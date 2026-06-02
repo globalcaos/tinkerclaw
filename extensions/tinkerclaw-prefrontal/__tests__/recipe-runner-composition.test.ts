@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseUsesDirective, parseLoopDirective, isDryNote } from "../kit-runner.js";
+import { parseUsesDirective, parseLoopDirective, isDryNote } from "../recipe-runner.js";
 
 describe("parseUsesDirective — step-level sub-kit delegation", () => {
   it("normalizes a bare own-kit slug to globalcaos/<slug> (first non-blank line)", () => {

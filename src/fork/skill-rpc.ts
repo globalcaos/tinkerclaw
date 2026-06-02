@@ -124,7 +124,7 @@ export const forkSkillHandlers: GatewayRequestHandlers = {
       }
       // Route through the Cerebellum-side skill-invocation seam (recordSkillOutcome)
       // — the canonical "externally-observed outcome" recorder the Wire phase hands
-      // to whoever ran the skill (e.g. the Prefrontal kit-runner) — rather than
+      // to whoever ran the skill (e.g. the Prefrontal recipe-runner) — rather than
       // poking the library directly, so the fitness-update path is single-owner.
       recordSkillOutcome(lib, skillId, success);
       const updated = lib.read(skillId);

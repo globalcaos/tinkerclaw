@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
  * FORK 2026-05-30 (Upgrade 5): durable per-step artifact persistence.
  *
  * The top-level `plan-store.test.ts` covers a single-step artifact round-trip.
- * This suite hardens the contract the resume path (kit-runner) depends on:
+ * This suite hardens the contract the resume path (recipe-runner) depends on:
  * EVERY step's `artifact` digest must survive a full render → on-disk → parse
  * cycle, including ones with spaces, unicode, and at the 500-char schema bound.
  */

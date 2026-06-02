@@ -2,28 +2,28 @@
  * FORK 2026-06-01: prefrontal/cc-skills-bridge — import a Claude-Code SKILL.md
  * as a kit/1.0 recipe (Upgrade 11, external recipe acquisition).
  *
- * Journey kits are already a near-native fetch (`kit-rpcs.ts` search/install).
+ * Journey kits are already a near-native fetch (`recipe-rpcs.ts` search/install).
  * Claude-Code skills are a DIFFERENT shape — `SKILL.md` (YAML frontmatter
  * `name`/`description` + a documented procedure in the body) plus loose scripts.
  * This adapter reads that SKILL.md, infers an ordered step list from the body,
- * and transpiles it to a `KitSpec`, which is then run through the EXISTING
- * `kit-author.ts` validators (`validateKitSpec` + `buildKitMd`) so the
+ * and transpiles it to a `RecipeSpec`, which is then run through the EXISTING
+ * `recipe-author.ts` validators (`validateRecipeSpec` + `buildRecipeMd`) so the
  * phantom-step and slug-traversal guards apply for free. We do NOT fork those
  * validators.
  *
  * Trust posture (see improvement_notes U11 risk a): bridged recipes are marked
  * `authoredBy: "cc-bridge"` so they are distinguishable / low-trust vs the
- * curated `globalcaos/*` set. We retag the buildKitMd output rather than fork
- * buildKitMd.
+ * curated `globalcaos/*` set. We retag the buildRecipeMd output rather than fork
+ * buildRecipeMd.
  *
- * Symlink-safety (risk b / Risk 6): `KitStore.resolveSandboxPath` blocks `../`
+ * Symlink-safety (risk b / Risk 6): `RecipeStore.resolveSandboxPath` blocks `../`
  * but NOT symlinks. Imported content is untrusted, so any SKILL.md path we read
  * from disk must be vetted with `assertNoSymlink` first — a symlinked SKILL.md
  * (or a symlinked component anywhere in its path) is rejected, never followed.
  *
- * Pure transpile here (no fs except the symlink probe): `skillMdToKitSpec` +
+ * Pure transpile here (no fs except the symlink probe): `skillMdToRecipeSpec` +
  * `buildBridgedKitMd` are unit-testable. The recipe.install RPC (Wire phase)
- * does the sandboxed write via `KitStore.writeKitFiles` and scans the
+ * does the sandboxed write via `RecipeStore.writeKitFiles` and scans the
  * `BRIDGED_SKILLS_DIRNAME` dir into the matcher index.
  *
  * See bible subagents-and-recipes.md (recipe/1.0 spec + sandbox enforcement).
@@ -31,14 +31,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { buildKitMd, type KitSpec, type KitStepSpec } from "./kit-author.js";
+import { buildRecipeMd, type RecipeSpec, type RecipeStepSpec } from "./recipe-author.js";
 
 /** Authorship tag stamped on every bridged recipe (low-trust / distinguishable). */
 export const BRIDGED_AUTHORED_BY = "cc-bridge";
 
 /**
  * Sub-directory (under the kit install sandbox) where bridged SKILL.md imports
- * land. The Wire phase adds this to `kit-matcher.ts loadKitIndex`'s scan set so
+ * land. The Wire phase adds this to `recipe-matcher.ts loadRecipeIndex`'s scan set so
  * imported recipes become matchable; keeping the name here gives both sides one
  * source of truth.
  */
@@ -61,7 +61,7 @@ const STEP_HEADING_RE = /^#{1,6}\s+(?:step\s+)?(\d+)\s*[.):-]\s+(.+?)\s*$/gim;
  * collapse whitespace/underscores to single hyphens, and drop everything that
  * is not `[a-z0-9-]`. We deliberately DO NOT try to "rescue" a name like
  * `../../etc` into something safe-looking — the final slug is re-checked by
- * `validateKitSpec`'s SLUG_RE, and a name that can't produce a valid slug
+ * `validateRecipeSpec`'s SLUG_RE, and a name that can't produce a valid slug
  * throws (so a malicious name can never silently become a different dir).
  */
 function slugifyName(name: string): string {
@@ -87,7 +87,7 @@ function humanizeName(name: string): string {
 /**
  * Derive matcher tags from the skill's name + description. The matcher scores
  * against `tags`, so we seed it with the name tokens and a few description
- * keywords; `buildKitMd` folds these (lowercased, deduped) into the frontmatter.
+ * keywords; `buildRecipeMd` folds these (lowercased, deduped) into the frontmatter.
  */
 function deriveTags(name: string, description: string, trigger?: string): string[] {
   const tags = new Set<string>();
@@ -112,7 +112,7 @@ function deriveTags(name: string, description: string, trigger?: string): string
  * becomes that step's body. Numbering drives the order (headings may be `0`-based
  * like graphify's `Step 0`, which we normalise to a contiguous 1..N sequence).
  */
-function inferStepsFromBody(body: string): KitStepSpec[] {
+function inferStepsFromBody(body: string): RecipeStepSpec[] {
   // Capture each heading's match-start (line start of the "### …" line) and the
   // offset just after the heading line (where the step body begins).
   const headings: Array<{ num: number; title: string; headingAt: number; bodyAt: number }> = [];
@@ -135,7 +135,7 @@ function inferStepsFromBody(body: string): KitStepSpec[] {
     const stepBody = body.slice(h.bodyAt, end).trim();
     return {
       title: h.title,
-      // A step must have a non-empty body to pass validateKitSpec; fall back to
+      // A step must have a non-empty body to pass validateRecipeSpec; fall back to
       // the title as a one-line instruction when the skill documented only a
       // heading (still executable, just terse).
       body: stepBody || `Perform: ${h.title}`,
@@ -145,13 +145,13 @@ function inferStepsFromBody(body: string): KitStepSpec[] {
 
 /**
  * Transpile a Claude-Code SKILL.md (frontmatter + documented procedure) into a
- * KitSpec. Throws on a malformed skill (no frontmatter, missing name/description,
+ * RecipeSpec. Throws on a malformed skill (no frontmatter, missing name/description,
  * no inferable steps, or a name that can't yield a traversal-safe slug) so the
  * caller never writes a non-recipe to disk. The returned spec is NOT yet
- * validated against `validateKitSpec` — callers MUST run it through that (and
- * `buildBridgedKitMd`) before persisting, matching kit-author's split.
+ * validated against `validateRecipeSpec` — callers MUST run it through that (and
+ * `buildBridgedKitMd`) before persisting, matching recipe-author's split.
  */
-export function skillMdToKitSpec(skillMdText: string): KitSpec {
+export function skillMdToRecipeSpec(skillMdText: string): RecipeSpec {
   if (typeof skillMdText !== "string" || !skillMdText.trim()) {
     throw new Error("cc-skills-bridge: empty SKILL.md");
   }
@@ -220,13 +220,13 @@ export function skillMdToKitSpec(skillMdText: string): KitSpec {
 }
 
 /**
- * Build the kit/1.0 markdown for a bridged spec, reusing `buildKitMd` and then
- * retagging `authoredBy` from kit-author's default ("jarvis-on-the-fly") to
+ * Build the kit/1.0 markdown for a bridged spec, reusing `buildRecipeMd` and then
+ * retagging `authoredBy` from recipe-author's default ("jarvis-on-the-fly") to
  * `cc-bridge` so the provenance is honest. We retag the single frontmatter line
- * rather than fork buildKitMd.
+ * rather than fork buildRecipeMd.
  */
-export function buildBridgedKitMd(spec: KitSpec): string {
-  const md = buildKitMd(spec);
+export function buildBridgedKitMd(spec: RecipeSpec): string {
+  const md = buildRecipeMd(spec);
   return md.replace(/^authoredBy:.*$/m, `authoredBy: ${JSON.stringify(BRIDGED_AUTHORED_BY)}`);
 }
 

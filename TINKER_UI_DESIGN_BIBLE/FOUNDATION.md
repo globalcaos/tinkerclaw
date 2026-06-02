@@ -82,8 +82,8 @@ High-altitude; the owning optic carries the detail.
 **Autonomy & cognition**
 
 - Prompts follow the **latest** model standards; system-prompt blocks in priority order. _(bible, tool-loop)_
-- **Recipes evolve continuously and autonomously** — made safe by reversibility and observability, not by constraints on change. _(subagents-and-kits)_
-- **Recipes are matched to intent before every execution**, however trivial it seems; mismatches become signals that grow the catalog. _(subagents-and-kits)_
+- **Recipes evolve continuously and autonomously** — made safe by reversibility and observability, not by constraints on change. _(subagents-and-recipes)_
+- **Recipes are matched to intent before every execution**, however trivial it seems; mismatches become signals that grow the catalog. _(subagents-and-recipes)_
 - Decisions derive from the live situation, not frozen lists/thresholds (model choice, budget, effort). _(auth-routing, config-shape)_
 
 **Reliability**

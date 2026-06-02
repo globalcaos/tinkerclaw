@@ -333,7 +333,7 @@ export async function runSleepConsolidation(
     manifestEntries.push(...recipeMutationEntries(proposals, nowISO));
 
     // J5 self-apply (full autonomy): hand each autoPromotable proposal to the Prefrontal apply
-    // loop via gateway RPC — engram cannot reach KitStore directly. Gated by RECIPE_AUTOAPPLY_ENABLED
+    // loop via gateway RPC — engram cannot reach RecipeStore directly. Gated by RECIPE_AUTOAPPLY_ENABLED
     // ("true" only, so it is OFF in tests/clones). Fire-and-forget + try/caught: consolidation never
     // blocks or fails on it, and the proposal is already in the manifest as the audit trail. The
     // apply loop snapshots (rollback net), validates, and refuses hand-curated kits (authorship guard).

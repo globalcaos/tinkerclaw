@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
  * FORK 2026-05-30 (Upgrade 5): durable checkpointing tests.
  *
  * Covers the pure helpers (summarizeOutput / collectPriorArtifacts /
- * withPriorArtifacts / isStepDone) and the runKit resume path against a mock
+ * withPriorArtifacts / isStepDone) and the runRecipe resume path against a mock
  * PlanStore in live mode (no real subagent spawns — the mock flips the row to
  * `done` the moment it goes in_progress, so waitForStepDone returns immediately).
  */
@@ -16,12 +16,12 @@ import {
   collectPriorArtifacts,
   withPriorArtifacts,
   isStepDone,
-  runKit,
+  runRecipe,
   ARTIFACT_DIGEST_MAX,
   type PriorArtifact,
-} from "../kit-runner.js";
+} from "../recipe-runner.js";
 
-// ── A minimal in-memory PlanStore stand-in (matches the methods runKit calls) ──
+// ── A minimal in-memory PlanStore stand-in (matches the methods runRecipe calls) ──
 interface StepCall {
   stepIndex: number;
   status: Plan["steps"][number]["status"];
@@ -159,7 +159,7 @@ describe("isStepDone", () => {
   });
 });
 
-// FORK 2026-05-30: no-op spawn injected via runKit's _spawnStep seam so the mock
+// FORK 2026-05-30: no-op spawn injected via runRecipe's _spawnStep seam so the mock
 // planStore drives step completion without a live gateway (the real spawn helper
 // shells out to openclaw-spawn-subagent.mjs, which needs a running gateway).
 const noopSpawn = async (_task: string, _label: string) => ({
@@ -167,7 +167,7 @@ const noopSpawn = async (_task: string, _label: string) => ({
   runId: "mock-run",
 });
 
-describe("runKit — durable resume (live mode, mock store)", () => {
+describe("runRecipe — durable resume (live mode, mock store)", () => {
   let kitsDir: string;
   beforeAll(async () => {
     kitsDir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-resume-"));
@@ -224,12 +224,12 @@ describe("runKit — durable resume (live mode, mock store)", () => {
 
   it("resumes from currentStep: never re-dispatches done steps 0/1", async () => {
     const store = makeMockStore(seededPlan());
-    const res = await runKit({
+    const res = await runRecipe({
       kitRef: "globalcaos/fourstep",
       sessionKey: "agent:main:main",
       intent: "Four Step",
       planStore: store as never,
-      ownKitsDir: kitsDir,
+      ownRecipesDir: kitsDir,
       _spawnStep: noopSpawn,
       resume: true,
     });
@@ -248,12 +248,12 @@ describe("runKit — durable resume (live mode, mock store)", () => {
 
   it("persists a ≤500-char artifact for each resumed step", async () => {
     const store = makeMockStore(seededPlan());
-    await runKit({
+    await runRecipe({
       kitRef: "globalcaos/fourstep",
       sessionKey: "agent:main:main",
       intent: "Four Step",
       planStore: store as never,
-      ownKitsDir: kitsDir,
+      ownRecipesDir: kitsDir,
       _spawnStep: noopSpawn,
       resume: true,
     });
@@ -267,12 +267,12 @@ describe("runKit — durable resume (live mode, mock store)", () => {
 
   it("does NOT resume without resume:true (force fresh restart at step 0)", async () => {
     const store = makeMockStore(seededPlan());
-    const res = await runKit({
+    const res = await runRecipe({
       kitRef: "globalcaos/fourstep",
       sessionKey: "agent:main:main",
       intent: "Four Step",
       planStore: store as never,
-      ownKitsDir: kitsDir,
+      ownRecipesDir: kitsDir,
       _spawnStep: noopSpawn,
       // resume omitted → fresh run
     });
@@ -288,12 +288,12 @@ describe("runKit — durable resume (live mode, mock store)", () => {
     const other = seededPlan();
     other.kitRef = "globalcaos/something-else";
     const store = makeMockStore(other);
-    const res = await runKit({
+    const res = await runRecipe({
       kitRef: "globalcaos/fourstep",
       sessionKey: "agent:main:main",
       intent: "Four Step",
       planStore: store as never,
-      ownKitsDir: kitsDir,
+      ownRecipesDir: kitsDir,
       _spawnStep: noopSpawn,
       resume: true,
     });
@@ -306,12 +306,12 @@ describe("runKit — durable resume (live mode, mock store)", () => {
     // only assert the sink is accepted and the run still succeeds (smoke).
     const store = makeMockStore(seededPlan());
     const beats: number[] = [];
-    const res = await runKit({
+    const res = await runRecipe({
       kitRef: "globalcaos/fourstep",
       sessionKey: "agent:main:main",
       intent: "Four Step",
       planStore: store as never,
-      ownKitsDir: kitsDir,
+      ownRecipesDir: kitsDir,
       _spawnStep: noopSpawn,
       resume: true,
       onCheckpoint: (ev) => beats.push(ev.stepIndex),
@@ -322,10 +322,10 @@ describe("runKit — durable resume (live mode, mock store)", () => {
 
 // U1 (2026-06): recipe ATTRIBUTION via tag-stamping. The Cerebellum's recipe-
 // fitness reads a `recipe:<owner/slug>` tag off episode events; the producer of
-// that tag is Prefrontal's kit-runner (cross-subsystem contract). runKit emits the
+// that tag is Prefrontal's recipe-runner (cross-subsystem contract). runRecipe emits the
 // tag through the opt-in onTag sink at kit start AND at each task dispatch, so the
-// caller (kit-rpcs) can forward it to whatever event sink stamps the metadata.
-describe("runKit — recipe attribution tags (U1, onTag sink)", () => {
+// caller (recipe-rpcs) can forward it to whatever event sink stamps the metadata.
+describe("runRecipe — recipe attribution tags (U1, onTag sink)", () => {
   let kitsDir: string;
   beforeAll(async () => {
     kitsDir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-tags-"));
@@ -357,12 +357,12 @@ describe("runKit — recipe attribution tags (U1, onTag sink)", () => {
   it("stamps recipe:<owner/slug> at run start and at every dispatch", async () => {
     const store = makeMockStore();
     const tags: Array<{ tag: string; stepIndex?: number; phase: string }> = [];
-    const res = await runKit({
+    const res = await runRecipe({
       kitRef: "globalcaos/twostep",
       sessionKey: "agent:main:main",
       intent: "Two Step",
       planStore: store as never,
-      ownKitsDir: kitsDir,
+      ownRecipesDir: kitsDir,
       _spawnStep: noopSpawn,
       onTag: (ev) => tags.push(ev),
     });
@@ -384,12 +384,12 @@ describe("runKit — recipe attribution tags (U1, onTag sink)", () => {
 
   it("never throws into the run when the onTag sink throws (observability is best-effort)", async () => {
     const store = makeMockStore();
-    const res = await runKit({
+    const res = await runRecipe({
       kitRef: "globalcaos/twostep",
       sessionKey: "agent:main:main",
       intent: "Two Step",
       planStore: store as never,
-      ownKitsDir: kitsDir,
+      ownRecipesDir: kitsDir,
       _spawnStep: noopSpawn,
       onTag: () => {
         throw new Error("sink boom");

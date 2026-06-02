@@ -4,17 +4,17 @@ import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   tokenMatches,
-  matchKitsDetailed,
+  matchRecipesDetailed,
   buildMergedPlan,
-  loadKitIndex,
-  invalidateKitIndexCache,
-  scoreKit,
+  loadRecipeIndex,
+  invalidateRecipeIndexCache,
+  scoreRecipe,
   seedPlanFromPrompt,
   fitnessFeedbackDelta,
   ratingScoreDelta,
   RATING_CLAMP,
-  type KitIndexEntry,
-} from "../kit-matcher.js";
+  type RecipeIndexEntry,
+} from "../recipe-matcher.js";
 
 describe("tokenMatches — fuzzy/stemmed matching", () => {
   it("matches inflections and typos", () => {
@@ -29,8 +29,8 @@ describe("tokenMatches — fuzzy/stemmed matching", () => {
   });
 });
 
-describe("matchKitsDetailed — scoring + confidence", () => {
-  const index: KitIndexEntry[] = [
+describe("matchRecipesDetailed — scoring + confidence", () => {
+  const index: RecipeIndexEntry[] = [
     {
       slug: "debug",
       title: "Debug & Fix",
@@ -50,19 +50,19 @@ describe("matchKitsDetailed — scoring + confidence", () => {
   ];
 
   it("high confidence for a clear single winner", () => {
-    const r = matchKitsDetailed("debug the crash, it throws an error", index);
+    const r = matchRecipesDetailed("debug the crash, it throws an error", index);
     expect(r.matches[0]?.entry.slug).toBe("debug");
     expect(r.confidence).toBe("high");
   });
 
   it("fuzzy match still scores (debugging → debug)", () => {
-    const r = matchKitsDetailed("debugging a crashing process", index);
+    const r = matchRecipesDetailed("debugging a crashing process", index);
     expect(r.matches[0]?.entry.slug).toBe("debug");
     expect(r.confidence).not.toBe("none");
   });
 
   it("none when nothing clears threshold", () => {
-    const r = matchKitsDetailed("xyzzy plugh frobnicate", index);
+    const r = matchRecipesDetailed("xyzzy plugh frobnicate", index);
     expect(r.matches.length).toBe(0);
     expect(r.confidence).toBe("none");
   });
@@ -90,8 +90,8 @@ describe("fitnessFeedbackDelta — non-negative fitness boost", () => {
   });
 });
 
-describe("scoreKit — feedback delta is additive, base is a floor", () => {
-  const kit: KitIndexEntry = {
+describe("scoreRecipe — feedback delta is additive, base is a floor", () => {
+  const kit: RecipeIndexEntry = {
     slug: "debug",
     title: "Debug & Fix",
     summary: "reproduce diagnose fix verify",
@@ -105,29 +105,29 @@ describe("scoreKit — feedback delta is additive, base is a floor", () => {
   );
 
   it("without feedback, score is the pure lexical base", () => {
-    const base = scoreKit(prompt, tokens, kit);
+    const base = scoreRecipe(prompt, tokens, kit);
     expect(base).toBeGreaterThan(0);
   });
 
   it("a proven recipe scores STRICTLY higher than its lexical base", () => {
-    const base = scoreKit(prompt, tokens, kit);
-    const boosted = scoreKit(prompt, tokens, kit, () => 0.95);
+    const base = scoreRecipe(prompt, tokens, kit);
+    const boosted = scoreRecipe(prompt, tokens, kit, () => 0.95);
     expect(boosted).toBeGreaterThan(base);
     expect(boosted).toBe(base + fitnessFeedbackDelta(0.95));
   });
 
   it("a poor / unknown recipe never falls BELOW its lexical base (floor)", () => {
-    const base = scoreKit(prompt, tokens, kit);
-    expect(scoreKit(prompt, tokens, kit, () => 0.05)).toBe(base); // poor → no demotion
-    expect(scoreKit(prompt, tokens, kit, () => undefined)).toBe(base); // unknown → base
+    const base = scoreRecipe(prompt, tokens, kit);
+    expect(scoreRecipe(prompt, tokens, kit, () => 0.05)).toBe(base); // poor → no demotion
+    expect(scoreRecipe(prompt, tokens, kit, () => undefined)).toBe(base); // unknown → base
   });
 
   it("re-ranks: a proven kit overtakes an equally-relevant unproven one", () => {
-    const a: KitIndexEntry = { ...kit, slug: "a" };
-    const b: KitIndexEntry = { ...kit, slug: "b" };
+    const a: RecipeIndexEntry = { ...kit, slug: "a" };
+    const b: RecipeIndexEntry = { ...kit, slug: "b" };
     const feedback = (slug: string) => (slug === "b" ? 0.95 : undefined);
-    const sa = scoreKit(prompt, tokens, a, feedback);
-    const sb = scoreKit(prompt, tokens, b, feedback);
+    const sa = scoreRecipe(prompt, tokens, a, feedback);
+    const sb = scoreRecipe(prompt, tokens, b, feedback);
     expect(sb).toBeGreaterThan(sa);
   });
 });
@@ -149,8 +149,8 @@ describe("ratingScoreDelta — clamped ±0.2 popularity nudge", () => {
   });
 });
 
-describe("scoreKit — rating composes with feedback (precedence base → feedback → rating)", () => {
-  const kit: KitIndexEntry = {
+describe("scoreRecipe — rating composes with feedback (precedence base → feedback → rating)", () => {
+  const kit: RecipeIndexEntry = {
     slug: "debug",
     title: "Debug & Fix",
     summary: "reproduce diagnose fix verify",
@@ -164,9 +164,9 @@ describe("scoreKit — rating composes with feedback (precedence base → feedba
   );
 
   it("adds the rating delta ON TOP of base + feedback", () => {
-    const base = scoreKit(prompt, tokens, kit);
-    const withFeedback = scoreKit(prompt, tokens, kit, () => 0.95);
-    const withBoth = scoreKit(
+    const base = scoreRecipe(prompt, tokens, kit);
+    const withFeedback = scoreRecipe(prompt, tokens, kit, () => 0.95);
+    const withBoth = scoreRecipe(
       prompt,
       tokens,
       kit,
@@ -180,29 +180,29 @@ describe("scoreKit — rating composes with feedback (precedence base → feedba
 
   it("rating alone never overturns a fitness lead (feedback dominates)", () => {
     // recipe A: high fitness, no rating. recipe B: no fitness, max rating.
-    const a: KitIndexEntry = { ...kit, slug: "a" };
-    const b: KitIndexEntry = { ...kit, slug: "b" };
+    const a: RecipeIndexEntry = { ...kit, slug: "a" };
+    const b: RecipeIndexEntry = { ...kit, slug: "b" };
     const feedback = (slug: string) => (slug === "a" ? 0.95 : undefined);
     const rating = (slug: string) => (slug === "b" ? 2 : undefined);
-    const sa = scoreKit(prompt, tokens, a, feedback, rating);
-    const sb = scoreKit(prompt, tokens, b, feedback, rating);
+    const sa = scoreRecipe(prompt, tokens, a, feedback, rating);
+    const sb = scoreRecipe(prompt, tokens, b, feedback, rating);
     // The integer fitness boost (>=1) dwarfs the ±0.2 rating clamp → A still wins.
     expect(sa).toBeGreaterThan(sb);
   });
 
   it("rating breaks a tie between two equally-relevant, equally-unproven recipes", () => {
-    const a: KitIndexEntry = { ...kit, slug: "a" };
-    const b: KitIndexEntry = { ...kit, slug: "b" };
+    const a: RecipeIndexEntry = { ...kit, slug: "a" };
+    const b: RecipeIndexEntry = { ...kit, slug: "b" };
     const rating = (slug: string) => (slug === "b" ? 2 : 0);
-    const sa = scoreKit(prompt, tokens, a, undefined, rating);
-    const sb = scoreKit(prompt, tokens, b, undefined, rating);
+    const sa = scoreRecipe(prompt, tokens, a, undefined, rating);
+    const sb = scoreRecipe(prompt, tokens, b, undefined, rating);
     expect(sb).toBeGreaterThan(sa); // popular one edges ahead within the clamp
   });
 });
 
 describe("buildMergedPlan — composition via composes:", () => {
   let dir: string;
-  let index: KitIndexEntry[];
+  let index: RecipeIndexEntry[];
   beforeAll(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-compose-"));
     const subMd = `---\nslug: "sub"\ntitle: "Sub"\nsummary: "s"\ntags: ["sub"]\n---\n## Steps\n### 1. SubStepA\nbody\n### 2. SubStepB\nbody\n`;
@@ -211,12 +211,12 @@ describe("buildMergedPlan — composition via composes:", () => {
     await fs.mkdir(path.join(dir, "top"), { recursive: true });
     await fs.writeFile(path.join(dir, "sub", "kit.md"), subMd);
     await fs.writeFile(path.join(dir, "top", "kit.md"), topMd);
-    invalidateKitIndexCache();
-    index = await loadKitIndex(dir);
+    invalidateRecipeIndexCache();
+    index = await loadRecipeIndex(dir);
   });
   afterAll(async () => {
     await fs.rm(dir, { recursive: true, force: true });
-    invalidateKitIndexCache();
+    invalidateRecipeIndexCache();
   });
 
   it("loads composes from frontmatter", () => {
@@ -234,10 +234,10 @@ describe("buildMergedPlan — composition via composes:", () => {
   });
 });
 
-// U11 (2026-06-01): loadKitIndex scans an extra bridged-skills dir so imported CC
+// U11 (2026-06-01): loadRecipeIndex scans an extra bridged-skills dir so imported CC
 // SKILL.md recipes are matchable alongside curated kits; own-kits win on a slug
 // collision (a bridged import can never shadow a curated kit of the same slug).
-describe("loadKitIndex — extraDirs (bridged-skills) scan", () => {
+describe("loadRecipeIndex — extraDirs (bridged-skills) scan", () => {
   let ownDir: string;
   let extraDir: string;
   beforeAll(async () => {
@@ -252,58 +252,58 @@ describe("loadKitIndex — extraDirs (bridged-skills) scan", () => {
     await fs.writeFile(path.join(extraDir, "imported", "kit.md"), bridged);
     await fs.mkdir(path.join(extraDir, "shared"), { recursive: true });
     await fs.writeFile(path.join(extraDir, "shared", "kit.md"), bridgedShadow);
-    invalidateKitIndexCache();
+    invalidateRecipeIndexCache();
   });
   afterAll(async () => {
     await fs.rm(ownDir, { recursive: true, force: true });
     await fs.rm(extraDir, { recursive: true, force: true });
-    invalidateKitIndexCache();
+    invalidateRecipeIndexCache();
   });
 
   it("includes bridged imports from the extra dir", async () => {
-    const index = await loadKitIndex(ownDir, [extraDir]);
+    const index = await loadRecipeIndex(ownDir, [extraDir]);
     expect(index.find((e) => e.slug === "imported")).toBeTruthy();
   });
 
   it("own-kits win on a slug collision (bridged cannot shadow curated)", async () => {
-    invalidateKitIndexCache();
-    const index = await loadKitIndex(ownDir, [extraDir]);
+    invalidateRecipeIndexCache();
+    const index = await loadRecipeIndex(ownDir, [extraDir]);
     const shared = index.filter((e) => e.slug === "shared");
     expect(shared).toHaveLength(1);
     expect(shared[0].title).toBe("Curated Shared"); // the own-kits entry, not the bridged shadow
   });
 
   it("a missing extra dir is not an error (empty contribution)", async () => {
-    invalidateKitIndexCache();
-    const index = await loadKitIndex(ownDir, [path.join(extraDir, "does-not-exist")]);
+    invalidateRecipeIndexCache();
+    const index = await loadRecipeIndex(ownDir, [path.join(extraDir, "does-not-exist")]);
     expect(index.find((e) => e.slug === "shared")).toBeTruthy();
     expect(index.find((e) => e.slug === "imported")).toBeFalsy();
   });
 });
 
 // U1 + U12 PRODUCER WIRING: the turn-start seed (seedPlanFromPrompt) must thread
-// the injected feedback + rating lookups into matchKitsDetailed. Before this wiring
+// the injected feedback + rating lookups into matchRecipesDetailed. Before this wiring
 // the deps existed but seedPlanFromPrompt called the matcher WITHOUT them, so the
 // fitness/rating signals were inert at the real turn-start call site.
 describe("seedPlanFromPrompt — threads feedback + rating into the match", () => {
   let dir: string;
   beforeAll(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "seed-feedback-"));
-    const kitMd = `---\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "reproduce diagnose fix verify"\ntags: ["debug", "bug", "crash", "error"]\n---\n### 1. Repro\nbody\n`;
+    const recipeMd = `---\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "reproduce diagnose fix verify"\ntags: ["debug", "bug", "crash", "error"]\n---\n### 1. Repro\nbody\n`;
     await fs.mkdir(path.join(dir, "debug"), { recursive: true });
-    await fs.writeFile(path.join(dir, "debug", "kit.md"), kitMd);
-    invalidateKitIndexCache();
+    await fs.writeFile(path.join(dir, "debug", "kit.md"), recipeMd);
+    invalidateRecipeIndexCache();
   });
   afterAll(async () => {
     await fs.rm(dir, { recursive: true, force: true });
-    invalidateKitIndexCache();
+    invalidateRecipeIndexCache();
   });
 
   it("consults the deps' feedback + rating lookups while scoring at the seed call site", async () => {
-    invalidateKitIndexCache();
+    invalidateRecipeIndexCache();
     // Proof that the producer fires: the injected lookups are CONSULTED with the
     // catalog slug during the real turn-start scoring pass. seedPlanFromPrompt calls
-    // its sibling matchKitsDetailed directly (intra-module), so we assert behaviour
+    // its sibling matchRecipesDetailed directly (intra-module), so we assert behaviour
     // (the lookups being invoked) rather than spying the local call.
     const feedback = vi.fn((slug: string) => (slug === "debug" ? 0.95 : undefined));
     const rating = vi.fn((slug: string) => (slug === "debug" ? 2 : undefined));
@@ -315,7 +315,7 @@ describe("seedPlanFromPrompt — threads feedback + rating into the match", () =
       prompt: "debug the crash error",
       sessionKey: "agent:main:main",
       runId: "r1",
-      ownKitsDir: dir,
+      ownRecipesDir: dir,
       planStore,
       feedback,
       rating,
@@ -327,7 +327,7 @@ describe("seedPlanFromPrompt — threads feedback + rating into the match", () =
   });
 
   it("WITHOUT feedback/rating the lookups are never consulted (back-compat / inert when unwired)", async () => {
-    invalidateKitIndexCache();
+    invalidateRecipeIndexCache();
     const planStore = {
       get: vi.fn().mockResolvedValue(null),
       set: vi.fn().mockResolvedValue({ runId: "r2" }),
@@ -337,7 +337,7 @@ describe("seedPlanFromPrompt — threads feedback + rating into the match", () =
       prompt: "debug the crash error",
       sessionKey: "agent:main:main",
       runId: "r2",
-      ownKitsDir: dir,
+      ownRecipesDir: dir,
       planStore,
     });
     expect(outcome.matches.some((m) => m.slug === "debug")).toBe(true);

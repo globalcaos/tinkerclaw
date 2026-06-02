@@ -2,15 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { KitStore } from "./kit-store.js";
+import { RecipeStore } from "./recipe-store.js";
 
-describe("KitStore", () => {
+describe("RecipeStore", () => {
   let root: string;
-  let store: KitStore;
+  let store: RecipeStore;
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "pf-kit-"));
-    store = new KitStore({ rootDir: root });
+    store = new RecipeStore({ rootDir: root });
   });
   afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 

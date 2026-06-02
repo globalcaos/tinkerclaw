@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Plan } from "../../../src/gateway/protocol/schema/prefrontal-plan.js";
-import { collectStepResults } from "../kit-runner.js";
+import { collectStepResults } from "../recipe-runner.js";
 
 function planWith(
   steps: Array<{ title: string; status: Plan["steps"][number]["status"]; note?: string }>,

@@ -15,10 +15,10 @@ verify:
     cmd: python3 -c 'import subprocess,json,time; sk=f"test:plan:{int(time.time()*1000)}"; subprocess.run(["openclaw","gateway","call","prefrontal.plan.set","--params",json.dumps({"sessionKey":sk,"intent":"verify","runId":"v1","steps":[{"title":"a"},{"title":"b"}]})],check=True,timeout=15); r=subprocess.run(["openclaw","gateway","call","prefrontal.plan.get","--params",json.dumps({"sessionKey":sk})],capture_output=True,text=True,timeout=15); assert "verify" in r.stdout, r.stdout[-500:]; subprocess.run(["openclaw","gateway","call","prefrontal.plan.close","--params",json.dumps({"sessionKey":sk,"status":"aborted"})],check=True,timeout=15)'
   - name: F-KIT-INSTALL — kit RPCs alive (search responds)
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","prefrontal.kit.search","--params",json.dumps({"query":"feature"})],capture_output=True,text=True,timeout=20); assert "results" in r.stdout, r.stdout[-500:]'
-  - name: F-RECIPE-STATE — runKit wires the onRecipeState producer (the dull-panel fix)
-    cmd: python3 -c 'import os; src=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "onRecipeState:" in src and "fork.prefrontal.setRecipe" in src, "recipe-state producer wiring missing"'
+  - name: F-RECIPE-STATE — runRecipe wires the onRecipeState producer (the dull-panel fix)
+    cmd: python3 -c 'import os; src=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts")).read(); assert "onRecipeState:" in src and "fork.prefrontal.setRecipe" in src, "recipe-state producer wiring missing"'
   - name: F-RECIPE-EVOLVE — consolidation self-apply loop wired to the prefrontal apply RPC (U1)
-    cmd: python3 -c 'import os; con=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/sleep-consolidation.ts")).read(); assert "proposeMutations" in con and "prefrontal.recipe.applyProposal" in con and "RECIPE_AUTOAPPLY_ENABLED" in con, "consolidation evolution loop wiring missing"; app=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts")).read(); assert "invalidateKitIndexCache()" in app and "isJarvisAuthored" in app, "recipe-apply rails/cache-invalidate missing"'
+    cmd: python3 -c 'import os; con=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/sleep-consolidation.ts")).read(); assert "proposeMutations" in con and "prefrontal.recipe.applyProposal" in con and "RECIPE_AUTOAPPLY_ENABLED" in con, "consolidation evolution loop wiring missing"; app=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts")).read(); assert "invalidateRecipeIndexCache()" in app and "isJarvisAuthored" in app, "recipe-apply rails/cache-invalidate missing"'
   - name: F-TOT-DELIBERATE — pre-prompt ToT deliberation is turn-local + trace persists (U10)
     cmd: python3 -c 'import os; att=open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "maybeRunThoughtSearch" in att and "preDeliberationSystemPromptText" in att, "attempt.ts deliberation wiring missing"; rr=open(os.path.expanduser("~/src/tinkerclaw/src/fork/reasoning-runtime.ts")).read(); assert "## Deliberation" in rr and "stashReasoningTrace" in rr, "reasoning-runtime producer missing"; hk=open(os.path.expanduser("~/src/tinkerclaw/src/fork/attempt-hooks.ts")).read(); assert "reasoning_tree_state" in hk and "consumeReasoningTrace" in hk, "trace persist-on-turn-complete missing"'
 ---
@@ -345,15 +345,15 @@ sequenceDiagram
 ## F-KIT-INSTALL. Journey kit install (sandboxed)
 
 **Trigger:** caller invokes `prefrontal.kit.install { kitRef }`.
-**Entry:** `extensions/tinkerclaw-prefrontal/src/kit-rpcs.ts:handleKitInstall`
+**Entry:** `extensions/tinkerclaw-prefrontal/src/recipe-rpcs.ts:handleKitInstall`
 **Exit:** files written to `~/.openclaw/workspace/kits/<owner>/<slug>/`; caller receives `{ ok, installedPath, preflightResults, nextSteps }`.
 
 ```mermaid
 sequenceDiagram
   participant CALLER as caller (Jarvis / TUI)
-  participant KR as kit-rpcs.ts
+  participant KR as recipe-rpcs.ts
   participant JK as journeykits.ai API
-  participant KS as KitStore (sandbox)
+  participant KS as RecipeStore (sandbox)
   participant FS as ~/.openclaw/workspace/kits/
 
   CALLER->>KR: prefrontal.kit.install {kitRef, allowRisky?}
@@ -385,30 +385,30 @@ sequenceDiagram
 - The install target is `~/.openclaw/workspace/kits/<owner>/<slug>/`. Source-tree kits (bundled at `extensions/tinkerclaw-prefrontal/kits/`) are never overwritten by install — they are separate.
 - `nextSteps` is passed through verbatim from the Journey API response for the caller to display.
 
-**See also:** lifecycles.md L-KIT-INSTALL; subagents-and-kits.md §Kits.
+**See also:** lifecycles.md L-KIT-INSTALL; subagents-and-recipes.md §Kits.
 
 ---
 
 ## F-RECIPE-STATE. Recipe run → live recipe-state → RECIPES panel header
 
 **Trigger:** caller invokes `prefrontal.recipe.run { kitRef, sessionKey, intent }` (the RECIPES-panel-backed kit execution path).
-**Entry:** `extensions/tinkerclaw-prefrontal/kit-rpcs.ts:"prefrontal.recipe.run"` → `kit-runner.ts:runKit`
+**Entry:** `extensions/tinkerclaw-prefrontal/recipe-rpcs.ts:"prefrontal.recipe.run"` → `recipe-runner.ts:runRecipe`
 **Exit:** Tinker UI RECIPES panel paints the rich recipe header (recipeId + step M/N + parallelism cap + in-flight labels) from live data instead of the synthetic fallback plan.
 
-**PRIOR GAP (fixed 18e618d241, FORK 2026-05-31):** the panel was dull because `runKit` NEVER emitted recipe-state — the rich header (`renderRecipeHeader`, panels.md) had no data source, so the panel always fell back to the synthetic 2-step "Thinking → Acting" plan. The fix wires the **producer** half: `runKit` now calls `onRecipeState` at kit start, on each parallel-group transition, and on completion.
+**PRIOR GAP (fixed 18e618d241, FORK 2026-05-31):** the panel was dull because `runRecipe` NEVER emitted recipe-state — the rich header (`renderRecipeHeader`, panels.md) had no data source, so the panel always fell back to the synthetic 2-step "Thinking → Acting" plan. The fix wires the **producer** half: `runRecipe` now calls `onRecipeState` at kit start, on each parallel-group transition, and on completion.
 
 ```mermaid
 sequenceDiagram
   participant CALLER as caller (Jarvis / TUI)
-  participant KR as kit-rpcs.ts (prefrontal.recipe.run)
-  participant RUN as runKit (kit-runner.ts)
+  participant KR as recipe-rpcs.ts (prefrontal.recipe.run)
+  participant RUN as runRecipe (recipe-runner.ts)
   participant SR as fork.prefrontal.setRecipe (prefrontal-state-rpc.ts)
   participant EV as emitAgentEvent (lifecycle)
   participant TUI as Tinker UI (app.ts)
   participant PNL as RECIPES panel (prefrontal-tree.ts)
 
   CALLER->>KR: prefrontal.recipe.run {kitRef, sessionKey, intent}
-  KR->>RUN: runKit({..., onRecipeState})
+  KR->>RUN: runRecipe({..., onRecipeState})
   Note over KR,RUN: onRecipeState wired to fork.prefrontal.setRecipe<br/>via loopback callGateway — fire-and-forget,<br/>wrapped so observability never throws into the run
   RUN->>KR: onRecipeState({recipeId, step, totalSteps, stepName, parallelismCap, inFlightLabels})
   Note over RUN: emit at kit start, each parallel-group<br/>transition, and on completion
@@ -422,25 +422,25 @@ sequenceDiagram
 
 **Invariants:**
 
-- The recipe-state emit is **best-effort, fire-and-forget**: `kit-rpcs.ts` wraps the `callGateway` in `.catch(() => {})` and `runKit` wraps every `onRecipeState` call so observability NEVER throws into the execution loop. A dead/closed UI must not stall a run.
-- `onRecipeState` is the PRODUCER seam (the half that was missing). The `RecipeStateUpdate` payload mirrors the `fork.prefrontal.setRecipe` param shape so `kit-rpcs.ts` forwards it verbatim; progress fields are optional (the start emit may omit step detail).
+- The recipe-state emit is **best-effort, fire-and-forget**: `recipe-rpcs.ts` wraps the `callGateway` in `.catch(() => {})` and `runRecipe` wraps every `onRecipeState` call so observability NEVER throws into the execution loop. A dead/closed UI must not stall a run.
+- `onRecipeState` is the PRODUCER seam (the half that was missing). The `RecipeStateUpdate` payload mirrors the `fork.prefrontal.setRecipe` param shape so `recipe-rpcs.ts` forwards it verbatim; progress fields are optional (the start emit may omit step detail).
 - The lifecycle phase token is `prefrontal-recipe-state` (single owner of the emit: `src/fork/prefrontal-state-rpc.ts`; the UI gate keys on `p.data.phase === "prefrontal-recipe-state"`).
 - The header data is **last-write-wins** in the UI: `currentRecipe` holds only the latest event, not a history.
 
-**See also:** subagents-and-kits.md §Kits (the parallel-group/runKit execution mechanism that GENERATES the transitions); panels.md (`renderRecipeHeader` render + RECIPES-panel fallback semantics); lifecycles.md L-STEP (per-step status barrier).
+**See also:** subagents-and-recipes.md §Kits (the parallel-group/runRecipe execution mechanism that GENERATES the transitions); panels.md (`renderRecipeHeader` render + RECIPES-panel fallback semantics); lifecycles.md L-STEP (per-step status barrier).
 
 ---
 
 ## F-RECIPE-EVOLVE. Episode complete → consolidation fitness → mutation self-apply → matcher re-reads (U1, J5+J13)
 
 **Trigger:** the `engram-consolidate` cron fires `consolidate()` over the day's closed episodes; at least one episode carries a `recipe:<owner/slug>` attribution tag.
-**Entry (producer of tags):** `extensions/tinkerclaw-prefrontal/kit-runner.ts:runKit` stamps `recipe:<owner/slug>` via the `onTag` sink (wired by `prefrontal.recipe.run`) at run start + each task dispatch.
+**Entry (producer of tags):** `extensions/tinkerclaw-prefrontal/recipe-runner.ts:runRecipe` stamps `recipe:<owner/slug>` via the `onTag` sink (wired by `prefrontal.recipe.run`) at run start + each task dispatch.
 **Entry (loop):** `src/memory/engram/sleep-consolidation.ts:consolidate()` §3b (opt-in, only when `config.recipeEvolution` is injected).
 **Exit:** for each `autoPromotable` proposal the on-disk recipe file is rewritten, the matcher's in-memory kit index is dropped, and the next turn's matcher re-scans the catalog with the new body + updated fitness boost.
 
 ```mermaid
 sequenceDiagram
-  participant RUN as runKit (kit-runner.ts)
+  participant RUN as runRecipe (recipe-runner.ts)
   participant ING as ingestion (recipe:<owner/slug> events)
   participant CRON as engram-consolidate cron
   participant CON as consolidate() §3b (sleep-consolidation.ts)
@@ -448,11 +448,11 @@ sequenceDiagram
   participant ARC as recipe-archive.ts (putVariant — never delete)
   participant EVO as recipe-evolution.ts (proposeMutations)
   participant GW as callGateway (loopback)
-  participant APP as prefrontal.recipe.applyProposal (kit-rpcs.ts)
+  participant APP as prefrontal.recipe.applyProposal (recipe-rpcs.ts)
   participant RA as applyMutationProposal (recipe-apply.ts)
-  participant KS as KitStore (recipe .md on disk)
-  participant CACHE as kit-matcher.ts (invalidateKitIndexCache)
-  participant MAT as matcher next turn (matchKitsDetailed)
+  participant KS as RecipeStore (recipe .md on disk)
+  participant CACHE as recipe-matcher.ts (invalidateRecipeIndexCache)
+  participant MAT as matcher next turn (matchRecipesDetailed)
 
   RUN->>ING: onTag → recipe:<owner/slug> stamped on episode events
   Note over ING: attribution survives in the event log<br/>(recipe-fitness.attributeRecipe matches this exact tag)
@@ -472,9 +472,9 @@ sequenceDiagram
       APP->>RA: applyMutationProposal(input, deps)
       RA->>RA: Rail 2 isJarvisAuthored? (curated → skip)
       RA->>KS: Rail 3 snapshot(recipeId) → .recipe-archive/ (rollback net)
-      RA->>RA: LLM rewrite → extractKitSpec → Rail 4 validateKitSpec
+      RA->>RA: LLM rewrite → extractKitSpec → Rail 4 validateRecipeSpec
       RA->>KS: authorKit(spec) (authorship-guarded write, slug preserved)
-      RA->>CACHE: invalidateKitIndexCache() — ONLY on successful apply
+      RA->>CACHE: invalidateRecipeIndexCache() — ONLY on successful apply
     end
   else gate off (tests/clones)
     Note over CON: proposals stay in the manifest for human review — no write
@@ -485,16 +485,16 @@ sequenceDiagram
 
 **Invariants:**
 
-- **Attribution is explicit, never inferred.** `recipe-fitness.attributeRecipe` matches ONLY the literal `recipe:<owner/slug>` tag stamped by `kit-runner.ts` `onTag`. No tag → no fitness update → no false attribution (`sleep-consolidation.ts:322` `continue`).
+- **Attribution is explicit, never inferred.** `recipe-fitness.attributeRecipe` matches ONLY the literal `recipe:<owner/slug>` tag stamped by `recipe-runner.ts` `onTag`. No tag → no fitness update → no false attribution (`sleep-consolidation.ts:322` `continue`).
 - **The archive never deletes.** `recipe-archive.putVariant` appends a versioned variant per consolidation pass; rollback is always possible. The apply path additionally snapshots the live body into `.recipe-archive/` (Rail 3) before any rewrite.
 - **`autoPromotable` is the only auto-apply gate inside the loop**, AND the whole self-apply block is gated by `RECIPE_AUTOAPPLY_ENABLED === "true"` (strict equality — OFF in tests/clones; live in prod, see memory `Jarvis full-autonomy flags`). Every proposal lands in the manifest regardless, so the audit trail exists even when the apply is gated off.
-- **`invalidateKitIndexCache()` fires only on a successful `authorKit`** (`recipe-apply.ts:208`) — a no-op/skip/reject never triggers a spurious catalog re-scan. Without this, an autonomous rewrite would only take effect after a process restart (or an unrelated dir-mtime bump).
-- **Selection feedback closes the loop:** the matcher reads `makeFitnessLookup(engramBaseDir)` as the `feedback` arg into `matchKitsDetailed` (`kit-rpcs.ts:420`), so the just-updated `successRate` boosts the recipe's score on the next match. Precedence: base score → U1 fitness feedback → U12 rating tie-break (see config-shape.md scoreKit composition).
+- **`invalidateRecipeIndexCache()` fires only on a successful `authorKit`** (`recipe-apply.ts:208`) — a no-op/skip/reject never triggers a spurious catalog re-scan. Without this, an autonomous rewrite would only take effect after a process restart (or an unrelated dir-mtime bump).
+- **Selection feedback closes the loop:** the matcher reads `makeFitnessLookup(engramBaseDir)` as the `feedback` arg into `matchRecipesDetailed` (`recipe-rpcs.ts:420`), so the just-updated `successRate` boosts the recipe's score on the next match. Precedence: base score → U1 fitness feedback → U12 rating tie-break (see config-shape.md scoreRecipe composition).
 - **The rewrite is authorship-guarded** (Rail 2): `applyMutationProposal` refuses any recipe that is not `isJarvisAuthored` — hand-curated kits are never auto-mutated.
 
 **State machines:** see lifecycles.md L-RECIPE / L-RECIPE-VARIANT (fitness/version transitions, archive lifecycle) — those are the single owner of the per-recipe state facts; this diagram owns only the call sequence.
 
-**See also:** config-shape.md (`RECIPE_AUTOAPPLY_ENABLED` flag + scoreKit precedence + the 5 apply rails); subagents-and-kits.md §Kits (`runKit`/`onTag` producer mechanics); failures.md (apply-failure → keep-original fallbacks).
+**See also:** config-shape.md (`RECIPE_AUTOAPPLY_ENABLED` flag + scoreRecipe precedence + the 5 apply rails); subagents-and-recipes.md §Kits (`runRecipe`/`onTag` producer mechanics); failures.md (apply-failure → keep-original fallbacks).
 
 ---
 

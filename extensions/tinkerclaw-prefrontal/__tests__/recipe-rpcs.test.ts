@@ -4,7 +4,7 @@
  * U11: recipe.install bridges a CC SKILL.md → recipe/1.0 (into the bridged-skills
  *      dir, scanned by the matcher); recipe.install resolves transitive
  *      composes:/uses: dependencies (cycle-guarded); recipe.search falls back to
- *      LOCAL matchKitsDetailed when the Journey fetch fails.
+ *      LOCAL matchRecipesDetailed when the Journey fetch fails.
  * U12: recipe.publish bumps the frontmatter version per `level` (default patch),
  *      refuses to overwrite an already-published version (immutability), and
  *      enforces an owner-permission check; recipe.get/install resolve an optional
@@ -18,14 +18,14 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BRIDGED_SKILLS_DIRNAME } from "../cc-skills-bridge.js";
-import { invalidateKitIndexCache } from "../kit-matcher.js";
-import { createKitRpcs, type KitRpcsDeps } from "../kit-rpcs.js";
-import { KitStore } from "../kit-store.js";
 import {
   createMarketplace,
   type MarketplaceFetch,
   type MarketplaceMeta,
 } from "../recipe-marketplace.js";
+import { invalidateRecipeIndexCache } from "../recipe-matcher.js";
+import { createRecipeRpcs, type KitRpcsDeps } from "../recipe-rpcs.js";
+import { RecipeStore } from "../recipe-store.js";
 
 const SKILL_MD = `---
 name: deploy-check
@@ -58,47 +58,47 @@ Reproduce the bug.
 `;
 
 let tmp: string;
-let ownKitsDir: string;
+let ownRecipesDir: string;
 let sandbox: string;
 
 beforeEach(async () => {
-  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "kit-rpcs-"));
-  ownKitsDir = path.join(tmp, "own");
+  tmp = await fs.mkdtemp(path.join(os.tmpdir(), "recipe-rpcs-"));
+  ownRecipesDir = path.join(tmp, "own");
   sandbox = path.join(tmp, "sandbox");
-  await fs.mkdir(ownKitsDir, { recursive: true });
+  await fs.mkdir(ownRecipesDir, { recursive: true });
   await fs.mkdir(sandbox, { recursive: true });
-  invalidateKitIndexCache();
+  invalidateRecipeIndexCache();
 });
 
 afterEach(async () => {
   await fs.rm(tmp, { recursive: true, force: true });
-  invalidateKitIndexCache();
+  invalidateRecipeIndexCache();
   vi.restoreAllMocks();
 });
 
 function baseDeps(over?: Partial<KitRpcsDeps>): KitRpcsDeps {
   return {
-    store: new KitStore({ rootDir: sandbox }),
+    store: new RecipeStore({ rootDir: sandbox }),
     baseUrl: "https://example.invalid",
     apiKey: "test-key",
-    kitInstallSandbox: sandbox,
-    ownKitsDir,
+    recipeInstallSandbox: sandbox,
+    ownRecipesDir,
     ...over,
   };
 }
 
 async function writeLocalKit(slug: string, md: string): Promise<void> {
-  const dir = path.join(ownKitsDir, slug);
+  const dir = path.join(ownRecipesDir, slug);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "kit.md"), md, "utf8");
-  invalidateKitIndexCache();
+  invalidateRecipeIndexCache();
 }
 
 // ─── U11: recipe.install bridges a CC SKILL.md ───────────────────────────────
 
 describe("U11 recipe.install — CC SKILL.md bridging", () => {
   it("transpiles a SKILL.md into a recipe/1.0 in the bridged-skills dir", async () => {
-    const rpcs = createKitRpcs(baseDeps());
+    const rpcs = createRecipeRpcs(baseDeps());
     const res: any = await rpcs["prefrontal.recipe.install"]({
       kitRef: "cc/deploy-check",
       skillMd: SKILL_MD,
@@ -106,9 +106,10 @@ describe("U11 recipe.install — CC SKILL.md bridging", () => {
     expect(res.ok).toBe(true);
     expect(res.bridged).toBe(true);
     expect(res.slug).toBe("deploy-check");
-    // Written under <sandbox>/<bridged-skills>/<slug>/kit.md, tagged cc-bridge.
+    // Written under <sandbox>/<bridged-skills>/<slug>/recipe.md (canonical;
+    // dual-read still loads a legacy kit.md), tagged cc-bridge.
     const written = await fs.readFile(
-      path.join(sandbox, BRIDGED_SKILLS_DIRNAME, "deploy-check", "kit.md"),
+      path.join(sandbox, BRIDGED_SKILLS_DIRNAME, "deploy-check", "recipe.md"),
       "utf8",
     );
     expect(written).toContain('authoredBy: "cc-bridge"');
@@ -117,7 +118,7 @@ describe("U11 recipe.install — CC SKILL.md bridging", () => {
   });
 
   it("rejects a malformed SKILL.md before any write", async () => {
-    const rpcs = createKitRpcs(baseDeps());
+    const rpcs = createRecipeRpcs(baseDeps());
     await expect(
       rpcs["prefrontal.recipe.install"]({ kitRef: "cc/bad", skillMd: "no frontmatter here" }),
     ).rejects.toThrow(/frontmatter/i);
@@ -162,7 +163,7 @@ describe("U11 recipe.install — transitive dependency resolution", () => {
 
   it("installs top + its transitive composes(mid) + uses(leaf) deps", async () => {
     const fetchJsonImpl = journeyFetch();
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl }));
     const res: any = await rpcs["prefrontal.recipe.install"]({ kitRef: "globalcaos/top" });
     expect(res.ok).toBe(true);
     // dependsInstalled lists the transitive set actually written (order: deps then root).
@@ -198,7 +199,7 @@ describe("U11 recipe.install — transitive dependency resolution", () => {
       if (m) return { files: cyclic[m[1]] ?? [], risk: [] };
       throw new Error(`unexpected ${p}`);
     });
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl }));
     const res: any = await rpcs["prefrontal.recipe.install"]({ kitRef: "globalcaos/a" });
     expect(res.ok).toBe(true);
     // Each ref fetched at most once (cycle broke) — a + b, never a third time.
@@ -209,12 +210,12 @@ describe("U11 recipe.install — transitive dependency resolution", () => {
 // ─── U11: recipe.search LOCAL fallback when Journey is down ───────────────────
 
 describe("U11 recipe.search — LOCAL fallback on Journey failure", () => {
-  it("returns local matchKitsDetailed results when the fetch throws", async () => {
+  it("returns local matchRecipesDetailed results when the fetch throws", async () => {
     await writeLocalKit("debug", LOCAL_DEBUG_KIT);
     const fetchJsonImpl = vi.fn(async () => {
       throw new Error("journey down");
     });
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl }));
     const res: any = await rpcs["prefrontal.recipe.search"]({ query: "debug the crash error" });
     expect(res.source).toBe("local");
     expect(res.results.length).toBeGreaterThan(0);
@@ -225,7 +226,7 @@ describe("U11 recipe.search — LOCAL fallback on Journey failure", () => {
     const fetchJsonImpl = vi.fn(async () => [
       { kitRef: "someone/remote-kit", releaseTag: "1.0.0" },
     ]);
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl }));
     const res: any = await rpcs["prefrontal.recipe.search"]({ query: "anything" });
     expect(res.source).not.toBe("local");
     expect(res.results[0].kitRef).toBe("someone/remote-kit");
@@ -252,7 +253,7 @@ describe("U12 recipe.publish — versioning + immutability + owner check", () =>
       return { ok: true };
     });
     const marketplace = mkMarketplace(["1.4.2"]); // 1.4.3 not yet published → allowed
-    const rpcs = createKitRpcs(
+    const rpcs = createRecipeRpcs(
       baseDeps({ fetchJsonImpl, marketplace, currentOwner: "globalcaos" }),
     );
     const res: any = await rpcs["prefrontal.recipe.publish"]({
@@ -260,14 +261,14 @@ describe("U12 recipe.publish — versioning + immutability + owner check", () =>
       visibility: "public",
     });
     expect(res.version).toBe("1.4.3"); // patch bump from 1.4.2
-    expect(posted[0].body.kitMd).toContain('version: "1.4.3"');
+    expect(posted[0].body.recipeMd).toContain('version: "1.4.3"');
   });
 
   it("supports an explicit bump level (minor)", async () => {
     await writeLocalKit("debug", LOCAL_DEBUG_KIT);
     const fetchJsonImpl = vi.fn(async () => ({ ok: true }));
     const marketplace = mkMarketplace(["1.4.2"]);
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl, marketplace }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl, marketplace }));
     const res: any = await rpcs["prefrontal.recipe.publish"]({
       slug: "debug",
       visibility: "public",
@@ -280,7 +281,7 @@ describe("U12 recipe.publish — versioning + immutability + owner check", () =>
     await writeLocalKit("debug", LOCAL_DEBUG_KIT); // 1.4.2 → bump to 1.4.3
     const fetchJsonImpl = vi.fn(async () => ({ ok: true }));
     const marketplace = mkMarketplace(["1.4.2", "1.4.3"]); // 1.4.3 ALREADY published
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl, marketplace }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl, marketplace }));
     await expect(
       rpcs["prefrontal.recipe.publish"]({ slug: "debug", visibility: "public" }),
     ).rejects.toThrow(/immutab|already published/i);
@@ -292,7 +293,7 @@ describe("U12 recipe.publish — versioning + immutability + owner check", () =>
     await writeLocalKit("debug", FOREIGN);
     const fetchJsonImpl = vi.fn(async () => ({ ok: true }));
     const marketplace = mkMarketplace(["1.4.2"]);
-    const rpcs = createKitRpcs(
+    const rpcs = createRecipeRpcs(
       baseDeps({ fetchJsonImpl, marketplace, currentOwner: "globalcaos" }),
     );
     await expect(
@@ -313,7 +314,7 @@ describe("U12 recipe.get/install — version-constraint resolution", () => {
       return { slug: "debug" };
     });
     const marketplace = mkMarketplace(["1.0.0", "1.2.0", "1.5.3", "2.0.0"]);
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl, marketplace }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl, marketplace }));
     await rpcs["prefrontal.recipe.get"]({ kitRef: "globalcaos/debug", ref: "^1.0.0" });
     // The resolved concrete version (1.5.3) is what gets fetched, not the raw "^1.0.0".
     expect(decodeURIComponent(seenRefs[0])).toBe("1.5.3");
@@ -327,7 +328,7 @@ describe("U12 recipe.get/install — version-constraint resolution", () => {
       return { files: [], risk: [], preflightChecks: [], nextSteps: [] };
     });
     const marketplace = mkMarketplace(["1.0.0", "1.2.0"]);
-    const rpcs = createKitRpcs(baseDeps({ fetchJsonImpl, marketplace }));
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl, marketplace }));
     await rpcs["prefrontal.recipe.install"]({ kitRef: "globalcaos/debug", ref: "^1.0.0" });
     expect(seen[0]).toBe("1.2.0");
   });

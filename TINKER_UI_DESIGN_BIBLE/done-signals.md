@@ -4,8 +4,8 @@ purpose: The cross-signal methodology for "is this turn/task done?" — the mast
 audience: AI (Claude, etc). Human readability is incidental.
 last_verified: 2026-05-17
 last_verified_commit: HEAD
-single_owner: yes — the cross-signal *precedence contract* and the master doneness map live here. Per-signal facts are owned elsewhere (lifecycles.md = session/worker/recovery state machines; tool-loop.md = heartbeat/idle-watchdog/lifecycle:end emission/no-UI-watchdog; flows.md = the chat.final guarantee + F-PLAN-RESUME; subagents-and-kits.md = plan/kit/recipe; panels.md = prefrontal render levels + the §147 helpers; failures.md = failure-mode maps). This file does NOT re-derive them — it sequences them.
-see_also: lifecycles.md (L1 session, L2 cc-bridge worker, L4 restart-recovery), tool-loop.md (heartbeat, idle watchdog, lifecycle:end emission, the deleted UI watchdog), flows.md (chat.send always ends in a final/error/aborted broadcast; F-PLAN-RESUME), panels.md (§115 prefrontal render levels, §147 single-source-of-truth helpers), subagents-and-kits.md (plan RPCs, kits, recipes, restart-continue), failures.md (M1 idle SIGTERM, M2 stuck spinner, incomplete_turn)
+single_owner: yes — the cross-signal *precedence contract* and the master doneness map live here. Per-signal facts are owned elsewhere (lifecycles.md = session/worker/recovery state machines; tool-loop.md = heartbeat/idle-watchdog/lifecycle:end emission/no-UI-watchdog; flows.md = the chat.final guarantee + F-PLAN-RESUME; subagents-and-recipes.md = plan/kit/recipe; panels.md = prefrontal render levels + the §147 helpers; failures.md = failure-mode maps). This file does NOT re-derive them — it sequences them.
+see_also: lifecycles.md (L1 session, L2 cc-bridge worker, L4 restart-recovery), tool-loop.md (heartbeat, idle watchdog, lifecycle:end emission, the deleted UI watchdog), flows.md (chat.send always ends in a final/error/aborted broadcast; F-PLAN-RESUME), panels.md (§115 prefrontal render levels, §147 single-source-of-truth helpers), subagents-and-recipes.md (plan RPCs, kits, recipes, restart-continue), failures.md (M1 idle SIGTERM, M2 stuck spinner, incomplete_turn)
 verify:
   - name: chat.final/aborted is authoritative-and-immediate AND cancels the debounced lifecycle:end delete (the core precedence contract this doc owns)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert re.search(r"pendingRunDeletes\.get\([^)]*\)[\s\S]{0,240}clearTimeout[\s\S]{0,200}activeRuns\.delete", t), "the chat.final/aborted handler no longer cancels the pending lifecycle:end timer before deleting the run — the authoritative-supersedes-debounced precedence (done-signals.md) is broken; a late lifecycle:end timer can now delete a run the user already re-used, or final no longer closes the run immediately"; assert re.search(r"pendingRunDeletes\.set\(", t) and re.search(r"setTimeout\([\s\S]{0,320}activeRuns\.delete", t), "the lifecycle:end debounced (delayed) delete path is gone — lifecycle:end must remain the advisory/debounced half of the contract, NOT an immediate delete; re-read done-signals.md before changing turn-completion"'
@@ -39,8 +39,8 @@ flowchart TD
   S147["§147 helpers: runBelongsToViewedSession /<br/>scopedActiveRuns / viewedSessionBusy (panels.md §147)"]
   IND["thinking indicator + `sending` pill<br/>(viewed-tab only)"]
   PF["prefrontal panel render ladder<br/>plan ▸ synthetic 2-step ▸ idle (panels.md §115)"]
-  PLAN["plan/recipe state<br/>prefrontal.plan.* + prefrontal-plan/recipe/tree/trail events<br/>(subagents-and-kits.md)"]
-  RC["restart-continue + main-session-restart-recovery<br/>(lifecycles.md L4, subagents-and-kits.md)"]
+  PLAN["plan/recipe state<br/>prefrontal.plan.* + prefrontal-plan/recipe/tree/trail events<br/>(subagents-and-recipes.md)"]
+  RC["restart-continue + main-session-restart-recovery<br/>(lifecycles.md L4, subagents-and-recipes.md)"]
 
   CLI --> R --> TR --> LC
   R -->|"turn Promise settles"| CF
@@ -74,7 +74,7 @@ Authority tiers — when two signals disagree, the **lower tier number wins**.
 | 3   | lifecycle `phase:end` / `phase:error`                                                 | stream.ts:835 → app.ts (3s **debounced** delete)                                             | The run ended — _advisory/safety-net_. Debounced so a stray end doesn't kill a re-used run; **superseded by #1**.                                                | 3 (debounced)                     | tool-loop.md                  |
 | 4   | lifecycle `phase:start` + phase mutations (`tool`/`responding`/`reflecting`)          | stream.ts:254 / app.ts:~1871,~1567                                                           | The run is _alive and doing X_. Sets `activeRuns`, drives the indicator label. Never asserts "done".                                                             | — (liveness)                      | tool-loop.md                  |
 | 5   | heartbeat / idle watchdog                                                             | stream.ts `HEARTBEAT_INTERVAL_MS`; AbortSignal→SIGTERM worker.ts:724                         | Keeps pi-agent-core's idle timer from firing; on real stall, SIGTERM → worker `onExit` rejects → becomes a #1 `error`. **Never clears the UI by itself.**        | — (keep-alive / failure-injector) | tool-loop.md / failures.md M1 |
-| 6   | plan / recipe state (`prefrontal.plan.*`, `prefrontal-plan/recipe/tree/trail` events) | extension → app.ts → prefrontal panel                                                        | The _task_ (multi-turn) is/ isn't done — **orthogonal** to turn doneness. A closed turn with an `in_progress` plan is "turn done, task not done".                | — (task scope)                    | subagents-and-kits.md         |
+| 6   | plan / recipe state (`prefrontal.plan.*`, `prefrontal-plan/recipe/tree/trail` events) | extension → app.ts → prefrontal panel                                                        | The _task_ (multi-turn) is/ isn't done — **orthogonal** to turn doneness. A closed turn with an `in_progress` plan is "turn done, task not done".                | — (task scope)                    | subagents-and-recipes.md      |
 | 7   | restart-continue / main-session-restart-recovery                                      | boot scan → re-dispatch a turn (#1 cycle restarts)                                           | A turn was interrupted by a gateway restart; the task is resumed. Detected via `status:"running"`→`abortedLastRun` and `in_progress` plan with unfinished steps. | — (recovery)                      | lifecycles.md L4              |
 
 **The two rules that resolve every historical bug here:**
@@ -111,7 +111,7 @@ regressed.
 
 ## 4. How recipes/plans feed it (task-scope, orthogonal lane)
 
-Owned by **subagents-and-kits.md**. The doneness-relevant synthesis:
+Owned by **subagents-and-recipes.md**. The doneness-relevant synthesis:
 
 - A turn ending (#1) does NOT end the task if a plan is `in_progress` with
   steps not all `done`. That gap is exactly what **restart-continue**
@@ -119,7 +119,7 @@ Owned by **subagents-and-kits.md**. The doneness-relevant synthesis:
   30s debounce → re-dispatch a `[System] continue` turn). If you change
   step-completion semantics you change restart-continue's trigger — read
   both before editing either.
-- The kit-matcher auto-seeds a plan at turn start (`before_prompt_build`);
+- The recipe-matcher auto-seeds a plan at turn start (`before_prompt_build`);
   without a seeded plan, restart-continue has nothing to resume for a
   normal turn. "Plan-set first for multi-step tasks" exists because of
   this coupling.

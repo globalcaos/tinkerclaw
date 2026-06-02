@@ -3,7 +3,7 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * `kit-matcher.ts` is LEXICAL-ONLY (stem / prefix / edit-distance-1). Its named
+ * `recipe-matcher.ts` is LEXICAL-ONLY (stem / prefix / edit-distance-1). Its named
  * loss mode: a *paraphrased* intent that shares no lexical surface with any
  * recipe's tags/title/summary silently NO-MATCHes. Example: a recipe tagged
  * ["deploy", "ship", "release"] with title "Ship to production" does not score
@@ -42,7 +42,12 @@
  * it never hard-fails a turn.
  */
 
-import type { KitIndexEntry, KitMatch, MatchConfidence, MatchResult } from "./kit-matcher.js";
+import type {
+  RecipeIndexEntry,
+  RecipeMatch,
+  MatchConfidence,
+  MatchResult,
+} from "./recipe-matcher.js";
 
 /**
  * Embed one-or-more texts into vectors. Injected so the hot path stays lexical
@@ -53,7 +58,7 @@ import type { KitIndexEntry, KitMatch, MatchConfidence, MatchResult } from "./ki
 export type EmbedFn = (texts: string[]) => Promise<number[][]>;
 
 export interface SemanticMatch {
-  entry: KitIndexEntry;
+  entry: RecipeIndexEntry;
   /** Cosine similarity in [-1, 1] (typically [0, 1] for these providers). */
   similarity: number;
 }
@@ -71,7 +76,7 @@ export interface SemanticLaneResult {
  * they lead; title + summary give natural-language context. Kept compact so a
  * batch of recipes stays well under the endpoint's per-input char cap.
  */
-export function recipeEmbedText(entry: KitIndexEntry): string {
+export function recipeEmbedText(entry: RecipeIndexEntry): string {
   const tags = entry.tags.join(", ");
   return [entry.title, entry.summary, tags].filter((p) => p && p.trim().length > 0).join(". ");
 }
@@ -118,7 +123,7 @@ const DEFAULT_SEMANTIC_MAX = 3;
  */
 export async function runSemanticLane(
   prompt: string,
-  index: KitIndexEntry[],
+  index: RecipeIndexEntry[],
   embed: EmbedFn | undefined,
   opts?: SemanticLaneOpts,
 ): Promise<SemanticLaneResult> {
@@ -199,7 +204,7 @@ export function blendLexicalSemantic(
   const SEMANTIC_SCORE_SPAN = 4; // sim 0→0, sim 1→threshold+4 (a strong-but-not-dominant score)
   const AGREEMENT_BONUS = 1;
 
-  const bySlug = new Map<string, KitMatch>();
+  const bySlug = new Map<string, RecipeMatch>();
   // Lexical first — preserves curated scores.
   for (const m of lexical.matches) {
     bySlug.set(m.entry.slug, { entry: m.entry, score: m.score });
@@ -250,10 +255,10 @@ export function blendLexicalSemantic(
 }
 
 export interface SmartMatchDeps {
-  /** Lexical result from `matchKitsDetailed` (already computed by the caller). */
+  /** Lexical result from `matchRecipesDetailed` (already computed by the caller). */
   lexical: MatchResult;
   prompt: string;
-  index: KitIndexEntry[];
+  index: RecipeIndexEntry[];
   /** Injected embedding seam. Omit/undefined → lexical-only (graceful). */
   embed?: EmbedFn;
   semanticOpts?: SemanticLaneOpts;
@@ -272,8 +277,8 @@ export interface SmartMatchResult extends MatchResult {
 
 /**
  * The orchestration entry: lexical-first, semantic-fallback. The caller passes
- * the already-computed lexical `matchKitsDetailed` result so this module never
- * re-implements lexical scoring (single owner: kit-matcher.ts). When lexical
+ * the already-computed lexical `matchRecipesDetailed` result so this module never
+ * re-implements lexical scoring (single owner: recipe-matcher.ts). When lexical
  * confidence is weak AND an embed seam is present, run + blend the semantic
  * lane; otherwise return the lexical result untouched.
  *

@@ -1,16 +1,16 @@
 /**
  * ENGRAM — Skill invocation outcome tracking (Upgrade 6, J5 Voyager).
  *
- * The Cerebellum owns skill FITNESS; the Prefrontal kit-runner owns skill
+ * The Cerebellum owns skill FITNESS; the Prefrontal recipe-runner owns skill
  * EXECUTION (the same split as Upgrade 1's recipe archive). This module is the
  * Cerebellum-side seam: given a skill, it (1) checks prerequisites and validates
  * inputs against the skill's testCases, then (2) wraps the actual execution
- * (performed by an injected runner — in production the Prefrontal kit-runner)
+ * (performed by an injected runner — in production the Prefrontal recipe-runner)
  * and RECORDS the success/failure back into the SkillLibrary's successMetrics so
  * future `rank()`/`search()` reflect empirical performance.
  *
  * It deliberately does NOT dispatch execution itself — `runner` is injected so
- * the actual kit-runner call lives in the Prefrontal layer (a cross-subsystem
+ * the actual recipe-runner call lives in the Prefrontal layer (a cross-subsystem
  * step out of scope here). When no runner is given, this module still records an
  * externally-observed outcome via {@link recordSkillOutcome} — the callback the
  * Wire phase hands to whoever ran the skill.
@@ -37,7 +37,7 @@ export interface SkillInvocationResult {
 }
 
 /**
- * The execution callback. In production this is the Prefrontal kit-runner; in
+ * The execution callback. In production this is the Prefrontal recipe-runner; in
  * tests a deterministic stub. Returns whether the run succeeded (and an optional
  * reason on failure).
  */
@@ -126,7 +126,7 @@ export async function invokeSkill(
 
 /**
  * Record an externally-observed skill outcome (when execution happened outside
- * this module, e.g. the Prefrontal kit-runner reports back). This is the
+ * this module, e.g. the Prefrontal recipe-runner reports back). This is the
  * recordOutcome CALLBACK the Wire phase hands to the runner.
  */
 export function recordSkillOutcome(

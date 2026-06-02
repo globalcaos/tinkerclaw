@@ -24,11 +24,11 @@ import {
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { createSubsystemLogger } from "../../src/logging/subsystem.js";
 import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
-import { skillMdToKitSpec, buildBridgedKitMd, BRIDGED_SKILLS_DIRNAME } from "./cc-skills-bridge.js";
-import { buildKitMd, validateKitSpec, type KitSpec } from "./kit-author.js";
-import { loadKitIndex, matchKitsDetailed, invalidateKitIndexCache } from "./kit-matcher.js";
-import { parseUsesDirective, runKit } from "./kit-runner.js";
-import { KitStore } from "./kit-store.js";
+import {
+  skillMdToRecipeSpec,
+  buildBridgedKitMd,
+  BRIDGED_SKILLS_DIRNAME,
+} from "./cc-skills-bridge.js";
 import { surfaceKitOutcome } from "./long-run-surface.js";
 import {
   applyMutationProposal,
@@ -36,13 +36,21 @@ import {
   isApplyEnabled,
   type ApplyProposalInput,
 } from "./recipe-apply.js";
+import { buildRecipeMd, validateRecipeSpec, type RecipeSpec } from "./recipe-author.js";
 import {
   bumpVersion,
   makeRatingLookup,
   type Marketplace,
   type SemverBump,
 } from "./recipe-marketplace.js";
+import {
+  loadRecipeIndex,
+  matchRecipesDetailed,
+  invalidateRecipeIndexCache,
+} from "./recipe-matcher.js";
+import { parseUsesDirective, runRecipe } from "./recipe-runner.js";
 import { snapshotKit } from "./recipe-snapshot.js";
+import { RecipeStore } from "./recipe-store.js";
 
 const recipeApplyLog = createSubsystemLogger("recipe-apply");
 
@@ -69,7 +77,7 @@ function check<T>(v: Validator, p: unknown, name: string): T {
 
 // ─── Canonical kit frontmatter shape ───────────────────────────────────────
 
-interface KitFrontmatter {
+interface RecipeFrontmatter {
   schema?: string;
   slug?: string;
   title?: string;
@@ -87,7 +95,7 @@ interface KitFrontmatter {
  *  3. Pattern-match any tag against known keywords.
  *  4. Fall back to "operations".
  */
-export function inferCategory(fm: KitFrontmatter): string {
+export function inferCategory(fm: RecipeFrontmatter): string {
   // 1. Explicit category field wins if present
   if (typeof fm.category === "string" && fm.category) return fm.category;
 
@@ -137,7 +145,7 @@ export async function parseKitMd(filePath: string): Promise<KitParsed> {
     const text = await fs.readFile(filePath, "utf-8");
     const fm = /^---\n([\s\S]+?)\n---/.exec(text);
     if (fm) {
-      const parsed = parseYaml(fm[1]) as KitFrontmatter | null;
+      const parsed = parseYaml(fm[1]) as RecipeFrontmatter | null;
       if (parsed && typeof parsed === "object") {
         if (typeof parsed.slug === "string" && parsed.slug) slug = parsed.slug;
         if (typeof parsed.title === "string" && parsed.title) title = parsed.title;
@@ -162,8 +170,8 @@ export async function parseKitMd(filePath: string): Promise<KitParsed> {
  * kit.md. Tolerates quoted (`version: "1.2.3"`) or bare (`owner: globalcaos`)
  * values. Returns undefined when there is no frontmatter or the key is absent.
  */
-export function readFrontmatterField(kitMd: string, key: string): string | undefined {
-  const fm = /^---\n([\s\S]+?)\n---/.exec(kitMd);
+export function readFrontmatterField(recipeMd: string, key: string): string | undefined {
+  const fm = /^---\n([\s\S]+?)\n---/.exec(recipeMd);
   if (!fm) return undefined;
   const re = new RegExp(`^${key}:\\s*(.+?)\\s*$`, "m");
   const m = re.exec(fm[1]);
@@ -172,18 +180,20 @@ export function readFrontmatterField(kitMd: string, key: string): string | undef
 }
 
 /**
- * Return `kitMd` with the frontmatter scalar `key` set to `value` (quoted). If the
+ * Return `recipeMd` with the frontmatter scalar `key` set to `value` (quoted). If the
  * key exists it is replaced in place; if absent it is appended just before the
  * closing `---`. No-op-safe on a doc without frontmatter (returns it unchanged).
  */
-export function setFrontmatterField(kitMd: string, key: string, value: string): string {
-  const fm = /^(---\n)([\s\S]+?)(\n---)/.exec(kitMd);
-  if (!fm) return kitMd;
+export function setFrontmatterField(recipeMd: string, key: string, value: string): string {
+  const fm = /^(---\n)([\s\S]+?)(\n---)/.exec(recipeMd);
+  if (!fm) return recipeMd;
   const block = fm[2];
   const re = new RegExp(`^${key}:.*$`, "m");
   const line = `${key}: ${JSON.stringify(value)}`;
   const newBlock = re.test(block) ? block.replace(re, line) : `${block}\n${line}`;
-  return kitMd.slice(0, fm.index) + fm[1] + newBlock + fm[3] + kitMd.slice(fm.index + fm[0].length);
+  return (
+    recipeMd.slice(0, fm.index) + fm[1] + newBlock + fm[3] + recipeMd.slice(fm.index + fm[0].length)
+  );
 }
 
 // ─── Own-kits walker ────────────────────────────────────────────────────────
@@ -200,24 +210,34 @@ interface OwnKitEntry {
 }
 
 /**
- * Walk `ownKitsDir/<slug>/kit.md` and return parsed entries.
- * Layout: `kits/<slug>/kit.md` (one level deep — slug is the immediate child dir).
+ * Walk `ownRecipesDir/<slug>/{recipe.md,kit.md}` and return parsed entries.
+ * Layout: `<slug>/recipe.md` (new canonical) or `<slug>/kit.md` (legacy) — one
+ * level deep, slug is the immediate child dir. DUAL-READ: recipe.md is probed
+ * first per slug-dir, kit.md is the legacy fallback.
  */
-async function listOwnKits(ownKitsDir: string): Promise<OwnKitEntry[]> {
+async function listOwnKits(ownRecipesDir: string): Promise<OwnKitEntry[]> {
   const out: OwnKitEntry[] = [];
   let slugDirs: string[];
   try {
-    slugDirs = await fs.readdir(ownKitsDir);
+    slugDirs = await fs.readdir(ownRecipesDir);
   } catch {
     return out;
   }
   await Promise.all(
     slugDirs.map(async (dirName) => {
-      const kitMdPath = path.join(ownKitsDir, dirName, "kit.md");
-      try {
-        await fs.access(kitMdPath);
-      } catch {
-        return; // not a kit directory
+      let kitMdPath = "";
+      for (const fname of ["recipe.md", "kit.md"]) {
+        const candidate = path.join(ownRecipesDir, dirName, fname);
+        try {
+          await fs.access(candidate);
+          kitMdPath = candidate;
+          break;
+        } catch {
+          // try next filename
+        }
+      }
+      if (!kitMdPath) {
+        return; // not a recipe directory
       }
       const parsed = await parseKitMd(kitMdPath);
       out.push({
@@ -240,30 +260,36 @@ async function listOwnKits(ownKitsDir: string): Promise<OwnKitEntry[]> {
 // ─── Shared kit-write (guarded) + recipe-rewrite spawn ──────────────────────
 
 /**
- * Validate + persist a KitSpec to the own-kits dir, enforcing the authorship guard: an existing
+ * Validate + persist a RecipeSpec to the own-kits dir, enforcing the authorship guard: an existing
  * kit is only overwritten when it carries `authoredBy: jarvis-*` AND overwrite is true. Hand-
  * curated kits are NEVER clobbered. Shared by the prefrontal.recipe.author RPC and the J5
  * self-apply loop so the guard lives in ONE place. Throws on invalid spec or guard violation.
  */
 export async function persistKitSpec(
-  spec: KitSpec,
-  ownKitsDir: string,
+  spec: RecipeSpec,
+  ownRecipesDir: string,
   overwrite: boolean,
 ): Promise<{ slug: string; path: string; replaced: boolean; note: string }> {
-  const v = validateKitSpec(spec);
+  const v = validateRecipeSpec(spec);
   if (!v.ok) {
     throw new Error(`invalid spec — ${v.errors.join("; ")}`);
   }
-  const kitMd = buildKitMd(spec);
-  const dir = path.join(ownKitsDir, spec.slug);
-  const target = path.join(dir, "kit.md");
+  const recipeMd = buildRecipeMd(spec);
+  const dir = path.join(ownRecipesDir, spec.slug);
+  // New authored recipes are written as recipe.md (canonical). DUAL-READ: the
+  // curated-overwrite guard must still see a legacy kit.md for the same slug, so
+  // the existence check probes recipe.md FIRST then kit.md.
+  const target = path.join(dir, "recipe.md");
   let existed = false;
   let existingText = "";
-  try {
-    existingText = await fs.readFile(target, "utf-8");
-    existed = true;
-  } catch {
-    existed = false;
+  for (const fname of ["recipe.md", "kit.md"]) {
+    try {
+      existingText = await fs.readFile(path.join(dir, fname), "utf-8");
+      existed = true;
+      break;
+    } catch {
+      // try next filename
+    }
   }
   if (existed) {
     // Never clobber a hand-curated, version-controlled kit. Only kits authored by this fork
@@ -281,8 +307,8 @@ export async function persistKitSpec(
     }
   }
   await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(target, kitMd, "utf-8");
-  invalidateKitIndexCache(); // next turn's matcher re-scans the catalog
+  await fs.writeFile(target, recipeMd, "utf-8");
+  invalidateRecipeIndexCache(); // next turn's matcher re-scans the catalog
   return {
     slug: spec.slug,
     path: target,
@@ -348,11 +374,11 @@ async function spawnRecipeRewrite(task: string): Promise<string | undefined> {
 // ─── RPC deps + factory ─────────────────────────────────────────────────────
 
 export interface KitRpcsDeps {
-  store: KitStore;
+  store: RecipeStore;
   baseUrl: string;
   apiKey: string | null;
-  kitInstallSandbox: string;
-  ownKitsDir: string;
+  recipeInstallSandbox: string;
+  ownRecipesDir: string;
   /** Optional plan store — required for prefrontal.kit.run in live mode */
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   planStore?: any;
@@ -387,7 +413,7 @@ export interface KitRpcsDeps {
   engramBaseDir?: string;
 }
 
-export function createKitRpcs(deps: KitRpcsDeps) {
+export function createRecipeRpcs(deps: KitRpcsDeps) {
   const fetchJson =
     deps.fetchJsonImpl ??
     (async (p: string, init?: Parameters<typeof undiciFetch>[1]) => {
@@ -403,9 +429,9 @@ export function createKitRpcs(deps: KitRpcsDeps) {
 
   // FORK 2026-06-01 (U11): bridged CC-skill imports land under the install
   // sandbox in a dedicated dir (BRIDGED_SKILLS_DIRNAME). The matcher scans it via
-  // loadKitIndex's extraDirs so imported recipes become matchable. One source of
+  // loadRecipeIndex's extraDirs so imported recipes become matchable. One source of
   // truth for the name lives in cc-skills-bridge.ts.
-  const bridgedSkillsDir = path.join(deps.kitInstallSandbox, BRIDGED_SKILLS_DIRNAME);
+  const bridgedSkillsDir = path.join(deps.recipeInstallSandbox, BRIDGED_SKILLS_DIRNAME);
 
   // FORK 2026-06 (U1) + 2026-06-01 (U12): build the matcher's empirical-fitness +
   // marketplace-rating lookups for the local-match RPCs (recipe.match + the
@@ -444,22 +470,24 @@ export function createKitRpcs(deps: KitRpcsDeps) {
   /**
    * FORK 2026-06-01 (U11): bridge ONE Claude-Code SKILL.md into a recipe/1.0 and
    * write it (sandboxed) into the bridged-skills dir. Reuses the existing
-   * cc-skills-bridge transpiler + the buildKitMd/validateKitSpec guards (no fork).
+   * cc-skills-bridge transpiler + the buildRecipeMd/validateRecipeSpec guards (no fork).
    * Throws on a malformed skill BEFORE any write (validation lives in
-   * skillMdToKitSpec). Returns the slug + on-disk path.
+   * skillMdToRecipeSpec). Returns the slug + on-disk path.
    */
   const bridgeSkill = async (skillMd: string): Promise<{ slug: string; path: string }> => {
-    const spec = skillMdToKitSpec(skillMd); // throws on malformed skill (pre-write)
-    const v = validateKitSpec(spec);
+    const spec = skillMdToRecipeSpec(skillMd); // throws on malformed skill (pre-write)
+    const v = validateRecipeSpec(spec);
     if (!v.ok) {
       throw new Error(`cc-skills-bridge: transpiled spec is invalid — ${v.errors.join("; ")}`);
     }
     const md = buildBridgedKitMd(spec);
     const dir = path.join(bridgedSkillsDir, spec.slug);
     await fs.mkdir(dir, { recursive: true });
-    const target = path.join(dir, "kit.md");
+    // Bridged imports are our-authored content → recipe.md (canonical). The
+    // matcher dual-reads, so a legacy bridged kit.md still loads.
+    const target = path.join(dir, "recipe.md");
     await fs.writeFile(target, md, "utf-8");
-    invalidateKitIndexCache(); // matcher re-scans (incl. bridgedSkillsDir) next turn
+    invalidateRecipeIndexCache(); // matcher re-scans (incl. bridgedSkillsDir) next turn
     return { slug: spec.slug, path: target };
   };
 
@@ -497,10 +525,10 @@ export function createKitRpcs(deps: KitRpcsDeps) {
   ): Promise<string[]> => {
     const installed: string[] = [];
     const [owner, slug] = rootRef.split("/");
-    let kitMd: string;
+    let recipeMd: string;
     try {
       const target = deps.store.resolveSandboxPath(owner, slug, "kit.md");
-      kitMd = await fs.readFile(target, "utf-8");
+      recipeMd = await fs.readFile(target, "utf-8");
     } catch {
       return installed; // nothing written / unreadable → no deps to resolve
     }
@@ -509,7 +537,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
     // not the root install's constraint.
     const deps2: Array<{ ref: string; constraint: string | undefined }> = [];
     // 1) frontmatter composes: [...]
-    const fm = /^---\n([\s\S]+?)\n---\n/.exec(kitMd);
+    const fm = /^---\n([\s\S]+?)\n---\n/.exec(recipeMd);
     if (fm) {
       try {
         const parsed = parseYaml(fm[1]) as Record<string, unknown> | null;
@@ -525,7 +553,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       }
     }
     // 2) `uses: <ref>` directives in step bodies (reuse the runner's parser).
-    const body = fm ? kitMd.slice(fm[0].length) : kitMd;
+    const body = fm ? recipeMd.slice(fm[0].length) : recipeMd;
     for (const part of body.split(/(?=^#{1,6}\s+\d+\.\s+)/m)) {
       const stepBody = part.replace(/^#{1,6}\s+\d+\.\s+.*$/m, "").trim();
       const usesRef = parseUsesDirective(stepBody);
@@ -568,10 +596,10 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         // hard-failing the search. The local matcher scores the query against the
         // own-kits catalog (+ bridged imports) so a network outage still surfaces
         // the recipes Jarvis already has. Never throws on the fallback path.
-        const index = await loadKitIndex(deps.ownKitsDir, [bridgedSkillsDir]);
+        const index = await loadRecipeIndex(deps.ownRecipesDir, [bridgedSkillsDir]);
         // FORK 2026-06 (U1) + 2026-06-01 (U12): same fitness+rating signals as the
         // turn-start seed so the local fallback ranks proven/popular recipes higher.
-        const { matches } = matchKitsDetailed(p.query, index, {
+        const { matches } = matchRecipesDetailed(p.query, index, {
           max: p.limit ?? 10,
           ...buildMatchSignals(),
         });
@@ -657,7 +685,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       // Resolve + install transitive composes:/uses: dependencies (cycle-guarded);
       // each dep resolves with its own declared constraint, not the root's p.ref.
       const dependenciesInstalled = await installDeps(p.kitRef, installOne, seen);
-      invalidateKitIndexCache(); // newly written kits are matchable next turn
+      invalidateRecipeIndexCache(); // newly written kits are matchable next turn
 
       const install = rootInstall ?? {};
       const [owner, slug] = p.kitRef.split("/");
@@ -672,7 +700,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
 
       return {
         ok: true,
-        installedPath: `${deps.kitInstallSandbox}/${owner}/${slug}`,
+        installedPath: `${deps.recipeInstallSandbox}/${owner}/${slug}`,
         dependenciesInstalled,
         preflightResults,
         nextSteps: install.nextSteps ?? [],
@@ -704,7 +732,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       // ── Source-tree (own) kits — skip if owner filter set (not ours) ──────
       let ownKits: ReturnType<typeof listOwnKits> extends Promise<infer T> ? T : never = [];
       if (!p.owner || p.owner === "globalcaos") {
-        ownKits = await listOwnKits(deps.ownKitsDir);
+        ownKits = await listOwnKits(deps.ownRecipesDir);
       }
       const ownKitsMapped = ownKits.map((e) => ({
         kitRef: `${e.owner}/${e.slug}`,
@@ -729,8 +757,21 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         throw new Error(
           "prefrontal.recipe.publish: missing apiKey (set integrations.journey.apiKey in openclaw.json)",
         );
-      const kitMdPath = path.join(deps.ownKitsDir, p.slug, "kit.md");
-      const body = await fs.readFile(kitMdPath, "utf-8");
+      // DUAL-READ: a recipe def is recipe.md (canonical) or kit.md (legacy).
+      let body = "";
+      {
+        let readErr: unknown;
+        for (const fname of ["recipe.md", "kit.md"]) {
+          try {
+            body = await fs.readFile(path.join(deps.ownRecipesDir, p.slug, fname), "utf-8");
+            readErr = undefined;
+            break;
+          } catch (err) {
+            readErr = err;
+          }
+        }
+        if (readErr) throw readErr;
+      }
 
       // FORK 2026-06-01 (U12): versioning + immutability + owner permission. The
       // publish becomes the place recipe-as-artifact semantics are enforced:
@@ -788,7 +829,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
           visibility: p.visibility,
           orgId: p.orgId,
           version: nextVersion,
-          kitMd: bumpedKitMd,
+          recipeMd: bumpedKitMd,
         }),
       });
       // Pre-seed the marketplace cache so a later resolve sees the new version.
@@ -806,14 +847,14 @@ export function createKitRpcs(deps: KitRpcsDeps) {
 
       if (p.dryRun) {
         // Dry-run: return the dispatch plan without spawning anything.
-        const result = await runKit({
+        const result = await runRecipe({
           kitRef: p.kitRef,
           sessionKey: p.sessionKey,
           intent: p.intent,
           parameters: p.parameters,
           dryRun: true,
-          ownKitsDir: deps.ownKitsDir,
-          kitInstallSandbox: deps.kitInstallSandbox,
+          ownRecipesDir: deps.ownRecipesDir,
+          recipeInstallSandbox: deps.recipeInstallSandbox,
         });
         return {
           ok: result.ok,
@@ -824,22 +865,22 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         };
       }
 
-      // Live mode: runKit seeds the plan synchronously then dispatches subagents
+      // Live mode: runRecipe seeds the plan synchronously then dispatches subagents
       // in the background. We await only the plan seed, then let dispatch continue
       // asynchronously. The plan board in TUI reflects live step progress.
       //
       // We wrap in a Promise that resolves after the plan is seeded (first async
-      // boundary inside runKit) by running the full kit in background and
+      // boundary inside runRecipe) by running the full kit in background and
       // returning immediately with the planId from a pre-seeded plan.
-      const runResult = await runKit({
+      const runResult = await runRecipe({
         kitRef: p.kitRef,
         sessionKey: p.sessionKey,
         intent: p.intent,
         parameters: p.parameters,
         dryRun: false,
         planStore: deps.planStore,
-        ownKitsDir: deps.ownKitsDir,
-        kitInstallSandbox: deps.kitInstallSandbox,
+        ownRecipesDir: deps.ownRecipesDir,
+        recipeInstallSandbox: deps.recipeInstallSandbox,
         // FORK 2026-05-30 (Upgrade 5): durable checkpointing. Auto-resume an
         // interrupted in_progress plan only when resume:true is explicitly passed
         // (no silent re-attach — the architect's policy). `resume` is now part of
@@ -869,7 +910,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
         // setRecipe broadcast RPC (same loopback callGateway pattern as
         // surfaceKitOutcome below). Fire-and-forget — observability never blocks
         // or fails the run. This is the producer half of the dull-panel fix: the
-        // kit-runner was previously silent, so the rich recipe header never had a
+        // recipe-runner was previously silent, so the rich recipe header never had a
         // data source and the panel always fell back to "Thinking → Acting".
         onRecipeState: (state) => {
           void callGateway({
@@ -885,7 +926,7 @@ export function createKitRpcs(deps: KitRpcsDeps) {
             },
           }).catch(() => {});
         },
-        // FORK 2026-06 (Upgrade 1): recipe-ATTRIBUTION producer. kit-runner stamps a
+        // FORK 2026-06 (Upgrade 1): recipe-ATTRIBUTION producer. recipe-runner stamps a
         // `recipe:<owner/slug>` TagStamp at run start AND at each task dispatch; we
         // forward each one to the engram trail/ingestion seam (same loopback
         // callGateway + fire-and-forget pattern as onRecipeState/onCheckpoint above).
@@ -945,11 +986,11 @@ export function createKitRpcs(deps: KitRpcsDeps) {
     // recipe gap into a reusable recipe in one call.
     "prefrontal.recipe.author": async (raw: unknown) => {
       const p = check<PrefrontalKitAuthorParams>(vAuthor, raw, "prefrontal.recipe.author");
-      const spec = p as unknown as KitSpec;
+      const spec = p as unknown as RecipeSpec;
       // Guarded write (validate + authorship-guard + persist) lives in persistKitSpec.
       let r: { slug: string; path: string; replaced: boolean };
       try {
-        r = await persistKitSpec(spec, deps.ownKitsDir, p.overwrite === true);
+        r = await persistKitSpec(spec, deps.ownRecipesDir, p.overwrite === true);
       } catch (err) {
         throw new Error(
           `prefrontal.kit.author: ${err instanceof Error ? err.message : String(err)}`,
@@ -993,21 +1034,25 @@ export function createKitRpcs(deps: KitRpcsDeps) {
       };
       const result = await applyMutationProposal(input, {
         loadKitText: async (slug) => {
-          try {
-            const target = path.join(deps.ownKitsDir, slug, "kit.md");
-            const text = await fs.readFile(target, "utf-8");
-            return { path: target, text };
-          } catch {
-            return null;
+          // DUAL-READ: recipe.md (canonical) then kit.md (legacy).
+          for (const fname of ["recipe.md", "kit.md"]) {
+            try {
+              const target = path.join(deps.ownRecipesDir, slug, fname);
+              const text = await fs.readFile(target, "utf-8");
+              return { path: target, text };
+            } catch {
+              // try next filename
+            }
           }
+          return null;
         },
         snapshot: (slug, text) =>
-          snapshotKit(deps.ownKitsDir, slug, text, new Date().toISOString()),
+          snapshotKit(deps.ownRecipesDir, slug, text, new Date().toISOString()),
         rewrite: (currentText, op, intent) =>
           spawnRecipeRewrite(buildRewritePrompt(currentText, op, intent)),
         authorKit: async (spec) => {
           try {
-            const r = await persistKitSpec(spec, deps.ownKitsDir, true);
+            const r = await persistKitSpec(spec, deps.ownRecipesDir, true);
             return { ok: true, note: r.note };
           } catch (err) {
             return { ok: false, note: err instanceof Error ? err.message : String(err) };
@@ -1057,11 +1102,11 @@ export function createKitRpcs(deps: KitRpcsDeps) {
     "prefrontal.recipe.match": async (raw: unknown) => {
       const p = check<PrefrontalKitMatchParams>(vMatch, raw, "prefrontal.recipe.match");
       // FORK 2026-06-01 (U11): include bridged CC-skill imports in the match catalog.
-      const index = await loadKitIndex(deps.ownKitsDir, [bridgedSkillsDir]);
+      const index = await loadRecipeIndex(deps.ownRecipesDir, [bridgedSkillsDir]);
       // FORK 2026-06 (U1) + 2026-06-01 (U12): fold empirical-fitness + marketplace-
       // rating into the score so recipe.match returns the same proven/popular-aware
       // ranking the turn-start seed uses (single scoring policy across both seams).
-      const { matches, confidence } = matchKitsDetailed(p.prompt, index, {
+      const { matches, confidence } = matchRecipesDetailed(p.prompt, index, {
         max: p.limit ?? 5,
         ...buildMatchSignals(),
       });

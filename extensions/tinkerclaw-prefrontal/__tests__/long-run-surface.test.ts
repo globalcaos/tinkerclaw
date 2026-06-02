@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { seedPlanFromPrompt } from "../kit-matcher.js";
 import {
   buildKitStatusEnvelope,
   buildKitCompletionMessage,
   surfaceKitOutcome,
 } from "../long-run-surface.js";
+import { seedPlanFromPrompt } from "../recipe-matcher.js";
 
 describe("buildKitStatusEnvelope", () => {
   it("produces a non-fatal busy envelope string prefixed with __ERR_ENV__:", () => {
@@ -64,7 +64,7 @@ describe("surfaceKitOutcome", () => {
   });
 });
 
-// Task 1.5 Step 6(a): the before_prompt_build kit-matcher must NOT seed a plan
+// Task 1.5 Step 6(a): the before_prompt_build recipe-matcher must NOT seed a plan
 // for a __KIT_DONE__ completion re-injection (phantom-plan guard, mirrors the
 // [System] restart-continue guard — MEMORY.md "Kit-matcher false-positive").
 describe("seedPlanFromPrompt __KIT_DONE__ guard", () => {
@@ -76,7 +76,7 @@ describe("seedPlanFromPrompt __KIT_DONE__ guard", () => {
         prompt,
         sessionKey: "agent:main:main",
         runId: "run-1",
-        ownKitsDir: "/nonexistent-kits-dir",
+        ownRecipesDir: "/nonexistent-kits-dir",
         planStore: {
           get: async () => null,
           set: async (params: unknown) => {

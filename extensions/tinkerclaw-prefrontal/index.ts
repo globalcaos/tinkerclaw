@@ -76,10 +76,6 @@ import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./explor
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
 import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
 import { getForcingQuestionsPrompt } from "./forcing-questions.js";
-import { seedPlanFromPrompt } from "./kit-matcher.js";
-import { createKitRpcs } from "./kit-rpcs.js";
-import { resolveOwnKitsDir } from "./kit-runner.js";
-import { KitStore } from "./kit-store.js";
 import { createPermissionHooks } from "./permission-hooks.js";
 import { saveState, loadState } from "./persistence.js";
 import { createPlanRpcs } from "./plan-rpcs.js";
@@ -95,6 +91,10 @@ import {
   type MarketplaceFetch,
   type MarketplaceMeta,
 } from "./recipe-marketplace.js";
+import { seedPlanFromPrompt } from "./recipe-matcher.js";
+import { createRecipeRpcs } from "./recipe-rpcs.js";
+import { resolveOwnRecipesDir } from "./recipe-runner.js";
+import { RecipeStore } from "./recipe-store.js";
 import { type EmbedFn } from "./semantic-matcher.js";
 import { TopologyStore } from "./topology.js";
 
@@ -758,18 +758,19 @@ export default function register(api: OpenClawPluginApi) {
     respond(true, featureFlags);
   });
 
-  // ── Kit dir constants (used by both plan-rpcs and kit-rpcs) ──
-  const kitInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
-  // Resolve ownKitsDir relative to this file's location so it works regardless of
+  // ── Kit dir constants (used by both plan-rpcs and recipe-rpcs) ──
+  const recipeInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
+  // Resolve ownRecipesDir relative to this file's location so it works regardless of
   // the gateway's working directory AND of the bundle depth (source lives at
   // extensions/tinkerclaw-prefrontal/, the bundle at dist/ root — different `..`
-  // counts). resolveOwnKitsDir walks up to the first existing kits dir.
-  const ownKitsDir = resolveOwnKitsDir(dirname(fileURLToPath(import.meta.url)));
+  // counts). resolveOwnRecipesDir walks up to the first existing recipes (or
+  // legacy kits) dir.
+  const ownRecipesDir = resolveOwnRecipesDir(dirname(fileURLToPath(import.meta.url)));
   // FORK 2026-06-01 (U11): where bridged CC SKILL.md imports land. Scanned by the
   // turn-start matcher (extraKitDirs) and the recipe.match/search RPCs so imported
   // recipes are matchable alongside curated kits. Single source of truth for the
   // dir name lives in cc-skills-bridge.ts.
-  const bridgedSkillsDir = join(kitInstallSandbox, BRIDGED_SKILLS_DIRNAME);
+  const bridgedSkillsDir = join(recipeInstallSandbox, BRIDGED_SKILLS_DIRNAME);
   // FORK 2026-06 (U1): engram base dir for the on-disk recipe-fitness store
   // (recipe-archive/). makeFitnessLookup(engramBaseDir) reads each candidate's
   // empirical successRate so the turn-start match prefers proven recipes. Same path
@@ -788,7 +789,7 @@ export default function register(api: OpenClawPluginApi) {
       }
     },
   });
-  const planRpcs = createPlanRpcs({ store: planStore, ownKitsDir, kitInstallSandbox });
+  const planRpcs = createPlanRpcs({ store: planStore, ownRecipesDir, recipeInstallSandbox });
   for (const [name, handler] of Object.entries(planRpcs)) {
     api.registerGatewayMethod(name, async ({ respond, params }) => {
       try {
@@ -821,7 +822,7 @@ export default function register(api: OpenClawPluginApi) {
         const trigger: string = ctx?.trigger ?? "";
         // Only the user's primary chat turn. Skip subagents, heartbeats,
         // cron, and any non-main session — those must not seed the main
-        // plan (and kit-runner's own subagents would recurse).
+        // plan (and recipe-runner's own subagents would recurse).
         if (
           !sessionKey ||
           sessionKey.includes(":subagent:") ||
@@ -900,7 +901,7 @@ export default function register(api: OpenClawPluginApi) {
         // FORK 2026-06 (U1) + 2026-06-01 (U12): build the empirical-fitness +
         // marketplace-rating lookups ONCE per turn and thread them into the match so
         // the seeded plan prefers proven (and, as a tie-break, popular) recipes.
-        // Both are sync + per-turn-memoized (scoreKit is sync). The rating lookup
+        // Both are sync + per-turn-memoized (scoreRecipe is sync). The rating lookup
         // reads ONLY the marketplace's warmed cache (no per-turn fetch), so a cold
         // cache contributes no nudge — never blocks the turn.
         const fitnessLookup = makeFitnessLookup(engramBaseDir);
@@ -909,7 +910,7 @@ export default function register(api: OpenClawPluginApi) {
           prompt,
           sessionKey,
           runId: ctx?.runId ?? "",
-          ownKitsDir,
+          ownRecipesDir,
           // FORK 2026-06-01 (U11): include bridged CC-skill imports in the turn-
           // start match catalog so imported recipes seed plans like curated ones.
           extraKitDirs: [bridgedSkillsDir],
@@ -1014,7 +1015,7 @@ export default function register(api: OpenClawPluginApi) {
           }
         }
       } catch (err) {
-        log.warn?.(`[kit-matcher] before_prompt_build failed: ${String(err)}`);
+        log.warn?.(`[recipe-matcher] before_prompt_build failed: ${String(err)}`);
       }
       if (parts.length > 0) return { prependSystemContext: parts.join("\n\n") };
       return {};
@@ -1023,7 +1024,7 @@ export default function register(api: OpenClawPluginApi) {
   );
 
   // ── Kit store + RPCs (FORK 2026-05-13, Phase 6) ──
-  const kitStore = new KitStore({ rootDir: kitInstallSandbox });
+  const kitStore = new RecipeStore({ rootDir: recipeInstallSandbox });
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   const journeyCfg = (config as any)?.integrations?.journey ?? {};
   const journeyBaseUrl =
@@ -1067,12 +1068,12 @@ export default function register(api: OpenClawPluginApi) {
   };
   const marketplace = createMarketplace({ fetchImpl: marketplaceFetch, log });
 
-  const kitRpcs = createKitRpcs({
+  const kitRpcs = createRecipeRpcs({
     store: kitStore,
     baseUrl: journeyBaseUrl,
     apiKey: journeyApiKey,
-    kitInstallSandbox,
-    ownKitsDir,
+    recipeInstallSandbox,
+    ownRecipesDir,
     // FORK 2026-05-14: pass the plan store so prefrontal.kit.run can seed/update plan rows
     planStore,
     // FORK 2026-06-01 (U12): marketplace versioning/immutability + owner identity.

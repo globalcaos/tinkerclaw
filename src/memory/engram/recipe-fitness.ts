@@ -11,7 +11,7 @@
  *   tokens   = sum of MemoryEvent.tokens over the episode's source events
  *
  * Recipe attribution is via an explicit `recipe:<owner/slug>` tag set on events
- * (by Prefrontal's kit-runner at dispatch — a cross-subsystem contract). When no
+ * (by Prefrontal's recipe-runner at dispatch — a cross-subsystem contract). When no
  * such tag is present, attribution returns null and the episode is NOT counted
  * against any recipe (no false attribution — risk #3).
  *
@@ -124,9 +124,9 @@ export function updateRecipeFitness(
 
 // ─── On-disk fitness reader (U1 producer-side seam) ──────────────────────────
 //
-// The Prefrontal matcher (extensions/tinkerclaw-prefrontal/kit-matcher.ts) scores
+// The Prefrontal matcher (extensions/tinkerclaw-prefrontal/recipe-matcher.ts) scores
 // recipes with an injected FitnessLookup `(slug) => successRate | undefined`. Its
-// callers (index.ts turn-start seed, kit-rpcs match/search) need a SYNC reader of
+// callers (index.ts turn-start seed, recipe-rpcs match/search) need a SYNC reader of
 // the on-disk fitness store so the matcher — which is itself sync — can fold the
 // empirical-fitness boost in. This is that reader. It mirrors recipe-archive.ts's
 // layout WITHOUT importing it (recipe-archive pulls in node:fs write helpers the
@@ -136,7 +136,7 @@ export function updateRecipeFitness(
 //   recipeId -> { recipeId, versions: number[] }; the latest version's fitness
 //   lives at <baseDir>/recipe-archive/<slugify(recipeId)>/v<n>.json under `.fitness`.
 // The recipeId is the canonical `owner/slug` (the `recipe:<owner/slug>` tag), but
-// the matcher keys by BARE slug (KitIndexEntry.slug). So the reader resolves a key
+// the matcher keys by BARE slug (RecipeIndexEntry.slug). So the reader resolves a key
 // that is either the full `owner/slug` OR a bare slug that suffix-matches one.
 
 const RECIPE_ARCHIVE_DIRNAME = "recipe-archive";
@@ -202,12 +202,12 @@ export function loadRecipeFitness(baseDir: string, slug: string): RecipeFitnessS
 
 /**
  * Build the matcher's FitnessLookup over the on-disk store under `baseDir`. The
- * returned function is SYNC (scoreKit is sync) and memoizes per-slug reads for the
+ * returned function is SYNC (scoreRecipe is sync) and memoizes per-slug reads for the
  * life of the lookup so a single turn's scoring pass touches disk at most once per
  * candidate recipe. Returns `undefined` for the Laplace-neutral default so the
  * matcher's `fitnessFeedbackDelta` treats an unmeasured recipe as "no opinion"
  * (delta 0) rather than a measured-neutral, and `successRate` otherwise. Build it
- * ONCE per turn and pass it as `feedback` into matchKitsDetailed/seedPlanFromPrompt.
+ * ONCE per turn and pass it as `feedback` into matchRecipesDetailed/seedPlanFromPrompt.
  */
 export function makeFitnessLookup(baseDir: string): (slug: string) => number | undefined {
   const cache = new Map<string, number | undefined>();

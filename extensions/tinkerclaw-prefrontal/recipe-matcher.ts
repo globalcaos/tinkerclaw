@@ -1,7 +1,7 @@
 /**
  * FORK 2026-05-16 (matching half of the smart router); upgraded 2026-05-29.
  *
- * The execution half (kit-runner.ts) consumes parallelism.groups and fans out
+ * The execution half (recipe-runner.ts) consumes parallelism.groups and fans out
  * subagents. The matcher fires automatically at turn start (before_prompt_build)
  * so Jarvis never has to remember to invoke a recipe.
  *
@@ -9,7 +9,7 @@
  *   - FUZZY scoring: stemming + prefix + edit-distance-1 token matching, so
  *     "debugging the crash" matches the `debug` kit even though no literal token
  *     is shared. Lexical-only used to silently NO-MATCH on paraphrases.
- *   - CONFIDENCE: matchKits reports none | low | high so the hook can decide
+ *   - CONFIDENCE: matchRecipes reports none | low | high so the hook can decide
  *     between seeding silently, surfacing alternatives, or prompting authoring.
  *   - COMPOSITION: a kit's frontmatter `composes: [slug, ...]` pulls those kits'
  *     steps into the merged plan (cycle-guarded) — recipes built from recipes.
@@ -23,10 +23,10 @@
 import fs from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { parseKitStepsAndParallelism } from "./kit-runner.js";
+import { parseKitStepsAndParallelism } from "./recipe-runner.js";
 import type { EmbedFn } from "./semantic-matcher.js";
 
-export interface KitIndexEntry {
+export interface RecipeIndexEntry {
   slug: string;
   title: string;
   summary: string;
@@ -37,15 +37,15 @@ export interface KitIndexEntry {
   path: string;
 }
 
-export interface KitMatch {
-  entry: KitIndexEntry;
+export interface RecipeMatch {
+  entry: RecipeIndexEntry;
   score: number;
 }
 
 export type MatchConfidence = "none" | "low" | "high";
 
 export interface MatchResult {
-  matches: KitMatch[];
+  matches: RecipeMatch[];
   confidence: MatchConfidence;
 }
 
@@ -163,16 +163,23 @@ function anyTokenMatches(promptTokens: string[], kitTok: string): boolean {
   return promptTokens.some((pt) => tokenMatches(pt, kitTok));
 }
 
-let cache: { sig: string; index: KitIndexEntry[] } | null = null;
+let cache: { sig: string; index: RecipeIndexEntry[] } | null = null;
 
 /** Drop the in-memory index cache (call after authoring a kit on the fly). */
-export function invalidateKitIndexCache(): void {
+export function invalidateRecipeIndexCache(): void {
   cache = null;
 }
 
-/** Scan ONE `<dir>/<slug>/kit.md` tree into KitIndexEntry rows. Missing dir → []. */
-async function scanKitDir(dir: string): Promise<KitIndexEntry[]> {
-  const index: KitIndexEntry[] = [];
+/**
+ * Scan ONE `<dir>/<slug>/{recipe.md,kit.md}` tree into RecipeIndexEntry rows.
+ * Missing dir → []. DUAL-READ (rename migration 2026-06-02): a definition file
+ * is `recipe.md` in the new layout, `kit.md` in the legacy layout. We probe
+ * recipe.md FIRST per slug-dir, then fall back to kit.md, so newly authored
+ * recipes win and old kit.md definitions keep loading without an on-disk move.
+ */
+async function scanRecipeDir(dir: string): Promise<RecipeIndexEntry[]> {
+  const RECIPE_FILENAMES = ["recipe.md", "kit.md"] as const;
+  const index: RecipeIndexEntry[] = [];
   let slugs: string[];
   try {
     slugs = await fs.readdir(dir);
@@ -180,12 +187,20 @@ async function scanKitDir(dir: string): Promise<KitIndexEntry[]> {
     return index; // dir absent (e.g. no bridged imports yet) — not an error
   }
   for (const slug of slugs) {
-    const path = join(dir, slug, "kit.md");
-    let text: string;
-    try {
-      text = await fs.readFile(path, "utf8");
-    } catch {
-      continue; // not a kit dir
+    let path = "";
+    let text: string | null = null;
+    for (const fname of RECIPE_FILENAMES) {
+      const candidate = join(dir, slug, fname);
+      try {
+        text = await fs.readFile(candidate, "utf8");
+        path = candidate;
+        break;
+      } catch {
+        // try next filename
+      }
+    }
+    if (text === null) {
+      continue; // not a recipe dir (no recipe.md or kit.md)
     }
     const fm = /^---\n([\s\S]+?)\n---\n/.exec(text);
     if (!fm) continue;
@@ -215,7 +230,7 @@ async function scanKitDir(dir: string): Promise<KitIndexEntry[]> {
 }
 
 /**
- * Load the matcher's catalog. Scans `ownKitsDir` plus any `extraDirs` (FORK
+ * Load the matcher's catalog. Scans `ownRecipesDir` plus any `extraDirs` (FORK
  * 2026-06-01 / U11: the bridged-skills dir where imported CC SKILL.md recipes
  * land), so imported recipes are matchable alongside the curated ones. A later
  * dir's entry wins on a slug collision (so a bridged recipe never shadows a
@@ -224,11 +239,11 @@ async function scanKitDir(dir: string): Promise<KitIndexEntry[]> {
  * invalidates the cache (a missing dir contributes a stable "x" so its later
  * creation also busts the cache).
  */
-export async function loadKitIndex(
-  ownKitsDir: string,
+export async function loadRecipeIndex(
+  ownRecipesDir: string,
   extraDirs: string[] = [],
-): Promise<KitIndexEntry[]> {
-  const dirs = [ownKitsDir, ...extraDirs];
+): Promise<RecipeIndexEntry[]> {
+  const dirs = [ownRecipesDir, ...extraDirs];
   const sigParts: string[] = [];
   for (const d of dirs) {
     try {
@@ -243,10 +258,10 @@ export async function loadKitIndex(
     return cache.index;
   }
 
-  // own-kits first so a bridged import cannot shadow a curated slug.
-  const bySlug = new Map<string, KitIndexEntry>();
+  // own-recipes first so a bridged import cannot shadow a curated recipe.
+  const bySlug = new Map<string, RecipeIndexEntry>();
   for (const d of dirs) {
-    for (const entry of await scanKitDir(d)) {
+    for (const entry of await scanRecipeDir(d)) {
       if (!bySlug.has(entry.slug)) bySlug.set(entry.slug, entry);
     }
   }
@@ -302,7 +317,7 @@ export type RatingLookup = (slug: string) => number | undefined;
  * re-clamped here into a tiny ±0.2 band that only breaks ties between otherwise
  * equally-relevant recipes. A neutral/absent rating contributes 0.
  *
- * PRECEDENCE (composed in scoreKit, lowest-to-highest authority of the FLOOR):
+ * PRECEDENCE (composed in scoreRecipe, lowest-to-highest authority of the FLOOR):
  *   base (lexical) → feedback (empirical fitness, integer 0..3, floor-preserving)
  *   → rating (popularity, ±0.2, tie-breaker only).
  * So a strong-fitness proven recipe still dominates a merely-popular one, and a
@@ -333,10 +348,10 @@ export function ratingScoreDelta(rating: number | undefined): number {
  * marketplace-popularity tie-breaker LAST, so precedence is base → feedback →
  * rating (see ratingScoreDelta). Omitted → no rating perturbation.
  */
-export function scoreKit(
+export function scoreRecipe(
   prompt: string,
   promptTokens: Set<string>,
-  kit: KitIndexEntry,
+  kit: RecipeIndexEntry,
   feedback?: FitnessLookup,
   rating?: RatingLookup,
 ): number {
@@ -371,23 +386,23 @@ export function scoreKit(
 const DEFAULT_THRESHOLD = 3;
 const DEFAULT_MAX_KITS = 3;
 
-export function matchKits(
+export function matchRecipes(
   prompt: string,
-  index: KitIndexEntry[],
+  index: RecipeIndexEntry[],
   opts?: { threshold?: number; max?: number; feedback?: FitnessLookup; rating?: RatingLookup },
-): KitMatch[] {
-  return matchKitsDetailed(prompt, index, opts).matches;
+): RecipeMatch[] {
+  return matchRecipesDetailed(prompt, index, opts).matches;
 }
 
-/** Like matchKits but also classifies confidence — used by the turn hook to
+/** Like matchRecipes but also classifies confidence — used by the turn hook to
  * decide seed-silently vs surface-alternatives vs prompt-authoring.
  * FORK 2026-06 (Upgrade 1): an optional `feedback` lookup boosts proven recipes
- * (post-base-score, base as floor — see scoreKit). FORK 2026-06-01 (U12): an
+ * (post-base-score, base as floor — see scoreRecipe). FORK 2026-06-01 (U12): an
  * optional `rating` lookup adds a clamped (±0.2) popularity tie-breaker LAST
  * (precedence base → feedback → rating). Both omitted → pure lexical. */
-export function matchKitsDetailed(
+export function matchRecipesDetailed(
   prompt: string,
-  index: KitIndexEntry[],
+  index: RecipeIndexEntry[],
   opts?: { threshold?: number; max?: number; feedback?: FitnessLookup; rating?: RatingLookup },
 ): MatchResult {
   const promptTokens = new Set(tokenize(prompt));
@@ -396,7 +411,7 @@ export function matchKitsDetailed(
   const scored = index
     .map((entry) => ({
       entry,
-      score: scoreKit(prompt, promptTokens, entry, opts?.feedback, opts?.rating),
+      score: scoreRecipe(prompt, promptTokens, entry, opts?.feedback, opts?.rating),
     }))
     .filter((m) => m.score >= threshold)
     .sort((a, b) => b.score - a.score);
@@ -419,17 +434,17 @@ export function matchKitsDetailed(
  * (recipes built from recipes), cycle-guarded against infinite expansion.
  */
 export async function buildMergedPlan(
-  matches: KitMatch[],
-  index?: KitIndexEntry[],
+  matches: RecipeMatch[],
+  index?: RecipeIndexEntry[],
 ): Promise<MergedPlan> {
   const steps: Array<{ title: string }> = [];
   const seen = new Set<string>();
   const kitRefs: string[] = [];
   const composedFrom: string[] = [];
-  const bySlug = new Map<string, KitIndexEntry>((index ?? []).map((e) => [e.slug, e]));
+  const bySlug = new Map<string, RecipeIndexEntry>((index ?? []).map((e) => [e.slug, e]));
   const expanded = new Set<string>();
 
-  const addStepsFrom = async (entry: KitIndexEntry, depth: number): Promise<void> => {
+  const addStepsFrom = async (entry: RecipeIndexEntry, depth: number): Promise<void> => {
     if (expanded.has(entry.slug) || depth > 3) return;
     expanded.add(entry.slug);
     // Expand composed kits FIRST so their steps lead (a composite recipe reads
@@ -477,8 +492,8 @@ export interface SeedPlanDeps {
   prompt: string;
   sessionKey: string;
   runId: string;
-  ownKitsDir: string;
-  /** FORK 2026-06-01 (U11): additional catalog dirs scanned alongside ownKitsDir
+  ownRecipesDir: string;
+  /** FORK 2026-06-01 (U11): additional catalog dirs scanned alongside ownRecipesDir
    * (e.g. the bridged-skills dir) so imported CC SKILL.md recipes are matchable at
    * turn start. Omitted → own-kits only (historical behaviour). */
   extraKitDirs?: string[];
@@ -498,7 +513,7 @@ export interface SeedPlanDeps {
   /**
    * FORK 2026-06 (U1): per-recipe empirical-fitness lookup. When supplied, the
    * turn-start lexical match folds in each candidate's Laplace-smoothed
-   * successRate boost (post-base-score, base as floor — see scoreKit). Omitted →
+   * successRate boost (post-base-score, base as floor — see scoreRecipe). Omitted →
    * pure lexical scoring (historical behaviour). Built once per turn by the caller
    * (index.ts) via makeFitnessLookup so the matcher stays decoupled from the engram
    * store.
@@ -507,7 +522,7 @@ export interface SeedPlanDeps {
   /**
    * FORK 2026-06-01 (U12): per-recipe marketplace-rating lookup. When supplied, a
    * clamped (±0.2) popularity tie-breaker is added LAST (precedence base → feedback
-   * → rating — see scoreKit). Omitted → no rating perturbation. Built once per turn
+   * → rating — see scoreRecipe). Omitted → no rating perturbation. Built once per turn
    * by the caller via makeRatingLookup over the warmed marketplace cache.
    */
   rating?: RatingLookup;
@@ -553,7 +568,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
   // Never seed for a kit-completion re-injection (phantom plan-of-a-plan).
   if (deps.prompt.trimStart().startsWith("__KIT_DONE__")) {
     deps.log?.info?.(
-      `[kit-matcher] sessionKey=${deps.sessionKey} kit-completion re-injection (suppressed)`,
+      `[recipe-matcher] sessionKey=${deps.sessionKey} kit-completion re-injection (suppressed)`,
     );
     return empty({ skipped: "kit-completion" });
   }
@@ -567,21 +582,21 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
   }
   if (existing && (existing as { status?: string }).status === "in_progress") {
     deps.log?.info?.(
-      `[kit-matcher] sessionKey=${deps.sessionKey} skipped — plan already in_progress`,
+      `[recipe-matcher] sessionKey=${deps.sessionKey} skipped — plan already in_progress`,
     );
     return empty({ skipped: "plan-in-progress" });
   }
 
-  const index = await loadKitIndex(deps.ownKitsDir, deps.extraKitDirs ?? []);
+  const index = await loadRecipeIndex(deps.ownRecipesDir, deps.extraKitDirs ?? []);
   if (index.length === 0) {
-    deps.log?.warn?.(`[kit-matcher] no kits found in ${deps.ownKitsDir}`);
+    deps.log?.warn?.(`[recipe-matcher] no kits found in ${deps.ownRecipesDir}`);
     return empty({ skipped: "empty-catalog" });
   }
 
   // FORK 2026-06 (U1) + 2026-06-01 (U12): thread the injected fitness + rating
   // lookups into the lexical match so the turn-start seed prefers empirically-better
   // and (as a tie-break) more-popular recipes. Both omitted → pure lexical.
-  const lexical = matchKitsDetailed(deps.prompt, index, {
+  const lexical = matchRecipesDetailed(deps.prompt, index, {
     feedback: deps.feedback,
     rating: deps.rating,
   });
@@ -610,7 +625,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
       recoveredBySemantic = smart.recoveredBySemantic;
     } catch (err) {
       deps.log?.warn?.(
-        `[kit-matcher] semantic lane failed (lexical kept): ${
+        `[recipe-matcher] semantic lane failed (lexical kept): ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -620,7 +635,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
 
   if (matches.length === 0) {
     deps.log?.warn?.(
-      `[kit-matcher] NO-MATCH sessionKey=${deps.sessionKey} prompt="${snippet}" (catalog=${index.length}) — recipe-gap; authoring offered`,
+      `[recipe-matcher] NO-MATCH sessionKey=${deps.sessionKey} prompt="${snippet}" (catalog=${index.length}) — recipe-gap; authoring offered`,
     );
     return empty({ catalogSize: index.length, noMatch: true });
   }
@@ -628,7 +643,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
   const plan = await buildMergedPlan(matches, index);
   if (plan.steps.length === 0) {
     deps.log?.warn?.(
-      `[kit-matcher] matched ${plan.kitRefs.join("+")} but produced 0 steps — skipping seed`,
+      `[recipe-matcher] matched ${plan.kitRefs.join("+")} but produced 0 steps — skipping seed`,
     );
     return empty({
       catalogSize: index.length,
@@ -646,7 +661,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
     steps: plan.steps,
   });
   deps.log?.info?.(
-    `[kit-matcher] seeded plan sessionKey=${deps.sessionKey} kits=${plan.kitRefs.join("+")} ` +
+    `[recipe-matcher] seeded plan sessionKey=${deps.sessionKey} kits=${plan.kitRefs.join("+")} ` +
       `steps=${plan.steps.length} conf=${confidence} scores=[${matchSummary.map((m) => `${m.slug}:${m.score}`).join(",")}]`,
   );
   return {

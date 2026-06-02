@@ -5,7 +5,7 @@ audience: AI
 last_verified: 2026-06-02
 last_verified_commit: 06f8647fdc
 single_owner: yes — state-transition facts live here, not in bible.md or flows.md
-see_also: flows.md (sequence of calls), failures.md (transitions that don't fire), probes.md (`debug.session.state` proposed), config-shape.md (U7 7D/7G dead-code RPC traps), subagents-and-kits.md (recipe selection/fitness scoring)
+see_also: flows.md (sequence of calls), failures.md (transitions that don't fire), probes.md (`debug.session.state` proposed), config-shape.md (U7 7D/7G dead-code RPC traps), subagents-and-recipes.md (recipe selection/fitness scoring)
 verify:
   - name: L1 — agent:main:main session entry exists and has a recognised status
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.state","--params",json.dumps({"sessionKey":"agent:main:main"})],capture_output=True,text=True,timeout=25); j=json.loads(r.stdout.split("Gateway call:")[-1].split("\n",1)[1] if "Gateway call:" in r.stdout else r.stdout); status = (j.get("entry") or {}).get("status"); assert status in {"idle","running","done","failed","aborted","timeout","interrupted",None}, f"unrecognised status {status!r}"'
@@ -324,11 +324,11 @@ stateDiagram-v2
 
 **Entity:** one recipe variant (`recipeId` @ a `version`) tracked by fitness in the never-delete archive at `<engram-baseDir>/recipe-archive/<recipeId-slug>/v<n>.json` (+ `index.json`). A `MutationProposal` is the transient object the evolution operator emits per consolidation.
 
-**Code:** `src/memory/engram/recipe-fitness.ts` (Laplace-smoothed `successRate`, `loadRecipeFitness`/`makeFitnessLookup`); `src/memory/engram/recipe-evolution.ts` (`proposeMutations` + `isAutoPromotable`); `src/memory/engram/recipe-archive.ts` (`putVariant`/`deprecate`/`rank` — never deletes). PRODUCER of attribution: `kit-runner.ts` stamps `recipe:<owner/slug>` tags via `onTag` (threaded by `prefrontal.recipe.run`); selection feeds `makeFitnessLookup` into `matchKitsDetailed`. The actual recipe WRITE (turning an `autoPromotable` proposal into a kit-file edit) lives in the Prefrontal kit layer, OUT of scope of this operator — the Cerebellum only proposes + flags. See also subagents-and-kits.md (selection/scoring precedence) and flows.md (consolidate→propose sequence).
+**Code:** `src/memory/engram/recipe-fitness.ts` (Laplace-smoothed `successRate`, `loadRecipeFitness`/`makeFitnessLookup`); `src/memory/engram/recipe-evolution.ts` (`proposeMutations` + `isAutoPromotable`); `src/memory/engram/recipe-archive.ts` (`putVariant`/`deprecate`/`rank` — never deletes). PRODUCER of attribution: `recipe-runner.ts` stamps `recipe:<owner/slug>` tags via `onTag` (threaded by `prefrontal.recipe.run`); selection feeds `makeFitnessLookup` into `matchRecipesDetailed`. The actual recipe WRITE (turning an `autoPromotable` proposal into a kit-file edit) lives in the Prefrontal kit layer, OUT of scope of this operator — the Cerebellum only proposes + flags. See also subagents-and-recipes.md (selection/scoring precedence) and flows.md (consolidate→propose sequence).
 
 ```mermaid
 stateDiagram-v2
-  [*] --> running: kit-runner runs a recipe (onTag stamps recipe:<owner/slug> attribution)
+  [*] --> running: recipe-runner runs a recipe (onTag stamps recipe:<owner/slug> attribution)
   running --> fitness_updated: outcome folded into recipe-fitness (Laplace-smoothed successRate)
   fitness_updated --> no_proposal: runs < minRuns (default 3) — low-n, stay quiet
   no_proposal --> running: more runs accumulate

@@ -1,26 +1,26 @@
 /**
- * FORK 2026-05-29: prefrontal/kit-author — compose a kit/1.0 recipe on the fly.
+ * FORK 2026-05-29: prefrontal/recipe-author — compose a kit/1.0 recipe on the fly.
  *
  * The matcher's NO-MATCH signal used to be a dead end: Jarvis was told "no
  * recipe fit" and that was that. This module closes the loop — Jarvis (or any
- * caller) composes a structured KitSpec and `prefrontal.kit.author` validates +
+ * caller) composes a structured RecipeSpec and `prefrontal.kit.author` validates +
  * persists it as a real kit.md the matcher will pick up next turn. That makes
  * "compose any recipe on the fly" a functional yes, not a manual file edit.
  *
- * Pure here (no fs): buildKitMd + validateKitSpec are unit-testable. The RPC in
- * kit-rpcs.ts does the sandboxed write via KitStore.writeKitFiles.
+ * Pure here (no fs): buildRecipeMd + validateRecipeSpec are unit-testable. The RPC in
+ * recipe-rpcs.ts does the sandboxed write via RecipeStore.writeKitFiles.
  *
  * See bible subagents-and-kits.md (kit/1.0 spec + sandbox enforcement).
  */
 
-export interface KitStepSpec {
+export interface RecipeStepSpec {
   title: string;
   tools?: string[];
   doneWhen?: string;
   body: string;
 }
 
-export interface KitSpec {
+export interface RecipeSpec {
   slug: string;
   title: string;
   summary: string;
@@ -29,7 +29,7 @@ export interface KitSpec {
   triggers?: string[];
   goal?: string;
   whenToUse?: string[];
-  steps: KitStepSpec[];
+  steps: RecipeStepSpec[];
   /** 0-based step-index groups; serial chains = one index per group. */
   parallelismGroups?: number[][];
   parallelismNotes?: string;
@@ -38,7 +38,7 @@ export interface KitSpec {
   failuresOvercome?: string[];
 }
 
-export interface KitValidationResult {
+export interface RecipeValidationResult {
   ok: boolean;
   errors: string[];
 }
@@ -54,14 +54,14 @@ const CANONICAL_CATEGORIES = [
 ];
 
 /**
- * Validate a KitSpec before it is written to disk. Mirrors the merge-gate
+ * Validate a RecipeSpec before it is written to disk. Mirrors the merge-gate
  * invariants in subagents-and-kits.md: parseable slug/title/summary, ≥1 step,
  * parallelism groups that are in-range, non-overlapping, and cover every step.
  * Slug is also the on-disk directory name, so it must be traversal-safe.
  */
-export function validateKitSpec(spec: unknown): KitValidationResult {
+export function validateRecipeSpec(spec: unknown): RecipeValidationResult {
   const errors: string[] = [];
-  const s = spec as Partial<KitSpec> | null;
+  const s = spec as Partial<RecipeSpec> | null;
 
   if (!s || typeof s !== "object") {
     return { ok: false, errors: ["spec is not an object"] };
@@ -148,12 +148,12 @@ function defaultGroups(stepCount: number): number[][] {
 }
 
 /**
- * Assemble a kit/1.0 markdown document from a validated KitSpec. The frontmatter
+ * Assemble a kit/1.0 markdown document from a validated RecipeSpec. The frontmatter
  * keys (schema/slug/title/summary/tags/category/parallelism.groups) are exactly
- * the ones the matcher (kit-matcher.ts) and the lister (kit-rpcs.ts parseKitMd)
+ * the ones the matcher (recipe-matcher.ts) and the lister (recipe-rpcs.ts parseKitMd)
  * read. Step headings use the canonical `### N. Title` form the runner parses.
  */
-export function buildKitMd(spec: KitSpec): string {
+export function buildRecipeMd(spec: RecipeSpec): string {
   const groups =
     spec.parallelismGroups && spec.parallelismGroups.length > 0
       ? spec.parallelismGroups
