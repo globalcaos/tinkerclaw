@@ -1,7 +1,7 @@
 import "./isolated-agent.mocks.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { runEmbeddedPiAgent } from "../agents/embedded-agent.js";
 import { loadModelCatalog } from "../agents/model-catalog.js";
-import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import {
   DEFAULT_MESSAGE,
   GMAIL_MODEL,

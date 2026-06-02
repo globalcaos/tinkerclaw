@@ -5,14 +5,14 @@ import {
   emitAssistantTextDelta,
   emitAssistantTextEnd,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
-describe("subscribeEmbeddedPiSession reply tags", () => {
+describe("subscribeEmbeddedAgentSession reply tags", () => {
   function createBlockReplyHarness() {
     const { session, emit } = createStubSessionHarness();
     const onBlockReply = vi.fn();
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       onBlockReply,
@@ -70,7 +70,7 @@ describe("subscribeEmbeddedPiSession reply tags", () => {
 
     const onPartialReply = vi.fn();
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       onPartialReply,

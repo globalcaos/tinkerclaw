@@ -19,6 +19,7 @@ import { normalizeOptionalLowercaseString, readStringValue } from "../shared/str
 import type { ApplyPatchSummary } from "./apply-patch.js";
 import type { ExecToolDetails } from "./bash-tools.exec-types.js";
 import { normalizeTextForComparison } from "./embedded-agent-helpers.js";
+import { isMessagingTool, isMessagingToolSendAction } from "./embedded-agent-messaging.js";
 import { mergeEmbeddedRunReplayState } from "./embedded-agent-runner/replay-state.js";
 import type {
   ToolCallSummary,
@@ -36,9 +37,8 @@ import {
   sanitizeToolArgs,
   sanitizeToolResult,
 } from "./embedded-agent-subscribe.tools.js";
+import { inferToolMetaFromArgs } from "./embedded-agent-utils.js";
 import { parseExecApprovalResultText } from "./exec-approval-result.js";
-import { isMessagingTool, isMessagingToolSendAction } from "./pi-embedded-messaging.js";
-import { inferToolMetaFromArgs } from "./pi-embedded-utils.js";
 import { buildToolMutationState, isSameToolMutationAction } from "./tool-mutation.js";
 import { normalizeToolName } from "./tool-policy.js";
 

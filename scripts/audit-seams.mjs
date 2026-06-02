@@ -584,7 +584,7 @@ function describeCronSeamKinds(relativePath, source) {
   const seamKinds = [];
   const importsAgentRunner = hasAnyImportSource(source, [
     "../../agents/cli-runner.js",
-    "../../agents/pi-embedded.js",
+    "../../agents/embedded-agent.js",
     "../../agents/model-fallback.js",
     "../../agents/subagent-registry.js",
     "../../infra/agent-events.js",

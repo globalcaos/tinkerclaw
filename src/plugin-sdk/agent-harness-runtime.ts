@@ -29,7 +29,7 @@ export type { ContextEngine as HarnessContextEngine } from "../context-engine/ty
 export type { CompactEmbeddedPiSessionParams } from "../agents/embedded-agent-runner/compact.js";
 export type { EmbeddedPiCompactResult } from "../agents/embedded-agent-runner/types.js";
 export type { AnyAgentTool } from "../agents/tools/common.js";
-export type { MessagingToolSend } from "../agents/pi-embedded-messaging.types.js";
+export type { MessagingToolSend } from "../agents/embedded-agent-messaging.types.js";
 export type { AgentApprovalEventData, AgentEventPayload } from "../infra/agent-events.js";
 export type { ExecApprovalDecision } from "../infra/exec-approvals.js";
 export type { NormalizedUsage } from "../agents/usage.js";
@@ -73,7 +73,7 @@ export {
   selectDefaultNodeFromList,
 } from "../agents/tools/nodes-utils.js";
 export { formatToolAggregate } from "../auto-reply/tool-meta.js";
-export { isMessagingTool, isMessagingToolSendAction } from "../agents/pi-embedded-messaging.js";
+export { isMessagingTool, isMessagingToolSendAction } from "../agents/embedded-agent-messaging.js";
 export {
   extractToolResultMediaArtifact,
   filterToolResultMediaUrls,

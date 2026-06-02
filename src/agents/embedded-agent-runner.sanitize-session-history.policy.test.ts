@@ -9,7 +9,7 @@ import {
   type SanitizeSessionHistoryHarness,
   sanitizeSnapshotChangedOpenAIReasoning,
   sanitizeWithOpenAIResponses,
-} from "./pi-embedded-runner.sanitize-session-history.test-harness.js";
+} from "./embedded-agent-runner.sanitize-session-history.test-harness.js";
 import { makeZeroUsageSnapshot } from "./usage.js";
 
 vi.mock(

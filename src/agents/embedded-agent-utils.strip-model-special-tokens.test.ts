@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripModelSpecialTokens } from "./pi-embedded-utils.js";
+import { stripModelSpecialTokens } from "./embedded-agent-utils.js";
 
 /**
  * @see https://github.com/openclaw/openclaw/issues/40020

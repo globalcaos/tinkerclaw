@@ -5,12 +5,12 @@ import {
   emitAssistantTextDeltaAndEnd,
   expectFencedChunks,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 import { makeZeroUsageSnapshot } from "./usage.js";
 
 type SessionEventHandler = (evt: unknown) => void;
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("splits long single-line fenced blocks with reopen/close", async () => {
     const onBlockReply = vi.fn();
     const { emit } = createParagraphChunkedBlockReplyHarness({
@@ -38,9 +38,9 @@ describe("subscribeEmbeddedPiSession", () => {
           }
         };
       },
-    } as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"];
+    } as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"];
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run-1",
     });
@@ -88,9 +88,9 @@ describe("subscribeEmbeddedPiSession", () => {
         listeners.push(listener);
         return () => {};
       },
-    } as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"];
+    } as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"];
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run-2",
     });
@@ -139,9 +139,9 @@ describe("subscribeEmbeddedPiSession", () => {
         listeners.push(listener);
         return () => {};
       },
-    } as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"];
+    } as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"];
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: "run-3",
     });

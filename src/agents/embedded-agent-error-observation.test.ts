@@ -4,7 +4,7 @@ import {
   buildApiErrorObservationFields,
   buildTextObservationFields,
   sanitizeForConsole,
-} from "./pi-embedded-error-observation.js";
+} from "./embedded-agent-error-observation.js";
 
 const OBSERVATION_BEARER_TOKEN = "sk-redact-test-token";
 const OBSERVATION_COOKIE_VALUE = "session-cookie-token";

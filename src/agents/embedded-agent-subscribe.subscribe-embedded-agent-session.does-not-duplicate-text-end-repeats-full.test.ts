@@ -5,7 +5,7 @@ import {
   emitAssistantTextEnd,
 } from "./embedded-agent-subscribe.e2e-harness.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("does not duplicate when text_end repeats full content", async () => {
     const onBlockReply = vi.fn();
     const { emit, subscription } = createTextEndBlockReplyHarness({ onBlockReply });

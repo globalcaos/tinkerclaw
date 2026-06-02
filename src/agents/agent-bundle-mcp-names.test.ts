@@ -4,7 +4,7 @@ import {
   normalizeReservedToolNames,
   sanitizeServerName,
   TOOL_NAME_SEPARATOR,
-} from "./pi-bundle-mcp-names.js";
+} from "./agent-bundle-mcp-names.js";
 
 describe("pi bundle MCP names", () => {
   it("sanitizes and disambiguates server names", () => {

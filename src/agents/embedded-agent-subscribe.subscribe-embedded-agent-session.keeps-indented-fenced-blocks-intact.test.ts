@@ -5,7 +5,7 @@ import {
   extractTextPayloads,
 } from "./embedded-agent-subscribe.e2e-harness.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("keeps indented fenced blocks intact", () => {
     const onBlockReply = vi.fn();
     const { emit } = createParagraphChunkedBlockReplyHarness({

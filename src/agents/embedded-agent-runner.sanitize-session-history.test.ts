@@ -1,8 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, UserMessage, Usage } from "@mariozechner/pi-ai";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { validateReplayTurns } from "./embedded-agent-runner/replay-history.js";
-import { OMITTED_ASSISTANT_REASONING_TEXT } from "./embedded-agent-runner/thinking.js";
 import {
   expectOpenAIResponsesStrictSanitizeCall,
   loadSanitizeSessionHistoryWithCleanMocks,
@@ -16,7 +14,9 @@ import {
   type SanitizeSessionHistoryFn,
   sanitizeWithOpenAIResponses,
   TEST_SESSION_ID,
-} from "./pi-embedded-runner.sanitize-session-history.test-harness.js";
+} from "./embedded-agent-runner.sanitize-session-history.test-harness.js";
+import { validateReplayTurns } from "./embedded-agent-runner/replay-history.js";
+import { OMITTED_ASSISTANT_REASONING_TEXT } from "./embedded-agent-runner/thinking.js";
 import { castAgentMessage, castAgentMessages } from "./test-helpers/agent-message-fixtures.js";
 import { extractToolCallsFromAssistant } from "./tool-call-id.js";
 import type { TranscriptPolicy } from "./transcript-policy.js";

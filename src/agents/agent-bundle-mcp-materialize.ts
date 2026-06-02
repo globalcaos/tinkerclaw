@@ -9,8 +9,8 @@ import {
   buildSafeToolName,
   normalizeReservedToolNames,
   TOOL_NAME_SEPARATOR,
-} from "./pi-bundle-mcp-names.js";
-import type { BundleMcpToolRuntime, SessionMcpRuntime } from "./pi-bundle-mcp-types.js";
+} from "./agent-bundle-mcp-names.js";
+import type { BundleMcpToolRuntime, SessionMcpRuntime } from "./agent-bundle-mcp-types.js";
 import type { AnyAgentTool } from "./tools/common.js";
 
 function toAgentToolResult(params: {

@@ -26,7 +26,7 @@ function createRunHandle(
   };
 }
 
-describe("pi-embedded runner run registry", () => {
+describe("embedded-agent runner run registry", () => {
   afterEach(() => {
     __testing.resetActiveEmbeddedRuns();
     vi.restoreAllMocks();

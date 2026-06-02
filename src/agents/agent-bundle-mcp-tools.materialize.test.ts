@@ -4,8 +4,8 @@ import {
   createBundleMcpToolRuntime,
   materializeBundleMcpToolsForRun,
 } from "./agent-bundle-mcp-materialize.js";
-import type { McpCatalogTool } from "./pi-bundle-mcp-types.js";
-import type { SessionMcpRuntime } from "./pi-bundle-mcp-types.js";
+import type { McpCatalogTool } from "./agent-bundle-mcp-types.js";
+import type { SessionMcpRuntime } from "./agent-bundle-mcp-types.js";
 
 function makeToolRuntime(
   params: {

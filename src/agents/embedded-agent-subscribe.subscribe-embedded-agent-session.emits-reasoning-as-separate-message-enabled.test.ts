@@ -5,14 +5,14 @@ import {
   createReasoningFinalAnswerMessage,
   createStubSessionHarness,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   function createReasoningBlockReplyHarness(params: { thinkingLevel?: "off" | "medium" } = {}) {
     const { session, emit } = createStubSessionHarness();
     const onBlockReply = vi.fn();
 
-    subscribeEmbeddedPiSession({
+    subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       onBlockReply,

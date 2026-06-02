@@ -5,6 +5,7 @@ import type { AssistantMessage, Message, Tool } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { runEmbeddedPiAgent } from "./embedded-agent-runner.js";
 import { compactEmbeddedPiSessionDirect } from "./embedded-agent-runner/compact.runtime.js";
 import {
   buildAssistantHistoryTurn as buildTypedAssistantHistoryTurn,
@@ -17,7 +18,6 @@ import {
   resolveLiveDirectModel,
   withLiveCacheHeartbeat,
 } from "./live-cache-test-support.js";
-import { runEmbeddedPiAgent } from "./pi-embedded-runner.js";
 import { buildZeroUsage } from "./stream-message-shared.js";
 
 const describeCacheLive = LIVE_CACHE_TEST_ENABLED ? describe : describe.skip;

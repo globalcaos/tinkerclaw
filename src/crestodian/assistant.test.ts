@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { RunCliAgentParams } from "../agents/cli-runner/types.js";
 import type { RunEmbeddedPiAgentParams } from "../agents/embedded-agent-runner/run/params.js";
-import type { EmbeddedPiRunResult } from "../agents/pi-embedded.js";
+import type { EmbeddedPiRunResult } from "../agents/embedded-agent.js";
 import { selectCrestodianLocalPlannerBackends } from "./assistant-backends.js";
 import {
   buildCrestodianAssistantUserPrompt,

@@ -281,10 +281,10 @@ function patchSubscribeTypes() {
     return;
   }
 
-  // Insert before the closing }; of SubscribeEmbeddedPiSessionParams
-  const typeMatch = src.match(/export type SubscribeEmbeddedPiSessionParams\s*=\s*\{/);
+  // Insert before the closing }; of SubscribeEmbeddedAgentSessionParams
+  const typeMatch = src.match(/export type SubscribeEmbeddedAgentSessionParams\s*=\s*\{/);
   if (!typeMatch) {
-    console.warn(`  ⚠️  Could not find SubscribeEmbeddedPiSessionParams in ${file}`);
+    console.warn(`  ⚠️  Could not find SubscribeEmbeddedAgentSessionParams in ${file}`);
     return;
   }
 
@@ -1854,7 +1854,7 @@ const NEW_PATCHES = [
   ["bundled provider plugin id aliases", patchBundledProviderPluginIdAliases],
   ["errors regain-access billing wrap", patchRegainAccessBillingWrap],
   ["heartbeat-runner tasks/isTaskDue/transcriptState", patchHeartbeatRunnerTasksAndTranscript],
-  ["pi-embedded extensions engram imports", patchExtensionsEngramImports],
+  ["embedded-agent extensions engram imports", patchExtensionsEngramImports],
   ["tool-policy dedupe local declarations", patchToolPolicyDedupeLocals],
   ["attempt.ts getLastCompactionTokensAfter stub", patchAttemptCompactionTokensStub],
   ["agent-command.ts drop onFallbackStep arg", patchAgentCommandDropOnFallbackStep],
@@ -1864,7 +1864,10 @@ const NEW_PATCHES = [
     "engine-storage detectGranularity/detectTopicCluster re-export",
     patchEngineStorageDetectExports,
   ],
-  ["pi-embedded extensions listEmbeddedExtensionFactories stub", patchExtensionsListFactoriesStub],
+  [
+    "embedded-agent extensions listEmbeddedExtensionFactories stub",
+    patchExtensionsListFactoriesStub,
+  ],
   ["hippocampus emptyPluginConfigSchema import path", patchHippocampusEmptyPluginConfigSchema],
   ["tsdown.config.ts native addons in neverBundle list", patchTsdownNativeAddons],
 ];
@@ -2107,7 +2110,7 @@ function patchHeartbeatResolveLane() {
   const file = "src/infra/heartbeat-runner.ts";
   let src = readFile(file);
 
-  if (/from "\.\.\/agents\/pi-embedded-runner\/lanes\.js"/.test(src)) {
+  if (/from "\.\.\/agents\/embedded-agent-runner\/lanes\.js"/.test(src)) {
     console.log(`  ✅ ${file} — resolveEmbeddedSessionLane already wired`);
     return;
   }

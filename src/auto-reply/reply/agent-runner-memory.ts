@@ -45,27 +45,29 @@ import { refreshQueuedFollowupSession, type FollowupRun } from "./queue.js";
 import type { ReplyOperation } from "./reply-run-registry.js";
 import { incrementCompactionCount } from "./session-updates.js";
 
-type PiEmbeddedRuntime = typeof import("../../agents/pi-embedded.js");
+type PiEmbeddedRuntime = typeof import("../../agents/embedded-agent.js");
 
 let piEmbeddedRuntimePromise: Promise<PiEmbeddedRuntime> | undefined;
 
 function loadPiEmbeddedRuntime(): Promise<PiEmbeddedRuntime> {
-  piEmbeddedRuntimePromise ??= import("../../agents/pi-embedded.js");
+  piEmbeddedRuntimePromise ??= import("../../agents/embedded-agent.js");
   return piEmbeddedRuntimePromise;
 }
 
 async function compactEmbeddedPiSessionDefault(
-  ...args: Parameters<typeof import("../../agents/pi-embedded.js").compactEmbeddedPiSession>
+  ...args: Parameters<typeof import("../../agents/embedded-agent.js").compactEmbeddedPiSession>
 ): Promise<
-  Awaited<ReturnType<typeof import("../../agents/pi-embedded.js").compactEmbeddedPiSession>>
+  Awaited<ReturnType<typeof import("../../agents/embedded-agent.js").compactEmbeddedPiSession>>
 > {
   const { compactEmbeddedPiSession } = await loadPiEmbeddedRuntime();
   return await compactEmbeddedPiSession(...args);
 }
 
 async function runEmbeddedPiAgentDefault(
-  ...args: Parameters<typeof import("../../agents/pi-embedded.js").runEmbeddedPiAgent>
-): Promise<Awaited<ReturnType<typeof import("../../agents/pi-embedded.js").runEmbeddedPiAgent>>> {
+  ...args: Parameters<typeof import("../../agents/embedded-agent.js").runEmbeddedPiAgent>
+): Promise<
+  Awaited<ReturnType<typeof import("../../agents/embedded-agent.js").runEmbeddedPiAgent>>
+> {
   const { runEmbeddedPiAgent } = await loadPiEmbeddedRuntime();
   return await runEmbeddedPiAgent(...args);
 }

@@ -33,7 +33,7 @@ wired end-to-end.
    - subscribes to pi events and streams assistant/tool deltas
    - enforces timeout -> aborts run if exceeded
    - returns payloads + usage metadata
-4. `subscribeEmbeddedPiSession` bridges pi-agent-core events to OpenClaw `agent` stream:
+4. `subscribeEmbeddedAgentSession` bridges pi-agent-core events to OpenClaw `agent` stream:
    - tool events => `stream: "tool"`
    - assistant deltas => `stream: "assistant"`
    - lifecycle events => `stream: "lifecycle"` (`phase: "start" | "end" | "error"`)
@@ -149,7 +149,7 @@ surfaces, while Codex native hooks remain a separate lower-level Codex mechanism
 
 ## Event streams (today)
 
-- `lifecycle`: emitted by `subscribeEmbeddedPiSession` (and as a fallback by `agentCommand`)
+- `lifecycle`: emitted by `subscribeEmbeddedAgentSession` (and as a fallback by `agentCommand`)
 - `assistant`: streamed deltas from pi-agent-core
 - `tool`: streamed tool events from pi-agent-core
 

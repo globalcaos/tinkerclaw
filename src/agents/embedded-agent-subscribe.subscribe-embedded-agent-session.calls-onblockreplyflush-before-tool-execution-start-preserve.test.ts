@@ -3,17 +3,17 @@ import {
   createStubSessionHarness,
   emitAssistantTextDelta,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("calls onBlockReplyFlush before tool_execution_start to preserve message boundaries", () => {
     const { session, emit } = createStubSessionHarness();
 
     const onBlockReplyFlush = vi.fn();
     const onBlockReply = vi.fn();
 
-    subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
       runId: "run-flush-test",
       onBlockReply,
       onBlockReplyFlush,
@@ -56,8 +56,8 @@ describe("subscribeEmbeddedPiSession", () => {
     const onBlockReply = vi.fn();
     const onBlockReplyFlush = vi.fn();
 
-    subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
       runId: "run-flush-buffer",
       onBlockReply,
       onBlockReplyFlush,
@@ -92,8 +92,8 @@ describe("subscribeEmbeddedPiSession", () => {
     const delivered: string[] = [];
     const flushSnapshots: string[][] = [];
 
-    subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
       runId: "run-async-tool-flush",
       onBlockReply: async (payload) => {
         await Promise.resolve();
@@ -132,8 +132,8 @@ describe("subscribeEmbeddedPiSession", () => {
     const onBlockReply = vi.fn();
     const onBlockReplyFlush = vi.fn();
 
-    subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
       runId: "run-message-end-flush",
       onBlockReply,
       onBlockReplyFlush,
@@ -166,8 +166,8 @@ describe("subscribeEmbeddedPiSession", () => {
     const delivered: string[] = [];
     const flushSnapshots: string[][] = [];
 
-    subscribeEmbeddedPiSession({
-      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+    subscribeEmbeddedAgentSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedAgentSession>[0]["session"],
       runId: "run-async-message-end-flush",
       onBlockReply: async (payload) => {
         await Promise.resolve();

@@ -32,10 +32,12 @@ import { DEFAULT_PROVIDER, formatMs } from "./shared.js";
 
 const PROBE_PROMPT = "Reply with OK. Do not use tools.";
 
-let embeddedRunnerModulePromise: Promise<typeof import("../../agents/pi-embedded.js")> | undefined;
+let embeddedRunnerModulePromise:
+  | Promise<typeof import("../../agents/embedded-agent.js")>
+  | undefined;
 
 function loadEmbeddedRunnerModule() {
-  embeddedRunnerModulePromise ??= import("../../agents/pi-embedded.js");
+  embeddedRunnerModulePromise ??= import("../../agents/embedded-agent.js");
   return embeddedRunnerModulePromise;
 }
 

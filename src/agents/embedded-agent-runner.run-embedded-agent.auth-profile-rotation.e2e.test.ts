@@ -12,7 +12,7 @@ import {
   installEmbeddedRunnerBackoffE2eMocks,
   installEmbeddedRunnerBaseE2eMocks,
   installEmbeddedRunnerFastRunE2eMocks,
-} from "./test-helpers/pi-embedded-runner-e2e-mocks.js";
+} from "./test-helpers/embedded-agent-runner-e2e-mocks.js";
 
 const runEmbeddedAttemptMock = vi.fn<(params: unknown) => Promise<EmbeddedRunAttemptResult>>();
 const resolveCopilotApiTokenMock = vi.fn();

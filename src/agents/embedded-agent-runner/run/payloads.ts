@@ -24,7 +24,7 @@ import {
   extractAssistantThinking,
   extractAssistantVisibleText,
   formatReasoningMessage,
-} from "../../pi-embedded-utils.js";
+} from "../../embedded-agent-utils.js";
 import { isExecLikeToolName, type ToolErrorSummary } from "../../tool-error-summary.js";
 import { isLikelyMutatingToolName } from "../../tool-mutation.js";
 
