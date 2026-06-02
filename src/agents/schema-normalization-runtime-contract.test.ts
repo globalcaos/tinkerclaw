@@ -8,9 +8,9 @@ import {
 } from "openclaw/plugin-sdk/agent-runtime-test-contracts";
 import { describe, expect, it } from "vitest";
 import { buildProviderToolCompatFamilyHooks } from "../plugin-sdk/provider-tools.js";
+import { createOpenAIResponsesContextManagementWrapper } from "./embedded-agent-runner/openai-stream-wrappers.js";
 import { buildOpenAIResponsesParams } from "./openai-transport-stream.js";
 import { convertTools as convertWebSocketTools } from "./openai-ws-message-conversion.js";
-import { createOpenAIResponsesContextManagementWrapper } from "./pi-embedded-runner/openai-stream-wrappers.js";
 
 describe("OpenAI transport schema normalization runtime contract", () => {
   it("keeps HTTP Responses and WebSocket strict decisions aligned for the same tool set", () => {

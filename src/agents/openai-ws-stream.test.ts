@@ -10,6 +10,7 @@
 
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "./embedded-agent-runner/logger.js";
 import type { ResponseObject } from "./openai-ws-connection.js";
 import {
   buildOpenAIWebSocketResponseCreatePayload,
@@ -26,7 +27,6 @@ import {
   releaseWsSession,
 } from "./openai-ws-stream.js";
 import type { InputItem, ResponseCreateEvent } from "./openai-ws-types.js";
-import { log } from "./pi-embedded-runner/logger.js";
 import { SYSTEM_PROMPT_CACHE_BOUNDARY } from "./system-prompt-cache-boundary.js";
 
 // ─────────────────────────────────────────────────────────────────────────────

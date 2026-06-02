@@ -168,21 +168,21 @@ describe("Config-to-code integrity", () => {
 describe("Fork wiring integrity", () => {
   it("attempt.ts imports fork/attempt-hooks", async () => {
     const source = await import("node:fs").then((fs) =>
-      fs.readFileSync(resolve(srcRoot, "agents/pi-embedded-runner/run/attempt.ts"), "utf-8"),
+      fs.readFileSync(resolve(srcRoot, "agents/embedded-agent-runner/run/attempt.ts"), "utf-8"),
     );
     expect(source).toContain("fork/attempt-hooks");
   });
 
   it("attempt.ts has FORK: persona block injection", async () => {
     const source = await import("node:fs").then((fs) =>
-      fs.readFileSync(resolve(srcRoot, "agents/pi-embedded-runner/run/attempt.ts"), "utf-8"),
+      fs.readFileSync(resolve(srcRoot, "agents/embedded-agent-runner/run/attempt.ts"), "utf-8"),
     );
     expect(source).toMatch(/FORK:.*persona block/i);
   });
 
   it("attempt.ts has FORK: post-turn processing", async () => {
     const source = await import("node:fs").then((fs) =>
-      fs.readFileSync(resolve(srcRoot, "agents/pi-embedded-runner/run/attempt.ts"), "utf-8"),
+      fs.readFileSync(resolve(srcRoot, "agents/embedded-agent-runner/run/attempt.ts"), "utf-8"),
     );
     expect(source).toMatch(/FORK:.*post-turn/i);
   });
@@ -196,7 +196,7 @@ describe("Fork wiring integrity", () => {
 
   it("run.ts has FORK: per-profile fallback error events", async () => {
     const source = await import("node:fs").then((fs) =>
-      fs.readFileSync(resolve(srcRoot, "agents/pi-embedded-runner/run.ts"), "utf-8"),
+      fs.readFileSync(resolve(srcRoot, "agents/embedded-agent-runner/run.ts"), "utf-8"),
     );
     expect(source).toMatch(/FORK:.*fallback error/i);
   });

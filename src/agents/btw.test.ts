@@ -50,7 +50,7 @@ vi.mock("./pi-model-discovery.js", () => ({
   discoverModels: (...args: unknown[]) => discoverModelsMock(...args),
 }));
 
-vi.mock("./pi-embedded-runner/model.js", () => ({
+vi.mock("./embedded-agent-runner/model.js", () => ({
   resolveModelWithRegistry: (...args: unknown[]) => resolveModelWithRegistryMock(...args),
 }));
 
@@ -59,7 +59,7 @@ vi.mock("./model-auth.js", () => ({
   requireApiKey: (...args: unknown[]) => requireApiKeyMock(...args),
 }));
 
-vi.mock("./pi-embedded-runner/runs.js", () => ({
+vi.mock("./embedded-agent-runner/runs.js", () => ({
   getActiveEmbeddedRunSnapshot: (...args: unknown[]) => getActiveEmbeddedRunSnapshotMock(...args),
 }));
 

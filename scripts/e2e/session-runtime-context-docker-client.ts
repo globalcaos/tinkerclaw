@@ -9,7 +9,7 @@ import { SessionManager } from "@mariozechner/pi-coding-agent";
 import {
   queueRuntimeContextForNextTurn,
   resolveRuntimeContextPromptParts,
-} from "../../dist/agents/pi-embedded-runner/run/runtime-context-prompt.js";
+} from "../../dist/agents/embedded-agent-runner/run/runtime-context-prompt.js";
 
 type TranscriptEntry = {
   type?: string;

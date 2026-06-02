@@ -133,7 +133,7 @@ vi.mock("../agents/model-catalog.js", () => ({
   loadModelCatalog,
 }));
 
-vi.mock("../agents/pi-embedded-runner/model.js", () => ({
+vi.mock("../agents/embedded-agent-runner/model.js", () => ({
   resolveModelWithRegistry: ({
     provider,
     modelId,

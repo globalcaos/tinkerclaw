@@ -1,7 +1,7 @@
+import { getActiveEmbeddedRunCount } from "../agents/embedded-agent-runner/run-state.js";
+import { abortEmbeddedPiRun } from "../agents/embedded-agent-runner/runs.js";
 import { resetModelCatalogCache } from "../agents/model-catalog.js";
 import { disposeAllSessionMcpRuntimes } from "../agents/pi-bundle-mcp-tools.js";
-import { getActiveEmbeddedRunCount } from "../agents/pi-embedded-runner/run-state.js";
-import { abortEmbeddedPiRun } from "../agents/pi-embedded-runner/runs.js";
 import { getTotalPendingReplies } from "../auto-reply/reply/dispatcher-registry.js";
 import type { CliDeps } from "../cli/deps.types.js";
 import { isRestartEnabled } from "../config/commands.flags.js";

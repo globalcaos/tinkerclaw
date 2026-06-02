@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveExtraParams } from "./pi-embedded-runner/extra-params.js";
+import { resolveExtraParams } from "./embedded-agent-runner/extra-params.js";
 
 describe("resolveExtraParams", () => {
   it("returns undefined with no model config", () => {

@@ -5,12 +5,12 @@ import type {
   ContextEnginePromptCacheInfo,
   ContextEngineRuntimeContext,
 } from "../../context-engine/types.js";
-import { runContextEngineMaintenance } from "../pi-embedded-runner/context-engine-maintenance.js";
+import { runContextEngineMaintenance } from "../embedded-agent-runner/context-engine-maintenance.js";
 import {
   buildAfterTurnRuntimeContext,
   buildAfterTurnRuntimeContextFromUsage,
-} from "../pi-embedded-runner/run/attempt.prompt-helpers.js";
-import type { EmbeddedRunAttemptParams } from "../pi-embedded-runner/run/types.js";
+} from "../embedded-agent-runner/run/attempt.prompt-helpers.js";
+import type { EmbeddedRunAttemptParams } from "../embedded-agent-runner/run/types.js";
 
 export type HarnessContextEngine = ContextEngine;
 

@@ -6,8 +6,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { OpenClawConfig } from "../config/config.js";
 import { redactIdentifier } from "../logging/redact-identifier.js";
 import type { AuthProfileFailureReason } from "./auth-profiles.js";
-import { buildAttemptReplayMetadata } from "./pi-embedded-runner/run/incomplete-turn.js";
-import type { EmbeddedRunAttemptResult } from "./pi-embedded-runner/run/types.js";
+import { buildAttemptReplayMetadata } from "./embedded-agent-runner/run/incomplete-turn.js";
+import type { EmbeddedRunAttemptResult } from "./embedded-agent-runner/run/types.js";
 import {
   installEmbeddedRunnerBackoffE2eMocks,
   installEmbeddedRunnerBaseE2eMocks,
@@ -42,7 +42,7 @@ const installRunEmbeddedMocks = () => {
       };
     },
   });
-  vi.doMock("./pi-embedded-runner/model.js", () => ({
+  vi.doMock("./embedded-agent-runner/model.js", () => ({
     resolveModelAsync: async (provider: string, modelId: string) => ({
       model: {
         id: modelId,
@@ -68,7 +68,7 @@ const installRunEmbeddedMocks = () => {
     computeBackoff: (policy, attempt) => computeBackoffMock(policy, attempt),
     sleepWithAbort: (ms, abortSignal) => sleepWithAbortMock(ms, abortSignal),
   });
-  vi.doMock("./pi-embedded-runner/compact.js", () => ({
+  vi.doMock("./embedded-agent-runner/compact.js", () => ({
     compactEmbeddedPiSessionDirect: vi.fn(async () => {
       throw new Error("compact should not run in auth profile rotation tests");
     }),
@@ -82,7 +82,7 @@ const installRunEmbeddedMocks = () => {
   });
 };
 
-let runEmbeddedPiAgent: typeof import("./pi-embedded-runner/run.js").runEmbeddedPiAgent;
+let runEmbeddedPiAgent: typeof import("./embedded-agent-runner/run.js").runEmbeddedPiAgent;
 let createDiagnosticLogRecordCaptureFn: typeof import("../logging/test-helpers/diagnostic-log-capture.js").createDiagnosticLogRecordCapture;
 let cleanupLogCapture: (() => void) | undefined;
 let resetLoggerFn: typeof import("../logging/logger.js").resetLogger;
@@ -92,7 +92,7 @@ const originalFetch = globalThis.fetch;
 beforeAll(async () => {
   vi.resetModules();
   installRunEmbeddedMocks();
-  ({ runEmbeddedPiAgent } = await import("./pi-embedded-runner/run.js"));
+  ({ runEmbeddedPiAgent } = await import("./embedded-agent-runner/run.js"));
   ({ createDiagnosticLogRecordCapture: createDiagnosticLogRecordCaptureFn } =
     await import("../logging/test-helpers/diagnostic-log-capture.js"));
   ({ resetLogger: resetLoggerFn, setLoggerOverride: setLoggerOverrideFn } =

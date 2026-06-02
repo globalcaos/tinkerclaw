@@ -3,8 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { buildAttemptReplayMetadata } from "../pi-embedded-runner/run/incomplete-turn.js";
-import type { EmbeddedRunAttemptResult } from "../pi-embedded-runner/run/types.js";
+import { buildAttemptReplayMetadata } from "../embedded-agent-runner/run/incomplete-turn.js";
+import type { EmbeddedRunAttemptResult } from "../embedded-agent-runner/run/types.js";
 
 export type EmbeddedPiRunnerTestWorkspace = {
   tempRoot: string;

@@ -4,7 +4,7 @@ import {
   clearActiveEmbeddedRun,
   setActiveEmbeddedRun,
   type EmbeddedPiQueueHandle,
-} from "../agents/pi-embedded-runner/runs.js";
+} from "../agents/embedded-agent-runner/runs.js";
 import { __testing } from "./server-reload-handlers.js";
 
 describe("gateway reload recovery handlers", () => {

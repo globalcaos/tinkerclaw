@@ -22,6 +22,9 @@ import { prepareProviderRuntimeAuth } from "../plugins/provider-runtime.js";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "./agent-scope.js";
 import { resolveSessionAuthProfileOverride } from "./auth-profiles/session-override.js";
+import { resolveModelWithRegistry } from "./embedded-agent-runner/model.js";
+import { getActiveEmbeddedRunSnapshot } from "./embedded-agent-runner/runs.js";
+import { streamWithPayloadPatch } from "./embedded-agent-runner/stream-payload-utils.js";
 import {
   resolveImageSanitizationLimits,
   type ImageSanitizationLimits,
@@ -29,9 +32,6 @@ import {
 import { getApiKeyForModel, requireApiKey } from "./model-auth.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
 import { EmbeddedBlockChunker, type BlockReplyChunking } from "./pi-embedded-block-chunker.js";
-import { resolveModelWithRegistry } from "./pi-embedded-runner/model.js";
-import { getActiveEmbeddedRunSnapshot } from "./pi-embedded-runner/runs.js";
-import { streamWithPayloadPatch } from "./pi-embedded-runner/stream-payload-utils.js";
 import { discoverAuthStorage, discoverModels } from "./pi-model-discovery.js";
 import { registerProviderStreamForModel } from "./provider-stream.js";
 import { stripToolResultDetails } from "./session-transcript-repair.js";

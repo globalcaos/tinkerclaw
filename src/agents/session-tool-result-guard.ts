@@ -12,11 +12,11 @@ import type {
 } from "../plugins/types.js";
 import { emitSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
-import { formatContextLimitTruncationNotice } from "./pi-embedded-runner/tool-result-context-guard.js";
+import { formatContextLimitTruncationNotice } from "./embedded-agent-runner/tool-result-context-guard.js";
 import {
   DEFAULT_MAX_LIVE_TOOL_RESULT_CHARS,
   truncateToolResultMessage,
-} from "./pi-embedded-runner/tool-result-truncation.js";
+} from "./embedded-agent-runner/tool-result-truncation.js";
 import {
   getRawSessionAppendMessage,
   setRawSessionAppendMessage,

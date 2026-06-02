@@ -15,7 +15,7 @@ const UPDATE_RESPAWN_HEALTH_POLL_MS = 200;
 type GatewayRunSignalAction = "stop" | "restart";
 type RestartDrainTimeoutMs = number | undefined;
 
-type EmbeddedRunsModule = typeof import("../../agents/pi-embedded-runner/runs.js");
+type EmbeddedRunsModule = typeof import("../../agents/embedded-agent-runner/runs.js");
 type RuntimeConfigModule = typeof import("../../config/config.js");
 type ProcessRespawnModule = typeof import("../../infra/process-respawn.js");
 type RestartSentinelModule = typeof import("../../infra/restart-sentinel.js");
@@ -40,7 +40,7 @@ let commandQueueModule: Promise<CommandQueueModule> | undefined;
 let runtimeInternalModule: Promise<RuntimeInternalModule> | undefined;
 
 const loadEmbeddedRunsModule = () =>
-  (embeddedRunsModule ??= import("../../agents/pi-embedded-runner/runs.js"));
+  (embeddedRunsModule ??= import("../../agents/embedded-agent-runner/runs.js"));
 const loadRuntimeConfigModule = () => (runtimeConfigModule ??= import("../../config/config.js"));
 const loadProcessRespawnModule = () =>
   (processRespawnModule ??= import("../../infra/process-respawn.js"));

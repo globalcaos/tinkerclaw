@@ -123,7 +123,7 @@ Each layer catches what the layer above missed. Unit tests catch logic bugs; bib
 
 ## Don't regress
 
-- **Don't test upstream code.** If a test file imports from `src/agents/pi-embedded-runner/run/llm-idle-timeout.ts` (upstream-owned), the test must have a written justification in its header.
+- **Don't test upstream code.** If a test file imports from `src/agents/embedded-agent-runner/run/llm-idle-timeout.ts` (upstream-owned), the test must have a written justification in its header.
 - **Don't put live RPCs in unit tests.** Unit tests run without a gateway. Anything that needs a gateway is bible:invariants, not vitest.
 - **Don't test private internals.** Test the _public contract_ of the module. If the test breaks during refactor of internals, the test was wrong.
 - **Don't write tests with sleeps.** Use vitest's fake timers or condition-based waiting (`vi.waitFor`). Sleeps flake on slow CI.

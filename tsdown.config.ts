@@ -260,10 +260,10 @@ function buildDockerE2eHarnessEntries(): Record<string, string> {
     // internal module they assert must have a stable package dist entry.
     "agents/pi-bundle-mcp-materialize": "src/agents/pi-bundle-mcp-materialize.ts",
     "agents/pi-bundle-mcp-runtime": "src/agents/pi-bundle-mcp-runtime.ts",
-    "agents/pi-embedded-runner/effective-tool-policy":
-      "src/agents/pi-embedded-runner/effective-tool-policy.ts",
-    "agents/pi-embedded-runner/run/runtime-context-prompt":
-      "src/agents/pi-embedded-runner/run/runtime-context-prompt.ts",
+    "agents/embedded-agent-runner/effective-tool-policy":
+      "src/agents/embedded-agent-runner/effective-tool-policy.ts",
+    "agents/embedded-agent-runner/run/runtime-context-prompt":
+      "src/agents/embedded-agent-runner/run/runtime-context-prompt.ts",
     "auto-reply/reply/commands-crestodian": "src/auto-reply/reply/commands-crestodian.ts",
     "cli/run-main": "src/cli/run-main.ts",
     "config/config": "src/config/config.ts",

@@ -1,7 +1,7 @@
 export type AgentHarnessSupportContext = {
   provider: string;
   modelId?: string;
-  requestedRuntime: import("../pi-embedded-runner/runtime.js").EmbeddedAgentRuntime;
+  requestedRuntime: import("../embedded-agent-runner/runtime.js").EmbeddedAgentRuntime;
 };
 
 export type AgentHarnessSupport =
@@ -9,13 +9,13 @@ export type AgentHarnessSupport =
   | { supported: false; reason?: string };
 
 export type AgentHarnessAttemptParams =
-  import("../pi-embedded-runner/run/types.js").EmbeddedRunAttemptParams;
+  import("../embedded-agent-runner/run/types.js").EmbeddedRunAttemptParams;
 export type AgentHarnessAttemptResult =
-  import("../pi-embedded-runner/run/types.js").EmbeddedRunAttemptResult;
+  import("../embedded-agent-runner/run/types.js").EmbeddedRunAttemptResult;
 export type AgentHarnessCompactParams =
-  import("../pi-embedded-runner/compact.types.js").CompactEmbeddedPiSessionParams;
+  import("../embedded-agent-runner/compact.types.js").CompactEmbeddedPiSessionParams;
 export type AgentHarnessCompactResult =
-  import("../pi-embedded-runner/types.js").EmbeddedPiCompactResult;
+  import("../embedded-agent-runner/types.js").EmbeddedPiCompactResult;
 export type AgentHarnessResetParams = {
   sessionId?: string;
   sessionKey?: string;

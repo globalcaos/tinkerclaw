@@ -40,6 +40,7 @@ import {
   encodeAssistantTextSignature,
   normalizeAssistantPhase,
 } from "../shared/chat-message-content.js";
+import { log } from "./embedded-agent-runner/logger.js";
 import { resolveOpenAIStrictToolSetting } from "./openai-strict-tool-setting.js";
 import {
   getOpenAIWebSocketErrorDetails,
@@ -60,7 +61,6 @@ import {
   planOpenAIWebSocketRequestPayload,
 } from "./openai-ws-request.js";
 import type { ResponseCreateEvent } from "./openai-ws-types.js";
-import { log } from "./pi-embedded-runner/logger.js";
 import { resolveProviderEndpoint } from "./provider-attribution.js";
 import { normalizeProviderId } from "./provider-id.js";
 import { createBoundaryAwareStreamFnForModel } from "./provider-transport-stream.js";

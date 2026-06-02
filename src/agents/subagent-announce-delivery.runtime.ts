@@ -16,4 +16,4 @@ export {
   isEmbeddedPiRunActive,
   queueEmbeddedPiMessage,
   resolveActiveEmbeddedRunSessionId,
-} from "./pi-embedded-runner/runs.js";
+} from "./embedded-agent-runner/runs.js";

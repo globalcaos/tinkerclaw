@@ -1,4 +1,4 @@
-import type { CompactEmbeddedPiSessionDirect } from "../agents/pi-embedded-runner/compact.runtime.types.js";
+import type { CompactEmbeddedPiSessionDirect } from "../agents/embedded-agent-runner/compact.runtime.types.js";
 import { normalizeStructuredPromptSection } from "../agents/prompt-cache-stability.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
 import { buildMemoryPromptSection } from "../plugins/memory-state.js";
@@ -13,7 +13,7 @@ let compactRuntimePromise: Promise<CompactRuntimeModule> | null = null;
 function loadCompactRuntime(): Promise<CompactRuntimeModule> {
   // Use a literal specifier so the bundler rewrites the runtime chunk path
   // instead of resolving a source-tree path at runtime.
-  compactRuntimePromise ??= import("../agents/pi-embedded-runner/compact.runtime.js");
+  compactRuntimePromise ??= import("../agents/embedded-agent-runner/compact.runtime.js");
   return compactRuntimePromise;
 }
 

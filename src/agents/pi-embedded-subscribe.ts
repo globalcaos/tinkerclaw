@@ -10,17 +10,17 @@ import type { InlineCodeState } from "../markdown/code-spans.js";
 import { buildCodeSpanIndex, createInlineCodeState } from "../markdown/code-spans.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { hasOrphanReasoningCloseBoundary } from "../shared/text/reasoning-tags.js";
+import {
+  createEmbeddedRunReplayState,
+  mergeEmbeddedRunReplayState,
+} from "./embedded-agent-runner/replay-state.js";
+import type { EmbeddedRunLivenessState } from "./embedded-agent-runner/types.js";
 import { EmbeddedBlockChunker } from "./pi-embedded-block-chunker.js";
 import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
 } from "./pi-embedded-helpers.js";
 import type { BlockReplyPayload } from "./pi-embedded-payloads.js";
-import {
-  createEmbeddedRunReplayState,
-  mergeEmbeddedRunReplayState,
-} from "./pi-embedded-runner/replay-state.js";
-import type { EmbeddedRunLivenessState } from "./pi-embedded-runner/types.js";
 import { createEmbeddedPiSessionEventHandler } from "./pi-embedded-subscribe.handlers.js";
 import {
   consumePendingAssistantReplyDirectivesIntoReply,

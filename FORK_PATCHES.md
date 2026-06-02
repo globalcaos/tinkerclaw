@@ -70,25 +70,25 @@ Three independent root causes surfaced while debugging "Jarvis silent after
 prompts" during the session on 2026-04-15. All three are source-patched
 **and** wired so the next upstream merge auto-restores them.
 
-| #   | File                                                    | Fix summary                                                         | Patch fn                       |
-| --- | ------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------ |
-| 1   | src/agents/pi-embedded-runner/run/assistant-failover.ts | `surface_error` must throw a FailoverError, not fall through to     | patchSurfaceErrorThrow         |
-|     |                                                         | `continue_normal`. Original branch logs the decision and returns,   |                                |
-|     |                                                         | leaving the UI with no error bubble when no profile rotation or     |                                |
-|     |                                                         | fallback model is available. Mirrors the existing fallback_model    |                                |
-|     |                                                         | error-construction path.                                            |                                |
-| 2   | src/agents/auth-profiles/proactive-refresh.ts           | Always consult the credential file FIRST when present, before       | patchProactiveRefreshDriftSync |
-|     |                                                         | checking the store's own `expires`. Claude Code is single-writer    |                                |
-|     |                                                         | for the credential file and rotates tokens independently of the     |                                |
-|     |                                                         | 15-minute tick; trusting store expiry alone lets a server-revoked   |                                |
-|     |                                                         | access token sit in the store looking valid, producing 60-second    |                                |
-|     |                                                         | hangs on API calls instead of clean 401s.                           |                                |
-| 3   | scripts/stage-bundled-plugin-runtime.mjs                | `shouldCopyRuntimeFile` now also copies `.md`/`.txt`/`.yaml`/`.yml` | patchStagingRuntimeAssets      |
-|     |                                                         | runtime assets alongside manifest files. Without this, extensions   |                                |
-|     |                                                         | that ship text assets via `readFileSync(join(extensionDir, …))` —   |                                |
-|     |                                                         | such as tinkerclaw-fractal-reflection reading `fractal-prompt.md` — |                                |
-|     |                                                         | silently lose them in dist-runtime and fall back to hard-coded      |                                |
-|     |                                                         | stubs, breaking extension behavior.                                 |                                |
+| #   | File                                                       | Fix summary                                                         | Patch fn                       |
+| --- | ---------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------ |
+| 1   | src/agents/embedded-agent-runner/run/assistant-failover.ts | `surface_error` must throw a FailoverError, not fall through to     | patchSurfaceErrorThrow         |
+|     |                                                            | `continue_normal`. Original branch logs the decision and returns,   |                                |
+|     |                                                            | leaving the UI with no error bubble when no profile rotation or     |                                |
+|     |                                                            | fallback model is available. Mirrors the existing fallback_model    |                                |
+|     |                                                            | error-construction path.                                            |                                |
+| 2   | src/agents/auth-profiles/proactive-refresh.ts              | Always consult the credential file FIRST when present, before       | patchProactiveRefreshDriftSync |
+|     |                                                            | checking the store's own `expires`. Claude Code is single-writer    |                                |
+|     |                                                            | for the credential file and rotates tokens independently of the     |                                |
+|     |                                                            | 15-minute tick; trusting store expiry alone lets a server-revoked   |                                |
+|     |                                                            | access token sit in the store looking valid, producing 60-second    |                                |
+|     |                                                            | hangs on API calls instead of clean 401s.                           |                                |
+| 3   | scripts/stage-bundled-plugin-runtime.mjs                   | `shouldCopyRuntimeFile` now also copies `.md`/`.txt`/`.yaml`/`.yml` | patchStagingRuntimeAssets      |
+|     |                                                            | runtime assets alongside manifest files. Without this, extensions   |                                |
+|     |                                                            | that ship text assets via `readFileSync(join(extensionDir, …))` —   |                                |
+|     |                                                            | such as tinkerclaw-fractal-reflection reading `fractal-prompt.md` — |                                |
+|     |                                                            | silently lose them in dist-runtime and fall back to hard-coded      |                                |
+|     |                                                            | stubs, breaking extension behavior.                                 |                                |
 
 **Symptoms these fixed:**
 
@@ -156,7 +156,7 @@ Cognitive extraction status:
 - `src/memory/synapse/`, `src/memory/cortex/`, `src/memory/limbic/` — DELETED (extracted to extensions)
 - `src/memory/**` PRESERVE rule — still valid for remaining files (embeddings-ollama.ts, embedding-model-limits.ts)
 - `src/agents/system-prompt.ts` — STILL IN TIER1 (personaBlock injection remains inline, gated by feature flag)
-- `src/agents/pi-embedded-runner/run.ts` — STILL IN TIER1 (per-profile fallback events not extracted)
+- `src/agents/embedded-agent-runner/run.ts` — STILL IN TIER1 (per-profile fallback events not extracted)
 
 Dry-run merge (2026-03-28): 185 commits behind upstream, 4 conflicts, no tags pending.
 
@@ -167,12 +167,12 @@ These files are resolved with `--theirs` (accept upstream version), then
 
 | File                                                          | Patch Function            | Notes                                                                                         |
 | ------------------------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| src/agents/pi-embedded-runner/run/attempt.ts                  | patchAttempt              | 2 imports + 4 hook call sites (persona, reinject, intercept, onTurnComplete)                  |
+| src/agents/embedded-agent-runner/run/attempt.ts               | patchAttempt              | 2 imports + 4 hook call sites (persona, reinject, intercept, onTurnComplete)                  |
 | src/agents/system-prompt.ts                                   | patchSystemPrompt         | personaBlock parameter + injection                                                            |
-| src/agents/pi-embedded-runner/run.ts                          | patchRun                  | Per-profile fallback error events (4 emission sites)                                          |
+| src/agents/embedded-agent-runner/run.ts                       | patchRun                  | Per-profile fallback error events (4 emission sites)                                          |
 | src/agents/pi-embedded-subscribe.types.ts                     | patchSubscribeTypes       | authProfileId field                                                                           |
-| src/agents/pi-embedded-helpers/errors.ts                      | patchErrors               | Billing cap classification                                                                    |
-| src/agents/pi-embedded-helpers/failover-matches.ts            | patchFailoverMatches      | Billing pattern in failover array                                                             |
+| src/agents/embedded-agent-helpers/errors.ts                   | patchErrors               | Billing cap classification                                                                    |
+| src/agents/embedded-agent-helpers/failover-matches.ts         | patchFailoverMatches      | Billing pattern in failover array                                                             |
 | src/gateway/server-methods/sessions.ts                        | patchSessions             | Webchat delete bypass                                                                         |
 | extensions/whatsapp/src/auto-reply/monitor.ts                 | patchMonitor              | syncFullHistory + ActiveWebListener                                                           |
 | extensions/whatsapp/src/auto-reply/monitor/process-message.ts | patchProcessMessage       | Thinking reaction + offline recovery hooks                                                    |

@@ -13,8 +13,8 @@ import {
   applyExtraParamsToAgent,
   resolveExtraParams,
   resolvePreparedExtraParams,
-} from "./pi-embedded-runner/extra-params.js";
-import { createOpenAIThinkingLevelWrapper } from "./pi-embedded-runner/openai-stream-wrappers.js";
+} from "./embedded-agent-runner/extra-params.js";
+import { createOpenAIThinkingLevelWrapper } from "./embedded-agent-runner/openai-stream-wrappers.js";
 import { supportsGptParallelToolCallsPayload } from "./provider-api-families.js";
 
 beforeEach(() => {

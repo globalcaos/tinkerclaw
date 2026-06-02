@@ -80,7 +80,7 @@ vi.mock("../plugins/provider-runtime.js", async () => ({
   prepareProviderDynamicModel: prepareProviderDynamicModelMock,
 }));
 
-vi.mock("../agents/pi-embedded-runner/model.js", () => ({
+vi.mock("../agents/embedded-agent-runner/model.js", () => ({
   resolveModelWithRegistry: resolveModelWithRegistryMock,
 }));
 

@@ -1,7 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
+import type { ClientToolDefinition } from "./embedded-agent-runner/run/params.js";
 import {
   CLIENT_TOOL_NAME_CONFLICT_PREFIX,
   createClientToolNameConflictError,

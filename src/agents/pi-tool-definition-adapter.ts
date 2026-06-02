@@ -8,7 +8,7 @@ import { logDebug, logError } from "../logger.js";
 import { redactToolDetail } from "../logging/redact.js";
 import { isPlainObject } from "../utils.js";
 import { sanitizeForConsole } from "./console-sanitize.js";
-import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
+import type { ClientToolDefinition } from "./embedded-agent-runner/run/params.js";
 import type { HookContext } from "./pi-tools.before-tool-call.js";
 import {
   buildBlockedToolResult,

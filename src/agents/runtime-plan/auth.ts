@@ -1,5 +1,5 @@
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import { normalizeEmbeddedAgentRuntime } from "../pi-embedded-runner/runtime.js";
+import { normalizeEmbeddedAgentRuntime } from "../embedded-agent-runner/runtime.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
 import type { AgentRuntimeAuthPlan } from "./types.js";
 

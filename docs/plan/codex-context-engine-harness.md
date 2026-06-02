@@ -36,7 +36,7 @@ OpenClaw-level compaction policy as far as the Codex app-server boundary allows.
 The embedded run loop resolves the configured context engine once per run before
 selecting a concrete low-level harness:
 
-- `src/agents/pi-embedded-runner/run.ts`
+- `src/agents/embedded-agent-runner/run.ts`
   - initializes context-engine plugins
   - calls `resolveContextEngine(params.config)`
   - passes `contextEngine` and `contextTokenBudget` into
@@ -44,7 +44,7 @@ selecting a concrete low-level harness:
 
 `runEmbeddedAttemptWithBackend(...)` delegates to the selected agent harness:
 
-- `src/agents/pi-embedded-runner/run/backend.ts`
+- `src/agents/embedded-agent-runner/run/backend.ts`
 - `src/agents/harness/selection.ts`
 
 The Codex app-server harness is registered by the bundled Codex plugin:
@@ -75,9 +75,9 @@ Embedded PI attempts call the context-engine lifecycle directly:
 
 Relevant PI code:
 
-- `src/agents/pi-embedded-runner/run/attempt.ts`
-- `src/agents/pi-embedded-runner/run/attempt.context-engine-helpers.ts`
-- `src/agents/pi-embedded-runner/context-engine-maintenance.ts`
+- `src/agents/embedded-agent-runner/run/attempt.ts`
+- `src/agents/embedded-agent-runner/run/attempt.context-engine-helpers.ts`
+- `src/agents/embedded-agent-runner/context-engine-maintenance.ts`
 
 Codex app-server attempts currently run generic agent-harness hooks and mirror
 the transcript, but do not call `params.contextEngine.bootstrap`,
@@ -160,9 +160,9 @@ This work changes what happens after the Codex harness is selected.
 
 Today the reusable lifecycle helpers live under the PI runner:
 
-- `src/agents/pi-embedded-runner/run/attempt.context-engine-helpers.ts`
-- `src/agents/pi-embedded-runner/run/attempt.prompt-helpers.ts`
-- `src/agents/pi-embedded-runner/context-engine-maintenance.ts`
+- `src/agents/embedded-agent-runner/run/attempt.context-engine-helpers.ts`
+- `src/agents/embedded-agent-runner/run/attempt.prompt-helpers.ts`
+- `src/agents/embedded-agent-runner/context-engine-maintenance.ts`
 
 Codex should not import from an implementation path whose name implies PI if we
 can avoid it.

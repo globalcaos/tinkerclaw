@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runExtraParamsPayloadCase } from "./pi-embedded-runner-extraparams.test-support.js";
-import { __testing as extraParamsTesting } from "./pi-embedded-runner/extra-params.js";
+import { __testing as extraParamsTesting } from "./embedded-agent-runner/extra-params.js";
 import {
   createMoonshotThinkingWrapper,
   resolveMoonshotThinkingKeep,
   resolveMoonshotThinkingType,
-} from "./pi-embedded-runner/moonshot-stream-wrappers.js";
+} from "./embedded-agent-runner/moonshot-stream-wrappers.js";
+import { runExtraParamsPayloadCase } from "./pi-embedded-runner-extraparams.test-support.js";
 
 beforeEach(() => {
   extraParamsTesting.setProviderRuntimeDepsForTest({

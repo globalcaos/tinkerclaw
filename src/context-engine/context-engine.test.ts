@@ -31,7 +31,7 @@ const { compactEmbeddedPiSessionDirectMock } = vi.hoisted(() => ({
   compactEmbeddedPiSessionDirectMock: vi.fn(),
 }));
 
-vi.mock("../agents/pi-embedded-runner/compact.runtime.js", () => ({
+vi.mock("../agents/embedded-agent-runner/compact.runtime.js", () => ({
   compactEmbeddedPiSessionDirect: compactEmbeddedPiSessionDirectMock,
 }));
 

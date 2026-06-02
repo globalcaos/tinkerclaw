@@ -11,7 +11,7 @@ import {
   registerCompactionProvider,
 } from "../../plugins/compaction-provider.js";
 import * as compactionModule from "../compaction.js";
-import { buildEmbeddedExtensionFactories } from "../pi-embedded-runner/extensions.js";
+import { buildEmbeddedExtensionFactories } from "../embedded-agent-runner/extensions.js";
 import { castAgentMessage } from "../test-helpers/agent-message-fixtures.js";
 import {
   consumeCompactionSafeguardCancelReason,

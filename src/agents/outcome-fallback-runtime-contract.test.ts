@@ -5,8 +5,8 @@ import {
 } from "openclaw/plugin-sdk/agent-runtime-test-contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { classifyEmbeddedPiRunResultForModelFallback } from "./embedded-agent-runner/result-fallback-classifier.js";
 import { runWithModelFallback } from "./model-fallback.js";
-import { classifyEmbeddedPiRunResultForModelFallback } from "./pi-embedded-runner/result-fallback-classifier.js";
 
 vi.mock("./auth-profiles/source-check.js", () => ({
   hasAnyAuthProfileStoreSource: () => false,

@@ -34,7 +34,7 @@ The rules are short on purpose. The point is that you can load this file once at
 
 ### 2. Folder shape "screams" what the app does, not how it's built
 
-**Why.** A tree organized by file type (`controllers/`, `services/`, `repos/`) tells you the tech stack but hides the domain. A tree organized by concern (`extensions/tinkerclaw-whatsapp/`, `src/gateway/server-methods/`, `src/agents/pi-embedded-runner/`) tells you what the system DOES. New contributors and AI agents both navigate by domain first; the second tree wins.
+**Why.** A tree organized by file type (`controllers/`, `services/`, `repos/`) tells you the tech stack but hides the domain. A tree organized by concern (`extensions/tinkerclaw-whatsapp/`, `src/gateway/server-methods/`, `src/agents/embedded-agent-runner/`) tells you what the system DOES. New contributors and AI agents both navigate by domain first; the second tree wins.
 
 **How to apply.** New domains get their own folder. Within a folder, you may layer (entry-point / domain / data-access) if the domain warrants it — but only when the domain is big enough for the layering to add clarity rather than indirection.
 

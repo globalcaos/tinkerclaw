@@ -240,18 +240,16 @@ vi.mock("/src/agents/pi-embedded.js", async () => {
   );
 });
 
-vi.mock("../agents/pi-embedded-runner/runs.js", async () => {
-  return await importEmbeddedRunMockModule<typeof import("../agents/pi-embedded-runner/runs.js")>(
-    "../agents/pi-embedded-runner/runs.js",
-    { includeActiveCount: true },
-  );
+vi.mock("../agents/embedded-agent-runner/runs.js", async () => {
+  return await importEmbeddedRunMockModule<
+    typeof import("../agents/embedded-agent-runner/runs.js")
+  >("../agents/embedded-agent-runner/runs.js", { includeActiveCount: true });
 });
 
-vi.mock("/src/agents/pi-embedded-runner/runs.js", async () => {
-  return await importEmbeddedRunMockModule<typeof import("../agents/pi-embedded-runner/runs.js")>(
-    "../agents/pi-embedded-runner/runs.js",
-    { includeActiveCount: true },
-  );
+vi.mock("/src/agents/embedded-agent-runner/runs.js", async () => {
+  return await importEmbeddedRunMockModule<
+    typeof import("../agents/embedded-agent-runner/runs.js")
+  >("../agents/embedded-agent-runner/runs.js", { includeActiveCount: true });
 });
 
 vi.mock("../commands/health.js", () => ({

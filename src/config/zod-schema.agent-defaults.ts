@@ -166,7 +166,7 @@ export const AgentDefaultsSchema = z
     compaction: z
       .object({
         // FORK: "engram" routes compaction through the engram memory subsystem
-        // (resolveCompactionMode in pi-embedded-runner/extensions.ts). Required
+        // (resolveCompactionMode in embedded-agent-runner/extensions.ts). Required
         // for the fork's engram-based compaction pipeline.
         mode: z
           .union([z.literal("default"), z.literal("safeguard"), z.literal("engram")])

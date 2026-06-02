@@ -22,7 +22,7 @@ vi.mock("../../agents/model-selection.js", () => ({
   resolveDefaultModelForAgent,
 }));
 
-vi.mock("../../agents/pi-embedded-runner/model.js", () => ({
+vi.mock("../../agents/embedded-agent-runner/model.js", () => ({
   resolveModelAsync,
 }));
 

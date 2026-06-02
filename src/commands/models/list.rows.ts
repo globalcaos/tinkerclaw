@@ -22,7 +22,7 @@ import { isLocalBaseUrl, modelKey } from "./shared.js";
 
 type ConfiguredByKey = Map<string, ConfiguredEntry>;
 type ModelCatalogModule = typeof import("../../agents/model-catalog.js");
-type ModelResolverModule = typeof import("../../agents/pi-embedded-runner/model.js");
+type ModelResolverModule = typeof import("../../agents/embedded-agent-runner/model.js");
 type ProfileListModule = typeof import("../../agents/auth-profiles/profile-list.js");
 type ProviderCatalogModule = typeof import("./list.provider-catalog.js");
 type SyntheticAuthModule = typeof import("../../plugins/synthetic-auth.runtime.js");
@@ -55,7 +55,7 @@ function loadModelCatalogModule(): Promise<ModelCatalogModule> {
 }
 
 function loadModelResolverModule(): Promise<ModelResolverModule> {
-  modelResolverModulePromise ??= import("../../agents/pi-embedded-runner/model.js");
+  modelResolverModulePromise ??= import("../../agents/embedded-agent-runner/model.js");
   return modelResolverModulePromise;
 }
 

@@ -41,8 +41,8 @@ OpenClaw uses the pi SDK to embed an AI coding agent into its messaging gateway 
 
 ```
 src/agents/
-├── pi-embedded-runner.ts          # Re-exports from pi-embedded-runner/
-├── pi-embedded-runner/
+├── pi-embedded-runner.ts          # Re-exports from embedded-agent-runner/
+├── embedded-agent-runner/
 │   ├── run.ts                     # Main entry: runEmbeddedPiAgent()
 │   ├── run/
 │   │   ├── attempt.ts             # Single attempt logic with session setup
@@ -76,7 +76,7 @@ src/agents/
 ├── pi-embedded-block-chunker.ts   # Streaming block reply chunking
 ├── pi-embedded-messaging.ts       # Messaging tool sent tracking
 ├── pi-embedded-helpers.ts         # Error classification, turn validation
-├── pi-embedded-helpers/           # Helper modules
+├── embedded-agent-helpers/           # Helper modules
 ├── pi-embedded-utils.ts           # Formatting utilities
 ├── pi-tools.ts                    # createOpenClawCodingTools()
 ├── pi-tools.abort.ts              # AbortSignal wrapping for tools
@@ -139,7 +139,7 @@ directories instead of under `src/agents/tools`, for example:
 
 ### 1. Running an Embedded Agent
 
-The main entry point is `runEmbeddedPiAgent()` in `pi-embedded-runner/run.ts`:
+The main entry point is `runEmbeddedPiAgent()` in `embedded-agent-runner/run.ts`:
 
 ```typescript
 import { runEmbeddedPiAgent } from "./agents/pi-embedded-runner.js";
@@ -358,7 +358,7 @@ const rotated = await advanceAuthProfile();
 ### Model resolution
 
 ```typescript
-import { resolveModel } from "./pi-embedded-runner/model.js";
+import { resolveModel } from "./embedded-agent-runner/model.js";
 
 const { model, error, authStorage, modelRegistry } = resolveModel(
   provider,
@@ -554,7 +554,7 @@ Pi integration coverage spans these suites:
 - `src/agents/pi-embedded-*.test.ts`
 - `src/agents/pi-embedded-helpers*.test.ts`
 - `src/agents/pi-embedded-runner*.test.ts`
-- `src/agents/pi-embedded-runner/**/*.test.ts`
+- `src/agents/embedded-agent-runner/**/*.test.ts`
 - `src/agents/pi-embedded-subscribe*.test.ts`
 - `src/agents/pi-tools*.test.ts`
 - `src/agents/pi-tool-definition-adapter*.test.ts`

@@ -10,7 +10,7 @@ declare module "@mariozechner/pi-coding-agent" {
   // reads `entry.tokensAfter` in src/gateway/session-utils.fs.ts to render
   // the "before -> after tok" diff in the UI compaction banner (Bible §5.80).
   // The fork's compaction writer DOES persist this field
-  // (src/agents/pi-embedded-runner/compaction-hooks.ts:274), but upstream's
+  // (src/agents/embedded-agent-runner/compaction-hooks.ts:274), but upstream's
   // CompactionEntry<T> only declares summary + tokensBefore — not
   // tokensAfter. esbuild/tsdown skips typecheck so the runtime always
   // worked, but `pnpm build:plugin-sdk:dts` (strict tsgo) failed with
