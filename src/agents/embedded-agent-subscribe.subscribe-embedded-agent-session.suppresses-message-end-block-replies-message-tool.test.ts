@@ -5,12 +5,12 @@ import {
   emitAssistantTextDelta,
   emitAssistantTextEnd,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
 function createBlockReplyHarness(blockReplyBreak: "message_end" | "text_end") {
   const { session, emit } = createStubSessionHarness();
   const onBlockReply = vi.fn();
-  subscribeEmbeddedPiSession({
+  subscribeEmbeddedAgentSession({
     session,
     runId: "run",
     onBlockReply,
@@ -61,7 +61,7 @@ function emitAssistantTextEndBlock(emit: (evt: unknown) => void, text: string) {
   emitAssistantTextEnd({ emit });
 }
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("suppresses message_end block replies when the message tool already sent", async () => {
     const { emit, onBlockReply } = createBlockReplyHarness("message_end");
 

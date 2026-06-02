@@ -1,4 +1,4 @@
-export type { MessagingToolSend } from "./pi-embedded-messaging.types.js";
+export type { MessagingToolSend } from "./embedded-agent-messaging.types.js";
 export {
   compactEmbeddedPiSession,
   compactEmbeddedPiSession as compactEmbeddedAgentSession,

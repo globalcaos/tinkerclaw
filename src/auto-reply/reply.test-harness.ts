@@ -22,7 +22,7 @@ const replyRuntimeMockState = vi.hoisted(() => ({
   } as ReplyRuntimeMocks,
 }));
 
-vi.mock("../agents/pi-embedded.js", () => ({
+vi.mock("../agents/embedded-agent.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   runEmbeddedPiAgent: (...args: unknown[]) =>
     replyRuntimeMockState.mocks.runEmbeddedPiAgent(...args),
@@ -55,7 +55,7 @@ vi.mock("../plugins/runtime/runtime-web-channel-plugin.js", () => ({
   readWebSelfId: (...args: unknown[]) => replyRuntimeMockState.mocks.readWebSelfId(...args),
 }));
 
-vi.mock("../agents/pi-embedded.runtime.js", () => ({
+vi.mock("../agents/embedded-agent.runtime.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
   isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),

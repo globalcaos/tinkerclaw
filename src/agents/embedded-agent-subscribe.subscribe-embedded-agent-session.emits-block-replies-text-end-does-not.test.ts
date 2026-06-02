@@ -98,7 +98,7 @@ function expectSingleBlockReplyText(params: {
   expect(params.subscription.assistantTexts).toEqual([params.text]);
 }
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("emits block replies on text_end and does not duplicate on message_end", async () => {
     const onBlockReply = vi.fn();
     const { emit, subscription } = createTextEndBlockReplyHarness({ onBlockReply });

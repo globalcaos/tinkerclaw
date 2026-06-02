@@ -46,7 +46,7 @@ const FULL_SUITE_CONFIG_WEIGHT = new Map([
   ["test/vitest/vitest.gateway-methods.config.ts", 177],
   ["test/vitest/vitest.commands.config.ts", 175],
   ["test/vitest/vitest.agents-core.config.ts", 170],
-  ["test/vitest/vitest.agents-pi-embedded.config.ts", 169],
+  ["test/vitest/vitest.agents-embedded-agent.config.ts", 169],
   ["test/vitest/vitest.agents-support.config.ts", 168],
   ["test/vitest/vitest.agents-tools.config.ts", 167],
   ["test/vitest/vitest.extension-voice-call.config.ts", 169],

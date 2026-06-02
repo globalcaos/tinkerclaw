@@ -1,6 +1,11 @@
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import { getRateLimitSnapshot } from "./anthropic-ratelimit-store.js";
+import {
+  buildApiErrorObservationFields,
+  buildTextObservationFields,
+  sanitizeForConsole,
+} from "./embedded-agent-error-observation.js";
 import { classifyFailoverReason, formatAssistantErrorText } from "./embedded-agent-helpers.js";
 import { isIncompleteTerminalAssistantTurn } from "./embedded-agent-runner/run/incomplete-turn.js";
 import {
@@ -9,12 +14,7 @@ import {
 } from "./embedded-agent-subscribe.handlers.messages.js";
 import type { EmbeddedPiSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
 import { isPromiseLike } from "./embedded-agent-subscribe.promise.js";
-import {
-  buildApiErrorObservationFields,
-  buildTextObservationFields,
-  sanitizeForConsole,
-} from "./pi-embedded-error-observation.js";
-import { isAssistantMessage } from "./pi-embedded-utils.js";
+import { isAssistantMessage } from "./embedded-agent-utils.js";
 
 export {
   handleCompactionEnd,

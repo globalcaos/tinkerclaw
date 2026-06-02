@@ -52,7 +52,7 @@ function applyPolicy(params: {
     tools: applyFinalEffectiveToolPolicy({
       bundledTools: params.tools,
       config: params.config,
-      sessionKey: "agent:main:docker-pi-bundle-mcp",
+      sessionKey: "agent:main:docker-agent-bundle-mcp",
       agentId: "main",
       senderIsOwner: true,
       warn: (message) => {
@@ -66,7 +66,7 @@ function applyPolicy(params: {
 async function main() {
   const stateDir =
     process.env.OPENCLAW_STATE_DIR?.trim() ||
-    path.join(os.tmpdir(), `openclaw-pi-bundle-mcp-${process.pid}`);
+    path.join(os.tmpdir(), `openclaw-agent-bundle-mcp-${process.pid}`);
   const probeDir = path.join(stateDir, "agent-bundle-mcp-tools");
   const serverPath = path.join(probeDir, "probe-server.mjs");
   await fs.mkdir(probeDir, { recursive: true });
@@ -90,8 +90,8 @@ async function main() {
 
   try {
     const runtime = await getOrCreateSessionMcpRuntime({
-      sessionId: `docker-pi-bundle-mcp-${randomUUID()}`,
-      sessionKey: "agent:main:docker-pi-bundle-mcp",
+      sessionId: `docker-agent-bundle-mcp-${randomUUID()}`,
+      sessionKey: "agent:main:docker-agent-bundle-mcp",
       workspaceDir: probeDir,
       cfg,
     });

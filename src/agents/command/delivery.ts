@@ -29,7 +29,7 @@ import type { EmbeddedPiRunMeta } from "../embedded-agent-runner/types.js";
 import { isNestedAgentLane } from "../lanes.js";
 import type { AgentCommandOpts, AgentCommandResultMetaOverrides } from "./types.js";
 
-type RunResult = Awaited<ReturnType<(typeof import("../pi-embedded.js"))["runEmbeddedPiAgent"]>>;
+type RunResult = Awaited<ReturnType<(typeof import("../embedded-agent.js"))["runEmbeddedPiAgent"]>>;
 
 const NESTED_LOG_PREFIX = "[agent:nested]";
 

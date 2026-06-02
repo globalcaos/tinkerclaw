@@ -1,4 +1,4 @@
-import type { SubscribeEmbeddedPiSessionParams } from "../../embedded-agent-subscribe.types.js";
+import type { SubscribeEmbeddedAgentSessionParams } from "../../embedded-agent-subscribe.types.js";
 
 type IdleAwareAgent = {
   waitForIdle?: (() => Promise<void>) | undefined;
@@ -9,8 +9,8 @@ type ToolResultFlushManager = {
   clearPendingToolResults?: (() => void) | undefined;
 };
 export function buildEmbeddedSubscriptionParams(
-  params: SubscribeEmbeddedPiSessionParams,
-): SubscribeEmbeddedPiSessionParams {
+  params: SubscribeEmbeddedAgentSessionParams,
+): SubscribeEmbeddedAgentSessionParams {
   return params;
 }
 

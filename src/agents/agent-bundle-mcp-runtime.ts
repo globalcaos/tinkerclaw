@@ -16,17 +16,17 @@ import { logWarn } from "../logger.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { redactSensitiveUrlLikeString } from "../shared/net/redact-sensitive-url.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
-import { loadEmbeddedPiMcpConfig } from "./embedded-pi-mcp.js";
-import { isMcpConfigRecord } from "./mcp-config-shared.js";
-import { resolveMcpTransport } from "./mcp-transport.js";
-import { sanitizeServerName } from "./pi-bundle-mcp-names.js";
+import { sanitizeServerName } from "./agent-bundle-mcp-names.js";
 import type {
   McpCatalogTool,
   McpServerCatalog,
   McpToolCatalog,
   SessionMcpRuntime,
   SessionMcpRuntimeManager,
-} from "./pi-bundle-mcp-types.js";
+} from "./agent-bundle-mcp-types.js";
+import { loadEmbeddedPiMcpConfig } from "./embedded-pi-mcp.js";
+import { isMcpConfigRecord } from "./mcp-config-shared.js";
+import { resolveMcpTransport } from "./mcp-transport.js";
 
 type BundleMcpSession = {
   serverName: string;

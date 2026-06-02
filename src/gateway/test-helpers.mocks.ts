@@ -228,15 +228,15 @@ vi.mock("../config/io.js", async () => {
   };
 });
 
-vi.mock("../agents/pi-embedded.js", async () => {
-  return await importEmbeddedRunMockModule<typeof import("../agents/pi-embedded.js")>(
-    "../agents/pi-embedded.js",
+vi.mock("../agents/embedded-agent.js", async () => {
+  return await importEmbeddedRunMockModule<typeof import("../agents/embedded-agent.js")>(
+    "../agents/embedded-agent.js",
   );
 });
 
-vi.mock("/src/agents/pi-embedded.js", async () => {
-  return await importEmbeddedRunMockModule<typeof import("../agents/pi-embedded.js")>(
-    "../agents/pi-embedded.js",
+vi.mock("/src/agents/embedded-agent.js", async () => {
+  return await importEmbeddedRunMockModule<typeof import("../agents/embedded-agent.js")>(
+    "../agents/embedded-agent.js",
   );
 });
 

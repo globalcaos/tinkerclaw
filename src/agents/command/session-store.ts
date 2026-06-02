@@ -11,7 +11,7 @@ import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
 import { isCliProvider } from "../model-selection.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage } from "../usage.js";
 
-type RunResult = Awaited<ReturnType<(typeof import("../pi-embedded.js"))["runEmbeddedPiAgent"]>>;
+type RunResult = Awaited<ReturnType<(typeof import("../embedded-agent.js"))["runEmbeddedPiAgent"]>>;
 
 let usageFormatModulePromise: Promise<typeof import("../../utils/usage-format.js")> | undefined;
 let contextModulePromise: Promise<typeof import("../context.js")> | undefined;

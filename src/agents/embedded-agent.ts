@@ -7,7 +7,7 @@ export type {
   EmbeddedPiCompactResult,
   EmbeddedPiRunMeta,
   EmbeddedPiRunResult,
-} from "./pi-embedded-runner.js";
+} from "./embedded-agent-runner.js";
 export {
   abortEmbeddedAgentRun,
   abortEmbeddedPiRun,
@@ -26,4 +26,4 @@ export {
   runEmbeddedPiAgent,
   waitForEmbeddedAgentRunEnd,
   waitForEmbeddedPiRunEnd,
-} from "./pi-embedded-runner.js";
+} from "./embedded-agent-runner.js";

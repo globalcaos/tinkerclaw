@@ -8,7 +8,7 @@ const abortEmbeddedPiRunMock = vi.hoisted(() => vi.fn());
 const persistAbortTargetEntryMock = vi.hoisted(() => vi.fn());
 const setAbortMemoryMock = vi.hoisted(() => vi.fn());
 
-vi.mock("../../agents/pi-embedded.js", () => ({
+vi.mock("../../agents/embedded-agent.js", () => ({
   abortEmbeddedPiRun: abortEmbeddedPiRunMock,
 }));
 

@@ -251,7 +251,7 @@ export function installFreshDirectiveBehaviorReplyMocks(params?: {
   onActualRunPreparedReply?: (runPreparedReply: RunPreparedReply) => void;
   runPreparedReply?: (...args: Parameters<RunPreparedReply>) => unknown;
 }) {
-  vi.doMock("../agents/pi-embedded.js", () => ({
+  vi.doMock("../agents/embedded-agent.js", () => ({
     abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
     compactEmbeddedPiSession: (...args: unknown[]) => compactEmbeddedPiSessionMock(...args),
     runEmbeddedPiAgent: (...args: unknown[]) => runEmbeddedPiAgentMock(...args),
@@ -260,7 +260,7 @@ export function installFreshDirectiveBehaviorReplyMocks(params?: {
     isEmbeddedPiRunActive: vi.fn().mockReturnValue(false),
     isEmbeddedPiRunStreaming: vi.fn().mockReturnValue(false),
   }));
-  vi.doMock("../agents/pi-embedded.runtime.js", () => ({
+  vi.doMock("../agents/embedded-agent.runtime.js", () => ({
     abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
     compactEmbeddedPiSession: (...args: unknown[]) => compactEmbeddedPiSessionMock(...args),
     runEmbeddedPiAgent: (...args: unknown[]) => runEmbeddedPiAgentMock(...args),

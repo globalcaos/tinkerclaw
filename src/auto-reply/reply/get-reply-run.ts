@@ -130,8 +130,9 @@ export function buildExecOverridePromptHint(params: {
     .join("\n");
 }
 
-let piEmbeddedRuntimePromise: Promise<typeof import("../../agents/pi-embedded.runtime.js")> | null =
-  null;
+let piEmbeddedRuntimePromise: Promise<
+  typeof import("../../agents/embedded-agent.runtime.js")
+> | null = null;
 let agentRunnerRuntimePromise: Promise<typeof import("./agent-runner.runtime.js")> | null = null;
 let sessionUpdatesRuntimePromise: Promise<typeof import("./session-updates.runtime.js")> | null =
   null;
@@ -141,7 +142,7 @@ let sessionStoreRuntimePromise: Promise<
 const UNTRUSTED_SYSTEM_EVENT_LINE_RE = /^System \(untrusted\):/m;
 
 function loadPiEmbeddedRuntime() {
-  piEmbeddedRuntimePromise ??= import("../../agents/pi-embedded.runtime.js");
+  piEmbeddedRuntimePromise ??= import("../../agents/embedded-agent.runtime.js");
   return piEmbeddedRuntimePromise;
 }
 

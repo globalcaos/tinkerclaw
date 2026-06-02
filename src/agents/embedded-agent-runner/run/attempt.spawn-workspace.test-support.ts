@@ -19,15 +19,15 @@ import {
   normalizeOptionalLowercaseString,
 } from "../../../shared/string-coerce.js";
 import type { EmbeddedContextFile } from "../../embedded-agent-helpers.js";
-import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
+import type { MessagingToolSend } from "../../embedded-agent-messaging.types.js";
 import type { WorkspaceBootstrapFile } from "../../workspace.js";
 
-type SubscribeEmbeddedPiSessionFn =
-  typeof import("../../embedded-agent-subscribe.js").subscribeEmbeddedPiSession;
+type SubscribeEmbeddedAgentSessionFn =
+  typeof import("../../embedded-agent-subscribe.js").subscribeEmbeddedAgentSession;
 type AcquireSessionWriteLockFn =
   typeof import("../../session-write-lock.js").acquireSessionWriteLock;
 
-type SubscriptionMock = ReturnType<SubscribeEmbeddedPiSessionFn>;
+type SubscriptionMock = ReturnType<SubscribeEmbeddedAgentSessionFn>;
 type UnknownMock = Mock<(...args: unknown[]) => unknown>;
 type AsyncUnknownMock = Mock<(...args: unknown[]) => Promise<unknown>>;
 type AsyncContextEngineMaintenanceMock = Mock<
@@ -60,7 +60,7 @@ type AttemptSpawnWorkspaceHoisted = {
   ensureGlobalUndiciEnvProxyDispatcherMock: UnknownMock;
   ensureGlobalUndiciStreamTimeoutsMock: UnknownMock;
   buildEmbeddedMessageActionDiscoveryInputMock: UnknownMock;
-  subscribeEmbeddedPiSessionMock: Mock<SubscribeEmbeddedPiSessionFn>;
+  subscribeEmbeddedAgentSessionMock: Mock<SubscribeEmbeddedAgentSessionFn>;
   acquireSessionWriteLockMock: Mock<AcquireSessionWriteLockFn>;
   installToolResultContextGuardMock: UnknownMock;
   flushPendingToolResultsAfterIdleMock: AsyncUnknownMock;
@@ -119,7 +119,7 @@ const hoisted = vi.hoisted((): AttemptSpawnWorkspaceHoisted => {
   const installToolResultContextGuardMock = vi.fn(() => () => {});
   const flushPendingToolResultsAfterIdleMock = vi.fn(async () => {});
   const releaseWsSessionMock = vi.fn(() => {});
-  const subscribeEmbeddedPiSessionMock = vi.fn<SubscribeEmbeddedPiSessionFn>(() =>
+  const subscribeEmbeddedAgentSessionMock = vi.fn<SubscribeEmbeddedAgentSessionFn>(() =>
     createSubscriptionMock(),
   );
   const acquireSessionWriteLockMock = vi.fn<AcquireSessionWriteLockFn>(async (_params) => ({
@@ -163,7 +163,7 @@ const hoisted = vi.hoisted((): AttemptSpawnWorkspaceHoisted => {
     ensureGlobalUndiciEnvProxyDispatcherMock,
     ensureGlobalUndiciStreamTimeoutsMock,
     buildEmbeddedMessageActionDiscoveryInputMock,
-    subscribeEmbeddedPiSessionMock,
+    subscribeEmbeddedAgentSessionMock,
     acquireSessionWriteLockMock,
     installToolResultContextGuardMock,
     flushPendingToolResultsAfterIdleMock,
@@ -222,8 +222,8 @@ vi.mock("../../session-tool-result-guard-wrapper.js", () => ({
 }));
 
 vi.mock("../../embedded-agent-subscribe.js", () => ({
-  subscribeEmbeddedPiSession: (params: Parameters<SubscribeEmbeddedPiSessionFn>[0]) =>
-    hoisted.subscribeEmbeddedPiSessionMock(params),
+  subscribeEmbeddedAgentSession: (params: Parameters<SubscribeEmbeddedAgentSessionFn>[0]) =>
+    hoisted.subscribeEmbeddedAgentSessionMock(params),
 }));
 
 vi.mock("../../../plugins/hook-runner-global.js", () => ({
@@ -723,7 +723,7 @@ export function resetEmbeddedAttemptHarness(
   params: {
     includeSpawnSubagent?: boolean;
     subscribeImpl?: Parameters<
-      (typeof hoisted.subscribeEmbeddedPiSessionMock)["mockImplementation"]
+      (typeof hoisted.subscribeEmbeddedAgentSessionMock)["mockImplementation"]
     >[0];
     sessionMessages?: AgentMessage[];
   } = {},
@@ -743,7 +743,7 @@ export function resetEmbeddedAttemptHarness(
   hoisted.buildEmbeddedMessageActionDiscoveryInputMock
     .mockReset()
     .mockImplementation((params) => params);
-  hoisted.subscribeEmbeddedPiSessionMock
+  hoisted.subscribeEmbeddedAgentSessionMock
     .mockReset()
     .mockImplementation(() => createSubscriptionMock());
   hoisted.acquireSessionWriteLockMock.mockReset().mockResolvedValue({
@@ -772,7 +772,7 @@ export function resetEmbeddedAttemptHarness(
     .mockReturnValue({ messages: params.sessionMessages ?? [] });
   hoisted.sessionManager.appendCustomEntry.mockReset();
   if (params.subscribeImpl) {
-    hoisted.subscribeEmbeddedPiSessionMock.mockImplementation(params.subscribeImpl);
+    hoisted.subscribeEmbeddedAgentSessionMock.mockImplementation(params.subscribeImpl);
   }
 }
 

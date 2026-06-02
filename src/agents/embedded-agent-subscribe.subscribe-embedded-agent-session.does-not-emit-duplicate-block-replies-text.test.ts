@@ -6,9 +6,9 @@ import {
   emitAssistantTextDelta,
   emitAssistantTextEnd,
 } from "./embedded-agent-subscribe.e2e-harness.js";
-import { subscribeEmbeddedPiSession } from "./embedded-agent-subscribe.js";
+import { subscribeEmbeddedAgentSession } from "./embedded-agent-subscribe.js";
 
-describe("subscribeEmbeddedPiSession", () => {
+describe("subscribeEmbeddedAgentSession", () => {
   it("does not emit duplicate block replies when text_end repeats", async () => {
     const onBlockReply = vi.fn();
     const { emit, subscription } = createTextEndBlockReplyHarness({ onBlockReply });
@@ -24,7 +24,7 @@ describe("subscribeEmbeddedPiSession", () => {
   it("does not duplicate assistantTexts when message_end repeats", () => {
     const { session, emit } = createStubSessionHarness();
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run",
     });
@@ -42,7 +42,7 @@ describe("subscribeEmbeddedPiSession", () => {
   it("does not duplicate assistantTexts when message_end repeats with trailing whitespace changes", () => {
     const { session, emit } = createStubSessionHarness();
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run",
     });
@@ -65,7 +65,7 @@ describe("subscribeEmbeddedPiSession", () => {
   it("does not duplicate assistantTexts when message_end repeats with reasoning blocks", () => {
     const { session, emit } = createStubSessionHarness();
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       reasoningMode: "on",
@@ -89,7 +89,7 @@ describe("subscribeEmbeddedPiSession", () => {
     // must still populate assistantTexts so providers can deliver a final reply.
     const { session, emit } = createStubSessionHarness();
 
-    const subscription = subscribeEmbeddedPiSession({
+    const subscription = subscribeEmbeddedAgentSession({
       session,
       runId: "run",
       blockReplyChunking: { minChars: 50, maxChars: 200 }, // Chunking enabled
