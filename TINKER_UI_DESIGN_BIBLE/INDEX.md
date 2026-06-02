@@ -17,7 +17,8 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 
 ## How an AI should read this directory
 
-1. **Always read THIS file first.** It is the map.
+0. **Read `FOUNDATION.md` first.** It is the apex — the base principles every optic derives from, and it **OUTRANKS every optic**. When an optic's detail contradicts FOUNDATION, FOUNDATION wins and the contradiction is a bug to fix. This INDEX is the map; FOUNDATION is the constitution.
+1. **Then read THIS file.** It is the map.
 2. **Pick the right optic for the question:**
    - "in what order do these components communicate?" → `flows.md`
    - "what transitions are legal for X?" → `lifecycles.md`
@@ -50,6 +51,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 
 | File                    | Compresses                                                                                                                                                                                         | Generation                       | ~Lines |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------ |
+| `FOUNDATION.md`         | **APEX.** Mission + first principles + foundational criteria + governance. Outranks every optic. The base reference the whole pyramid derives from.                                                | hand                             | ~180   |
 | `INDEX.md`              | This map                                                                                                                                                                                           | hand                             | ~80    |
 | `bible.md`              | Narrative, intent, decisions, don't-regress rules. Slimmed 2026-05-11 from 3,085 lines to ~1,730 after extracting tinker-ui.md and bug-log.md. Continues to slim as structural files absorb facts. | hand                             | ~1730  |
 | `tinker-ui.md`          | Layout, visual language, UI feature registry (former bible §3, §4, §5.1-§5.65, migrated 2026-05-11)                                                                                                | hand                             | ~1095  |
