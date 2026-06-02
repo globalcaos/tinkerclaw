@@ -887,6 +887,62 @@ These are proposals — only create them when the maintainer agrees the cloner-u
 
 ---
 
+### 5.83 The 12 OSS-Harness Upgrades — Autonomy Borrowed From the Open-Source Agent Frontier (2026-06-02, commit `06f8647fdc`)
+
+This is the narrative for the largest single autonomy push the fork has shipped: twelve upgrades (U1–U12) landed in one commit on `develop` (`06f8647fdc`, on top of `70ad58e45d`). It is a decision log, not a spec — every structural fact (file paths, store shapes, RPC contracts, dead-code-trap registrations) lives in the owning optics. This section records WHY we did it, WHAT we chose to keep on or off, and WHAT must not regress.
+
+#### Why this initiative exists
+
+§11.5 (Research Papers — Implementation Status) tracks the eleven papers the cognitive subsystems were built from. The honest read of that table by mid-2026 was: the fork had strong _substrate_ (ENGRAM event store, RAAC round-table, AMYGDALA, recipes/kits, Prefrontal) but the autonomy loops on top of it were either `DESIGN ONLY` (Curiosity, Corporate Swarm) or one-shot rather than self-improving. Meanwhile the open-source agent frontier had shipped concrete, reproducible mechanisms for exactly those gaps. The roadmap (`docs/notes/2026-05-30-papers-coverage-and-oss-roadmap.md` Part 3, in the jarvis-icu repo) maps each upgrade to the OSS harness it borrows from:
+
+- **U1 recipe-evolution loop** — STOP / Gödel-machine self-improvement: recipes accumulate a fitness signal and mutate toward higher success.
+- **U2 curiosity / intrinsic-motivation** — closes the `DESIGN ONLY` Curiosity-Motivation row with a real gap store + hedging detector + idle goals (the LoRA half stays a stub — see decisions).
+- **U3 bi-temporal edges** — Graphiti / Zep: memory edges carry valid-time intervals so a contradiction closes the old fact instead of overwriting it; reads can ask "as of T".
+- **U4 failure→strategy-switch** — turns repeated failure modes into a recorded strategy decision the consolidation cron applies.
+- **U5 durable checkpointing** — DeerFlow-style resumable plans: a kit run can checkpoint per step and resume after a crash.
+- **U6 Voyager skill-library** — Voyager: extract a verified, structured procedure from a successful run, never delete it, embed-rank it for reuse.
+- **U7 AG2 speaker-select** — AG2 / AutoGen: smarter debate orchestration on top of the existing round table (budget-aware speaker selection, carried memory).
+- **U8 Mem0 reconciliation** — Mem0: an ADD/UPDATE/DELETE/NONE reconciler on the ingestion hot path so memory converges instead of accreting duplicates.
+- **U9 A-MEM Zettelkasten** — A-MEM: `[[wikilink]]` + entity references between memories, indexed bidirectionally, expanded one hop at retrieval.
+- **U10 ToT / LATS** — Tree-of-Thoughts / Language-Agent-Tree-Search: an optional pre-prompt thought search with a persisted reasoning trace.
+- **U11 external recipe acquisition** — Symphony / skill-sharing: import a `SKILL.md` as a kit when the Journey registry is unreachable, resolving transitive deps.
+- **U12 recipe marketplace** — versioned, immutable, rating-ranked recipe distribution layered on top of U1's fitness.
+
+The framing the architect set: **autonomy-first**. Borrow the mechanism that's already been validated in the wild rather than re-derive it, wire it to the fork's own substrate, and gate anything that could surprise the operator behind a flag.
+
+#### What shipped, and what it composes with
+
+The unifying shape across U1–U12 is the producer→consumer loop: a _producer_ emits a signal during real work (a fitness tag, a curiosity gap, a superseding edge, a reasoning trace, a backlink), and a _consumer_ later reads it (kit selection, the consolidation cron, a temporal read, a retrieval expansion). Three of the new RPCs are confirmed live against the restarted gateway on this commit: `fork.strategy.switch.list`, `fork.skill.search`, `fork.memory.search` (the last returning `temporalMode:"current"` — U3's read surface). Selection precedence in kit scoring is the load-bearing composition: **base → U1 fitness feedback → U12 rating tie-break**, in that order, so a marketplace rating can only break ties, never override demonstrated fitness. Structural homes: `memory-layout.md` (U3/U6/U8/U9 stores + bi-temporal edges), `subagents-and-kits.md` (U1/U5/U11/U12 recipe-kit contract + selection precedence), `tool-loop.md` (U10 reasoning runtime + the attempt.ts deliberation seam), `topology.md` (U7 round-table extension + orchestrator), `config-shape.md` (the new openclaw.json keys + the dead-code-trap registry).
+
+#### The decisions (this is the part to read before changing anything)
+
+1. **U2 2c LoRA training kept EXTERNAL — deliberately a stub.** Curiosity logs gaps and (when enough accumulate) raises a "this capability needs training" signal via `consolidation-shell.ts:notifyLoraTrainingNeeded` gated by `capability-matrix.ts` (`src/validation/`). That is the entire fork-side surface. Actual GPU/Python LoRA training is out of scope and intentionally not wired — running model training inside the gateway is the wrong place for it, and the fork ships to cloners who won't have the hardware. The stub is honest TBD, not dead code pretending to be live; it is registered as a dead-code trap in `config-shape.md` so nobody later mistakes the no-op for a regression.
+
+2. **U8 Mem0 reconciliation DARK-LAUNCHED OFF.** This is the most consequential gate. Reconciliation is the one upgrade that can _rewrite the operator's engram_ — `reconciler.decide()` sits in the ingestion append hot-path and can emit UPDATE/DELETE, and `memory-md-writer.ts` can edit the human-readable MEMORY.md. We refused to enable a memory-mutating loop by default. It is gated behind `ENGRAM_RECONCILE` (default OFF). With the flag off, the default reconciler is **always-ADD** — byte-for-byte today's behavior, no UPDATE, no DELETE, no MEMORY.md edits. The md-writer is additionally bounded, idempotent, and suggest-only even when on. This is the opposite call from the three full-autonomy flags the architect turned on (supersede, semantic-match, recipe self-apply): those rewrite recipes and close memory edges, but they don't silently delete the operator's authored memories. Reconciliation does, so it waits for an explicit decision after the operator has watched its proposed ledger for a while.
+
+3. **U1 attribution chosen as Prefrontal tag-stamping, not a separate event stream.** Recipes need to know which run they fed so fitness can be credited. The decision was to make the producer the kit-runner itself: `kit-runner.ts` stamps `recipe:<owner/slug>` attribution tags via an `onTag` callback that `prefrontal.recipe.run` threads in. Fitness (`makeFitnessLookup`, Laplace-smoothed success rate) is then threaded back into `matchKitsDetailed` as selection feedback. We chose tag-stamping on the existing kit-run path over a parallel telemetry channel because the kit run is the single point that already knows owner, slug, phase, step, and session — adding a second producer would have been a second thing to keep wired (and the next item is exactly about producers that weren't kept wired).
+
+4. **U7 7D/7G shipped READY-BUT-UNBOUND, pending gateway RPCs that don't exist yet.** The AG2 speaker-select extension carries two pieces that depend on gateway RPCs the gateway does not expose: 7D's `respectBillingGate` / `resolveDebateBudget` wants `agent.getBillingState` (to clamp debate budget to billing headroom), and 7G's `orchestrator-api.ts` (`DebateOrchestrator` / `getOrchestrator`) wants `plugins.getOrchestrator`. Both degrade gracefully today — the budget clamp is a no-op and orchestration falls back to plain RAAC. We shipped them unbound rather than hold the whole commit, but this is a **real dead-code trap**: the code path looks live and will silently stay inert until those RPCs land. It is registered in `config-shape.md` alongside the LoRA stub and the reconciliation flag. 7F (SpeakerMemory carryover) does NOT depend on a missing RPC and is live.
+
+#### Don't-regress
+
+- **Producers must fire at REAL call sites — verify the emit, not just the consumer.** The first implementation pass of this initiative merged with every unit test green while six of the twelve upgrades did nothing at runtime: the consumers were wired and tested, but the producers that feed them (recipe-attribution `onTag`, `setLinkBuilderRuntime` at the session-setup site, `stashReasoningTrace` in `onTurnComplete`, the consolidation-cron skill/strategy injections, the fitness/rating feedback into selection) were left as handoff prose. A unit test that mocks the producer's output and asserts the consumer stays green whether or not the producer ever fires in production. This is the same class as the 2026-06-01 RECIPES-panel bug (`setRecipe` never called) and the 2026-05-30 W3 subagent-color bug (`_subagentId` never set) — three of a kind. Full incident with the confirmed-live producer list is the `META [config-dead-code]` entry in `bug-log.md`; the producer→consumer invariant itself lives in `design-principles.md`. For any future producer→consumer wiring in this family: trace the producer to a call site on the hot path and confirm it fires there.
+- **Single owner per fact across the new stores.** U3/U6/U8/U9 each introduced their own persistence (bi-temporal edges, skill library, reconciliation ledger, link index `<sessionKey>.jsonl`). Do not duplicate a memory fact across two of them — a skill is not a memory edge is not a backlink. The store boundaries are documented once in `memory-layout.md`; treat that as the authority.
+- **Don't flip `ENGRAM_RECONCILE` to default-on as a convenience.** The default-OFF / always-ADD posture is the safety contract for the operator's memory. Turning it on is an operator decision after watching the proposed ledger, not a maintainer cleanup.
+- **Don't "complete" U7 7D/7G by faking the missing RPCs.** They bind when `agent.getBillingState` and `plugins.getOrchestrator` exist for real. Until then the graceful no-op IS the correct behavior; a stubbed-positive billing gate would route real debates past the budget clamp.
+- **Don't drop the U10 deliberation-prompt restore.** A bug in this pass leaked the deliberation system-prompt augmentation into the next turn when a `runtimeContext` override was present; the fix captures `preDeliberationSystemPromptText` and restores the TRUE base in `finally` so the augmentation stays turn-local (`src/agents/pi-embedded-runner/run/attempt.ts`). If you refactor `maybeRunThoughtSearch`'s call site, keep the capture-and-restore.
+
+- **Status:** `DEPLOYED`
+- **last_verified:** 2026-06-02
+- **last_verified_commit:** `06f8647fdc`
+- **verify:**
+  - name: U7 strategy-switch read RPC is live (one of the 3 VERIFIED-LIVE RPCs on this commit)
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.strategy.switch.list"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
+  - name: the 12-upgrade roadmap source exists (jarvis-icu repo)
+    cmd: python3 -c 'import glob,os; assert glob.glob(os.path.expanduser("~/src/jarvis-icu/docs/notes/2026-05-30-papers-coverage-and-oss-roadmap.md")), "roadmap source missing"'
+
+---
+
 ## 6. Backend Fork Patches That Feed Tinker
 
 These are upstream files modified to support Tinker features. They require re-application after every merge.

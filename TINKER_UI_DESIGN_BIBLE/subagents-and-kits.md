@@ -2,10 +2,10 @@
 file: subagents-and-kits.md
 purpose: How fork subagents are spawned, how kits drive orchestration, how plans persist across restarts, how Prefrontal observes it all
 audience: AI
-last_verified: 2026-06-01
-last_verified_commit: 18e618d241
-single_owner: yes — subagent + kit orchestration + plan persistence facts live here
-see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream)
+last_verified: 2026-06-02
+last_verified_commit: 06f8647fdc
+single_owner: yes — subagent + kit orchestration + plan persistence + skill-library behavior + marketplace semantics facts live here
+see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream), memory-layout.md (WHERE recipe-archive / skill-library / failure-state stores live on disk), probes.md (fork.skill.* / fork.prefrontal.* RPC surface), config-shape.md (RECIPE_AUTOAPPLY_ENABLED, dead-code trap registry)
 verify:
   - name: kit-matcher exists and auto-seeds a plan at turn start (FORK 2026-05-16 — the smart-router matching half)
     cmd: python3 -c 'import os; m=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-matcher.ts")).read(); assert "export async function seedPlanFromPrompt" in m and "NO-MATCH" in m and "recipe-gap" in m, "kit-matcher.ts missing seedPlanFromPrompt or the no-match recipe-gap WARN — the smart-router matching half regressed"; idx=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts")).read(); assert "seedPlanFromPrompt" in idx and "before_prompt_build" in idx, "index.ts no longer wires seedPlanFromPrompt into a before_prompt_build hook — turn-start auto-seed is dead, restart-continue has nothing to resume for normal turns"'
@@ -59,6 +59,20 @@ verify:
       if bad:
           print("\n".join(bad)); sys.exit(1)
       PYEOF
+  - name: U1 recipe-evolution loop is present (fitness store + never-delete archive + mutation operator + isAutoPromotable gate)
+    cmd: python3 -c 'import os; b=os.path.expanduser("~/src/tinkerclaw/src/memory/engram"); f=open(os.path.join(b,"recipe-fitness.ts")).read(); assert "loadRecipeFitness" in f and "makeFitnessLookup" in f and "function laplace" in f, "recipe-fitness.ts lost loadRecipeFitness/makeFitnessLookup/laplace — U1 selection feedback regressed"; a=open(os.path.join(b,"recipe-archive.ts")).read(); assert "never" in a.lower() and "deprecate" in a and "putVariant" in a, "recipe-archive.ts lost the never-delete variant store"; e=open(os.path.join(b,"recipe-evolution.ts")).read(); assert "proposeMutations" in e and "isAutoPromotable" in e, "recipe-evolution.ts lost proposeMutations/isAutoPromotable"'
+  - name: U1 producer — kit-runner stamps recipe:<owner/slug> attribution via onTag, kit-rpcs forwards it AND threads makeFitnessLookup as feedback
+    cmd: python3 -c 'import os; r=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-runner.ts")).read(); assert "onTag" in r and "recipe:${opts.kitRef}" in r and "TagStamp" in r, "kit-runner.ts lost the onTag recipe-attribution producer — empirical fitness goes inert (no events tagged)"; p=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "makeFitnessLookup" in p and "onTag:" in p, "kit-rpcs.ts no longer wires makeFitnessLookup feedback or forwards onTag — the U1 select<->measure loop is broken"'
+  - name: U5 durable checkpointing — kit-runner has resume/onCheckpoint/per-step artifact, resume is in the run-params schema, kit-rpcs gates on resume:true
+    cmd: python3 -c 'import os; r=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-runner.ts")).read(); assert "resume?" in r and "onCheckpoint" in r and "collectPriorArtifacts" in r and "withPriorArtifacts" in r and "ARTIFACT_DIGEST_MAX" in r, "kit-runner.ts lost a U5 checkpointing seam (resume / onCheckpoint / prior-artifact carry-forward)"; s=open(os.path.expanduser("~/src/tinkerclaw/src/gateway/protocol/schema/prefrontal-kit.ts")).read(); assert "resume:" in s, "prefrontal-kit.ts schema lost the resume field"; p=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "resume: p.resume === true" in p, "kit-rpcs.ts no longer gates auto-resume on explicit resume:true (silent re-attach is the architect-forbidden default)"'
+  - name: U6 skill-library — extract/library/invocation modules present, fork.skill.* RPCs wired, library injected into the engram-consolidate cron
+    cmd: python3 -c 'import os; b=os.path.expanduser("~/src/tinkerclaw/src/memory/engram"); lib=open(os.path.join(b,"skill-library.ts")).read(); assert "createSkillLibrary" in lib and "recordOutcome" in lib and "verifiedCode" in lib and "SKILL_DEDUP_JACCARD" in lib, "skill-library.ts lost a U6 invariant (never-delete + recordOutcome + verifiedCode opt-in + dedup)"; ex=open(os.path.join(b,"skill-extraction.ts")).read(); assert "isSkillWorthy" in ex and "extractSkill" in ex, "skill-extraction.ts lost the worthiness gate / extractor"; inv=open(os.path.join(b,"skill-invocation.ts")).read(); assert "invokeSkill" in inv and "recordSkillOutcome" in inv, "skill-invocation.ts lost invokeSkill/recordSkillOutcome"; rpc=open(os.path.expanduser("~/src/tinkerclaw/src/fork/skill-rpc.ts")).read(); assert "fork.skill.search" in rpc and "fork.skill.recordOutcome" in rpc, "skill-rpc.ts lost the fork.skill.* RPCs"; cron=open(os.path.expanduser("~/src/tinkerclaw/src/cron/jobs/engram-consolidate.ts")).read(); assert "createSkillLibrary" in cron, "engram-consolidate.ts no longer injects the SkillLibrary — skills are never extracted"'
+  - name: fork.skill.search is live on the running gateway (VERIFIED 2026-06-02 / 06f8647fdc — read-only, never runs a model)
+    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.skill.search","--params","{\"query\":\"test\",\"k\":1}"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
+  - name: U11 external recipe acquisition — cc-skills-bridge transpiler present, recipe.search has a local fallback, recipe.install has a transitive dep resolver
+    cmd: python3 -c 'import os; b=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/cc-skills-bridge.ts")).read(); assert "skillMdToKitSpec" in b and "buildBridgedKitMd" in b and "BRIDGED_AUTHORED_BY" in b and "assertNoSymlink" in b, "cc-skills-bridge.ts lost the SKILL.md->KitSpec transpiler / symlink guard"; p=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "installDeps" in p and "splitDepRef" in p and "source: \"local\" as const" in p, "kit-rpcs.ts lost the U11 transitive dep resolver or the recipe.search local fallback"'
+  - name: U12 marketplace — versioning/immutability/resolution + clamped rating tie-break, composed AFTER U1 feedback (precedence base->feedback->rating)
+    cmd: python3 -c 'import os; m=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-marketplace.ts")).read(); assert "bumpVersion" in m and "resolveVersion" in m and "hasVersion" in m and "getRatingBonusSync" in m and "makeRatingLookup" in m, "recipe-marketplace.ts lost a U12 semantics primitive"; km=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-matcher.ts")).read(); assert "ratingScoreDelta" in km and "fitnessFeedbackDelta" in km and "RATING_CLAMP" in km, "kit-matcher.ts lost the rating/fitness deltas"; i=km.index("if (feedback)"); j=km.index("if (rating)"); assert 0 <= i < j, "scoreKit precedence regressed: rating must be folded in AFTER feedback (base -> feedback -> rating)"; p=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kit-rpcs.ts")).read(); assert "hasVersion" in p and "bumpVersion" in p, "kit-rpcs.ts publish lost the version-bump / immutability gate"'
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
@@ -282,6 +296,77 @@ stateDiagram-v2
 
 Every transition emits a provenance trail verb (`searched`/`matched`/`merged`/`composed`/`authored`) the RECIPES panel renders as its decision trail.
 
+## The OSS-harness upgrades — how recipes/skills/plans LEARN (FORK 06f8647fdc, 2026-06-02)
+
+Twelve OSS-harness upgrades landed together on `develop` (`06f8647fdc` on top of `70ad58e45d`); the five that change how **recipes/kits/plans/skills behave** are owned here (U1, U5, U6, U11, U12). The Cerebellum-side STORES they read/write — `recipe-archive/`, `skill-library/`, `failure-state.json` — are owned by `memory-layout.md`; the gateway RPC SURFACE (`fork.skill.*`, `fork.prefrontal.*`) is owned by `probes.md`. This optic owns the BEHAVIOR.
+
+The recurring fork-wide pattern across all five: **a SYNC producer-side reader memoized once per turn**, threaded into `scoreKit`/`seedPlanFromPrompt` as an injected lookup, with **graceful degradation to neutral** when the store/network is absent (an offline or fitness-less deploy keeps pure-lexical scoring byte-identical). The matcher never blocks on disk or network on the hot path.
+
+### U1 — the recipe-evolution loop (fitness-aware selection ↔ measurement)
+
+The closed loop is: a kit RUNS → its outcome is ATTRIBUTED to the recipe → fitness is MEASURED at consolidation → the next match PREFERS the empirically-better recipe → a chronically-failing recipe gets a MUTATION PROPOSAL → an applied mutation re-enters the catalog and is re-measured. Three Cerebellum modules + two Prefrontal seams:
+
+- **Fitness** (`src/memory/engram/recipe-fitness.ts`): `updateRecipeFitness` folds one episode into a `RecipeFitness` (Laplace-smoothed `successRate = (successes+1)/(runs+2)` so 1/1 is not a perfect 1.0; running-mean latency/tokens; mean `turnCount` as Gödel "difficulty"). `attributeRecipe` reads a `recipe:<owner/slug>` tag off the episode's events — **no tag ⇒ null ⇒ the episode is counted against NO recipe** (no false attribution).
+- **Archive** (`recipe-archive.ts`): an append-only, **never-delete** versioned variant store (modeled on `artifact-store.ts`: `<baseDir>/recipe-archive/index.json` + `<slug>/v<n>.json`). `deprecate()` marks a variant obsolete but its body stays readable — so every mutation is **reversible** (the rollback guarantee the autonomy gate depends on). `rank()` is best-fitness-first with an epsilon-greedy explorer slot and optional `taskDifficulty` biasing (Gödel: difficulty-aware selection).
+- **Evolution operator** (`recipe-evolution.ts`): `proposeMutations` emits `add_step`/`tighten_criteria` when `successRate < floor` (default 0.5) AND `runs >= minRuns` (3), or `remove_step`/`reorder` on a latency regression vs the window mean. `isAutoPromotable` flags a corrective proposal to skip human review ONLY when it is high-confidence (`successRate <= floor × autoFloorRatio`, i.e. FAR below the floor) AND well-evidenced (`runs >= autoMinRuns`, 8) AND reversible (always — the never-delete archive). Latency/efficiency proposals stay human-gated. This module never WRITES a recipe; the apply lives in the Prefrontal layer (`prefrontal.recipe.applyProposal`, see the autonomous-evolution observability below).
+
+**The PRODUCER (the missing half that made fitness inert until U1):** `kit-runner.ts` stamps the attribution tag via the `onTag` sink — a `TagStamp` (`tag: "recipe:<owner/slug>"`, `phase: "start"|"dispatch"`) emitted ONCE at run start and once per actually-dispatched step (skipped resume steps do NOT stamp, so the tag count tracks real dispatches). `kit-rpcs.ts` `prefrontal.recipe.run` forwards each `TagStamp` to `fork.prefrontal.trailEvent` (kind `recipe-tag`); the tag rides into the run's episode events so `attributeRecipe()` can attribute the outcome at consolidation. Best-effort + fire-and-forget: a broken sink can NEVER throw into the dispatch loop.
+
+**The SELECTION feedback:** `recipe-fitness.makeFitnessLookup(baseDir)` returns a SYNC `(slug) => successRate | undefined` (memoized per-lookup; reads the latest archived variant's `.fitness`; degrades to the Laplace-neutral 0.5 → `undefined` on any read failure). It is threaded as `feedback` into `matchKitsDetailed`/`seedPlanFromPrompt`. In `scoreKit` it is applied AFTER the lexical base via `fitnessFeedbackDelta`: `successRate <= 0.5 → +0` (FLOOR — the matcher never DEMOTES a lexically-relevant recipe; demotion is recipe-evolution's job), `> 0.5 → a bounded integer boost in (0, 3]` on the same scale as the tag/title/summary weights. The turn-start seed (`index.ts`) and the local-match RPCs (`recipe.match`, the `recipe.search` local fallback) all build this lookup. Gated by `RECIPE_AUTOAPPLY_ENABLED` (already `true`; the apply half) — config key owned by `config-shape.md`.
+
+### U5 — durable checkpointing (resume / artifact carry-forward)
+
+A long `prefrontal.recipe.run` survives a gateway restart. `kit-runner.runKit` gained three seams (all in `kit-runner.ts`):
+
+- **`resume?: boolean`** — when `true`, an existing `in_progress` plan for this `sessionKey` whose `kitRef` AND step-count MATCH is resumed: dispatch starts at `plan.currentStep`, already-`done` rows are SKIPPED (idempotent — trust the durable row over re-running work), and a stale/unrelated plan is never hijacked. **Architect policy (2026-05-30): NO silent re-attach** — a bare run always force-restarts at step 0. `prefrontal.recipe.run` gates this on `resume: p.resume === true`, and `resume` is a field in `PrefrontalKitRunParamsSchema` (`src/gateway/protocol/schema/prefrontal-kit.ts`). A partially-written plan that fails to parse is quarantined (`store.get()` → null) → fresh run (Risk 4 lossy-recovery mitigation).
+- **Per-step artifact persistence** — each successful step persists a ≤500-char `artifact` digest (`summarizeOutput`, bounded by `ARTIFACT_DIGEST_MAX=500`, the plan schema's `artifact` field cap) alongside the full `note`. `collectPriorArtifacts` + `withPriorArtifacts` then prepend a `## Prior step outputs` block to each downstream step's task so a subagent reads upstream output. The live plan is re-read each dispatch, so artifacts produced earlier THIS run are included, not just the resume snapshot.
+- **`onCheckpoint`** — a heartbeat fired every `CHECKPOINT_INTERVAL_MS` (120s) while a step polls, so a long-polling step is observably alive (`prefrontal.recipe.run` forwards it to `fork.prefrontal.trailEvent` kind `checkpoint`). Lets the guardian distinguish a stalled poll from genuine long work.
+
+### U6 — the Voyager skill library (extract on consolidation → retrieve by embedding → invoke + record)
+
+Distinct from recipes (markdown playbooks): a **Skill** is a first-class, addressable, structured PROCEDURE (named `steps[]` + `prerequisites[]` + `testCases[]` + `successMetrics`, with an OPTIONAL `verifiedCode` — the true-Voyager skill-as-code opt-in). Three Cerebellum modules, the same own-fitness / Prefrontal-executes split as U1:
+
+- **Extract** (`skill-extraction.ts`): `extractSkill` runs at consolidation on a COMPLETED, skill-worthy episode. `isSkillWorthy` is a STRICT gate (completed AND used a tool AND recorded ≥1 key decision) — the primary defense against library bloat / retrieval pollution. The procedure body comes from an injected LLM callback (deterministic stub in tests); a malformed/declined body yields null (no spurious skills). One skill per worthy episode; higher-order clustering is deferred.
+- **Library** (`skill-library.ts`): a versioned, **never-delete** registry (`<baseDir>/skill-library/library.json` + `skill-<id>/v<n>.json`, atomic tmp+rename writes). `put` versions a same-named OR Jaccard>0.8 near-identical skill instead of duplicating (merges provenance, never resets metrics). `search` reuses the recall-tool embedding path — one BATCH embed of `[query, ...skillTexts]` (no N+1), cosine-ranked — and a keyword (Jaccard) fallback when no `EmbedFn` is wired. `rank` is by `successRate` (Laplace), recency tie-break. `recordOutcome` updates the monotonic counters so a skill encoding an obsolete API SINKS and becomes deprecation-reachable.
+- **Invoke** (`skill-invocation.ts`): `invokeSkill` gates on prerequisites + validates inputs against `testCases`, runs via an INJECTED runner (the Prefrontal kit-runner in production), and records the outcome back into the library — but only when the skill actually RAN (a prerequisite/validation refusal records nothing, so a never-run skill is not penalized). `recordSkillOutcome` is the externally-observed-outcome callback the Wire phase hands the runner.
+
+RPC surface: `fork.skill.search(query, k)` + `fork.skill.recordOutcome(skillId, success)` (`src/fork/skill-rpc.ts`, schema owned by `probes.md`). The library is INJECTED into the `engram-consolidate` cron (`src/cron/jobs/engram-consolidate.ts` via `sleep-consolidation.ts` `createSkillLibrary`) — the same library the `fork.skill.*` RPCs read.
+
+### U11 — external recipe acquisition (CC SKILL.md import + local search fallback + transitive deps)
+
+Three ways the catalog grows beyond hand-authoring + on-the-fly authoring:
+
+- **CC-skills bridge** (`cc-skills-bridge.ts`): imports a Claude-Code `SKILL.md` (frontmatter `name`/`description` + a documented procedure) as a recipe/1.0. `skillMdToKitSpec` infers an ordered step list from the body's `### N.` / `### Step N -` headings and transpiles to a `KitSpec`, then runs it through the EXISTING `kit-author.ts` guards (`validateKitSpec` + `buildKitMd`) — the phantom-step + slug-traversal guards apply for free (no validator fork). Bridged recipes are stamped `authoredBy: "cc-bridge"` (low-trust / filterable) and land under `<sandbox>/bridged-skills/<slug>/`, which the matcher scans (`loadKitIndex` extraDirs) so they're matchable next turn. Untrusted-content safety: `assertNoSymlink` vets every path segment with `lstat` before any read (`resolveSandboxPath` blocks `../` but NOT symlinks). Triggered via `prefrontal.recipe.install { skillMd }`.
+- **Local search fallback** (`recipe.search`): when Journey is unreachable the search degrades to the LOCAL catalog (own-kits + bridged imports) scored with the SAME fitness+rating signals as the turn-start seed (`source: "local"`, `fallbackReason` set) — same Risk-7 graceful-degradation posture as the marketplace, never hard-fails a search.
+- **Transitive dependency resolver** (`recipe.install`): after a kit is written, `installDeps` parses its frontmatter `composes: [...]` AND leading `uses: <ref>` step directives and installs each, recursively, cycle-guarded by a `seen` set. Each dep resolves with its OWN declared constraint (a trailing `@<constraint>`) or `latest` — **the root install's `p.ref` constraint is NEVER inherited by a transitive dep**. The risk-gate + sandbox write apply uniformly to root and deps.
+
+### U12 — the recipe marketplace (versioning / immutability / clamped rating tie-break)
+
+`recipe-marketplace.ts` layers SEMANTICS on the existing `prefrontal.recipe.publish` plumbing (pure logic + one injectable `MarketplaceFetch` + a ~1h TTL cache; mirrors `semantic-matcher.ts`):
+
+- **Versioning + immutability** (`recipe.publish`): an OWNER check (frontmatter `owner:` must equal the publishing identity), then `bumpVersion` per `level` (default `patch`; a missing/garbage version starts the chain at `1.0.0`), then — if a marketplace is wired and the bumped version is already published (`hasVersion`) — REFUSE: **versions are immutable; a bad recipe is yanked + re-bumped, never overwritten in place**.
+- **Version resolution** (`recipe.get`/`recipe.install`): `resolveVersion(kitRef, constraint)` accepts `latest` | exact `1.2.3` | caret/tilde/`>=` ranges. `latest`/range skip `yanked` versions; an EXACT pin can still hit a yanked version (pinned consumers stay reproducible). Risk-7: on fetch failure it degrades to the (even stale) cache and NEVER throws — a marketplace outage degrades a match to local cache, never hard-fails a turn.
+- **Discovery tie-break** — `getRatingBonusSync(slug)` reads the WARMED in-memory cache only (no fetch — `scoreKit` is sync) and returns the recipe's `ratingBonus(meta)` (rating 0–5 dominant + a log-scaled download nudge, clamped to `[0, MAX_RATING_BONUS=2]`). `makeRatingLookup` wraps it into the matcher's `rating` lookup. In `scoreKit` it is folded in LAST via `ratingScoreDelta` — re-clamped to a tiny **±0.2** band centered on the 1.0 midpoint, so popularity only breaks ties between otherwise equally-relevant recipes and can NEVER rescue a lexical mismatch or override empirical fitness.
+
+**The composed precedence (the load-bearing ordering in `scoreKit`):** `base (lexical) → feedback (U1 empirical fitness, integer 0..3, floor-preserving) → rating (U12 popularity, ±0.2, tie-breaker only)`. The order is an invariant: `if (feedback)` MUST be applied before `if (rating)`. So a strong-fitness proven recipe dominates a merely-popular one, and a lexical mismatch is never rescued by popularity. Both lookups omitted ⇒ pure lexical scoring (historical behaviour, byte-identical).
+
+```mermaid
+flowchart LR
+  subgraph select[selection — turn-start matcher, all SYNC]
+    base[lexical base score] --> fb["+ fitnessFeedbackDelta<br/>(U1, 0..3, floor)"]
+    fb --> rt["+ ratingScoreDelta<br/>(U12, ±0.2, tie-break)"]
+  end
+  rt --> run[prefrontal.recipe.run → runKit]
+  run -->|onTag recipe:owner/slug| ep[episode events]
+  run -->|onCheckpoint / artifact| ck[durable plan rows]
+  ep --> cons[engram-consolidate cron]
+  cons -->|updateRecipeFitness| arch[(recipe-archive<br/>never-delete)]
+  cons -->|extractSkill| lib[(skill-library<br/>never-delete)]
+  arch -->|makeFitnessLookup| fb
+  cons -->|proposeMutations + isAutoPromotable| ap[recipe.applyProposal]
+  ap -->|new variant| arch
+```
+
 ## Prefrontal observability — the kit-state CLI
 
 Kits coordinate; Prefrontal observes. The kit-state CLI publishes orchestration state to the Prefrontal panel (which renders it as the call tree visible in Tinker UI).
@@ -441,3 +526,9 @@ estimates.
 - The split between Prefrontal panel and chat text is the single most important orchestration invariant. If it breaks, both panels become useless noise.
 - The `currentStep` invariant (at most one `in_progress` step per plan) is enforced by the plan-store. Never bypass it.
 - Kit sandbox enforcement (`resolveSandboxPath`) must run on every file in every install — no exceptions, no trusted-path bypass.
+- **U1+U12 score precedence (`scoreKit`) is `base → feedback → rating`** — the `feedback` (empirical fitness) delta MUST be applied before the `rating` (popularity) delta, and `fitnessFeedbackDelta` MUST preserve the lexical floor (`successRate <= 0.5 → +0`). Reordering or letting either signal demote a lexically-relevant recipe re-introduces the rich-get-richer / fitness-tyranny failure the clamps prevent. The verify block asserts the source order.
+- **U1 attribution producer must stay wired.** `kit-runner.onTag` stamping `recipe:<owner/slug>` (and `recipe.run` forwarding it) is the ONLY producer of the tag `recipe-fitness.attributeRecipe()` reads. Drop it and empirical fitness silently goes inert again (everything still runs, nothing is ever measured) — the exact dead-loop U1 closed. Keep it best-effort-wrapped.
+- **U5 auto-resume requires explicit `resume:true`** (architect policy: no silent re-attach). A bare `recipe.run` always force-restarts at step 0, and resume only re-attaches a plan whose `kitRef` AND step-count match.
+- **Never-delete is an invariant for BOTH stores.** `recipe-archive` and `skill-library` deprecate, never delete — it is what makes every recipe mutation reversible (the precondition for `isAutoPromotable`) and keeps obsolete skills auditable. A real delete breaks rollback.
+- **U11 transitive deps resolve with their OWN constraint** — the root install's `p.ref` must never leak onto a `composes:`/`uses:` dependency, and the symlink guard (`assertNoSymlink`) must run on every imported SKILL.md path.
+- **U12 published versions are immutable** — publish bumps + refuses an already-published version (`hasVersion`); yank + re-bump, never overwrite. Marketplace fetch failures degrade to cache, never throw into a turn (Risk 7).
