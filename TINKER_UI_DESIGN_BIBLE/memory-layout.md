@@ -5,7 +5,7 @@ audience: AI
 last_verified: 2026-06-02
 last_verified_commit: 06f8647fdc
 single_owner: yes — directory map + writer + retention live here (both workspace/memory/ AND ~/.openclaw/engram/)
-see_also: topology.md (workspace symlinks), crons.md (engram-consolidate writer), subagents-and-kits.md (recipe/skill BEHAVIOR — selection, fitness scoring, never-delete), pii-boundary.md (everything under workspace/memory is PRIVATE)
+see_also: topology.md (workspace symlinks), crons.md (engram-consolidate writer), subagents-and-recipes.md (recipe/skill BEHAVIOR — selection, fitness scoring, never-delete), pii-boundary.md (everything under workspace/memory is PRIVATE)
 verify:
   - name: workspace memory dir exists
     cmd: test -d ~/.openclaw/workspace/memory
@@ -139,12 +139,12 @@ Convention shared by these stores: **atomic write = write-temp-then-rename** (`f
 
 ### `recipe-archive/` — U1 recipe-evolution versioned store (J5 + J13)
 
-- **Writer:** `createRecipeArchive()` in `src/memory/engram/recipe-archive.ts`. PRODUCER chain: `kit-runner.ts` stamps `recipe:<owner/slug>` attribution tags via `onTag` (threaded by `prefrontal.recipe.run`); the `engram-consolidate` cron runs `proposeMutations()` (`recipe-evolution.ts`) and writes new variants. Gated by `RECIPE_AUTOAPPLY_ENABLED` (already "true").
-- **Reader:** `loadRecipeFitness(baseDir, slug)` / `makeFitnessLookup()` (`recipe-fitness.ts`) — a SYNC reader threaded as a `FitnessLookup` feedback into `matchKitsDetailed` (turn-start seed + `recipe.match`). `rank()` returns variants best-fitness-first with an epsilon-greedy explorer slot.
+- **Writer:** `createRecipeArchive()` in `src/memory/engram/recipe-archive.ts`. PRODUCER chain: `recipe-runner.ts` stamps `recipe:<owner/slug>` attribution tags via `onTag` (threaded by `prefrontal.recipe.run`); the `engram-consolidate` cron runs `proposeMutations()` (`recipe-evolution.ts`) and writes new variants. Gated by `RECIPE_AUTOAPPLY_ENABLED` (already "true").
+- **Reader:** `loadRecipeFitness(baseDir, slug)` / `makeFitnessLookup()` (`recipe-fitness.ts`) — a SYNC reader threaded as a `FitnessLookup` feedback into `matchRecipesDetailed` (turn-start seed + `recipe.match`). `rank()` returns variants best-fitness-first with an epsilon-greedy explorer slot.
 - **Layout:** `index.json` (`{ recipeId -> { recipeId, versions: number[] } }`) + `<recipeId-slug>/v<n>.json` (`{ body, fitness, deprecated }`). `recipeId` is the canonical `owner/slug`; dir-name slugify escapes non-`[A-Za-z0-9._-]`.
 - **No separate fitness store:** `recipe-fitness.ts` has NO file of its own — each variant's Laplace-smoothed `successRate` lives INSIDE its `v<n>.json` under `.fitness`. Default for an unmeasured recipe is the neutral `laplace(0,0)` = 0.5 (never penalised).
 - **Retention:** NEVER deletes — supersession sets `deprecated:true`; the body stays readable for rollback (self-reinforcing-error-spiral mitigation). On-disk dir is created lazily on first promoted mutation (absent until then).
-- **Behavior owner:** selection/scoring precedence (base → U1 fitness feedback → U12 rating tie-break) lives in subagents-and-kits.md; this optic owns only the on-disk shape.
+- **Behavior owner:** selection/scoring precedence (base → U1 fitness feedback → U12 rating tie-break) lives in subagents-and-recipes.md; this optic owns only the on-disk shape.
 
 ### `skill-library/` — U6 Voyager skill-library-as-code (J5 + J2)
 

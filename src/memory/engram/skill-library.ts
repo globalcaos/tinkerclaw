@@ -24,7 +24,7 @@
  *   - keyword:  a token-overlap fallback when no EmbedFn is wired (and used to
  *     merge with the semantic ranking), matching textSimilarity in recall-tool.
  *
- * The Cerebellum owns the library + fitness; the Prefrontal kit-runner owns
+ * The Cerebellum owns the library + fitness; the Prefrontal recipe-runner owns
  * execution (skill-invocation.ts records the outcome back here) — the same
  * split as Upgrade 1's recipe archive.
  *

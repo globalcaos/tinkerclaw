@@ -47,7 +47,7 @@ export type StoredChunk = {
 // deferred). A Skill is a STRUCTURED PROCEDURE (named steps + prerequisites +
 // successMetrics) with an OPTIONAL `verifiedCode` field — it is "skill-as-code"
 // only when the extractor synthesized a runnable snippet, otherwise it is a
-// steps[] procedure the Prefrontal kit-runner consumes like a recipe. Stored in
+// steps[] procedure the Prefrontal recipe-runner consumes like a recipe. Stored in
 // a never-delete library: supersession bumps `version` and `deprecated` marks an
 // obsolete entry while its body stays readable.
 export type SkillTestCase = {

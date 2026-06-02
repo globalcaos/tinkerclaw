@@ -5,11 +5,11 @@ import { MockAgent, setGlobalDispatcher, getGlobalDispatcher, type Dispatcher } 
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { createRecipeArchive } from "../../src/memory/engram/recipe-archive.js";
 import { createInitialRecipeFitness, laplace } from "../../src/memory/engram/recipe-fitness.js";
-import * as kitMatcher from "./kit-matcher.js";
-import { createKitRpcs, inferCategory, parseKitMd } from "./kit-rpcs.js";
-import * as kitRunner from "./kit-runner.js";
-import { KitStore } from "./kit-store.js";
 import { createMarketplace, type MarketplaceMeta } from "./recipe-marketplace.js";
+import * as kitMatcher from "./recipe-matcher.js";
+import { createRecipeRpcs, inferCategory, parseKitMd } from "./recipe-rpcs.js";
+import * as kitRunner from "./recipe-runner.js";
+import { RecipeStore } from "./recipe-store.js";
 
 // callGateway is the loopback seam the recipe.run onTag forwards through. Mock it
 // so the producer test asserts the forward WITHOUT a live gateway.
@@ -18,12 +18,12 @@ vi.mock("../../src/gateway/call.js", () => ({
   callGateway: (...args: unknown[]) => callGatewaySpy(...args),
 }));
 
-describe("kit-rpcs", () => {
+describe("recipe-rpcs", () => {
   let mock: MockAgent;
   let original: Dispatcher;
-  let store: KitStore;
+  let store: RecipeStore;
   let root: string;
-  let ownKitsDir: string;
+  let ownRecipesDir: string;
 
   beforeEach(() => {
     original = getGlobalDispatcher();
@@ -31,13 +31,13 @@ describe("kit-rpcs", () => {
     mock.disableNetConnect();
     setGlobalDispatcher(mock);
     root = fs.mkdtempSync(path.join(os.tmpdir(), "pf-kr-"));
-    store = new KitStore({ rootDir: root });
-    ownKitsDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-own-"));
+    store = new RecipeStore({ rootDir: root });
+    ownRecipesDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-own-"));
   });
   afterEach(() => {
     setGlobalDispatcher(original);
     fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(ownKitsDir, { recursive: true, force: true });
+    fs.rmSync(ownRecipesDir, { recursive: true, force: true });
   });
 
   it("prefrontal.recipe.search returns parsed results (flat array shape)", async () => {
@@ -55,12 +55,12 @@ describe("kit-rpcs", () => {
         },
       ]);
 
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.search"]({ query: "feature" });
     expect(res.results).toHaveLength(1);
@@ -92,12 +92,12 @@ describe("kit-rpcs", () => {
         },
       ]);
 
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.search"]({ query: "feature" });
     expect(res.results).toHaveLength(1);
@@ -110,12 +110,12 @@ describe("kit-rpcs", () => {
       .get("https://www.journeykits.ai")
       .intercept({ path: "/api/kits/globalcaos/feature", method: "GET" })
       .reply(200, { slug: "feature", title: "Build Feature" });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.get"]({ kitRef: "globalcaos/feature" });
     expect(res.kit.slug).toBe("feature");
@@ -133,12 +133,12 @@ describe("kit-rpcs", () => {
         verification: null,
         risk: [{ source: "snyk", level: "Critical", alertCount: 3 }],
       });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     await expect(rpcs["prefrontal.recipe.install"]({ kitRef: "foo/bar" })).rejects.toThrow(
       /risk|Critical/,
@@ -157,12 +157,12 @@ describe("kit-rpcs", () => {
         verification: null,
         risk: [{ source: "snyk", level: "Safe" }],
       });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     await expect(rpcs["prefrontal.recipe.install"]({ kitRef: "foo/bar" })).rejects.toThrow(
       /escapes sandbox/,
@@ -181,12 +181,12 @@ describe("kit-rpcs", () => {
         verification: null,
         risk: [{ source: "snyk", level: "High Risk", alertCount: 1 }],
       });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.install"]({ kitRef: "foo/bar", allowRisky: true });
     expect(res.ok).toBe(true);
@@ -239,12 +239,12 @@ describe("kit-rpcs", () => {
         };
       });
 
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.install"]({
       kitRef: "globalcaos/root",
@@ -295,12 +295,12 @@ describe("kit-rpcs", () => {
         risk: [{ source: "snyk", level: "Safe" }],
       });
 
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     // The dep intercept only matches ref=~1.4.0; the install resolves cleanly only
     // if the dep's own declared constraint is used (the producer fires correctly).
@@ -315,12 +315,12 @@ describe("kit-rpcs", () => {
       slug: "feature",
       files: [{ path: "kit.md", content: "x" }],
     });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.list"]({});
     expect(res.kits.find((k) => k.kitRef === "globalcaos/feature")).toBeTruthy();
@@ -338,12 +338,12 @@ describe("kit-rpcs", () => {
         },
       ],
     });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.list"]({});
     const kit = res.kits.find((k) => k.slug === "block-scalar");
@@ -351,12 +351,12 @@ describe("kit-rpcs", () => {
   });
 
   it("prefrontal.recipe.publish requires apiKey", async () => {
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     await expect(
       rpcs["prefrontal.recipe.publish"]({ slug: "feature", visibility: "public" }),
@@ -366,9 +366,9 @@ describe("kit-rpcs", () => {
   it("prefrontal.recipe.publish: a brand-new recipe with NO version frontmatter publishes 1.0.0", async () => {
     // The first publish of a recipe that has no `version:` line must mint 1.0.0
     // (NOT bump a phantom 0.0.0 -> 0.0.1). Assert the version the producer POSTs.
-    fs.mkdirSync(path.join(ownKitsDir, "fresh"), { recursive: true });
+    fs.mkdirSync(path.join(ownRecipesDir, "fresh"), { recursive: true });
     fs.writeFileSync(
-      path.join(ownKitsDir, "fresh", "kit.md"),
+      path.join(ownRecipesDir, "fresh", "kit.md"),
       "---\nschema: kit/1.0\nslug: fresh\nowner: globalcaos\n---\n# body\n",
       "utf-8",
     );
@@ -382,24 +382,24 @@ describe("kit-rpcs", () => {
         return { ok: true, kitRef: "globalcaos/fresh" };
       });
 
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: "test-key",
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.publish"]({ slug: "fresh", visibility: "public" });
     expect(res.version).toBe("1.0.0");
     expect(postedBody.version).toBe("1.0.0");
     // The frontmatter shipped in the POST body carries the minted version too.
-    expect(postedBody.kitMd).toContain('version: "1.0.0"');
+    expect(postedBody.recipeMd).toContain('version: "1.0.0"');
   });
 
   it("prefrontal.recipe.publish reads source kit body and POSTs to Journey", async () => {
-    fs.mkdirSync(path.join(ownKitsDir, "feature"), { recursive: true });
+    fs.mkdirSync(path.join(ownRecipesDir, "feature"), { recursive: true });
     fs.writeFileSync(
-      path.join(ownKitsDir, "feature", "kit.md"),
+      path.join(ownRecipesDir, "feature", "kit.md"),
       "---\nschema: kit/1.0\nslug: feature\n---\n# body\n",
       "utf-8",
     );
@@ -414,12 +414,12 @@ describe("kit-rpcs", () => {
         version: "1.0.0",
       });
 
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: "test-key",
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.publish"]({ slug: "feature", visibility: "public" });
     expect(res.ok).toBe(true);
@@ -463,7 +463,7 @@ describe("kit-rpcs", () => {
   // ─── parseKitMd tests ───────────────────────────────────────────────────
 
   it("parseKitMd: parses slug, title, summary, tags, category from frontmatter", async () => {
-    const kitPath = path.join(ownKitsDir, "my-kit", "kit.md");
+    const kitPath = path.join(ownRecipesDir, "my-kit", "kit.md");
     fs.mkdirSync(path.dirname(kitPath), { recursive: true });
     fs.writeFileSync(
       kitPath,
@@ -479,7 +479,7 @@ describe("kit-rpcs", () => {
   });
 
   it("parseKitMd: derives category via inferCategory (first canonical tag)", async () => {
-    const kitPath = path.join(ownKitsDir, "comms-kit", "kit.md");
+    const kitPath = path.join(ownRecipesDir, "comms-kit", "kit.md");
     fs.mkdirSync(path.dirname(kitPath), { recursive: true });
     fs.writeFileSync(
       kitPath,
@@ -491,7 +491,7 @@ describe("kit-rpcs", () => {
   });
 
   it("parseKitMd: falls back gracefully when kit.md has no frontmatter", async () => {
-    const kitPath = path.join(ownKitsDir, "bare-kit", "kit.md");
+    const kitPath = path.join(ownRecipesDir, "bare-kit", "kit.md");
     fs.mkdirSync(path.dirname(kitPath), { recursive: true });
     fs.writeFileSync(kitPath, "# Just a body\n", "utf-8");
     const parsed = await parseKitMd(kitPath);
@@ -502,18 +502,18 @@ describe("kit-rpcs", () => {
   // ─── kit.list: source=ours + combined list ──────────────────────────────
 
   it("prefrontal.recipe.list includes source-tree kits with source:'ours'", async () => {
-    fs.mkdirSync(path.join(ownKitsDir, "debug"), { recursive: true });
+    fs.mkdirSync(path.join(ownRecipesDir, "debug"), { recursive: true });
     fs.writeFileSync(
-      path.join(ownKitsDir, "debug", "kit.md"),
+      path.join(ownRecipesDir, "debug", "kit.md"),
       '---\nschema: "kit/1.0"\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "Systematic debug"\ntags: ["coding"]\n---\n',
       "utf-8",
     );
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.list"]({});
     const kit = res.kits.find((k) => k.slug === "debug");
@@ -525,9 +525,9 @@ describe("kit-rpcs", () => {
 
   it("prefrontal.recipe.list combines ours + downloaded, ours appear first", async () => {
     // Set up one own kit
-    fs.mkdirSync(path.join(ownKitsDir, "own-kit"), { recursive: true });
+    fs.mkdirSync(path.join(ownRecipesDir, "own-kit"), { recursive: true });
     fs.writeFileSync(
-      path.join(ownKitsDir, "own-kit", "kit.md"),
+      path.join(ownRecipesDir, "own-kit", "kit.md"),
       '---\nschema: "kit/1.0"\nslug: "own-kit"\ntitle: "Own Kit"\nsummary: ""\ntags: ["coding"]\n---\n',
       "utf-8",
     );
@@ -543,12 +543,12 @@ describe("kit-rpcs", () => {
         },
       ],
     });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.list"]({});
     const ownIdx = res.kits.findIndex((k) => k.slug === "own-kit");
@@ -572,12 +572,12 @@ describe("kit-rpcs", () => {
         },
       ],
     });
-    const rpcs = createKitRpcs({
+    const rpcs = createRecipeRpcs({
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
-      kitInstallSandbox: store.rootDirPublic(),
-      ownKitsDir,
+      recipeInstallSandbox: store.rootDirPublic(),
+      ownRecipesDir,
     });
     const res = await rpcs["prefrontal.recipe.list"]({});
     const kit = res.kits.find((k) => k.slug === "feature");
@@ -586,7 +586,7 @@ describe("kit-rpcs", () => {
 
   // ─── U1 + U12 PRODUCER WIRING: recipe.match folds in fitness + rating ─────────
   // The matcher exposes feedback?/rating? seams; before this wiring NO caller
-  // supplied them. These tests fail if recipe.match calls matchKitsDetailed without
+  // supplied them. These tests fail if recipe.match calls matchRecipesDetailed without
   // a non-empty feedback + rating (the unwired-producer regression).
 
   function meta(
@@ -597,11 +597,11 @@ describe("kit-rpcs", () => {
     return { kitRef, versions, rating: over?.rating, downloads: over?.downloads };
   }
 
-  it("prefrontal.recipe.match passes a NON-EMPTY feedback + rating into matchKitsDetailed", async () => {
+  it("prefrontal.recipe.match passes a NON-EMPTY feedback + rating into matchRecipesDetailed", async () => {
     // A curated kit in the catalog.
-    fs.mkdirSync(path.join(ownKitsDir, "debug"), { recursive: true });
+    fs.mkdirSync(path.join(ownRecipesDir, "debug"), { recursive: true });
     fs.writeFileSync(
-      path.join(ownKitsDir, "debug", "kit.md"),
+      path.join(ownRecipesDir, "debug", "kit.md"),
       '---\nschema: "kit/1.0"\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "reproduce diagnose fix verify"\ntags: ["debug", "bug", "crash", "error"]\n---\n### 1. Repro\nbody\n',
       "utf-8",
     );
@@ -619,14 +619,14 @@ describe("kit-rpcs", () => {
       meta("globalcaos/debug", ["1.0.0"], { rating: 5, downloads: 500 }),
     );
 
-    const spy = vi.spyOn(kitMatcher, "matchKitsDetailed");
+    const spy = vi.spyOn(kitMatcher, "matchRecipesDetailed");
     try {
-      const rpcs = createKitRpcs({
+      const rpcs = createRecipeRpcs({
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
-        kitInstallSandbox: store.rootDirPublic(),
-        ownKitsDir,
+        recipeInstallSandbox: store.rootDirPublic(),
+        ownRecipesDir,
         marketplace,
         engramBaseDir,
       });
@@ -652,23 +652,23 @@ describe("kit-rpcs", () => {
   });
 
   it("prefrontal.recipe.search local fallback also passes feedback + rating", async () => {
-    fs.mkdirSync(path.join(ownKitsDir, "debug"), { recursive: true });
+    fs.mkdirSync(path.join(ownRecipesDir, "debug"), { recursive: true });
     fs.writeFileSync(
-      path.join(ownKitsDir, "debug", "kit.md"),
+      path.join(ownRecipesDir, "debug", "kit.md"),
       '---\nschema: "kit/1.0"\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "reproduce diagnose fix verify"\ntags: ["debug", "bug", "crash", "error"]\n---\n### 1. Repro\nbody\n',
       "utf-8",
     );
     const engramBaseDir = fs.mkdtempSync(path.join(os.tmpdir(), "pf-engram-"));
     const marketplace = createMarketplace({ fetchImpl: vi.fn() });
 
-    const spy = vi.spyOn(kitMatcher, "matchKitsDetailed");
+    const spy = vi.spyOn(kitMatcher, "matchRecipesDetailed");
     try {
-      const rpcs = createKitRpcs({
+      const rpcs = createRecipeRpcs({
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
-        kitInstallSandbox: store.rootDirPublic(),
-        ownKitsDir,
+        recipeInstallSandbox: store.rootDirPublic(),
+        ownRecipesDir,
         marketplace,
         engramBaseDir,
         // Force the LOCAL fallback path by failing the Journey fetch.
@@ -687,26 +687,26 @@ describe("kit-rpcs", () => {
     }
   });
 
-  // ─── U1 PRODUCER WIRING: recipe.run passes onTag into runKit ──────────────────
-  // kit-runner emits recipe:<owner/slug> TagStamps via opts.onTag, but recipe.run
+  // ─── U1 PRODUCER WIRING: recipe.run passes onTag into runRecipe ──────────────────
+  // recipe-runner emits recipe:<owner/slug> TagStamps via opts.onTag, but recipe.run
   // never supplied it → the attribution producer was inert. This asserts the seam.
 
-  it("prefrontal.recipe.run passes a DEFINED onTag into runKit that forwards to the trail seam", async () => {
+  it("prefrontal.recipe.run passes a DEFINED onTag into runRecipe that forwards to the trail seam", async () => {
     let capturedOnTag: ((ev: kitRunner.TagStamp) => void) | undefined;
     const runKitSpy = vi
-      .spyOn(kitRunner, "runKit")
-      .mockImplementation(async (opts: kitRunner.KitRunOptions) => {
+      .spyOn(kitRunner, "runRecipe")
+      .mockImplementation(async (opts: kitRunner.RecipeRunOptions) => {
         capturedOnTag = opts.onTag;
         return { ok: true, planId: "test-plan", results: [] };
       });
     callGatewaySpy.mockClear();
     try {
-      const rpcs = createKitRpcs({
+      const rpcs = createRecipeRpcs({
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
-        kitInstallSandbox: store.rootDirPublic(),
-        ownKitsDir,
+        recipeInstallSandbox: store.rootDirPublic(),
+        ownRecipesDir,
         planStore: {} as never,
       });
       await rpcs["prefrontal.recipe.run"]({
@@ -715,7 +715,7 @@ describe("kit-rpcs", () => {
         intent: "debug it",
       });
 
-      // The producer seam is wired: runKit received a callable onTag.
+      // The producer seam is wired: runRecipe received a callable onTag.
       expect(runKitSpy).toHaveBeenCalled();
       expect(typeof capturedOnTag).toBe("function");
 

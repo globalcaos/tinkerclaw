@@ -197,10 +197,10 @@ The 12 OSS-harness upgrades (U1–U12; roadmap `docs/notes/2026-05-30-papers-cov
 
 The OSS upgrades that need a runtime gate reuse the three full-autonomy flags already set `"true"` in `~/.openclaw/openclaw.json` `env.vars` (granted 2026-05-31; see jarvis-icu memory `project_jarvis_full_autonomy_flags.md`). No new key was added for these:
 
-- **`RECIPE_AUTOAPPLY_ENABLED`** (`"true"`) — gates **U1** recipe-evolution self-apply (`recipe-evolution.ts` `isAutoPromotable` + kit-runner `recipe:<owner/slug>` attribution feeding `makeFitnessLookup`). Same flag that already gated recipe self-rewrite.
+- **`RECIPE_AUTOAPPLY_ENABLED`** (`"true"`) — gates **U1** recipe-evolution self-apply (`recipe-evolution.ts` `isAutoPromotable` + recipe-runner `recipe:<owner/slug>` attribution feeding `makeFitnessLookup`). Same flag that already gated recipe self-rewrite.
 - **`ENGRAM_SUPERSEDE_ENABLED`** (`"true"`) — gates **U3** bi-temporal supersede (`supersede-writer.ts` interval-close on contradiction; `temporalMode`/`asOfTime` on `fork.memory.search`).
-- **`PREFRONTAL_SEMANTIC_MATCH_ENABLED`** (`"true"`) — semantic kit/recipe match lane; threaded by U1's fitness feedback into `matchKitsDetailed`.
-- **No new flag** for U4 (failure→strategy-switch, driven by the engram-consolidate cron), U5 (durable checkpointing), U6 (Voyager skill-library), U9 (A-MEM Zettelkasten links), U11 (external recipe acquisition), U12 (recipe marketplace) — these are always-on once the consolidation cron / kit-runner paths execute; their behavior is data-driven, not config-gated.
+- **`PREFRONTAL_SEMANTIC_MATCH_ENABLED`** (`"true"`) — semantic kit/recipe match lane; threaded by U1's fitness feedback into `matchRecipesDetailed`.
+- **No new flag** for U4 (failure→strategy-switch, driven by the engram-consolidate cron), U5 (durable checkpointing), U6 (Voyager skill-library), U9 (A-MEM Zettelkasten links), U11 (external recipe acquisition), U12 (recipe marketplace) — these are always-on once the consolidation cron / recipe-runner paths execute; their behavior is data-driven, not config-gated.
 
 ## control-panel plugin schema (v3.5 — 2026-05-22)
 

@@ -70,7 +70,7 @@ Cron sessions are SKIPPED by the restart-recovery main-session path (`shouldSkip
 status: DEPLOYED (code descriptor + on-demand RPC); NOT in the stored jobs.json registry
 last_verified: 2026-06-02
 last_verified_commit: 06f8647fdc
-see_also: subagents-and-kits.md (recipe/skill stores), memory-layout.md (engram root), config-shape.md (ENGRAM_RECONCILE gate)
+see_also: subagents-and-recipes.md (recipe/skill stores), memory-layout.md (engram root), config-shape.md (ENGRAM_RECONCILE gate)
 verify:
   - name: engram-consolidate cron descriptor source exists
     cmd: python3 -c 'import glob,os; assert glob.glob(os.path.expanduser("~/src/tinkerclaw/src/cron/jobs/engram-consolidate.ts"))'

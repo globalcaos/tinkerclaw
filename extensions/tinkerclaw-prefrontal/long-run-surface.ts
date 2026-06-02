@@ -6,12 +6,12 @@
  *   - agent RPC deliver:false, lane Main, idempotencyKey → a fresh completion
  *     turn (lines 167-177)
  * The completion message carries the __KIT_DONE__ sentinel so the
- * before_prompt_build kit-matcher does NOT auto-seed a phantom plan (see
- * kit-matcher guard, Task 1.5 Step 6).
+ * before_prompt_build recipe-matcher does NOT auto-seed a phantom plan (see
+ * recipe-matcher guard, Task 1.5 Step 6).
  */
 
 import crypto from "node:crypto";
-import type { StepResult } from "./kit-runner.js";
+import type { StepResult } from "./recipe-runner.js";
 
 export function buildKitStatusEnvelope(p: { kitRef: string; done: number; total: number }): string {
   const now = new Date();

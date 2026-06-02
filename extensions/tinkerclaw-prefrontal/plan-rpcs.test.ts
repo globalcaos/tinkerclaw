@@ -55,7 +55,7 @@ describe("plan-rpcs", () => {
     // Build fresh store + rpcs scoped to this test's temp dir
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "pf-plan-kr-"));
     const store2 = new PlanStore({ rootDir: dir2 });
-    const rpcs2 = createPlanRpcs({ store: store2, ownKitsDir: ownKits });
+    const rpcs2 = createPlanRpcs({ store: store2, ownRecipesDir: ownKits });
 
     const res = await rpcs2["prefrontal.plan.set"]({
       sessionKey: "agent:main:main",

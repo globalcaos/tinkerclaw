@@ -6,7 +6,7 @@
  * hard-won episode into tomorrow's reflexive skill. A `Skill` is a STRUCTURED
  * PROCEDURE (named steps + prerequisites + successMetrics) with an OPTIONAL
  * `verifiedCode` field; in this fork recipes are already markdown procedures run
- * by the Prefrontal kit-runner, so the default skill shape is "skill-as-recipe"
+ * by the Prefrontal recipe-runner, so the default skill shape is "skill-as-recipe"
  * (steps[]) and `verifiedCode` is the true-Voyager opt-in when the extractor
  * synthesized a runnable, verified snippet.
  *

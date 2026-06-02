@@ -35,8 +35,8 @@ function validateOrThrow<T>(validator: Validator, params: unknown, name: string)
 
 export interface PlanRpcsDeps {
   store: PlanStore;
-  ownKitsDir?: string;
-  kitInstallSandbox?: string;
+  ownRecipesDir?: string;
+  recipeInstallSandbox?: string;
 }
 
 export function createPlanRpcs(deps: PlanRpcsDeps) {
@@ -94,14 +94,14 @@ function cryptoRandomId(): string {
 
 async function readStepsFromKit(
   kitRef: string,
-  deps: { ownKitsDir?: string; kitInstallSandbox?: string },
+  deps: { ownRecipesDir?: string; recipeInstallSandbox?: string },
 ): Promise<Array<{ title: string }>> {
   const fs = await import("node:fs/promises");
   const [owner, slug] = kitRef.split("/");
   const candidates: string[] = [];
-  if (deps.ownKitsDir) candidates.push(path.join(deps.ownKitsDir, slug, "kit.md"));
-  if (deps.kitInstallSandbox)
-    candidates.push(path.join(deps.kitInstallSandbox, owner, slug, "kit.md"));
+  if (deps.ownRecipesDir) candidates.push(path.join(deps.ownRecipesDir, slug, "kit.md"));
+  if (deps.recipeInstallSandbox)
+    candidates.push(path.join(deps.recipeInstallSandbox, owner, slug, "kit.md"));
   for (const p of candidates) {
     try {
       const text = await fs.readFile(p, "utf-8");

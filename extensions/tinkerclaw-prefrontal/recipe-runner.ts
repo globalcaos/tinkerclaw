@@ -1,10 +1,10 @@
 /**
- * FORK: prefrontal/kit-runner — Consumes parallelism.groups from kit frontmatter
+ * FORK: prefrontal/recipe-runner — Consumes parallelism.groups from kit frontmatter
  * and dispatches each group's steps as parallel subagents via
  * scripts/openclaw-spawn-subagent.mjs. Plan-row status is the per-step write
  * barrier: in_progress → done (or error on failure).
  *
- * Wired in by: kit-rpcs.ts (prefrontal.kit.run RPC) which delegates here.
+ * Wired in by: recipe-rpcs.ts (prefrontal.kit.run RPC) which delegates here.
  *
  * Parallelism contract:
  *   parallelism.groups is a list of step-index arrays.
@@ -32,7 +32,7 @@ import type { PlanStore } from "./plan-store.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export interface KitRunOptions {
+export interface RecipeRunOptions {
   /** e.g. "globalcaos/feature" */
   kitRef: string;
   /** plan's session key — used as the plan row identifier */
@@ -46,9 +46,9 @@ export interface KitRunOptions {
   /** for injection in tests / alternate deploy environments */
   planStore?: PlanStore;
   /** path to the kits directory (default: co-located kits/ dir) */
-  ownKitsDir?: string;
+  ownRecipesDir?: string;
   /** path to the install sandbox (for downloaded kits) */
-  kitInstallSandbox?: string;
+  recipeInstallSandbox?: string;
   /** FORK 2026-05-29 composition: recursion depth (sub-kits invoked via `uses:`). */
   _depth?: number;
   /** FORK 2026-05-29 composition: kitRefs already on the call stack (cycle guard). */
@@ -72,12 +72,12 @@ export interface KitRunOptions {
    */
   _spawnStep?: (task: string, label: string) => Promise<SpawnResult>;
   /**
-   * FORK 2026-05-31: recipe-state observability sink. runKit calls this at kit
+   * FORK 2026-05-31: recipe-state observability sink. runRecipe calls this at kit
    * start, on each parallel-group transition, and on completion so the Tinker
    * RECIPES panel can render the live recipe header (id + step M/N +
    * parallelism). The caller wires it to fork.prefrontal.setRecipe, which
    * broadcasts the prefrontal-recipe-state lifecycle event. Best-effort and
-   * fire-and-forget: kit-runner wraps every call so observability NEVER throws
+   * fire-and-forget: recipe-runner wraps every call so observability NEVER throws
    * into the execution loop. Until this was wired the header had no data source
    * and the panel always fell back to the synthetic "Thinking → Acting" plan.
    */
@@ -89,9 +89,9 @@ export interface KitRunOptions {
    * recipe-fitness (src/memory/engram/recipe-fitness.ts) attributes an episode to
    * a recipe by reading a `recipe:<owner/slug>` tag off the episode's events, but
    * it is NOT the producer of that tag — the contract is that the EXECUTOR stamps
-   * it. kit-runner is the executor, so it emits the canonical attribution tag here
-   * at run start AND at each task dispatch. The caller (kit-rpcs) forwards the tag
-   * to whatever event sink stamps the metadata; kit-runner stays decoupled from
+   * it. recipe-runner is the executor, so it emits the canonical attribution tag here
+   * at run start AND at each task dispatch. The caller (recipe-rpcs) forwards the tag
+   * to whatever event sink stamps the metadata; recipe-runner stays decoupled from
    * the engram event store (so the native-dep stack is never dragged into this
    * bundled extension — see the onRecipeState rationale above and the J13 embed
    * lane). Best-effort + fire-and-forget: every emit is wrapped so a broken sink
@@ -102,7 +102,7 @@ export interface KitRunOptions {
 
 /**
  * FORK 2026-06 (Upgrade 1): one recipe-attribution tag emit. `phase` is "start"
- * (the single per-run stamp at runKit entry) or "dispatch" (one per task dispatch,
+ * (the single per-run stamp at runRecipe entry) or "dispatch" (one per task dispatch,
  * carrying the stepIndex). `tag` is always `recipe:<owner/slug>` for the running
  * kit — the exact string recipe-fitness.attributeRecipe() matches on.
  */
@@ -114,7 +114,7 @@ export interface TagStamp {
 }
 
 /**
- * FORK 2026-05-31: a single recipe-state observability update emitted by runKit.
+ * FORK 2026-05-31: a single recipe-state observability update emitted by runRecipe.
  * Mirrors the fork.prefrontal.setRecipe param shape so the caller can forward it
  * verbatim. All progress fields optional — the start emit may omit step detail.
  */
@@ -190,7 +190,7 @@ export function withPriorArtifacts(task: string, prior: PriorArtifact[]): string
 /** Max depth for `uses:` sub-kit recursion — recipes calling recipes. */
 const MAX_USES_DEPTH = 3;
 
-export interface KitRunResult {
+export interface RecipeRunResult {
   ok: boolean;
   planId: string;
   dryRunPlan?: DryRunDispatchPlan;
@@ -313,19 +313,19 @@ interface ParsedKitStep {
   body: string;
 }
 
-interface KitParallelism {
+interface RecipeParallelism {
   groups: number[][];
 }
 
-interface ParsedKit {
+interface ParsedRecipe {
   steps: ParsedKitStep[];
-  parallelism: KitParallelism | null;
+  parallelism: RecipeParallelism | null;
 }
 
-export function parseKitStepsAndParallelism(text: string): ParsedKit {
+export function parseKitStepsAndParallelism(text: string): ParsedRecipe {
   // Strip frontmatter, collect parallelism block and step sections.
   const fmMatch = /^---\n([\s\S]+?)\n---\n/.exec(text);
-  let parallelism: KitParallelism | null = null;
+  let parallelism: RecipeParallelism | null = null;
   if (fmMatch) {
     try {
       const fm = parseYaml(fmMatch[1]) as Record<string, unknown> | null;
@@ -367,7 +367,7 @@ export function parseKitStepsAndParallelism(text: string): ParsedKit {
  * Build the list of step groups from a parallelism block (or fallback to
  * one group per step if the block is absent / invalid).
  */
-function resolveGroups(kit: ParsedKit): number[][] {
+function resolveGroups(kit: ParsedRecipe): number[][] {
   if (kit.parallelism?.groups && kit.parallelism.groups.length > 0) {
     // Validate: every group must be a non-empty array, all indices in range
     const stepCount = kit.steps.length;
@@ -415,7 +415,7 @@ interface SpawnResult {
 /**
  * Invoke openclaw-spawn-subagent.mjs for a single step. Returns a promise that
  * resolves when the subagent has been spawned (not when it completes — the
- * kit-runner polls plan-row status for completion).
+ * recipe-runner polls plan-row status for completion).
  *
  * Timeout: 120s per spawn call (time for the subagent to be accepted by the
  * gateway; actual execution continues independently).
@@ -531,18 +531,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// ─── Kit file resolution ──────────────────────────────────────────────────────
+// ─── Recipe file resolution ───────────────────────────────────────────────────
+//
+// DUAL-READ (rename migration 2026-06-02): a recipe definition is `recipe.md`
+// in the new layout, but legacy definitions are still `kit.md`. We probe
+// recipe.md FIRST (so freshly authored recipes win) then fall back to kit.md,
+// in both the own-recipes dir and the per-owner install sandbox. No on-disk
+// move is required — old kit.md definitions keep loading unchanged.
+const RECIPE_FILENAMES = ["recipe.md", "kit.md"] as const;
 
-async function loadKitText(
+async function loadRecipeText(
   kitRef: string,
-  ownKitsDir: string,
-  kitInstallSandbox: string,
+  ownRecipesDir: string,
+  recipeInstallSandbox: string,
 ): Promise<string> {
   const [owner, slug] = kitRef.split("/");
-  const candidates = [
-    join(ownKitsDir, slug, "kit.md"),
-    join(kitInstallSandbox, owner, slug, "kit.md"),
-  ];
+  const candidates: string[] = [];
+  for (const fname of RECIPE_FILENAMES) candidates.push(join(ownRecipesDir, slug, fname));
+  for (const fname of RECIPE_FILENAMES)
+    candidates.push(join(recipeInstallSandbox, owner, slug, fname));
   for (const candidate of candidates) {
     try {
       return await fs.readFile(candidate, "utf-8");
@@ -550,7 +557,7 @@ async function loadKitText(
       // try next
     }
   }
-  throw new Error(`kit-runner: kit ${kitRef} not found in ${candidates.join(" or ")}`);
+  throw new Error(`recipe-runner: recipe ${kitRef} not found in ${candidates.join(" or ")}`);
 }
 
 // ─── Result collection ────────────────────────────────────────────────────────
@@ -575,23 +582,27 @@ export function collectStepResults(plan: Plan): StepResult[] {
   return out;
 }
 
-// ─── Kits-dir resolution ────────────────────────────────────────────────────
+// ─── Recipes-dir resolution ───────────────────────────────────────────────────
 //
-// The own-kits dir is `<repo-root>/extensions/tinkerclaw-prefrontal/kits`. The
-// caller lives at a DIFFERENT depth depending on layout: source is at
+// The own-recipes dir is `<repo-root>/extensions/tinkerclaw-prefrontal/recipes`
+// in the new (canonical) layout, with `kits` as the legacy fallback. The caller
+// lives at a DIFFERENT depth depending on layout: source is at
 // extensions/tinkerclaw-prefrontal/ (3 levels deep) while the bundle is at
 // dist/ root (1 level deep). A fixed `..` count is correct for only one of them.
 // Walk UP from startDir and return the FIRST ancestor whose
-// `extensions/tinkerclaw-prefrontal/kits` exists on disk — both layouts share
-// the same repo root, so this resolves correctly regardless of bundle depth.
+// `extensions/tinkerclaw-prefrontal/{recipes,kits}` exists on disk — both
+// layouts share the same repo root, so this resolves correctly regardless of
+// bundle depth. recipes/ is preferred; kits/ is the legacy fallback (dual-read).
 // Falls back to the legacy 3-up resolve so behavior never gets worse.
-export function resolveOwnKitsDir(startDir: string): string {
+export function resolveOwnRecipesDir(startDir: string): string {
   const MAX_LEVELS = 8;
   let dir = startDir;
   for (let i = 0; i < MAX_LEVELS; i++) {
-    const candidate = join(dir, "extensions", "tinkerclaw-prefrontal", "kits");
-    if (existsSync(candidate)) {
-      return candidate;
+    for (const leaf of ["recipes", "kits"]) {
+      const candidate = join(dir, "extensions", "tinkerclaw-prefrontal", leaf);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
     }
     const parent = dirname(dir);
     if (parent === dir) {
@@ -599,22 +610,22 @@ export function resolveOwnKitsDir(startDir: string): string {
     }
     dir = parent;
   }
-  return resolve(startDir, "..", "..", "..", "extensions", "tinkerclaw-prefrontal", "kits");
+  return resolve(startDir, "..", "..", "..", "extensions", "tinkerclaw-prefrontal", "recipes");
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
-export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
+export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult> {
   // Resolve directories
   const thisDir = dirname(fileURLToPath(import.meta.url));
-  const ownKitsDir = opts.ownKitsDir ?? resolveOwnKitsDir(thisDir);
-  const kitInstallSandbox =
-    opts.kitInstallSandbox ?? join(process.env.HOME ?? "/tmp", ".openclaw", "workspace", "kits");
+  const ownRecipesDir = opts.ownRecipesDir ?? resolveOwnRecipesDir(thisDir);
+  const recipeInstallSandbox =
+    opts.recipeInstallSandbox ?? join(process.env.HOME ?? "/tmp", ".openclaw", "workspace", "kits");
 
-  // Load the kit
+  // Load the recipe (recipe.md preferred, kit.md legacy fallback)
   let kitText: string;
   try {
-    kitText = await loadKitText(opts.kitRef, ownKitsDir, kitInstallSandbox);
+    kitText = await loadRecipeText(opts.kitRef, ownRecipesDir, recipeInstallSandbox);
   } catch (err) {
     return { ok: false, planId: "", errorMessage: String(err) };
   }
@@ -624,7 +635,7 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
     return {
       ok: false,
       planId: "",
-      errorMessage: `kit-runner: kit ${opts.kitRef} has no parsable steps`,
+      errorMessage: `recipe-runner: kit ${opts.kitRef} has no parsable steps`,
     };
   }
 
@@ -637,7 +648,7 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       const step = kit.steps[idx];
       if (!step) {
         throw new Error(
-          `kit-runner: parallelism.groups references invalid step index ${idx} (kit has ${kit.steps.length} steps)`,
+          `recipe-runner: parallelism.groups references invalid step index ${idx} (kit has ${kit.steps.length} steps)`,
         );
       }
       const rawTask = `Kit: ${opts.kitRef}\nStep ${idx + 1}/${kit.steps.length}: ${step.title}\n\n${step.body}`;
@@ -669,7 +680,7 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
     return {
       ok: false,
       planId: "",
-      errorMessage: "kit-runner: planStore is required in live mode",
+      errorMessage: "recipe-runner: planStore is required in live mode",
     };
   }
 
@@ -755,7 +766,7 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       return {
         ok: false,
         planId: "",
-        errorMessage: `kit-runner: failed to seed plan: ${String(err)}`,
+        errorMessage: `recipe-runner: failed to seed plan: ${String(err)}`,
       };
     }
   }
@@ -886,14 +897,14 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
               note: progressNote || `↳ running ${dispatch.usesKitRef}`,
             });
           } catch {}
-          const sub = await runKit({
+          const sub = await runRecipe({
             kitRef: dispatch.usesKitRef,
             sessionKey: `${opts.sessionKey}::uses::${dispatch.stepIndex}`,
             intent: `↳ ${dispatch.title}`,
             parameters: opts.parameters,
             planStore: store,
-            ownKitsDir,
-            kitInstallSandbox,
+            ownRecipesDir,
+            recipeInstallSandbox,
             _depth: depth + 1,
             _usesChain: [...chain, dispatch.usesKitRef],
             // FORK 2026-05-31: sub-kits surface their own recipe-state too (latest
@@ -1012,7 +1023,7 @@ export async function runKit(opts: KitRunOptions): Promise<KitRunResult> {
       return {
         ok: false,
         planId,
-        errorMessage: `kit-runner: group failed at step ${failed.stepIndex}; plan aborted`,
+        errorMessage: `recipe-runner: group failed at step ${failed.stepIndex}; plan aborted`,
         results: partialResults,
       };
     }

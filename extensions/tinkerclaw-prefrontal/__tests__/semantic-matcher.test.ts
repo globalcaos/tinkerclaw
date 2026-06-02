@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import type { KitIndexEntry, MatchResult } from "../kit-matcher.js";
+import type { RecipeIndexEntry, MatchResult } from "../recipe-matcher.js";
 import {
   cosineSimilarity,
   recipeEmbedText,
@@ -12,7 +12,7 @@ import {
   type SemanticMatch,
 } from "../semantic-matcher.js";
 
-function entry(slug: string, over?: Partial<KitIndexEntry>): KitIndexEntry {
+function entry(slug: string, over?: Partial<RecipeIndexEntry>): RecipeIndexEntry {
   return {
     slug,
     title: over?.title ?? slug,
