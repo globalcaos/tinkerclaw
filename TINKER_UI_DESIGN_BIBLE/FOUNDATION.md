@@ -1,6 +1,6 @@
 ---
 title: TinkerClaw FOUNDATION — the apex of the pyramid
-status: RATIFYING (awaiting architect sign-off)
+status: RATIFIED (architect sign-off 2026-06-02)
 authority: OUTRANKS every bible optic. When an optic's detail contradicts this file, THIS file wins and the contradiction is flagged for repair — never silently followed.
 last_verified: 2026-06-02
 audience: AI (Claude Code, Jarvis) + architect. The base reference every layer below derives from.
