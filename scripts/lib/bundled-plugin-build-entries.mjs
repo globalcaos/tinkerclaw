@@ -18,7 +18,33 @@ export const NON_PACKAGED_BUNDLED_PLUGIN_DIRS = new Set(["qa-channel", "qa-lab",
 // tsdown with MISSING_EXPORT. Excluding it here keeps the dir present-but-inert.
 // To resurrect it, remove its name from this set and reconcile the SDK surface.
 // Re-add after every upstream merge (apply-fork-wiring), like the neverBundle list.
-export const DORMANT_OVERLAY_PLUGIN_DIRS = new Set(["whatsapp"]);
+//
+// FORK 2026-06-02 (S5a): same overlay-not-delete strategy applied to the ~14
+// upstream extension dirs our fork had deleted (they kept re-conflicting on
+// every `git merge upstream/main` as add/delete churn). They are restored from
+// upstream/main onto disk so merges stop conflicting, but stay DORMANT: NOT in
+// plugins.allow, NOT enabled, and build-excluded here (tsdown otherwise compiles
+// every bundled extension and the SDK divergence trips MISSING_EXPORT). To
+// resurrect any of them, remove its name from this set and reconcile the SDK
+// surface. Re-add after every upstream merge (apply-fork-wiring).
+export const DORMANT_OVERLAY_PLUGIN_DIRS = new Set([
+  "whatsapp",
+  // S5a overlay-not-delete restores (dormant):
+  "admin-http-rpc",
+  "canvas",
+  "clickclack",
+  "codex-supervisor",
+  "copilot",
+  "diffs-language-pack",
+  "file-transfer",
+  "gmi",
+  "novita",
+  "oc-path",
+  "pixverse",
+  "policy",
+  "sms",
+  "workboard",
+]);
 const toPosixPath = (value) => value.replaceAll("\\", "/");
 
 function readBundledPluginPackageJson(packageJsonPath) {
