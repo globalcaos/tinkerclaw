@@ -49,6 +49,11 @@ import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
 import { resolveUserPath } from "../../../utils.js";
 import { normalizeMessageChannel } from "../../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../../utils/provider-utils.js";
+import { createBundleLspToolRuntime } from "../../agent-bundle-lsp-runtime.js";
+import {
+  getOrCreateSessionMcpRuntime,
+  materializeBundleMcpToolsForRun,
+} from "../../agent-bundle-mcp-tools.js";
 import { resolveOpenClawAgentDir } from "../../agent-paths.js";
 import { resolveSessionAgentIds } from "../../agent-scope.js";
 import { createAnthropicPayloadLogger } from "../../anthropic-payload-log.js";
@@ -76,6 +81,16 @@ import {
 } from "../../channel-tools.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawReferencePaths } from "../../docs-path.js";
+import type { EmbeddedContextFile } from "../../embedded-agent-helpers.js";
+import {
+  downgradeOpenAIFunctionCallReasoningPairs,
+  downgradeOpenAIReasoningBlocks,
+  isCloudCodeAssistFormatError,
+  resolveBootstrapMaxChars,
+  resolveBootstrapPromptTruncationWarningMode,
+  resolveBootstrapTotalMaxChars,
+} from "../../embedded-agent-helpers.js";
+import { subscribeEmbeddedPiSession } from "../../embedded-agent-subscribe.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-prompt.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
@@ -86,22 +101,7 @@ import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import { supportsModelTools } from "../../model-tool-support.js";
 import { releaseWsSession } from "../../openai-ws-stream.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
-import { createBundleLspToolRuntime } from "../../pi-bundle-lsp-runtime.js";
 import { TOOL_NAME_SEPARATOR } from "../../pi-bundle-mcp-names.js";
-import {
-  getOrCreateSessionMcpRuntime,
-  materializeBundleMcpToolsForRun,
-} from "../../pi-bundle-mcp-tools.js";
-import type { EmbeddedContextFile } from "../../pi-embedded-helpers.js";
-import {
-  downgradeOpenAIFunctionCallReasoningPairs,
-  downgradeOpenAIReasoningBlocks,
-  isCloudCodeAssistFormatError,
-  resolveBootstrapMaxChars,
-  resolveBootstrapPromptTruncationWarningMode,
-  resolveBootstrapTotalMaxChars,
-} from "../../pi-embedded-helpers.js";
-import { subscribeEmbeddedPiSession } from "../../pi-embedded-subscribe.js";
 import { createPreparedEmbeddedPiSettingsManager } from "../../pi-project-settings.js";
 import {
   applyPiAutoCompactionGuard,

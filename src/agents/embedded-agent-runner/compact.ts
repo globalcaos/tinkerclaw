@@ -35,6 +35,8 @@ import { buildTtsSystemPromptHint } from "../../tts/tts.js";
 import { resolveUserPath } from "../../utils.js";
 import { normalizeMessageChannel } from "../../utils/message-channel.js";
 import { isReasoningTagProvider } from "../../utils/provider-utils.js";
+import { createBundleLspToolRuntime } from "../agent-bundle-lsp-runtime.js";
+import { createBundleMcpToolRuntime } from "../agent-bundle-mcp-tools.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import { resolveSessionAgentIds } from "../agent-scope.js";
 import {
@@ -56,6 +58,8 @@ import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { formatUserTime, resolveUserTimeFormat, resolveUserTimezone } from "../date-time.js";
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { resolveOpenClawReferencePaths } from "../docs-path.js";
+import { ensureSessionHeader } from "../embedded-agent-helpers.js";
+import { pickFallbackThinkingLevel } from "../embedded-agent-helpers.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../heartbeat-system-prompt.js";
 import {
   applyAuthHeaderOverride,
@@ -66,10 +70,6 @@ import {
 import { supportsModelTools } from "../model-tool-support.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
 import { resolveOwnerDisplaySetting } from "../owner-display.js";
-import { createBundleLspToolRuntime } from "../pi-bundle-lsp-runtime.js";
-import { createBundleMcpToolRuntime } from "../pi-bundle-mcp-tools.js";
-import { ensureSessionHeader } from "../pi-embedded-helpers.js";
-import { pickFallbackThinkingLevel } from "../pi-embedded-helpers.js";
 import {
   consumeCompactionSafeguardCancelReason,
   setCompactionSafeguardCancelReason,

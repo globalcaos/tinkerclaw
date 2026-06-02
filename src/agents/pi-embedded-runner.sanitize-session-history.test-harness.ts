@@ -14,7 +14,7 @@ export type SanitizeSessionHistoryFn = (params: {
   modelId?: string;
   policy?: TranscriptPolicy;
 }) => Promise<AgentMessage[]>;
-export type SanitizeSessionHistoryMockedHelpers = typeof import("./pi-embedded-helpers.js");
+export type SanitizeSessionHistoryMockedHelpers = typeof import("./embedded-agent-helpers.js");
 export type SanitizeSessionHistoryHarness = {
   sanitizeSessionHistory: SanitizeSessionHistoryFn;
   mockedHelpers: SanitizeSessionHistoryMockedHelpers;
@@ -62,7 +62,7 @@ export function makeSimpleUserMessages(): AgentMessage[] {
 
 export async function createSanitizeSessionHistoryHelpersMock(extra: Record<string, unknown> = {}) {
   return {
-    ...(await vi.importActual("./pi-embedded-helpers.js")),
+    ...(await vi.importActual("./embedded-agent-helpers.js")),
     sanitizeSessionMessagesImages: vi.fn(async (msgs) => msgs),
     ...extra,
   };
@@ -102,7 +102,7 @@ export function createSanitizeSessionHistoryProviderHookRuntimeMock(
 export async function loadSanitizeSessionHistoryWithCleanMocks(): Promise<SanitizeSessionHistoryHarness> {
   vi.resetModules();
   vi.resetAllMocks();
-  const mockedHelpers = await import("./pi-embedded-helpers.js");
+  const mockedHelpers = await import("./embedded-agent-helpers.js");
   vi.mocked(mockedHelpers.sanitizeSessionMessagesImages).mockImplementation(async (msgs) => msgs);
   const mod = await import("./embedded-agent-runner/replay-history.js");
   return {

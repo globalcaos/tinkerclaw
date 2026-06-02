@@ -22,8 +22,8 @@ import { extractToolCallsFromAssistant } from "./tool-call-id.js";
 import type { TranscriptPolicy } from "./transcript-policy.js";
 import { makeZeroUsageSnapshot } from "./usage.js";
 
-vi.mock("./pi-embedded-helpers.js", async () => ({
-  ...(await vi.importActual("./pi-embedded-helpers.js")),
+vi.mock("./embedded-agent-helpers.js", async () => ({
+  ...(await vi.importActual("./embedded-agent-helpers.js")),
   isGoogleModelApi: vi.fn(),
   sanitizeSessionMessagesImages: vi.fn(async (msgs) => msgs),
 }));

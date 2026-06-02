@@ -3,7 +3,7 @@
  * captured from HTTP response headers. Updated on every Anthropic API
  * response via the custom fetch wrapper in anthropic-vertex-stream.ts.
  *
- * Consumers: pi-embedded-subscribe.handlers.lifecycle.ts (emits snapshot on
+ * Consumers: embedded-agent-subscribe.handlers.lifecycle.ts (emits snapshot on
  * lifecycle "end" events), and any HTTP route that wants to expose live
  * utilization to the Tinker UI.
  */

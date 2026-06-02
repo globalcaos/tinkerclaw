@@ -113,17 +113,17 @@ and registered as wiring-script patches the same day so the next merge can
 auto-restore them. The wiring script also gained a structural PRESERVE guard
 and a cross-package import guard.
 
-| #   | File                                               | Symbol                            | Patch fn                    | Restored in |
-| --- | -------------------------------------------------- | --------------------------------- | --------------------------- | ----------- |
-| 1   | src/config/types.auth.ts                           | AuthProfileConfig.displayName     | patchAuthProfileDisplayName | 9223a3cb9e  |
-| 2   | src/agents/bash-tools.exec-host-shared.ts          | obfuscationDetected (×2 fns)      | patchObfuscationDetected    | 9223a3cb9e  |
-| 3   | src/infra/heartbeat-runner.ts                      | hasFractalHook (type+ret+dst)     | patchHeartbeatFractalHook   | 9223a3cb9e  |
-| 4   | src/agents/system-prompt.ts                        | amygdalaNudge (param+block)       | patchAmygdalaNudge          | e06283b94e  |
-| 5   | src/agents/pi-embedded-subscribe.types.ts          | modelId + modelProvider           | patchSubscribeModelFields   | 62ae6c6ab3  |
-| 6   | src/agents/pi-embedded-subscribe.handlers.types.ts | emitBlockReply on context         | patchEmitBlockReply         | 62ae6c6ab3  |
-| 7   | src/auto-reply/reply/agent-runner.ts               | resetTriggered                    | patchResetTriggered         | fbd5b51e20  |
-| 8   | src/auto-reply/reply/get-reply.ts                  | applyMergePatch + logIngressStage | patchGetReplyHelpers        | fbd5b51e20  |
-| 9   | src/media/read-response-with-limit.ts              | onIdleTimeout                     | patchOnIdleTimeout          | fbd5b51e20  |
+| #   | File                                                  | Symbol                            | Patch fn                    | Restored in |
+| --- | ----------------------------------------------------- | --------------------------------- | --------------------------- | ----------- |
+| 1   | src/config/types.auth.ts                              | AuthProfileConfig.displayName     | patchAuthProfileDisplayName | 9223a3cb9e  |
+| 2   | src/agents/bash-tools.exec-host-shared.ts             | obfuscationDetected (×2 fns)      | patchObfuscationDetected    | 9223a3cb9e  |
+| 3   | src/infra/heartbeat-runner.ts                         | hasFractalHook (type+ret+dst)     | patchHeartbeatFractalHook   | 9223a3cb9e  |
+| 4   | src/agents/system-prompt.ts                           | amygdalaNudge (param+block)       | patchAmygdalaNudge          | e06283b94e  |
+| 5   | src/agents/embedded-agent-subscribe.types.ts          | modelId + modelProvider           | patchSubscribeModelFields   | 62ae6c6ab3  |
+| 6   | src/agents/embedded-agent-subscribe.handlers.types.ts | emitBlockReply on context         | patchEmitBlockReply         | 62ae6c6ab3  |
+| 7   | src/auto-reply/reply/agent-runner.ts                  | resetTriggered                    | patchResetTriggered         | fbd5b51e20  |
+| 8   | src/auto-reply/reply/get-reply.ts                     | applyMergePatch + logIngressStage | patchGetReplyHelpers        | fbd5b51e20  |
+| 9   | src/media/read-response-with-limit.ts                 | onIdleTimeout                     | patchOnIdleTimeout          | fbd5b51e20  |
 
 Structural guards added in the same wiring-script change:
 
@@ -170,7 +170,7 @@ These files are resolved with `--theirs` (accept upstream version), then
 | src/agents/embedded-agent-runner/run/attempt.ts               | patchAttempt              | 2 imports + 4 hook call sites (persona, reinject, intercept, onTurnComplete)                  |
 | src/agents/system-prompt.ts                                   | patchSystemPrompt         | personaBlock parameter + injection                                                            |
 | src/agents/embedded-agent-runner/run.ts                       | patchRun                  | Per-profile fallback error events (4 emission sites)                                          |
-| src/agents/pi-embedded-subscribe.types.ts                     | patchSubscribeTypes       | authProfileId field                                                                           |
+| src/agents/embedded-agent-subscribe.types.ts                  | patchSubscribeTypes       | authProfileId field                                                                           |
 | src/agents/embedded-agent-helpers/errors.ts                   | patchErrors               | Billing cap classification                                                                    |
 | src/agents/embedded-agent-helpers/failover-matches.ts         | patchFailoverMatches      | Billing pattern in failover array                                                             |
 | src/gateway/server-methods/sessions.ts                        | patchSessions             | Webchat delete bypass                                                                         |

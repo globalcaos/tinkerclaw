@@ -18,8 +18,8 @@ import {
   getApiErrorPayloadFingerprint,
   isRawApiErrorPayload,
   normalizeTextForComparison,
-} from "../../pi-embedded-helpers.js";
-import type { ToolResultFormat } from "../../pi-embedded-subscribe.shared-types.js";
+} from "../../embedded-agent-helpers.js";
+import type { ToolResultFormat } from "../../embedded-agent-subscribe.shared-types.js";
 import {
   extractAssistantThinking,
   extractAssistantVisibleText,
