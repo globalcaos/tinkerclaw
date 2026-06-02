@@ -11,11 +11,11 @@ import {
 
 // U1: applyMutationProposal must drop the matcher's in-memory index cache after a
 // successful persist so the rewritten recipe is matchable next turn. Mock the
-// kit-matcher module so we can assert the invalidation deterministically (the
+// recipe-matcher module so we can assert the invalidation deterministically (the
 // real cache keys off dir mtime, whose resolution is too coarse to test against).
 const invalidateSpy = vi.fn();
-vi.mock("../kit-matcher.js", () => ({
-  invalidateKitIndexCache: () => invalidateSpy(),
+vi.mock("../recipe-matcher.js", () => ({
+  invalidateRecipeIndexCache: () => invalidateSpy(),
 }));
 
 const JARVIS_KIT = `---
@@ -173,7 +173,7 @@ describe("applyMutationProposal", () => {
     expect(deps.calls).not.toContain("author");
   });
 
-  it("keeps the original when the rewrite is invalid (fails validateKitSpec)", async () => {
+  it("keeps the original when the rewrite is invalid (fails validateRecipeSpec)", async () => {
     const deps = makeDeps({
       rewrite: async () => JSON.stringify({ slug: "demo-recipe", title: "x" }),
     });

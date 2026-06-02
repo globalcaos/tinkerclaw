@@ -1,32 +1,37 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-export interface KitFileEntry {
+export interface RecipeFileEntry {
   path: string;
   content: string;
   writeMode?: "overwrite" | "append" | "skip-if-exists";
 }
 
-export class KitStore {
+export class RecipeStore {
   constructor(private opts: { rootDir: string }) {}
 
   resolveSandboxPath(owner: string, slug: string, relPath: string): string {
-    if (path.isAbsolute(relPath)) throw new Error(`kit-store: absolute path rejected: ${relPath}`);
+    if (path.isAbsolute(relPath))
+      throw new Error(`recipe-store: absolute path rejected: ${relPath}`);
     const ownerSlug = `${this.safeSegment(owner)}/${this.safeSegment(slug)}`;
     const sandboxRoot = path.resolve(this.opts.rootDir, ownerSlug);
     const target = path.resolve(sandboxRoot, relPath);
     if (target !== sandboxRoot && !target.startsWith(sandboxRoot + path.sep)) {
-      throw new Error(`kit-store: path escapes sandbox: ${relPath} -> ${target}`);
+      throw new Error(`recipe-store: path escapes sandbox: ${relPath} -> ${target}`);
     }
     return target;
   }
 
   private safeSegment(s: string): string {
-    if (!/^[a-zA-Z0-9_-]+$/.test(s)) throw new Error(`kit-store: unsafe segment: ${s}`);
+    if (!/^[a-zA-Z0-9_-]+$/.test(s)) throw new Error(`recipe-store: unsafe segment: ${s}`);
     return s;
   }
 
-  async writeKitFiles(opts: { owner: string; slug: string; files: KitFileEntry[] }): Promise<void> {
+  async writeKitFiles(opts: {
+    owner: string;
+    slug: string;
+    files: RecipeFileEntry[];
+  }): Promise<void> {
     for (const entry of opts.files) {
       const target = this.resolveSandboxPath(opts.owner, opts.slug, entry.path);
       await fs.mkdir(path.dirname(target), { recursive: true });
@@ -62,11 +67,15 @@ export class KitStore {
       if (!stat?.isDirectory()) continue;
       const slugs = await fs.readdir(ownerDir);
       for (const slug of slugs) {
-        const kitMd = path.join(ownerDir, slug, "kit.md");
-        try {
-          await fs.access(kitMd);
-          out.push({ owner, slug, path: kitMd });
-        } catch {}
+        // DUAL-READ: recipe.md (canonical) then kit.md (legacy / Journey-installed).
+        for (const fname of ["recipe.md", "kit.md"]) {
+          const recipeMd = path.join(ownerDir, slug, fname);
+          try {
+            await fs.access(recipeMd);
+            out.push({ owner, slug, path: recipeMd });
+            break;
+          } catch {}
+        }
       }
     }
     return out;

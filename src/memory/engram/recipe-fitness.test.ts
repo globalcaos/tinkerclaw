@@ -86,7 +86,7 @@ describe("makeFitnessLookup — sync FitnessLookup over the on-disk store", () =
     expect(lookup("never-run")).toBeUndefined(); // no record → no opinion (matcher delta 0)
   });
 
-  it("is sync (returns a value, not a promise) so scoreKit can call it inline", () => {
+  it("is sync (returns a value, not a promise) so scoreRecipe can call it inline", () => {
     const lookup = makeFitnessLookup(baseDir);
     const r = lookup("whatever");
     expect(r instanceof Promise).toBe(false);

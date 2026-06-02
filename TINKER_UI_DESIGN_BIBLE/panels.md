@@ -118,7 +118,7 @@ This rule was added to fix the bug "Control Panel wrongly still visible when I c
 
 FORK 2026-05-14: the prefrontal panel inside right-panels MUST always render content when right-panels is visible. There is no "panel is empty" mode. Three render levels, in priority order:
 
-1. **Explicit plan** — `currentPlan` (from `prefrontal-plan-state` WS event) with `status: in_progress`. Render the full checklist. The rich recipe HEADER bar (`renderRecipeHeader` — recipe name + `step M/N` + parallelism) is now actually populated at runtime: as of 18e618d241 the kit-runner emits `prefrontal-recipe-state` (producer mechanism owned by `subagents-and-kits.md`), which previously it never did — so the header had no data source and the panel always fell through to the synthetic 2-step plan (level 2). That was the root cause of the "dull RECIPES panel" — the header was dead/empty, not the renderer.
+1. **Explicit plan** — `currentPlan` (from `prefrontal-plan-state` WS event) with `status: in_progress`. Render the full checklist. The rich recipe HEADER bar (`renderRecipeHeader` — recipe name + `step M/N` + parallelism) is now actually populated at runtime: as of 18e618d241 the recipe-runner emits `prefrontal-recipe-state` (producer mechanism owned by `subagents-and-recipes.md`), which previously it never did — so the header had no data source and the panel always fell through to the synthetic 2-step plan (level 2). That was the root cause of the "dull RECIPES panel" — the header was dead/empty, not the renderer.
 2. **Implicit 2-step plan** — when no explicit plan but `tree.active === true` (an LLM run is alive). Render a synthetic 2-step plan: `▶ Thinking` while the run's phase is `thinking` / `reflecting`; `▶ Doing` once a tool call or text delta has fired. The two steps share the run's `runId` and `model`. Status transitions automatically: thinking ✓ when first tool/text fires; doing ✓ when the run reaches `state: final`.
 3. **Idle** — no plan AND no active run. Show `○ Idle — waiting for the next turn` plus the last completed turn's summary if available. This is the only "nothing's happening" state, and it explicitly says so rather than rendering blank.
 
@@ -130,7 +130,7 @@ The implicit and idle states are derived from the same data the call-tree block 
 
 **Per-subagent task sub-line (FORK 2026-06-01).** Each subagent row now renders a `↳ <task>` sub-line ("what this subagent is doing") above its vitals, sourced from the tree node summary.
 
-**New decision-trail event kinds (FORK 2026-06-01).** Three kinds now appear in the decision trail: `recipe-apply` / `recipe-reject` / `recipe-supersede` — provenance for the autonomous recipe-evolution loop. Their emission is owned by `subagents-and-kits.md`; this file only records that the trail RENDERS them.
+**New decision-trail event kinds (FORK 2026-06-01).** Three kinds now appear in the decision trail: `recipe-apply` / `recipe-reject` / `recipe-supersede` — provenance for the autonomous recipe-evolution loop. Their emission is owned by `subagents-and-recipes.md`; this file only records that the trail RENDERS them.
 
 ```mermaid
 stateDiagram-v2

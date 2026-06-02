@@ -5,7 +5,7 @@
  *
  * WHY THIS EXISTS
  * ---------------
- * `prefrontal.recipe.publish` already POSTs to `/api/kits/publish` (kit-rpcs.ts).
+ * `prefrontal.recipe.publish` already POSTs to `/api/kits/publish` (recipe-rpcs.ts).
  * The capstone of the recipe-as-artifact thesis is the *semantics* layered on
  * that plumbing — NOT a new backend client:
  *
@@ -30,9 +30,9 @@
  * degrade a match to local cache, never hard-fail a turn.
  *
  * Wiring (Wire phase, NOT done here):
- *   - publish (kit-rpcs.ts): bump version → `hasVersion` immutability check → POST.
- *   - get/install (kit-rpcs.ts): `resolveVersion(kitRef, constraint)` → fetch that ref.
- *   - kit-matcher.ts scoreKit (Upgrade 1's weight-adjust seam): `+= ratingBonus(meta)`.
+ *   - publish (recipe-rpcs.ts): bump version → `hasVersion` immutability check → POST.
+ *   - get/install (recipe-rpcs.ts): `resolveVersion(kitRef, constraint)` → fetch that ref.
+ *   - recipe-matcher.ts scoreRecipe (Upgrade 1's weight-adjust seam): `+= ratingBonus(meta)`.
  *
  * See bible subagents-and-recipes.md.
  */
@@ -228,11 +228,11 @@ export interface Marketplace {
   /** Pre-seed / refresh the cache from a known-good meta (e.g. a search response
    * already carrying versions) so a later resolve avoids a round-trip. */
   recordMarketplaceCache(meta: MarketplaceMeta): void;
-  /** Drop the in-memory cache (parity with kit-matcher's invalidateKitIndexCache). */
+  /** Drop the in-memory cache (parity with recipe-matcher's invalidateRecipeIndexCache). */
   invalidateMarketplaceCache(): void;
   /**
    * FORK 2026-06-01 (U12 producer-side seam): SYNC rating-bonus reader for the
-   * matcher. Reads the WARMED in-memory cache ONLY (no fetch — scoreKit is sync and
+   * matcher. Reads the WARMED in-memory cache ONLY (no fetch — scoreRecipe is sync and
    * a turn-start match must never block on the network) and returns the recipe's
    * `ratingBonus(meta)` in [0, MAX_RATING_BONUS], or `undefined` when nothing is
    * cached for that ref yet. `slug` may be the canonical `owner/slug` (a cache key)
@@ -344,11 +344,11 @@ export function createMarketplace(deps: MarketplaceDeps): Marketplace {
 
 /**
  * FORK 2026-06-01 (U12 producer-side seam): build the matcher's RatingLookup over a
- * marketplace's warmed cache. The returned function is SYNC (scoreKit is sync) and
+ * marketplace's warmed cache. The returned function is SYNC (scoreRecipe is sync) and
  * delegates to getRatingBonusSync, so the matcher folds in a clamped popularity
- * tie-breaker (ratingScoreDelta in kit-matcher.ts) only for recipes whose meta is
+ * tie-breaker (ratingScoreDelta in recipe-matcher.ts) only for recipes whose meta is
  * already cached. Build it ONCE per turn and pass it as `rating` into
- * matchKitsDetailed/seedPlanFromPrompt. Returns `undefined` for an uncached recipe
+ * matchRecipesDetailed/seedPlanFromPrompt. Returns `undefined` for an uncached recipe
  * so the matcher applies no nudge (ratingScoreDelta(undefined) === 0).
  */
 export function makeRatingLookup(marketplace: Marketplace): (slug: string) => number | undefined {

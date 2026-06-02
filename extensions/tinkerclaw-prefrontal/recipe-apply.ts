@@ -6,7 +6,7 @@
  * verification/guard step before the failing action"), not a concrete edit. This module is
  * the apply half: given an autoPromotable proposal, it (1) loads the recipe, (2) SNAPSHOTS
  * the current content to an append-only archive (the rollback net — there was none before),
- * (3) has an LLM rewrite the recipe into a new KitSpec applying the op+intent, (4) VALIDATES
+ * (3) has an LLM rewrite the recipe into a new RecipeSpec applying the op+intent, (4) VALIDATES
  * the rewrite, and (5) writes it ONLY if valid, through the authorship-guarded author path.
  *
  * AUTONOMY, BOUNDED BY FIVE RAILS:
@@ -16,7 +16,7 @@
  *      Hand-curated recipes are NEVER touched (checked here AND in the author write path).
  *   3. SNAPSHOT-BEFORE-WRITE — the prior content is archived (never-delete) before any write,
  *      so every auto-mutation is one-command reversible.
- *   4. VALIDATE-OR-SKIP — a rewrite that fails validateKitSpec (or fails to parse) is DROPPED;
+ *   4. VALIDATE-OR-SKIP — a rewrite that fails validateRecipeSpec (or fails to parse) is DROPPED;
  *      the original recipe is kept untouched. A bad rewrite is a no-op, never a corruption.
  *   5. KILL-SWITCH — the whole loop is gated by RECIPE_AUTOAPPLY_ENABLED (see isApplyEnabled).
  *
@@ -25,8 +25,8 @@
  * with no gateway, no fs, and no LLM.
  */
 
-import { validateKitSpec, type KitSpec } from "./kit-author.js";
-import { invalidateKitIndexCache } from "./kit-matcher.js";
+import { validateRecipeSpec, type RecipeSpec } from "./recipe-author.js";
+import { invalidateRecipeIndexCache } from "./recipe-matcher.js";
 
 /** The mutation directive this loop applies (the autoPromotable subset of MutationProposal). */
 export interface ApplyProposalInput {
@@ -42,10 +42,10 @@ export interface ApplyDeps {
   loadKitText: (slug: string) => Promise<{ path: string; text: string } | null>;
   /** Snapshot the current text to the append-only archive; returns the archive path. */
   snapshot: (slug: string, text: string) => Promise<string>;
-  /** LLM rewrite: produce the improved recipe as raw text (expected to contain a KitSpec JSON). */
+  /** LLM rewrite: produce the improved recipe as raw text (expected to contain a RecipeSpec JSON). */
   rewrite: (currentText: string, op: string, intent: string) => Promise<string | undefined>;
   /** Write the validated spec through the authorship-guarded author path (overwrite:true). */
-  authorKit: (spec: KitSpec) => Promise<{ ok: boolean; note?: string }>;
+  authorKit: (spec: RecipeSpec) => Promise<{ ok: boolean; note?: string }>;
   log?: { info?: (m: string) => void; warn?: (m: string) => void };
 }
 
@@ -60,7 +60,7 @@ export interface ApplyResult {
     | "rewrite-invalid"
     | "author-rejected";
   archivePath?: string;
-  /** validateKitSpec errors when reason === "rewrite-invalid". */
+  /** validateRecipeSpec errors when reason === "rewrite-invalid". */
   errors?: string[];
 }
 
@@ -71,7 +71,7 @@ export function isApplyEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
- * Authorship guard, mirrored from the author RPC (kit-rpcs.ts): only kits this fork itself
+ * Authorship guard, mirrored from the author RPC (recipe-rpcs.ts): only kits this fork itself
  * authored (`authoredBy: jarvis-*`) may be auto-mutated. Hand-curated kits have no such field
  * and are protected. Pure + testable.
  */
@@ -79,7 +79,7 @@ export function isJarvisAuthored(kitText: string): boolean {
   return /authoredBy:\s*["']?jarvis/i.test(kitText);
 }
 
-/** Compose the rewrite prompt. The subagent must return ONLY a KitSpec JSON object. Pure. */
+/** Compose the rewrite prompt. The subagent must return ONLY a RecipeSpec JSON object. Pure. */
 export function buildRewritePrompt(currentText: string, op: string, intent: string): string {
   return `You are a RECIPE-EVOLUTION editor. A recipe (an OpenClaw "kit/1.0" markdown file) has a
 low success rate, and the Cerebellum proposed this corrective mutation:
@@ -112,7 +112,7 @@ ${currentText}
 }
 
 /**
- * Extract a KitSpec object from an LLM reply. Tolerates code fences + leading/trailing prose by
+ * Extract a RecipeSpec object from an LLM reply. Tolerates code fences + leading/trailing prose by
  * taking the first balanced top-level JSON object. Returns undefined if none parses. Pure.
  */
 export function extractKitSpec(reply: string | undefined): unknown | undefined {
@@ -176,7 +176,7 @@ export async function applyMutationProposal(
   const archivePath = await deps.snapshot(recipeId, loaded.text);
   // LLM rewrite.
   const reply = await deps.rewrite(loaded.text, input.op, input.intent);
-  const spec = extractKitSpec(reply) as KitSpec | undefined;
+  const spec = extractKitSpec(reply) as RecipeSpec | undefined;
   if (!spec) {
     deps.log?.warn?.(`[recipe-apply] ${recipeId}: rewrite empty/unparseable — keep original`);
     return { recipeId, applied: false, reason: "rewrite-empty", archivePath };
@@ -184,7 +184,7 @@ export async function applyMutationProposal(
   // Preserve the slug — a rewrite must not fork the recipe identity.
   spec.slug = recipeId;
   // Rail 4: validate-or-skip.
-  const v = validateKitSpec(spec);
+  const v = validateRecipeSpec(spec);
   if (!v.ok) {
     deps.log?.warn?.(
       `[recipe-apply] ${recipeId}: rewrite invalid (${v.errors.join("; ")}) — keep original`,
@@ -205,7 +205,7 @@ export async function applyMutationProposal(
   // here (not only in the injected authorKit) so it holds for ANY authorKit
   // implementation, and ONLY on a successful apply so a no-op never triggers a
   // spurious catalog re-scan.
-  invalidateKitIndexCache();
+  invalidateRecipeIndexCache();
   deps.log?.info?.(
     `[recipe-apply] ${recipeId}: APPLIED op=${input.op} (snapshot ${archivePath}); ${res.note ?? ""}`,
   );
