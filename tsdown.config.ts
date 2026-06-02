@@ -258,8 +258,8 @@ function buildDockerE2eHarnessEntries(): Record<string, string> {
   return {
     // Mounted Docker harnesses run against the npm tarball image, so any
     // internal module they assert must have a stable package dist entry.
-    "agents/pi-bundle-mcp-materialize": "src/agents/pi-bundle-mcp-materialize.ts",
-    "agents/pi-bundle-mcp-runtime": "src/agents/pi-bundle-mcp-runtime.ts",
+    "agents/agent-bundle-mcp-materialize": "src/agents/agent-bundle-mcp-materialize.ts",
+    "agents/agent-bundle-mcp-runtime": "src/agents/agent-bundle-mcp-runtime.ts",
     "agents/embedded-agent-runner/effective-tool-policy":
       "src/agents/embedded-agent-runner/effective-tool-policy.ts",
     "agents/embedded-agent-runner/run/runtime-context-prompt":

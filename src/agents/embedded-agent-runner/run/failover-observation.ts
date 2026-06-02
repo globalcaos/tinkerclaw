@@ -1,10 +1,10 @@
 import { redactIdentifier } from "../../../logging/redact-identifier.js";
 import type { AuthProfileFailureReason } from "../../auth-profiles.js";
+import type { FailoverReason } from "../../embedded-agent-helpers.js";
 import {
   buildApiErrorObservationFields,
   sanitizeForConsole,
 } from "../../pi-embedded-error-observation.js";
-import type { FailoverReason } from "../../pi-embedded-helpers.js";
 import { log } from "../logger.js";
 
 export type FailoverDecisionLoggerInput = {

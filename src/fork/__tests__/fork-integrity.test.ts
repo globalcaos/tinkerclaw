@@ -201,9 +201,9 @@ describe("Fork wiring integrity", () => {
     expect(source).toMatch(/FORK:.*fallback error/i);
   });
 
-  it("pi-embedded-subscribe.ts has FORK: streaming reasoning", async () => {
+  it("embedded-agent-subscribe.ts has FORK: streaming reasoning", async () => {
     const source = await import("node:fs").then((fs) =>
-      fs.readFileSync(resolve(srcRoot, "agents/pi-embedded-subscribe.ts"), "utf-8"),
+      fs.readFileSync(resolve(srcRoot, "agents/embedded-agent-subscribe.ts"), "utf-8"),
     );
     expect(source).toMatch(/FORK:.*streaming reasoning|FORK:.*raw.*thinking/i);
   });

@@ -1,4 +1,5 @@
 import { resolveAgentDir } from "../agents/agent-scope.js";
+import { EmbeddedBlockChunker } from "../agents/embedded-agent-block-chunker.js";
 // @ts-nocheck
 import {
   findModelInCatalog,
@@ -6,7 +7,6 @@ import {
   modelSupportsVision,
 } from "../agents/model-catalog.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
-import { EmbeddedBlockChunker } from "../agents/pi-embedded-block-chunker.js";
 import { resolveChunkMode } from "../auto-reply/chunk.js";
 import { clearHistoryEntriesIfEnabled } from "../auto-reply/reply/history.js";
 import { dispatchReplyWithBufferedBlockDispatcher } from "../auto-reply/reply/provider-dispatcher.js";

@@ -11,7 +11,7 @@ import {
 } from "./pi-embedded-runner.sanitize-session-history.test-harness.js";
 import { castAgentMessage } from "./test-helpers/agent-message-fixtures.js";
 
-vi.mock("./pi-embedded-helpers.js", async () => await createSanitizeSessionHistoryHelpersMock());
+vi.mock("./embedded-agent-helpers.js", async () => await createSanitizeSessionHistoryHelpersMock());
 
 vi.mock(
   "../plugins/provider-runtime.js",

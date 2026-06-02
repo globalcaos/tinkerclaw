@@ -1,4 +1,4 @@
-import type { SubscribeEmbeddedPiSessionParams } from "../../pi-embedded-subscribe.types.js";
+import type { SubscribeEmbeddedPiSessionParams } from "../../embedded-agent-subscribe.types.js";
 
 type IdleAwareAgent = {
   waitForIdle?: (() => Promise<void>) | undefined;

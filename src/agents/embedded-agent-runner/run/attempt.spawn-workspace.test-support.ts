@@ -18,12 +18,12 @@ import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalLowercaseString,
 } from "../../../shared/string-coerce.js";
-import type { EmbeddedContextFile } from "../../pi-embedded-helpers.js";
+import type { EmbeddedContextFile } from "../../embedded-agent-helpers.js";
 import type { MessagingToolSend } from "../../pi-embedded-messaging.types.js";
 import type { WorkspaceBootstrapFile } from "../../workspace.js";
 
 type SubscribeEmbeddedPiSessionFn =
-  typeof import("../../pi-embedded-subscribe.js").subscribeEmbeddedPiSession;
+  typeof import("../../embedded-agent-subscribe.js").subscribeEmbeddedPiSession;
 type AcquireSessionWriteLockFn =
   typeof import("../../session-write-lock.js").acquireSessionWriteLock;
 
@@ -221,7 +221,7 @@ vi.mock("../../session-tool-result-guard-wrapper.js", () => ({
   guardSessionManager: () => hoisted.sessionManager,
 }));
 
-vi.mock("../../pi-embedded-subscribe.js", () => ({
+vi.mock("../../embedded-agent-subscribe.js", () => ({
   subscribeEmbeddedPiSession: (params: Parameters<SubscribeEmbeddedPiSessionFn>[0]) =>
     hoisted.subscribeEmbeddedPiSessionMock(params),
 }));
@@ -439,14 +439,14 @@ vi.mock("../../pi-tools.js", () => ({
   resolveToolLoopDetectionConfig: () => undefined,
 }));
 
-vi.mock("../../pi-bundle-mcp-tools.js", () => ({
+vi.mock("../../agent-bundle-mcp-tools.js", () => ({
   createBundleMcpToolRuntime: async () => undefined,
   getOrCreateSessionMcpRuntime: async () => undefined,
   materializeBundleMcpToolsForRun: async () => undefined,
   retireSessionMcpRuntime: async () => true,
 }));
 
-vi.mock("../../pi-bundle-lsp-runtime.js", () => ({
+vi.mock("../../agent-bundle-lsp-runtime.js", () => ({
   createBundleLspToolRuntime: async () => undefined,
 }));
 

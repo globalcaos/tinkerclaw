@@ -77,7 +77,7 @@ export { isMessagingTool, isMessagingToolSendAction } from "../agents/pi-embedde
 export {
   extractToolResultMediaArtifact,
   filterToolResultMediaUrls,
-} from "../agents/pi-embedded-subscribe.tools.js";
+} from "../agents/embedded-agent-subscribe.tools.js";
 export { normalizeUsage } from "../agents/usage.js";
 export { resolveOpenClawAgentDir } from "../agents/agent-paths.js";
 export { resolveSessionAgentIds } from "../agents/agent-scope.js";

@@ -196,9 +196,9 @@ vi.mock("../agents/model-catalog.js", async () => {
   };
 });
 
-vi.mock("../agents/pi-bundle-mcp-tools.js", async () => {
-  const actual = await vi.importActual<typeof import("../agents/pi-bundle-mcp-tools.js")>(
-    "../agents/pi-bundle-mcp-tools.js",
+vi.mock("../agents/agent-bundle-mcp-tools.js", async () => {
+  const actual = await vi.importActual<typeof import("../agents/agent-bundle-mcp-tools.js")>(
+    "../agents/agent-bundle-mcp-tools.js",
   );
   return {
     ...actual,

@@ -69,7 +69,7 @@ vi.mock("../../agents/bootstrap-budget.js", () => ({
   resolveBootstrapWarningSignaturesSeen: () => [],
 }));
 
-vi.mock("../../agents/pi-embedded-helpers.js", () => ({
+vi.mock("../../agents/embedded-agent-helpers.js", () => ({
   BILLING_ERROR_USER_MESSAGE: "billing",
   formatRateLimitOrOverloadedErrorCopy: (message: string) => {
     if (/model\s+(?:is\s+)?at capacity/i.test(message)) {

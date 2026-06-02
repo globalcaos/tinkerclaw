@@ -68,14 +68,14 @@ src/agents/
 │   ├── tool-split.ts              # Split tools into builtIn vs custom
 │   ├── types.ts                   # EmbeddedPiAgentMeta, EmbeddedPiRunResult
 │   └── utils.ts                   # ThinkLevel mapping, error description
-├── pi-embedded-subscribe.ts       # Session event subscription/dispatch
-├── pi-embedded-subscribe.types.ts # SubscribeEmbeddedPiSessionParams
-├── pi-embedded-subscribe.handlers.ts # Event handler factory
-├── pi-embedded-subscribe.handlers.lifecycle.ts
-├── pi-embedded-subscribe.handlers.types.ts
-├── pi-embedded-block-chunker.ts   # Streaming block reply chunking
+├── embedded-agent-subscribe.ts       # Session event subscription/dispatch
+├── embedded-agent-subscribe.types.ts # SubscribeEmbeddedPiSessionParams
+├── embedded-agent-subscribe.handlers.ts # Event handler factory
+├── embedded-agent-subscribe.handlers.lifecycle.ts
+├── embedded-agent-subscribe.handlers.types.ts
+├── embedded-agent-block-chunker.ts   # Streaming block reply chunking
 ├── pi-embedded-messaging.ts       # Messaging tool sent tracking
-├── pi-embedded-helpers.ts         # Error classification, turn validation
+├── embedded-agent-helpers.ts         # Error classification, turn validation
 ├── embedded-agent-helpers/           # Helper modules
 ├── pi-embedded-utils.ts           # Formatting utilities
 ├── pi-tools.ts                    # createOpenClawCodingTools()
@@ -451,7 +451,7 @@ const { text: cleanedText, mediaUrls, audioAsVoice, replyToId } = consumeReplyDi
 
 ### Error classification
 
-`pi-embedded-helpers.ts` classifies errors for appropriate handling:
+`embedded-agent-helpers.ts` classifies errors for appropriate handling:
 
 ```typescript
 isContextOverflowError(errorText)     // Context too large
@@ -552,10 +552,10 @@ Pi integration coverage spans these suites:
 - `src/agents/pi-*.test.ts`
 - `src/agents/pi-auth-json.test.ts`
 - `src/agents/pi-embedded-*.test.ts`
-- `src/agents/pi-embedded-helpers*.test.ts`
+- `src/agents/embedded-agent-helpers*.test.ts`
 - `src/agents/pi-embedded-runner*.test.ts`
 - `src/agents/embedded-agent-runner/**/*.test.ts`
-- `src/agents/pi-embedded-subscribe*.test.ts`
+- `src/agents/embedded-agent-subscribe*.test.ts`
 - `src/agents/pi-tools*.test.ts`
 - `src/agents/pi-tool-definition-adapter*.test.ts`
 - `src/agents/pi-settings.test.ts`

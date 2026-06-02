@@ -13,7 +13,7 @@ import {
 import { makeZeroUsageSnapshot } from "./usage.js";
 
 vi.mock(
-  "./pi-embedded-helpers.js",
+  "./embedded-agent-helpers.js",
   async () => await createSanitizeSessionHistoryHelpersMock({ isGoogleModelApi: vi.fn() }),
 );
 

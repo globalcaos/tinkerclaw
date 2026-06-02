@@ -16,6 +16,10 @@ import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import { sanitizeForLog } from "../../terminal/ansi.js";
 import { resolveUserPath } from "../../utils.js";
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
+import {
+  retireSessionMcpRuntime,
+  retireSessionMcpRuntimeForSessionKey,
+} from "../agent-bundle-mcp-tools.js";
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
 import {
   hasConfiguredModelFallbacks,
@@ -36,6 +40,22 @@ import {
   resolveStoredSessionKeyForSessionId,
 } from "../command/session.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
+import {
+  classifyFailoverReason,
+  extractObservedOverflowTokenCount,
+  type FailoverReason,
+  formatAssistantErrorText,
+  isAuthAssistantError,
+  isBillingAssistantError,
+  isCompactionFailureError,
+  isFailoverAssistantError,
+  isFailoverErrorMessage,
+  isLikelyContextOverflowError,
+  isRateLimitAssistantError,
+  parseImageDimensionError,
+  parseImageSizeError,
+  pickFallbackThinkingLevel,
+} from "../embedded-agent-helpers.js";
 import { isStrictAgenticExecutionContractActive } from "../execution-contract.js";
 import {
   coerceToFailoverError,
@@ -55,26 +75,6 @@ import {
   shouldPreferExplicitConfigApiKeyAuth,
 } from "../model-auth.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
-import {
-  retireSessionMcpRuntime,
-  retireSessionMcpRuntimeForSessionKey,
-} from "../pi-bundle-mcp-tools.js";
-import {
-  classifyFailoverReason,
-  extractObservedOverflowTokenCount,
-  type FailoverReason,
-  formatAssistantErrorText,
-  isAuthAssistantError,
-  isBillingAssistantError,
-  isCompactionFailureError,
-  isFailoverAssistantError,
-  isFailoverErrorMessage,
-  isLikelyContextOverflowError,
-  isRateLimitAssistantError,
-  parseImageDimensionError,
-  parseImageSizeError,
-  pickFallbackThinkingLevel,
-} from "../pi-embedded-helpers.js";
 import { resolveProviderIdForAuth } from "../provider-auth-aliases.js";
 import { buildAgentRuntimeAuthPlan } from "../runtime-plan/auth.js";
 import { buildAgentRuntimePlan } from "../runtime-plan/build.js";

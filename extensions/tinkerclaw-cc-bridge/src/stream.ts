@@ -864,7 +864,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // to land on the streamed-scratch text — typically a 100-byte
         // preamble — so when tail-recover later emitted text_delta with the
         // 2KB+ result_text, those late deltas arrived AFTER text_end.
-        // Downstream pi-embedded-subscribe.handleMessageEnd then skipped the
+        // Downstream embedded-agent-subscribe.handleMessageEnd then skipped the
         // safety re-send because lastBlockReplyText was already set, silently
         // dropping the actual answer. Now pushTextEnd() fires only after the
         // result is reconciled (lines below + the error path), so text_end

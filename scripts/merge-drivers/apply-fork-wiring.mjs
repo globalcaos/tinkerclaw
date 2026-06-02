@@ -270,10 +270,10 @@ function patchSessions() {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// 7. pi-embedded-subscribe.types.ts — authProfileId field
+// 7. embedded-agent-subscribe.types.ts — authProfileId field
 // ---------------------------------------------------------------------------
 function patchSubscribeTypes() {
-  const file = "src/agents/pi-embedded-subscribe.types.ts";
+  const file = "src/agents/embedded-agent-subscribe.types.ts";
   let src = readFile(file);
 
   if (src.includes("authProfileId")) {
@@ -812,7 +812,7 @@ try {
   console.warn(`  ⚠️  lifecycle handlers ratelimit: ${err.message}`);
 }
 function patchLifecycleRateLimit() {
-  const file = "src/agents/pi-embedded-subscribe.handlers.lifecycle.ts";
+  const file = "src/agents/embedded-agent-subscribe.handlers.lifecycle.ts";
   let src = readFile(file);
 
   const hasImport = src.includes("getRateLimitSnapshot");
@@ -864,7 +864,7 @@ try {
   console.warn(`  ⚠️  tools handler emitToolExec: ${err.message}`);
 }
 function patchToolsHandlerEmitToolExec() {
-  const file = "src/agents/pi-embedded-subscribe.handlers.tools.ts";
+  const file = "src/agents/embedded-agent-subscribe.handlers.tools.ts";
   let src = readFile(file);
 
   const hasImport = /from "\.\.\/fork\/attempt-hooks\.js"/.test(src);
@@ -1129,10 +1129,10 @@ function patchAmygdalaNudge() {
 }
 
 // ---------------------------------------------------------------------------
-// 19. pi-embedded-subscribe.types.ts — modelId + modelProvider
+// 19. embedded-agent-subscribe.types.ts — modelId + modelProvider
 // ---------------------------------------------------------------------------
 function patchSubscribeModelFields() {
-  const file = "src/agents/pi-embedded-subscribe.types.ts";
+  const file = "src/agents/embedded-agent-subscribe.types.ts";
   let src = readFile(file);
 
   if (src.includes("modelId?: string") && src.includes("modelProvider?: string")) {
@@ -1155,10 +1155,10 @@ function patchSubscribeModelFields() {
 }
 
 // ---------------------------------------------------------------------------
-// 20. pi-embedded-subscribe.handlers.types.ts — emitBlockReply on context
+// 20. embedded-agent-subscribe.handlers.types.ts — emitBlockReply on context
 // ---------------------------------------------------------------------------
 function patchEmitBlockReply() {
-  const file = "src/agents/pi-embedded-subscribe.handlers.types.ts";
+  const file = "src/agents/embedded-agent-subscribe.handlers.types.ts";
   let src = readFile(file);
 
   if (src.includes("emitBlockReply:")) {

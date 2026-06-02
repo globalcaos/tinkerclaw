@@ -8,14 +8,14 @@ import {
   isProfileInCooldown,
   resolveProfilesUnavailableReason,
 } from "../../auth-profiles.js";
-import { FailoverError, resolveFailoverStatus } from "../../failover-error.js";
-import { shouldAllowCooldownProbeForReason } from "../../failover-policy.js";
-import { getApiKeyForModel, type ResolvedProviderAuth } from "../../model-auth.js";
 import {
   classifyFailoverReason,
   isFailoverErrorMessage,
   type FailoverReason,
-} from "../../pi-embedded-helpers.js";
+} from "../../embedded-agent-helpers.js";
+import { FailoverError, resolveFailoverStatus } from "../../failover-error.js";
+import { shouldAllowCooldownProbeForReason } from "../../failover-policy.js";
+import { getApiKeyForModel, type ResolvedProviderAuth } from "../../model-auth.js";
 import {
   resolveProviderRequestConfig,
   sanitizeRuntimeProviderRequestOverrides,
