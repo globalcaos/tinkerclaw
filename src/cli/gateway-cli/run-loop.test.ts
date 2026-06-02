@@ -104,7 +104,7 @@ vi.mock("../../plugins/bundled-runtime-deps-activity.js", () => ({
     waitForBundledRuntimeDepsInstallIdle(timeoutMs),
 }));
 
-vi.mock("../../agents/pi-embedded-runner/runs.js", () => ({
+vi.mock("../../agents/embedded-agent-runner/runs.js", () => ({
   abortEmbeddedPiRun: (sessionId?: string, opts?: { mode?: "all" | "compacting" }) =>
     abortEmbeddedPiRun(sessionId, opts),
   getActiveEmbeddedRunCount: () => getActiveEmbeddedRunCount(),

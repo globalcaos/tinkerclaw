@@ -10,7 +10,7 @@ verify:
   - name: cc-bridge stream.ts still suppresses tool_use blocks from assistant.message.content
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK (2026-04-22)" in t and "re-execute them via the OpenClaw exec tool" in t, "the 2026-04-22 tool-loop divergence comment block is missing from stream.ts — verify the suppression still holds"'
   - name: idle-timeout-diag log line is emitted on each turn (idle watchdog is wrapped)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "[idle-timeout-diag]" in t, "the idle-timeout-diag canary log line is missing from attempt.ts"'
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-runner/run/attempt.ts")).read(); assert "[idle-timeout-diag]" in t, "the idle-timeout-diag canary log line is missing from attempt.ts"'
   - name: cc-bridge heartbeat is wired in stream.ts (FORK 2026-05-11)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK 2026-05-11" in t and "heartbeat" in t.lower() and "HEARTBEAT_INTERVAL_MS" in t, "the cc-bridge heartbeat that resets pi-agent-core idle watchdog is missing or undocumented"'
   - name: tinker-ui has no stale-run watchdog (FORK 2026-05-14 — deleted; trust lifecycle:end instead)
@@ -120,7 +120,7 @@ The lifecycle audit lives in `src/agents/pi-embedded-subscribe.handlers.lifecycl
 
 - `handleAgentStart` emits `stream: "lifecycle"` `phase: "start"`.
 - `handleAgentEnd` emits `phase: "end"` on clean termination, `phase: "error"` on error termination. The bible verify in this file's frontmatter asserts both `phase` values + the `emitAgentEvent` call are present.
-- The outer attempt loop in `src/agents/pi-embedded-runner/run/attempt.ts` already wraps everything in `try ... finally` (line 3383 at the time of this writing); a future hardening can hang a synthetic lifecycle:end on that finally if a real-world missed-emission case is ever observed.
+- The outer attempt loop in `src/agents/embedded-agent-runner/run/attempt.ts` already wraps everything in `try ... finally` (line 3383 at the time of this writing); a future hardening can hang a synthetic lifecycle:end on that finally if a real-world missed-emission case is ever observed.
 
 What was kept in `app.ts`:
 
@@ -168,7 +168,7 @@ verify:
 - `extensions/tinkerclaw-cc-bridge/src/stream.ts` — the stream pipeline (text-end fix 2026-05-04, runId smuggle 2026-04-27).
 - `extensions/tinkerclaw-cc-bridge/src/worker-pool.ts` — resume lookup priority.
 - `extensions/tinkerclaw-cc-bridge/src/session-map.ts` — openclawSessionId fallback.
-- `src/agents/pi-embedded-runner/run/llm-idle-timeout.ts` — the watchdog.
+- `src/agents/embedded-agent-runner/run/llm-idle-timeout.ts` — the watchdog.
 - bible.md §11.6d / §11.6e — the regression + fix history.
 
 ---
@@ -224,7 +224,7 @@ Trusts `~/.claude/.credentials.json`. Env scrub strips `ANTHROPIC_API_KEY`, `ANT
 
 ### Files
 
-`extensions/tinkerclaw-cc-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/pi-embedded-subscribe.types.ts`, `src/agents/pi-embedded-runner/run/attempt.ts` (forward model/provider/profile).
+`extensions/tinkerclaw-cc-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/pi-embedded-subscribe.types.ts`, `src/agents/embedded-agent-runner/run/attempt.ts` (forward model/provider/profile).
 
 ### Workspace skills exposed to Jarvis via `--plugin-dir` (FORK 2026-05-04)
 

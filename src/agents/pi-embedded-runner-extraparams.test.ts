@@ -1,7 +1,7 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { __testing as extraParamsTesting } from "./pi-embedded-runner/extra-params.js";
+import { __testing as extraParamsTesting } from "./embedded-agent-runner/extra-params.js";
 
 vi.mock("../plugins/provider-hook-runtime.js", () => ({
   __testing: {
@@ -275,20 +275,20 @@ function createAnthropicFastModeWrapper(baseStreamFn: StreamFn | undefined, fast
   return createAnthropicServiceTierWrapper(baseStreamFn, fastMode ? "auto" : "standard_only");
 }
 
-import { createAnthropicToolPayloadCompatibilityWrapper } from "./pi-embedded-runner/anthropic-family-tool-payload-compat.js";
+import { createAnthropicToolPayloadCompatibilityWrapper } from "./embedded-agent-runner/anthropic-family-tool-payload-compat.js";
 import {
   createBedrockNoCacheWrapper,
   isAnthropicBedrockModel,
-} from "./pi-embedded-runner/bedrock-stream-wrappers.js";
+} from "./embedded-agent-runner/bedrock-stream-wrappers.js";
 import {
   applyExtraParamsToAgent,
   resolveAgentTransportOverride,
   resolveExplicitSettingsTransport,
   resolvePreparedExtraParams,
-} from "./pi-embedded-runner/extra-params.js";
-import { createGoogleThinkingPayloadWrapper } from "./pi-embedded-runner/google-stream-wrappers.js";
-import { log } from "./pi-embedded-runner/logger.js";
-import { createMinimaxFastModeWrapper } from "./pi-embedded-runner/minimax-stream-wrappers.js";
+} from "./embedded-agent-runner/extra-params.js";
+import { createGoogleThinkingPayloadWrapper } from "./embedded-agent-runner/google-stream-wrappers.js";
+import { log } from "./embedded-agent-runner/logger.js";
+import { createMinimaxFastModeWrapper } from "./embedded-agent-runner/minimax-stream-wrappers.js";
 import {
   createCodexNativeWebSearchWrapper,
   createOpenAIAttributionHeadersWrapper,
@@ -303,7 +303,7 @@ import {
   resolveOpenAIFastMode,
   resolveOpenAIServiceTier,
   resolveOpenAITextVerbosity,
-} from "./pi-embedded-runner/openai-stream-wrappers.js";
+} from "./embedded-agent-runner/openai-stream-wrappers.js";
 
 type WrapProviderStreamFnParams = Parameters<
   typeof import("../plugins/provider-hook-runtime.js").wrapProviderStreamFn

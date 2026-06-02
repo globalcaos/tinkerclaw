@@ -27,7 +27,7 @@ type AbortTarget = {
 };
 
 async function abortEmbeddedPiRunForSession(sessionId: string): Promise<void> {
-  const { abortEmbeddedPiRun } = await import("../../agents/pi-embedded-runner/runs.js");
+  const { abortEmbeddedPiRun } = await import("../../agents/embedded-agent-runner/runs.js");
   abortEmbeddedPiRun(sessionId);
 }
 

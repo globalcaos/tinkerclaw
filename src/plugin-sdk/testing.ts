@@ -119,7 +119,7 @@ export {
   isOverloadedErrorMessage,
   isServerErrorMessage,
   isTimeoutErrorMessage,
-} from "../agents/pi-embedded-helpers/failover-matches.js";
+} from "../agents/embedded-agent-helpers/failover-matches.js";
 export { maybeLoadShellEnvForGenerationProviders } from "../test-utils/generation-live-test-helpers.js";
 export { __testing } from "../acp/control-plane/manager.js";
 export { __testing as acpManagerTesting } from "../acp/control-plane/manager.js";

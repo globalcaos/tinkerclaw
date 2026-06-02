@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import { sanitizeSessionHistory } from "./pi-embedded-runner/google.js";
+import { sanitizeSessionHistory } from "./embedded-agent-runner/google.js";
 
 describe("sanitizeSessionHistory (google thinking)", () => {
   it("keeps thinking blocks without signatures for Google models", async () => {

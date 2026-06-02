@@ -6,7 +6,7 @@ import {
   __testing as embeddedRunTesting,
   abortEmbeddedPiRun,
   isEmbeddedPiRunActive,
-} from "../../agents/pi-embedded-runner/runs.js";
+} from "../../agents/embedded-agent-runner/runs.js";
 import * as sessionTypesModule from "../../config/sessions.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { loadSessionStore, saveSessionStore } from "../../config/sessions.js";

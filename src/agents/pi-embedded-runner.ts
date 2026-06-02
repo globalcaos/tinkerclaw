@@ -2,24 +2,24 @@ export type { MessagingToolSend } from "./pi-embedded-messaging.types.js";
 export {
   compactEmbeddedPiSession,
   compactEmbeddedPiSession as compactEmbeddedAgentSession,
-} from "./pi-embedded-runner/compact.queued.js";
+} from "./embedded-agent-runner/compact.queued.js";
 export {
   applyExtraParamsToAgent,
   resolveAgentTransportOverride,
   resolveExtraParams,
   resolvePreparedExtraParams,
-} from "./pi-embedded-runner/extra-params.js";
+} from "./embedded-agent-runner/extra-params.js";
 
 export {
   getDmHistoryLimitFromSessionKey,
   getHistoryLimitFromSessionKey,
   limitHistoryTurns,
-} from "./pi-embedded-runner/history.js";
-export { resolveEmbeddedSessionLane } from "./pi-embedded-runner/lanes.js";
+} from "./embedded-agent-runner/history.js";
+export { resolveEmbeddedSessionLane } from "./embedded-agent-runner/lanes.js";
 export {
   runEmbeddedPiAgent,
   runEmbeddedPiAgent as runEmbeddedAgent,
-} from "./pi-embedded-runner/run.js";
+} from "./embedded-agent-runner/run.js";
 export {
   abortEmbeddedPiRun,
   abortEmbeddedPiRun as abortEmbeddedAgentRun,
@@ -33,10 +33,10 @@ export {
   resolveActiveEmbeddedRunSessionId as resolveActiveEmbeddedAgentRunSessionId,
   waitForEmbeddedPiRunEnd,
   waitForEmbeddedPiRunEnd as waitForEmbeddedAgentRunEnd,
-} from "./pi-embedded-runner/runs.js";
-export { buildEmbeddedSandboxInfo } from "./pi-embedded-runner/sandbox-info.js";
-export { createSystemPromptOverride } from "./pi-embedded-runner/system-prompt.js";
-export { splitSdkTools } from "./pi-embedded-runner/tool-split.js";
+} from "./embedded-agent-runner/runs.js";
+export { buildEmbeddedSandboxInfo } from "./embedded-agent-runner/sandbox-info.js";
+export { createSystemPromptOverride } from "./embedded-agent-runner/system-prompt.js";
+export { splitSdkTools } from "./embedded-agent-runner/tool-split.js";
 export type {
   EmbeddedPiAgentMeta as EmbeddedAgentMeta,
   EmbeddedPiAgentMeta,
@@ -46,4 +46,4 @@ export type {
   EmbeddedPiRunMeta,
   EmbeddedPiRunResult as EmbeddedAgentRunResult,
   EmbeddedPiRunResult,
-} from "./pi-embedded-runner/types.js";
+} from "./embedded-agent-runner/types.js";

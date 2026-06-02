@@ -1,13 +1,13 @@
 import type { Message, Model } from "@mariozechner/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { wrapStreamFnSanitizeMalformedToolCalls } from "./embedded-agent-runner/run/attempt.tool-call-normalization.js";
+import { OMITTED_ASSISTANT_REASONING_TEXT } from "./embedded-agent-runner/thinking.js";
 import {
   completeSimpleWithLiveTimeout,
   extractAssistantText,
   logLiveCache,
 } from "./live-cache-test-support.js";
 import { isLiveTestEnabled } from "./live-test-helpers.js";
-import { wrapStreamFnSanitizeMalformedToolCalls } from "./pi-embedded-runner/run/attempt.tool-call-normalization.js";
-import { OMITTED_ASSISTANT_REASONING_TEXT } from "./pi-embedded-runner/thinking.js";
 import { buildAssistantMessageWithZeroUsage } from "./stream-message-shared.js";
 
 const ANTHROPIC_LIVE = isLiveTestEnabled(["ANTHROPIC_LIVE_TEST"]);

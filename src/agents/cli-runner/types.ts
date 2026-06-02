@@ -8,7 +8,7 @@ import type { CliBackendConfig } from "../../config/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { PromptImageOrderEntry } from "../../media/prompt-image-order.js";
 import type { ResolvedCliBackend } from "../cli-backends.js";
-import type { EmbeddedRunTrigger } from "../pi-embedded-runner/run/params.js";
+import type { EmbeddedRunTrigger } from "../embedded-agent-runner/run/params.js";
 import type { SkillSnapshot } from "../skills.js";
 import type { SilentReplyPromptMode } from "../system-prompt.types.js";
 

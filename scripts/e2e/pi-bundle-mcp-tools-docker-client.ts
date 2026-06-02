@@ -6,12 +6,12 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { applyFinalEffectiveToolPolicy } from "../../dist/agents/embedded-agent-runner/effective-tool-policy.js";
 import { materializeBundleMcpToolsForRun } from "../../dist/agents/pi-bundle-mcp-materialize.js";
 import {
   disposeAllSessionMcpRuntimes,
   getOrCreateSessionMcpRuntime,
 } from "../../dist/agents/pi-bundle-mcp-runtime.js";
-import { applyFinalEffectiveToolPolicy } from "../../dist/agents/pi-embedded-runner/effective-tool-policy.js";
 import type { OpenClawConfig } from "../../dist/config/types.openclaw.js";
 import { getPluginToolMeta } from "../../dist/plugins/tools.js";
 

@@ -20,14 +20,14 @@ vi.mock("../agents/models-config.js", () => ({
     ensureOpenClawModelsJsonMock(config, agentDir, options),
 }));
 
-vi.mock("../agents/pi-embedded-runner/model.js", () => {
+vi.mock("../agents/embedded-agent-runner/model.js", () => {
   piModelModuleLoadedMock();
   return {
     resolveModel: () => ({}),
   };
 });
 
-vi.mock("../agents/pi-embedded-runner/runtime.js", () => ({
+vi.mock("../agents/embedded-agent-runner/runtime.js", () => ({
   resolveEmbeddedAgentRuntime: () => resolveEmbeddedAgentRuntimeMock(),
 }));
 

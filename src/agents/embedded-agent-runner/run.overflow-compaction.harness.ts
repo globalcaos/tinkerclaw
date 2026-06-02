@@ -9,7 +9,7 @@ import type {
   PluginHookBeforePromptBuildResult,
 } from "../../plugins/types.js";
 import { normalizeLowercaseStringOrEmpty } from "../../shared/string-coerce.js";
-import type { FailoverReason } from "../pi-embedded-helpers/types.js";
+import type { FailoverReason } from "../embedded-agent-helpers/types.js";
 import type { buildEmbeddedRunPayloads } from "./run/payloads.js";
 import type { EmbeddedRunAttemptResult } from "./run/types.js";
 

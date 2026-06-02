@@ -5,20 +5,20 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
 import { resolveAgentRuntimePolicy } from "../agent-runtime-policy.js";
 import { listAgentEntries, resolveSessionAgentIds } from "../agent-scope.js";
-import { isCliRuntimeAlias } from "../model-runtime-aliases.js";
-import type { CompactEmbeddedPiSessionParams } from "../pi-embedded-runner/compact.types.js";
+import type { CompactEmbeddedPiSessionParams } from "../embedded-agent-runner/compact.types.js";
 import type {
   EmbeddedRunAttemptParams,
   EmbeddedRunAttemptResult,
-} from "../pi-embedded-runner/run/types.js";
+} from "../embedded-agent-runner/run/types.js";
 import {
   normalizeEmbeddedAgentRuntime,
   resolveEmbeddedAgentHarnessFallback,
   resolveEmbeddedAgentRuntime,
   type EmbeddedAgentHarnessFallback,
   type EmbeddedAgentRuntime,
-} from "../pi-embedded-runner/runtime.js";
-import type { EmbeddedPiCompactResult } from "../pi-embedded-runner/types.js";
+} from "../embedded-agent-runner/runtime.js";
+import type { EmbeddedPiCompactResult } from "../embedded-agent-runner/types.js";
+import { isCliRuntimeAlias } from "../model-runtime-aliases.js";
 import { createPiAgentHarness } from "./builtin-pi.js";
 import { listRegisteredAgentHarnesses } from "./registry.js";
 import type { AgentHarness, AgentHarnessSupport } from "./types.js";

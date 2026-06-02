@@ -17,7 +17,7 @@ vi.mock("./pi-embedded.js", () => {
   return {};
 });
 
-vi.mock("./pi-embedded-runner/runs.js", () => ({
+vi.mock("./embedded-agent-runner/runs.js", () => ({
   abortEmbeddedPiRun: (...args: unknown[]) => state.abortEmbeddedPiRunMock(...args),
   requestEmbeddedRunModelSwitch: (...args: unknown[]) =>
     state.requestEmbeddedRunModelSwitchMock(...args),

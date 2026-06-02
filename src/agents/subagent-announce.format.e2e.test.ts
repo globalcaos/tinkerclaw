@@ -20,7 +20,7 @@ import {
   buildAnnounceIdFromChildRun,
   buildAnnounceIdempotencyKey,
 } from "./announce-idempotency.js";
-import * as piEmbedded from "./pi-embedded-runner/runs.js";
+import * as piEmbedded from "./embedded-agent-runner/runs.js";
 import { __testing as subagentAnnounceDeliveryTesting } from "./subagent-announce-delivery.js";
 import { runSubagentAnnounceDispatch } from "./subagent-announce-dispatch.js";
 import { resetAnnounceQueuesForTests } from "./subagent-announce-queue.js";

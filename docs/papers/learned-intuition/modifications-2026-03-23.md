@@ -61,7 +61,7 @@ Pipeline: nudge file → `getAmygdalaNudge()` hook → `amygdalaNudge` param →
 - Nudge file: `data/amygdala/personality-nudge.json` (updated nightly by training cron)
 - Visibility: `[🧠 AMYGDALA: <nudge>]` tags appended when nudge influences response
 
-**Files:** `attempt-hooks.ts`, `system-prompt.ts`, `pi-embedded-runner/system-prompt.ts`, `attempt.ts`
+**Files:** `attempt-hooks.ts`, `system-prompt.ts`, `embedded-agent-runner/system-prompt.ts`, `attempt.ts`
 
 ### 5. Fractal Reflection Second Pass (NEW — beyond paper scope)
 

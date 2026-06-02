@@ -20,7 +20,7 @@ verify:
   - name: F-RECIPE-EVOLVE — consolidation self-apply loop wired to the prefrontal apply RPC (U1)
     cmd: python3 -c 'import os; con=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/sleep-consolidation.ts")).read(); assert "proposeMutations" in con and "prefrontal.recipe.applyProposal" in con and "RECIPE_AUTOAPPLY_ENABLED" in con, "consolidation evolution loop wiring missing"; app=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts")).read(); assert "invalidateRecipeIndexCache()" in app and "isJarvisAuthored" in app, "recipe-apply rails/cache-invalidate missing"'
   - name: F-TOT-DELIBERATE — pre-prompt ToT deliberation is turn-local + trace persists (U10)
-    cmd: python3 -c 'import os; att=open(os.path.expanduser("~/src/tinkerclaw/src/agents/pi-embedded-runner/run/attempt.ts")).read(); assert "maybeRunThoughtSearch" in att and "preDeliberationSystemPromptText" in att, "attempt.ts deliberation wiring missing"; rr=open(os.path.expanduser("~/src/tinkerclaw/src/fork/reasoning-runtime.ts")).read(); assert "## Deliberation" in rr and "stashReasoningTrace" in rr, "reasoning-runtime producer missing"; hk=open(os.path.expanduser("~/src/tinkerclaw/src/fork/attempt-hooks.ts")).read(); assert "reasoning_tree_state" in hk and "consumeReasoningTrace" in hk, "trace persist-on-turn-complete missing"'
+    cmd: python3 -c 'import os; att=open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-runner/run/attempt.ts")).read(); assert "maybeRunThoughtSearch" in att and "preDeliberationSystemPromptText" in att, "attempt.ts deliberation wiring missing"; rr=open(os.path.expanduser("~/src/tinkerclaw/src/fork/reasoning-runtime.ts")).read(); assert "## Deliberation" in rr and "stashReasoningTrace" in rr, "reasoning-runtime producer missing"; hk=open(os.path.expanduser("~/src/tinkerclaw/src/fork/attempt-hooks.ts")).read(); assert "reasoning_tree_state" in hk and "consumeReasoningTrace" in hk, "trace persist-on-turn-complete missing"'
 ---
 
 # Flows — top pipelines
@@ -121,7 +121,7 @@ sequenceDiagram
 ## F3. Surface-error → envelope → broadcast
 
 **Trigger:** LLM/provider failure that the agent runner classifies as `surface_error` (timeout, overload, auth, etc.).
-**Entry:** `src/agents/pi-embedded-runner/run/assistant-failover.ts`
+**Entry:** `src/agents/embedded-agent-runner/run/assistant-failover.ts`
 **Exit:** Channel-appropriate error envelope delivered.
 
 ```mermaid
@@ -501,7 +501,7 @@ sequenceDiagram
 ## F-TOT-DELIBERATE. Pre-prompt Tree-of-Thoughts deliberation → turn-local prompt → trace persist (U10, J3↔J13)
 
 **Trigger:** an interactive turn is about to call `activeSession.prompt(...)` AND `fork.cognitive.reasoning` config is `"tree"` or `"lats"` (default `"none"` → pure pass-through).
-**Entry:** `src/agents/pi-embedded-runner/run/attempt.ts:~2783` (the pre-prompt deliberation block) → `src/fork/reasoning-runtime.ts:maybeRunThoughtSearch`.
+**Entry:** `src/agents/embedded-agent-runner/run/attempt.ts:~2783` (the pre-prompt deliberation block) → `src/fork/reasoning-runtime.ts:maybeRunThoughtSearch`.
 **Exit:** the model runs THIS turn with a `## Deliberation` block folded into the system prompt; the search tree is persisted as a `reasoning_tree_state` MemoryEvent on turn complete; the base prompt is restored so nothing leaks into the next turn.
 
 ```mermaid

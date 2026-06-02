@@ -17,11 +17,11 @@ import {
   buildLimitedBootstrapPromptLines,
 } from "./bootstrap-prompt.js";
 import type { ResolvedTimeFormat } from "./date-time.js";
-import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
 import type {
   EmbeddedFullAccessBlockedReason,
   EmbeddedSandboxInfo,
-} from "./pi-embedded-runner/types.js";
+} from "./embedded-agent-runner/types.js";
+import type { EmbeddedContextFile } from "./pi-embedded-helpers.js";
 import {
   normalizePromptCapabilityIds,
   normalizeStructuredPromptSection,

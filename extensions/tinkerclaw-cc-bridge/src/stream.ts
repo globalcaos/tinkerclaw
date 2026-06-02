@@ -137,7 +137,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // FORK (2026-04-24, extended 2026-04-27): OpenClaw's embedded runner
       // smuggles the current run/session identity into options via
       // `__openclawRunId` / `__openclawSessionKey` / `__openclawSessionId`
-      // (see `src/agents/pi-embedded-runner/run/attempt.ts`). The runId +
+      // (see `src/agents/embedded-agent-runner/run/attempt.ts`). The runId +
       // sessionKey attribute live `stream:"tool"` agent events so the UI
       // can render tool bubbles with purpose titles. The sessionId is used
       // BELOW in `deriveSessionKey` to make /new and /reset cascade into

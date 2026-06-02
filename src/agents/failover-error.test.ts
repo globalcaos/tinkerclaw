@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { classifyFailoverSignal } from "./embedded-agent-helpers/errors.js";
 import {
   coerceToFailoverError,
   describeFailoverError,
@@ -7,7 +8,6 @@ import {
   resolveFailoverReasonFromError,
   resolveFailoverStatus,
 } from "./failover-error.js";
-import { classifyFailoverSignal } from "./pi-embedded-helpers/errors.js";
 import { SessionWriteLockTimeoutError } from "./session-write-lock-error.js";
 
 // OpenAI 429 example shape: https://help.openai.com/en/articles/5955604-how-can-i-solve-429-too-many-requests-errors
