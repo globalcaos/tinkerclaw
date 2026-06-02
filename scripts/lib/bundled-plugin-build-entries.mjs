@@ -9,6 +9,16 @@ import { shouldBuildBundledCluster } from "./optional-bundled-clusters.mjs";
 
 const TOP_LEVEL_PUBLIC_SURFACE_EXTENSIONS = new Set([".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"]);
 export const NON_PACKAGED_BUNDLED_PLUGIN_DIRS = new Set(["qa-channel", "qa-lab", "qa-matrix"]);
+// FORK 2026-06-02 (S5b): upstream's `extensions/whatsapp` is kept on disk as a
+// DORMANT overlay so future `git merge upstream/main` stops re-conflicting on
+// its ~260 files, but it is NEVER built or shipped — our active channel is
+// `extensions/tinkerclaw-whatsapp`. The dormant dir imports SDK exports that
+// our fork has dropped (e.g. text-chunking.ts `convertMarkdownTables`,
+// string-coerce-runtime.ts `normalizeStringEntries`), so building it crashes
+// tsdown with MISSING_EXPORT. Excluding it here keeps the dir present-but-inert.
+// To resurrect it, remove its name from this set and reconcile the SDK surface.
+// Re-add after every upstream merge (apply-fork-wiring), like the neverBundle list.
+export const DORMANT_OVERLAY_PLUGIN_DIRS = new Set(["whatsapp"]);
 const toPosixPath = (value) => value.replaceAll("\\", "/");
 
 function readBundledPluginPackageJson(packageJsonPath) {
@@ -93,6 +103,11 @@ export function collectBundledPluginBuildEntries(params = {}) {
 
   for (const dirent of fs.readdirSync(extensionsRoot, { withFileTypes: true })) {
     if (!dirent.isDirectory()) {
+      continue;
+    }
+    // Dormant upstream overlays live on disk for merge de-confliction but are
+    // never compiled, packed, or staged. See DORMANT_OVERLAY_PLUGIN_DIRS.
+    if (DORMANT_OVERLAY_PLUGIN_DIRS.has(dirent.name)) {
       continue;
     }
 
