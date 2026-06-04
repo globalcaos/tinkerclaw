@@ -30,7 +30,7 @@ import {
 import { getObservationRuntime } from "../agents/pi-extensions/observation-runtime.js";
 import { getRetrievalRuntime } from "../agents/pi-extensions/retrieval-runtime.js";
 import type { SerializedTree } from "../agents/reasoning-tree.js";
-import { captureForensicDump } from "../forensic/dump-writer.js";
+import { captureForensicDump, finalizeForensicRun } from "../forensic/dump-writer.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { estimateTokens } from "../memory/engram/event-store.js";
 import type { MemoryEvent } from "../memory/engram/event-types.js";
@@ -594,6 +594,50 @@ export async function emitPrePromptAnatomy(params: {
   }
 }
 
+/**
+ * FORK 2026-06-04 (Stream C — forensic map permanently empty): standalone
+ * pre-prompt forensic-dump capture, wired directly into attempt.ts right
+ * before `activeSession.prompt(...)`. The pre-existing `emitPrePromptAnatomy`
+ * export above ALSO calls `captureForensicDump`, but that whole function is
+ * dead (never invoked from attempt.ts — the anatomy insert was moved into
+ * `onTurnComplete`), so the forensic store (`sessionRuns` in dump-writer.ts)
+ * was never populated and every `forensic.getLive*` RPC returned NO_DATA.
+ *
+ * This hook captures ONLY the forensic dump (NOT anatomy — onTurnComplete owns
+ * that) so the L3 treemap drill-down + `forensic.summarize` have real data.
+ * It receives the POST-deliberation system-prompt bytes actually sent to the
+ * model so the dump reflects the exact request. Fire-and-forget; never throws.
+ */
+export function captureForensicDumpHook(params: {
+  runId: string;
+  sessionKey?: string;
+  model: string;
+  provider: string;
+  modelApi?: string;
+  systemPromptText: string;
+  messages: unknown[];
+  tools?: unknown[];
+  effectivePrompt: string;
+  log: { warn: (msg: string) => void };
+}): void {
+  if (!params.sessionKey) {
+    return;
+  }
+  captureForensicDump({
+    runId: params.runId,
+    sessionKey: params.sessionKey,
+    model: params.model,
+    provider: params.provider,
+    modelApi: params.modelApi ?? params.provider,
+    systemPrompt: params.systemPromptText,
+    messages: params.messages,
+    tools: params.tools ?? [],
+    effectivePrompt: params.effectivePrompt,
+  }).catch((err) => {
+    params.log.warn(`pre-prompt forensic dump (hook) failed: ${String(err)}`);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Hook: Round-level event emission (per LLM API call + tool execution)
 // ---------------------------------------------------------------------------
@@ -916,6 +960,20 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
     } catch (err) {
       log.warn(`context-anatomy build failed: ${String(err)}`);
     }
+  }
+
+  // FORK 2026-06-04 (Stream C — forensic map permanently empty): finalize the
+  // RESPONSE half of the forensic dump for this run. captureForensicDumpHook
+  // (wired in attempt.ts before each prompt) records the REQUEST side into the
+  // per-session forensic store; finalizeForensicRun walks those dumps + the
+  // final messagesSnapshot to extract each call's response content blocks, so
+  // the response treemap + `forensic.summarize {component:"response"}` work.
+  // Fire-and-forget — never block post-turn processing. Matches the anatomy
+  // wiring style above (onTurnComplete owns both response-side writes).
+  if (params.sessionKey) {
+    finalizeForensicRun(params.sessionKey, params.runId, messagesSnapshot).catch((err) => {
+      log.warn(`forensic finalize failed: ${String(err)}`);
+    });
   }
 
   // ENGRAM ingestion
