@@ -84,6 +84,51 @@ function resolveMainSessionResumeBlockReason(messages: unknown[]): string | null
   return null;
 }
 
+/**
+ * A trailing `tool_use` block with no following `tool_result` means the turn
+ * was interrupted while waiting for tool execution — genuinely resumable. If
+ * the assistant message were followed by its tool_result, that result (a
+ * user/tool message) would be the last meaningful message instead, not this
+ * assistant message — so any tool_use in the LAST assistant message is dangling.
+ */
+function assistantTurnHasPendingToolUse(message: unknown): boolean {
+  if (getMessageRole(message) !== "assistant") {
+    return false;
+  }
+  const content = (message as { content?: unknown }).content;
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  // Accept both the raw Anthropic name (`tool_use`) and OpenClaw's normalized
+  // name (`toolCall`): recognizing more tool-block shapes only ever errs toward
+  // resuming, never toward wrongly skipping a genuine mid-tool interruption.
+  return content.some((block) => {
+    if (block == null || typeof block !== "object") {
+      return false;
+    }
+    const type = (block as { type?: unknown }).type;
+    return type === "tool_use" || type === "toolCall";
+  });
+}
+
+/**
+ * FORK 2026-05-31 (Oscar directive): is the session idle — i.e. did its last
+ * turn already COMPLETE, so there is nothing to resume? Distinguishes the three
+ * tail shapes the 2026-05-10 change collapsed into one "not resumable" verdict:
+ *   - no meaningful message (empty transcript) → cc-bridge mid-flight → NOT idle (resume)
+ *   - last message is `assistant` with a trailing tool_use → interrupted → NOT idle (resume)
+ *   - last message is `assistant`, text only → turn finished → IDLE (skip resume)
+ *   - last message is user/tool/toolResult → genuine interruption → NOT idle (resume)
+ * Returning true here is what breaks the phantom-resume loop on idle sessions.
+ */
+function isIdleCompletedTail(messages: unknown[]): boolean {
+  const lastMeaningful = messages.toReversed().find(isMeaningfulTailMessage);
+  if (!lastMeaningful || getMessageRole(lastMeaningful) !== "assistant") {
+    return false;
+  }
+  return !assistantTurnHasPendingToolUse(lastMeaningful);
+}
+
 function buildResumeMessage(): string {
   // FORK 2026-05-30 (Oscar directive): the resume must be LEGIBLE. The user
   // wants a brief "here's where I'm picking up" note — which plan step, what's
@@ -119,6 +164,31 @@ export async function markSessionFailed(params: {
     { skipMaintenance: true },
   );
   log.warn(`marked interrupted main session failed: ${params.sessionKey} (${params.reason})`);
+}
+
+/**
+ * FORK 2026-05-31 — an idle session that the drain flagged `running` +
+ * `abortedLastRun` (because a prior phantom resume-turn was killed by the next
+ * restart) keeps re-matching the recovery gate on every boot. Clear the flags
+ * so the gate stops matching and the resume loop ends. Atomic read-modify-write
+ * via updateSessionStore — never clobber a stale snapshot.
+ */
+async function settleIdleSession(params: { storePath: string; sessionKey: string }): Promise<void> {
+  await updateSessionStore(
+    params.storePath,
+    (store) => {
+      const entry = store[params.sessionKey];
+      if (!entry || entry.status !== "running") {
+        return;
+      }
+      entry.status = "done";
+      entry.abortedLastRun = false;
+      entry.endedAt = Date.now();
+      entry.updatedAt = entry.endedAt;
+      store[params.sessionKey] = entry;
+    },
+    { skipMaintenance: true },
+  );
 }
 
 /**
@@ -357,6 +427,20 @@ async function recoverStore(params: {
     //     common cc-bridge case.
     // The chip wording deliberately omits any "please retry" hint; we
     // promise the user we are picking up where we stopped.
+    // FORK 2026-05-31 (Oscar directive): do NOT resume an IDLE session whose
+    // last turn already completed. The 2026-05-10 change disabled the tail
+    // check entirely to keep cc-bridge mid-flight recovery working, but that
+    // also resurrected every completed session on each restart — firing a
+    // phantom [System] continue at a turn with nothing to resume (the "talked
+    // with no prompt" loop). isIdleCompletedTail still resumes the empty
+    // transcript (cc-bridge mid-flight) and the dangling-tool_use cases.
+    if (isIdleCompletedTail(messages)) {
+      log.info(`skipping resume; last turn already completed (idle): ${sessionKey}`);
+      await settleIdleSession({ storePath: params.storePath, sessionKey });
+      result.skipped++;
+      continue;
+    }
+
     const resumeBlockReason = resolveMainSessionResumeBlockReason(messages);
     if (resumeBlockReason) {
       log.info(

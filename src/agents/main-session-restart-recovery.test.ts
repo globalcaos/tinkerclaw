@@ -113,8 +113,10 @@ describe("main-session-restart-recovery", () => {
     const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
 
     expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
-    expect(callGateway).toHaveBeenCalledOnce();
-    expect(vi.mocked(callGateway).mock.calls[0]?.[0].params).toMatchObject({
+    // A resume fires two gateway calls: the restart-warning envelope
+    // (chat.inject) and the [System] continue dispatch (agent).
+    const agentCall = vi.mocked(callGateway).mock.calls.find((c) => c[0].method === "agent");
+    expect(agentCall?.[0].params).toMatchObject({
       sessionKey: "agent:main:main",
       deliver: false,
       lane: "main",
@@ -123,7 +125,13 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
   });
 
-  it("fails marked sessions with stale approval-pending exec tool results", async () => {
+  // FLAGGED to Oscar 2026-05-31: pre-2026-05-10 this FAILED a stale
+  // approval-pending tail; the 2026-05-10 "resume every recovered session"
+  // directive made it resume instead. A toolResult tail is NOT idle (the
+  // 2026-05-31 idle fix leaves it untouched), so it still resumes. Whether a
+  // dead approval prompt SHOULD auto-resume is an open question — not in scope
+  // for the idle fix, so this documents current behavior, not a verdict.
+  it("resumes a stale approval-pending tail (2026-05-10 fork resumes every recovered session)", async () => {
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
       "agent:main:main": {
@@ -150,11 +158,9 @@ describe("main-session-restart-recovery", () => {
 
     const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
 
-    expect(result).toEqual({ recovered: 0, failed: 1, skipped: 0 });
-    expect(callGateway).not.toHaveBeenCalled();
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
-    expect(store["agent:main:main"]?.status).toBe("failed");
-    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
   });
 
   it("does not scan ordinary running sessions without the restart-aborted marker", async () => {
@@ -177,7 +183,12 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
   });
 
-  it("fails marked sessions whose transcript tail cannot be resumed", async () => {
+  // FORK 2026-05-31 (Oscar directive: "fix the resume on idle"). An idle
+  // session whose last turn already COMPLETED (assistant text tail) must NOT be
+  // resumed — doing so fires a phantom [System] continue at a turn with nothing
+  // to resume (the "talked with no prompt" loop). It is settled to done so the
+  // recovery gate stops re-matching it on every restart.
+  it("skips and settles an idle session whose last turn already completed", async () => {
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
       "agent:main:main": {
@@ -189,15 +200,88 @@ describe("main-session-restart-recovery", () => {
     });
     await writeTranscript(sessionsDir, "main-session", [
       { role: "user", content: "hello" },
-      { role: "assistant", content: "partial answer" },
+      { role: "assistant", content: [{ type: "text", text: "complete answer" }] },
     ]);
 
     const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
 
-    expect(result).toEqual({ recovered: 0, failed: 1, skipped: 0 });
+    expect(result).toEqual({ recovered: 0, failed: 0, skipped: 1 });
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
-    expect(store["agent:main:main"]?.status).toBe("failed");
-    expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
+    expect(store["agent:main:main"]?.status).toBe("done");
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+  });
+
+  // Genuine cc-bridge mid-flight interruption: the user prompt is persisted at
+  // turn start, so the tail is a `user` message — must still resume.
+  it("resumes a genuinely interrupted session whose tail is the user prompt", async () => {
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "assistant", content: [{ type: "text", text: "previous answer" }] },
+      { role: "user", content: "now do the next thing" },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+  });
+
+  // cc-bridge interrupted before anything reached the OpenClaw transcript:
+  // empty transcript is the mid-flight signal the 2026-05-10 change protects —
+  // must still resume (the idle fix only skips a COMPLETED assistant tail).
+  it("resumes a session whose transcript is empty (cc-bridge mid-flight)", async () => {
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    // No transcript file written → readSessionMessages returns [].
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+  });
+
+  // Native turn interrupted mid-tool: the assistant tail ends in a dangling
+  // tool_use (no following tool_result) — genuinely resumable, must NOT be
+  // mistaken for an idle completed turn.
+  it("resumes a session interrupted mid-tool (assistant tail with a dangling tool_use)", async () => {
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "search the codebase" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Looking now" },
+          { type: "tool_use", id: "call-1", name: "grep" },
+        ],
+      },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
   });
 });
