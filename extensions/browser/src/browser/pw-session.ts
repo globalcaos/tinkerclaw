@@ -37,6 +37,10 @@ import {
 import { DEFAULT_DOWNLOAD_DIR } from "./paths.js";
 import { playwrightCore } from "./playwright-core.runtime.js";
 import { BROWSER_REF_MARKER_ATTRIBUTE, withPageScopedCdpClient } from "./pw-session.page-cdp.js";
+// FORK 2026-06-04 (Browser Relay upgrade): bootstrap that injects the persistent
+// Jarvis cursor + shared-tab frame. Registered here via page.addInitScript so the
+// affordances survive navigation/reload (they re-render on every fresh document).
+import { TINKERCLAW_OVERLAY_BOOTSTRAP } from "./pw-tinkerclaw-overlay.js";
 import { sanitizeUntrustedFileName } from "./safe-filename.js";
 
 const { chromium } = playwrightCore;
@@ -387,6 +391,12 @@ export function ensurePageState(page: Page): PageState {
 
   if (!observedPages.has(page)) {
     observedPages.add(page);
+    // FORK 2026-06-04 (Browser Relay upgrade): register the persistent-cursor +
+    // shared-tab-frame bootstrap so it re-injects on every navigation/reload of
+    // this page. Best-effort and fire-and-forget — addInitScript only affects
+    // FUTURE documents; the already-loaded current document is covered by
+    // ensureTinkerclawCursor() in interactions.ts before each action.
+    void page.addInitScript(TINKERCLAW_OVERLAY_BOOTSTRAP).catch(() => {});
     page.on("console", (msg: ConsoleMessage) => {
       const entry: BrowserConsoleMessage = {
         type: msg.type(),
