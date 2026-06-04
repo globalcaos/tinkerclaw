@@ -2,7 +2,7 @@
  * FORK: Tinkerclaw Browser Relay — Chrome Extension background service worker.
  *
  * Adapted from upstream assets/chrome-extension/background.js with these changes:
- * - Tab group management: shared tabs grouped in "Tinker Shared" (grey color)
+ * - Tab group management: shared tabs grouped in "Tinker Shared" (orange color)
  * - Persistent tab sharing across service worker restarts (chrome.storage.local)
  * - Badge showing count of shared tabs (sandstone #c19a6b background)
  * - No new window/tab creation — only attaches to user-selected tabs
@@ -16,7 +16,11 @@
 const DEFAULT_PORT = 18792;
 
 const TAB_GROUP_NAME = "Tinker Shared";
-const TAB_GROUP_COLOR = "grey"; // Chrome doesn't have brown — grey is closest earth tone
+// FORK 2026-06-04 (Browser Relay upgrade): make the shared/focused tab STAND OUT.
+// Was "grey" (chosen as a muted earth tone); orange is a Chrome-allowed tabGroups
+// color (grey/blue/red/yellow/green/pink/purple/cyan/orange) that is far more
+// eye-catching so the user can spot the Jarvis-shared tab at a glance.
+const TAB_GROUP_COLOR = "orange";
 
 const BADGE = {
   on: { text: "ON", color: "#c19a6b" },
