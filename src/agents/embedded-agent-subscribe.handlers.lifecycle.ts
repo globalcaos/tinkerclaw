@@ -122,6 +122,12 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
       ...(ctx.state.yielded === true ? { yielded: true } : {}),
     };
     if (isError) {
+      // FORK 2026-06-04: the terminal phase:"error" gateway event must carry the
+      // same identity fields the clean phase:"end" branch sends. The Tinker UI gates
+      // its lifecycle start/end/error handler behind `p.data?.model`, so an error
+      // event without model/sessionKey is DROPPED → the run is never scheduled for
+      // deletion → its thinking indicator sticks forever (and stacks with the next
+      // run = "multiple at once"). Mirror the phase:"end" identity fields exactly.
       emitAgentEvent({
         runId: ctx.params.runId,
         stream: "lifecycle",
@@ -132,6 +138,11 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
           ...(livenessState ? { livenessState } : {}),
           ...(replayInvalid ? { replayInvalid } : {}),
           endedAt: Date.now(),
+          authProfileId: ctx.params.authProfileId,
+          model: ctx.params.modelId,
+          modelProvider: ctx.params.modelProvider,
+          sessionKey: ctx.params.sessionKey,
+          ...(rateLimit ? { rateLimit } : {}),
         },
       });
       void ctx.params.onAgentEvent?.({
