@@ -104,13 +104,16 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
     enabled: true,
     trust: {
       // FORK 2026-05-30 ("Amygdala" task): crank the LLM personality-nudge
-      // influence to the ceiling (alpha_max) so we can actually SEE its effect.
-      // Both alphas were 0.0 — the nudge had literally zero weight, which is
-      // why it "didn't seem to do anything". This is the nudge (LLM tone), NOT
-      // the AEGIS tool-gate (that stays observe-only via cfg.observeOnly).
+      // influence so we can actually SEE its effect. Both alphas were 0.0 — the
+      // nudge had literally zero weight. This is the nudge (LLM tone), NOT the
+      // AEGIS tool-gate (that stays observe-only via cfg.observeOnly).
+      // FORK 2026-06-04: bumped personality 0.15 → 0.5 for the narration-canary
+      // experiment — narration_discipline nudge is the visible tell that the
+      // whole personality pipeline is live (Oscar's instrument). Prudence stays
+      // 0.15 (observe-only safety gate).
       alpha_prudence: 0.15,
-      alpha_personality: 0.15,
-      alpha_max: 0.15,
+      alpha_personality: 0.5,
+      alpha_max: 0.5,
       alpha_min: 0.0,
       phase: 4,
       ramp_eta: 0.01,
@@ -124,11 +127,9 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       window_size: 32,
     },
     prudence: {
-      // FORK 2026-05-30: point a/b/c at the top-level FULL-WEIGHT models
-      // (prudence-{a,b,c}.onnx, ~1MB, verified loadable). The onnx/prudence_*.onnx
-      // set is graph-only and references external-data sidecars that don't exist
-      // (→ "external data path does not exist"), so those never load. d/e have no
-      // full-weight model on disk yet → they neutral-fallback (3/5 ensemble runs).
+      // FORK 2026-06-04: all 5 prudence nets retrained and exported full-weight
+      // to top-level hyphenated prudence-{a..e}.onnx (dynamo=False, verified
+      // matching PyTorch <1e-4). Full 5/5 ensemble — d/e no longer fall back.
       model_paths: {
         a: join(modelsDir, "prudence-a.onnx"),
         b: join(modelsDir, "prudence-b.onnx"),
@@ -141,15 +142,15 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       disagreement_threshold: 0.3,
     },
     personality: {
-      // FORK 2026-05-30: only a/b/c personality nets exist on disk (top-level,
-      // hyphenated). a/b/c now load real weights; d/e remain absent → NEUTRAL
-      // (the d/e personality architectures were never trained — tracked as a gap).
+      // FORK 2026-06-04: all 5 personality nets retrained and exported to ONNX
+      // (export_onnx.py writes top-level hyphenated personality-{a..e}.onnx with
+      // dynamo=False so GRU/dual-encoder match PyTorch <1e-4). Full 5/5 ensemble.
       model_paths: {
         a: join(modelsDir, "personality-a.onnx"),
         b: join(modelsDir, "personality-b.onnx"),
         c: join(modelsDir, "personality-c.onnx"),
-        d: join(modelsDir, "onnx", "personality_d.onnx"),
-        e: join(modelsDir, "onnx", "personality_e.onnx"),
+        d: join(modelsDir, "personality-d.onnx"),
+        e: join(modelsDir, "personality-e.onnx"),
       },
       meta_weights: [0.2, 0.2, 0.2, 0.2, 0.2],
       target_vector: targetVector,

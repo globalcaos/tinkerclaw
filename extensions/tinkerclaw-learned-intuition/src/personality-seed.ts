@@ -27,6 +27,7 @@ export const DEFAULT_TARGET_DIMENSIONS: Record<string, number> = {
   voice_consistency: 0.95,
   warmth: 0.6,
   wonder: 0.85,
+  narration_discipline: 1.0,
 
   // -- Interest attractors (curiosity decomposed) --
   interest_consciousness: 0.9,
