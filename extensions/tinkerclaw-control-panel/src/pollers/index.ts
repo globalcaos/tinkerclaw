@@ -23,6 +23,8 @@ import type { ControlPanelResolvedConfig } from "../paths.js";
 import { getDb } from "../store/db.js";
 import { addMetric, recordObservation } from "../store/observations.js";
 import { githubForks, githubOpenIssues, githubStargazers } from "./github.js";
+import { localStateValue } from "./localstate.js";
+import { moltbookKarma, moltbookPosts, moltbookComments, moltbookFollowers } from "./moltbook.js";
 import { npmDownloadsMonthly, npmDownloadsWeekly } from "./npm.js";
 import { demoWebsiteVisits } from "./website.js";
 
@@ -38,6 +40,14 @@ export const POLLER_REGISTRY: Map<string, PollerFn> = new Map([
   // GoatCounter / GA4 / Search Console). The graph still populates so the
   // Graphs section has something to render against the KPI section.
   ["demo.website.visits", demoWebsiteVisits],
+  // FORK 2026-06-04 — online-presence pollers (execmode-pulse graphs).
+  ["moltbook.karma", moltbookKarma],
+  ["moltbook.posts", moltbookPosts],
+  ["moltbook.comments", moltbookComments],
+  ["moltbook.followers", moltbookFollowers],
+  // Generic: read a numeric value out of an online-presence state JSON the
+  // crons already maintain (fork traffic, clawhub installs, inbound links).
+  ["localstate", localStateValue],
 ]);
 
 type Logger = { info: (msg: string) => void; warn?: (msg: string) => void };
@@ -85,6 +95,67 @@ const SEED_KPIS: SeedSpec[] = [
     id: "graph.website.visits.daily",
     source: "demo.website.visits:default",
     cadence_seconds: 3600,
+    template: "sparkline",
+  },
+  // ── Online presence (FORK 2026-06-04 — execmode-pulse graphs) ──────────────
+  // Moltbook standing — live API; account fixed by ~/.config/moltbook creds.
+  {
+    id: "kpi.moltbook.karma",
+    source: "moltbook.karma:self",
+    cadence_seconds: 86400,
+    template: "single-stat",
+  },
+  {
+    id: "kpi.moltbook.posts",
+    source: "moltbook.posts:self",
+    cadence_seconds: 86400,
+    template: "single-stat",
+  },
+  {
+    id: "graph.moltbook.comments",
+    source: "moltbook.comments:self",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.moltbook.followers",
+    source: "moltbook.followers:self",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  // Fork traffic + ClawHub installs — read off engagement-state.json (kept by
+  // the 08:00 online-engagement cron) so we need no GitHub-traffic auth.
+  {
+    id: "graph.github.traffic.views14d",
+    source: "localstate:engagement-state.json#github.traffic.tinkerclaw_14d.views",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.github.traffic.clones14d",
+    source: "localstate:engagement-state.json#github.traffic.tinkerclaw_14d.clones",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.installs",
+    source:
+      "localstate:engagement-state.json#clawhub.namespace_variants_jarvis_voice.total_downloads_visible_estimate",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  // Inbound links — fed by the weekly Inbound-Marketing cron's audit
+  // (inbound-campaign-state.json); pollers error+retry until it first exists.
+  {
+    id: "kpi.inbound.organic",
+    source: "localstate:inbound-campaign-state.json#inbound.organic",
+    cadence_seconds: 86400,
+    template: "single-stat",
+  },
+  {
+    id: "graph.inbound.ours",
+    source: "localstate:inbound-campaign-state.json#inbound.ours",
+    cadence_seconds: 86400,
     template: "sparkline",
   },
 ];
