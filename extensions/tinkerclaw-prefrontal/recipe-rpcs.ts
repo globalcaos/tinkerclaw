@@ -13,6 +13,7 @@ import {
   PrefrontalKitListParamsSchema,
   PrefrontalKitRunParamsSchema,
   PrefrontalKitAuthorParamsSchema,
+  PrefrontalKitComposeParamsSchema,
   PrefrontalKitMatchParamsSchema,
   PrefrontalKitOrchestrateParamsSchema,
   type PrefrontalKitSearchParams,
@@ -22,6 +23,7 @@ import {
   type PrefrontalKitListParams,
   type PrefrontalKitRunParams,
   type PrefrontalKitAuthorParams,
+  type PrefrontalKitComposeParams,
   type PrefrontalKitMatchParams,
   type PrefrontalKitOrchestrateParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
@@ -69,6 +71,7 @@ const vPublish = ajv.compile(PrefrontalKitPublishParamsSchema);
 const vList = ajv.compile(PrefrontalKitListParamsSchema);
 const vRun = ajv.compile(PrefrontalKitRunParamsSchema);
 const vAuthor = ajv.compile(PrefrontalKitAuthorParamsSchema);
+const vCompose = ajv.compile(PrefrontalKitComposeParamsSchema);
 const vMatch = ajv.compile(PrefrontalKitMatchParamsSchema);
 const vOrchestrate = ajv.compile(PrefrontalKitOrchestrateParamsSchema);
 
@@ -322,6 +325,20 @@ export async function persistKitSpec(
     replaced: existed,
     note: existed ? `overwrote existing kit "${spec.slug}"` : `authored new kit "${spec.slug}"`,
   };
+}
+
+/**
+ * SS3: build a traversal-safe, validateRecipeSpec-valid slug (`^[a-z0-9][a-z0-9-]{1,63}$`)
+ * from a free-text compose query. Always prefixed `composed-` so it starts with a
+ * letter and never collides with a hand-curated single-word slug.
+ */
+export function composeSlug(query: string): string {
+  const base = query
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const slug = `composed-${base}`.slice(0, 64).replace(/-+$/g, "");
+  return /^[a-z0-9][a-z0-9-]{1,63}$/.test(slug) ? slug : "composed-recipe";
 }
 
 /**
@@ -1068,6 +1085,59 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     // kit/1.0 doc, and writes it to the own-kits dir so the turn-start matcher
     // picks it up immediately. This is the NO-MATCH escape hatch — Jarvis turns a
     // recipe gap into a reusable recipe in one call.
+    // SS3 (2026-06-04): mechanically compose a recipe from stdlib skills. Search the
+    // skill library for `query`, emit ONE `invoke skill:` step per hit in rank order,
+    // then validate + persist as an authored recipe (buildRecipeMd stamps
+    // authoredBy: jarvis-* so the authorship guard allows it). Deterministic +
+    // testable with a stubbed fork.skill.search; LLM-override is a later additive (O3).
+    "prefrontal.recipe.compose": async (raw: unknown) => {
+      const p = check<PrefrontalKitComposeParams>(vCompose, raw, "prefrontal.recipe.compose");
+      const k = p.k ?? 4;
+      // Loopback re-negotiates scopes (does NOT inherit) — fork.skill.* default-deny
+      // to admin, so pass operator.admin (single trusted principal, same as spawn).
+      const hits = await callGateway<{ skills?: Array<{ skillId: string; name?: string }> }>({
+        method: "fork.skill.search",
+        params: { query: p.query, k },
+        scopes: ["operator.admin"],
+      });
+      const skills = (hits?.skills ?? []).slice(0, k);
+      if (skills.length === 0) {
+        return { ok: false, note: `compose: no matching skills for "${p.query}"` };
+      }
+      const spec: RecipeSpec = {
+        slug: composeSlug(p.query),
+        title: `composed: ${p.query}`.slice(0, 120),
+        summary: `Auto-composed from ${skills.length} stdlib skill(s) for: ${p.query}`,
+        tags: ["composed", ...p.query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 4)],
+        steps: skills.map((s) => ({
+          title: s.name ?? s.skillId,
+          invokeSkill: s.skillId,
+          body: `Apply skill ${s.skillId} to the task.`,
+        })),
+      };
+      const v = validateRecipeSpec(spec);
+      if (!v.ok) {
+        return { ok: false, note: `compose: invalid spec: ${v.errors.join("; ")}` };
+      }
+      let r: { slug: string; path: string; replaced: boolean };
+      try {
+        // overwrite:true — a re-compose of the same query updates its own authored
+        // recipe (never clobbers a hand-curated kit; the guard enforces that).
+        r = await persistKitSpec(spec, deps.ownRecipesDir, true);
+      } catch (err) {
+        return {
+          ok: false,
+          note: `compose: persist failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+      return {
+        ok: true,
+        slug: r.slug,
+        kitRef: `globalcaos/${r.slug}`,
+        composedSkills: skills.map((s) => s.skillId),
+      };
+    },
+
     "prefrontal.recipe.author": async (raw: unknown) => {
       const p = check<PrefrontalKitAuthorParams>(vAuthor, raw, "prefrontal.recipe.author");
       const spec = p as unknown as RecipeSpec;
