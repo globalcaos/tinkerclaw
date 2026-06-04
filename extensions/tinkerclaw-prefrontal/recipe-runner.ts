@@ -26,10 +26,24 @@ import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import AjvPkg from "ajv";
 import { parse as parseYaml } from "yaml";
 import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
 import type { PlanStore } from "./plan-store.js";
-import { resolveStepRefs } from "./recipe-types.js";
+import {
+  resolveStepRefs,
+  parseStepIoDirectives,
+  stripStepIoDirectives,
+  validateTypedNote,
+  parseStepRef,
+  type JsonSchema,
+  type Port,
+} from "./recipe-types.js";
+import { deriveRedispatchBudget } from "./redispatch-budget.js";
+
+// SS1: shared Ajv for validating typed step outputs (mirrors recipe-rpcs.ts).
+const AjvCtor = AjvPkg as unknown as typeof import("ajv").default;
+const stepAjv = new AjvCtor({ allErrors: true });
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +113,30 @@ export interface RecipeRunOptions {
    * can never throw into the dispatch loop.
    */
   onTag?: (ev: TagStamp) => void;
+  /**
+   * SS1: recipe fitness success rate in [0,1] for the running kit, used by the
+   * J16 budget-derived re-dispatch bound (more reliable recipe → fewer schema
+   * correction attempts). Optional; absent → a 0.5 default. The caller
+   * (recipe-rpcs) already loads fitness and can thread it here.
+   */
+  fitnessSuccessRate?: number;
+  /**
+   * SS1: classified-trail sink (mirrors onTag/onRecipeState — best-effort,
+   * fire-and-forget, never throws into the run). The runner emits a
+   * `schema-mismatch` event on each typed-output re-dispatch so a validation
+   * failure is observable, never silent. The caller wires it to
+   * fork.prefrontal.trailEvent; absent → no-op (the runner stays gateway-decoupled).
+   */
+  onTrail?: (ev: TrailEvent) => void;
+}
+
+/** SS1: one classified trail event emitted by the runner (e.g. schema-mismatch). */
+export interface TrailEvent {
+  kind: string;
+  message: string;
+  label?: string;
+  sessionKey?: string;
+  payload?: Record<string, unknown>;
 }
 
 /**
@@ -224,6 +262,8 @@ interface StepDispatch {
   usesKitRef?: string;
   /** FORK 2026-05-30: if set, this step repeats (count / until-dry / until-marker). */
   loop?: LoopSpec;
+  /** SS1: if set, this step's output is validated against this JSON-Schema. */
+  outSchema?: JsonSchema;
 }
 
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
@@ -389,6 +429,66 @@ function resolveGroups(kit: ParsedRecipe): number[][] {
   }
   // Fallback: each step is its own group (fully sequential)
   return kit.steps.map((s) => [s.index]);
+}
+
+// ─── SS1: plan-compile port-wiring check ───────────────────────────────────────
+
+/** SS1: a step reduced to just the fields the port-wiring check needs. */
+export interface CompileStep {
+  title: string;
+  out?: JsonSchema;
+  in?: Port[];
+}
+
+/**
+ * SS1: verify every `in:` port resolves to a real, EARLIER producer step whose
+ * `out:` schema declares the referenced field. Returns human-readable errors;
+ * an empty array means the wiring is sound. Run at seed time so a mis-wired
+ * recipe fails fast — before any step executes (FOUNDATION: contracts at boundaries).
+ */
+export function checkPortWiring(steps: CompileStep[]): string[] {
+  const errors: string[] = [];
+  steps.forEach((step, i) => {
+    const consumerNumber = i + 1;
+    for (const port of step.in ?? []) {
+      const ref = parseStepRef(port.from);
+      if (!ref) {
+        errors.push(
+          `step ${consumerNumber} port "${port.name}": from is not a steps.<n>.out reference`,
+        );
+        continue;
+      }
+      if (ref.stepNumber < 1 || ref.stepNumber > steps.length) {
+        errors.push(
+          `step ${consumerNumber} port "${port.name}": references step ${ref.stepNumber} which does not exist`,
+        );
+        continue;
+      }
+      if (ref.stepNumber >= consumerNumber) {
+        errors.push(
+          `step ${consumerNumber} port "${port.name}": step ${ref.stepNumber} must precede it`,
+        );
+        continue;
+      }
+      const producer = steps[ref.stepNumber - 1];
+      if (!producer.out) {
+        errors.push(
+          `step ${consumerNumber} port "${port.name}": step ${ref.stepNumber} declares no out: schema`,
+        );
+        continue;
+      }
+      const firstSegment = ref.path.split(".")[0];
+      if (firstSegment) {
+        const props = (producer.out as { properties?: Record<string, unknown> }).properties ?? {};
+        if (!(firstSegment in props)) {
+          errors.push(
+            `step ${consumerNumber} port "${port.name}": step ${ref.stepNumber} out: schema has no field "${firstSegment}"`,
+          );
+        }
+      }
+    }
+  });
+  return errors;
 }
 
 // ─── Parameter substitution ───────────────────────────────────────────────────
@@ -647,6 +747,30 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
     };
   }
 
+  // SS1: fail fast on malformed typed-port directives or mis-wired ports BEFORE
+  // seeding a plan or dispatching any step (plan-compile check).
+  let compileSteps: CompileStep[];
+  try {
+    compileSteps = kit.steps.map((s) => {
+      const io = parseStepIoDirectives(s.body);
+      return { title: s.title, out: io.out, in: io.in };
+    });
+  } catch (err) {
+    return {
+      ok: false,
+      planId: "",
+      errorMessage: `recipe-runner: malformed typed-port directive in ${opts.kitRef}: ${String(err)}`,
+    };
+  }
+  const wiringErrors = checkPortWiring(compileSteps);
+  if (wiringErrors.length > 0) {
+    return {
+      ok: false,
+      planId: "",
+      errorMessage: `recipe-runner: port-wiring check failed:\n - ${wiringErrors.join("\n - ")}`,
+    };
+  }
+
   const groups = resolveGroups(kit);
 
   // Build dispatch plan (used for both dryRun output and live dispatch)
@@ -659,12 +783,33 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           `recipe-runner: parallelism.groups references invalid step index ${idx} (kit has ${kit.steps.length} steps)`,
         );
       }
-      const rawTask = `Kit: ${opts.kitRef}\nStep ${idx + 1}/${kit.steps.length}: ${step.title}\n\n${step.body}`;
-      const task = substituteParameters(rawTask, params);
+      // SS1: lift typed IO from the leading directives, then strip them so the
+      // subagent never sees raw `out:`/`in:` lines. `uses:`/`loop:` are parsed off
+      // the cleaned body so directive order (io vs uses/loop) doesn't matter.
+      const stepIo = parseStepIoDirectives(step.body);
+      const cleanBody = stripStepIoDirectives(step.body);
+      const rawTask = `Kit: ${opts.kitRef}\nStep ${idx + 1}/${kit.steps.length}: ${step.title}\n\n${cleanBody}`;
+      let task = substituteParameters(rawTask, params);
+      if (stepIo.out) {
+        // Instruct the subagent to emit a single fenced json block matching the schema.
+        task +=
+          "\n\n---\n**Structured output required.** End your reply with one ```json fenced block " +
+          "that validates against this JSON-Schema (and nothing after it):\n```json\n" +
+          JSON.stringify(stepIo.out, null, 2) +
+          "\n```";
+      }
       const label = `${opts.kitRef}:step-${idx}`;
-      const usesKitRef = parseUsesDirective(step.body);
-      const loop = parseLoopDirective(step.body);
-      return { stepIndex: idx, title: step.title, task, label, usesKitRef, loop };
+      const usesKitRef = parseUsesDirective(cleanBody);
+      const loop = parseLoopDirective(cleanBody);
+      return {
+        stepIndex: idx,
+        title: step.title,
+        task,
+        label,
+        usesKitRef,
+        loop,
+        outSchema: stepIo.out,
+      };
     }),
   );
 
@@ -726,6 +871,17 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       opts.onTag({ tag: recipeTag, phase, stepIndex, sessionKey: opts.sessionKey });
     } catch {
       // attribution observability must never break the run
+    }
+  };
+
+  // SS1: classified-trail emit (e.g. schema-mismatch re-dispatch). Best-effort
+  // like the tag/state sinks above — a broken sink can never throw into the loop.
+  const emitTrail = (ev: TrailEvent): void => {
+    if (!opts.onTrail) return;
+    try {
+      opts.onTrail(ev);
+    } catch {
+      // trail observability must never break the run
     }
   };
 
@@ -848,6 +1004,24 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             status: "done",
             note: note ?? undefined,
             artifact,
+          });
+        } catch {}
+      };
+
+      // SS1: persist a typed step's validated output as a structured artifact
+      // (the full object) plus a prose digest for display. Direct store.step()
+      // path (not the RPC) so the new fields aren't gated by the wire schema.
+      const persistTypedArtifact = async (note: string | null, value: unknown): Promise<void> => {
+        const artifact = summarizeOutput(note) || summarizeOutput(JSON.stringify(value));
+        try {
+          await store.step({
+            sessionKey: opts.sessionKey,
+            stepIndex: dispatch.stepIndex,
+            status: "done",
+            note: note ?? undefined,
+            artifact,
+            output: value,
+            outputKind: "json",
           });
         } catch {}
       };
@@ -987,8 +1161,51 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
 
       // ── No loop: single execution ──
       if (!dispatch.loop) {
-        const r = await executeOnce("");
+        let r = await executeOnce("");
         if (!r.ok) return markError(r.note ?? "step failed");
+
+        // SS1: when the step is typed, validate its output and re-dispatch a
+        // budget-derived number of times on mismatch. No frozen retry constant —
+        // the bound comes from deriveRedispatchBudget (J16). Exhaustion → a
+        // recorded step error, never a silent pass.
+        if (dispatch.outSchema) {
+          const validate = stepAjv.compile(dispatch.outSchema);
+          const requiredFieldCount = Array.isArray(
+            (dispatch.outSchema as { required?: unknown }).required,
+          )
+            ? (dispatch.outSchema as { required: unknown[] }).required.length
+            : 0;
+          const maxRedispatch = deriveRedispatchBudget({
+            requiredFieldCount,
+            fitnessSuccessRate: opts.fitnessSuccessRate,
+          });
+          let attempt = 0;
+          let validation = validateTypedNote(r.note, validate);
+          while (!validation.ok && attempt < maxRedispatch) {
+            attempt++;
+            emitTrail({
+              kind: "schema-mismatch",
+              label: `${opts.kitRef}:step-${dispatch.stepIndex}`,
+              message: `step ${dispatch.stepIndex + 1} output failed schema (attempt ${attempt}/${maxRedispatch}): ${validation.errorText ?? "invalid"}`,
+              sessionKey: opts.sessionKey,
+              payload: { stepIndex: dispatch.stepIndex, attempt, maxRedispatch },
+            });
+            r = await executeOnce(
+              `Your previous output did not satisfy the required schema: ${validation.errorText}. ` +
+                "Re-emit ONLY a corrected ```json block.",
+            );
+            if (!r.ok) return markError(r.note ?? "step failed during schema re-dispatch");
+            validation = validateTypedNote(r.note, validate);
+          }
+          if (!validation.ok) {
+            return markError(
+              `typed step output never satisfied its schema after ${maxRedispatch} re-dispatch(es): ${validation.errorText}`,
+            );
+          }
+          await persistTypedArtifact(r.note, validation.value);
+          return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
+        }
+
         // Persist the artifact digest (Upgrade 5). For the spawn path the
         // subagent already wrote done+note; we re-stamp `done` with the digest
         // (idempotent, keeps the row done). For the sub-kit (uses:) path the
