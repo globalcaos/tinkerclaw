@@ -71,6 +71,7 @@ The horizontal scan ("what does this touch?") matters as much as the vertical zo
 - **Cost / recurring spend** — did this start or change anything that bills over time (crons, paid APIs, token ceilings, model spend)?
 - **People / relationships** — did this involve someone whose profile, owed reply, or commitment should be updated in memory?
 - **Commitments** — did I promise something this turn (a draft, a follow-up, a restart) that must not silently drop?
+- **Operational / downstream** — did a state change (config, cron schedule, service, a file another process reads) break an ordering, a dependency, or open a gap in something that consumes it? After any state mutation, trace what reads or depends on what you just changed _before_ reporting done. The "rescheduled a cron → broke the feeder ordering and left today's run in a gap" class lives here.
   </fractal_branching>
 
 <seven_questions>
@@ -87,6 +88,8 @@ Every turn belongs to some pattern. Name it.
 - 🌿 Level 2: your pattern observation
 - 🌿 Level 3 (if the pattern is structural): what system produces it
 - 🌿 Level 4 (if the worldview needs questioning): what assumption underlies the system
+
+**Recurrence is the signal.** If memory (or this session) has seen this correction before, count it: the Nth instance is not a new incident, it is one unsolved systemic gap wearing a new mask. At N≥2, skip the local patch — jump to Level 3, name the system producing it, and fix the column, not the cell. Logging the same failure class a third time without changing the structure _is_ the failure.
 
 ### 3. RIPPLE — did this change make anything stale?
 
@@ -124,7 +127,9 @@ The user should never have to tell you something is broken that you could have d
 
 ### 6. RECIPE — did you follow one? Should you have? Should one be created or improved?
 
-Recipes (kits) in `extensions/tinkerclaw-prefrontal/kits/` encode the best way to handle recurring tasks. Reflection is where recipes evolve.
+Recipes (kits) in `extensions/tinkerclaw-prefrontal/kits/` and `extensions/tinkerclaw-prefrontal/recipes/` encode the best way to handle recurring tasks. Reflection is where recipes evolve.
+
+**Full autonomy + capture-first (Oscar, 2026-06-02).** You manage, update, and create recipes ON YOUR OWN — no approval needed. Treat recipes as a programming language: compose them (`children:` / `uses:` / `composes:`), parameterize them, and drive them with the `Workflow` tool (ultracode) as the executable layer. **At the START of every turn, before doing the work, ask: is this ask one we are likely to repeat? If yes and a recipe governs it — follow it; if none exists — create it now, then do the task through it.** Do not wait for reflection to capture a repeatable pattern; capture it the moment you see it. Lean toward more recipes, more composition, not fewer.
 
 If you followed one: did it help? Were all steps relevant? Did you hit a wrong or missing step → edit the recipe file now. Would a different recipe have fit better? Name it; if it does not exist, note it for creation.
 
