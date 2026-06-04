@@ -955,6 +955,22 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
             },
           }).catch(() => {});
         },
+        // SS1: forward typed-output schema-mismatch re-dispatch trails to the
+        // prefrontal trail (same loopback + fire-and-forget pattern as the sinks
+        // above) so a validation failure + its correction attempts are observable,
+        // never silent. Wire-seam for SS1's "no silent failure" guarantee.
+        onTrail: (ev) => {
+          void callGateway({
+            method: "fork.prefrontal.trailEvent",
+            params: {
+              kind: ev.kind,
+              label: ev.label,
+              message: ev.message,
+              sessionKey: ev.sessionKey,
+              payload: ev.payload,
+            },
+          }).catch(() => {});
+        },
       });
 
       // Surface progress/completion back into the (possibly closed) parent turn.
