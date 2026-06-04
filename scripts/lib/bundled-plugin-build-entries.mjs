@@ -136,6 +136,13 @@ export function collectBundledPluginBuildEntries(params = {}) {
     if (DORMANT_OVERLAY_PLUGIN_DIRS.has(dirent.name)) {
       continue;
     }
+    // `.disabled*` overlays (e.g. *.disabled-hostver) are host-disabled variants
+    // kept on disk for merge de-confliction, same as dormant overlays — never
+    // compiled. Skipping them keeps a stale disabled extension (e.g. an SDK
+    // export it no longer resolves) from breaking the whole build.
+    if (dirent.name.includes(".disabled")) {
+      continue;
+    }
 
     const pluginDir = path.join(extensionsRoot, dirent.name);
     const manifestPath = path.join(pluginDir, "openclaw.plugin.json");
