@@ -13,11 +13,17 @@
  * See bible subagents-and-kits.md (kit/1.0 spec + sandbox enforcement).
  */
 
+import type { JsonSchema, Port } from "./recipe-types.js";
+
 export interface RecipeStepSpec {
   title: string;
   tools?: string[];
   doneWhen?: string;
   body: string;
+  /** SS1: optional JSON-Schema the step's structured output must satisfy. */
+  out?: JsonSchema;
+  /** SS1: optional named input ports bound from prior steps' typed outputs. */
+  in?: Port[];
 }
 
 export interface RecipeSpec {
@@ -97,6 +103,34 @@ export function validateRecipeSpec(spec: unknown): RecipeValidationResult {
           errors.push(
             `step ${i} body has a numbered markdown heading ("### N. …") that would reparse as a phantom step — reword it`,
           );
+        // SS1: validate optional typed IO.
+        if (st.out !== undefined) {
+          if (st.out === null || typeof st.out !== "object" || Array.isArray(st.out)) {
+            errors.push(`step ${i} out: must be a JSON-Schema object`);
+          } else if ((st.out as { type?: unknown }).type !== "object") {
+            errors.push(
+              `step ${i} out: schema must have "type":"object" (typed step outputs are objects)`,
+            );
+          }
+        }
+        if (st.in !== undefined) {
+          if (!Array.isArray(st.in)) {
+            errors.push(`step ${i} in: must be an array of ports`);
+          } else {
+            st.in.forEach((port, j) => {
+              if (!port || typeof port !== "object") {
+                errors.push(`step ${i} port ${j} is not an object`);
+                return;
+              }
+              if (typeof port.name !== "string" || !port.name.trim())
+                errors.push(`step ${i} port ${j} missing name`);
+              if (typeof port.from !== "string" || !/^steps\.\d+\.out(\.[^\s]+)?$/.test(port.from))
+                errors.push(
+                  `step ${i} port ${j} from must be a steps.<n>.out[.<path>] reference — got ${JSON.stringify(port.from)}`,
+                );
+            });
+          }
+        }
       }
     });
   }
@@ -204,6 +238,10 @@ export function buildRecipeMd(spec: RecipeSpec): string {
   body.push("## Steps", "");
   spec.steps.forEach((st, i) => {
     body.push(`### ${i + 1}. ${st.title}`, "");
+    // SS1: typed-port directives lead the step body (single-line JSON), mirroring `uses:`.
+    if (st.out !== undefined) body.push(`out: ${JSON.stringify(st.out)}`);
+    if (st.in !== undefined) body.push(`in: ${JSON.stringify(st.in)}`);
+    if (st.out !== undefined || st.in !== undefined) body.push("");
     if (st.tools && st.tools.length > 0) body.push(`**Tools:** ${st.tools.join(", ")}`);
     if (st.doneWhen) body.push(`**Done when:** ${st.doneWhen}`);
     if (st.tools?.length || st.doneWhen) body.push("");
