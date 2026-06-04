@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
 import type { PlanStore } from "./plan-store.js";
+import { resolveStepRefs } from "./recipe-types.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -160,11 +161,15 @@ export interface PriorArtifact {
   stepIndex: number;
   title: string;
   artifact: string;
+  /** SS1: the prior step's validated typed output, when it declared `out:`. */
+  output?: unknown;
 }
 
 /**
  * FORK 2026-05-30 (Upgrade 5): collect the durable artifacts of every `done`
  * step BEFORE stepIndex, so a resuming / downstream step can read upstream output.
+ * SS1: also carry each typed step's validated `output` so downstream `in:` ports
+ * and `{{steps.N.out.path}}` refs can bind named fields, not just the prose digest.
  */
 export function collectPriorArtifacts(plan: Plan, beforeStep: number): PriorArtifact[] {
   const out: PriorArtifact[] = [];
@@ -172,7 +177,10 @@ export function collectPriorArtifacts(plan: Plan, beforeStep: number): PriorArti
     if (i >= beforeStep) return;
     if (s.status !== "done") return;
     const artifact = s.artifact ?? summarizeOutput(s.note ?? "");
-    if (artifact) out.push({ stepIndex: i, title: s.title, artifact });
+    // A typed step may carry an output even if its prose digest is empty.
+    if (artifact || s.output !== undefined) {
+      out.push({ stepIndex: i, title: s.title, artifact: artifact ?? "", output: s.output });
+    }
   });
   return out;
 }
@@ -942,9 +950,16 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         try {
           const live = await store.get(opts.sessionKey);
           if (live) {
+            const prior = collectPriorArtifacts(live, dispatch.stepIndex);
+            // SS1: bind named typed fields — resolve {{steps.<n>.out.<path>}} from
+            // prior steps' validated outputs (1-based step number = stepIndex + 1).
+            const outputsByStep = new Map<number, unknown>();
+            for (const p of prior) {
+              if (p.output !== undefined) outputsByStep.set(p.stepIndex + 1, p.output);
+            }
             taskWithContext = withPriorArtifacts(
-              dispatch.task,
-              collectPriorArtifacts(live, dispatch.stepIndex),
+              resolveStepRefs(dispatch.task, outputsByStep),
+              prior,
             );
           }
         } catch {
