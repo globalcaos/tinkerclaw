@@ -78,6 +78,29 @@ function extractParticipants(events: MemoryEvent[]): string[] {
   return [...participants];
 }
 
+/**
+ * Derive an episode's key-decision trace from its events (SS3 Task 0b).
+ *
+ * A "key decision" is a consequential action the agent took — represented by its
+ * `tool_call` events. This is the signal `buildEpisode` previously left empty,
+ * which made `isSkillWorthy`'s third gate decline EVERY freshly-detected episode
+ * (the library only ever grew by hand-seeding / compose).
+ *
+ * A SINGLE tool call is a trivial one-shot, NOT "a multi-step procedure worth
+ * encoding" (the explicit intent of `isSkillWorthy`). Only a SEQUENCE of two or
+ * more actions constitutes a procedure's decision trace, so a lone tool call
+ * yields an empty trace → the strict gate still declines it (no library bloat).
+ * The two-or-more boundary is the *definition* of multi-step (one vs many), not a
+ * tunable budget/threshold — distinct from the J16 live-margin bounds elsewhere.
+ */
+function extractKeyDecisions(events: MemoryEvent[]): string[] {
+  const actions = events
+    .filter((e) => e.kind === "tool_call")
+    .map((e) => e.content.split(/\r?\n/)[0]?.trim().slice(0, 120) ?? "")
+    .filter((s) => s.length > 0);
+  return actions.length >= 2 ? actions : [];
+}
+
 /** Infer outcome from events. */
 function inferOutcome(events: MemoryEvent[]): Episode["outcome"] {
   const last = events[events.length - 1];
@@ -159,7 +182,7 @@ async function buildEpisode(
     topic,
     participants: extractParticipants(events),
     outcome: inferOutcome(events),
-    keyDecisions: [],
+    keyDecisions: extractKeyDecisions(events),
     sourceEventIds: events.map((e) => e.id),
   };
 }
