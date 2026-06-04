@@ -270,6 +270,24 @@ export function createSkillLibrary(options: SkillLibraryOptions): SkillLibrary {
             : existing.verifiedCode !== undefined
               ? { verifiedCode: existing.verifiedCode }
               : {}),
+          // SS3 typed I/O + lineage: adopt the freshly-provided schema/lineage
+          // (the newer contract), else carry the existing one forward. Same
+          // "newer wording wins, never silently drop" rule as verifiedCode.
+          ...(skill.inputSchema !== undefined
+            ? { inputSchema: skill.inputSchema }
+            : existing.inputSchema !== undefined
+              ? { inputSchema: existing.inputSchema }
+              : {}),
+          ...(skill.outputSchema !== undefined
+            ? { outputSchema: skill.outputSchema }
+            : existing.outputSchema !== undefined
+              ? { outputSchema: existing.outputSchema }
+              : {}),
+          ...(skill.lineage !== undefined
+            ? { lineage: skill.lineage }
+            : existing.lineage !== undefined
+              ? { lineage: existing.lineage }
+              : {}),
         };
         writeVersion(newVersion);
         const idx = loadIndex();
