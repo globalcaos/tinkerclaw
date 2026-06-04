@@ -538,6 +538,7 @@ def pretrain_all(
     output_dir: str,
     device: Optional[str] = None,
     run_hp_search: bool = False,
+    target_vector: Optional[List[float]] = None,
 ) -> Dict[str, Dict]:
     """
     Pre-train all 10 networks and save a summary.
@@ -568,6 +569,7 @@ def pretrain_all(
         results[f"personality_{key}"] = pretrain_personality(
             key, db_path, output_dir,
             kd_weights_path=kd_p if Path(kd_p).exists() else None,
+            target_vector=target_vector,
             device=device, **cfg,
         )
 
@@ -596,6 +598,19 @@ if __name__ == "__main__":
     parser.add_argument("--out", required=True, help="Output directory")
     parser.add_argument("--device", default=None)
     parser.add_argument("--hp-search", action="store_true")
+    parser.add_argument(
+        "--target-vector",
+        default=None,
+        help="Path to a JSON file holding the 64-d personality target vector "
+        "(must match the runtime decoder's generateTargetVector). Without it, "
+        "personality nets train toward ZEROS — the degenerate all-nudges-fire state.",
+    )
     args = parser.parse_args()
 
-    pretrain_all(args.db, args.out, args.device, args.hp_search)
+    target_vector = None
+    if args.target_vector:
+        with open(args.target_vector) as f:
+            target_vector = json.load(f)
+        print(f"[pretrain] target vector: {len(target_vector)}-d from {args.target_vector}")
+
+    pretrain_all(args.db, args.out, args.device, args.hp_search, target_vector=target_vector)
