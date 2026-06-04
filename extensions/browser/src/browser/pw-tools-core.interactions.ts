@@ -25,6 +25,9 @@ import {
   refLocator,
   restoreRoleRefsForTarget,
 } from "./pw-session.js";
+// FORK 2026-06-04 (Browser Relay upgrade): shared bootstrap for the persistent
+// cursor + shared-tab frame (also registered via addInitScript in pw-session.ts).
+import { TINKERCLAW_OVERLAY_BOOTSTRAP } from "./pw-tinkerclaw-overlay.js";
 import {
   normalizeTimeoutMs,
   requireRef,
@@ -572,6 +575,171 @@ async function indicatorCoordsForLocator(locator: {
   }
 }
 
+// FORK 2026-06-04 (Browser Relay upgrade): two persistent affordances that make
+// the shared tab legible to the watching user:
+//   (1) a PERSISTENT cursor — a single visible pointer DOM element that follows
+//       the agent's mouse with human-like easing, so the user can track where
+//       Jarvis is about to act (vs. the old transient per-click cursor).
+//   (2) a SHARED-TAB frame — a full-viewport outline + corner pill that is
+//       always rendered while the tab is shared (the relay only ever drives
+//       shared tabs, so always-on is safe) so it's obvious which tab Jarvis
+//       can see/drive.
+// Both are injected idempotently and re-injected on navigation via
+// page.addInitScript (registered from ensurePageState in pw-session.ts), and
+// both are stripped before page.screenshot so they never pollute screenshots.
+// Attribute conventions (all matched by the screenshot-teardown selector
+// `[data-tinkerclaw-cursor],[data-tinkerclaw-shared],[data-tinkerclaw-click-indicator]`):
+//   - [data-tinkerclaw-cursor]          the persistent pointer
+//   - [data-tinkerclaw-shared]          the shared-tab frame + pill
+//   - [data-tinkerclaw-click-indicator] the transient click ring/pulse
+const TINKERCLAW_CURSOR_MOVE_MS = 300;
+const TINKERCLAW_CURSOR_MOVE_STEPS = 18;
+
+// z-index layering (all below the labels overlay's 2147483647 ring so the click
+// confirmation ring stays on top, and pointer-events:none everywhere so none of
+// these affordances ever eat a real click):
+//   shared frame  = 2147483640  (lowest — just a backdrop affordance)
+//   persistent cursor = 2147483645  (above the frame, below the click ring 2147483646)
+const TINKERCLAW_SHARED_FRAME_Z = 2147483640;
+const TINKERCLAW_CURSOR_Z = 2147483645;
+
+/**
+ * FORK 2026-06-04 (Browser Relay upgrade): idempotently ensure the persistent
+ * cursor + shared-tab frame exist on the CURRENT document. addInitScript (wired
+ * in pw-session.ensurePageState) handles future navigations; this covers the
+ * already-loaded page. Best-effort — never blocks an action on render failure.
+ */
+export async function ensureTinkerclawCursor(page: Page): Promise<void> {
+  try {
+    await page.evaluate(TINKERCLAW_OVERLAY_BOOTSTRAP);
+  } catch {
+    // best-effort; the tab may be navigating or the context torn down
+  }
+}
+
+// Per-page last-known cursor position so a human-like move can tween FROM where
+// the cursor visually rests TO the next target. Keyed by Page; entries are
+// naturally dropped when the page (and its WeakMap key) is GC'd.
+const lastCursorPosByPage = new WeakMap<Page, { x: number; y: number }>();
+
+export function getLastCursorPos(page: Page): { x: number; y: number } | null {
+  return lastCursorPosByPage.get(page) ?? null;
+}
+
+/**
+ * FORK 2026-06-04 (Browser Relay upgrade): move the visible cursor from
+ * (fromX,fromY) to (toX,toY) with a human-like ease-in-out tween, AND drive
+ * Playwright's real mouse along the same path so the page receives genuine
+ * mousemove/hover events. The DOM tween runs inside the page via rAF so the
+ * user sees smooth motion; page.mouse.move({ steps }) issues the real events.
+ * Best-effort: any failure is swallowed so the subsequent click never breaks.
+ */
+export async function moveCursorHumanlike(
+  page: Page,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): Promise<void> {
+  await ensureTinkerclawCursor(page);
+  // (a) Smooth DOM tween of the visible cursor (eased Bézier-ish path via rAF).
+  try {
+    await page.evaluate(
+      ([fx, fy, tx, ty, durationMs, steps]) => {
+        const cursor = document.querySelector("[data-tinkerclaw-cursor]") as HTMLElement | null;
+        if (!cursor) return;
+        return new Promise<void>((resolve) => {
+          const ease = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2); // ease-in-out
+          // Quadratic Bézier control point: offset perpendicular to the straight
+          // line so the path bows like a hand-drawn arc rather than a ruler line.
+          const midX = (fx + tx) / 2;
+          const midY = (fy + ty) / 2;
+          const dx = tx - fx;
+          const dy = ty - fy;
+          const dist = Math.hypot(dx, dy) || 1;
+          const bow = Math.min(40, dist * 0.15);
+          const cx = midX + (-dy / dist) * bow;
+          const cy = midY + (dx / dist) * bow;
+          const start = performance.now();
+          const total = Math.max(60, durationMs);
+          const tick = (now: number) => {
+            const raw = Math.min(1, (now - start) / total);
+            const e = ease(raw);
+            // Quadratic Bézier B(e) with control point (cx,cy).
+            const u = 1 - e;
+            const x = u * u * fx + 2 * u * e * cx + e * e * tx;
+            const y = u * u * fy + 2 * u * e * cy + e * e * ty;
+            cursor.style.left = `${x}px`;
+            cursor.style.top = `${y}px`;
+            if (raw < 1) {
+              requestAnimationFrame(tick);
+            } else {
+              cursor.style.left = `${tx}px`;
+              cursor.style.top = `${ty}px`;
+              resolve();
+            }
+          };
+          void steps; // step count is honored by the real-mouse path below
+          requestAnimationFrame(tick);
+        });
+      },
+      [fromX, fromY, toX, toY, TINKERCLAW_CURSOR_MOVE_MS, TINKERCLAW_CURSOR_MOVE_STEPS] as const,
+    );
+  } catch {
+    // best-effort visual tween
+  }
+  // (b) Real stepped mouse move so the page gets genuine mousemove/hover events.
+  try {
+    await page.mouse.move(toX, toY, { steps: TINKERCLAW_CURSOR_MOVE_STEPS });
+  } catch {
+    // best-effort; the click that follows will still target the element
+  }
+  lastCursorPosByPage.set(page, { x: toX, y: toY });
+}
+
+/**
+ * FORK 2026-06-04 (Browser Relay upgrade): convenience wrapper that moves the
+ * human-like cursor toward (toX,toY) starting from the last known cursor
+ * position (or the destination itself on first move, so the first action does
+ * not jump from a stale origin). Used by click/hover before they act.
+ */
+async function moveCursorToTarget(page: Page, toX: number, toY: number): Promise<void> {
+  const last = lastCursorPosByPage.get(page);
+  const from = last ?? { x: toX, y: toY };
+  await moveCursorHumanlike(page, from.x, from.y, toX, toY);
+}
+
+// FORK 2026-06-04 (Browser Relay upgrade): selector matching ALL injected
+// tinkerclaw affordances — the persistent cursor, the shared-tab frame/pill, and
+// the transient click ring — so they can be stripped before a screenshot and
+// re-injected after (mirrors the labels-overlay teardown).
+const TINKERCLAW_OVERLAY_SELECTOR =
+  "[data-tinkerclaw-cursor],[data-tinkerclaw-shared],[data-tinkerclaw-click-indicator]";
+
+/**
+ * FORK 2026-06-04 (Browser Relay upgrade): run a page.screenshot with the
+ * injected tinkerclaw affordances (cursor + shared frame + click ring)
+ * temporarily removed, then re-inject the persistent ones afterward so the
+ * user's live view keeps the cursor + frame. Mirrors the labels-overlay
+ * strip/restore already used by screenshotWithLabelsViaPlaywright.
+ */
+async function withTinkerclawOverlaysHidden<T>(page: Page, run: () => Promise<T>): Promise<T> {
+  try {
+    await page.evaluate((sel) => {
+      document.querySelectorAll(sel).forEach((el) => el.remove());
+    }, TINKERCLAW_OVERLAY_SELECTOR);
+  } catch {
+    // best-effort strip; never block the screenshot
+  }
+  try {
+    return await run();
+  } finally {
+    // Re-inject the persistent cursor + shared frame (the transient click ring is
+    // short-lived and intentionally not restored).
+    await ensureTinkerclawCursor(page).catch(() => {});
+  }
+}
+
 export async function clickViaPlaywright(opts: {
   cdpUrl: string;
   targetId?: string;
@@ -641,6 +809,11 @@ export async function clickViaPlaywright(opts: {
         // agent is about to act.
         const indicatorCoords = await indicatorCoordsForLocator(locator);
         if (indicatorCoords) {
+          // FORK 2026-06-04 (Browser Relay upgrade): glide the persistent cursor
+          // to the target with a human-like easing path (and real mousemove
+          // events) BEFORE the click, then show the existing destination ring as
+          // the click confirmation.
+          await moveCursorToTarget(page, indicatorCoords.x, indicatorCoords.y);
           await showTinkerclawClickIndicator(page, indicatorCoords.x, indicatorCoords.y);
           await new Promise((r) => setTimeout(r, TINKERCLAW_CLICK_INDICATOR_DELAY_MS));
         }
@@ -694,6 +867,9 @@ export async function clickCoordsViaPlaywright(opts: {
   const previousUrl = page.url();
   await assertInteractionNavigationCompletedSafely({
     action: async () => {
+      // FORK 2026-06-04 (Browser Relay upgrade): human-like cursor glide to the
+      // coords before the coords-click, then the existing confirmation ring.
+      await moveCursorToTarget(page, opts.x, opts.y);
       // FORK 2026-04-30 (Bible §5.81f): visual click indicator before coords-click.
       await showTinkerclawClickIndicator(page, opts.x, opts.y);
       await new Promise((r) => setTimeout(r, TINKERCLAW_CLICK_INDICATOR_DELAY_MS));
@@ -725,6 +901,13 @@ export async function hoverViaPlaywright(opts: {
     ? refLocator(page, requireRef(resolved.ref))
     : page.locator(resolved.selector!);
   try {
+    // FORK 2026-06-04 (Browser Relay upgrade): glide the persistent cursor to the
+    // hover target with human-like motion before Playwright's hover, so the user
+    // sees the pointer travel to what the agent is inspecting.
+    const hoverCoords = await indicatorCoordsForLocator(locator);
+    if (hoverCoords) {
+      await moveCursorToTarget(page, hoverCoords.x, hoverCoords.y);
+    }
     await locator.hover({
       timeout: resolveInteractionTimeoutMs(opts.timeoutMs),
     });
@@ -1146,11 +1329,16 @@ export async function takeScreenshotViaPlaywright(opts: {
     const buffer = await locator.screenshot({ type, timeout: opts.timeoutMs });
     return { buffer };
   }
-  const buffer = await page.screenshot({
-    type,
-    fullPage: Boolean(opts.fullPage),
-    timeout: opts.timeoutMs,
-  });
+  // FORK 2026-06-04 (Browser Relay upgrade): strip the injected cursor/frame/ring
+  // before the viewport (or full-page) screenshot so they don't pollute it, then
+  // re-inject the persistent affordances for the live view.
+  const buffer = await withTinkerclawOverlaysHidden(page, () =>
+    page.screenshot({
+      type,
+      fullPage: Boolean(opts.fullPage),
+      timeout: opts.timeoutMs,
+    }),
+  );
   return { buffer };
 }
 
@@ -1270,7 +1458,12 @@ export async function screenshotWithLabelsViaPlaywright(opts: {
       }, boxes);
     }
 
-    const buffer = await page.screenshot({ type, timeout: opts.timeoutMs });
+    // FORK 2026-06-04 (Browser Relay upgrade): also strip the injected
+    // cursor/frame/click-ring affordances for this labeled screenshot, then
+    // re-inject the persistent ones for the live view.
+    const buffer = await withTinkerclawOverlaysHidden(page, () =>
+      page.screenshot({ type, timeout: opts.timeoutMs }),
+    );
     return { buffer, labels: boxes.length, skipped };
   } finally {
     await page
