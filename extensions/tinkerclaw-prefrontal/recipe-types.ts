@@ -27,23 +27,37 @@ export interface StepIo {
 }
 
 const DIRECTIVE_RE = /^(out|in):\s*(.+)$/;
+// Other leading step-body directives (the runner parses these itself). We skip
+// past them when scanning for io so directive ORDER (io vs uses/loop) never
+// matters, and never treat them as prose that ends the io block.
+const OTHER_DIRECTIVE_RE = /^(uses|loop):/i;
+// A typed-port value must be a JSON object/array. This guards against a prose
+// line that merely begins with "out:"/"in:" (e.g. "out: of scope, skip") — such
+// a line is left as prose, NOT parsed (and never throws the whole run).
+const looksLikeJson = (s: string): boolean => /^[[{]/.test(s.trim());
 
 /**
  * Parse leading `out:`/`in:` directive lines (single-line JSON values) from a
- * step body. Scanning stops at the first line that is not blank and not a
- * directive — directives must lead, exactly like `uses:`.
+ * step body. Scans the leading directive block: skips blank lines and the
+ * sibling `uses:`/`loop:` directives, stops at the first prose line. An
+ * `out:`/`in:` line whose value is not JSON-shaped is treated as prose (the
+ * block ends) rather than throwing — so a previously-valid untyped recipe whose
+ * body happens to start "out:/in:" keeps working (overlay-not-delete).
  */
 export function parseStepIoDirectives(body: string): StepIo {
   const io: StepIo = {};
   for (const line of body.split("\n")) {
     const trimmed = line.trim();
     if (trimmed === "") continue;
+    if (OTHER_DIRECTIVE_RE.test(trimmed)) continue; // sibling directive — skip, keep scanning
     const m = DIRECTIVE_RE.exec(trimmed);
     if (!m) break; // first real prose line — stop scanning
+    const raw = m[2].trim();
+    if (!looksLikeJson(raw)) break; // "out:/in:" prose, not a typed-port directive
     const key = m[1] as "out" | "in";
     let value: unknown;
     try {
-      value = JSON.parse(m[2]);
+      value = JSON.parse(raw);
     } catch (err) {
       throw new Error(`${key}: directive is not valid JSON — ${String(err)}`);
     }
@@ -53,23 +67,31 @@ export function parseStepIoDirectives(body: string): StepIo {
   return io;
 }
 
-/** Remove the leading io directive lines, returning the prose task body. */
+/**
+ * Remove the leading `out:`/`in:` JSON directives, returning the prose task
+ * body. Mirrors parseStepIoDirectives: blank lines and `uses:`/`loop:` siblings
+ * are PRESERVED (the runner parses uses/loop off the cleaned body), only the io
+ * directives are stripped, and scanning stops at the first prose line.
+ */
 export function stripStepIoDirectives(body: string): string {
   const lines = body.split("\n");
+  const kept: string[] = [];
   let i = 0;
-  while (i < lines.length) {
+  for (; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (trimmed === "") {
-      i++;
+      kept.push(lines[i]);
       continue;
     }
-    if (DIRECTIVE_RE.test(trimmed)) {
-      i++;
+    if (OTHER_DIRECTIVE_RE.test(trimmed)) {
+      kept.push(lines[i]); // keep uses:/loop: for the runner to parse
       continue;
     }
-    break;
+    const m = DIRECTIVE_RE.exec(trimmed);
+    if (m && looksLikeJson(m[2])) continue; // drop the io directive line
+    break; // first prose line
   }
-  return lines.slice(i).join("\n").trim();
+  return [...kept, ...lines.slice(i)].join("\n").trim();
 }
 
 const JSON_FENCE_RE = /```json\s*\n([\s\S]*?)\n```/gi;
