@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { emitAgentEvent } from "../infra/agent-events.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import { handleAgentEnd } from "./embedded-agent-subscribe.handlers.lifecycle.js";
 import type { EmbeddedPiSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
@@ -92,6 +93,37 @@ describe("handleAgentEnd", () => {
         error: "LLM request failed: connection refused by the provider endpoint.",
         livenessState: "blocked",
       },
+    });
+  });
+
+  it("emits identity fields (model + sessionKey) on the phase:error gateway lifecycle event", async () => {
+    // FORK 2026-06-04: regression guard — the Tinker UI drops any lifecycle event
+    // lacking `data.model`, so the terminal phase:"error" gateway emit MUST carry the
+    // same identity fields as phase:"end" or the stuck thinking indicator never clears.
+    vi.mocked(emitAgentEvent).mockClear();
+    const ctx = createContext({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "connection refused",
+      content: [{ type: "text", text: "" }],
+    });
+    ctx.params.modelId = "claude-test";
+    ctx.params.modelProvider = "anthropic";
+    ctx.params.authProfileId = "profile-1";
+
+    await handleAgentEnd(ctx);
+
+    const errorEmit = vi
+      .mocked(emitAgentEvent)
+      .mock.calls.map((call) => call[0])
+      .find((event) => event?.stream === "lifecycle" && event?.data?.phase === "error");
+    expect(errorEmit).toBeDefined();
+    expect(errorEmit?.data).toMatchObject({
+      phase: "error",
+      model: "claude-test",
+      modelProvider: "anthropic",
+      authProfileId: "profile-1",
+      sessionKey: "agent:main:main",
     });
   });
 
