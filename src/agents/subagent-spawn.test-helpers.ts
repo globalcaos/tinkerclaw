@@ -120,6 +120,7 @@ export async function loadSubagentSpawnModuleForTest(params: {
   updateSessionStoreMock?: MockFn;
   forkSessionFromParentMock?: MockFn;
   resolveContextEngineMock?: MockFn;
+  ensureContextEnginesInitializedMock?: MockFn;
   resolveParentForkMaxTokensMock?: MockFn;
   pruneLegacyStoreKeysMock?: MockFn;
   registerSubagentRunMock?: MockFn;
@@ -179,6 +180,7 @@ export async function loadSubagentSpawnModuleForTest(params: {
       params.getRuntimeConfig?.() ??
       createSubagentSpawnTestConfig(params.workspaceDir ?? os.tmpdir()),
     resolveContextEngine: params.resolveContextEngineMock ?? (async () => ({})),
+    ensureContextEnginesInitialized: params.ensureContextEnginesInitializedMock ?? (() => {}),
     resolveParentForkMaxTokens: params.resolveParentForkMaxTokensMock ?? (() => 100_000),
     mergeSessionEntry: (
       current: Record<string, unknown> | undefined,

@@ -14,6 +14,7 @@ describe("sessions_spawn context modes", () => {
   const updateSessionStoreMock = vi.fn();
   const forkSessionFromParentMock = vi.fn();
   const resolveContextEngineMock = vi.fn();
+  const ensureContextEnginesInitializedMock = vi.fn();
   let spawnSubagentDirect: Awaited<
     ReturnType<typeof loadSubagentSpawnModuleForTest>
   >["spawnSubagentDirect"];
@@ -24,6 +25,7 @@ describe("sessions_spawn context modes", () => {
       updateSessionStoreMock,
       forkSessionFromParentMock,
       resolveContextEngineMock,
+      ensureContextEnginesInitializedMock,
       sessionStorePath: storePath,
     }));
   });
@@ -33,6 +35,7 @@ describe("sessions_spawn context modes", () => {
     updateSessionStoreMock.mockReset();
     forkSessionFromParentMock.mockReset();
     resolveContextEngineMock.mockReset();
+    ensureContextEnginesInitializedMock.mockReset();
     setupAcceptedSubagentGatewayMock(callGatewayMock);
     resolveContextEngineMock.mockResolvedValue({});
   });
@@ -109,6 +112,27 @@ describe("sessions_spawn context modes", () => {
         childSessionKey: result.childSessionKey,
         contextMode: "isolated",
       }),
+    );
+  });
+
+  it("initializes context engines before resolving (cold-registry guard)", async () => {
+    const store: SessionStore = {
+      main: { sessionId: "parent-session-id", updatedAt: 1 },
+    };
+    usePersistentStoreMock(store);
+    resolveContextEngineMock.mockResolvedValue({
+      prepareSubagentSpawn: vi.fn(async () => undefined),
+    });
+
+    const result = await spawnSubagentDirect({ task: "clean worker" }, { agentSessionKey: "main" });
+
+    expect(result.status).toBe("accepted");
+    // The cold-registry bug: resolveContextEngine throws `Context engine "legacy"
+    // is not registered` unless ensureContextEnginesInitialized() runs first. Assert
+    // the ordering so any caller of fork.subagents.spawn is safe on a cold registry.
+    expect(ensureContextEnginesInitializedMock).toHaveBeenCalled();
+    expect(ensureContextEnginesInitializedMock.mock.invocationCallOrder[0]).toBeLessThan(
+      resolveContextEngineMock.mock.invocationCallOrder[0],
     );
   });
 
