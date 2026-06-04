@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import AjvPkg from "ajv";
 import { fetch as undiciFetch } from "undici";
@@ -12,6 +13,7 @@ import {
   PrefrontalKitListParamsSchema,
   PrefrontalKitRunParamsSchema,
   PrefrontalKitAuthorParamsSchema,
+  PrefrontalKitComposeParamsSchema,
   PrefrontalKitMatchParamsSchema,
   PrefrontalKitOrchestrateParamsSchema,
   type PrefrontalKitSearchParams,
@@ -21,11 +23,13 @@ import {
   type PrefrontalKitListParams,
   type PrefrontalKitRunParams,
   type PrefrontalKitAuthorParams,
+  type PrefrontalKitComposeParams,
   type PrefrontalKitMatchParams,
   type PrefrontalKitOrchestrateParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { createSubsystemLogger } from "../../src/logging/subsystem.js";
 import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
+import { createSkillLibrary } from "../../src/memory/engram/skill-library.js";
 import {
   skillMdToRecipeSpec,
   buildBridgedKitMd,
@@ -67,6 +71,7 @@ const vPublish = ajv.compile(PrefrontalKitPublishParamsSchema);
 const vList = ajv.compile(PrefrontalKitListParamsSchema);
 const vRun = ajv.compile(PrefrontalKitRunParamsSchema);
 const vAuthor = ajv.compile(PrefrontalKitAuthorParamsSchema);
+const vCompose = ajv.compile(PrefrontalKitComposeParamsSchema);
 const vMatch = ajv.compile(PrefrontalKitMatchParamsSchema);
 const vOrchestrate = ajv.compile(PrefrontalKitOrchestrateParamsSchema);
 
@@ -320,6 +325,20 @@ export async function persistKitSpec(
     replaced: existed,
     note: existed ? `overwrote existing kit "${spec.slug}"` : `authored new kit "${spec.slug}"`,
   };
+}
+
+/**
+ * SS3: build a traversal-safe, validateRecipeSpec-valid slug (`^[a-z0-9][a-z0-9-]{1,63}$`)
+ * from a free-text compose query. Always prefixed `composed-` so it starts with a
+ * letter and never collides with a hand-curated single-word slug.
+ */
+export function composeSlug(query: string): string {
+  const base = query
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const slug = `composed-${base}`.slice(0, 64).replace(/-+$/g, "");
+  return /^[a-z0-9][a-z0-9-]{1,63}$/.test(slug) ? slug : "composed-recipe";
 }
 
 /**
@@ -850,6 +869,18 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     "prefrontal.recipe.run": async (raw: unknown) => {
       const p = check<PrefrontalKitRunParams>(vRun, raw, "prefrontal.recipe.run");
 
+      // SS3: the stdlib skill library an `invoke skill:` step resolves against —
+      // the SAME on-disk engram library the fork.skill.* RPCs read (so a skill
+      // deposited via compose/extraction is invocable here). Read-only in the
+      // runner; outcomes route back via onSkillOutcome → fork.skill.recordOutcome.
+      // Needed at SEED time too: compileSteps lifts a skill's outputSchema so the
+      // port-wiring check validates downstream `in:` ports (also in dry-run).
+      const skillLibrary = createSkillLibrary({
+        baseDir:
+          deps.engramBaseDir ??
+          path.join(process.env.OPENCLAW_HOME ?? homedir(), ".openclaw", "engram"),
+      });
+
       if (p.dryRun) {
         // Dry-run: return the dispatch plan without spawning anything.
         const result = await runRecipe({
@@ -860,6 +891,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
           dryRun: true,
           ownRecipesDir: deps.ownRecipesDir,
           recipeInstallSandbox: deps.recipeInstallSandbox,
+          skillLibrary,
         });
         return {
           ok: result.ok,
@@ -886,6 +918,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         planStore: deps.planStore,
         ownRecipesDir: deps.ownRecipesDir,
         recipeInstallSandbox: deps.recipeInstallSandbox,
+        skillLibrary,
         // FORK 2026-05-30 (Upgrade 5): durable checkpointing. Auto-resume an
         // interrupted in_progress plan only when resume:true is explicitly passed
         // (no silent re-attach — the architect's policy). `resume` is now part of
@@ -976,6 +1009,15 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
             },
           }).catch(() => {});
         },
+        // SS3: skill-fitness loopback — a skill step's terminal outcome routes to
+        // fork.skill.recordOutcome so the library's Laplace fitness compounds with
+        // real use. Same loopback callGateway + fire-and-forget pattern as above.
+        onSkillOutcome: (skillId, success) => {
+          void callGateway({
+            method: "fork.skill.recordOutcome",
+            params: { skillId, success },
+          }).catch(() => {});
+        },
       });
 
       // Surface progress/completion back into the (possibly closed) parent turn.
@@ -1043,6 +1085,76 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     // kit/1.0 doc, and writes it to the own-kits dir so the turn-start matcher
     // picks it up immediately. This is the NO-MATCH escape hatch — Jarvis turns a
     // recipe gap into a reusable recipe in one call.
+    // SS3 (2026-06-04): mechanically compose a recipe from stdlib skills. Search the
+    // skill library for `query`, emit ONE `invoke skill:` step per hit in rank order,
+    // then validate + persist as an authored recipe (buildRecipeMd stamps
+    // authoredBy: jarvis-* so the authorship guard allows it). Deterministic +
+    // testable with a stubbed fork.skill.search; LLM-override is a later additive (O3).
+    "prefrontal.recipe.compose": async (raw: unknown) => {
+      const p = check<PrefrontalKitComposeParams>(vCompose, raw, "prefrontal.recipe.compose");
+      const k = p.k ?? 4;
+      // Loopback re-negotiates scopes (does NOT inherit) — fork.skill.* default-deny
+      // to admin, so pass operator.admin (single trusted principal, same as spawn).
+      const hits = await callGateway<{ skills?: Array<{ skillId: string; name?: string }> }>({
+        method: "fork.skill.search",
+        params: { query: p.query, k },
+        scopes: ["operator.admin"],
+      });
+      const skills = (hits?.skills ?? []).slice(0, k);
+      if (skills.length === 0) {
+        return { ok: false, note: `compose: no matching skills for "${p.query}"` };
+      }
+      const spec: RecipeSpec = {
+        slug: composeSlug(p.query),
+        title: `composed: ${p.query}`.slice(0, 120),
+        summary: `Auto-composed from ${skills.length} stdlib skill(s) for: ${p.query}`,
+        tags: ["composed", ...p.query.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 4)],
+        steps: skills.map((s) => ({
+          title: s.name ?? s.skillId,
+          invokeSkill: s.skillId,
+          body: `Apply skill ${s.skillId} to the task.`,
+        })),
+      };
+      const v = validateRecipeSpec(spec);
+      if (!v.ok) {
+        return { ok: false, note: `compose: invalid spec: ${v.errors.join("; ")}` };
+      }
+      let r: { slug: string; path: string; replaced: boolean };
+      try {
+        // overwrite:true — a re-compose of the same query updates its own authored
+        // recipe (never clobbers a hand-curated kit; the guard enforces that).
+        r = await persistKitSpec(spec, deps.ownRecipesDir, true);
+      } catch (err) {
+        return {
+          ok: false,
+          note: `compose: persist failed: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+      // SS3 (O2): snapshot the composed recipe with lineage in the FRONTMATTER (the
+      // never-delete archive = reversibility + provenance). Best-effort.
+      try {
+        await snapshotKit(
+          deps.ownRecipesDir,
+          r.slug,
+          buildRecipeMd(spec),
+          new Date().toISOString(),
+          {
+            composedFrom: "compose",
+            sourceQuery: p.query,
+            composedSkills: skills.map((s) => s.skillId),
+          },
+        );
+      } catch {
+        // snapshot is provenance, never blocks the compose result
+      }
+      return {
+        ok: true,
+        slug: r.slug,
+        kitRef: `globalcaos/${r.slug}`,
+        composedSkills: skills.map((s) => s.skillId),
+      };
+    },
+
     "prefrontal.recipe.author": async (raw: unknown) => {
       const p = check<PrefrontalKitAuthorParams>(vAuthor, raw, "prefrontal.recipe.author");
       const spec = p as unknown as RecipeSpec;

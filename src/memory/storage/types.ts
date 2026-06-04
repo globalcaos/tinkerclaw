@@ -50,6 +50,14 @@ export type StoredChunk = {
 // steps[] procedure the Prefrontal recipe-runner consumes like a recipe. Stored in
 // a never-delete library: supersession bumps `version` and `deprecated` marks an
 // obsolete entry while its body stays readable.
+/**
+ * A JSON Schema object. Structurally identical to the prefrontal recipe-runner's
+ * `JsonSchema` (SS1 typed ports) so an `inputSchema`/`outputSchema` extracted here
+ * can be fed straight to that runner's Ajv validation without conversion. Defined
+ * locally to avoid a `src` → `extensions` dependency.
+ */
+export type JsonSchema = Record<string, unknown>;
+
 export type SkillTestCase = {
   input: Record<string, unknown>;
   expect: string;
@@ -83,6 +91,27 @@ export type Skill = {
    * plain auto-generated recipe.
    */
   verifiedCode?: string;
+  /**
+   * OPTIONAL SS3 typed I/O. When present, `invoke skill:` validates the caller's
+   * input against `inputSchema` and the skill's result against `outputSchema`
+   * (same Ajv path as SS1 recipe ports). Absent for untyped prose skills, which
+   * still invoke as a plain steps[] procedure (overlay-not-delete).
+   */
+  inputSchema?: JsonSchema;
+  outputSchema?: JsonSchema;
+  /**
+   * OPTIONAL SS3 provenance for composed/promoted skills. `composedFrom` records
+   * how this skill entered the library; `composedSkills`/`composedRecipes` name
+   * the parts a `compose`-built skill was assembled from; `sourceQuery` is the
+   * search wording that surfaced (or failed to surface) it at compose time. A
+   * flat record — no resolver indirection (kept legible per the bible).
+   */
+  lineage?: {
+    composedFrom?: "compose" | "extraction" | "promotion";
+    composedSkills?: string[];
+    composedRecipes?: string[];
+    sourceQuery?: string;
+  };
 };
 
 /** Lightweight handle to a stored Skill (the search/rank return shape). */
