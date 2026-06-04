@@ -1196,6 +1196,55 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Verified live:** 6 sessions that previously resolved to `displayName="Tinker UI"` now resolve to `displayName=""`; new `chat.send`-originated sessions inherit the same fix automatically.
 - **Files:** `src/gateway/session-utils.ts` (server filter), `tinker-ui/src/app.ts` (client resolver + mirror set).
 
+### 5.70 Tab name summary — right-click rename + recency-weighted auto-name (2026-06-04)
+
+- **Status:** `DEPLOYED-UNTESTED` (HMR-live in `tinker-ui/src/app.ts`, uncommitted; entangled with parallel WIP in the same file)
+- **What the user sees:** Right-clicking any non-Main tab opens a small context menu (reuses the `.exec-context-menu` styling) with two actions:
+  - **Rename…** — a floating manual-rename input pops over the tab; the user types a title and it sticks (persisted as the tab's `tab.title`, the highest-priority label per §5.69's resolution order).
+  - **Auto-name** — fires the existing Ollama `generateTabTitle` to summarise the conversation into a short tab label. It is now **recency-weighted**: the newest turn gets a 500-char budget vs 150 for older turns, and the prompt explicitly asks for the _current_ topic (a long-running tab may have drifted off its original subject). Auto-generated titles are prefixed with the distinct `AUTO_NAME_ICON` sentinel **🏷️** so an auto-name reads differently from a hand-typed one at a glance.
+- **Main tab excluded:** the Main tab has no context menu / no auto-name — its title is force-restored to "Main" (it is the one tab whose label must stay stable).
+- **Unified path:** the periodic background auto-titler now goes through the same code path + 🏷️ icon as the manual "Auto-name" action, so a tab named by the timer and a tab named by the menu look identical.
+- **How it's used:** rename a tab to pin a meaningful label you chose; or hit Auto-name to let Ollama re-summarise after the conversation has moved on. The 🏷️ prefix tells you a label came from the model, not from you.
+- **See also:** §5.69 (sessions-list label resolution order — `tab.title` is rank 1); panels.md (Sessions panel render). Task `task-mpzcjw6n`.
+- **Files:** `tinker-ui/src/app.ts` (tab context menu reusing `.exec-context-menu`, floating rename input, `generateTabTitle` recency weighting, `AUTO_NAME_ICON`, Main-tab exclusion + force-restore, periodic-titler unification).
+
+### 5.71 Binary chat thinking indicator — one consolidated busy row (2026-06-04)
+
+- **Status:** `DEPLOYED-UNTESTED` (HMR-live in `tinker-ui/src/app.ts`, uncommitted)
+- **What the user sees:** the chat thinking indicator is now **binary** — a single consolidated row when the _viewed_ session is busy, instead of one row per active run (main + each subagent). The old per-run rendering was the "multiple indicators at once" complaint: a turn that spawned subagents stacked several bouncing-dot rows in the chat.
+- **Subagent count:** when subagents are running, their number shows as a small **`▸N`** badge on the single row rather than as extra rows. The per-run / per-subagent breakdown is NOT shown in chat anymore — it lives only in the **RECIPES panel** (and in the collapsible subagent chat bubbles).
+- **Stop:** one Stop button is correct — it already called the session-level `abort()`, which stops the whole run (main + its subagents) at once.
+- **How it's used:** glance at the chat to know "Jarvis is busy / idle" without parsing N rows; open the RECIPES panel when you actually want to see which subagent is doing what.
+- **See also:** §5.7 / §5.7.1 (thinking-indicator base behaviour + restart continuity); panels.md (RECIPES / prefrontal panel = where the per-run breakdown now lives); done-signals.md (which signal is authoritative for "busy"). Task `task-mpzgsvbo` (chat-binary part).
+- **Files:** `tinker-ui/src/app.ts` (`renderThinkingIndicator` consolidated-row + `▸N` subagent badge).
+
+### 5.72 Answer/amygdala/fractal bubble rendered as FINAL by structure (2026-06-04)
+
+- **Status:** `DEPLOYED-UNTESTED` (HMR-live in `tinker-ui/src/app.ts`, uncommitted)
+- **What the user sees:** a completed reply that carries the three-section answer / amygdala / fractal structure now always renders as a proper **final answer** bubble — even if it landed in a non-final stream slot. Previously such a bubble could show up as a plain thinking bubble with the raw section markers visible, because the splitter (`splitSectionedReply`) was gated behind `!isThinking` (a POSITION-based test): a structured reply that didn't occupy the last slot was never split.
+- **Why it changed:** appearance is now decided by **structure, not position** — `splitSectionedReply` runs unconditionally at both `renderMsg` detection sites. Because the check is content-local, it cannot reintroduce the earlier "blinking" class flicker.
+- **How it's used:** nothing to do — structured replies just look right (clean answer + collapsed amygdala/fractal sections) regardless of where in the stream they finalised.
+- **See also:** §5.8 / §5.8c (thinking-vs-final classification); bug-log.md (root cause of the raw-markers-in-a-thinking-bubble regression). Task `task-mpwf4x8s`.
+- **Files:** `tinker-ui/src/app.ts` (`splitSectionedReply` run unconditionally at both `renderMsg` detection sites).
+
+### 5.73 Queued prompts render as a trailing "queued" bubble (2026-06-04)
+
+- **Status:** `DEPLOYED-UNTESTED` (HMR-live in `tinker-ui/src/app.ts`, uncommitted)
+- **What the user sees:** if you send a new prompt while Jarvis is still answering, your queued message now shows as a **trailing "queued" bubble** at the very bottom of the transcript and stays there until the current turn finishes — then it flushes into the transcript in correct chronological order (after the full answer). Previously the queued user bubble was pushed straight into `messages[]`, so the still-streaming turn's own continuation/tool bubbles landed _after_ it — the queued prompt appeared "in the middle of the last answer" until a hard refresh re-fetched the correct server order.
+- **Mechanism (user-relevant):** the queued bubble is held in a separate `pendingQueuedSends` buffer (OUT of `messages[]`) and rendered as a trailing bubble; on turn-final it's flushed into `messages[]`. This matches real server behaviour — cc-bridge genuinely **queues** a mid-turn send (`turnQueue` → `drainQueue` runs it as a separate NEXT turn); it does NOT steer or blend into the running turn.
+- **Not yet:** true mid-turn steer/blend (your prompt changing the _current_ answer) is deferred — it depends on claude-cli headless input injection.
+- **See also:** flows.md / tool-loop.md (cc-bridge turnQueue / drainQueue = next-turn semantics, NOT mid-turn steer); bug-log.md (the "queued prompt in the middle of the answer" root cause). Task `task-mpwfiot2`.
+- **Files:** `tinker-ui/src/app.ts` (`pendingQueuedSends` buffer, trailing-bubble render, flush-on-turn-final).
+
+### 5.74 Background tabs hydrate proactively on connect (2026-06-04)
+
+- **Status:** `DEPLOYED-UNTESTED` (HMR-live in `tinker-ui/src/app.ts`, uncommitted)
+- **What the user sees:** restored background tabs now have their transcripts ready immediately — switching to a previously-attached tab shows the conversation right away instead of being momentarily empty. Previously tabs were born empty (`freshTabState` → `messages: []`) and only the _active_ tab's transcript was fetched on connect; a background tab only hydrated on `switchToTab → loadChat`, so the first switch to it flashed blank while it loaded.
+- **Mechanism (user-relevant):** a new `hydrateTab()` proactively fetches each restored attached tab's `chat.history` into its OWN `TabState` at connect time, batched via `Promise.allSettled` so one slow/failed tab doesn't block the others.
+- **How it's used:** nothing to do — multi-tab workspaces feel instant on reconnect / page reload.
+- **See also:** §5.5 (tab/session lifecycle + detach), §5.69 (per-tab `tab.title`). Task `task-mppceqsu`.
+- **Files:** `tinker-ui/src/app.ts` (`hydrateTab`, `Promise.allSettled` fan-out on connect).
+
 ## Generated FORK registry
 
 <!-- BEGIN GENERATED-FORK-REGISTRY -->

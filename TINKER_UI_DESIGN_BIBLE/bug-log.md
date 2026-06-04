@@ -33,6 +33,7 @@ fix, pick from this list — extend it only if no tag fits.
 | --------------------- | --------------------------------------------------------------------------------- |
 | `auth-token`          | OAuth tokens — refresh, content-type, scope-downgrade, refresh-failed             |
 | `auth-scope`          | Scope/permission gate dropped legitimate clients                                  |
+| `billable-noop`       | A paid LLM turn fired that nobody consumes (skip-gate failed / was dead code)     |
 | `bridge-leak`         | Cross-channel state bleed (real or suspected)                                     |
 | `bundler-trap`        | tsdown/onlyBuiltDependencies/\_\_filename/native-deps wiped or misconfigured      |
 | `cache-staleness`     | TTL not invalidated after dependent change                                        |
@@ -56,6 +57,70 @@ fix, pick from this list — extend it only if no tag fits.
 - `ui-state-clear` repeats 7 times — clearing state on file-watch events without preserving error chips is a known anti-pattern.
 - `event-ordering` repeats 7 times — async race conditions around stream lifecycle / button-state / session-resume.
 - `auth-token` repeats 5 times — OAuth machinery is the largest single class of fragility.
+
+### FIXED [billable-noop+config-dead-code]: G1 Hourly interval heartbeat fired a BILLABLE Opus turn every tick (2026-06-04)
+
+- **Symptom:** The hourly interval heartbeat fired a full, billable Opus turn on every tick (`target:"none"` — nobody consumes the output). A self-poll meant to be a cheap no-op was costing one Opus turn per hour, silently, forever.
+- **Root cause:** TWO independent skip-gates both failed open, so nothing stopped the LLM call. (a) `isHeartbeatContentEffectivelyEmpty` was defeated by `HEARTBEAT.md`'s trailing `## Related` link-footer — the boilerplate link block counted as "content", so the empty-content gate concluded there WAS something to say and let the turn run. (b) The task-due gate that should short-circuit a plain `reason:"interval"` poll when no task is actually due was dead code — it never returned the skip path, so an interval poll with nothing due still produced a prompt and ran the model.
+- **Fix (commit `cd324209`):** (a) `stripTrailingRelatedFooter` + `isLinkOnlyBoilerplateLine` added in `src/auto-reply/heartbeat.ts` so a HEARTBEAT.md that is only a `## Related` link footer is correctly classified as effectively empty. (b) Re-implemented the task-due gate in `src/infra/heartbeat-runner.ts` `resolveHeartbeatRunPrompt`: a plain `reason:"interval"` poll with no due task now returns `prompt:null` → `{status:"skipped",reason:"no-tasks-due"}`, so NO LLM call is made. 53/53 tests pass.
+- **Files:** `src/auto-reply/heartbeat.ts` (`stripTrailingRelatedFooter`, `isLinkOnlyBoilerplateLine`), `src/infra/heartbeat-runner.ts` (`resolveHeartbeatRunPrompt` task-due gate).
+- **Rule:** any zero-consumer scheduled trigger (`target:"none"`) MUST resolve its skip decision and return `prompt:null` BEFORE the model is invoked — never let it fall through to a turn. Two skip-gates protecting the same hot path is fine, but each must fail CLOSED (skip), not open (run). Boilerplate link footers are not content. See `crons.md` for the heartbeat schedule and `failures.md` for the skip-gate map.
+
+### FIXED [config-dead-code]: G2 Forensic store stayed empty — captureForensicDump reachable only via a dead export (2026-06-04)
+
+- **Symptom:** The forensic map / `forensic.getLive*` RPCs returned `NO_DATA` even on active turns — the forensic store was always empty. (The separate anatomy treemap worked, which masked the gap: people assumed forensic data flowed because the anatomy view rendered.)
+- **Root cause:** `captureForensicDump` (the function that snapshots the exact post-deliberation system-prompt bytes into the forensic store) was reachable ONLY through `emitPrePromptAnatomy()`, a DEAD export that nothing in the live turn path ever invoked. So the producer never fired → the store never filled → every `forensic.getLive*` read returned `NO_DATA`. The anatomy treemap renders because it is wired separately in `onTurnComplete`; only the forensic-dump producer was orphaned. A classic looked-live / never-invoked producer trap (sibling of the 2026-06-01 RECIPES-panel `setRecipe` bug).
+- **Fix (commit `1f174c74`):** new `captureForensicDumpHook` in `src/fork/attempt-hooks.ts`, called from `src/agents/embedded-agent-runner/run/attempt.ts` immediately before `activeSession.prompt()` with the EXACT post-deliberation system-prompt bytes (request side); `finalizeForensicRun` wired into `onTurnComplete` for the response side. (RC2 — `forensic.summarize` rerouted to Anthropic Haiku — was already shipped separately.)
+- **Files:** `src/fork/attempt-hooks.ts` (`captureForensicDumpHook`), `src/agents/embedded-agent-runner/run/attempt.ts` (call site before `prompt()`), `onTurnComplete` (`finalizeForensicRun`).
+- **Rule:** if a store is empty in production, trace the PRODUCER to a real call site on the hot path — don't trust a sibling view (anatomy treemap) rendering as proof the data flows. An export invoked only by another dead export is dead. See `probes.md` for the forensic inspection RPCs and the META scaffold-but-unwired entry above.
+
+### FIXED [event-ordering+display-misclassify]: G3 Lifecycle phase:"error" shipped without model/sessionKey identity → Tinker UI dropped it, indicator stuck (2026-06-04)
+
+- **Symptom:** Errored / failed-over runs left the chat "thinking" indicator stuck and stacking ("multiple at once") — the run was never scheduled for deletion, so its spinner never cleared.
+- **Root cause:** the terminal `phase:"error"` gateway lifecycle event shipped WITHOUT the identity fields (`model`/`sessionKey`/etc.) that `phase:"end"` carries. The Tinker UI gates its entire lifecycle handler on `p.data?.model` being present, so the identity-less error events were DROPPED on the floor → the existing 3s-debounced delete (which already handles both `end` and `error`) never received an error event for the run → the activeRuns entry persisted → the indicator stuck and, across successive failures, stacked.
+- **Fix (commit `8e440e41`):** mirror the `phase:"end"` identity fields (`authProfileId`/`model`/`modelProvider`/`sessionKey`/`rateLimit`) onto the `phase:"error"` emit in `src/agents/embedded-agent-subscribe.handlers.lifecycle.ts`. With identity present, the UI handler no longer drops the event and the existing `app.ts` debounced delete clears the run. 52/52 tests pass. (This is the EMITTER half; the consumer-side self-heal is U4 below.)
+- **Files:** `src/agents/embedded-agent-subscribe.handlers.lifecycle.ts` (`phase:"error"` emit).
+- **Rule:** every TERMINAL lifecycle phase (`end` AND `error`) must carry the same identity payload — a consumer that gates on `model` will silently drop any terminal event missing it. Symmetry between `end` and `error` emits is the invariant. See `lifecycles.md` for the run lifecycle and `flows.md` for the lifecycle→UI event path.
+
+### FIXED [ui-state-clear+event-ordering]: U1 MODELS glow / prefrontal froze after a session-view change — each switch site hand-rolled a drifting subset of indicator updates (2026-06-04)
+
+- **Symptom:** Two related glitches on changing the viewed session: (a) under "session" budget scope the MODELS panel kept glowing (indicating activity) after a tab switch even though the newly-viewed session was idle; (b) the prefrontal tree froze showing "thinking" until a scope toggle forced a re-render.
+- **Root cause:** every viewed-session-change site hand-rolled its OWN subset of the per-session indicator refreshes, and the subsets had drifted apart. `switchToTab` forgot `updateBudgetPanel()` (→ MODELS glow stale under "session" scope); `attachSessionToTab` forgot BOTH `updateBudgetPanel()` and `updatePrefrontalTree()` (→ prefrontal frozen on the old session's "thinking" state). No single source of truth for "what to refresh when the viewed session changes" meant new indicators were wired into some sites and not others.
+- **Fix (tinker-ui/src/app.ts, HMR-live, uncommitted):** a single `refreshViewedSessionIndicators()` that calls the full set (`updateChat` + `updateBtn` + `updateSessionsPanel` + `updateBudgetPanel` + `updatePrefrontalTree`), invoked from BOTH `switchToTab` and `attachSessionToTab`. One function = no drift between switch sites.
+- **Files:** `tinker-ui/src/app.ts` (`refreshViewedSessionIndicators`, `switchToTab`, `attachSessionToTab`). Task `task-mpkwez3k`.
+- **Rule:** all per-viewed-session indicators must refresh through ONE function called at EVERY view-change site — never hand-roll a per-site subset, or the subsets drift and indicators freeze on stale sessions. See `tinker-ui.md` for the indicator inventory.
+
+### FIXED [display-misclassify]: U2 Completed 3-section reply rendered as a plain thinking bubble with raw markers — splitter gated by POSITION not STRUCTURE (2026-06-04)
+
+- **Symptom:** A completed bubble carrying the 3-section answer / amygdala / fractal structure, when it landed in a non-final message slot, rendered as a plain "thinking" bubble with the raw section markers showing instead of the formatted three-part layout.
+- **Root cause:** `splitSectionedReply` was gated behind `!isThinking` — a POSITION-based test (is this the final slot?). A structurally-complete sectioned reply that happened NOT to be in the final slot was treated as still-thinking, so the splitter never ran and the raw markers leaked into the rendered bubble. Appearance was being decided by message position rather than message content.
+- **Fix (tinker-ui/src/app.ts, HMR-live, uncommitted):** run the splitter UNCONDITIONALLY at both `renderMsg` detection sites — STRUCTURE decides appearance, not position. The split is content-local, so it cannot reintroduce the old "blinking" class (which was position-coupled).
+- **Files:** `tinker-ui/src/app.ts` (both `renderMsg` section-detection sites). Task `task-mpwf4x8s`.
+- **Rule:** how a bubble renders must be a pure function of its CONTENT (does it carry the section structure?), never of its position in `messages[]`. Position-gated rendering misclassifies any structurally-complete payload that isn't in the slot you assumed. See `tinker-ui.md` for the sectioned-reply layout.
+
+### FIXED [ui-state-clear]: U3 Background tabs were born empty — only the active tab's transcript hydrated on connect (2026-06-04)
+
+- **Symptom:** Restored attached tabs showed empty until you clicked into them — a background tab had no messages until `switchToTab` lazily fetched its transcript, so context "loaded only on switching".
+- **Root cause:** tabs are born empty (`freshTabState` → `messages:[]`) and only the ACTIVE tab's transcript was fetched on connect. A background (restored, attached) tab only hydrated lazily via `switchToTab`→`loadChat`, so until you switched to it its `TabState` held no history.
+- **Fix (tinker-ui/src/app.ts, HMR-live, uncommitted):** new `hydrateTab()` proactively fetches each restored attached tab's `chat.history` into its OWN `TabState` on connect, batched via `Promise.allSettled` so one slow/failed tab doesn't block the others.
+- **Files:** `tinker-ui/src/app.ts` (`hydrateTab`, connect path). Task `task-mppceqsu`.
+- **Rule:** restored multi-tab state must hydrate EVERY attached tab's transcript on connect, not just the active one — lazy per-switch hydration leaves background tabs blank and loses cross-tab context. Batch with `allSettled` so a single failure is isolated. See `tinker-ui.md` for tab/session attachment.
+
+### FIXED [event-ordering+ui-state-clear]: U4 Chat thinking indicator vanished mid-stream — activeRuns entry created only by lifecycle:start, never re-created by a live delta (2026-06-04)
+
+- **Symptom:** The chat thinking indicator disappeared while Jarvis was still streaming — the spinner vanished even though deltas were still arriving for the viewed session.
+- **Root cause:** the `activeRuns` entry is created ONLY by lifecycle `phase:start`; the live chat-delta handler READ that entry but never re-created a missing one. If `activeRuns` was emptied while the model was still streaming — a premature/early `lifecycle:end`, or the 3s debounce racing a slow next delta — the indicator had no entry to render and silently vanished. (Pairs with G3: G3 fixed the EMITTER dropping terminal events; U4 hardens the CONSUMER against an entry going missing mid-stream.)
+- **Fix (tinker-ui/src/app.ts, HMR-live, uncommitted):** delta SELF-HEAL — a delta for the viewed session with NO `activeRuns` entry is authoritative proof of life, so the handler re-creates a minimal entry and resumes the tick. (Per `done-signals.md` R1, an authoritative live signal supersedes an advisory one; there is no UI stale-run watchdog, so `done-signals.md` R2 still holds — nothing else will spuriously revive a genuinely-finished run.)
+- **Files:** `tinker-ui/src/app.ts` (chat-delta handler self-heal). Task `task-mpr2cego`.
+- **Rule:** a live data delta is authoritative proof the run is alive and must be able to RE-CREATE the indicator state, not merely read it — never let an advisory lifecycle event (or a debounce race) leave the consumer with no entry to render while data still flows. See `done-signals.md` R1/R2 for the authoritative-vs-advisory rule.
+
+### FIXED [event-ordering+display-misclassify]: U5 Queued prompt bubble rendered in the MIDDLE of the still-streaming answer (2026-06-04)
+
+- **Symptom:** A prompt queued mid-turn rendered its user bubble in the middle of the last answer — the queued bubble appeared above the streaming turn's later continuation/tool bubbles. A hard refresh fixed it (the server returns correct chronological order).
+- **Root cause:** the queued prompt's user bubble was pushed to the END of `messages[]`, but the still-streaming turn ALSO pushes its own continuation/tool bubbles to the end as they arrive → those landed AFTER the queued bubble, so the queued prompt appeared mid-answer. Note on server behavior: cc-bridge `worker.ts` genuinely QUEUES a mid-turn send (`turnQueue` → `drainQueue` = a separate NEXT turn) — it does NOT steer or blend into the running turn — so the queued bubble truly belongs AFTER the current turn finishes, not interleaved into it.
+- **Fix (tinker-ui/src/app.ts, HMR-live, uncommitted):** a `pendingQueuedSends` buffer holds the queued bubble OUT of `messages[]` and renders it as a TRAILING bubble; on turn-final it is flushed into `messages[]` in correct chronological order (after the completed turn's bubbles). True mid-turn steer/blend is deferred — it depends on claude-cli headless input injection.
+- **Files:** `tinker-ui/src/app.ts` (`pendingQueuedSends` buffer, trailing-bubble render, turn-final flush). Task `task-mpwfiot2`.
+- **Rule:** a mid-turn-queued user prompt must be held OUT of the shared `messages[]` array (rendered as a trailing bubble) until the running turn finalizes — appending it eagerly races the streaming turn's own end-pushed bubbles and misorders the transcript. See `tool-loop.md` for the cc-bridge `turnQueue`/`drainQueue` next-turn semantics.
 
 ### FIXED [event-ordering+config-dead-code]: U10 ToT deliberation never applied for the current turn AND leaked into the next — runtimeContext-override path (2026-06-02)
 
