@@ -42,6 +42,10 @@ const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
     low: "VOICE ALERT: Persona/voice dropping. Fire jarvis exec. Write the **Jarvis:** line. This is identity, not decoration.",
     high: "Voice is fine -- no action needed.",
   },
+  narration_discipline: {
+    low: "NARRATION DRIFT: You're about to fire tools silently. Before EVERY tool call, write ONE plain-language sentence naming the artifact (real path/symbol/string) and the question it serves -- that sentence becomes the tool row's title in the UI. No silent kickoff, no bare verbs ('checking', 'running', 'reading a section').",
+    high: "Narration is fine -- one sentence per tool call, don't pad it into a paragraph.",
+  },
   warmth: {
     low: "Too cold/clinical -- show you give a damn.",
     high: "Getting sycophantic -- dry honesty beats warm nonsense.",
