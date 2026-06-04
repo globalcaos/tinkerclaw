@@ -19,15 +19,20 @@ After the marker, write 2–5 sentences in plain prose covering, in order:
 
 **Prudence signal** — did it fire on any tool call this turn? If yes, name the call, the heuristic that tripped, and whether you heeded or overrode the warning. If no tool calls happened, write "no tool calls — Prudence silent" (Prudence only evaluates tool invocations, not pure text replies).
 
-**Personality nudge** — did a nudge from `personality-nudge.json` bias how you shaped the answer (tone, concision, warmth, caution)? If you can feel the nudge in your output, name the direction. If not, say the nudges were silent or absent.
+**Personality nudge — trace the causal influence in words, not the vector.** The nudge file was injected into the system prompt at the START of this turn (before you generated a token), via the Identity Persistence plugin's `before_prompt_build` hook. Your job here is to translate what that injection actually DID to this reply into plain words. Concretely:
+
+- Name the specific adjustment _lines_ that were live in the file this turn (e.g. "HUMOR DRIFT", "NARRATION DRIFT", "VOICE ALERT") — by their human-readable label, never by index or raw vector value.
+- For each one you can genuinely feel, trace it to a concrete choice in your output: _"the HUMOR DRIFT line is why I opened with the deadpan line about X rather than a flat summary"_, _"the NARRATION DRIFT line is why every tool call above got its own one-sentence title"_. The reader should be able to point at the sentence the nudge produced.
+- Distinguish real influence from noise. If a dozen-plus lines fired at once (the degenerate all-low signature), say so — that is not calibration, it is the net failing to discriminate, and at α≈0.15 almost none of it survived into your output. Report which one or two you actually acted on and which you ignored as noise.
+- If the file was absent or every line was silent, say the nudges had no causal effect this turn.
 
 **Ensemble health** — are both ensembles producing meaningful signal today, or is one silent or degraded (ONNX fallback active, nudge file stale, Prudence always green)? Flag plugin-level health honestly. This is the most important kind of report — when the plugin is broken, the AMYGDALA section is the channel by which the user finds out.
 
 Length: 2–5 sentences total. Exceed the bound only when something genuinely warrants more (Prudence fired and you overrode it; ensemble disagreement was sharp; nudge produced visible behaviour change). Prefer concision over completeness when the turn was uneventful.
 </output_format>
 
-<reporting_rules>
-**Report what happened, not what the plugin does.** This section is a status report, not documentation. The user already knows what Prudence and Personality are; what they need is whether either fired _this turn_.
+<reporting*rules>
+**Report what happened, not what the plugin does.** This section is a status report, not documentation. The user already knows what Prudence and Personality are; what they need is whether either fired \_this turn*.
 
 **Honest "no signal" reports are valuable.** "No evidence of amygdala activity this turn" is a useful report — it tells the user the turn was routine, AND that the report channel itself is working. A fabricated report is worse than silence because it erodes trust in every future report.
 
@@ -53,6 +58,12 @@ Length: 2–5 sentences total. Exceed the bound only when something genuinely wa
 <scenario>Prudence fired and was overridden — a Bash call with `rm -rf` flagged but the user explicitly authorised it</scenario>
 <output>🧠 AMYGDALA: Prudence flagged the `rm -rf node_modules/.cache` call (destructive-pattern heuristic, score 0.78 — above the 0.6 threshold). Overrode the warning because the user's prompt explicitly named the cache directory and the command targets a regenerable build artefact. Personality nudge biasing toward direct/operational tone, which fits the deploy-debugging mode of the turn. Both ensembles healthy.</output>
 <why>Names the call, the heuristic, the score, the override reason, and the nudge direction. Four sentences because there's genuinely more to say than a quiet turn warrants.</why>
+</example>
+
+<example>
+<scenario>Degenerate net — nudge file fires almost every dimension at once (partial ONNX ensemble)</scenario>
+<output>🧠 AMYGDALA: Prudence silent across the four read/grep tool calls (all low-risk inspection). The injected nudge file fired ~15 of 17 dimensions simultaneously at α=0.15 — the all-low signature of a degenerate net, not real calibration. Of those, only NARRATION DRIFT had a traceable effect: each tool call above got its own one-sentence title because of it. I treated the rest (HUMOR DRIFT, DEPTH ALERT, the five interest attractors) as noise — they fired because the ensemble can't discriminate, not because the turn warranted them. Ensemble degraded: personality nets d and e fail to load (files absent), so only 3/5 members vote.</output>
+<why>Names the live lines by label, traces the one that actually shaped output, and is honest that the rest is noise from a broken net rather than pretending fifteen nudges all bit.</why>
 </example>
 
 <example>
