@@ -54,6 +54,7 @@ import {
   normalizeDeliveryContext,
   pruneLegacyStoreKeys,
   resolveAgentConfig,
+  ensureContextEnginesInitialized,
   resolveContextEngine,
   resolveDisplaySessionKey,
   resolveGatewaySessionStoreTarget,
@@ -92,6 +93,7 @@ type SubagentSpawnDeps = {
   getGlobalHookRunner: () => SubagentLifecycleHookRunner | null;
   getRuntimeConfig: typeof getRuntimeConfig;
   resolveContextEngine: typeof resolveContextEngine;
+  ensureContextEnginesInitialized: typeof ensureContextEnginesInitialized;
   resolveParentForkMaxTokens: typeof resolveParentForkMaxTokens;
   updateSessionStore: typeof updateSessionStore;
 };
@@ -102,6 +104,7 @@ const defaultSubagentSpawnDeps: SubagentSpawnDeps = {
   getGlobalHookRunner,
   getRuntimeConfig,
   resolveContextEngine,
+  ensureContextEnginesInitialized,
   resolveParentForkMaxTokens,
   updateSessionStore,
 };
@@ -416,6 +419,13 @@ async function prepareContextEngineSubagentSpawn(params: {
   { status: "ok"; preparation?: SubagentSpawnPreparation } | { status: "error"; error: string }
 > {
   try {
+    // Register the default ("legacy") context engine before resolving it. The
+    // process-global registry is only warmed by ensureContextEnginesInitialized(),
+    // which on the bare fork.subagents.spawn path is otherwise never called — so a
+    // spawn on a COLD registry (orchestrate, recipe.run/round-table/overseer on a
+    // freshly-restarted gateway) threw `Context engine "legacy" is not registered`.
+    // Idempotent (no-op once warm); covers the whole spawn family at the funnel.
+    subagentSpawnDeps.ensureContextEnginesInitialized();
     const engine = await subagentSpawnDeps.resolveContextEngine(params.cfg);
     const preparation = await engine.prepareSubagentSpawn?.({
       parentSessionKey: params.requesterInternalKey,

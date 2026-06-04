@@ -10,6 +10,7 @@ export {
   resolveParentForkMaxTokens,
 } from "../auto-reply/reply/session-fork.js";
 export { resolveContextEngine } from "../context-engine/registry.js";
+export { ensureContextEnginesInitialized } from "../context-engine/init.js";
 export { callGateway } from "../gateway/call.js";
 export { ADMIN_SCOPE, isAdminOnlyMethod } from "../gateway/method-scopes.js";
 export {
