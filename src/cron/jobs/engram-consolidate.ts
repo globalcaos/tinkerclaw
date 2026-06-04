@@ -10,8 +10,9 @@
  *  - U6 post-episode skill extraction: injects a never-delete `SkillLibrary`
  *    (createSkillLibrary, the same one fork.skill.* RPCs read) plus a deterministic
  *    no-LLM `SkillExtractor`. The strict `isSkillWorthy` gate keeps the library
- *    from filling — so with today's `detectEpisodes` (which emits keyDecisions:[])
- *    zero skills extract = byte-identical to before, but the LANE is now live.
+ *    from filling — and since SS3 Task 0b `detectEpisodes` derives keyDecisions
+ *    from a multi-step procedure's tool-call trace, so genuinely-worthy episodes
+ *    now extract a skill while trivial one-shots are still declined.
  *  - U8 Mem0 write-reconciliation: gated behind `ENGRAM_RECONCILE` (default OFF →
  *    today's behavior). The default reconciler is `createAlwaysAddReconciler()`
  *    (every event ADD, nothing reconciled away), with a persisted ledger.
@@ -42,7 +43,6 @@ import {
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { createArtifactStore } from "../../memory/engram/artifact-store.js";
-import type { EmbedFn } from "../../memory/engram/embedding-worker.js";
 import {
   type ConsolidationState,
   type Episode,
@@ -58,6 +58,7 @@ import type { FailureStateMap } from "../../memory/engram/failure-tracking.js";
 import { createRecipeArchive } from "../../memory/engram/recipe-archive.js";
 import { createReconciliationLedger } from "../../memory/engram/reconciliation-ledger.js";
 import { createAlwaysAddReconciler } from "../../memory/engram/reconciliation.js";
+import { resolveSkillEmbedFn } from "../../memory/engram/skill-embed.js";
 import type { SkillBody, SkillExtractor } from "../../memory/engram/skill-extraction.js";
 import { createSkillLibrary } from "../../memory/engram/skill-library.js";
 import {
@@ -150,67 +151,17 @@ function saveConsolidationState(baseDir: string, state: Record<string, Consolida
 }
 
 /**
- * Best-effort in-process embed fn for the skill library's semantic search,
- * resolved EXACTLY like fork.prefrontal.embed (the canonical in-process embed
- * path — ollama/mxbai via memorySearch). Returns undefined when no provider is
- * configured/available (tests, clones, headless) so the library degrades to its
- * keyword fallback — i.e. absence is the same behavior as fork.skill.search,
- * which already constructs the library with no embedFn. Never throws.
- */
-async function resolveEmbedFn(): Promise<EmbedFn | undefined> {
-  try {
-    const [
-      { getRuntimeConfig },
-      { resolveDefaultAgentId },
-      { resolveAgentDir },
-      { resolveMemorySearchConfig },
-      { createConfiguredEmbeddingProvider },
-    ] = await Promise.all([
-      import("../../config/io.js"),
-      import("../../agents/agent-scope-config.js"),
-      import("../../agents/agent-scope.js"),
-      import("../../agents/memory-search.js"),
-      import("../../gateway/embeddings-http.js"),
-    ]);
-    const cfg = getRuntimeConfig();
-    const agentId = resolveDefaultAgentId(cfg);
-    const agentDir = resolveAgentDir(cfg, agentId);
-    const memorySearch = resolveMemorySearchConfig(cfg, agentId);
-    if (!memorySearch?.provider) {
-      return undefined;
-    }
-    const provider = await createConfiguredEmbeddingProvider({
-      cfg,
-      agentDir,
-      provider: memorySearch.provider,
-      model: memorySearch.model,
-      memorySearch: {
-        local: memorySearch.local,
-        remote: memorySearch.remote,
-        outputDimensionality: memorySearch.outputDimensionality,
-      },
-    });
-    // Adapt number[][] → Float32Array[] (EmbedFn's contract). cosine() in the
-    // skill library accepts either, but the type demands Float32Array.
-    return async (texts: string[]): Promise<Float32Array[]> => {
-      const vecs = await provider.embedBatch(texts);
-      return vecs.map((v) => (v instanceof Float32Array ? v : Float32Array.from(v)));
-    };
-  } catch {
-    return undefined; // no provider in this environment → keyword fallback
-  }
-}
-
-/**
  * Deterministic, no-LLM default skill extractor. Synthesizes a "skill-as-recipe"
  * body (steps[] = the episode's tool-call sequence) from a skill-WORTHY episode.
  * Production has no LLM-backed extractor wired yet, so this safe default keeps the
  * U6 lane live without inventing a model dependency: the strict `isSkillWorthy`
  * gate (applied by runSleepConsolidation BEFORE this runs) already requires a
- * completed, tool-using episode with ≥1 keyDecision — and today's `detectEpisodes`
- * never emits keyDecisions, so in practice this declines on every real episode
- * (skillsExtracted stays 0 = pre-wiring behavior). Returns null on a body that
- * would be empty so no spurious skill ever enters the library.
+ * completed, tool-using episode with ≥1 keyDecision. Since SS3 Task 0b,
+ * `detectEpisodes` derives keyDecisions from a multi-step procedure's tool-call
+ * trace, so a genuinely-worthy episode now reaches this extractor and a real
+ * skill is synthesized (a lone one-shot tool call still yields no keyDecisions
+ * and is declined upstream). Returns null on a body that would be empty so no
+ * spurious skill ever enters the library.
  */
 function defaultSkillExtractor(episode: Episode, episodeEvents: MemoryEvent[]): SkillBody | null {
   const steps = episodeEvents
@@ -274,7 +225,7 @@ export async function runEngramConsolidate(
   // --- Procedural-evolution lane deps, built once and shared across sessions ---
   // (so a skill/recipe recurring in multiple sessions accrues a single version
   // history + fitness, mirroring the global failure-state map above).
-  const embedFn = await resolveEmbedFn();
+  const embedFn = await resolveSkillEmbedFn();
 
   // U6: never-delete skill library (same store the fork.skill.* RPCs read), with
   // a deterministic no-LLM extractor. Caller-supplied skillExtraction (e.g. a

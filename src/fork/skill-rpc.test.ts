@@ -11,6 +11,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EmbedFn } from "../memory/engram/embedding-worker.js";
+import { resolveSkillEmbedFn } from "../memory/engram/skill-embed.js";
 import * as skillInvocation from "../memory/engram/skill-invocation.js";
 import { createSkillLibrary } from "../memory/engram/skill-library.js";
 import type { Skill } from "../memory/storage/types.js";
@@ -23,6 +25,13 @@ vi.mock("../memory/engram/skill-invocation.js", async (importActual) => {
   const actual = await importActual<typeof import("../memory/engram/skill-invocation.js")>();
   return { ...actual, recordSkillOutcome: vi.fn(actual.recordSkillOutcome) };
 });
+
+// Mock the embed resolver so search is deterministic + fast: default → undefined
+// (keyword fallback, the env-default for tests/clones); a test overrides it
+// per-call to inject a semantic embedFn and prove the RPC actually uses it.
+vi.mock("../memory/engram/skill-embed.js", () => ({
+  resolveSkillEmbedFn: vi.fn(async () => undefined),
+}));
 
 let tmpHome: string;
 let prevHome: string | undefined;
@@ -106,6 +115,45 @@ describe("fork.skill.search", () => {
     const skills = (result as { skills: Array<{ skillId: string; score?: number }> }).skills;
     expect(skills.length).toBeGreaterThan(0);
     expect(skills[0].skillId).toBe("sk-merge");
+  });
+
+  it("uses the resolved embedFn for semantic ranking (cosine), not keyword (SS3)", async () => {
+    const lib = createSkillLibrary({ baseDir: engramRoot() });
+    await lib.put(
+      makeSkill({
+        skillId: "sk-merge",
+        name: "merge-conflict-resolution",
+        description: "resolve git merge conflicts",
+        steps: ["open the conflict", "pick a side", "run the tests"],
+      }),
+    );
+    await lib.put(
+      makeSkill({
+        skillId: "sk-deploy",
+        name: "deploy-prod",
+        description: "ship a release to production",
+        steps: ["tag the release", "push the image"],
+      }),
+    );
+
+    // Fake embedFn: query (index 0) aligns with the DEPLOY skill, orthogonal to
+    // merge. Keyword search would rank sk-merge first for this query, so a
+    // sk-deploy-first result proves the embedFn path is wired + used.
+    const fakeEmbed: EmbedFn = async (texts: string[]) =>
+      texts.map((t, i) => {
+        if (i === 0) return Float32Array.from([0, 1]); // the query → align with deploy
+        const isDeploy = /deploy|release|ship/.test(t);
+        return Float32Array.from(isDeploy ? [0, 1] : [1, 0]);
+      });
+    vi.mocked(resolveSkillEmbedFn).mockResolvedValueOnce(fakeEmbed);
+
+    const { ok, result } = await call("fork.skill.search", {
+      query: "merge conflict resolution", // keyword-best = sk-merge
+      k: 5,
+    });
+    expect(ok).toBe(true);
+    const skills = (result as { skills: Array<{ skillId: string }> }).skills;
+    expect(skills[0].skillId).toBe("sk-deploy"); // semantic winner, not keyword
   });
 
   it("rejects a blank query", async () => {
