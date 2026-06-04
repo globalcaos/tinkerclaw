@@ -26,6 +26,8 @@ export const DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;
  * - Markdown ATX headers (`#`, `##`, ...)
  * - Markdown fence markers such as ``` or ```markdown
  * - Empty list item stubs (`- `, `- [ ]`, `* `, `+ `)
+ * - A trailing "## Related" boilerplate section whose body is only link-only
+ *   list items / bare links (no actionable prose, no `tasks:` block)
  *
  * Note: A missing file returns false (not effectively empty) so the LLM can still
  * decide what to do. This function is only for when the file exists but has no content.
@@ -38,7 +40,17 @@ export function isHeartbeatContentEffectivelyEmpty(content: string | undefined |
     return false;
   }
 
-  const lines = content.split("\n");
+  // FORK (2026-06-04): drop a trailing "## Related" footer before the emptiness
+  // check. Workspace HEARTBEAT.md files append a "## Related" section of
+  // link-only list items (e.g. "- [Heartbeat config](/gateway/config-agents)")
+  // for doc rendering; that footer carries no task semantics but defeated the
+  // empty-heartbeat gate (link text doesn't match the empty-list-item stub),
+  // causing the LLM to fire every interval tick. Only strip the footer when its
+  // body is purely link-only / boilerplate so a real "## Related" task list is
+  // still honored. See heartbeat token-leak diagnosis 2026-06-04.
+  const withoutRelatedFooter = stripTrailingRelatedFooter(content);
+
+  const lines = withoutRelatedFooter.split("\n");
   for (const line of lines) {
     const trimmed = line.trim();
     // Skip empty lines
@@ -65,6 +77,60 @@ export function isHeartbeatContentEffectivelyEmpty(content: string | undefined |
   }
   // All lines were either empty or comments
   return true;
+}
+
+/**
+ * FORK (2026-06-04): A markdown list item / paragraph counts as "link-only
+ * boilerplate" when, after removing markdown link syntax `[text](url)` (and bare
+ * `<url>` autolinks), nothing but list-marker punctuation / whitespace remains.
+ * Used to decide whether a trailing "## Related" footer is safe to ignore.
+ */
+function isLinkOnlyBoilerplateLine(trimmed: string): boolean {
+  if (!trimmed) {
+    return true;
+  }
+  const withoutLinks = trimmed
+    // [text](url) -> drop entirely (the visible text is just a link label)
+    .replace(/\[[^\]]*\]\([^)]*\)/g, "")
+    // bare <https://...> autolinks
+    .replace(/<https?:\/\/[^>]*>/g, "")
+    // leftover list markers / punctuation
+    .replace(/^[-*+]\s*/, "")
+    .trim();
+  return withoutLinks.length === 0;
+}
+
+/**
+ * FORK (2026-06-04): Remove a trailing "## Related" section when its body is
+ * only blank lines + link-only boilerplate list items. If the section contains
+ * any actionable prose (or a `tasks:` block) it is left intact so the emptiness
+ * check still sees real content.
+ */
+function stripTrailingRelatedFooter(content: string): string {
+  const lines = content.split("\n");
+  // Find the LAST "## Related" heading (case-insensitive, any ATX level).
+  let headingIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^#{1,6}\s+related\b/i.test(lines[i].trim())) {
+      headingIdx = i;
+      break;
+    }
+  }
+  if (headingIdx === -1) {
+    return content;
+  }
+  // Everything after the heading must be blank or link-only boilerplate.
+  for (let i = headingIdx + 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (!isLinkOnlyBoilerplateLine(trimmed)) {
+      // Real content under "## Related" — keep the footer.
+      return content;
+    }
+  }
+  return lines.slice(0, headingIdx).join("\n");
 }
 
 export function resolveHeartbeatPrompt(raw?: string): string {
