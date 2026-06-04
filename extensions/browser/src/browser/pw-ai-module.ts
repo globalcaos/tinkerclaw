@@ -42,10 +42,22 @@ export async function getPwAiModule(opts?: { mode?: PwAiLoadMode }): Promise<PwA
     if (!pwAiModuleSoft) {
       pwAiModuleSoft = loadPwAiModule("soft");
     }
-    return await pwAiModuleSoft;
+    const mod = await pwAiModuleSoft;
+    // Do not memoize failures: a null here is usually transient (e.g. a dist
+    // rebuild orphaned the lazily-imported pw-ai chunk under a long-running
+    // gateway). Clearing the cache lets the next request self-heal once the
+    // dist is coherent again, instead of disabling Playwright until restart.
+    if (!mod) {
+      pwAiModuleSoft = null;
+    }
+    return mod;
   }
   if (!pwAiModuleStrict) {
     pwAiModuleStrict = loadPwAiModule("strict");
   }
-  return await pwAiModuleStrict;
+  const mod = await pwAiModuleStrict;
+  if (!mod) {
+    pwAiModuleStrict = null;
+  }
+  return mod;
 }
