@@ -1,3 +1,4 @@
+import AjvPkg from "ajv";
 import { describe, it, expect } from "vitest";
 import {
   parseStepIoDirectives,
@@ -6,7 +7,35 @@ import {
   dotGet,
   parseStepRef,
   resolveStepRefs,
+  validateTypedNote,
 } from "../recipe-types.js";
+
+const AjvCtor = AjvPkg as unknown as typeof import("ajv").default;
+
+describe("validateTypedNote", () => {
+  const ajv = new AjvCtor({ allErrors: true });
+  const validate = ajv.compile({
+    type: "object",
+    properties: { passed: { type: "boolean" } },
+    required: ["passed"],
+  });
+
+  it("accepts a conforming json block", () => {
+    const r = validateTypedNote('```json\n{"passed": true}\n```', validate);
+    expect(r.ok).toBe(true);
+    expect(r.value).toEqual({ passed: true });
+  });
+  it("reports missing-block clearly", () => {
+    const r = validateTypedNote("no json", validate);
+    expect(r.ok).toBe(false);
+    expect(r.errorText).toMatch(/no fenced/i);
+  });
+  it("reports a schema violation with field detail", () => {
+    const r = validateTypedNote('```json\n{"passed": "yes"}\n```', validate);
+    expect(r.ok).toBe(false);
+    expect(r.errorText).toMatch(/passed|boolean/i);
+  });
+});
 
 describe("parseStepIoDirectives", () => {
   it("reads leading out: and in: lines as JSON", () => {

@@ -6,6 +6,8 @@
  * (recipe-author.ts) both depend on these so the wire format has a single owner.
  */
 
+import type { ValidateFunction } from "ajv";
+
 /** A JSON-Schema object (Ajv-compileable). Kept loose on purpose — gradual typing. */
 export type JsonSchema = Record<string, unknown>;
 
@@ -125,4 +127,30 @@ export function resolveStepRefs(text: string, outputsByStep: Map<number, unknown
     if (value === undefined) return whole;
     return typeof value === "string" ? value : JSON.stringify(value);
   });
+}
+
+export interface TypedValidationResult {
+  ok: boolean;
+  value?: unknown;
+  /** Ajv error text, ready to append to a corrective re-dispatch prompt. */
+  errorText?: string;
+}
+
+/**
+ * Extract a typed object from a note and validate it against a compiled schema.
+ * Returns ok + the value, or a human-readable errorText for the re-dispatch.
+ */
+export function validateTypedNote(
+  note: string | null | undefined,
+  validate: ValidateFunction,
+): TypedValidationResult {
+  const value = extractTypedOutput(note);
+  if (value === undefined) {
+    return { ok: false, errorText: "no fenced ```json output block was found in the reply" };
+  }
+  if (validate(value)) return { ok: true, value };
+  const errorText = (validate.errors ?? [])
+    .map((e) => `${e.instancePath || "(root)"} ${e.message ?? "invalid"}`)
+    .join("; ");
+  return { ok: false, value, errorText };
 }
