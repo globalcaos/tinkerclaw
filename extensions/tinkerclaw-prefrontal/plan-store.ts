@@ -69,6 +69,8 @@ export class PlanStore {
     status: PlanStep["status"];
     note?: string;
     artifact?: string;
+    output?: unknown;
+    outputKind?: "json";
   }): Promise<Plan> {
     const plan = await this.get(params.sessionKey);
     if (!plan) throw new Error(`plan-store: no plan for sessionKey=${params.sessionKey}`);
@@ -103,6 +105,8 @@ export class PlanStore {
 
     if (params.note !== undefined) step.note = params.note;
     if (params.artifact !== undefined) step.artifact = params.artifact;
+    if (params.output !== undefined) step.output = params.output;
+    if (params.outputKind !== undefined) step.outputKind = params.outputKind;
     plan.updated = now;
 
     await this.writeLocked(params.sessionKey, plan);
@@ -215,8 +219,14 @@ function renderStep(s: PlanStep, i: number): string {
   const artifactLine = s.artifact
     ? `\n  <!-- artifact64:${Buffer.from(s.artifact, "utf-8").toString("base64")} -->`
     : "";
+  // SS1: the full validated typed output, JSON-stringified then base64-encoded
+  // (its own comment line, like the artifact digest, so it survives the parser).
+  const outputLine =
+    s.output !== undefined
+      ? `\n  <!-- output64:${Buffer.from(JSON.stringify(s.output), "utf-8").toString("base64")} -->`
+      : "";
   const note = s.note ? `\n  ${s.note.replace(/\n/g, "\n  ")}` : "";
-  return `- ${marker} **${i}. ${s.title}**${metaLine}${artifactLine}${note}`;
+  return `- ${marker} **${i}. ${s.title}**${metaLine}${artifactLine}${outputLine}${note}`;
 }
 
 export function parsePlanMd(text: string): Plan {
@@ -261,6 +271,17 @@ export function parsePlanMd(text: string): Plan {
         lastStep.artifact = Buffer.from(am[1], "base64").toString("utf-8");
       } catch {
         // ignore an undecodable artifact line
+      }
+      continue;
+    }
+    // SS1: structured output line: <!-- output64:<base64-of-json> -->
+    const om = /^\s+<!--\s+output64:(\S+)\s+-->$/.exec(line);
+    if (om && lastStep) {
+      try {
+        lastStep.output = JSON.parse(Buffer.from(om[1], "base64").toString("utf-8"));
+        lastStep.outputKind = "json";
+      } catch {
+        // ignore an undecodable output line
       }
       continue;
     }
