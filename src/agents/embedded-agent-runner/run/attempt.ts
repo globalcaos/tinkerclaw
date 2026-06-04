@@ -2749,6 +2749,12 @@ export async function runEmbeddedAttempt(
               if (runtimeSystemPrompt) {
                 applySystemPromptOverrideToSession(activeSession, runtimeSystemPrompt);
               }
+              // FORK 2026-06-04 (Stream C — forensic map permanently empty):
+              // track the EXACT system-prompt bytes installed on the session so
+              // the forensic dump captures what's really sent to the model. Starts
+              // at the runtime-augmented prompt (if any) else the base, then gets
+              // bumped to the U10 deliberation-augmented prompt below when applied.
+              let effectiveSystemPromptForCapture = runtimeSystemPrompt ?? systemPromptText;
               // Turn-local snapshot of the base prompt the `finally` must restore.
               // Captured here, BEFORE the U10 deliberation augments systemPromptText,
               // so the deliberation never leaks into the next turn's base prompt. The
@@ -2832,12 +2838,36 @@ export async function runEmbeddedAttempt(
                           ),
                         }) ?? turnSystemPromptText;
                       applySystemPromptOverrideToSession(activeSession, turnRuntimeSystemPrompt);
+                      // FORK 2026-06-04 (Stream C): capture the deliberation+runtime bytes sent.
+                      effectiveSystemPromptForCapture = turnRuntimeSystemPrompt;
                     } else {
                       applySystemPromptOverrideToSession(activeSession, turnSystemPromptText);
+                      // FORK 2026-06-04 (Stream C): capture the deliberation bytes sent.
+                      effectiveSystemPromptForCapture = turnSystemPromptText;
                     }
                     appliedTurnLocalOverride = true;
                   }
                 }
+
+                // FORK 2026-06-04 (Stream C — forensic map permanently empty):
+                // capture the REQUEST side of the forensic dump with the EXACT
+                // post-deliberation system-prompt bytes about to be sent. This is
+                // the ONLY live caller of captureForensicDump (the old
+                // emitPrePromptAnatomy export is dead), so without it the forensic
+                // store stays empty and every forensic.getLive* RPC returns
+                // NO_DATA. Fire-and-forget; must not block or fail the prompt.
+                _forkAttemptHooks.captureForensicDumpHook({
+                  runId: params.runId,
+                  sessionKey: params.sessionKey,
+                  model: params.modelId,
+                  provider: params.provider,
+                  modelApi: params.model.api,
+                  systemPromptText: effectiveSystemPromptForCapture ?? "",
+                  messages: activeSession.messages,
+                  tools: effectiveTools,
+                  effectivePrompt: promptSubmission.prompt,
+                  log,
+                });
 
                 // Only pass images option if there are actually images to pass
                 // This avoids potential issues with models that don't expect the images parameter
