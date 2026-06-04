@@ -1130,6 +1130,23 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
           note: `compose: persist failed: ${err instanceof Error ? err.message : String(err)}`,
         };
       }
+      // SS3 (O2): snapshot the composed recipe with lineage in the FRONTMATTER (the
+      // never-delete archive = reversibility + provenance). Best-effort.
+      try {
+        await snapshotKit(
+          deps.ownRecipesDir,
+          r.slug,
+          buildRecipeMd(spec),
+          new Date().toISOString(),
+          {
+            composedFrom: "compose",
+            sourceQuery: p.query,
+            composedSkills: skills.map((s) => s.skillId),
+          },
+        );
+      } catch {
+        // snapshot is provenance, never blocks the compose result
+      }
       return {
         ok: true,
         slug: r.slug,
