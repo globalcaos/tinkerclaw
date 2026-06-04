@@ -263,6 +263,58 @@ Check the server logs
 `;
     expect(isHeartbeatContentEffectivelyEmpty(content)).toBe(true);
   });
+
+  // FORK (2026-06-04): regression for the heartbeat token-leak. The live
+  // workspace HEARTBEAT.md is the fenced template body plus a trailing
+  // "## Related" footer of link-only list items. That footer must be treated as
+  // boilerplate so the empty-heartbeat gate still fires (otherwise the LLM runs
+  // every interval tick producing content nobody consumes).
+  it("returns true for the fenced template body + a link-only '## Related' footer", () => {
+    const content = `\`\`\`markdown
+# Keep this file empty (or with only comments) to skip heartbeat API calls.
+
+# Add tasks below when you want the agent to check something periodically.
+\`\`\`
+
+## Related
+
+- [Heartbeat config](/gateway/config-agents)
+`;
+    expect(isHeartbeatContentEffectivelyEmpty(content)).toBe(true);
+  });
+
+  it("returns true for header-only content with a link-only '## Related' footer", () => {
+    const content = `# HEARTBEAT.md
+
+## Related
+
+- [Heartbeat config](/gateway/config-agents)
+- <https://example.com/docs>
+`;
+    expect(isHeartbeatContentEffectivelyEmpty(content)).toBe(true);
+  });
+
+  it("keeps a '## Related' section that contains a real actionable task", () => {
+    const content = `# HEARTBEAT.md
+
+## Related
+
+- Check the deploy queue every hour
+`;
+    expect(isHeartbeatContentEffectivelyEmpty(content)).toBe(false);
+  });
+
+  it("does not strip a '## Related' footer when earlier body has real content", () => {
+    const content = `# HEARTBEAT.md
+
+Check the server logs for errors.
+
+## Related
+
+- [Heartbeat config](/gateway/config-agents)
+`;
+    expect(isHeartbeatContentEffectivelyEmpty(content)).toBe(false);
+  });
 });
 
 describe("parseHeartbeatTasks", () => {

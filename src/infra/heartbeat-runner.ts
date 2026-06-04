@@ -573,6 +573,10 @@ type HeartbeatReasonFlags = {
   isExecEventReason: boolean;
   isCronEventReason: boolean;
   isWakeReason: boolean;
+  // FORK (2026-06-04): true for a plain `reason:"interval"` tick (the hourly
+  // scheduler poll). Used to re-enable the task-due gate that skips the LLM when
+  // no scheduled HEARTBEAT.md task is actually due. See token-leak diagnosis.
+  isIntervalReason: boolean;
 };
 
 type HeartbeatSkipReason = "empty-heartbeat-file";
@@ -594,6 +598,7 @@ function resolveHeartbeatReasonFlags(reason?: string): HeartbeatReasonFlags {
     isExecEventReason: reasonKind === "exec-event",
     isCronEventReason: reasonKind === "cron",
     isWakeReason: reasonKind === "wake" || reasonKind === "hook",
+    isIntervalReason: reasonKind === "interval",
   };
 }
 
@@ -683,7 +688,11 @@ async function resolveHeartbeatPreflight(params: {
 }
 
 type HeartbeatPromptResolution = {
-  prompt: string;
+  // FORK (2026-06-04): `null` signals the task-due gate fired — a plain interval
+  // tick with HEARTBEAT.md tasks present but none currently due. Callers must
+  // skip the LLM dispatch (status:"no-tasks-due") and emit only a cheap liveness
+  // tick instead of paying for an Opus turn nobody consumes.
+  prompt: string | null;
   hasExecCompletion: boolean;
   hasCronEvents: boolean;
   /** FORK: Fractal reflection hook — true when pending events include FRACTAL REFLECTION. */
@@ -708,7 +717,40 @@ function resolveHeartbeatRunPrompt(params: {
   preflight: HeartbeatPreflight;
   canRelayToUser: boolean;
   workspaceDir: string;
+  // FORK (2026-06-04): wall-clock used by the task-due gate to compare each
+  // HEARTBEAT.md task's persisted last-run time against its interval.
+  nowMs: number;
 }): HeartbeatPromptResolution {
+  // FORK (2026-06-04): task-due gate. A plain interval tick must NOT invoke the
+  // LLM unless a scheduled HEARTBEAT.md `tasks:` entry is actually due. Previously
+  // this gate was dead/missing, so the hourly poll fired Opus every hour against
+  // a non-empty-but-task-less HEARTBEAT.md (target:"none" → tokens nobody reads).
+  // Event-driven runs (exec/cron/wake/hook) and runs with pending system events
+  // bypass this gate because their prompt IS the event payload, not a task poll.
+  const pf = params.preflight;
+  const isPlainIntervalPoll =
+    pf.isIntervalReason &&
+    !pf.isExecEventReason &&
+    !pf.isCronEventReason &&
+    !pf.isWakeReason &&
+    !pf.hasTaggedCronEvents &&
+    pf.pendingEventEntries.length === 0;
+  if (isPlainIntervalPoll && pf.tasks.length > 0) {
+    const taskState = pf.session.entry?.heartbeatTaskState ?? {};
+    const dueTasks = pf.tasks.filter((task) =>
+      isTaskDue(taskState[task.name], task.interval, params.nowMs),
+    );
+    if (dueTasks.length === 0) {
+      // No task due → skip the LLM. The caller short-circuits on prompt===null.
+      return {
+        prompt: null,
+        hasExecCompletion: false,
+        hasCronEvents: false,
+        hasFractalHook: false,
+      };
+    }
+  }
+
   const pendingEventEntries = params.preflight.pendingEventEntries;
   const pendingEvents = params.preflight.shouldInspectPendingEvents
     ? pendingEventEntries.map((event) => event.text)
@@ -883,6 +925,9 @@ export async function runHeartbeatOnce(opts: {
     preflight,
     canRelayToUser,
     workspaceDir,
+    // FORK (2026-06-04): pass the run's start time so the task-due gate evaluates
+    // each task's interval against the same clock used for timestamp updates.
+    nowMs: startedAt,
   });
 
   // If no tasks are due, skip heartbeat entirely
