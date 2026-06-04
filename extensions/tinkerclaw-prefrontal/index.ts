@@ -999,6 +999,29 @@ export default function register(api: OpenClawPluginApi) {
               }
             })();
           }
+          // SS3: a WEAK/ambiguous match → advise composing a fresh recipe from the
+          // skill stdlib instead of forcing the weak match. Gate on the LIVE MARGIN
+          // of the score distribution (J16: never DEFAULT_THRESHOLD+3 / second>=2) —
+          // the top match is "weak" when its lead over the field is within the
+          // field's own spread (mean + 1 std). A sole match stands out trivially.
+          if (outcome.confidence !== "high" && effortGuidance !== null) {
+            const scores = (outcome.matches ?? [])
+              .map((m) => m.score)
+              .filter((s): s is number => typeof s === "number");
+            if (scores.length >= 1) {
+              const [top, ...rest] = scores;
+              const mean = rest.length ? rest.reduce((a, b) => a + b, 0) / rest.length : 0;
+              const std = rest.length
+                ? Math.sqrt(rest.reduce((a, b) => a + (b - mean) ** 2, 0) / rest.length)
+                : 0;
+              const standsOut = rest.length === 0 ? true : top > mean + std;
+              if (!standsOut) {
+                parts.push(
+                  `<recipe_low_confidence>The best recipe match is weak/ambiguous (its lead over the field is within the field's spread). Before committing to it, consider COMPOSING a fresh recipe from your skill stdlib: call \`prefrontal.recipe.compose\` with {sessionKey, query:"<this task>"} — it assembles \`invoke skill:\` steps from the skill library into a matchable recipe.</recipe_low_confidence>`,
+                );
+              }
+            }
+          }
         } else if (outcome.noMatch) {
           emitTrail(
             "warn",
@@ -1010,7 +1033,7 @@ export default function register(api: OpenClawPluginApi) {
           // reuse it instead of re-classifying (review finding 2026-05-29).
           if (effortGuidance !== null) {
             parts.push(
-              `<recipe_gap>No existing recipe matched (catalog=${outcome.catalogSize}). If this is repeatable work, COMPOSE one now: call \`prefrontal.kit.author\` with {slug,title,summary,tags,category,steps:[{title,tools,doneWhen,body}],parallelismGroups}. It becomes matchable next turn. To build a recipe FROM other recipes, add a \`uses: <slug>\` line to a step (runtime sub-kit) or a frontmatter \`composes: [slug,...]\` list (merged steps).</recipe_gap>`,
+              `<recipe_gap>No existing recipe matched (catalog=${outcome.catalogSize}). If this is repeatable work, COMPOSE one from your skill stdlib FIRST: call \`prefrontal.recipe.compose\` with {sessionKey, query:"<this task>"} — it searches the skill library and assembles \`invoke skill:\` steps into a matchable recipe. If no skills fit, author from scratch: \`prefrontal.recipe.author\` with {slug,title,summary,tags,category,steps:[{title,tools,doneWhen,body}],parallelismGroups}. Either becomes matchable next turn. To build a recipe FROM other recipes, add a \`uses: <slug>\` line to a step (runtime sub-kit) or a frontmatter \`composes: [slug,...]\` list (merged steps).</recipe_gap>`,
             );
           }
         }
