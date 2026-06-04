@@ -3,7 +3,7 @@ schema: recipe/1.0
 id: compile-paper
 title: Compile Paper to PDF
 category: writing
-summary: Markdown paper folder → Serra-styled PDF with figures and clickable refs
+summary: Markdown paper folder → J-Series-styled PDF with figures and clickable refs
 triggers: [compile paper, build pdf, paper to pdf, render paper, make pdf, publish paper]
 effort: deep
 tools: [read, glob, grep, exec, edit, write]
@@ -12,7 +12,7 @@ children: []
 
 ## Goal
 
-Take one paper folder under `~/Documents/AI_reports/Papers/` and produce a Serra-styled PDF — figures embedded, references clickable.
+Take one paper folder under `~/Documents/AI_reports/Papers/` and produce a J-Series-styled PDF — figures embedded, references clickable.
 
 ## When to Use
 
@@ -20,13 +20,13 @@ Take one paper folder under `~/Documents/AI_reports/Papers/` and produce a Serra
 - A previously built PDF is stale and needs a re-run after edits.
 - A new paper has been added in the same `J*_topic/` layout.
 
-Not for: bulk-building all 15 papers (separate recipe later), Group A `.latex` sources, Google-Docs sources.
+Not for: bulk-building all 15 papers (use `revise-publish-batch`, which composes this recipe across a series), Group A `.latex` sources, Google-Docs sources.
 
 ## Canonical references
 
 - Inventory + style + naming: `~/Documents/AI_reports/Papers/BLUEPRINT.md`
 - Build script (unchanged): `~/Documents/AI_reports/Papers/build-paper.sh`
-- Style: `~/Documents/AI_reports/Papers/serra-paper.sty`
+- Style: `~/Documents/AI_reports/Papers/jseries-paper.sty`
 - Converter: `~/Documents/AI_reports/Papers/md-to-tex.sh`
 
 ## Steps
@@ -36,7 +36,7 @@ Not for: bulk-building all 15 papers (separate recipe later), Group A `.latex` s
 **Tools:** read, glob
 **Done when:** Latest dated `.md` chosen; figures + `diagram-suggestions.md` enumerated
 
-`ls` the target folder. Pick the most recent `YYYY-MM-DD-*.md` (highest date, highest version). Enumerate figures by globbing `fig-*.{png,jpg,pdf}` at the folder root and any files in `images/` / `diagrams/`. Note whether `diagram-suggestions.md` exists.
+`ls` the target folder. Pick the **genuinely latest** version — NOT just the highest-dated filename. Most paper folders also hold an UNDATED `<topic>.md` (e.g. `curiosity-motivation.md`, `corporate-swarm.md`) that is frequently the real current version with a higher `vX.Y` in its header than any dated file. Compare version headers across the dated `YYYY-MM-DD-codename-vX.Y.md` files and the undated `<topic>.md`, then pick the highest. Ignore supporting files (`sota-expansion-*`, `*-review-*`, `*-critique*`, `*-references*`, `*-synthesis*`, `*-brief*`, `gemini-*`). Enumerate figures by globbing `fig-*.{png,jpg,pdf}` at the folder root and any files in `images/` / `diagrams/`. Note whether `diagram-suggestions.md` exists.
 
 ### 2. Plan figures
 
@@ -100,9 +100,9 @@ Report:
 
 ## Constraints
 
-- One paper per run. Do not auto-fan-out to the rest of `Papers/` without an explicit user request — bulk orchestration is out of scope.
+- One paper per run. Do not auto-fan-out to the rest of `Papers/` without an explicit user request — bulk orchestration belongs to `revise-publish-batch`.
 - Do NOT rewrite `.md` content. The recipe compiles, it does not edit.
-- Do NOT touch `build-paper.sh` or `serra-paper.sty` from inside the recipe.
+- Do NOT touch `build-paper.sh` or `jseries-paper.sty` from inside the recipe.
 - Filename violations: ask the user before renaming the `.md`.
 
 ## Safety Notes
@@ -115,3 +115,7 @@ Report:
 - **Silent `paper.tex`:** Previous runs (J3) produced `paper.tex` instead of the dated name. `md-to-tex.sh` now fails fast on bad filenames so this can't happen.
 - **Broken refs:** Hand-entered `.bib` entries without URLs make every citation a dead link. The enrichment step is per-entry isolated so one lookup failure doesn't block the build.
 - **Missing figures:** Pandoc happily emits `\includegraphics{fig-X.png}` for a path that doesn't exist; the PDF builds with `!! ERROR` markers instead. Step 2 surfaces the gap before step 6.
+- **ASCII box-art diagrams (J8 pilot):** A markdown architecture diagram drawn in box-drawing glyphs (`─ │ ┌ ┐ ▼`) emits ~hundreds of undefined-Unicode errors under pdflatex. Convert it to a real TikZ figure compiled standalone to `images/<name>.pdf` and embed — don't ship the ASCII.
+- **Tall figure overflows the footer (J8 pilot):** A portrait diagram triggers `Float too large for page by Npt` and the caption collides with the `J-Series — YYYY` footer. Always constrain embeds with `\includegraphics[width=\linewidth,height=0.85\textheight,keepaspectratio]{...}` so no figure exceeds the text height.
+- **Wrong base version:** "Latest = highest-dated filename" picks a stale base when an undated `<topic>.md` is the real current version (J8: `curiosity-motivation.md` was v6.0 vs the dated v1.0). Step 1 now compares version headers, not filename dates.
+- **Dropped code blocks (J2 full run):** `jseries-paper.sty` ships no pandoc syntax-highlighting preamble, so a paper with fenced code blocks emits `Shaded`/`Highlighting` undefined (~50 undefined control sequences) and the code silently vanishes from the PDF. Fix per-build: inject pandoc's `fancyvrb`/`framed` `Shaded`+`Highlighting` environments, the `*Tok` token macros, and `\DeclareUnicodeCharacter` for any non-ASCII glyphs (≤ ≈ × → · κ †) into the generated `.tex` preamble between `\usepackage{jseries-paper}` and `\begin{document}`. These injections are lost if `md-to-tex.sh` is re-run — the durable fix is to fold the highlighting preamble into `jseries-paper.sty` (toolchain change, needs the owner's OK).
