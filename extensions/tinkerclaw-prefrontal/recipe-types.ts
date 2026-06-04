@@ -28,9 +28,11 @@ export interface StepIo {
 
 const DIRECTIVE_RE = /^(out|in):\s*(.+)$/;
 // Other leading step-body directives (the runner parses these itself). We skip
-// past them when scanning for io so directive ORDER (io vs uses/loop) never
-// matters, and never treat them as prose that ends the io block.
-const OTHER_DIRECTIVE_RE = /^(uses|loop):/i;
+// past them when scanning for io so directive ORDER (io vs uses/loop/invoke)
+// never matters, and never treat them as prose that ends the io block.
+// `invoke skill:` (SS3) is a sibling directive (keyword + " skill:"), so the
+// pattern matches that two-word form, not a bare `invoke:`.
+const OTHER_DIRECTIVE_RE = /^(?:uses|loop):|^invoke\s+skill:/i;
 // A typed-port value must be a JSON object/array. This guards against a prose
 // line that merely begins with "out:"/"in:" (e.g. "out: of scope, skip") — such
 // a line is left as prose, NOT parsed (and never throws the whole run).

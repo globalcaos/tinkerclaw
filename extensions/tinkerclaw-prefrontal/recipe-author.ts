@@ -24,6 +24,8 @@ export interface RecipeStepSpec {
   out?: JsonSchema;
   /** SS1: optional named input ports bound from prior steps' typed outputs. */
   in?: Port[];
+  /** SS3: if set, this step invokes a stdlib skill primitive by id (`invoke skill:`). */
+  invokeSkill?: string;
 }
 
 export interface RecipeSpec {
@@ -241,7 +243,9 @@ export function buildRecipeMd(spec: RecipeSpec): string {
     // SS1: typed-port directives lead the step body (single-line JSON), mirroring `uses:`.
     if (st.out !== undefined) body.push(`out: ${JSON.stringify(st.out)}`);
     if (st.in !== undefined) body.push(`in: ${JSON.stringify(st.in)}`);
-    if (st.out !== undefined || st.in !== undefined) body.push("");
+    // SS3: invoke a stdlib skill primitive inline (sibling directive of out:/in:/uses:).
+    if (st.invokeSkill) body.push(`invoke skill: ${st.invokeSkill}`);
+    if (st.out !== undefined || st.in !== undefined || st.invokeSkill) body.push("");
     if (st.tools && st.tools.length > 0) body.push(`**Tools:** ${st.tools.join(", ")}`);
     if (st.doneWhen) body.push(`**Done when:** ${st.doneWhen}`);
     if (st.tools?.length || st.doneWhen) body.push("");
