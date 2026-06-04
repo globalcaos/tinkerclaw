@@ -114,10 +114,12 @@ export interface RecipeRunOptions {
    */
   onTag?: (ev: TagStamp) => void;
   /**
-   * SS1: recipe fitness success rate in [0,1] for the running kit, used by the
-   * J16 budget-derived re-dispatch bound (more reliable recipe → fewer schema
-   * correction attempts). Optional; absent → a 0.5 default. The caller
-   * (recipe-rpcs) already loads fitness and can thread it here.
+   * SS1: recipe fitness success rate in [0,1] for the running kit — an OPTIONAL
+   * input to the J16 budget-derived re-dispatch bound (more reliable recipe →
+   * fewer schema correction attempts). Absent → a 0.5 default, in which case the
+   * bound varies only with the step's value-of-work (required-field count). NOT
+   * yet threaded by the recipe-rpcs caller; wiring it (and a per-spawn token
+   * budget) is a documented SS1 follow-up to bring more J16 signals live in prod.
    */
   fitnessSuccessRate?: number;
   /**
@@ -1139,7 +1141,14 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         } catch {
           // fall back to the bare task on any read failure
         }
-        const spawnResult = await (opts._spawnStep ?? spawnStep)(taskWithContext, dispatch.label);
+        // SS1: deliver the corrective re-dispatch prompt (progressNote) to the
+        // subagent's TASK, not just the plan note — otherwise a schema re-dispatch
+        // re-spawns blind and cannot actually correct its output. A loop label
+        // rides along too (harmless context on which iteration this is).
+        const taskForSpawn = progressNote
+          ? `${taskWithContext}\n\n---\n${progressNote}`
+          : taskWithContext;
+        const spawnResult = await (opts._spawnStep ?? spawnStep)(taskForSpawn, dispatch.label);
         if (!spawnResult.ok) {
           return { ok: false, note: `spawn failed: ${spawnResult.error ?? "unknown"}` };
         }

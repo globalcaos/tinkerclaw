@@ -66,6 +66,16 @@ describe("parseStepIoDirectives", () => {
   it("throws a clear error on malformed directive JSON", () => {
     expect(() => parseStepIoDirectives("out: {not json}")).toThrow(/out:.*JSON/i);
   });
+
+  it("skips a leading uses:/loop: directive and still reads out: (order-independent)", () => {
+    const body = 'loop: count 2\nout: {"type":"object"}\n\nprose';
+    expect(parseStepIoDirectives(body).out).toEqual({ type: "object" });
+  });
+
+  it("treats a prose line that merely starts with out:/in: as prose, never throwing", () => {
+    expect(parseStepIoDirectives("out: of scope for this step, skip it")).toEqual({});
+    expect(parseStepIoDirectives("in: the previous run we saw a flake")).toEqual({});
+  });
 });
 
 describe("stripStepIoDirectives", () => {
@@ -75,6 +85,12 @@ describe("stripStepIoDirectives", () => {
   });
   it("leaves an untyped body unchanged", () => {
     expect(stripStepIoDirectives("Do the thing.")).toBe("Do the thing.");
+  });
+  it("preserves a leading uses:/loop: directive while dropping io", () => {
+    const out = stripStepIoDirectives('out: {"type":"object"}\nuses: foo\n\nDo it.');
+    expect(out).toContain("uses: foo");
+    expect(out).toContain("Do it.");
+    expect(out).not.toContain("out:");
   });
 });
 

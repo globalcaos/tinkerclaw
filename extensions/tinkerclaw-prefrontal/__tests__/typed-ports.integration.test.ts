@@ -168,6 +168,13 @@ describe("typed ports end-to-end", () => {
     // One re-dispatch ⇒ step 0 spawned at least twice.
     expect(step1Calls).toBeGreaterThanOrEqual(2);
 
+    // The corrective re-dispatch prompt must reach the subagent's TASK (not just
+    // the plan note) — otherwise re-dispatch re-spawns blind and can't correct.
+    const correctiveTask = tasksSeen.find(
+      (t) => t.includes("Step 1/") && t.includes("did not satisfy the required schema"),
+    );
+    expect(correctiveTask).toBeDefined();
+
     // Step 2's task had the typed field bound (not the literal template).
     const step2Task = tasksSeen.find((t) => t.includes("Step 2/"));
     expect(step2Task).toBeDefined();

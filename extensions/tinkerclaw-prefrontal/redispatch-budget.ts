@@ -37,7 +37,9 @@ export function deriveRedispatchBudget(signals: RedispatchSignals): number {
 
   // affordability clamp: never plan more dispatches than the budget can pay for.
   const affordable =
-    signals.remainingTokenBudget != null && signals.estStepTokens
+    signals.remainingTokenBudget != null &&
+    signals.estStepTokens != null &&
+    signals.estStepTokens > 0
       ? Math.floor(signals.remainingTokenBudget / signals.estStepTokens)
       : Number.POSITIVE_INFINITY;
 
