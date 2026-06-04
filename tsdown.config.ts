@@ -56,7 +56,12 @@ function buildInputOptions(options: InputOptionsArg): InputOptionsReturn {
       return true;
     }
     if (log.code === "UNRESOLVED_IMPORT") {
-      return normalizedLogHaystack(log).includes("extensions/");
+      const haystack = normalizedLogHaystack(log);
+      // node-llama-cpp is an undeclared optional native module, imported lazily
+      // via dynamic import() in src/memory/node-llama.ts. Rolldown already
+      // externalizes unresolved imports correctly — don't fail the build over
+      // an optional dep that is resolved (or gracefully absent) at runtime.
+      return haystack.includes("extensions/") || haystack.includes("node-llama-cpp");
     }
     if (log.code !== "EVAL") {
       return false;
