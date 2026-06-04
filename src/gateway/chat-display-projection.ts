@@ -10,6 +10,17 @@ import { isSuppressedControlReplyText } from "./control-reply-text.js";
 
 export const DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS = 8_000;
 
+// FORK 2026-06-04: visible assistant/user TEXT must not be cut by the display
+// char cap — that silently dropped the tail (🧠 AMYGDALA / 🌿 FRACTAL) of long
+// structured answers, on the live stream AND on every reload. The 8_000 cap is
+// kept for collapsed NOISE (thinking, tool partialJson/arguments). Visible text
+// is bounded instead by the per-message byte backstop
+// (CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 KB in server-methods/chat.ts) plus
+// the overall history byte budget — those are the real ceilings. 100_000 chars
+// sits comfortably under 128 KB so the byte cap stays authoritative and real
+// answers are never truncated. See the response-truncation-bookmark memory.
+export const DEFAULT_CHAT_HISTORY_ANSWER_MAX_CHARS = 100_000;
+
 type RoleContentMessage = {
   role: string;
   content?: unknown;
@@ -68,13 +79,15 @@ function sanitizeChatHistoryContentBlock(
   const preserveExactToolPayload =
     opts?.preserveExactToolPayload === true || isToolHistoryBlockType(entry.type);
   const maxChars = opts?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS;
+  // Visible text/content is bounded by the byte backstop, not the noise cap.
+  const answerMax = Math.max(maxChars, DEFAULT_CHAT_HISTORY_ANSWER_MAX_CHARS);
   if (typeof entry.text === "string") {
     const stripped = stripInlineDirectiveTagsForDisplay(entry.text);
     if (preserveExactToolPayload) {
       entry.text = stripped.text;
       changed ||= stripped.changed;
     } else {
-      const res = truncateChatHistoryText(stripped.text, maxChars);
+      const res = truncateChatHistoryText(stripped.text, answerMax);
       entry.text = res.text;
       changed ||= stripped.changed || res.truncated;
     }
@@ -85,7 +98,7 @@ function sanitizeChatHistoryContentBlock(
       entry.content = stripped.text;
       changed ||= stripped.changed;
     } else {
-      const res = truncateChatHistoryText(stripped.text, maxChars);
+      const res = truncateChatHistoryText(stripped.text, answerMax);
       entry.content = res.text;
       changed ||= stripped.changed || res.truncated;
     }
@@ -266,13 +279,14 @@ function sanitizeChatHistoryMessage(
     }
   }
 
+  const answerMax = Math.max(maxChars, DEFAULT_CHAT_HISTORY_ANSWER_MAX_CHARS);
   if (typeof entry.content === "string") {
     const stripped = stripInlineDirectiveTagsForDisplay(entry.content);
     if (preserveExactToolPayload) {
       entry.content = stripped.text;
       changed ||= stripped.changed;
     } else {
-      const res = truncateChatHistoryText(stripped.text, maxChars);
+      const res = truncateChatHistoryText(stripped.text, answerMax);
       entry.content = res.text;
       changed ||= stripped.changed || res.truncated;
     }
@@ -299,7 +313,7 @@ function sanitizeChatHistoryMessage(
       entry.text = stripped.text;
       changed ||= stripped.changed;
     } else {
-      const res = truncateChatHistoryText(stripped.text, maxChars);
+      const res = truncateChatHistoryText(stripped.text, answerMax);
       entry.text = res.text;
       changed ||= stripped.changed || res.truncated;
     }
