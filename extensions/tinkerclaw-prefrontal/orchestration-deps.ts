@@ -9,11 +9,13 @@
  * chat.history path the round-table + overseer already use — no new transport,
  * shares the cc-bridge billing harness + fan-out budget).
  *
- * ⚠️ RESTART-UNVERIFIED: the gateway-call sequence here is unit-tested against a
- * MOCK callGateway and is type-clean, but it has NOT been run against the live
- * gateway (no restart this arc). The extraction logic + call order are verified;
- * the live spawn/wait/history contract is mirrored from reasoning-runtime.ts but
- * must be smoke-verified at the next restart window before it's trusted in prod.
+ * Live-verify (2026-06-04): the no-spawn orchestrate path was confirmed live; the
+ * agent()-spawn path initially failed with `missing scope: operator.admin` — the
+ * loopback `callGateway` was requesting least-privilege `[]` scopes, but
+ * fork.subagents.spawn is admin-only. Fixed by pinning `scopes:["operator.admin"]`
+ * on the loopback calls (see ADMIN_SCOPES below). reasoning-runtime.ts /
+ * overseer-runtime.ts / curiosity-interestingness.ts carry the SAME latent bug
+ * (bare callGateway spawn with no scopes) — they just haven't been exercised yet.
  */
 
 import { createOrchestrationRuntime, type AgentOpts } from "./orchestration-runtime.js";
@@ -23,7 +25,18 @@ export type CallGateway = <T>(args: {
   method: string;
   params?: unknown;
   timeoutMs?: number;
+  /**
+   * Operator scopes the loopback should request at its connect handshake. A
+   * loopback `callGateway` opens a FRESH connection that negotiates its own
+   * scopes — the outer caller's scope does NOT propagate. fork.subagents.spawn
+   * is admin-only (unclassified → default-deny → ADMIN_SCOPE), so the spawn
+   * loopback must request operator.admin explicitly (mirrors how
+   * scripts/openclaw-spawn-subagent.mjs authorizes its spawn).
+   */
+  scopes?: string[];
 }) => Promise<T>;
+
+const ADMIN_SCOPES = ["operator.admin"];
 
 interface HistoryMessage {
   role?: string;
@@ -95,6 +108,7 @@ export async function spawnTextVia(
       expectsCompletionMessage: false,
     },
     timeoutMs: (runTimeoutSeconds + 10) * 1000,
+    scopes: ADMIN_SCOPES, // fork.subagents.spawn is admin-only; the loopback must request it
   });
   if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) {
     throw new Error(`orchestration spawn failed: ${spawn?.note ?? "no childSessionKey/runId"}`);
@@ -104,6 +118,7 @@ export async function spawnTextVia(
     method: "agent.wait",
     params: { runId, timeoutMs: runTimeoutSeconds * 1000 },
     timeoutMs: runTimeoutSeconds * 1000 + 5_000,
+    scopes: ADMIN_SCOPES,
   });
   if (wait?.status === "error") throw new Error(`orchestration run errored: ${wait.error ?? "?"}`);
   if (wait?.status === "timeout") return "";
@@ -111,6 +126,7 @@ export async function spawnTextVia(
     method: "chat.history",
     params: { sessionKey: childSessionKey, limit: 30 },
     timeoutMs: 10_000,
+    scopes: ADMIN_SCOPES,
   });
   return extractLastAssistantText(hist?.messages);
 }
