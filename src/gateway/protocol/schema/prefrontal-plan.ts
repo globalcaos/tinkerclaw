@@ -18,7 +18,12 @@ export const PlanStepSchema = Type.Object(
     title: Type.String({ minLength: 1, maxLength: 200 }),
     status: StepStatusSchema,
     note: Type.Optional(Type.String({ maxLength: 4000 })),
+    // Human-readable ≤500-char prose digest (display only; unchanged behavior).
     artifact: Type.Optional(Type.String({ maxLength: 500 })),
+    // SS1: the full validated typed output when the step declared an `out:` schema.
+    // Not length-bounded — this is the canonical value downstream steps bind to.
+    output: Type.Optional(Type.Unknown()),
+    outputKind: Type.Optional(Type.Literal("json")),
     startedAt: Type.Optional(Type.String({ format: "date-time" })),
     completedAt: Type.Optional(Type.String({ format: "date-time" })),
   },
