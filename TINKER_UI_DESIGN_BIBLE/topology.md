@@ -2,8 +2,8 @@
 file: topology.md
 purpose: What runs where, what talks to what, what's bundled vs separate
 audience: AI
-last_verified: 2026-06-02
-last_verified_commit: 06f8647fdc
+last_verified: 2026-06-04
+last_verified_commit: 24237e0cd22
 single_owner: yes — process map, plugin inventory, channel inventory, workspace symlinks, fork RPC-bundle registration live here
 see_also: flows.md (how they talk), config-shape.md (what configures them), probes.md (how to call the RPCs)
 verify:
@@ -26,6 +26,10 @@ verify:
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.strategy.switch.list"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
   - name: U6 fork.skill.search RPC registered + answers (query required)
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.skill.search","--params","{\"query\":\"x\",\"k\":1}"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
+  - name: SS3 fork.skill.put RPC + semantic fork.skill.search wired (resolveSkillEmbedFn, DRY with the consolidation cron)
+    cmd: grep -q '"fork.skill.put"' ~/src/tinkerclaw/src/fork/skill-rpc.ts && grep -q "resolveSkillEmbedFn" ~/src/tinkerclaw/src/fork/skill-rpc.ts
+  - name: SS3 single-owner — prefrontal.recipe.compose lives in the prefrontal extension, NOT topology's fork bundles
+    cmd: grep -q '"prefrontal.recipe.compose"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && ! grep -q "prefrontal.recipe.compose" ~/src/tinkerclaw/src/gateway/server-methods.ts
   - name: U3 fork.memory.search RPC registered + answers (query required, temporalMode)
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.memory.search","--params","{\"query\":\"x\",\"temporalMode\":\"current\"}"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
   - name: U7/U9/U10 new component files present on disk
@@ -77,18 +81,20 @@ All fork RPCs are spread into `coreGatewayHandlers` in `src/gateway/server-metho
 
 The OSS-harness upgrade wave (develop `06f8647fdc` on top of `70ad58e45d`) added/extended these fork bundles. The full upgrade roadmap is `docs/notes/2026-05-30-papers-coverage-and-oss-roadmap.md` Part 3 in the jarvis-icu repo.
 
-| Bundle export                 | Import path (`src/…`)                       | Wire methods                                                                             | Upgrade      | Status                                                        |
-| ----------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------- |
-| `forkSubagentsHandlers`       | `fork/subagents-rpc.js`                     | `fork.subagents.spawn`                                                                   | —            | DEPLOYED                                                      |
-| `forkPrefrontalStateHandlers` | `fork/prefrontal-state-rpc.js`              | prefrontal recipe-state + trail events                                                   | —            | DEPLOYED                                                      |
-| `forkCuriosityHandlers`       | `fork/curiosity-rpc.js`                     | `fork.curiosity.logGap`, `fork.curiosity.topGaps`, `fork.curiosity.resolveGap`           | U2 (J8)      | DEPLOYED                                                      |
-| `forkOverseerHandlers`        | `fork/overseer-runtime.js`                  | overseer activate/deactivate/status                                                      | —            | DEPLOYED                                                      |
-| `forkReasoningHandlers`       | `fork/reasoning-runtime.js`                 | `fork.reasoning.search`                                                                  | U10 (J3↔J13) | DEPLOYED (RPC registered; runs a model — NOT in verify suite) |
-| `forkStrategyHandlers`        | `gateway/server-methods/engram-strategy.js` | `fork.strategy.switch.list`, `fork.strategy.switch.apply`, `fork.strategy.switch.review` | U4 (J5)      | DEPLOYED + VERIFIED-LIVE                                      |
-| `forkSkillHandlers`           | `fork/skill-rpc.js`                         | `fork.skill.search`, `fork.skill.recordOutcome`                                          | U6 (J5+J2)   | DEPLOYED + VERIFIED-LIVE                                      |
-| `forkMemoryHandlers`          | `fork/memory-rpc.js`                        | `fork.memory.search` (+ `fork.engram.consolidate.run`)                                   | U3 (J2+J14)  | DEPLOYED + VERIFIED-LIVE                                      |
+| Bundle export                 | Import path (`src/…`)                       | Wire methods                                                                             | Upgrade                | Status                                                        |
+| ----------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------- |
+| `forkSubagentsHandlers`       | `fork/subagents-rpc.js`                     | `fork.subagents.spawn`                                                                   | —                      | DEPLOYED                                                      |
+| `forkPrefrontalStateHandlers` | `fork/prefrontal-state-rpc.js`              | prefrontal recipe-state + trail events                                                   | —                      | DEPLOYED                                                      |
+| `forkCuriosityHandlers`       | `fork/curiosity-rpc.js`                     | `fork.curiosity.logGap`, `fork.curiosity.topGaps`, `fork.curiosity.resolveGap`           | U2 (J8)                | DEPLOYED                                                      |
+| `forkOverseerHandlers`        | `fork/overseer-runtime.js`                  | overseer activate/deactivate/status                                                      | —                      | DEPLOYED                                                      |
+| `forkReasoningHandlers`       | `fork/reasoning-runtime.js`                 | `fork.reasoning.search`                                                                  | U10 (J3↔J13)           | DEPLOYED (RPC registered; runs a model — NOT in verify suite) |
+| `forkStrategyHandlers`        | `gateway/server-methods/engram-strategy.js` | `fork.strategy.switch.list`, `fork.strategy.switch.apply`, `fork.strategy.switch.review` | U4 (J5)                | DEPLOYED + VERIFIED-LIVE                                      |
+| `forkSkillHandlers`           | `fork/skill-rpc.js`                         | `fork.skill.search` (semantic, SS3), `fork.skill.recordOutcome`, `fork.skill.put` (SS3)  | U6 (J5+J2) · SS3 (J16) | DEPLOYED + VERIFIED-LIVE                                      |
+| `forkMemoryHandlers`          | `fork/memory-rpc.js`                        | `fork.memory.search` (+ `fork.engram.consolidate.run`)                                   | U3 (J2+J14)            | DEPLOYED + VERIFIED-LIVE                                      |
 
 **Param contracts (verify-relevant gotcha).** `fork.strategy.switch.list` takes NO params → returns `{ok:true,decisions:[]}` on an empty failure-state map. But `fork.skill.search` and `fork.memory.search` REQUIRE a `query` param — calling them with no params returns `GatewayClientRequestError: '…': 'query' required` (rc=1), NOT `{ok:true}`. So the verify blocks pass `--params '{"query":"x",…}'`. `fork.memory.search` additionally threads `temporalMode` (`current` | `as-of`) / `asOfTime` into manager-search for point-in-time recall (the U3 bi-temporal read path; the supersede WRITE path is owned by `lifecycles.md`/ENGRAM). The CLI prints a config-warnings banner to stderr (stale `whatsapp`/`telegram` plugin entries) before the JSON on stdout — assert a substring of stdout, never parse the whole stream.
+
+**SS3 — `forkSkillHandlers` gained `fork.skill.put`; `fork.skill.search` went semantic (develop `24237e0cd22`).** `forkSkillHandlers` now exports a THIRD method, `fork.skill.put` — the Voyager deposit RPC (`lib.put` was previously unexposed, so depositing a reusable skill was unimplementable via RPC). It is caller-driven (`prefrontal.recipe.compose` + the consolidation path call it). **Param-contract gotcha (the deposit gate fails CLOSED):** unlike search (which gates on a missing `query`), `fork.skill.put` gates on a malformed _skill object_ — a skill with an empty `name` or zero `steps` returns `INVALID_REQUEST` (rc=1, NOT `{ok:true}`); `promote:true` additionally requires a measured `candidateRate` and applies `clearsPromotionBar()` (a J16 live-margin bar — mean + 1σ of the library's current `successRate` distribution, never a frozen N; non-clearing returns `{ok:false,promoted:false}`). A valid deposit is reversible/idempotent for free (never-delete archive + same-name version-bump). And `fork.skill.search` now resolves an in-process embed fn via `resolveSkillEmbedFn` (`src/memory/engram/skill-embed.ts`, the SAME path the consolidation cron uses — DRY) → batched-embed + cosine ranking, keyword fallback only when no provider. **Single-owner boundary (do not duplicate here):** `prefrontal.recipe.compose` (compose-from-library) is registered in the prefrontal extension's `recipe-rpcs.ts`, NOT spread into `coreGatewayHandlers` in `src/gateway/server-methods.ts` — so it is NOT a fork bundle and stays OUT of this table; the `prefrontal.recipe.*` family + the `invoke skill:` directive behavior are owned by `subagents-and-recipes.md`.
 
 **Dead-code trap (U7 7D/7G).** `extensions/tinkerclaw-round-table/src/orchestrator-api.ts` calls two gateway RPCs that DO NOT EXIST yet: `agent.getBillingState` (7D budget clamp) and `plugins.getOrchestrator` (7G external orchestrator load). Both degrade gracefully — billing clamp becomes a no-op and `getOrchestrator(id)` falls back to the built-in `raacOrchestrator`. These bind only once those host RPCs land. Registered as a dead-code trap; full registry in `config-shape.md`.
 
