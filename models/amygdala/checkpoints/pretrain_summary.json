@@ -1,32 +1,32 @@
 {
   "prudence_a": {
-    "best_val_loss": 0.16699128028224497
+    "best_val_loss": 0.5165598852684978
   },
   "personality_a": {
-    "best_val_loss": 7.313498051243026e-6
+    "best_val_loss": 0.13019556499517426
   },
   "prudence_b": {
-    "best_val_loss": 0.1654424677876865
+    "best_val_loss": 0.510841905649475
   },
   "personality_b": {
-    "best_val_loss": 2.4319158942757094e-5
+    "best_val_loss": 0.13020334142678197
   },
   "prudence_c": {
-    "best_val_loss": 0.16544415389790254
+    "best_val_loss": 0.5059922013181679
   },
   "personality_c": {
-    "best_val_loss": 0.00015222389192786067
+    "best_val_loss": 0.13019546326710563
   },
   "prudence_d": {
-    "best_val_loss": 0.1656108582721037
+    "best_val_loss": 0.5600160250815401
   },
   "personality_d": {
-    "best_val_loss": 3.354863375694977e-6
+    "best_val_loss": 0.13019148781632367
   },
   "prudence_e": {
-    "best_val_loss": 0.16546866595745086
+    "best_val_loss": 0.5207788812608685
   },
   "personality_e": {
-    "best_val_loss": 9.599780536090667e-7
+    "best_val_loss": 0.13020252665445578
   }
 }

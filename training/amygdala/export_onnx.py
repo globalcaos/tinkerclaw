@@ -240,6 +240,7 @@ def export_personality(
             _PerABCWrapper(model),
             (dummy,),
             output_path,
+            dynamo=False,
             input_names=["sequence"],
             output_names=["behaviour_embedding"],
             dynamic_axes={
@@ -265,6 +266,7 @@ def export_personality(
             _PerDWrapper(model),
             (dummy_ctx, dummy_cur),
             output_path,
+            dynamo=False,
             input_names=["context", "current"],
             output_names=["behaviour_embedding"],
             dynamic_axes={
@@ -290,6 +292,7 @@ def export_personality(
             _PerEWrapper(model),
             (dummy_cur,),
             output_path,
+            dynamo=False,
             input_names=["current"],
             output_names=["behaviour_embedding"],
             dynamic_axes={
