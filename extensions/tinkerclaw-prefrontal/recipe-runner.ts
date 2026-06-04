@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import AjvPkg from "ajv";
 import { parse as parseYaml } from "yaml";
 import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
+import type { SkillLibrary } from "../../src/memory/engram/skill-library.js";
 import type { PlanStore } from "./plan-store.js";
 import {
   resolveStepRefs,
@@ -130,6 +131,19 @@ export interface RecipeRunOptions {
    * fork.prefrontal.trailEvent; absent → no-op (the runner stays gateway-decoupled).
    */
   onTrail?: (ev: TrailEvent) => void;
+  /**
+   * SS3: the stdlib skill library a step's `invoke skill:<id>` resolves against.
+   * Absent → an `invoke skill:` step fails closed (skill not found). The library
+   * is read-only here; the runner records outcomes via `onSkillOutcome` (it stays
+   * gateway-decoupled, like onTag/onTrail).
+   */
+  skillLibrary?: SkillLibrary;
+  /**
+   * SS3: fitness loopback — called on a skill step's terminal outcome
+   * (done/error) so the caller can route it to fork.skill.recordOutcome.
+   * Best-effort, fire-and-forget (never throws into the run).
+   */
+  onSkillOutcome?: (skillId: string, success: boolean) => void;
 }
 
 /** SS1: one classified trail event emitted by the runner (e.g. schema-mismatch). */
@@ -266,6 +280,8 @@ interface StepDispatch {
   loop?: LoopSpec;
   /** SS1: if set, this step's output is validated against this JSON-Schema. */
   outSchema?: JsonSchema;
+  /** SS3: if set, this step invokes a stdlib skill primitive (by id) inline. */
+  skillId?: string;
 }
 
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
@@ -281,7 +297,7 @@ function leadingDirectives(body: string): string[] {
       if (out.length > 0) break; // a blank after directives ends the block
       continue; // skip leading blank lines
     }
-    if (!/^(?:uses|loop):/i.test(line)) break; // first prose line ends the block
+    if (!/^(?:uses|loop):|^invoke\s+skill:/i.test(line)) break; // first prose line ends the block
     out.push(line);
     if (out.length >= 3) break;
   }
@@ -296,6 +312,17 @@ export function parseUsesDirective(body: string): string | undefined {
     if (!m) continue;
     const ref = m[1];
     return ref.includes("/") ? ref : `globalcaos/${ref}`;
+  }
+  return undefined;
+}
+
+/** SS3: a leading `invoke skill:<id>` directive calls a stdlib skill primitive
+ * inline (a sibling of `uses:`). Skill ids match `[A-Za-z0-9._-]`. Returns the
+ * id, or undefined when no invoke directive leads the (io-stripped) body. */
+export function parseInvokeSkillDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^invoke\s+skill:\s*([A-Za-z0-9._-]+)\s*$/i.exec(line);
+    if (m) return m[1];
   }
   return undefined;
 }
@@ -803,6 +830,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       const label = `${opts.kitRef}:step-${idx}`;
       const usesKitRef = parseUsesDirective(cleanBody);
       const loop = parseLoopDirective(cleanBody);
+      const skillId = parseInvokeSkillDirective(cleanBody);
       return {
         stepIndex: idx,
         title: step.title,
@@ -811,6 +839,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         usesKitRef,
         loop,
         outSchema: stepIo.out,
+        skillId,
       };
     }),
   );
