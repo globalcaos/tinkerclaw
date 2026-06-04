@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
 import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { resolveSkillEmbedFn } from "../memory/engram/skill-embed.js";
 import { recordSkillOutcome } from "../memory/engram/skill-invocation.js";
 import { createSkillLibrary } from "../memory/engram/skill-library.js";
 
@@ -75,9 +76,18 @@ export const forkSkillHandlers: GatewayRequestHandlers = {
     const baseDir = readStr(p, "baseDir");
 
     try {
-      const lib = createSkillLibrary({ baseDir: engramRoot(baseDir) });
+      // SS3: resolve the in-process embed fn (same path as the consolidation cron)
+      // so search is SEMANTIC when a provider is configured; undefined → the
+      // library's keyword fallback (tests/clones/headless), unchanged behavior.
+      const embedFn = await resolveSkillEmbedFn();
+      const lib = createSkillLibrary({
+        baseDir: engramRoot(baseDir),
+        ...(embedFn ? { embedFn } : {}),
+      });
       const skills = await lib.search(query, k, { excludeDeprecated });
-      log.info(`fork.skill.search query="${query}" k=${k} returned=${skills.length}`);
+      log.info(
+        `fork.skill.search query="${query}" k=${k} embed=${embedFn ? "semantic" : "keyword"} returned=${skills.length}`,
+      );
       respond(true, { ok: true, skills }, undefined);
     } catch (err) {
       console.error("[fork.skill.search] search failed", err);
