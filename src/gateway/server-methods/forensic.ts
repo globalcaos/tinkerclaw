@@ -41,8 +41,8 @@ function getModelPricing(model: string): { input: number; output: number } {
   return MODEL_PRICING.default;
 }
 
-// ─── Google API key (from auth-profiles) ───
-function getGoogleApiKey(): string | null {
+// ─── Anthropic API key (from auth-profiles) ───
+function getAnthropicApiKey(): string | null {
   try {
     const authPath = path.join(
       os.homedir(),
@@ -53,7 +53,7 @@ function getGoogleApiKey(): string | null {
       "auth-profiles.json",
     );
     const data = JSON.parse(fs.readFileSync(authPath, "utf-8"));
-    const profile = data?.profiles?.["google:default"];
+    const profile = data?.profiles?.["anthropic:api"];
     if (profile?.key) {
       return profile.key;
     }
@@ -75,42 +75,46 @@ function extractText(dump: any, component: string, key: string | undefined): str
   return result;
 }
 
-// ─── Call Gemini Flash for summarization (cheap + fast) ───
+// ─── Call Anthropic Haiku for summarization (cheap + reliable) ───
+// FORK 2026-05-31: was Gemini 2.0 Flash on the free `google:default` key, which
+// exhausts its daily free-tier quota (HTTP 429) and silently kills every
+// summarize button + double-click summary. Routed to Anthropic Haiku via the
+// `anthropic:api` key — restores this handler's original "via Anthropic Haiku"
+// intent and rides the same paid provider as the main session (~$0.001/call).
 async function summarizeText(text: string): Promise<string> {
-  const apiKey = getGoogleApiKey();
+  const apiKey = getAnthropicApiKey();
   if (!apiKey) {
-    throw new Error("No Google API key found in auth-profiles.json");
+    throw new Error("No anthropic:api key in auth-profiles.json — summarize needs one");
   }
 
-  // Truncate to ~60k chars (Gemini Flash has a large context window)
+  // Truncate to ~60k chars (Haiku has a large context window)
   const truncated = text.length > 60_000 ? text.slice(0, 60_000) + "\n…[truncated]" : text;
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [
-            {
-              text: "Summarize the following content in 2-3 concise sentences. Focus on what it does and why it matters.",
-            },
-          ],
-        },
-        contents: [{ parts: [{ text: truncated }] }],
-        generationConfig: { maxOutputTokens: 300 },
-      }),
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
     },
-  );
+    body: JSON.stringify({
+      model: "claude-haiku-4-5",
+      max_tokens: 300,
+      system:
+        "Summarize the following content in 2-3 concise sentences. Focus on what it does and why it matters.",
+      messages: [{ role: "user", content: truncated }],
+    }),
+  });
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Gemini API ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`Anthropic API ${res.status}: ${body.slice(0, 200)}`);
   }
 
   const data = (await res.json()) as any;
-  const candidate = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+  const candidate = data?.content?.find(
+    (b: { type?: string; text?: string }) => b?.type === "text",
+  )?.text;
   return candidate ?? "(no summary returned)";
 }
 
