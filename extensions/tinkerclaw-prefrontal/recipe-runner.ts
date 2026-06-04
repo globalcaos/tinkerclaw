@@ -782,7 +782,17 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
   try {
     compileSteps = kit.steps.map((s) => {
       const io = parseStepIoDirectives(s.body);
-      return { title: s.title, out: io.out, in: io.in };
+      // SS3 eager lift: an `invoke skill:` step with no explicit `out:` adopts the
+      // skill's outputSchema NOW (at compile) so checkPortWiring validates
+      // downstream `in:` ports against the skill's REAL output. (`uses:` resolves
+      // lazily in executeOnce; a skill's output contract must resolve at compile.)
+      let out = io.out;
+      if (!out && opts.skillLibrary) {
+        const sid = parseInvokeSkillDirective(stripStepIoDirectives(s.body));
+        const sk = sid ? opts.skillLibrary.read(sid) : undefined;
+        if (sk?.outputSchema) out = sk.outputSchema;
+      }
+      return { title: s.title, out, in: io.in };
     });
   } catch (err) {
     return {
@@ -817,20 +827,36 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       // the cleaned body so directive order (io vs uses/loop) doesn't matter.
       const stepIo = parseStepIoDirectives(step.body);
       const cleanBody = stripStepIoDirectives(step.body);
+      const skillId = parseInvokeSkillDirective(cleanBody);
+      // SS3: an `invoke skill:` step injects the skill's PROCEDURE into the task
+      // and adopts its output contract; a step-level `out:` still NARROWS it.
+      const skill = skillId ? opts.skillLibrary?.read(skillId) : undefined;
+      const effectiveOut = stepIo.out ?? (skill?.outputSchema as JsonSchema | undefined);
       const rawTask = `Kit: ${opts.kitRef}\nStep ${idx + 1}/${kit.steps.length}: ${step.title}\n\n${cleanBody}`;
       let task = substituteParameters(rawTask, params);
-      if (stepIo.out) {
+      if (skill) {
+        const ref = skill.verifiedCode
+          ? `\n\nReference implementation:\n${skill.verifiedCode}`
+          : "";
+        // Surface the input contract for visibility (a hard structured-input gate
+        // belongs to SS2's structured-call model — this execution path binds
+        // inputs as prompt text, so there is no structured input object to reject).
+        const inHint = skill.inputSchema
+          ? `\n\nExpected input shape:\n${JSON.stringify(skill.inputSchema, null, 2)}`
+          : "";
+        task += `\n\n---\nSkill ${skillId} procedure:\n${skill.steps.join("\n")}${ref}${inHint}`;
+      }
+      if (effectiveOut) {
         // Instruct the subagent to emit a single fenced json block matching the schema.
         task +=
           "\n\n---\n**Structured output required.** End your reply with one ```json fenced block " +
           "that validates against this JSON-Schema (and nothing after it):\n```json\n" +
-          JSON.stringify(stepIo.out, null, 2) +
+          JSON.stringify(effectiveOut, null, 2) +
           "\n```";
       }
       const label = `${opts.kitRef}:step-${idx}`;
       const usesKitRef = parseUsesDirective(cleanBody);
       const loop = parseLoopDirective(cleanBody);
-      const skillId = parseInvokeSkillDirective(cleanBody);
       return {
         stepIndex: idx,
         title: step.title,
@@ -838,7 +864,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         label,
         usesKitRef,
         loop,
-        outSchema: stepIo.out,
+        outSchema: effectiveOut,
         skillId,
       };
     }),
@@ -1057,6 +1083,17 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         } catch {}
       };
 
+      // SS3: fire the skill-fitness loopback exactly once on a skill step's
+      // terminal outcome. The resume-skip path returns its result directly (above)
+      // WITHOUT calling this, so an already-`done` step is never re-recorded.
+      const settleSkillOutcome = (success: boolean) => {
+        if (dispatch.skillId) {
+          try {
+            opts.onSkillOutcome?.(dispatch.skillId, success);
+          } catch {}
+        }
+      };
+
       const markError = async (note: string) => {
         try {
           await store.step({
@@ -1066,6 +1103,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             note,
           });
         } catch {}
+        settleSkillOutcome(false);
         return { stepIndex: dispatch.stepIndex, outcome: "error" as const };
       };
 
@@ -1084,6 +1122,20 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       const executeOnce = async (
         progressNote: string,
       ): Promise<{ ok: boolean; note: string | null }> => {
+        // SS3: an `invoke skill:` step fails CLOSED if the skill is absent or
+        // deprecated (no silent fallthrough to a procedure-less spawn). The
+        // procedure + output contract were already lifted into dispatch.task /
+        // dispatch.outSchema at construction, so a resolved skill just falls
+        // through to the normal spawn + SS1 typed-output path below.
+        if (dispatch.skillId) {
+          const skill = opts.skillLibrary?.read(dispatch.skillId);
+          if (!skill || skill.deprecated) {
+            return {
+              ok: false,
+              note: `invoke skill: ${dispatch.skillId} not found or deprecated`,
+            };
+          }
+        }
         if (dispatch.usesKitRef) {
           // Seed the chain with THIS kit's own ref so a self-`uses:` is caught at
           // depth 0 (review finding: an unseeded chain let a self-referencing
@@ -1241,6 +1293,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             );
           }
           await persistTypedArtifact(r.note, validation.value);
+          settleSkillOutcome(true);
           return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
         }
 
@@ -1249,6 +1302,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         // (idempotent, keeps the row done). For the sub-kit (uses:) path the
         // sub-plan's terminal result becomes the PARENT step's artifact.
         await persistArtifact(r.note);
+        settleSkillOutcome(true);
         return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
       }
 
@@ -1274,6 +1328,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       }
       const loopNote = `looped ${iter}× (${loop.mode}); last: ${(lastNote ?? "").slice(0, 80)}`;
       await persistArtifact(loopNote);
+      settleSkillOutcome(true);
       return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
     });
 

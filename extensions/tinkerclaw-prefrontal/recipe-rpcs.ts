@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { homedir } from "node:os";
 import path from "node:path";
 import AjvPkg from "ajv";
 import { fetch as undiciFetch } from "undici";
@@ -26,6 +27,7 @@ import {
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { createSubsystemLogger } from "../../src/logging/subsystem.js";
 import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
+import { createSkillLibrary } from "../../src/memory/engram/skill-library.js";
 import {
   skillMdToRecipeSpec,
   buildBridgedKitMd,
@@ -850,6 +852,18 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     "prefrontal.recipe.run": async (raw: unknown) => {
       const p = check<PrefrontalKitRunParams>(vRun, raw, "prefrontal.recipe.run");
 
+      // SS3: the stdlib skill library an `invoke skill:` step resolves against —
+      // the SAME on-disk engram library the fork.skill.* RPCs read (so a skill
+      // deposited via compose/extraction is invocable here). Read-only in the
+      // runner; outcomes route back via onSkillOutcome → fork.skill.recordOutcome.
+      // Needed at SEED time too: compileSteps lifts a skill's outputSchema so the
+      // port-wiring check validates downstream `in:` ports (also in dry-run).
+      const skillLibrary = createSkillLibrary({
+        baseDir:
+          deps.engramBaseDir ??
+          path.join(process.env.OPENCLAW_HOME ?? homedir(), ".openclaw", "engram"),
+      });
+
       if (p.dryRun) {
         // Dry-run: return the dispatch plan without spawning anything.
         const result = await runRecipe({
@@ -860,6 +874,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
           dryRun: true,
           ownRecipesDir: deps.ownRecipesDir,
           recipeInstallSandbox: deps.recipeInstallSandbox,
+          skillLibrary,
         });
         return {
           ok: result.ok,
@@ -886,6 +901,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         planStore: deps.planStore,
         ownRecipesDir: deps.ownRecipesDir,
         recipeInstallSandbox: deps.recipeInstallSandbox,
+        skillLibrary,
         // FORK 2026-05-30 (Upgrade 5): durable checkpointing. Auto-resume an
         // interrupted in_progress plan only when resume:true is explicitly passed
         // (no silent re-attach — the architect's policy). `resume` is now part of
@@ -974,6 +990,15 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
               sessionKey: ev.sessionKey,
               payload: ev.payload,
             },
+          }).catch(() => {});
+        },
+        // SS3: skill-fitness loopback — a skill step's terminal outcome routes to
+        // fork.skill.recordOutcome so the library's Laplace fitness compounds with
+        // real use. Same loopback callGateway + fire-and-forget pattern as above.
+        onSkillOutcome: (skillId, success) => {
+          void callGateway({
+            method: "fork.skill.recordOutcome",
+            params: { skillId, success },
           }).catch(() => {});
         },
       });
