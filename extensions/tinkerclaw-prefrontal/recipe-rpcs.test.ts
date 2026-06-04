@@ -739,4 +739,51 @@ describe("recipe-rpcs", () => {
       runKitSpy.mockRestore();
     }
   });
+
+  describe("prefrontal.recipe.compose (SS3)", () => {
+    it("mechanically composes a recipe of invoke skill: steps from search hits", async () => {
+      // stub fork.skill.search (the handler's only callGateway call)
+      callGatewaySpy.mockResolvedValueOnce({
+        skills: [
+          { skillId: "stdlib-summarize-text", name: "summarize-text" },
+          { skillId: "stdlib-web-search-and-cite", name: "web-search-and-cite" },
+        ],
+      });
+      const rpcs = createRecipeRpcs({
+        store,
+        baseUrl: "https://www.journeykits.ai",
+        apiKey: null,
+        recipeInstallSandbox: store.rootDirPublic(),
+        ownRecipesDir,
+      });
+      const res = await rpcs["prefrontal.recipe.compose"]({
+        sessionKey: "agent:main:main",
+        query: "summarize a document and cite sources",
+      });
+      expect(res.ok).toBe(true);
+      expect(res.composedSkills).toEqual(["stdlib-summarize-text", "stdlib-web-search-and-cite"]);
+      // persisted recipe.md carries the invoke skill: directives + the authorship stamp
+      const md = fs.readFileSync(path.join(ownRecipesDir, res.slug, "recipe.md"), "utf-8");
+      expect(md).toContain("invoke skill: stdlib-summarize-text");
+      expect(md).toContain("invoke skill: stdlib-web-search-and-cite");
+      expect(md).toContain('authoredBy: "jarvis-on-the-fly"');
+    });
+
+    it("returns ok:false when the skill search yields no hits", async () => {
+      callGatewaySpy.mockResolvedValueOnce({ skills: [] });
+      const rpcs = createRecipeRpcs({
+        store,
+        baseUrl: "https://www.journeykits.ai",
+        apiKey: null,
+        recipeInstallSandbox: store.rootDirPublic(),
+        ownRecipesDir,
+      });
+      const res = await rpcs["prefrontal.recipe.compose"]({
+        sessionKey: "agent:main:main",
+        query: "nothing relevant whatsoever",
+      });
+      expect(res.ok).toBe(false);
+      expect(String(res.note)).toMatch(/no matching skills/i);
+    });
+  });
 });

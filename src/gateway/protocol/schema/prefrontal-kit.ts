@@ -152,7 +152,21 @@ export const PrefrontalKitOrchestrateParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+// SS3 (2026-06-04): compose a recipe from stdlib skills. Mechanical assembly —
+// search the skill library for `query`, emit one `invoke skill:` step per hit in
+// rank order, then validate + persist + snapshot as an authored recipe.
+export const PrefrontalKitComposeParamsSchema = Type.Object(
+  {
+    sessionKey: Type.String({ minLength: 1, maxLength: 200 }),
+    query: Type.String({ minLength: 1, maxLength: 4000 }),
+    k: Type.Optional(Type.Integer({ minimum: 1, maximum: 12 })),
+    label: Type.Optional(Type.String({ maxLength: 120 })),
+  },
+  { additionalProperties: false },
+);
+
 export type PrefrontalKitAuthorParams = Static<typeof PrefrontalKitAuthorParamsSchema>;
+export type PrefrontalKitComposeParams = Static<typeof PrefrontalKitComposeParamsSchema>;
 export type PrefrontalKitMatchParams = Static<typeof PrefrontalKitMatchParamsSchema>;
 export type PrefrontalKitSearchParams = Static<typeof PrefrontalKitSearchParamsSchema>;
 export type PrefrontalKitGetParams = Static<typeof PrefrontalKitGetParamsSchema>;
