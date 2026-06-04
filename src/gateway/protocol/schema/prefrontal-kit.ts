@@ -137,6 +137,21 @@ export const PrefrontalKitMatchParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+// SS0 (2026-06-04): run a Jarvis-authored orchestration script natively. `script`
+// is the async-function BODY with agent/parallel/pipeline/phase/log/args in scope
+// (the native replacement for the borrowed Claude Code Workflow tool). Same trust
+// boundary as prefrontal.recipe.run — Jarvis's own self-hosted gateway, a single
+// trusted principal; NOT a sandbox (the script has Jarvis's privileges by design).
+export const PrefrontalKitOrchestrateParamsSchema = Type.Object(
+  {
+    sessionKey: Type.String({ minLength: 1, maxLength: 200 }),
+    script: Type.String({ minLength: 1, maxLength: 100000 }),
+    args: Type.Optional(Type.Unknown()),
+    label: Type.Optional(Type.String({ maxLength: 120 })),
+  },
+  { additionalProperties: false },
+);
+
 export type PrefrontalKitAuthorParams = Static<typeof PrefrontalKitAuthorParamsSchema>;
 export type PrefrontalKitMatchParams = Static<typeof PrefrontalKitMatchParamsSchema>;
 export type PrefrontalKitSearchParams = Static<typeof PrefrontalKitSearchParamsSchema>;
@@ -145,3 +160,4 @@ export type PrefrontalKitInstallParams = Static<typeof PrefrontalKitInstallParam
 export type PrefrontalKitPublishParams = Static<typeof PrefrontalKitPublishParamsSchema>;
 export type PrefrontalKitListParams = Static<typeof PrefrontalKitListParamsSchema>;
 export type PrefrontalKitRunParams = Static<typeof PrefrontalKitRunParamsSchema>;
+export type PrefrontalKitOrchestrateParams = Static<typeof PrefrontalKitOrchestrateParamsSchema>;

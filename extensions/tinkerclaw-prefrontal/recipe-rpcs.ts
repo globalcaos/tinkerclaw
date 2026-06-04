@@ -13,6 +13,7 @@ import {
   PrefrontalKitRunParamsSchema,
   PrefrontalKitAuthorParamsSchema,
   PrefrontalKitMatchParamsSchema,
+  PrefrontalKitOrchestrateParamsSchema,
   type PrefrontalKitSearchParams,
   type PrefrontalKitGetParams,
   type PrefrontalKitInstallParams,
@@ -21,6 +22,7 @@ import {
   type PrefrontalKitRunParams,
   type PrefrontalKitAuthorParams,
   type PrefrontalKitMatchParams,
+  type PrefrontalKitOrchestrateParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { createSubsystemLogger } from "../../src/logging/subsystem.js";
 import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
@@ -30,6 +32,8 @@ import {
   BRIDGED_SKILLS_DIRNAME,
 } from "./cc-skills-bridge.js";
 import { surfaceKitOutcome } from "./long-run-surface.js";
+import { createProductionOrchestrationRuntime } from "./orchestration-deps.js";
+import { runOrchestrationScript } from "./orchestration-script.js";
 import {
   applyMutationProposal,
   buildRewritePrompt,
@@ -64,6 +68,7 @@ const vList = ajv.compile(PrefrontalKitListParamsSchema);
 const vRun = ajv.compile(PrefrontalKitRunParamsSchema);
 const vAuthor = ajv.compile(PrefrontalKitAuthorParamsSchema);
 const vMatch = ajv.compile(PrefrontalKitMatchParamsSchema);
+const vOrchestrate = ajv.compile(PrefrontalKitOrchestrateParamsSchema);
 
 type Validator = ReturnType<typeof ajv.compile>;
 
@@ -994,6 +999,44 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         results: runResult.results,
         note: runResult.ok ? "kit runner completed; check plan board for step results" : undefined,
       };
+    },
+
+    // SS0 (2026-06-04): run a Jarvis-authored orchestration script natively over
+    // the A1 runtime (agent/parallel/pipeline/phase) — the native replacement for
+    // the borrowed Claude Code Workflow tool. Same trust boundary as recipe.run:
+    // Jarvis's own self-hosted gateway, a single trusted principal; the script runs
+    // with Jarvis's privileges (NOT a sandbox, by design). RESTART-UNVERIFIED — the
+    // production spawn path (orchestration-deps) mirrors reasoning-runtime.ts and is
+    // type-clean but awaits a live-restart smoke test.
+    "prefrontal.recipe.orchestrate": async (raw: unknown) => {
+      const p = check<PrefrontalKitOrchestrateParams>(
+        vOrchestrate,
+        raw,
+        "prefrontal.recipe.orchestrate",
+      );
+      const runtime = createProductionOrchestrationRuntime({
+        callGateway,
+        parentSessionKey: p.sessionKey,
+        onPhase: (title) => {
+          void callGateway({
+            method: "fork.prefrontal.setRecipe",
+            params: {
+              recipeId: p.label ?? "orchestrate",
+              stepName: title,
+              sessionKey: p.sessionKey,
+            },
+          }).catch(() => {});
+        },
+      });
+      const logs: string[] = [];
+      const result = await runOrchestrationScript(runtime, p.script, p.args, (message) => {
+        logs.push(message);
+        void callGateway({
+          method: "fork.prefrontal.trailEvent",
+          params: { kind: "orchestrate-log", message, sessionKey: p.sessionKey },
+        }).catch(() => {});
+      });
+      return { ok: true, result, logs };
     },
 
     // FORK 2026-05-29: compose a recipe on the fly. Validates the spec, builds a
