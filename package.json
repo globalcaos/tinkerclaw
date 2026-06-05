@@ -1232,6 +1232,14 @@
       "types": "./dist/plugin-sdk/zod.d.ts",
       "default": "./dist/plugin-sdk/zod.js"
     },
+    "./plugin-sdk/config-contracts": {
+      "types": "./dist/plugin-sdk/config-contracts.d.ts",
+      "default": "./dist/plugin-sdk/config-contracts.js"
+    },
+    "./plugin-sdk/text-utility-runtime": {
+      "types": "./dist/plugin-sdk/text-utility-runtime.d.ts",
+      "default": "./dist/plugin-sdk/text-utility-runtime.js"
+    },
     "./extension-api": "./dist/extensionAPI.js",
     "./cli-entry": "./openclaw.mjs"
   },

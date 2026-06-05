@@ -637,6 +637,20 @@ export async function spawnSubagentDirect(
   ctx: SpawnSubagentContext,
 ): Promise<SpawnSubagentResult> {
   const task = params.task;
+  // Load-bearing invariant: a subagent must NEVER be spawned without a real task.
+  // The single shared funnel rejects an empty/whitespace/non-string task by
+  // construction, so no caller (RPC, !spawn, sessions_spawn, or any future
+  // loopback such as the orchestration runtime's agent()/spawnTextVia) can ever
+  // spawn a billed, untrackable orphan child whose system prompt degrades to the
+  // literal "{{TASK_DESCRIPTION}}" placeholder. Validating here, not at each call
+  // site, makes the orphan impossible rather than merely unlikely.
+  if (typeof task !== "string" || task.trim() === "") {
+    return {
+      status: "error",
+      error:
+        "Refusing to spawn a subagent with no task. Pass a non-empty task describing what the subagent should do.",
+    };
+  }
   const label = params.label?.trim() || "";
   const requestedAgentId = params.agentId?.trim();
 

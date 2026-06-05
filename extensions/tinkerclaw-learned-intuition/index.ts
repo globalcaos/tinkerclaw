@@ -273,6 +273,12 @@ export default definePluginEntry({
     // Kick off init immediately
     ensureInit();
 
+    // FORK 2026-06-04: cache the Personality net's REAL situational embedding
+    // from the most recent tool-call evaluation, so the llm_output nudge writer
+    // can decode against it instead of a neutral 0.5 stub (which discarded the
+    // net entirely). Null until the first tool call of the session.
+    let lastPersonalityEmbedding: Float32Array | null = null;
+
     // -- Hook: before_tool_call --
     api.on(
       "before_tool_call",
@@ -309,6 +315,13 @@ export default definePluginEntry({
           );
 
           const modeTag = result.ruleBasedFallback ? "[rules]" : "[onnx]";
+
+          // FORK 2026-06-04: capture the net's real read of this situation so the
+          // personality nudge reflects what the net actually saw, not neutral 0.5.
+          const personEmb = result.evaluation?.personality?.combined_embedding;
+          if (personEmb && personEmb.length > 0) {
+            lastPersonalityEmbedding = personEmb;
+          }
 
           if (result.blocked) {
             // FORK 2026-05-30: AEGIS is the ABSOLUTE deterministic veto. A
@@ -352,14 +365,15 @@ export default definePluginEntry({
         // Generate personality nudge from target vector
         const targetVector = amygdalaConfig.personality.target_vector;
         if (targetVector.length > 0) {
-          // Use a neutral combined embedding as baseline (actual model output
-          // would come from the last evaluation, but we generate a fresh nudge
-          // based on the target vector drift from neutral)
-          const neutralEmbedding = new Float32Array(amygdalaConfig.personality.embedding_dim).fill(
-            0.5,
-          );
+          // FORK 2026-06-04: decode against the net's REAL combined_embedding from
+          // the last tool-call evaluation (cached above). Falls back to neutral 0.5
+          // only before any tool call has run this session. This is what makes the
+          // Personality NET actually steer the nudge, not just the static target.
+          const baselineEmbedding =
+            lastPersonalityEmbedding ??
+            new Float32Array(amygdalaConfig.personality.embedding_dim).fill(0.5);
           const nudge = decodePersonalityNudge(
-            neutralEmbedding,
+            baselineEmbedding,
             targetVector,
             amygdalaConfig.trust.alpha_personality,
           );
