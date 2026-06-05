@@ -43,6 +43,16 @@ export function createOrchestrationRuntime(deps: OrchestrationDeps) {
    * validated object (typed self-correction via SS1's bounded re-dispatch).
    */
   async function agent(prompt: string, opts?: AgentOpts): Promise<unknown> {
+    // Never spawn with an empty/garbage prompt. A prior stage that timed out
+    // chains '' and parallel/pipeline null-isolation chains null/undefined; if
+    // such a value reached deps.spawn it would create a taskless orphan child.
+    // Fail loudly here so the script surfaces the upstream gap instead.
+    if (typeof prompt !== "string" || prompt.trim() === "") {
+      throw new Error(
+        "orchestration agent(): empty prompt — refusing to spawn a taskless subagent. " +
+          "A prior stage likely timed out or returned empty; guard it before chaining.",
+      );
+    }
     if (opts?.schema) {
       return agentWithSchema((p) => deps.spawn(p, opts), prompt, opts.schema);
     }

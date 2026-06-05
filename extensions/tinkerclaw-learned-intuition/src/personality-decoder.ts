@@ -12,6 +12,9 @@ import type { PersonalityNudge } from "./types.js";
 /** Minimum |delta| to trigger a nudge for a dimension */
 const DRIFT_THRESHOLD = 0.15;
 
+/** Max number of nudges to fire per turn (highest-drift dimensions win) */
+const DEFAULT_TOP_K = 5;
+
 /** Human-readable nudge templates per dimension */
 const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
   humor: {
@@ -96,6 +99,7 @@ export function decodePersonalityNudge(
   combined: Float32Array,
   target: number[],
   alphaPers: number,
+  topK = DEFAULT_TOP_K,
 ): PersonalityNudge {
   const dim = Math.min(combined.length, target.length);
   const delta = new Float32Array(dim);
@@ -103,7 +107,7 @@ export function decodePersonalityNudge(
     delta[i] = (target[i] ?? 0.5) - (combined[i] ?? 0);
   }
 
-  const adjustments: string[] = [];
+  const candidates: Array<{ text: string; mag: number }> = [];
   const indexMap = getDimensionIndexMap(DEFAULT_TARGET_DIMENSIONS);
 
   for (const [name, indices] of indexMap) {
@@ -128,12 +132,21 @@ export function decodePersonalityNudge(
 
     if (dimDelta > DRIFT_THRESHOLD) {
       // Target is higher than current -> need to increase
-      adjustments.push(templates.low);
+      candidates.push({ text: templates.low, mag: dimDelta });
     } else if (dimDelta < -DRIFT_THRESHOLD) {
       // Current is higher than target -> need to decrease
-      adjustments.push(templates.high);
+      candidates.push({ text: templates.high, mag: -dimDelta });
     }
   }
+
+  // FORK 2026-06-04: fire only the top-K most-drifted dimensions instead of
+  // every dimension past threshold. A net that sits uniformly below target
+  // would otherwise fire ~16/17 templates at once (noise, not calibration);
+  // top-K surfaces the few dimensions drifting MOST relative to the rest.
+  // When the net learns to discriminate per-situation, top-K tracks the real
+  // drift automatically — no further change needed.
+  candidates.sort((a, b) => b.mag - a.mag);
+  const adjustments = candidates.slice(0, Math.max(0, topK)).map((c) => c.text);
 
   return {
     adjustments,

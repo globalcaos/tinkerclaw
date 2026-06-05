@@ -62,10 +62,18 @@ async function collectViolations() {
   const entrypoints = readEntrypoints();
   const exports = readPackageExports();
   const privateLocalOnlySubpaths = readPrivateLocalOnlySubpaths();
-  const files = (await collectTypeScriptFilesFromRoots(scanRoots, { includeTests: true })).toSorted(
-    (left, right) =>
-      normalizeRepoPath(repoRoot, left).localeCompare(normalizeRepoPath(repoRoot, right)),
-  );
+  // FORK 2026-06-05: skip build-excluded `*.disabled*` extension dirs so the lint
+  // matches the BUILD's scope. When the fork build-excludes an upstream extension
+  // (the remedy when upstream drops a subsystem the fork has replaced — e.g.
+  // whatsapp → tinkerclaw-whatsapp), the disabled dir's imports must NOT be flagged:
+  // they are never bundled, so a "missing export" there is not a real violation.
+  const DISABLED_DIR_RE = /(^|\/)[^/]+\.disabled[^/]*\//;
+  const files = (await collectTypeScriptFilesFromRoots(scanRoots, { includeTests: true }))
+    .filter((filePath) => !DISABLED_DIR_RE.test(normalizeRepoPath(repoRoot, filePath)))
+    .toSorted(
+      (left, right) =>
+        normalizeRepoPath(repoRoot, left).localeCompare(normalizeRepoPath(repoRoot, right)),
+    );
   const violations = [];
 
   for (const filePath of files) {
