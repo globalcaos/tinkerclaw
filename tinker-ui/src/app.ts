@@ -99,6 +99,13 @@ let streamMsgIdx = -1;
 let streamRunId: string | null = null;
 let streamProvider = "";
 let streamProfileId = "";
+// FORK 2026-06-04 — bug task-mpwfiot2 (Queuing a prompt): user prompts queued WHILE a turn is
+// streaming are held here (NOT in messages[]) until the turn finalizes, then flushed into
+// messages[] in correct chronological order. Keeping them out of messages[] during the turn is
+// what prevents the running turn's continuation/tool bubbles from landing after them — the
+// "queued prompt appears in the middle of the last answer (fixed by hard refresh)" bug.
+// Rendered as trailing bubbles by updateChat; flushed by the chat final/error/aborted handler.
+let pendingQueuedSends: Array<Record<string, unknown>> = [];
 /** Length of the last full delta text received (used to compute per-bubble
  * `_segmentStart` when a new bubble is created mid-stream — tool freeze or
  * >5s gap split). FORK 2026-05-09: replaced the global frozenTextEnd cursor
@@ -1156,6 +1163,13 @@ let activeTabId = (() => {
 const TAB_STORAGE_KEY = "tinker-tabs";
 const ACTIVE_TAB_STORAGE_KEY = "tinker-active-tab";
 const TAB_TITLE_INTERVAL = 5;
+// FORK 2026-06-04 — jarvis-upgrade task-mpzcjw6n-n45zs (Tab name summary): the sentinel icon
+// prefixed to AUTO-summarized tab names so they're visually distinct from fortune-cookie names
+// (zen/nature emoji), "🏠 Main" and "❤️ Heartbeat". Single-sourced here so it's trivially
+// swappable. Manual renames keep whatever the user types; auto-naming (periodic + the right-click
+// "Auto-name" action) both flow through generateTabTitle and get this prefix.
+const AUTO_NAME_ICON = "🏷️";
+let tabContextMenuEl: HTMLElement | null = null;
 
 function saveActiveTabId(): void {
   try {
@@ -1866,6 +1880,16 @@ function onFrame(f: unknown) {
           refreshTreemap();
           refreshTimelineRespectingMode();
           scheduleUnconfirmedPrune();
+          // FORK 2026-06-04 — bug task-mppceqsu-24yex (Tab context loads only on
+          // switching tabs): proactively hydrate every restored background tab's
+          // transcript so its content is present BEFORE the user clicks it (they used to
+          // be empty until switched to). Fire-and-forget, batched via allSettled to avoid
+          // a thundering herd of chat.history RPCs when many tabs are open.
+          void Promise.allSettled(
+            others
+              .filter((t) => t.isAttached && t.sessionKey && t.id !== activeTabId)
+              .map((t) => hydrateTab(t)),
+          );
           req("forensic.setMode", { enabled: true })
             .then((res: unknown) => {
               _forensicMode = res?.enabled ?? true;
@@ -2193,7 +2217,39 @@ function onEvent(evt: unknown) {
       }
       streamRunId = p.runId;
       // Update active run phase based on streaming content
-      const runInfo = activeRuns.get(p.runId);
+      let runInfo = activeRuns.get(p.runId);
+      if (!runInfo) {
+        // FORK 2026-06-04 — bug task-mpr2cego-unkak (Disappearing chat thinking indicator).
+        // A text delta is arriving for the VIEWED main session (guaranteed by the guard at
+        // the top of this handler) but there is NO activeRuns entry — the run was emptied
+        // prematurely (a stray/early lifecycle:end, the 3s debounce racing a slow next
+        // delta, or a runId we never saw a phase:start for) while Jarvis is demonstrably
+        // still emitting. A delta is authoritative proof the run is ALIVE, so SELF-HEAL:
+        // re-create a minimal entry and resume the tick. This follows done-signals.md R1
+        // (an authoritative live signal supersedes an advisory/debounced "done") and does
+        // NOT violate R2 (no UI stale-run watchdog): we only ever ADD a run on positive
+        // evidence of life, never force-clear one on a timer. The matching lifecycle:end /
+        // chat.final for this same runId still clears it normally.
+        const pendingTimeout = pendingRunDeletes.get(p.runId);
+        if (pendingTimeout) {
+          clearTimeout(pendingTimeout);
+          pendingRunDeletes.delete(p.runId);
+        }
+        runInfo = {
+          model: "",
+          provider: streamProvider || "",
+          authProfileId: streamProfileId || undefined,
+          startedAt: Date.now(),
+          lastEventAt: Date.now(),
+          sessionKey: typeof p.sessionKey === "string" ? p.sessionKey : sessionKey || undefined,
+          phase: "responding",
+        };
+        activeRuns.set(p.runId, runInfo);
+        sending = true;
+        saveActiveRuns();
+        startThinkingTick();
+        updatePrefrontalTree();
+      }
       if (runInfo) {
         const txt = p.message?.content?.[0]?.text ?? "";
         const isFractal =
@@ -2292,7 +2348,20 @@ function onEvent(evt: unknown) {
       }
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
-      // FORK: Un-queue any queued user messages on final/error
+      // FORK 2026-06-04 — bug task-mpwfiot2 (Queuing a prompt): the running turn ended, so any
+      // prompts queued during it now take their correct chronological place at the END of the
+      // transcript (matching the server's history order — the position a hard refresh always
+      // showed correctly). Flush the held bubbles into messages[] as normal user messages. They
+      // were kept OUT of messages[] until now so the turn's own continuation/tool bubbles could
+      // never land after them ("queued prompt in the middle of the last answer").
+      if (pendingQueuedSends.length > 0) {
+        for (const qm of pendingQueuedSends) {
+          delete qm._queued;
+          messages.push(qm);
+        }
+        pendingQueuedSends = [];
+      }
+      // Defensive: clear any _queued styling that slipped into messages[] directly.
       for (const m of messages) {
         if (m._queued) {
           delete m._queued;
@@ -3451,6 +3520,82 @@ async function loadChat() {
   // Title generation happens in send() on first prompt and every N prompts.
 }
 
+// FORK 2026-06-04 — bug task-mppceqsu-24yex (Tab context loads only on switching tabs).
+// Proactively hydrate a background/restored tab's transcript so its content is present
+// BEFORE the user switches to it. Previously every non-active tab was born empty
+// (freshTabState → messages:[]) and only fetched its history the moment it was clicked
+// (switchToTab → loadChat), so background tabs showed nothing until selected. This writes
+// straight into the tab's own TabState — never the active/global `messages` — mirroring
+// loadChat's background-tab write path (lines ~3380-3404). The on-switch loadChat()
+// remains the freshness refresh; this just removes the empty-until-clicked gap.
+async function hydrateTab(tab: Tab): Promise<void> {
+  if (!tab.sessionKey || !tab.isAttached || tab.id === activeTabId) {
+    return;
+  }
+  const ts = tabStates.get(tab.id) ?? freshTabState();
+  // Already has content — skip so we never clobber a tab the user already populated;
+  // on-switch loadChat() will refresh it for staleness.
+  if (ts.messages.length > 0) {
+    return;
+  }
+  const res = await req("chat.history", { sessionKey: tab.sessionKey, limit: 1000 }).catch(() => ({
+    messages: [],
+  }));
+  // The user may have switched INTO this tab mid-fetch — if it's now active, let
+  // loadChat() own the write (it sets globals + renders); don't double-write here.
+  if (tab.id === activeTabId) {
+    return;
+  }
+  const target = tabStates.get(tab.id) ?? ts;
+  target.messages = res.messages ?? [];
+  for (const m of target.messages) {
+    reconstructInjectionFields(m as Record<string, unknown>);
+    const rec = m as Record<string, unknown>;
+    if (rec.role === "user" && !rec._promptStartedAt) {
+      const t2 = rec.createdAtMs ?? rec.timestamp;
+      if (typeof t2 === "number") {
+        rec._promptStartedAt = t2;
+      } else if (typeof t2 === "string") {
+        const parsed = Date.parse(t2 as string);
+        if (!isNaN(parsed)) {
+          rec._promptStartedAt = parsed;
+        }
+      }
+    }
+  }
+  target.currentTurnNumber = target.messages.filter((m: unknown) => m.role === "user").length;
+  tabStates.set(tab.id, target);
+}
+
+// FORK 2026-06-04 — task-mpzcjw6n (auto-rename fix): generateTabTitle hardcoded
+// "qwen3:14b-q4_K_M", which is NOT installed on this box (only gemma4:26b + an embed model), so
+// every auto-name (the menu button AND the periodic titler) silently 404'd and looked broken.
+// Resolve an AVAILABLE ollama chat model dynamically (cached), excluding embedding models, so it
+// works regardless of which model is pulled. Returns null (→ caller skips) if ollama is down or
+// only embedding models exist.
+let _ollamaTitleModel: string | null | undefined = undefined;
+async function resolveOllamaTitleModel(): Promise<string | null> {
+  if (_ollamaTitleModel !== undefined) {
+    return _ollamaTitleModel;
+  }
+  try {
+    const res = await fetch("http://localhost:11434/api/tags")
+      .then((r) => r.json())
+      .catch(() => null);
+    const names: string[] = ((res?.models ?? []) as Array<{ name?: string }>)
+      .map((m) => m?.name ?? "")
+      .filter(Boolean);
+    const isEmbed = (n: string) => /embed/i.test(n);
+    // Prefer a fast small instruct model if present, else the first non-embedding model installed.
+    const preferred = ["qwen3:14b-q4_K_M", "qwen2.5:7b", "llama3.2:3b", "llama3.1:8b", "gemma4:26b"];
+    _ollamaTitleModel =
+      preferred.find((p) => names.includes(p)) ?? names.find((n) => !isEmbed(n)) ?? null;
+  } catch {
+    _ollamaTitleModel = null;
+  }
+  return _ollamaTitleModel;
+}
+
 async function generateTabTitle(tab: Tab) {
   if (!tab.sessionKey || tab.id === "tab-main") {
     return;
@@ -3459,9 +3604,13 @@ async function generateTabTitle(tab: Tab) {
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
   const tabMessages =
     tab.sessionKey === sessionKey ? messages : (tabStates.get(tab.id)?.messages ?? []);
-  // Collect last N Q&A pairs from messages
+  // FORK 2026-06-04 — task-mpzcjw6n-n45zs: recency-weighted sampling. We still take the last
+  // TAB_TITLE_INTERVAL Q&A pairs from the END of the transcript, but give the MOST RECENT turn a
+  // much bigger char budget than older ones so the summary tracks topic drift (the chat may have
+  // moved on from how it started). `processed` counts messages newest-first.
   const pairs: string[] = [];
   let count = 0;
+  let processed = 0;
   for (let i = tabMessages.length - 1; i >= 0 && count < TAB_TITLE_INTERVAL; i--) {
     const m = tabMessages[i];
     if (!m?.content) {
@@ -3478,7 +3627,10 @@ async function generateTabTitle(tab: Tab) {
     }
     const role = (m.role || "").toLowerCase();
     if (role === "user" || role === "assistant") {
-      pairs.unshift(`${role}: ${text.slice(0, 200)}`);
+      // Newest 2 messages (the latest user+assistant turn) get the lion's share of context.
+      const budget = processed < 2 ? 500 : 150;
+      pairs.unshift(`${role}: ${text.slice(0, budget)}`);
+      processed++;
       if (role === "user") {
         count++;
       }
@@ -3489,14 +3641,24 @@ async function generateTabTitle(tab: Tab) {
     return;
   }
 
-  const prompt = `Summarize this conversation in 1-3 words (short title, no quotes, no punctuation). Start with a relevant emoji. Example: "🔧 Fix auth bug". Here is the conversation:\n\n${pairs.join("\n")}`;
+  // FORK 2026-06-04 — task-mpzcjw6n (auto-rename fix): use an INSTALLED ollama model, not a
+  // hardcoded one that may be absent. Skip gracefully if none is available.
+  const titleModel = await resolveOllamaTitleModel();
+  if (!titleModel) {
+    console.log("[tabs] auto-name skipped — no ollama chat model installed (only embed/none)");
+    return;
+  }
+
+  // FORK 2026-06-04 — task-mpzcjw6n-n45zs: ask for the CURRENT topic, weighting recent messages,
+  // and NO emoji (we prepend the AUTO_NAME_ICON sentinel ourselves below).
+  const prompt = `Summarize what this conversation is CURRENTLY about in 1-3 words (a short tab title), weighting the MOST RECENT messages most heavily — the topic may have drifted from how it started. Reply with ONLY the title: no quotes, no punctuation, no emoji. Example: Fix auth bug. Here is the conversation (oldest to newest):\n\n${pairs.join("\n")}`;
 
   try {
     // Try local Ollama first (free, fast)
     const ollamaRes = await fetch("http://localhost:11434/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "qwen3:14b-q4_K_M", prompt, stream: false }),
+      body: JSON.stringify({ model: titleModel, prompt, stream: false }),
     })
       .then((r) => r.json())
       .catch(() => null);
@@ -3510,12 +3672,11 @@ async function generateTabTitle(tab: Tab) {
 
     console.log("[tabs] ollama response:", JSON.stringify(ollamaRes));
     if (title && title.length > 0 && title.length <= 40) {
-      // Preserve the original emoji prefix from the fortune cookie
-      const originalEmoji =
-        tab.title.match(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)\s*/u)?.[0] || "";
-      // Strip any emoji the LLM may have added
+      // FORK 2026-06-04 \u2014 task-mpzcjw6n-n45zs: auto-named tabs get the distinct AUTO_NAME_ICON
+      // sentinel (not the fortune-cookie emoji) so the user can tell auto-named tabs apart.
+      // Strip any emoji the LLM added despite the instruction, then prepend the sentinel.
       const stripped = title.replace(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)\s*/u, "").trim();
-      tab.title = originalEmoji + stripped;
+      tab.title = `${AUTO_NAME_ICON} ${stripped}`;
       console.log("[tabs] title updated to:", tab.title);
       renderTabs();
       saveTabs();
@@ -3681,14 +3842,23 @@ async function send(text: string) {
   // FORK 2026-05-09: Capture wall-clock send time so the user bubble can show
   // an absolute HH:MM:SS timestamp on its left gutter (Feature A). Also used
   // by assistant bubbles to compute elapsed seconds (Feature B).
-  messages.push({
+  const outgoingUserMsg: Record<string, unknown> = {
     role: "user",
     content: [{ type: "text", text }],
     _promptStartedAt: Date.now(),
     ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
     ...(briefingPath ? { _briefingPath: briefingPath } : {}),
     ...(isQueued ? { _queued: true } : {}),
-  });
+  };
+  if (isQueued) {
+    // FORK 2026-06-04 — bug task-mpwfiot2: hold the queued bubble OUT of messages[] (see the
+    // pendingQueuedSends declaration). It renders as a trailing "queued" bubble and is flushed
+    // into messages[] when the in-flight turn ends, so the running turn's later bubbles can
+    // never jump above it.
+    pendingQueuedSends.push(outgoingUserMsg);
+  } else {
+    messages.push(outgoingUserMsg);
+  }
   updateChat();
   if (!isQueued) {
     updateBtn();
@@ -5071,7 +5241,15 @@ function renderMsg(
       // the user never sees the raw "💬 ANSWER:" / "🧠 AMYGDALA:" / "🌿 FRACTAL:"
       // prefixes as plain text. Splitter returns whatever sections it can
       // extract; missing sections simply don't render.
-      if (!isThinking) {
+      // FORK 2026-06-04 — bug task-mpwf4x8s-t8wjt (Thinking vs Final Answer bubbles).
+      // Decide appearance by STRUCTURE, not by position. This used to be gated behind
+      // `!isThinking`, so a completed bubble that carries the full answer-amygdala-fractal
+      // structure but lands in a non-final (thinking) slot rendered as a plain thinking
+      // bubble with the raw 💬/🧠/🌿 markers showing. Run the splitter unconditionally:
+      // any bubble whose own text actually has the structure renders as the final-answer
+      // layout regardless of where it sits in the stream (content-local, so it cannot
+      // reintroduce the format "blinking" class which depended on neighbouring stream state).
+      {
         const sectioned = splitSectionedReply(text);
         if (sectioned && (sectioned.answer || sectioned.amygdala || sectioned.fractal)) {
           h += renderSectionedReply(sectioned, elapsedChip(msg, idx));
@@ -5230,7 +5408,9 @@ function renderMsg(
           return h;
         }
         // FORK 2026-04-18: Amygdala/Answer/Fractal 3-section detection (twin path).
-        if (!isThinking) {
+        // FORK 2026-06-04 — bug task-mpwf4x8s-t8wjt: structure-based, not position-based
+        // (see the string-content path above for the full rationale). Run unconditionally.
+        {
           const sectioned2 = splitSectionedReply(text);
           if (sectioned2 && (sectioned2.answer || sectioned2.amygdala || sectioned2.fractal)) {
             h += renderSectionedReply(sectioned2, elapsedChip(msg, idx));
@@ -5369,50 +5549,64 @@ let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
 
 function renderThinkingIndicator(): string {
   if (activeRuns.size > 0) {
-    // FORK 2026-05-16: the run-belongs-to-viewed-session test is now the ONE
-    // shared predicate (runBelongsToViewedSession) so the indicator can never
-    // disagree with the prefrontal panel / model count about which runs are
-    // "this tab's". Subagent-descendant inclusion is baked into the helper.
-    const mainRows: string[] = [];
-    const subagentRows: string[] = [];
+    // FORK 2026-06-04 — bug task-mpzgsvbo (Thinking indicators): the CHAT indicator is now
+    // BINARY — it shows ONLY whether the viewed session has a live LLM call, as ONE row.
+    // It used to render one row PER active run (main + each subagent), which is what produced
+    // the "multiple indicators at once" Oscar reported. The per-run / per-subagent breakdown
+    // now lives ONLY in the RECIPES panel (+ the collapsible subagent chat bubbles). The Stop
+    // button has always called the session-level abort() (see the delegated #messages handler),
+    // so one Stop is the correct semantics. runBelongsToViewedSession stays the ONE shared
+    // predicate so chat/prefrontal/model-count can't disagree. See done-signals.md §3 + panels.md §147.
+    const viewed: Array<[string, ActiveRunInfo]> = [];
+    let subagentCount = 0;
+    let restarting = false;
     for (const [runId, info] of activeRuns) {
       if (!runBelongsToViewedSession(info)) {
         continue;
       }
+      viewed.push([runId, info]);
       const sk = info.sessionKey ?? "";
-      const isSubagentDescendant =
+      if (
         sk.includes(":subagent:") &&
         !!sessionKey &&
-        sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:");
-      // FORK 2026-05-30: subagents use their stable per-subagent identity color
-      // (matches the chat sub-bubble + RECIPES panel row); the main run keeps its
-      // provider color. Was: always provider color → never matched the bubbles.
-      const color = isSubagentDescendant
-        ? colorForSubagent(runId)
-        : PROVIDER_COLORS[info.provider] || "#6b7280";
-      const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
-      const name = modelName(info.model);
+        sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
+      ) {
+        subagentCount++;
+      }
+      if (info.state === "restarting") {
+        restarting = true;
+      }
+    }
+    if (viewed.length > 0) {
+      // Primary = the main (non-subagent) run if present, else the earliest-started run.
+      const isSub = (i: ActiveRunInfo) => {
+        const sk = i.sessionKey ?? "";
+        return (
+          sk.includes(":subagent:") &&
+          !!sessionKey &&
+          sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
+        );
+      };
+      const [primaryRunId, primary] =
+        viewed.find(([, i]) => !isSub(i)) ??
+        viewed.reduce((a, b) => (a[1].startedAt <= b[1].startedAt ? a : b));
+      const color = PROVIDER_COLORS[primary.provider] || "#6b7280";
+      const elapsed = Math.floor((Date.now() - primary.startedAt) / 1000);
+      const name = modelName(primary.model) || "working";
       const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
-      const subagentTag = isSubagentDescendant
-        ? ` <span class="thinking-subagent-tag" title="subagent">▸</span>`
-        : "";
-      const badge =
-        info.state === "restarting" ? `<span class="restart-badge">RESTARTING</span>` : "";
-      const row = `<div class="thinking-run${isSubagentDescendant ? " thinking-run-subagent" : ""}" data-run-id="${esc(runId)}" data-provider="${esc(info.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
+      // One small badge for "+N subagents running" — detail is in the RECIPES panel.
+      const subBadge =
+        subagentCount > 0
+          ? ` <span class="thinking-subagent-tag" title="${subagentCount} subagent${subagentCount > 1 ? "s" : ""} running — see RECIPES panel">▸${subagentCount}</span>`
+          : "";
+      const badge = restarting ? `<span class="restart-badge">RESTARTING</span>` : "";
+      const row = `<div class="thinking-run" data-run-id="${esc(primaryRunId)}" data-provider="${esc(primary.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${providerIcon(info.provider)} ${esc(name)}${subagentTag}${recipeLabel}</span>
+  <span class="thinking-model">${providerIcon(primary.provider)} ${esc(name)}${recipeLabel}${subBadge}</span>
   ${badge}<span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
-      if (isSubagentDescendant) {
-        subagentRows.push(row);
-      } else {
-        mainRows.push(row);
-      }
-    }
-    const rows = [...mainRows, ...subagentRows].join("");
-    if (rows) {
-      return `<div class="thinking-indicator">${rows}</div>`;
+      return `<div class="thinking-indicator">${row}</div>`;
     }
   }
   // The "sending..." pending pill is ONLY the brief window between chat.send
@@ -5946,6 +6140,14 @@ function updateChat(skipScroll = false) {
     }
   }
 
+  // FORK 2026-06-04 — bug task-mpwfiot2 (Queuing a prompt): render queued-but-not-yet-committed
+  // prompts as TRAILING bubbles, after the running turn's transcript and just above the thinking
+  // indicator. They are deliberately NOT in messages[] (see send()), so the still-streaming turn's
+  // continuation/tool bubbles can never land after them. Flushed into messages[] on turn-final.
+  for (let k = 0; k < pendingQueuedSends.length; k++) {
+    h += renderMsg(pendingQueuedSends[k], messages.length + k, false, globalResultMap, globalToolNames);
+  }
+
   if (activeRuns.size > 0 || sending) {
     h += renderThinkingIndicator();
   }
@@ -6142,6 +6344,116 @@ function renderTabs() {
   }
 }
 
+// FORK 2026-06-04 — jarvis-upgrade task-mpzcjw6n-n45zs (Tab name summary): right-click a tab to
+// rename it. Two actions: "Rename…" (manual, type a name) and "Auto-name" (an LLM summary via the
+// existing generateTabTitle, recency-weighted + the 🏷️ sentinel). Reuses the proven
+// .exec-context-menu / .exec-context-item styling + clamp pattern (openExecContextMenu). The Main
+// tab is excluded — its title is force-restored to "🏠 Main" on every loadTabs(), so a rename
+// wouldn't stick.
+function openTabContextMenu(tabId: string, x: number, y: number) {
+  closeTabContextMenu();
+  const tab = tabs.find((t) => t.id === tabId);
+  if (!tab || tab.id === "tab-main") {
+    return;
+  }
+  const menu = document.createElement("div");
+  menu.className = "exec-context-menu";
+  tabContextMenuEl = menu;
+  menu.innerHTML = `
+    <button data-tab-action="rename" class="exec-context-item">✏️ Rename…</button>
+    <button data-tab-action="auto" class="exec-context-item">${AUTO_NAME_ICON} Auto-name</button>
+  `;
+  menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 100)}px`;
+  document.body.appendChild(menu);
+  requestAnimationFrame(() => {
+    const r = menu.getBoundingClientRect();
+    if (r.right > window.innerWidth - 8) menu.style.left = `${window.innerWidth - r.width - 8}px`;
+    if (r.bottom > window.innerHeight - 8) menu.style.top = `${window.innerHeight - r.height - 8}px`;
+  });
+  menu.querySelectorAll<HTMLElement>(".exec-context-item").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const action = btn.dataset.tabAction;
+      closeTabContextMenu();
+      if (action === "rename") {
+        openTabRename(tabId, x, y);
+      } else if (action === "auto") {
+        const t = tabs.find((tt) => tt.id === tabId);
+        if (t) {
+          // FORK 2026-06-04 — task-mpzcjw6n (auto-rename fix): immediate visual feedback while the
+          // (local-LLM) summary runs; revert if it produced nothing (empty tab / no model / failure).
+          const prev = t.title;
+          const placeholder = `${AUTO_NAME_ICON} …`;
+          t.title = placeholder;
+          renderTabs();
+          void generateTabTitle(t).then(() => {
+            if (t.title === placeholder) {
+              t.title = prev;
+              renderTabs();
+            }
+          });
+        }
+      }
+    });
+  });
+}
+
+function closeTabContextMenu() {
+  if (tabContextMenuEl) {
+    tabContextMenuEl.remove();
+    tabContextMenuEl = null;
+  }
+}
+
+// Floating single-line rename input (the 64px tab is too narrow to edit in place). Enter / blur
+// commit, Escape cancels. Persists via the existing saveTabs + renderTabs + updateSessionsPanel.
+function openTabRename(tabId: string, x: number, y: number) {
+  const tab = tabs.find((t) => t.id === tabId);
+  if (!tab || tab.id === "tab-main") {
+    return;
+  }
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;z-index:10000;";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = tab.title;
+  input.spellcheck = false;
+  input.style.cssText =
+    "width:200px;font-size:11px;padding:3px 6px;background:var(--surface,#1a1a1a);color:var(--text,#eee);border:1px solid var(--accent,#d97757);border-radius:4px;outline:none;";
+  box.appendChild(input);
+  box.style.left = `${Math.min(x, window.innerWidth - 220)}px`;
+  box.style.top = `${Math.min(y, window.innerHeight - 44)}px`;
+  document.body.appendChild(box);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = (save: boolean) => {
+    if (done) return;
+    done = true;
+    if (save) {
+      const v = input.value.trim();
+      if (v) {
+        tab.title = v;
+        saveTabs();
+        renderTabs();
+        updateSessionsPanel();
+      }
+    }
+    box.remove();
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commit(true);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      commit(false);
+    }
+  });
+  input.addEventListener("blur", () => commit(true));
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -6160,6 +6472,23 @@ function checkTabOverflow() {
   bar.classList.toggle("has-overflow", overflows);
 }
 
+// FORK 2026-06-04 — bug task-mpkwez3k-ehc9v (thinking indicator: MODELS panel +
+// session/all toggle + prefrontal freeze). Single source of truth for "the viewed
+// session changed → every viewed-session-scoped indicator must re-derive." Each
+// view-change site used to hand-roll its own subset of update calls and they drifted:
+// switchToTab forgot updateBudgetPanel() (the MODELS-panel glow kept indicating after a
+// tab switch under "session" scope), and attachSessionToTab forgot both
+// updateBudgetPanel() AND updatePrefrontalTree() (prefrontal froze "thinking" until you
+// toggled scope). Routing ALL of them through here means no indicator can be missed.
+// See bible panels.md §147 (single-source-of-truth) + done-signals.md §3.
+function refreshViewedSessionIndicators() {
+  updateChat();
+  updateBtn();
+  updateSessionsPanel();
+  updateBudgetPanel();
+  updatePrefrontalTree();
+}
+
 function switchToTab(tabId: string) {
   const tab = tabs.find((t) => t.id === tabId);
   if (!tab || tab.id === activeTabId) {
@@ -6176,10 +6505,7 @@ function switchToTab(tabId: string) {
     sessionKey = tab.sessionKey;
     // FORK: Restore per-tab state atomically — no async, no clearing
     loadTabState(tab.id);
-    updateChat();
-    updateBtn();
     updateSelect();
-    updateSessionsPanel();
     const tmCanvas = $("treemap-canvas");
     if (tmCanvas) {
       (tmCanvas as unknown).__treemapClear?.();
@@ -6192,18 +6518,18 @@ function switchToTab(tabId: string) {
   } else {
     sessionKey = "";
     loadTabState(tab.id); // loads fresh empty state
-    updateChat();
-    updateBtn();
     updateSelect();
   }
 
   renderTabs();
   saveTabs();
-  // FORK 2026-05-17: the viewed session changed — prefrontal filters by the
-  // viewed sessionKey under "session" scope, but it only re-rendered on WS
-  // events, so it showed the prior session's activity ("thinking no matter
-  // which session I select"). Re-render now. See bible panels.md §147.
-  updatePrefrontalTree();
+  // FORK 2026-05-17 / 2026-06-04: the viewed session changed — re-derive EVERY
+  // viewed-session-scoped indicator (chat spinner, button, sessions glow, MODELS glow,
+  // prefrontal) through the single helper so none can be missed. Prefrontal filters by
+  // the viewed sessionKey under "session" scope and only re-rendered on WS events before
+  // ("thinking no matter which session I select"); the MODELS glow had the same bug
+  // (task-mpkwez3k-ehc9v). See bible panels.md §147.
+  refreshViewedSessionIndicators();
 }
 
 function createTab(): Tab {
@@ -6284,12 +6610,15 @@ function attachSessionToTab(key: string) {
 
   sessionKey = key;
   messages = [];
-  updateChat();
   loadChat();
   updateSelect();
-  updateSessionsPanel();
   renderTabs();
   saveTabs();
+  // FORK 2026-06-04 — bug task-mpkwez3k-ehc9v: attaching a session to a tab is a
+  // viewed-session change too; route through the same helper so the MODELS glow and the
+  // prefrontal panel re-derive for the newly-attached session. Both were missing here,
+  // so prefrontal froze "thinking" until a scope toggle forced a re-render.
+  refreshViewedSessionIndicators();
 }
 
 function updateBtn() {
@@ -13672,6 +14001,28 @@ function init() {
     const tabEl = (e.target as HTMLElement).closest("[data-tab-id]") as HTMLElement | null;
     if (tabEl) {
       closeTab(tabEl.dataset.tabId!);
+    }
+  });
+
+  // FORK 2026-06-04 — task-mpzcjw6n-n45zs (Tab name summary): right-click a tab → rename / auto-name.
+  $("tab-bar-scroll")!.addEventListener("contextmenu", (e) => {
+    const tabEl = (e.target as HTMLElement).closest("[data-tab-id]") as HTMLElement | null;
+    const tabId = tabEl?.dataset.tabId;
+    if (!tabId || tabId === "tab-main") {
+      return; // let the native menu show off the tab bar / on Main (Main has no rename)
+    }
+    e.preventDefault();
+    openTabContextMenu(tabId, e.clientX, e.clientY);
+  });
+  // Dismiss the tab context menu on outside-click / Escape (mirrors the exec-task menu).
+  document.addEventListener("click", (e) => {
+    if (tabContextMenuEl && !tabContextMenuEl.contains(e.target as Node)) {
+      closeTabContextMenu();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeTabContextMenu();
     }
   });
 
