@@ -6044,3 +6044,37 @@ code.fs-link.fs-link-error {
   background: var(--overseer-color, #d97706);
   vertical-align: baseline;
 }
+
+/* FORK 2026-06-04 — Exec-mode Pulse presence graphs (grouped multi-line + axes). */
+.pg-chart{margin:8px 0 12px;}
+.pg-head{display:flex;align-items:center;gap:6px;margin-bottom:2px;}
+.pg-title{font-weight:600;font-size:12px;color:#F4F1DE;}
+.pg-legend{display:flex;flex-wrap:wrap;gap:8px 12px;margin:0 0 3px;font-size:10px;color:#A8A5A0;}
+.pg-leg i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle;}
+.pg-body{position:relative;cursor:grab;touch-action:none;}
+.pg-svg{display:block;width:100%;height:auto;}
+.pg-grid{stroke:rgba(255,255,255,.08);stroke-width:1;}
+.pg-xtick{stroke:rgba(255,255,255,.05);stroke-width:1;}
+.pg-ylab,.pg-xlab{fill:#8a8f98;font-size:7.5px;}
+.pg-line{vector-effect:non-scaling-stroke;stroke-width:1.6;}
+.pg-cross{stroke:rgba(255,255,255,.4);stroke-width:1;stroke-dasharray:3 3;}
+.pg-tip{position:absolute;top:2px;pointer-events:none;background:rgba(10,15,26,.94);border:1px solid rgba(255,255,255,.14);border-radius:4px;padding:4px 7px;font-size:10px;color:#F4F1DE;z-index:6;min-width:96px;line-height:1.5;box-shadow:0 2px 8px rgba(0,0,0,.4);}
+.pg-tipdate{color:#A8A5A0;margin-bottom:2px;font-size:9px;}
+.pg-tiprow{display:block;white-space:nowrap;}
+.pg-tiprow i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;}
+
+/* FORK 2026-06-04b — Pulse graph header / collapse / drag / hover-name + outline. */
+.pg-head{display:flex;align-items:center;gap:6px;padding:2px 3px 3px;cursor:grab;user-select:none;border-radius:4px;}
+.pg-head:active{cursor:grabbing;}
+.pg-grip{color:#5a6068;font-size:11px;line-height:1;}
+.pg-icon{font-size:12px;}
+.pg-name{font-size:11px;font-weight:600;color:#F4F1DE;opacity:0;transition:opacity .12s;}
+.pg-chart{margin:6px 0 10px;border:1px solid transparent;border-radius:6px;padding:2px 4px;transition:border-color .12s,background .12s;}
+.pg-chart:hover{border-color:rgba(142,202,230,.35);background:rgba(255,255,255,.025);}
+.pg-chart:hover .pg-name{opacity:1;}
+.pg-chart[data-dragging="1"]{opacity:.55;}
+.pg-chart.collapsed .pg-body{display:none;}
+.pg-chart.collapsed .pg-name{opacity:1;color:#A8A5A0;}
+
+/* FORK 2026-06-04c — graph titles permanent (no longer hover-only). */
+.pg-name{opacity:1;}

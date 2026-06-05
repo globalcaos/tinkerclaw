@@ -27,6 +27,7 @@ import { localStateValue } from "./localstate.js";
 import { moltbookKarma, moltbookPosts, moltbookComments, moltbookFollowers } from "./moltbook.js";
 import { npmDownloadsMonthly, npmDownloadsWeekly } from "./npm.js";
 import { demoWebsiteVisits } from "./website.js";
+import { ga4Sessions } from "./ga4.js";
 
 export type PollerFn = (args: string) => Promise<number>;
 
@@ -40,6 +41,8 @@ export const POLLER_REGISTRY: Map<string, PollerFn> = new Map([
   // GoatCounter / GA4 / Search Console). The graph still populates so the
   // Graphs section has something to render against the KPI section.
   ["demo.website.visits", demoWebsiteVisits],
+  // FORK 2026-06-05 — real GA4 traffic (SA-authenticated Data API), replaces the stub.
+  ["ga4.sessions", ga4Sessions],
   // FORK 2026-06-04 — online-presence pollers (execmode-pulse graphs).
   ["moltbook.karma", moltbookKarma],
   ["moltbook.posts", moltbookPosts],
@@ -75,26 +78,16 @@ const SEED_KPIS: SeedSpec[] = [
     cadence_seconds: 21600,
     template: "single-stat",
   },
-  {
-    id: "kpi.github.forks.tinkerclaw",
-    source: "github.forks:globalcaos/tinkerclaw",
-    cadence_seconds: 21600,
-    template: "single-stat",
-  },
-  {
-    id: "kpi.github.open_issues.tinkerclaw",
-    source: "github.open_issues:globalcaos/tinkerclaw",
-    cadence_seconds: 21600,
-    template: "single-stat",
-  },
+  // FORK 2026-06-04 — forks + open-issues KPIs removed at Oscar's request.
   // FORK 2026-05-13 — placeholder website-visits graph. `demo.website.visits`
   // produces deterministic-noise values until the user names their analytics
   // provider; swap the source string to e.g. "plausible.visitors:tinkerzone.com"
   // when wiring Plausible/Umami/GA4/Search Console.
   {
+    // FORK 2026-06-05 — real GA4 sessions for thetinkerzone.com (property 529436250).
     id: "graph.website.visits.daily",
-    source: "demo.website.visits:default",
-    cadence_seconds: 3600,
+    source: "ga4.sessions:529436250",
+    cadence_seconds: 86400,
     template: "sparkline",
   },
   // ── Online presence (FORK 2026-06-04 — execmode-pulse graphs) ──────────────
@@ -103,13 +96,13 @@ const SEED_KPIS: SeedSpec[] = [
     id: "kpi.moltbook.karma",
     source: "moltbook.karma:self",
     cadence_seconds: 86400,
-    template: "single-stat",
+    template: "sparkline",
   },
   {
     id: "kpi.moltbook.posts",
     source: "moltbook.posts:self",
     cadence_seconds: 86400,
-    template: "single-stat",
+    template: "sparkline",
   },
   {
     id: "graph.moltbook.comments",
@@ -137,24 +130,48 @@ const SEED_KPIS: SeedSpec[] = [
     cadence_seconds: 86400,
     template: "sparkline",
   },
+  // FORK 2026-06-05 — ClawHub: NO seeds. Verified live that clawhub.ai/globalcaos/
+  // jarvis-voice 404s — our skill is NOT on ClawHub (the clawskills.sh "4.5k" was a
+  // bad mirror). The only "jarvis voice" skills on ClawHub are copies by others.
+  // Re-add a seed here only when we actually re-publish a skill and verify it live.
+  // Inbound links — fed by the weekly Inbound-Marketing cron's audit
+  // (inbound-campaign-state.json); pollers error+retry until it first exists.
+  // FORK 2026-06-05 — split per destination target × {external (organic, others
+  // created), ours (we created)}. UI colors one hue per target and dashes the
+  // "ours" line; see SERIES_STYLE in tinker-ui/src/app.ts.
   {
-    id: "graph.clawhub.installs",
-    source:
-      "localstate:engagement-state.json#clawhub.namespace_variants_jarvis_voice.total_downloads_visible_estimate",
+    id: "graph.inbound.tinkerclaw.external",
+    source: "localstate:inbound-campaign-state.json#inbound_targets.tinkerclaw.external",
     cadence_seconds: 86400,
     template: "sparkline",
   },
-  // Inbound links — fed by the weekly Inbound-Marketing cron's audit
-  // (inbound-campaign-state.json); pollers error+retry until it first exists.
   {
-    id: "kpi.inbound.organic",
-    source: "localstate:inbound-campaign-state.json#inbound.organic",
+    id: "graph.inbound.tinkerclaw.ours",
+    source: "localstate:inbound-campaign-state.json#inbound_targets.tinkerclaw.ours",
     cadence_seconds: 86400,
-    template: "single-stat",
+    template: "sparkline",
   },
   {
-    id: "graph.inbound.ours",
-    source: "localstate:inbound-campaign-state.json#inbound.ours",
+    id: "graph.inbound.thetinkerzone.external",
+    source: "localstate:inbound-campaign-state.json#inbound_targets.thetinkerzone.external",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.inbound.thetinkerzone.ours",
+    source: "localstate:inbound-campaign-state.json#inbound_targets.thetinkerzone.ours",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.inbound.sprintpaper.external",
+    source: "localstate:inbound-campaign-state.json#inbound_targets.sprintpaper.external",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.inbound.sprintpaper.ours",
+    source: "localstate:inbound-campaign-state.json#inbound_targets.sprintpaper.ours",
     cadence_seconds: 86400,
     template: "sparkline",
   },

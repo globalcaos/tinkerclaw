@@ -290,5 +290,7 @@
   "webhook-request-guards",
   "webhook-path",
   "web-media",
-  "zod"
+  "zod",
+  "config-contracts",
+  "text-utility-runtime"
 ]

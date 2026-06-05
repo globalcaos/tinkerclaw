@@ -121,7 +121,12 @@ export async function spawnTextVia(
     scopes: ADMIN_SCOPES,
   });
   if (wait?.status === "error") throw new Error(`orchestration run errored: ${wait.error ?? "?"}`);
-  if (wait?.status === "timeout") return "";
+  // A timeout must NOT silently return '' — chaining that empty string into a
+  // downstream agent(prev) call would spawn a taskless orphan subagent. Throw so
+  // parallel/pipeline null-isolation drops this leg to null instead of poisoning
+  // the next stage with an empty task.
+  if (wait?.status === "timeout")
+    throw new Error(`orchestration run timed out after ${runTimeoutSeconds}s`);
   const hist = await callGateway<{ messages?: unknown }>({
     method: "chat.history",
     params: { sessionKey: childSessionKey, limit: 30 },

@@ -14,6 +14,11 @@ import {
   type TreeNode,
   type TreeResponse,
 } from "./panels/prefrontal-tree.js";
+import {
+  renderPresenceGraphsHtml,
+  attachPresenceGraphs,
+  type GGroup,
+} from "./panels/presence-graph.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
 // FORK 2026-05-30: shared per-subagent identity color (chat sub-bubble + RECIPES
 // panel row + thinking-row all import the SAME function so colors always match).
@@ -3587,7 +3592,13 @@ async function resolveOllamaTitleModel(): Promise<string | null> {
       .filter(Boolean);
     const isEmbed = (n: string) => /embed/i.test(n);
     // Prefer a fast small instruct model if present, else the first non-embedding model installed.
-    const preferred = ["qwen3:14b-q4_K_M", "qwen2.5:7b", "llama3.2:3b", "llama3.1:8b", "gemma4:26b"];
+    const preferred = [
+      "qwen3:14b-q4_K_M",
+      "qwen2.5:7b",
+      "llama3.2:3b",
+      "llama3.1:8b",
+      "gemma4:26b",
+    ];
     _ollamaTitleModel =
       preferred.find((p) => names.includes(p)) ?? names.find((n) => !isEmbed(n)) ?? null;
   } catch {
@@ -6145,7 +6156,13 @@ function updateChat(skipScroll = false) {
   // indicator. They are deliberately NOT in messages[] (see send()), so the still-streaming turn's
   // continuation/tool bubbles can never land after them. Flushed into messages[] on turn-final.
   for (let k = 0; k < pendingQueuedSends.length; k++) {
-    h += renderMsg(pendingQueuedSends[k], messages.length + k, false, globalResultMap, globalToolNames);
+    h += renderMsg(
+      pendingQueuedSends[k],
+      messages.length + k,
+      false,
+      globalResultMap,
+      globalToolNames,
+    );
   }
 
   if (activeRuns.size > 0 || sending) {
@@ -6369,7 +6386,8 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
   requestAnimationFrame(() => {
     const r = menu.getBoundingClientRect();
     if (r.right > window.innerWidth - 8) menu.style.left = `${window.innerWidth - r.width - 8}px`;
-    if (r.bottom > window.innerHeight - 8) menu.style.top = `${window.innerHeight - r.height - 8}px`;
+    if (r.bottom > window.innerHeight - 8)
+      menu.style.top = `${window.innerHeight - r.height - 8}px`;
   });
   menu.querySelectorAll<HTMLElement>(".exec-context-item").forEach((btn) => {
     btn.addEventListener("click", (ev) => {
@@ -8274,6 +8292,16 @@ function init() {
     "kpi.npm.downloads.weekly": { icon: "📦", label: "npm weekly" },
     "kpi.npm.downloads.monthly": { icon: "📦", label: "npm monthly" },
     "graph.website.visits": { icon: "🌐", label: "Website visits" },
+    // FORK 2026-06-04 — online-presence metrics (execmode-pulse graphs).
+    "kpi.moltbook.karma": { icon: "🦞", label: "Moltbook karma" },
+    "kpi.moltbook.posts": { icon: "📝", label: "Moltbook posts" },
+    "graph.moltbook.comments": { icon: "💬", label: "Moltbook comments" },
+    "graph.moltbook.followers": { icon: "👥", label: "Moltbook followers" },
+    "graph.github.traffic.views14d": { icon: "👁", label: "Repo views" },
+    "graph.github.traffic.clones14d": { icon: "⬇", label: "Repo clones" },
+    "graph.clawhub.installs": { icon: "🧩", label: "ClawHub installs" },
+    "kpi.inbound.organic": { icon: "🔗", label: "Organic inbound links" },
+    "graph.inbound.ours": { icon: "🔗", label: "Inbound links (ours)" },
   };
 
   function deriveKpiPresentation(id: string): { icon: string; label: string; target: string } {
@@ -8339,14 +8367,16 @@ function init() {
       const visible = (metricsRes.metrics ?? []).filter(
         (m) => (m.id.startsWith("kpi.") || m.id.startsWith("graph.")) && m.class === "SNAPSHOT",
       );
-      const sinceTs = now - 1000 * 60 * 60 * 24 * 30; // 30 days
+      // FORK 2026-06-05 — load ALL recorded history (no time window). The 30d
+      // cap was hiding months of already-collected data; Oscar wants the full
+      // record. No from_ts → every observation since the metric's first point;
+      // the chart's fullRange auto-fits the span and zoom/pan covers it all.
       const obsLists = await Promise.all(
         visible.map(async (m) => {
           try {
             const r = (await req("control-panel.query", {
               id: m.id,
-              from_ts: sinceTs,
-              limit: 200,
+              limit: 100000,
             })) as { observations: KpiObservation[] };
             return { metric: m, observations: (r.observations ?? []).slice().reverse() };
           } catch {
@@ -8358,18 +8388,76 @@ function init() {
         .filter(({ metric }) => !isGraphTemplate(metric.template))
         .map(({ metric, observations }) => renderKpiRow(metric, observations, "compact"))
         .join("");
-      const graphHtml = obsLists
-        .filter(({ metric }) => isGraphTemplate(metric.template))
-        .map(({ metric, observations }) => renderKpiRow(metric, observations, "tall"))
-        .join("");
+      // FORK 2026-06-04 — Graphs section groups graph-template metrics by family
+      // (github, moltbook, …) into one multi-line chart each: numeric Y axis,
+      // adaptive time X axis, colored lines + legend + hover crosshair.
+      const GROUP_TITLES: Record<string, string> = {
+        github: "GitHub",
+        moltbook: "Moltbook",
+        clawhub: "ClawHub",
+        inbound: "Inbound links",
+        website: "Website",
+        npm: "npm",
+      };
+      const groupMeta = (id: string): { key: string; title: string } => {
+        const seg = id.split(".")[1] ?? id;
+        return { key: seg, title: GROUP_TITLES[seg] ?? seg.charAt(0).toUpperCase() + seg.slice(1) };
+      };
+      // Per-series styling: distinct colors, dashed = "external/organic", a
+      // secondary right axis for series whose scale dwarfs the others (github
+      // views vs cumulative clones), and cumulative running-totals where clearer.
+      const SERIES_STYLE: Record<
+        string,
+        { color?: string; dash?: boolean; cumulative?: boolean; axis?: "left" | "right"; label?: string }
+      > = {
+        // NOT cumulative: clones14d is GitHub's trailing-14-day rolling total; summing
+        // daily snapshots double-counts each clone ~14× (the bogus "~50k"). Show the
+        // real 14d window value instead (~750).
+        "graph.github.traffic.clones14d": { color: "#8ECAE6", axis: "left" },
+        "graph.github.traffic.views14d": { color: "#F4A261", axis: "right" },
+        // FORK 2026-06-05 — Inbound links: one hue per destination target, the
+        // solid line = external (organic / others created), dashed = ours (we
+        // created). Same color pairs the two lines of a target visually.
+        "graph.inbound.tinkerclaw.external": { color: "#8ECAE6", label: "tinkerclaw · external" },
+        "graph.inbound.tinkerclaw.ours": { color: "#8ECAE6", dash: true, label: "tinkerclaw · ours" },
+        "graph.inbound.thetinkerzone.external": { color: "#F4A261", label: "thetinkerzone · external" },
+        "graph.inbound.thetinkerzone.ours": { color: "#F4A261", dash: true, label: "thetinkerzone · ours" },
+        "graph.inbound.sprintpaper.external": { color: "#c084fc", label: "sprintpaper · external" },
+        "graph.inbound.sprintpaper.ours": { color: "#c084fc", dash: true, label: "sprintpaper · ours" },
+        // FORK 2026-06-05 — ClawHub: no series. Verified our globalcaos/jarvis-voice
+        // 404s on clawhub.ai (clawskills.sh's "4.5k" was a bad mirror). Add a line
+        // only when we re-publish a real skill and confirm it live on clawhub.ai.
+      };
+      const presenceGroups = new Map<string, GGroup>();
+      for (const { metric, observations } of obsLists) {
+        if (!isGraphTemplate(metric.template) || observations.length === 0) continue;
+        const meta = groupMeta(metric.id);
+        let grp = presenceGroups.get(meta.key);
+        if (!grp) {
+          grp = { key: meta.key, title: meta.title, series: [] };
+          presenceGroups.set(meta.key, grp);
+        }
+        // Strip the group name from the line label ("Moltbook karma" → "karma").
+        let label = deriveKpiPresentation(metric.id).label;
+        if (label.toLowerCase().startsWith(meta.title.toLowerCase() + " ")) {
+          label = label.slice(meta.title.length + 1);
+        }
+        grp.series.push({
+          id: metric.id,
+          label,
+          points: observations.map((o) => ({ ts: o.ts, value: o.value })),
+          ...(SERIES_STYLE[metric.id] ?? {}),
+        });
+      }
       kpisBody.innerHTML = kpiHtml || `<div class="exec-kpi-empty">No KPIs configured yet.</div>`;
-      graphsBody.innerHTML =
-        graphHtml || `<div class="exec-kpi-empty">No graphs configured yet.</div>`;
+      graphsBody.innerHTML = renderPresenceGraphsHtml([...presenceGroups.values()]);
       kpisBody.dataset.populated = "1";
       graphsBody.dataset.populated = "1";
-      // FORK 2026-05-13 — Tall sparklines get wheel-zoom + drag-pan handlers
-      // after each render. attachGraphInteractions is idempotent per element.
+      // FORK 2026-06-04 — grouped charts get zoom/pan/hover here. The old
+      // attachGraphInteractions stays (now a no-op: no .exec-kpi-spark-tall
+      // remain) so the compact-KPI sparkline wiring path is untouched.
       attachGraphInteractions(panel);
+      attachPresenceGraphs(graphsBody);
     } catch (err) {
       console.error(`[exec-panel] loadExecKpis attempt ${attempt} failed`, err);
       // Auto-retry with backoff: 500, 1000, 2000, 3000, 4000 ms. ~16s total
