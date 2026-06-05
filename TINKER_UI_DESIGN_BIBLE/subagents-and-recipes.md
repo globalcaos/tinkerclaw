@@ -579,12 +579,18 @@ Workflow (not a kit) that any session — Claude Code or this runtime via cc-bri
 should reach for **by default whenever a coding task touches 2+ independently-editable
 files**, instead of editing them serially.
 
-- **Design:** lease-based, two-phase. Phase A (NO lease, fully parallel) — every edit-unit
+- **Design:** lease-based, three-phase. Phase A (NO lease, fully parallel) — every edit-unit
   reads + drafts its EXACT patch (~95% of wall-clock). Phase B (brief per-file lease, fast
   handoff) — acquire the file leases → apply the prepared patch → verify → release. Disjoint
   files run concurrently; shared files serialize; a staleness guard makes a Phase-B agent
   AUTO-RE-DERIVE a patch that no longer applies. "Clean merge" is a non-event. This is the
   right tool for `tinker-ui/src/app.ts`-class contention between parallel sessions.
+- **Phase C — fast committing (on by default):** commits each applied unit as its OWN commit so
+  nothing is left as an orphan pile. Commits are SERIALIZED (git's index/HEAD is one shared
+  resource → concurrent commits would race) and stage ONLY that unit's files — NEVER `git add -A`,
+  so a parallel session's WIP is never swept in. Enforces a commit-message ruleset (subject
+  `<type>(<scope>): summary` ≤72; body = what+why from the unit task; quote task IDs; co-author
+  trailer; no `--no-verify`/`--force`). `commit:false` to skip; `commitScope`/`coAuthor` to tune.
 - **Surfaces:** Claude Code skill `orca` (the workflow `meta` IS the skill — no SKILL.md) and
   the runtime skill `~/.openclaw/workspace/skills/orca/SKILL.md`.
 - **Invoke:** Workflow tool, `scriptPath:
