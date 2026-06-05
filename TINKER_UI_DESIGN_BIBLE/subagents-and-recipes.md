@@ -571,6 +571,27 @@ Reference playbook: `docs/superpowers/specs/2026-05-13-kits-parallelism-playbook
 (in the jarvis-icu repo) for the per-kit recommendations and per-pattern speedup
 estimates.
 
+## ORCA — the external parallel multi-agent CODING orchestrator (FORK-adjacent, 2026-06-05)
+
+The kit-parallelism above governs the fork's OWN subagent dispatch. **ORCA** is the
+complementary tool for _writing code across many files at once_: a Claude-Code
+Workflow (not a kit) that any session — Claude Code or this runtime via cc-bridge —
+should reach for **by default whenever a coding task touches 2+ independently-editable
+files**, instead of editing them serially.
+
+- **Design:** lease-based, two-phase. Phase A (NO lease, fully parallel) — every edit-unit
+  reads + drafts its EXACT patch (~95% of wall-clock). Phase B (brief per-file lease, fast
+  handoff) — acquire the file leases → apply the prepared patch → verify → release. Disjoint
+  files run concurrently; shared files serialize; a staleness guard makes a Phase-B agent
+  AUTO-RE-DERIVE a patch that no longer applies. "Clean merge" is a non-event. This is the
+  right tool for `tinker-ui/src/app.ts`-class contention between parallel sessions.
+- **Surfaces:** Claude Code skill `orca` (the workflow `meta` IS the skill — no SKILL.md) and
+  the runtime skill `~/.openclaw/workspace/skills/orca/SKILL.md`.
+- **Invoke:** Workflow tool, `scriptPath:
+jarvis-icu/docs/superpowers/parallel-implement.workflow.js`, `args:{repoRoot,
+units:[{id,task,writes:[paths]}], wrapPath?, verifyHint?}`. Spec:
+  `docs/superpowers/specs/2026-06-04-parallel-multi-agent-coding-design.md`.
+
 ## Don't regress
 
 - The `--trail` verbs are a small fixed set: `dispatch`, `complete`, `note`, `transition`, `warn`. Adding a new verb requires coordinating with the Prefrontal renderer.
@@ -589,3 +610,4 @@ estimates.
 - **The `invoke skill:` output path always strictly validates** via the SS1 validate→budget-redispatch→persist path and **fails CLOSED on a missing/deprecated skill** — never a silent pass. `onSkillOutcome` must NOT fire on the resume-skip path (skipped durable steps never re-record fitness).
 - **Compose + deposit must stamp `authoredBy: "jarvis-on-the-fly"`** and respect the curated/promotion-seed overwrite guard — never clobber a curated kit or a `lineage.composedFrom:"promotion"` seed without `allowReplace:true`.
 - **`clearsPromotionBar` is a LIVE-MARGIN J16 bar** (`mean + 1 std` of the CURRENT `successRate` distribution), never a frozen N — and lineage lands in the snapshot FRONTMATTER, never a sidecar.
+- **ORCA (parallel multi-agent CODING) is the default for any 2+ independent-file edit** — its lease-based Phase-A-parallel / Phase-B-per-file-serialized design is what keeps concurrent writes from clobbering (esp. `tinker-ui/src/app.ts` between parallel sessions). Don't regress to serial hand-edits when files are disjoint. The canonical workflow `meta.name` is `orca`; the file keeps the `parallel-implement` name. Surfaces as Claude Code skill `orca` + runtime skill `~/.openclaw/workspace/skills/orca/`.
