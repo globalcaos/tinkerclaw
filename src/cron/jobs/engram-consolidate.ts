@@ -19,6 +19,13 @@
  *  - U1 offline recipe-fitness/evolution loop: injects a `RecipeArchive`
  *    (createRecipeArchive) so recipe-tagged episodes accrue fitness + gated
  *    mutation proposals into the daily manifest.
+ *  - SS4 self-sharpening (per-step): the recipe-evolution lane's per-STEP
+ *    sharpening reads the LIVE plan archive (not the inert fitness store) and
+ *    dispatches `prefrontal.recipe.optimize` for a struggling recipe. The
+ *    cross-subsystem WRITE lives in that prefrontal RPC (recipe-optimize.ts +
+ *    recipe-apply's rewrite_step_text branch), NOT here — this cron deliberately
+ *    does not import the prefrontal extension. Apply is gated by
+ *    RECIPE_AUTOAPPLY_ENABLED (proposes-only by default). No new coded scheduler.
  *
  * Every lane is opt-in / safe-default: absence of a backend (no embed provider,
  * ENGRAM_RECONCILE unset, declining extractor) leaves the consolidation output
