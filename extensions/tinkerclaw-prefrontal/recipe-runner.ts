@@ -49,6 +49,7 @@ import {
 } from "./recipe-types.js";
 import { deriveRecoveryRetryBudget } from "./recovery-budget.js";
 import { deriveRedispatchBudget } from "./redispatch-budget.js";
+import { deriveSpawnBudget } from "./spawn-budget.js";
 import { evaluateWhen, collectWhenRefs } from "./when-eval.js";
 
 // SS1: shared Ajv for validating typed step outputs (mirrors recipe-rpcs.ts).
@@ -95,7 +96,7 @@ export interface RecipeRunOptions {
    * so a mock planStore can drive step completion without a live gateway — the
    * real dispatch path stays untouched in production.
    */
-  _spawnStep?: (task: string, label: string) => Promise<SpawnResult>;
+  _spawnStep?: (task: string, label: string, spawnOpts?: SpawnOpts) => Promise<SpawnResult>;
   /**
    * FORK 2026-05-31: recipe-state observability sink. runRecipe calls this at kit
    * start, on each parallel-group transition, and on completion so the Tinker
@@ -132,6 +133,14 @@ export interface RecipeRunOptions {
    * budget) is a documented SS1 follow-up to bring more J16 signals live in prod.
    */
   fitnessSuccessRate?: number;
+  /**
+   * SS5b: remaining dispatch/token allowance for the run, if a caller threads one.
+   * An OPTIONAL input to the J16 deriveSpawnBudget(...) bound used as the fail-closed
+   * default when a step's `max-tokens:` directive is absent / non-numeric / an
+   * unresolved {{template}}. NOT yet threaded by the recipe-rpcs caller (the same
+   * documented gap as fitnessSuccessRate); absent → the affordability clamp is inert.
+   */
+  remainingTokenBudget?: number;
   /**
    * SS1: classified-trail sink (mirrors onTag/onRecipeState — best-effort,
    * fire-and-forget, never throws into the run). The runner emits a
@@ -318,6 +327,15 @@ interface StepDispatch {
   keepWhen?: string;
   /** SS5a: a `onError:` recovery policy — retry N / fallback kit:<id> / continue-partial. */
   onError?: OnErrorPolicy;
+  /** SS5b: a `allow-tools:` directive — the comma-separated tool-name allowlist for the spawn. */
+  allowTools?: string[];
+  /** SS5b: a `max-tokens:` per-spawn token bound. Either the literal directive value or,
+   * when the directive is absent / non-numeric / an unresolved {{template}}, the
+   * fail-closed deriveSpawnBudget(...) bound (never a throw — mirrors SS5a `retry N`). */
+  maxTokens?: number;
+  /** SS5b: a `max-tool-calls:` per-spawn tool-call bound (literal or {{template}}; a
+   * non-numeric / unresolved value is simply omitted — no fabricated default). */
+  maxToolCalls?: number;
 }
 
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
@@ -333,7 +351,11 @@ function leadingDirectives(body: string): string[] {
       if (out.length > 0) break; // a blank after directives ends the block
       continue; // skip leading blank lines
     }
-    if (!/^(?:uses|loop|when|return|done|map|filter|keep|onError):|^invoke\s+skill:/i.test(line))
+    if (
+      !/^(?:uses|loop|when|return|done|map|filter|keep|onError|allow-tools|max-tokens|max-tool-calls):|^invoke\s+skill:/i.test(
+        line,
+      )
+    )
       break; // first prose line ends the block
     out.push(line);
   }
@@ -441,6 +463,45 @@ export function parseOnErrorDirective(body: string): OnErrorPolicy | undefined {
     if (fallback) return { mode: "fallback", kitRef: fallback[1] };
     if (/^continue-partial$/i.test(spec)) return { mode: "continue-partial" };
     return undefined; // an unrecognized onError body is left as no policy
+  }
+  return undefined;
+}
+
+/** SS5b: a leading `allow-tools: a, b, c` directive — the comma-separated tool-name
+ * allowlist threaded to the spawn as `--allow-tools`. Returns the trimmed,
+ * non-empty names, or undefined when no allow-tools directive leads the body. */
+export function parseAllowToolsDirective(body: string): string[] | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^allow-tools:\s*(.+\S)\s*$/i.exec(line);
+    if (!m) continue;
+    const names = m[1]
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    return names.length > 0 ? names : undefined;
+  }
+  return undefined;
+}
+
+/** SS5b: a leading `max-tokens: <int|{{template}}>` directive — the RAW value
+ * (literal or {{template}}). Resolution + the fail-closed deriveSpawnBudget(...)
+ * fallback happen at the dispatch-build call site (mirrors the SS5a `retry N`
+ * template rule). Returns the raw string, or undefined when absent. */
+export function parseMaxTokensDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^max-tokens:\s*(.+\S)\s*$/i.exec(line);
+    if (m) return m[1].trim();
+  }
+  return undefined;
+}
+
+/** SS5b: a leading `max-tool-calls: <int|{{template}}>` directive — the RAW value
+ * (literal or {{template}}). A non-numeric / unresolved value is simply omitted at
+ * the call site (no fabricated default). Returns the raw string, or undefined. */
+export function parseMaxToolCallsDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^max-tool-calls:\s*(.+\S)\s*$/i.exec(line);
+    if (m) return m[1].trim();
   }
   return undefined;
 }
@@ -810,6 +871,20 @@ interface SpawnResult {
 }
 
 /**
+ * SS5b: per-spawn budget directives threaded into the openclaw-spawn-subagent.mjs
+ * argv. Each field is OPTIONAL — only present flags are appended (an absent field
+ * adds no argv entry, so the existing spawn behavior is unchanged).
+ */
+export interface SpawnOpts {
+  /** `--allow-tools` comma-joined tool allowlist. */
+  allowTools?: string[];
+  /** `--max-tokens` per-spawn token bound. */
+  maxTokens?: number;
+  /** `--max-tool-calls` per-spawn tool-call bound. */
+  maxToolCalls?: number;
+}
+
+/**
  * Invoke openclaw-spawn-subagent.mjs for a single step. Returns a promise that
  * resolves when the subagent has been spawned (not when it completes — the
  * recipe-runner polls plan-row status for completion).
@@ -817,12 +892,24 @@ interface SpawnResult {
  * Timeout: 120s per spawn call (time for the subagent to be accepted by the
  * gateway; actual execution continues independently).
  */
-function spawnStep(task: string, label: string): Promise<SpawnResult> {
+function spawnStep(task: string, label: string, spawnOpts?: SpawnOpts): Promise<SpawnResult> {
   return new Promise((resolve) => {
     const helperPath = resolveSpawnHelperPath();
+    // SS5b: append per-spawn budget flags ONLY when present (an absent directive
+    // adds no argv entry, so the existing spawn path is byte-for-byte unchanged).
+    const budgetArgs: string[] = [];
+    if (spawnOpts?.allowTools && spawnOpts.allowTools.length > 0) {
+      budgetArgs.push("--allow-tools", spawnOpts.allowTools.join(","));
+    }
+    if (spawnOpts?.maxTokens != null && Number.isFinite(spawnOpts.maxTokens)) {
+      budgetArgs.push("--max-tokens", String(spawnOpts.maxTokens));
+    }
+    if (spawnOpts?.maxToolCalls != null && Number.isFinite(spawnOpts.maxToolCalls)) {
+      budgetArgs.push("--max-tool-calls", String(spawnOpts.maxToolCalls));
+    }
     const child = spawn(
       process.execPath,
-      [helperPath, "--task", task, "--label", label, "--json"],
+      [helperPath, "--task", task, "--label", label, ...budgetArgs, "--json"],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
 
@@ -1153,6 +1240,31 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       const loop = parseLoopDirective(cleanBody);
       const whenGuard = parseWhenDirective(cleanBody);
       const earlyExit = parseEarlyExitDirective(cleanBody);
+      const skillForBudget = skillId ? opts.skillLibrary?.read(skillId) : undefined;
+      // SS5b: parse the per-spawn directives. `allow-tools` is a name list. A
+      // `max-tool-calls` keeps only a numeric literal (no fabricated default). For
+      // `max-tokens`: a numeric literal wins; ABSENT / non-numeric / an unresolved
+      // {{template}} FAILS CLOSED to the J16 deriveSpawnBudget(...) bound (never a
+      // throw — mirrors the SS5a `retry N` template rule). Prior typed outputs are
+      // not available at build time, so a {{template}} cannot resolve here and falls
+      // through to the derived bound by design.
+      const allowTools = parseAllowToolsDirective(cleanBody);
+      const rawMaxTokens = parseMaxTokensDirective(cleanBody);
+      const rawMaxToolCalls = parseMaxToolCallsDirective(cleanBody);
+      const requiredFieldCount = Array.isArray((effectiveOut as { required?: unknown })?.required)
+        ? (effectiveOut as { required: unknown[] }).required.length
+        : 0;
+      const derivedSpawnBudget = deriveSpawnBudget({
+        requiredFieldCount,
+        skillInvoked: !!skillForBudget,
+        fitnessSuccessRate: opts.fitnessSuccessRate,
+        remainingTokenBudget: opts.remainingTokenBudget,
+      });
+      const parsedMaxTokens = rawMaxTokens != null ? Number.parseInt(rawMaxTokens, 10) : NaN;
+      const maxTokens = Number.isFinite(parsedMaxTokens) ? parsedMaxTokens : derivedSpawnBudget;
+      const parsedMaxToolCalls =
+        rawMaxToolCalls != null ? Number.parseInt(rawMaxToolCalls, 10) : NaN;
+      const maxToolCalls = Number.isFinite(parsedMaxToolCalls) ? parsedMaxToolCalls : undefined;
       return {
         stepIndex: idx,
         title: step.title,
@@ -1168,6 +1280,9 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         filterOver: parseFilterIterDirective(cleanBody),
         keepWhen: parseKeepDirective(cleanBody),
         onError: parseOnErrorDirective(cleanBody),
+        allowTools,
+        maxTokens,
+        maxToolCalls,
       };
     }),
   );
@@ -1733,7 +1848,19 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         const taskForSpawn = progressNote
           ? `${taskWithContext}\n\n---\n${progressNote}`
           : taskWithContext;
-        const spawnResult = await (opts._spawnStep ?? spawnStep)(taskForSpawn, dispatch.label);
+        // SS5b: thread the step's per-spawn budget (allow-tools / max-tokens /
+        // max-tool-calls) into the spawn. An absent directive leaves the field
+        // undefined, so spawnStep appends no flag (unchanged behavior).
+        const spawnOpts: SpawnOpts = {
+          allowTools: dispatch.allowTools,
+          maxTokens: dispatch.maxTokens,
+          maxToolCalls: dispatch.maxToolCalls,
+        };
+        const spawnResult = await (opts._spawnStep ?? spawnStep)(
+          taskForSpawn,
+          dispatch.label,
+          spawnOpts,
+        );
         if (!spawnResult.ok) {
           return {
             ok: false,
