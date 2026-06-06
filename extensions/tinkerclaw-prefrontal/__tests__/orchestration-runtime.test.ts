@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createOrchestrationRuntime } from "../orchestration-runtime.js";
+import { classifyError } from "../recipe-types.js";
 
 describe("agent()", () => {
   it("spawns a subagent and returns its final text", async () => {
@@ -17,7 +18,7 @@ describe("agent()", () => {
 });
 
 describe("parallel()", () => {
-  it("barriers and null-isolates failures, preserving order", async () => {
+  it("barriers and isolates failures as Settled errors, preserving order", async () => {
     const rt = createOrchestrationRuntime({ spawn: async (p) => ({ finalText: p }) });
     const res = await rt.parallel([
       () => rt.agent("a"),
@@ -26,15 +27,30 @@ describe("parallel()", () => {
       },
       () => rt.agent("c"),
     ]);
-    expect(res).toEqual(["a", null, "c"]);
+    expect(res[0]).toEqual({ ok: true, value: "a" });
+    expect(res[1].ok).toBe(false);
+    expect(res[1].ok === false && res[1].index).toBe(1);
+    expect(res[2]).toEqual({ ok: true, value: "c" });
+  });
+
+  it("preserves a thrown ClassifiedError's kind in the Settled error", async () => {
+    const rt = createOrchestrationRuntime({ spawn: async (p) => ({ finalText: p }) });
+    const res = await rt.parallel([
+      () => rt.agent("a"),
+      async () => {
+        throw classifyError("budget-exceeded", "x");
+      },
+    ]);
+    expect(res[1].ok).toBe(false);
+    expect(res[1].ok === false && res[1].error.kind).toBe("budget-exceeded");
   });
 
   it("runs all thunks even past the concurrency cap", async () => {
     const rt = createOrchestrationRuntime({ spawn: async (p) => ({ finalText: p }) });
     const res = await rt.parallel(Array.from({ length: 50 }, (_, i) => () => rt.agent(String(i))));
     expect(res).toHaveLength(50);
-    expect(res[0]).toBe("0");
-    expect(res[49]).toBe("49");
+    expect(res[0]).toEqual({ ok: true, value: "0" });
+    expect(res[49]).toEqual({ ok: true, value: "49" });
   });
 });
 
@@ -53,10 +69,13 @@ describe("pipeline()", () => {
         return (n as number) + 1;
       },
     );
-    expect(out).toEqual([11, 21]);
+    expect(out).toEqual([
+      { ok: true, value: 11 },
+      { ok: true, value: 21 },
+    ]);
   });
 
-  it("drops an item to null when a stage throws, skipping remaining stages", async () => {
+  it("drops an item to a Settled error when a stage throws, skipping remaining stages", async () => {
     const rt = createOrchestrationRuntime({ spawn: async (p) => ({ finalText: p }) });
     let stage2Ran = 0;
     const out = await rt.pipeline(
@@ -70,8 +89,21 @@ describe("pipeline()", () => {
         return n;
       },
     );
-    expect(out).toEqual([null, 2]);
+    expect(out[0].ok).toBe(false);
+    expect(out[0].ok === false && out[0].index).toBe(0);
+    expect(out[1]).toEqual({ ok: true, value: 2 });
     expect(stage2Ran).toBe(1); // only item 2 reached stage 2
+  });
+
+  it("preserves a thrown ClassifiedError's kind in a dropped pipeline item", async () => {
+    const rt = createOrchestrationRuntime({ spawn: async (p) => ({ finalText: p }) });
+    const out = await rt.pipeline([1, 2], async (n) => {
+      if ((n as number) === 1) throw classifyError("budget-exceeded", "x");
+      return n;
+    });
+    expect(out[0].ok).toBe(false);
+    expect(out[0].ok === false && out[0].error.kind).toBe("budget-exceeded");
+    expect(out[1]).toEqual({ ok: true, value: 2 });
   });
 
   it("passes (prev, originalItem, index) to each stage", async () => {
