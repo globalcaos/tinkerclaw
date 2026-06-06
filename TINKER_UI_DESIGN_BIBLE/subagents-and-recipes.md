@@ -147,6 +147,14 @@ verify:
     cmd: grep -Fq 'allowTools' ~/src/tinkerclaw/src/agents/subagent-spawn.ts && grep -Fq 'maxToolCalls' ~/src/tinkerclaw/src/agents/subagent-spawn.ts
   - name: SS5b matcher keys recipe fitness by the exact owner/slug recipeId (not the bare slug)
     cmd: grep -Fq 'owner: string' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-matcher.ts && grep -Fq 'feedback(kit.owner' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-matcher.ts
+  - name: Recipe edits SURVIVE git pull — ~/.openclaw/recipes overlay has read-precedence (runner + recipe.read RPC) + the save endpoint write-redirects to it
+    cmd: grep -Fq 'export function resolveRecipeOverlayDir' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'resolveRecipeOverlayDir(), slug' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && grep -Fq '.openclaw/recipes' ~/src/tinkerclaw/extensions/tinkerclaw-tinker/index.ts
+  - name: Agent-freedom — default runRecipe path is live-dispatch (no confirm/dry-run stopper); contract test pins it
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/__tests__/recipe-run-no-stopper.test.ts && grep -Fq 'dryRun' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/__tests__/recipe-run-no-stopper.test.ts
+  - name: Overseer is a BROCA RECIPE with a DERIVED loop bound (no frozen cap) + a right-side keep-going bubble (onKeepGoing, unmarked = user-anchored)
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/overseer/recipe.md && grep -Fq 'loop: until OVERSEER_DONE' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/overseer/recipe.md && grep -Fq 'export function deriveOverseerLoopBudget' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/overseer-budget.ts && grep -Fq 'deriveOverseerLoopBudget(' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'onKeepGoing' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: Prompt caching — the tools array gets a cache_control breakpoint (tools->system->messages), the highest-ROI budget-prompting win
+    cmd: grep -Fq 'export function applyAnthropicCacheControlToTools' ~/src/tinkerclaw/src/agents/anthropic-payload-policy.ts && grep -Fq 'applyAnthropicCacheControlToTools(payloadObj.tools' ~/src/tinkerclaw/src/agents/anthropic-payload-policy.ts
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
