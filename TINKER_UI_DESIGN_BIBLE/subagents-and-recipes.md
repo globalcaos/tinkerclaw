@@ -131,6 +131,22 @@ verify:
     cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'export async function optimizeRecipe' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'isApplyEnabled' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts
   - name: SS4 prefrontal.recipe.optimize RPC present (mirrors applyProposal)
     cmd: grep -Fq '"prefrontal.recipe.optimize"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && grep -Fq 'optimizeRecipe' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts
+  - name: SS5b deriveSpawnBudget present + PURE (no node:fs) + derived (POSITIVE_INFINITY no-signal fallback)
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/spawn-budget.ts && ! grep -q 'node:fs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/spawn-budget.ts && grep -Fq 'export function deriveSpawnBudget' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/spawn-budget.ts && grep -Fq 'Number.POSITIVE_INFINITY' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/spawn-budget.ts
+  - name: SS5b per-spawn budget is DERIVED, never a frozen const (no const MAX_TOKENS / MAX_TOOL_CALLS / SPAWN_BUDGET)
+    cmd: ! grep -Eq 'const (MAX_TOKENS|MAX_TOOL_CALLS|SPAWN_BUDGET) =' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/spawn-budget.ts
+  - name: SS5b per-spawn directives (allow-tools/max-tokens/max-tool-calls) parsed by the runner + on StepDispatch
+    cmd: grep -Fq 'allow-tools|max-tokens|max-tool-calls' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'allowTools' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'maxToolCalls' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: SS5b parallel()/pipeline() return catchable Settled<T> partials (orchestration-runtime.ts)
+    cmd: grep -Fq 'export type Settled<T>' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-runtime.ts && grep -Fq 'Promise<Array<Settled<T>>>' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-runtime.ts
+  - name: SS5b catchable budget-exceeded arm wired in spawnTextVia (KNOWN-INERT — fires once agent.wait carries exhausted/budget-exhausted)
+    cmd: grep -Fq 'budget-exceeded' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-deps.ts && grep -Fq 'budget-exhausted' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-deps.ts
+  - name: SS5b validateSpawnBudget gates the subagents RPC + C1 tool-gate enforcement marker present (KNOWN-INERT until a tool-gate lands)
+    cmd: grep -Fq 'export function validateSpawnBudget' ~/src/tinkerclaw/src/fork/subagents-rpc.ts && grep -Fq 'SS5b-C1: enforce allowTools here once the tool-gate lands' ~/src/tinkerclaw/src/fork/subagents-rpc.ts
+  - name: SS5b spawn budget fields (allowTools/maxToolCalls) on SpawnSubagentParams
+    cmd: grep -Fq 'allowTools' ~/src/tinkerclaw/src/agents/subagent-spawn.ts && grep -Fq 'maxToolCalls' ~/src/tinkerclaw/src/agents/subagent-spawn.ts
+  - name: SS5b matcher keys recipe fitness by the exact owner/slug recipeId (not the bare slug)
+    cmd: grep -Fq 'owner: string' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-matcher.ts && grep -Fq 'feedback(kit.owner' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-matcher.ts
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
