@@ -27,6 +27,7 @@
 
 import { validateRecipeSpec, type RecipeSpec } from "./recipe-author.js";
 import { invalidateRecipeIndexCache } from "./recipe-matcher.js";
+import { parseRecipeMd } from "./recipe-parse.js";
 
 /** The mutation directive this loop applies (the autoPromotable subset of MutationProposal). */
 export interface ApplyProposalInput {
@@ -35,6 +36,18 @@ export interface ApplyProposalInput {
   /** Opaque intent note from the Cerebellum (payload.note), e.g. "add a guard step". */
   intent: string;
   rationale: string;
+  /**
+   * SS4: structured proposal payload. For `rewrite_step_text` it carries
+   * `{ stepIndex, stepTitle?, dominantKind?, failureRate? }` — the single step to
+   * sharpen + the dominant failure context for the rewrite prompt.
+   */
+  payload?: {
+    stepIndex?: number;
+    stepTitle?: string;
+    dominantKind?: string;
+    failureRate?: number;
+    [key: string]: unknown;
+  };
 }
 
 export interface ApplyDeps {
@@ -44,6 +57,19 @@ export interface ApplyDeps {
   snapshot: (slug: string, text: string) => Promise<string>;
   /** LLM rewrite: produce the improved recipe as raw text (expected to contain a RecipeSpec JSON). */
   rewrite: (currentText: string, op: string, intent: string) => Promise<string | undefined>;
+  /**
+   * SS4: per-STEP rewrite — given one struggling step's current body + title +
+   * dominant failure kind/message, return ONLY the improved step body prose (no
+   * RecipeSpec, no fences). Optional: when absent the rewrite_step_text branch
+   * returns reason:"rewrite-empty" (a no-op, never a corruption). Only
+   * prefrontal.recipe.optimize wires it.
+   */
+  rewriteStep?: (
+    stepBody: string,
+    stepTitle: string,
+    dominantKind: string,
+    message: string,
+  ) => Promise<string | undefined>;
   /** Write the validated spec through the authorship-guarded author path (overwrite:true). */
   authorKit: (spec: RecipeSpec) => Promise<{ ok: boolean; note?: string }>;
   log?: { info?: (m: string) => void; warn?: (m: string) => void };
@@ -112,6 +138,37 @@ ${currentText}
 }
 
 /**
+ * SS4: compose the per-STEP rewrite prompt. Unlike buildRewritePrompt (which asks
+ * for a whole RecipeSpec), this asks the subagent for ONLY the rewritten body prose
+ * of a single struggling step, given its dominant field failure. Pure.
+ */
+export function buildStepRewritePrompt(
+  stepBody: string,
+  stepTitle: string,
+  dominantKind: string,
+  message: string,
+): string {
+  return `You are a RECIPE-STEP editor. One step of an OpenClaw "kit/1.0" recipe keeps
+FAILING in the field, dominantly with this error class:
+
+  step:           ${stepTitle}
+  dominant error: ${dominantKind}
+  last message:   ${message}
+
+Rewrite the step's INSTRUCTION TEXT so a worker following it avoids that failure
+mode — add the missing precondition / verification / explicit budget / clearer
+success criterion that the failures imply. Keep the step's PURPOSE identical and the
+prose concise. Do NOT add numbered markdown headings ("### N. …" reparses as a
+phantom step). Output ONLY the rewritten step body prose — no JSON, no code fences,
+no commentary, no leading directives (out:/in:/uses:/when:/onError:). Here is the
+CURRENT step body:
+
+--- BEGIN STEP BODY ---
+${stepBody}
+--- END STEP BODY ---`;
+}
+
+/**
  * Extract a RecipeSpec object from an LLM reply. Tolerates code fences + leading/trailing prose by
  * taking the first balanced top-level JSON object. Returns undefined if none parses. Pure.
  */
@@ -174,6 +231,81 @@ export async function applyMutationProposal(
   }
   // Rail 3: snapshot BEFORE any write (rollback net).
   const archivePath = await deps.snapshot(recipeId, loaded.text);
+  // SS4: per-step sharpening — rewrite ONLY the struggling step's body. Reuses
+  // rails 1-3 above (load/curated-guard/snapshot) and rails 4-5 below (validate +
+  // guarded author). A missing rewriteStep dep or an out-of-range stepIndex is a
+  // safe no-op (the original is kept).
+  if (input.op === "rewrite_step_text") {
+    const stepIndex = typeof input.payload?.stepIndex === "number" ? input.payload.stepIndex : -1;
+    let spec: RecipeSpec;
+    try {
+      spec = parseRecipeMd(loaded.text);
+    } catch {
+      return {
+        recipeId,
+        applied: false,
+        reason: "rewrite-invalid",
+        archivePath,
+        errors: ["could not parse recipe"],
+      };
+    }
+    if (stepIndex < 0 || stepIndex >= spec.steps.length) {
+      deps.log?.warn?.(
+        `[recipe-apply] ${recipeId}: step ${stepIndex} out of range — keep original`,
+      );
+      return {
+        recipeId,
+        applied: false,
+        reason: "rewrite-invalid",
+        archivePath,
+        errors: [`step ${stepIndex} out of range`],
+      };
+    }
+    if (!deps.rewriteStep) {
+      deps.log?.warn?.(`[recipe-apply] ${recipeId}: no rewriteStep dep — keep original`);
+      return { recipeId, applied: false, reason: "rewrite-empty", archivePath };
+    }
+    const target = spec.steps[stepIndex];
+    const improved = await deps.rewriteStep(
+      target.body,
+      target.title,
+      input.payload?.dominantKind ?? "execution-error",
+      input.rationale,
+    );
+    if (!improved || !improved.trim()) {
+      deps.log?.warn?.(`[recipe-apply] ${recipeId}: step rewrite empty — keep original`);
+      return { recipeId, applied: false, reason: "rewrite-empty", archivePath };
+    }
+    spec.slug = recipeId; // never fork identity
+    spec.steps[stepIndex] = { ...target, body: improved.trim() };
+    // Rail 4: validate-or-skip.
+    const sv = validateRecipeSpec(spec);
+    if (!sv.ok) {
+      deps.log?.warn?.(
+        `[recipe-apply] ${recipeId}: step rewrite invalid (${sv.errors.join("; ")}) — keep original`,
+      );
+      return {
+        recipeId,
+        applied: false,
+        reason: "rewrite-invalid",
+        archivePath,
+        errors: sv.errors,
+      };
+    }
+    // Rail 5: guarded author (patch version bump lives in the injected authorKit).
+    const ar = await deps.authorKit(spec);
+    if (!ar.ok) {
+      deps.log?.warn?.(
+        `[recipe-apply] ${recipeId}: author rejected (${ar.note ?? "?"}) — kept original`,
+      );
+      return { recipeId, applied: false, reason: "author-rejected", archivePath };
+    }
+    invalidateRecipeIndexCache();
+    deps.log?.info?.(
+      `[recipe-apply] ${recipeId}: APPLIED rewrite_step_text step=${stepIndex} (snapshot ${archivePath}); ${ar.note ?? ""}`,
+    );
+    return { recipeId, applied: true, reason: "applied", archivePath };
+  }
   // LLM rewrite.
   const reply = await deps.rewrite(loaded.text, input.op, input.intent);
   const spec = extractKitSpec(reply) as RecipeSpec | undefined;

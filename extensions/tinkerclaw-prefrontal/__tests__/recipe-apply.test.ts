@@ -5,6 +5,7 @@ import {
   isJarvisAuthored,
   extractKitSpec,
   buildRewritePrompt,
+  buildStepRewritePrompt,
   type ApplyDeps,
   type ApplyProposalInput,
 } from "../recipe-apply.js";
@@ -251,5 +252,151 @@ describe("applyMutationProposal — matcher cache invalidation", () => {
     );
     expect(res.reason).toBe("rewrite-invalid");
     expect(invalidateSpy).not.toHaveBeenCalled();
+  });
+});
+
+// SS4: a jarvis-authored kit whose step 2 ("Act") is the struggling step we sharpen.
+const JARVIS_TWO_STEP = `---
+schema: "kit/1.0"
+slug: "demo-recipe"
+title: "Demo"
+summary: "A demo recipe"
+version: "1.2.0"
+owner: "globalcaos"
+authoredBy: jarvis-on-the-fly
+tags: [demo]
+parallelism:
+  groups:
+    - [0]
+    - [1]
+---
+
+# Demo
+
+## Steps
+
+### 1. Setup
+Prepare the inputs.
+
+### 2. Act
+Do the flaky thing.
+`;
+
+const STEP_REWRITE_INPUT: ApplyProposalInput = {
+  recipeId: "demo-recipe",
+  op: "rewrite_step_text",
+  intent: "sharpen the struggling step",
+  rationale:
+    'step 2 "Act" failed 8/10 (80%) (dominant failure: timeout) — sharpen its instruction text',
+  payload: { stepIndex: 1, stepTitle: "Act", dominantKind: "timeout", failureRate: 0.8 },
+};
+
+const IMPROVED_BODY =
+  "Do the thing. If it has not responded within the budget, wait and retry once before failing; verify the result is non-empty.";
+
+describe("buildStepRewritePrompt", () => {
+  it("includes the step title, body, dominant kind, and the failure message", () => {
+    const p = buildStepRewritePrompt("Do the flaky thing.", "Act", "timeout", "step timed out");
+    expect(p).toContain("Act");
+    expect(p).toContain("Do the flaky thing.");
+    expect(p).toContain("timeout");
+    expect(p).toContain("step timed out");
+    // It must ask for ONLY the rewritten step body (prose), not a whole RecipeSpec.
+    expect(p).toMatch(/only the (rewritten|improved) step/i);
+  });
+});
+
+describe("applyMutationProposal — rewrite_step_text branch", () => {
+  function makeStepDeps(
+    over: Partial<ApplyDeps> & { calls?: string[] } = {},
+  ): ApplyDeps & { calls: string[]; written: { spec?: unknown } } {
+    const calls = over.calls ?? [];
+    const written: { spec?: unknown } = {};
+    return {
+      calls,
+      written,
+      loadKitText:
+        over.loadKitText ??
+        (async () => {
+          calls.push("load");
+          return { path: "/k/demo-recipe/recipe.md", text: JARVIS_TWO_STEP };
+        }),
+      snapshot:
+        over.snapshot ??
+        (async () => {
+          calls.push("snapshot");
+          return "/archive/demo-recipe-2026.md";
+        }),
+      // unused on the step path but required by the type:
+      rewrite: over.rewrite ?? (async () => undefined),
+      // Use key-presence (not `??`) so an explicit `rewriteStep: undefined` is
+      // honored — that is exactly the "no rewriteStep dep wired" case under test.
+      rewriteStep:
+        "rewriteStep" in over
+          ? over.rewriteStep
+          : async () => {
+              calls.push("rewriteStep");
+              return IMPROVED_BODY;
+            },
+      authorKit:
+        over.authorKit ??
+        (async (spec) => {
+          calls.push("author");
+          written.spec = spec;
+          return { ok: true, note: "written v1.2.1" };
+        }),
+      log: over.log,
+    };
+  }
+
+  it("rewrites ONLY the struggling step's body, snapshotting before the write", async () => {
+    const deps = makeStepDeps();
+    const res = await applyMutationProposal(STEP_REWRITE_INPUT, deps);
+    expect(res).toMatchObject({ applied: true, reason: "applied" });
+    expect(deps.calls.indexOf("snapshot")).toBeLessThan(deps.calls.indexOf("author"));
+    const spec = deps.written.spec as {
+      steps: Array<{ title: string; body: string }>;
+      slug: string;
+    };
+    expect(spec.slug).toBe("demo-recipe");
+    // step 0 (Setup) is untouched; step 1 (Act) carries the improved body.
+    expect(spec.steps[0].body).toContain("Prepare the inputs.");
+    expect(spec.steps[1].body).toBe(IMPROVED_BODY);
+  });
+
+  it("refuses a curated (non-jarvis) recipe before any rewrite or write", async () => {
+    const deps = makeStepDeps({
+      loadKitText: async () => ({ path: "/k", text: CURATED_KIT }),
+    });
+    const res = await applyMutationProposal(STEP_REWRITE_INPUT, deps);
+    expect(res.reason).toBe("curated-skip");
+    expect(deps.calls).not.toContain("snapshot");
+    expect(deps.calls).not.toContain("rewriteStep");
+    expect(deps.calls).not.toContain("author");
+  });
+
+  it("keeps the original when rewriteStep returns nothing (snapshot taken, no write)", async () => {
+    const deps = makeStepDeps({ rewriteStep: async () => undefined });
+    const res = await applyMutationProposal(STEP_REWRITE_INPUT, deps);
+    expect(res.reason).toBe("rewrite-empty");
+    expect(deps.calls).toContain("snapshot");
+    expect(deps.calls).not.toContain("author");
+  });
+
+  it("skips the branch (rewrite-empty) when no rewriteStep dep is wired", async () => {
+    const deps = makeStepDeps({ rewriteStep: undefined });
+    const res = await applyMutationProposal(STEP_REWRITE_INPUT, deps);
+    expect(res.reason).toBe("rewrite-empty");
+    expect(deps.calls).not.toContain("author");
+  });
+
+  it("keeps the original when the rewritten body is out of range (bad stepIndex)", async () => {
+    const deps = makeStepDeps();
+    const res = await applyMutationProposal(
+      { ...STEP_REWRITE_INPUT, payload: { stepIndex: 9 } },
+      deps,
+    );
+    expect(res.reason).toBe("rewrite-invalid");
+    expect(deps.calls).not.toContain("author");
   });
 });
