@@ -126,7 +126,7 @@ verify:
   - name: SS4 step-rewrite apply branch + buildStepRewritePrompt present in recipe-apply.ts
     cmd: grep -Fq 'export function buildStepRewritePrompt' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts && grep -Fq 'input.op === "rewrite_step_text"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts
   - name: SS4 optimizeRecipe orchestrator present (recipe-optimize.ts) and proposes-only by default (kill-switch reused)
-    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'export function optimizeRecipe' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'isApplyEnabled' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'export async function optimizeRecipe' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'isApplyEnabled' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts
   - name: SS4 prefrontal.recipe.optimize RPC present (mirrors applyProposal)
     cmd: grep -Fq '"prefrontal.recipe.optimize"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && grep -Fq 'optimizeRecipe' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts
 ---
