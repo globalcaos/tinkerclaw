@@ -190,6 +190,13 @@ export interface RecipeStateUpdate {
   parallelismCap?: number;
   inFlightLabels?: string[];
   sessionKey?: string;
+  /** BROCA visibility (2026-06-06): stable per-user-turn id (the run's sessionKey)
+   * — the SAME value across every event of one prompt; lets the UI scope the
+   * composition to the current turn. Optional → old consumers ignore it. */
+  turnId?: string;
+  /** BROCA visibility (2026-06-06): the skill the CURRENT step invokes (if any),
+   * from the step's `invoke skill:` directive. Optional → old consumers ignore it. */
+  skillId?: string;
 }
 
 /** FORK 2026-05-30 (Upgrade 5): max chars of a step's done-note persisted as the
@@ -1205,6 +1212,9 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         totalSteps: kit.steps.length,
         parallelismCap: maxParallelism,
         sessionKey: opts.sessionKey,
+        // BROCA visibility: turnId is the run's sessionKey — stable across every
+        // event of one prompt. A per-call skillId in `update` overrides as needed.
+        turnId: opts.sessionKey,
         ...update,
       });
     } catch {
@@ -1290,9 +1300,11 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
 
   // FORK 2026-05-31: announce the recipe to the panel as soon as the plan is
   // seeded (resume picks up at the checkpoint step; fresh runs at step 1).
+  const startDispatch = dispatchGroups.flat().find((d) => d.stepIndex === startIndex);
   emitRecipeState({
     step: startIndex + 1,
     stepName: kit.steps[startIndex]?.title,
+    skillId: startDispatch?.skillId,
   });
 
   // FORK 2026-06 (Upgrade 1): stamp the recipe-attribution tag ONCE at run start.
@@ -1326,6 +1338,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         step: groupFirst + 1,
         stepName: groupDispatches.map((d) => d.title).join(" ∥ "),
         inFlightLabels: groupDispatches.map((d) => d.label),
+        skillId: groupDispatches[0]?.skillId,
       });
     }
 
