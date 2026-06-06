@@ -44,6 +44,12 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   modelRegistry: ModelRegistry;
   thinkLevel: ThinkLevel;
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
+  /** Optional tool allow-list; when set, only these tools are sent to the model. */
+  toolsAllow?: string[];
+  /** Optional per-run output token budget, read by attempt.ts. */
+  maxTokens?: number;
+  /** Optional per-run tool-call budget, read by attempt.ts. */
+  maxToolCalls?: number;
 };
 
 export type EmbeddedRunAttemptResult = {

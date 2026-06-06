@@ -115,6 +115,10 @@ export type RunEmbeddedPiAgentParams = {
   bootstrapContextRunKind?: "default" | "heartbeat" | "cron";
   /** Optional tool allow-list; when set, only these tools are sent to the model. */
   toolsAllow?: string[];
+  /** Optional per-run output token budget; forwarded to the attempt/backend. */
+  maxTokens?: number;
+  /** Optional per-run tool-call budget; forwarded to the attempt/backend. */
+  maxToolCalls?: number;
   /** Seen bootstrap truncation warning signatures for this session (once mode dedupe). */
   bootstrapPromptWarningSignaturesSeen?: string[];
   /** Last shown bootstrap truncation warning signature for this session. */
