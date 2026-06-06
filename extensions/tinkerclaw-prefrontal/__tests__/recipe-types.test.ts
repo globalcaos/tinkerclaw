@@ -8,6 +8,7 @@ import {
   parseStepRef,
   resolveStepRefs,
   validateTypedNote,
+  parseKitRefValue,
 } from "../recipe-types.js";
 
 const AjvCtor = AjvPkg as unknown as typeof import("ajv").default;
@@ -146,5 +147,32 @@ describe("resolveStepRefs", () => {
   });
   it("leaves an unresolvable ref untouched (compile-check is the guard)", () => {
     expect(resolveStepRefs("{{steps.9.out.x}}", new Map())).toBe("{{steps.9.out.x}}");
+  });
+});
+
+describe("parseKitRefValue (SS2b kitRef value)", () => {
+  it("normalizes a bare slug to globalcaos/<slug>", () => {
+    expect(parseKitRefValue("echo")).toBe("globalcaos/echo");
+    expect(parseKitRefValue("code-review")).toBe("globalcaos/code-review");
+  });
+  it("preserves an explicit owner/slug", () => {
+    expect(parseKitRefValue("globalcaos/feature")).toBe("globalcaos/feature");
+    expect(parseKitRefValue("someowner/their-kit")).toBe("someowner/their-kit");
+  });
+  it("trims surrounding whitespace", () => {
+    expect(parseKitRefValue("  echo  ")).toBe("globalcaos/echo");
+  });
+  it("rejects malformed refs (returns null)", () => {
+    expect(parseKitRefValue("")).toBeNull();
+    expect(parseKitRefValue("UPPER")).toBeNull();
+    expect(parseKitRefValue("a/b/c")).toBeNull();
+    expect(parseKitRefValue("../escape")).toBeNull();
+    expect(parseKitRefValue("{{steps.1.out.worker}}")).toBeNull();
+    expect(parseKitRefValue("steps.1.out.worker")).toBeNull();
+    expect(parseKitRefValue("has space")).toBeNull();
+  });
+  it("rejects a non-string", () => {
+    expect(parseKitRefValue(undefined as unknown as string)).toBeNull();
+    expect(parseKitRefValue(42 as unknown as string)).toBeNull();
   });
 });
