@@ -63,7 +63,7 @@ import {
 } from "./recipe-matcher.js";
 import { optimizeRecipe } from "./recipe-optimize.js";
 import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
-import { parseUsesDirective, runRecipe } from "./recipe-runner.js";
+import { parseUsesDirective, resolveRecipeOverlayDir, runRecipe } from "./recipe-runner.js";
 import { snapshotKit } from "./recipe-snapshot.js";
 import { RecipeStore } from "./recipe-store.js";
 
@@ -882,6 +882,18 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
           md = await fs.readFile(p.path, "utf-8");
         } catch {
           md = null;
+        }
+      }
+      if (md === null && slug) {
+        // OVERLAY-FIRST: an edited copy under ~/.openclaw/recipes/<slug>/ shadows the
+        // git-tracked default, so the BROCA/UI panel reads the user's edited recipe.
+        for (const fname of ["recipe.md", "kit.md"]) {
+          try {
+            md = await fs.readFile(path.join(resolveRecipeOverlayDir(), slug, fname), "utf-8");
+            break;
+          } catch {
+            // try next filename / fall through to the git-tracked default
+          }
         }
       }
       if (md === null && slug) {
