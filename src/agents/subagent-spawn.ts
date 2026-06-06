@@ -1108,6 +1108,12 @@ export async function spawnSubagentDirect(
         thinking: thinkingOverride,
         timeout: runTimeoutSeconds,
         label: label || undefined,
+        // SS5b-C1 spawn budget: forward the normalized allow-list / caps to the
+        // child run so they can be enforced child-side (see attempt.ts). Only
+        // include each key when it was supplied on the spawn params.
+        ...(params.allowTools ? { allowTools: params.allowTools } : {}),
+        ...(params.maxTokens != null ? { maxTokens: params.maxTokens } : {}),
+        ...(params.maxToolCalls != null ? { maxToolCalls: params.maxToolCalls } : {}),
         ...(bootstrapContextMode
           ? {
               bootstrapContextMode,

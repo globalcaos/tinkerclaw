@@ -182,11 +182,13 @@ export const forkSubagentsHandlers: GatewayRequestHandlers = {
       log.info(
         `fork.subagents.spawn ok childSessionKey=${result.childSessionKey} runId=${result.runId} task.len=${task.length}`,
       );
-      // SS5b-C1: enforce allowTools here once the tool-gate lands.
-      // The budget is validated + normalized above but NOT yet enforced on the
-      // child run; log what was requested so it is observable until enforcement ships.
+      // SS5b-C1: the budget is validated + normalized above and now FORWARDED to
+      // the child run via the agent call inside spawnSubagentDirect
+      // (allowTools/maxTokens/maxToolCalls), where it is enforced child-side in
+      // attempt.ts. Keep the observability log so the requested budget stays
+      // visible alongside the spawn result.
       log.info(
-        `fork.subagents.spawn budget (enforcement pending) allowTools=${
+        `fork.subagents.spawn budget (forwarded) allowTools=${
           spawnParams.allowTools ? spawnParams.allowTools.join(",") : "<none>"
         } maxTokens=${spawnParams.maxTokens ?? "<none>"} maxToolCalls=${
           spawnParams.maxToolCalls ?? "<none>"
