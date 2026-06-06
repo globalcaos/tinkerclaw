@@ -40,9 +40,11 @@ import {
 import { surfaceKitOutcome } from "./long-run-surface.js";
 import { createProductionOrchestrationRuntime } from "./orchestration-deps.js";
 import { runOrchestrationScript } from "./orchestration-script.js";
+import { parsePlanMd } from "./plan-store.js";
 import {
   applyMutationProposal,
   buildRewritePrompt,
+  buildStepRewritePrompt,
   isApplyEnabled,
   type ApplyProposalInput,
 } from "./recipe-apply.js";
@@ -58,6 +60,7 @@ import {
   matchRecipesDetailed,
   invalidateRecipeIndexCache,
 } from "./recipe-matcher.js";
+import { optimizeRecipe } from "./recipe-optimize.js";
 import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
 import { parseUsesDirective, runRecipe } from "./recipe-runner.js";
 import { snapshotKit } from "./recipe-snapshot.js";
@@ -1406,6 +1409,133 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
               },
         }).catch(() => {});
       } catch {}
+      return { ok: true, ...result };
+    },
+
+    // SS4 (2026-06-06): the self-sharpening RPC. Read this recipe's LIVE plan archive
+    // → per-step struggle → propose a rewrite_step_text per struggling step → apply
+    // each ONLY when RECIPE_AUTOAPPLY_ENABLED (proposes-only by default). Mirrors
+    // applyProposal: snapshot-reversible, authorship-guarded, validate-or-skip;
+    // patch version bump. Never throws into the caller.
+    "prefrontal.recipe.optimize": async (raw: unknown) => {
+      const p = (raw ?? {}) as { kitRef?: unknown };
+      if (typeof p.kitRef !== "string" || !p.kitRef.trim()) {
+        throw new Error("prefrontal.recipe.optimize: kitRef (non-empty string) required");
+      }
+      const kitRef = p.kitRef.trim();
+      const slug = kitRef.includes("/") ? kitRef.split("/")[1] : kitRef;
+
+      const result = await optimizeRecipe(kitRef, {
+        // Read the plan archive for THIS recipe: scan archive/<date>/*.md under the
+        // plan-store root, parse each, keep those whose frontmatter kitRef matches.
+        readArchivedPlans: async () => {
+          if (!deps.planStore) return [];
+          const plans: import("../../src/gateway/protocol/schema/prefrontal-plan.js").Plan[] = [];
+          const archiveRoot = path.join(deps.planStore.rootDirPublic(), "archive");
+          let dateDirs: string[] = [];
+          try {
+            dateDirs = await fs.readdir(archiveRoot);
+          } catch {
+            return [];
+          }
+          for (const date of dateDirs) {
+            let files: string[] = [];
+            try {
+              files = await fs.readdir(path.join(archiveRoot, date));
+            } catch {
+              continue;
+            }
+            for (const f of files) {
+              if (!f.endsWith(".md")) continue;
+              try {
+                const text = await fs.readFile(path.join(archiveRoot, date, f), "utf-8");
+                const plan = parsePlanMd(text);
+                if (plan.kitRef === kitRef) plans.push(plan);
+              } catch {
+                // skip an unreadable / malformed archive file
+              }
+            }
+          }
+          return plans;
+        },
+        baseVersion: await (async () => {
+          // Read the current version from the kit frontmatter (default 1 for bumping).
+          for (const fname of ["recipe.md", "kit.md"]) {
+            try {
+              const text = await fs.readFile(path.join(deps.ownRecipesDir, slug, fname), "utf-8");
+              const v = readFrontmatterField(text, "version");
+              const major = v ? parseInt(v.split(".")[0], 10) : 1;
+              return Number.isFinite(major) ? major : 1;
+            } catch {
+              // try next filename
+            }
+          }
+          return 1;
+        })(),
+        applyProposal: async (input) =>
+          applyMutationProposal(input, {
+            loadKitText: async (s) => {
+              for (const fname of ["recipe.md", "kit.md"]) {
+                try {
+                  const target = path.join(deps.ownRecipesDir, s, fname);
+                  const text = await fs.readFile(target, "utf-8");
+                  return { path: target, text };
+                } catch {
+                  // try next filename
+                }
+              }
+              return null;
+            },
+            snapshot: (s, text) =>
+              snapshotKit(deps.ownRecipesDir, s, text, new Date().toISOString()),
+            rewrite: async () => undefined, // unused on the step path
+            rewriteStep: (stepBody, stepTitle, dominantKind, message) =>
+              spawnRecipeRewrite(
+                buildStepRewritePrompt(stepBody, stepTitle, dominantKind, message),
+              ),
+            authorKit: async (spec) => {
+              try {
+                // SS4: patch version bump on a step-text sharpening (immutable history).
+                const r = await persistKitSpec(spec, deps.ownRecipesDir, true);
+                try {
+                  const target = path.join(deps.ownRecipesDir, spec.slug, "recipe.md");
+                  const text = await fs.readFile(target, "utf-8");
+                  const cur = readFrontmatterField(text, "version") ?? "1.0.0";
+                  const bumped = setFrontmatterField(text, "version", bumpVersion(cur, "patch"));
+                  await fs.writeFile(target, bumped, "utf-8");
+                } catch {
+                  // version-bump is best-effort; the rewrite itself already persisted
+                }
+                return { ok: true, note: r.note };
+              } catch (err) {
+                return { ok: false, note: err instanceof Error ? err.message : String(err) };
+              }
+            },
+            log: { info: (m) => recipeApplyLog.info(m), warn: (m) => recipeApplyLog.warn(m) },
+          }),
+      });
+
+      // Surface the optimize pass in the RECIPES panel decision trail (best-effort).
+      try {
+        void callGateway({
+          method: "fork.prefrontal.trailEvent",
+          params: {
+            kind: result.applied.length > 0 ? "recipe-optimize" : "recipe-optimize-proposed",
+            label: kitRef,
+            message:
+              result.applied.length > 0
+                ? `sharpened ${result.applied.filter((a) => a.applied).length} step(s) of ${kitRef}`
+                : `proposed ${result.proposed.length} step rewrite(s) for ${kitRef} (apply OFF)`,
+            payload: {
+              kitRef,
+              proposed: result.proposed.length,
+              applied: result.applied.filter((a) => a.applied).length,
+              strugglingStepIndexes: result.struggleBefore.strugglingStepIndexes,
+            },
+          },
+        }).catch(() => {});
+      } catch {}
+
       return { ok: true, ...result };
     },
 
