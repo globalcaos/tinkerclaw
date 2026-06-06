@@ -39,10 +39,15 @@ import {
   validateTypedNote,
   parseStepRef,
   parseKitRefValue,
+  classifyError,
+  isRecoverableKind,
   dotGet,
   type JsonSchema,
   type Port,
+  type ClassifiedError,
+  type OnErrorPolicy,
 } from "./recipe-types.js";
+import { deriveRecoveryRetryBudget } from "./recovery-budget.js";
 import { deriveRedispatchBudget } from "./redispatch-budget.js";
 import { evaluateWhen, collectWhenRefs } from "./when-eval.js";
 
@@ -304,6 +309,8 @@ interface StepDispatch {
   filterOver?: string;
   /** SS2b: the `keep:` predicate for a filter (evaluated per element with {{item}} substituted). */
   keepWhen?: string;
+  /** SS5a: a `onError:` recovery policy — retry N / fallback kit:<id> / continue-partial. */
+  onError?: OnErrorPolicy;
 }
 
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
@@ -319,7 +326,8 @@ function leadingDirectives(body: string): string[] {
       if (out.length > 0) break; // a blank after directives ends the block
       continue; // skip leading blank lines
     }
-    if (!/^(?:uses|loop|when|return|done|map|filter|keep):|^invoke\s+skill:/i.test(line)) break; // first prose line ends the block
+    if (!/^(?:uses|loop|when|return|done|map|filter|keep|onError):|^invoke\s+skill:/i.test(line))
+      break; // first prose line ends the block
     out.push(line);
   }
   return out;
@@ -404,6 +412,28 @@ export function parseKeepDirective(body: string): string | undefined {
   for (const line of leadingDirectives(body)) {
     const m = /^keep:\s*(.+\S)\s*$/i.exec(line);
     if (m) return m[1].trim();
+  }
+  return undefined;
+}
+
+/** SS5a: a leading `onError: <policy>` recovery directive. Three forms:
+ *   onError: retry <N|{{template}}>   — re-run the step (bounded by deriveRecoveryRetryBudget)
+ *   onError: fallback kit:<id>        — dispatch a recovery kit via the uses: edge
+ *   onError: continue-partial         — settle as done-partial (do not abort)
+ * Returns the parsed OnErrorPolicy, or undefined when no onError directive leads
+ * the (io-stripped) body. A `retry` N may be a literal or a `{{template}}` (resolved
+ * at dispatch like uses:; a non-numeric resolution fails closed to the derived bound). */
+export function parseOnErrorDirective(body: string): OnErrorPolicy | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^onError:\s*(.+\S)\s*$/i.exec(line);
+    if (!m) continue;
+    const spec = m[1].trim();
+    const retry = /^retry\s+(\S+)$/i.exec(spec);
+    if (retry) return { mode: "retry", n: retry[1] };
+    const fallback = /^fallback\s+kit:\s*(\S+)$/i.exec(spec);
+    if (fallback) return { mode: "fallback", kitRef: fallback[1] };
+    if (/^continue-partial$/i.test(spec)) return { mode: "continue-partial" };
+    return undefined; // an unrecognized onError body is left as no policy
   }
   return undefined;
 }
@@ -566,6 +596,8 @@ export interface CompileStep {
   usesKitRef?: string;
   /** SS2b: a DYNAMIC `uses: {{steps.N.out.path}}` worker template (unresolved). */
   usesWorkerRef?: string;
+  /** SS5a: the step's onError recovery policy (for checkOnErrorRefs at seed). */
+  onError?: OnErrorPolicy;
 }
 
 /**
@@ -708,6 +740,34 @@ export function checkCombinatorRefs(steps: CompileStep[], hostKitRef: string): s
       if (!producer.out) {
         errors.push(`step ${consumerNumber} uses: step ${ref.stepNumber} declares no out: schema`);
       }
+    }
+  });
+  return errors;
+}
+
+/**
+ * SS5a: seed-time onError-ref validation (mirrors checkCombinatorRefs). A
+ * `fallback kit:<id>` ref must parse via parseKitRefValue and must NOT be the host
+ * kit itself (a self-cycle — falling back to the same kit that failed loops). A
+ * `retry`/`continue-partial` policy carries no ref → nothing to check. A `{{…}}`
+ * fallback kitRef is allowed through (resolved+re-validated at dispatch, like uses:).
+ */
+export function checkOnErrorRefs(steps: CompileStep[], hostKitRef: string): string[] {
+  const errors: string[] = [];
+  steps.forEach((step, i) => {
+    const consumerNumber = i + 1;
+    const policy = step.onError;
+    if (!policy || policy.mode !== "fallback") return;
+    if (isDynamicUsesRef(policy.kitRef)) return; // dynamic → checked at dispatch
+    const norm = parseKitRefValue(policy.kitRef);
+    if (!norm) {
+      errors.push(
+        `step ${consumerNumber} onError: fallback kit "${policy.kitRef}" is not a valid kitRef`,
+      );
+    } else if (norm === hostKitRef) {
+      errors.push(
+        `step ${consumerNumber} onError: fallback kit "${norm}" is the host kit itself (self-cycle)`,
+      );
     }
   });
   return errors;
@@ -994,6 +1054,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         when: parseWhenDirective(cleaned),
         usesKitRef: usesRef && !isDynamicUsesRef(usesRef) ? usesRef : undefined,
         usesWorkerRef: usesRef && isDynamicUsesRef(usesRef) ? usesRef : undefined,
+        onError: parseOnErrorDirective(cleaned),
       };
     });
   } catch (err) {
@@ -1025,6 +1086,14 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       ok: false,
       planId: "",
       errorMessage: `recipe-runner: combinator-ref check failed:\n - ${combErrors.join("\n - ")}`,
+    };
+  }
+  const onErrorErrors = checkOnErrorRefs(compileSteps, opts.kitRef);
+  if (onErrorErrors.length > 0) {
+    return {
+      ok: false,
+      planId: "",
+      errorMessage: `recipe-runner: onError-ref check failed:\n - ${onErrorErrors.join("\n - ")}`,
     };
   }
 
@@ -1091,6 +1160,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         mapOver: parseMapIterDirective(cleanBody),
         filterOver: parseFilterIterDirective(cleanBody),
         keepWhen: parseKeepDirective(cleanBody),
+        onError: parseOnErrorDirective(cleanBody),
       };
     }),
   );
@@ -1319,13 +1389,15 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         }
       };
 
-      const markError = async (note: string) => {
+      const markError = async (note: string, err?: ClassifiedError) => {
+        const classified = err ?? classifyError("execution-error", note, undefined, false);
         try {
           await store.step({
             sessionKey: opts.sessionKey,
             stepIndex: dispatch.stepIndex,
             status: "error",
             note,
+            error: classified,
           });
         } catch {}
         settleSkillOutcome(false);
@@ -1346,7 +1418,12 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       // ended with, so the loop wrapper can decide whether to run again.
       const executeOnce = async (
         progressNote: string,
-      ): Promise<{ ok: boolean; note: string | null; subReturnValue?: unknown }> => {
+      ): Promise<{
+        ok: boolean;
+        note: string | null;
+        subReturnValue?: unknown;
+        error?: ClassifiedError;
+      }> => {
         // SS3: an `invoke skill:` step fails CLOSED if the skill is absent or
         // deprecated (no silent fallthrough to a procedure-less spawn). The
         // procedure + output contract were already lifted into dispatch.task /
@@ -1358,6 +1435,10 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             return {
               ok: false,
               note: `invoke skill: ${dispatch.skillId} not found or deprecated`,
+              error: classifyError(
+                "skill-not-found",
+                `invoke skill: ${dispatch.skillId} not found or deprecated`,
+              ),
             };
           }
         }
@@ -1374,6 +1455,10 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             return {
               ok: false,
               note: `map/filter ref ${iterRef} is not a steps.<n>.out reference`,
+              error: classifyError(
+                "map-filter-resolution",
+                `map/filter ref ${iterRef} is not a steps.<n>.out reference`,
+              ),
             };
           }
           // Resolve the array + (dynamic) worker from prior outputs.
@@ -1386,7 +1471,14 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           }
           const arr = dotGet(outputsByStep.get(parsedRef.stepNumber), parsedRef.path);
           if (!Array.isArray(arr)) {
-            return { ok: false, note: `map/filter: ${iterRef} did not resolve to an array` };
+            return {
+              ok: false,
+              note: `map/filter: ${iterRef} did not resolve to an array`,
+              error: classifyError(
+                "map-filter-resolution",
+                `map/filter: ${iterRef} did not resolve to an array`,
+              ),
+            };
           }
           let workerRef = dispatch.usesKitRef;
           if (isDynamicUsesRef(workerRef)) {
@@ -1395,6 +1487,10 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
               return {
                 ok: false,
                 note: `map/filter worker ${workerRef} did not resolve to a kitRef`,
+                error: classifyError(
+                  "map-filter-resolution",
+                  `map/filter worker ${workerRef} did not resolve to a kitRef`,
+                ),
               };
             }
             workerRef = w;
@@ -1405,10 +1501,15 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             return {
               ok: false,
               note: `composition depth limit (${MAX_USES_DEPTH}) reached at ${workerRef}`,
+              error: classifyError(
+                "depth-limit",
+                `composition depth limit (${MAX_USES_DEPTH}) reached at ${workerRef}`,
+              ),
             };
           }
           const fanOut = deriveCombinatorFanOut({ arrayLength: arr.length });
           const collected: unknown[] = [];
+          const droppedElements: number[] = [];
           for (let i = 0; i < fanOut; i++) {
             const item = arr[i];
             const itemText = typeof item === "string" ? item : JSON.stringify(item);
@@ -1441,9 +1542,18 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
               onRecipeState: opts.onRecipeState,
             });
             if (!sub.ok) {
+              if (dispatch.onError?.mode === "continue-partial") {
+                droppedElements.push(i);
+                continue; // drop this element, keep aggregating survivors
+              }
               return {
                 ok: false,
                 note: `map/filter element ${i} (${workerRef}) failed: ${sub.errorMessage ?? "unknown"}`,
+                error: classifyError(
+                  "sub-kit-failure",
+                  `map/filter element ${i} (${workerRef}) failed: ${sub.errorMessage ?? "unknown"}`,
+                  { stepIndex: dispatch.stepIndex, element: i },
+                ),
               };
             }
             if (dispatch.mapOver) {
@@ -1452,6 +1562,20 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
               // predicate-kit filter: keep the ELEMENT when the worker returnValue is truthy.
               if (sub.returnValue) collected.push(item);
             }
+          }
+          if (droppedElements.length > 0) {
+            // continue-partial: survivors aggregated, failures dropped → signal a
+            // partial so the recovery driver settles this as done-partial.
+            return {
+              ok: false,
+              note: `${dispatch.mapOver ? "mapped" : "filtered"} ${workerRef} over ${arr.length} → ${collected.length} (dropped ${droppedElements.length})`,
+              subReturnValue: collected,
+              error: classifyError(
+                "sub-kit-failure",
+                `dropped ${droppedElements.length} failed element(s): [${droppedElements.join(", ")}]`,
+                { stepIndex: dispatch.stepIndex, droppedElements },
+              ),
+            };
           }
           return {
             ok: true,
@@ -1479,6 +1603,10 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
               return {
                 ok: false,
                 note: `dynamic uses: ${dispatch.usesKitRef} did not resolve to a valid kitRef`,
+                error: classifyError(
+                  "map-filter-resolution",
+                  `dynamic uses: ${dispatch.usesKitRef} did not resolve to a valid kitRef`,
+                ),
               };
             }
             resolvedKitRef = r;
@@ -1492,12 +1620,20 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             return {
               ok: false,
               note: `composition depth limit (${MAX_USES_DEPTH}) reached at ${resolvedKitRef}`,
+              error: classifyError(
+                "depth-limit",
+                `composition depth limit (${MAX_USES_DEPTH}) reached at ${resolvedKitRef}`,
+              ),
             };
           }
           if (chain.includes(resolvedKitRef)) {
             return {
               ok: false,
               note: `composition cycle: ${resolvedKitRef} already on stack [${chain.join(" → ")}]`,
+              error: classifyError(
+                "sub-kit-failure",
+                `composition cycle: ${resolvedKitRef} already on stack [${chain.join(" → ")}]`,
+              ),
             };
           }
           try {
@@ -1527,6 +1663,10 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             return {
               ok: false,
               note: `sub-kit ${resolvedKitRef} failed: ${sub.errorMessage ?? "unknown"}`,
+              error: classifyError(
+                "sub-kit-failure",
+                `sub-kit ${resolvedKitRef} failed: ${sub.errorMessage ?? "unknown"}`,
+              ),
             };
           }
           // SS2b: carry the sub-kit's returnValue up so compose threads it and
@@ -1582,7 +1722,14 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           : taskWithContext;
         const spawnResult = await (opts._spawnStep ?? spawnStep)(taskForSpawn, dispatch.label);
         if (!spawnResult.ok) {
-          return { ok: false, note: `spawn failed: ${spawnResult.error ?? "unknown"}` };
+          return {
+            ok: false,
+            note: `spawn failed: ${spawnResult.error ?? "unknown"}`,
+            error: classifyError(
+              "spawn-failure",
+              `spawn failed: ${spawnResult.error ?? "unknown"}`,
+            ),
+          };
         }
         const outcome = await waitForStepDone(
           store,
@@ -1595,6 +1742,10 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           return {
             ok: false,
             note: outcome === "timeout" ? "step timed out after 10 minutes" : "step ended in error",
+            error: classifyError(
+              outcome === "timeout" ? "timeout" : "execution-error",
+              outcome === "timeout" ? "step timed out after 10 minutes" : "step ended in error",
+            ),
           };
         }
         return { ok: true, note: await readNote() };
@@ -1616,7 +1767,10 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           }
           pass = evaluateWhen(dispatch.whenGuard, outputsByStep);
         } catch (err) {
-          return markError(`when: guard evaluation failed: ${String(err)}`);
+          return markError(
+            `when: guard evaluation failed: ${String(err)}`,
+            classifyError("guard-eval-error", `when: guard evaluation failed: ${String(err)}`),
+          );
         }
         if (!pass) {
           await persistArtifact(`skipped (when: ${dispatch.whenGuard} = false)`);
@@ -1628,7 +1782,157 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       // ── No loop: single execution ──
       if (!dispatch.loop) {
         let r = await executeOnce("");
-        if (!r.ok) return markError(r.note ?? "step failed");
+        // SS5a: catchable recovery. A failed step with an `onError:` policy is not
+        // an automatic abort — try retry / fallback / continue-partial first. retry
+        // is honored ONLY when the error is recoverable (a hard limit skips it).
+        if (!r.ok && dispatch.onError) {
+          const policy = dispatch.onError;
+          if (policy.mode === "retry" && r.error?.recoverable !== false) {
+            // author N is a DOWNWARD cap; the real bound is the derived budget (J16).
+            const live0 = await store.get(opts.sessionKey);
+            const outputsByStep0 = new Map<number, unknown>();
+            if (live0) {
+              for (const p of collectPriorArtifacts(live0, dispatch.stepIndex)) {
+                if (p.output !== undefined) outputsByStep0.set(p.stepIndex + 1, p.output);
+              }
+            }
+            const resolvedN = resolveStepRefs(policy.n, outputsByStep0).trim();
+            const authorN = Number.parseInt(resolvedN, 10);
+            const derived = deriveRecoveryRetryBudget({
+              fitnessSuccessRate: opts.fitnessSuccessRate,
+            });
+            // a non-numeric / template-unresolved N fails CLOSED to the derived bound.
+            const bound = Number.isFinite(authorN)
+              ? Math.max(1, Math.min(authorN, derived))
+              : derived;
+            let attempt = 0;
+            while (!r.ok && r.error?.recoverable !== false && attempt < bound) {
+              attempt++;
+              emitTrail({
+                kind: "recovery-retry",
+                label: `${opts.kitRef}:step-${dispatch.stepIndex}`,
+                message: `step ${dispatch.stepIndex + 1} recovery retry ${attempt}/${bound}: ${r.error?.message ?? r.note ?? "failed"}`,
+                sessionKey: opts.sessionKey,
+                payload: { stepIndex: dispatch.stepIndex, attempt, bound },
+              });
+              r = await executeOnce(
+                `Previous attempt failed: ${r.error?.message ?? r.note ?? "unknown"}. ` +
+                  "Recover and complete the step.",
+              );
+            }
+            if (!r.ok) {
+              return markError(
+                `recovery exhausted after ${attempt} retr${attempt === 1 ? "y" : "ies"}: ${r.error?.message ?? r.note ?? "failed"}`,
+                classifyError(
+                  "recovery-exhausted",
+                  r.error?.message ?? r.note ?? "recovery exhausted",
+                  { stepIndex: dispatch.stepIndex, attempts: attempt },
+                ),
+              );
+            }
+          } else if (policy.mode === "fallback") {
+            // resolve the fallback kitRef (static or {{…}}), then dispatch it via the
+            // SS2b uses: kit-factory edge (its own sub-session, _depth+1, _usesChain
+            // pushed so a fallback cycle is caught by the same guard).
+            let fbRef = policy.kitRef;
+            if (isDynamicUsesRef(fbRef)) {
+              const liveF = await store.get(opts.sessionKey);
+              const outF = new Map<number, unknown>();
+              if (liveF) {
+                for (const p of collectPriorArtifacts(liveF, dispatch.stepIndex)) {
+                  if (p.output !== undefined) outF.set(p.stepIndex + 1, p.output);
+                }
+              }
+              const resolved = resolveKitRefTemplate(fbRef, outF);
+              if (!resolved) {
+                return markError(
+                  `onError: fallback ${fbRef} did not resolve to a valid kitRef`,
+                  classifyError("fallback-failed", `fallback ${fbRef} did not resolve`),
+                );
+              }
+              fbRef = resolved;
+            } else {
+              const norm = parseKitRefValue(fbRef);
+              if (!norm) {
+                return markError(
+                  `onError: fallback ${fbRef} is not a valid kitRef`,
+                  classifyError("fallback-failed", `fallback ${fbRef} is not a valid kitRef`),
+                );
+              }
+              fbRef = norm;
+            }
+            const chain = opts._usesChain ?? [opts.kitRef];
+            const depth = opts._depth ?? 0;
+            if (depth >= MAX_USES_DEPTH) {
+              return markError(
+                `onError: fallback depth limit (${MAX_USES_DEPTH}) reached at ${fbRef}`,
+                classifyError("depth-limit", `fallback depth limit reached at ${fbRef}`),
+              );
+            }
+            emitTrail({
+              kind: "recovery-fallback",
+              label: `${opts.kitRef}:step-${dispatch.stepIndex}`,
+              message: `step ${dispatch.stepIndex + 1} falling back to ${fbRef}: ${r.error?.message ?? r.note ?? "failed"}`,
+              sessionKey: opts.sessionKey,
+              payload: { stepIndex: dispatch.stepIndex, fallbackKit: fbRef },
+            });
+            const fb = await runRecipe({
+              kitRef: fbRef,
+              sessionKey: `${opts.sessionKey}::fallback::${dispatch.stepIndex}`,
+              intent: `↳ fallback ${dispatch.title}`,
+              parameters: opts.parameters,
+              planStore: store,
+              ownRecipesDir,
+              recipeInstallSandbox,
+              _depth: depth + 1,
+              _usesChain: [...chain, fbRef],
+              _spawnStep: opts._spawnStep,
+              onRecipeState: opts.onRecipeState,
+            });
+            if (!fb.ok) {
+              return markError(
+                `onError: fallback ${fbRef} failed: ${fb.errorMessage ?? "unknown"}`,
+                classifyError(
+                  "fallback-failed",
+                  `fallback ${fbRef} failed: ${fb.errorMessage ?? "unknown"}`,
+                ),
+              );
+            }
+            // fallback succeeded → the step settles done carrying the fallback's value.
+            r = {
+              ok: true,
+              note: `recovered via fallback ${fbRef} (${fb.results?.length ?? 0} sub-steps)`,
+              subReturnValue: fb.returnValue,
+            };
+          } else if (policy.mode === "continue-partial") {
+            // persist the partial note/artifact + the error envelope, then settle as
+            // a NON-aborting done-partial. In a map/filter step r.subReturnValue is
+            // the survivor array (a failed element was already dropped upstream).
+            const partialErr =
+              r.error ??
+              classifyError("execution-error", r.note ?? "partial completion", undefined, false);
+            try {
+              await store.step({
+                sessionKey: opts.sessionKey,
+                stepIndex: dispatch.stepIndex,
+                status: "done",
+                note: r.note ?? "partial completion",
+                artifact: summarizeOutput(r.note),
+                ...(r.subReturnValue !== undefined
+                  ? { output: r.subReturnValue, outputKind: "json" as const }
+                  : {}),
+                error: partialErr,
+              });
+            } catch {}
+            settleSkillOutcome(false);
+            return {
+              stepIndex: dispatch.stepIndex,
+              outcome: "done-partial" as const,
+              partialError: partialErr,
+            };
+          }
+        }
+        if (!r.ok) return markError(r.note ?? "step failed", r.error);
 
         // SS1: when the step is typed, validate its output and re-dispatch a
         // budget-derived number of times on mismatch. No frozen retry constant —
@@ -1739,6 +2043,25 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
     });
 
     const settlements = await Promise.all(settlePromises);
+
+    // SS5a: collect done-partial settlements — a survivable failure caught by
+    // `onError: continue-partial`. These do NOT abort: emit a partial-completion
+    // trail event for each and CONTINUE to the next group (the step is already
+    // persisted as a `done` row carrying its PlanStep.error).
+    for (const s of settlements) {
+      if (s.outcome === "done-partial") {
+        emitTrail({
+          kind: "partial-completion",
+          label: `${opts.kitRef}:step-${s.stepIndex}`,
+          message: `step ${s.stepIndex + 1} completed partially (caught by onError: continue-partial)`,
+          sessionKey: opts.sessionKey,
+          payload: {
+            stepIndex: s.stepIndex,
+            error: (s as { partialError?: ClassifiedError }).partialError,
+          },
+        });
+      }
+    }
 
     // SS2a: a `return:`/`done:` early-exit closes the plan as DONE, carrying the
     // exiting step's value — it is NOT a failure. Check before the error path.
