@@ -85,6 +85,13 @@ After ~a week or two of normal use, `LEGACY_2WORD_PHRASE_RE` + the migration bra
 - Never re-introduce a server-side `cookiePhrase` generator. `cookiePhrase` is stored-only; the client owns the mint.
 - Never re-introduce a 2-word format. `FORTUNE_COOKIES` is the only pool.
 - Auto-title (Gemini topic phrase) STILL wins over cookiePhrase. Don't break that by clobbering `tab.title` unconditionally. The `looksLikeLegacy2WordPhrase` gate IS what protects auto-titles — any title that doesn't match the legacy regex is treated as user-meaningful.
+- **(2026-06-06, in progress)** Prefer the EXPLICIT `titleLocked` flag over the `LEGACY_2WORD_PHRASE_RE` heuristic to decide whether `loadSessions()` may overwrite a `tab.title`. A locked title (manual rename or successful auto-name) is NEVER clobbered by the server `cookiePhrase`. See the amendment section below.
+
+## In-progress amendment: explicit title-lock (2026-06-06)
+
+**Status:** HMR-live, **uncommitted** (recovery patch jarvis-icu `9fe305a`; not yet on develop).
+
+The `LEGACY_2WORD_PHRASE_RE` heuristic (above) infers "is this title user-meaningful?" from string shape — and can mis-fire: a custom/auto title could be clobbered by the server `cookiePhrase` on the next `loadSessions()`, which is exactly the bug "renamed/auto titles don't survive restart." Fix: a persisted per-tab boolean `titleLocked` (in `localStorage["tinker.tabs"]`), set TRUE on manual rename AND on a successful auto-name. `loadSessions()` reconciliation now **never overwrites a `titleLocked` tab's title**; it only syncs the server phrase into tabs whose title is still a default/fortune (unlocked). Custom/auto names then survive both hard refresh AND gateway restart (localStorage is browser-side, independent of the gateway). The `🏠 Main` force-reset is preserved. The legacy regex + its migration branch can be retired once `titleLocked` ships. See `bug-log.md` FIXED [ui-state-clear] (2026-06-06, tab titles).
 
 ## Verify (proposed for next ship)
 
