@@ -30,7 +30,7 @@ describe("extractLastAssistantText", () => {
 
 function mockGateway(
   history: unknown,
-  opts?: { spawnOk?: boolean; waitStatus?: string },
+  opts?: { spawnOk?: boolean; waitStatus?: string; waitStopReason?: string },
 ): {
   call: CallGateway;
   methods: string[];
@@ -42,7 +42,8 @@ function mockGateway(
       return opts?.spawnOk === false
         ? { ok: false, note: "boom" }
         : { ok: true, childSessionKey: "cs", runId: "r1" };
-    if (args.method === "agent.wait") return { status: opts?.waitStatus ?? "ok" };
+    if (args.method === "agent.wait")
+      return { status: opts?.waitStatus ?? "ok", stopReason: opts?.waitStopReason };
     if (args.method === "chat.history") return { messages: history };
     return {};
   }) as unknown as CallGateway;
@@ -81,5 +82,46 @@ describe("createProductionOrchestrationRuntime", () => {
     const rt = createProductionOrchestrationRuntime({ callGateway: call });
     const res = await rt.parallel([() => rt.agent("a"), () => rt.agent("b")]);
     expect(res).toEqual(["ok", "ok"]);
+  });
+
+  it("throws a classified 'budget-exceeded' error when the wait reports status:'exhausted'", async () => {
+    const { call, methods } = mockGateway([{ role: "assistant", content: "x" }], {
+      waitStatus: "exhausted",
+    });
+    const rt = createProductionOrchestrationRuntime({ callGateway: call });
+    let caught: unknown;
+    try {
+      await rt.agent("q");
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { kind?: string } | undefined)?.kind).toBe("budget-exceeded");
+    expect((caught as { recoverable?: boolean } | undefined)?.recoverable).toBe(false);
+    expect(methods).toEqual(["fork.subagents.spawn", "agent.wait"]); // never reached chat.history
+  });
+
+  it("throws a classified 'budget-exceeded' error when the wait carries stopReason:'budget-exhausted'", async () => {
+    const { call } = mockGateway([{ role: "assistant", content: "x" }], {
+      waitStatus: "ok",
+      waitStopReason: "budget-exhausted",
+    });
+    const rt = createProductionOrchestrationRuntime({ callGateway: call });
+    let caught: unknown;
+    try {
+      await rt.agent("q");
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as { kind?: string } | undefined)?.kind).toBe("budget-exceeded");
+  });
+
+  it("leaves the normal 'ok' status path unchanged", async () => {
+    const { call, methods } = mockGateway([
+      { role: "user", content: "question" },
+      { role: "assistant", content: "the answer" },
+    ]);
+    const rt = createProductionOrchestrationRuntime({ callGateway: call });
+    expect(await rt.agent("question")).toBe("the answer");
+    expect(methods).toEqual(["fork.subagents.spawn", "agent.wait", "chat.history"]);
   });
 });
