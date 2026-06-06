@@ -107,6 +107,14 @@ Recipes are structured workflows in `extensions/tinkerclaw-prefrontal/kits/` (ki
 
 The goal: every hard-won operational insight gets encoded as a recipe step, so the next time this situation arises — even in a different session — the structured path is already there. Recipes are the compound interest of agent intelligence.
 
+### 5b. ORCA — Did you edit independent files SERIALLY when you should have parallelized?
+
+If this turn changed 2+ files whose edits are INDEPENDENT (disjoint), the default tool is **ORCA** (the parallel multi-agent coding orchestrator) — not hand-editing them one at a time. ORCA drafts each unit's patch in parallel, applies per-file-serialized (disjoint files concurrent, shared files lease-serialized + auto-re-derived), and commits each unit cleanly **without ever sweeping a parallel session's uncommitted WIP**. This is the DEFAULT for independent multi-file coding, not an opt-in.
+
+- **Did you serial-edit independent files this turn?** Name it as a miss. Next time decompose into edit-units and run ORCA: Workflow `scriptPath: docs/superpowers/parallel-implement.workflow.js`, `args:{repoRoot, units:[{id,task,writes:[paths]}], worktreePerAgent?}` (`worktreePerAgent:true` in a repo another session may be editing).
+- **One file, or tightly-coupled edits to a single file?** ORCA is the wrong tool — a direct edit is correct. Say "ORCA not applicable."
+- The rule: **independent files → ORCA by default; one file / coupled → direct edit.** See the `orca` skill + bible `subagents-and-recipes.md`.
+
 ### 6. PREEMPT — Have you done this same action before? Encode the trigger.
 
 If you performed an action this turn that you've done 2+ times in this session (or that you recognize from prior sessions), this is a **compounding opportunity**:
