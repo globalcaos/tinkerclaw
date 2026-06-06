@@ -15,7 +15,17 @@
 
 import os from "node:os";
 import { agentWithSchema } from "./orchestration-schema.js";
-import type { JsonSchema } from "./recipe-types.js";
+import { classifyError, type ClassifiedError, type JsonSchema } from "./recipe-types.js";
+
+/**
+ * The settled outcome of one parallel()/pipeline() thunk, in input order.
+ * `ok:true` carries the value; `ok:false` carries the ClassifiedError that the
+ * thunk threw plus its input `index` — replacing the old silent `null` so a
+ * failure surfaces a typed, attributable error instead of vanishing.
+ */
+export type Settled<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: ClassifiedError; index: number };
 
 export interface AgentOpts {
   /** Optional JSON-Schema; when set, agent() returns the validated object. */
@@ -61,20 +71,29 @@ export function createOrchestrationRuntime(deps: OrchestrationDeps) {
   }
 
   /**
-   * Run every thunk concurrently (capped), await ALL (a barrier), and return
-   * results in input order. A thunk that throws resolves to `null` — the call
-   * itself never rejects (null-isolation). Filter with `.filter(Boolean)`.
+   * Run every thunk concurrently (capped), await ALL (a barrier), and return a
+   * Settled<T> per thunk in input order. A thunk that throws is captured as
+   * `{ ok:false, error, index }` (the error CLASSIFIED, never a silent null) — the
+   * call itself never rejects (failure-isolation: one failure never sinks the
+   * barrier). Filter successes with `.filter((r) => r.ok)`.
    */
-  async function parallel<T>(thunks: Array<() => Promise<T>>): Promise<Array<T | null>> {
-    const results: Array<T | null> = new Array(thunks.length).fill(null);
+  async function parallel<T>(thunks: Array<() => Promise<T>>): Promise<Array<Settled<T>>> {
+    const results: Array<Settled<T>> = new Array(thunks.length);
     let next = 0;
     const runWorker = async (): Promise<void> => {
       while (next < thunks.length) {
         const idx = next++;
         try {
-          results[idx] = await thunks[idx]();
-        } catch {
-          results[idx] = null; // null-isolation: one failure never sinks the barrier
+          results[idx] = { ok: true, value: await thunks[idx]() };
+        } catch (err) {
+          // failure-isolation: classify the failure, attribute it to its input
+          // index, and keep the barrier intact instead of dropping a silent null.
+          const e = err as { kind?: ClassifiedError["kind"] };
+          results[idx] = {
+            ok: false,
+            error: classifyError(e && e.kind ? e.kind : "execution-error", String(err)),
+            index: idx,
+          };
         }
       }
     };
@@ -86,24 +105,32 @@ export function createOrchestrationRuntime(deps: OrchestrationDeps) {
   /**
    * Run each item through ALL stages independently — NO barrier between stages
    * (item A can be in stage 3 while B is still in stage 1). Each stage receives
-   * (prevResult, originalItem, index). A stage that throws drops that item to
-   * `null` and skips its remaining stages.
+   * (prevResult, originalItem, index) and yields a Settled<unknown> in input
+   * order. A stage that throws drops that item to `{ ok:false, error, index }`
+   * (the error CLASSIFIED, never a silent null) and skips its remaining stages.
    */
   async function pipeline<T>(
     items: T[],
     ...stages: Array<(prev: unknown, item: T, index: number) => Promise<unknown>>
-  ): Promise<unknown[]> {
+  ): Promise<Array<Settled<unknown>>> {
     return Promise.all(
-      items.map(async (item, index) => {
+      items.map(async (item, index): Promise<Settled<unknown>> => {
         let cur: unknown = item;
         for (const stage of stages) {
           try {
             cur = await stage(cur, item, index);
-          } catch {
-            return null; // drop this item; do not run its remaining stages
+          } catch (err) {
+            // drop this item (skip its remaining stages) but classify + attribute
+            // the failure instead of dropping a silent null.
+            const e = err as { kind?: ClassifiedError["kind"] };
+            return {
+              ok: false,
+              error: classifyError(e && e.kind ? e.kind : "execution-error", String(err)),
+              index,
+            };
           }
         }
-        return cur;
+        return { ok: true, value: cur };
       }),
     );
   }

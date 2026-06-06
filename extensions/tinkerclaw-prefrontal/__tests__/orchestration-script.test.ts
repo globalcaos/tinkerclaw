@@ -16,7 +16,10 @@ describe("runOrchestrationScript", () => {
       "return await parallel(args.items.map((i) => () => agent(i)));",
       { items: ["a", "b"] },
     );
-    expect(out).toEqual(["a", "b"]);
+    expect(out).toEqual([
+      { ok: true, value: "a" },
+      { ok: true, value: "b" },
+    ]);
   });
 
   it("exposes pipeline() to the script", async () => {
@@ -25,7 +28,10 @@ describe("runOrchestrationScript", () => {
       rt,
       "return await pipeline([1, 2], async (n) => n * 10, async (n) => n + 1);",
     );
-    expect(out).toEqual([11, 21]);
+    expect(out).toEqual([
+      { ok: true, value: 11 },
+      { ok: true, value: 21 },
+    ]);
   });
 
   it("exposes phase() and log() to the script", async () => {
