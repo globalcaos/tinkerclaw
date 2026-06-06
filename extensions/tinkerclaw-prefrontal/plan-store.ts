@@ -71,6 +71,7 @@ export class PlanStore {
     artifact?: string;
     output?: unknown;
     outputKind?: "json";
+    error?: { kind: string; message: string; recoverable: boolean; details?: unknown };
   }): Promise<Plan> {
     const plan = await this.get(params.sessionKey);
     if (!plan) throw new Error(`plan-store: no plan for sessionKey=${params.sessionKey}`);
@@ -107,6 +108,7 @@ export class PlanStore {
     if (params.artifact !== undefined) step.artifact = params.artifact;
     if (params.output !== undefined) step.output = params.output;
     if (params.outputKind !== undefined) step.outputKind = params.outputKind;
+    if (params.error !== undefined) step.error = params.error;
     plan.updated = now;
 
     await this.writeLocked(params.sessionKey, plan);
@@ -225,8 +227,14 @@ function renderStep(s: PlanStep, i: number): string {
     s.output !== undefined
       ? `\n  <!-- output64:${Buffer.from(JSON.stringify(s.output), "utf-8").toString("base64")} -->`
       : "";
+  // SS5a: the step's ClassifiedError, JSON-stringified then base64-encoded
+  // (its own comment line, exactly like output64, so it survives the parser).
+  const errorLine =
+    s.error !== undefined
+      ? `\n  <!-- error64:${Buffer.from(JSON.stringify(s.error), "utf-8").toString("base64")} -->`
+      : "";
   const note = s.note ? `\n  ${s.note.replace(/\n/g, "\n  ")}` : "";
-  return `- ${marker} **${i}. ${s.title}**${metaLine}${artifactLine}${outputLine}${note}`;
+  return `- ${marker} **${i}. ${s.title}**${metaLine}${artifactLine}${outputLine}${errorLine}${note}`;
 }
 
 export function parsePlanMd(text: string): Plan {
@@ -282,6 +290,16 @@ export function parsePlanMd(text: string): Plan {
         lastStep.outputKind = "json";
       } catch {
         // ignore an undecodable output line
+      }
+      continue;
+    }
+    // SS5a: structured error line: <!-- error64:<base64-of-json> -->
+    const em = /^\s+<!--\s+error64:(\S+)\s+-->$/.exec(line);
+    if (em && lastStep) {
+      try {
+        lastStep.error = JSON.parse(Buffer.from(em[1], "base64").toString("utf-8"));
+      } catch {
+        // ignore an undecodable error line
       }
       continue;
     }
