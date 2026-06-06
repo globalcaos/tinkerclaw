@@ -135,6 +135,16 @@ export type SpawnSubagentParams = {
     mimeType?: string;
   }>;
   attachMountPath?: string;
+  /**
+   * SS5b-C1 spawn budget (allow-list of tool names the child may use).
+   * Validated + normalized (deduped, lowercased) at the RPC boundary; actual
+   * enforcement is pending the child-side tool gate.
+   */
+  allowTools?: string[];
+  /** SS5b-C1 spawn budget: max output tokens for the child run (validated >= 0 integer). */
+  maxTokens?: number;
+  /** SS5b-C1 spawn budget: max tool calls for the child run (validated >= 0 integer). */
+  maxToolCalls?: number;
 };
 
 export type SpawnSubagentContext = {
