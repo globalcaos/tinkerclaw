@@ -9,6 +9,9 @@ import {
   resolveStepRefs,
   validateTypedNote,
   parseKitRefValue,
+  isRecoverableKind,
+  classifyError,
+  type ErrorKind,
 } from "../recipe-types.js";
 
 const AjvCtor = AjvPkg as unknown as typeof import("ajv").default;
@@ -174,5 +177,56 @@ describe("parseKitRefValue (SS2b kitRef value)", () => {
   it("rejects a non-string", () => {
     expect(parseKitRefValue(undefined as unknown as string)).toBeNull();
     expect(parseKitRefValue(42 as unknown as string)).toBeNull();
+  });
+});
+
+describe("SS5a isRecoverableKind (single source of truth for auto-retry)", () => {
+  it("recoverable ONLY for the transient set {schema-mismatch, timeout, spawn-failure}", () => {
+    expect(isRecoverableKind("schema-mismatch")).toBe(true);
+    expect(isRecoverableKind("timeout")).toBe(true);
+    expect(isRecoverableKind("spawn-failure")).toBe(true);
+  });
+  it("execution-error is NON-recoverable — never auto-retry an unclassified failure (OVERRIDE)", () => {
+    expect(isRecoverableKind("execution-error")).toBe(false);
+  });
+  it("hard-limit kinds are NOT recoverable", () => {
+    for (const k of [
+      "budget-exceeded",
+      "guard-eval-error",
+      "skill-not-found",
+      "depth-limit",
+      "map-filter-resolution",
+      "fallback-failed",
+      "recovery-exhausted",
+      "sub-kit-failure",
+    ] as ErrorKind[]) {
+      expect(isRecoverableKind(k)).toBe(false);
+    }
+  });
+  it("classifyError stamps recoverable from the kind (single source) and carries message + details", () => {
+    const e = classifyError("timeout", "step timed out", { stepIndex: 2 });
+    expect(e.kind).toBe("timeout");
+    expect(e.message).toBe("step timed out");
+    expect(e.recoverable).toBe(true);
+    expect(e.details).toEqual({ stepIndex: 2 });
+    const x = classifyError("execution-error", "boom");
+    expect(x.recoverable).toBe(false);
+    expect(x.details).toBeUndefined();
+  });
+  it("classifyError honors an explicit recoverable override", () => {
+    expect(classifyError("timeout", "now terminal", undefined, false).recoverable).toBe(false);
+  });
+});
+
+describe("SS5a io-scanner skips a leading onError: (order-independence)", () => {
+  it("keeps out: parsing when an onError: directive leads the body", () => {
+    const io = parseStepIoDirectives('onError: retry 2\nout: {"type":"array"}');
+    expect(io.out).toEqual({ type: "array" });
+  });
+  it("treats a leading onError: as a sibling directive, not a prose stop", () => {
+    const io = parseStepIoDirectives(
+      'onError: continue-partial\nin: [{"name":"x","from":"steps.1.out"}]',
+    );
+    expect(io.in).toEqual([{ name: "x", from: "steps.1.out" }]);
   });
 });

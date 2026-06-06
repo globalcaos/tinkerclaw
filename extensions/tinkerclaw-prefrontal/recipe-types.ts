@@ -37,7 +37,7 @@ const DIRECTIVE_RE = /^(out|in):\s*(.+)$/;
 // never matters, and never treat them as prose that ends the io block.
 // `invoke skill:` (SS3) is a sibling directive (keyword + " skill:"), so the
 // pattern matches that two-word form, not a bare `invoke:`.
-const OTHER_DIRECTIVE_RE = /^(?:uses|loop|when|return|done|map|filter):|^invoke\s+skill:/i;
+const OTHER_DIRECTIVE_RE = /^(?:uses|loop|when|return|done|map|filter|onError):|^invoke\s+skill:/i;
 // A typed-port value must be a JSON object/array. This guards against a prose
 // line that merely begins with "out:"/"in:" (e.g. "out: of scope, skip") — such
 // a line is left as prose, NOT parsed (and never throws the whole run).
@@ -159,6 +159,93 @@ export function parseKitRefValue(ref: string): string | null {
   if (!m) return null;
   return m[2] ? t : `globalcaos/${m[1]}`;
 }
+
+// SS5a (2026-06-06): the unified error envelope. Every step failure is CLASSIFIED
+// into one of these kinds; `recoverable` is computed FROM the kind (a hard limit
+// has zero expected value from a retry), so the onError policy router stays
+// situation-derived, not hand-set per call-site. No silent failure (FOUNDATION §5):
+// every error is classified + persisted on PlanStep.error + emitTrail'd.
+export type ErrorKind =
+  | "schema-mismatch"
+  | "spawn-failure"
+  | "timeout"
+  | "budget-exceeded"
+  | "guard-eval-error"
+  | "sub-kit-failure"
+  | "map-filter-resolution"
+  | "depth-limit"
+  | "skill-not-found"
+  | "recovery-exhausted"
+  | "fallback-failed"
+  | "execution-error";
+
+/** A classified step failure. `recoverable` drives the onError policy: a recoverable
+ * error may be retried; a non-recoverable one can only be caught by fallback /
+ * continue-partial (retry is forbidden — it has zero expected value). */
+export interface ClassifiedError {
+  kind: ErrorKind;
+  message: string;
+  recoverable: boolean;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * The recoverable kinds — the SINGLE SOURCE OF TRUTH the runner's recovery driver
+ * consults. A retry MAY help ONLY for a transient timeout, a recoverable output-shape
+ * mismatch, or a spawn failure. Everything else is a hard limit — retry is futile.
+ *
+ * OVERRIDE (SS5a, 2026-06-06): `execution-error` is DELIBERATELY excluded. An
+ * unclassified failure that surfaced as a bare execution-error has no diagnosable
+ * transient cause, so the runner must NEVER auto-retry it — it can only be caught by
+ * fallback / continue-partial or recorded via markError. This corrects the
+ * micro-design/plan default (which listed execution-error as recoverable).
+ */
+const RECOVERABLE_KINDS: ReadonlySet<ErrorKind> = new Set<ErrorKind>([
+  "schema-mismatch",
+  "timeout",
+  "spawn-failure",
+]);
+
+/**
+ * Is a retry worth attempting for this error kind? (Kind-derived, never author-set.)
+ * This is the ONE function the runner calls to gate auto-retry — keep it the single
+ * source of truth. Returns true ONLY for {schema-mismatch, timeout, spawn-failure};
+ * false for everything else, INCLUDING execution-error (never auto-retry an
+ * unclassified failure).
+ */
+export function isRecoverableKind(kind: ErrorKind): boolean {
+  return RECOVERABLE_KINDS.has(kind);
+}
+
+/**
+ * Construct a ClassifiedError, stamping `recoverable` FROM the kind via
+ * isRecoverableKind (the single source of truth) unless an explicit override is
+ * passed (used on the recovery-EXHAUSTED auto-path, where a once-recoverable error
+ * is now terminal).
+ */
+export function classifyError(
+  kind: ErrorKind,
+  message: string,
+  details?: Record<string, unknown>,
+  recoverable?: boolean,
+): ClassifiedError {
+  return {
+    kind,
+    message,
+    recoverable: recoverable ?? isRecoverableKind(kind),
+    ...(details !== undefined ? { details } : {}),
+  };
+}
+
+/** SS5a: a step's `onError:` recovery policy (parsed by parseOnErrorDirective in
+ * recipe-runner.ts). `retry` carries the author's retryCount (a DOWNWARD cap; the
+ * runner floors the real bound via deriveRecoveryRetryBudget) as either a literal
+ * number or a `{{template}}` string resolved at dispatch. `fallback` carries a kitRef
+ * (bare or owner-prefixed; validated by checkOnErrorRefs at seed). */
+export type OnErrorPolicy =
+  | { mode: "retry"; retryCount: string | number }
+  | { mode: "fallback"; kitRef: string }
+  | { mode: "continue-partial" };
 
 const TEMPLATE_RE = /\{\{\s*(steps\.\d+\.out(?:\.[^}\s]+)?)\s*\}\}/g;
 
