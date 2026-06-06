@@ -20,6 +20,11 @@
 // FORK 2026-05-30: subagent (child) rows take their stable per-subagent color so a
 // panel row matches that subagent's chat sub-bubble — the SAME function the chat uses.
 import { colorForSubagent } from "../subagent-color.js";
+// FORK 2026-06-06 — BROCA structured skill coloring (Phase 3, Task 3.1). Pure,
+// structured-only: colorSkillTokens wraps a label in <span class="broca-skill">
+// (yellow) ONLY when the label is EXACTLY a known skill id; otherwise it returns
+// the HTML-escaped label unchanged. No fuzzy prose matching, no links.
+import { colorSkillTokens } from "./broca.js";
 import { getProviderColor, getProviderBorderColor, getProviderLogoSvg } from "./provider-logos.js";
 
 // FORK 2026-05-13 — Current Plan types (Phase 2 plan-board).
@@ -189,6 +194,21 @@ function fmtDuration(seconds: number): string {
 function fmtTokens(n: number): string {
   if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k";
   return String(n);
+}
+
+// FORK 2026-06-06 — collect every non-empty node.skill in the current tree into a
+// Set, so skill-backed node labels + trail labels that are EXACTLY a known skill
+// id render in BROCA yellow (structured-only — see colorSkillTokens). Walks the
+// whole tree from the given root.
+function collectSkillIds(root: TreeNode | null): Set<string> {
+  const ids = new Set<string>();
+  if (!root) return ids;
+  (function walk(n: TreeNode) {
+    const s = (n.skill ?? "").trim();
+    if (s) ids.add(s);
+    for (const c of n.children) walk(c);
+  })(root);
+  return ids;
 }
 
 // FORK 2026-05-29: per-subagent vitals — phase + current tool(arg) + tool count
@@ -577,6 +597,9 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const recipe = currentState?.recipe ?? null;
     const trail = currentState?.trail ?? [];
     const plan = currentState?.plan ?? null;
+    // FORK 2026-06-06 — skill ids visible in the current tree; drives BROCA token
+    // coloring (structured-only) for node labels + trail labels below.
+    const knownSkillIds = collectSkillIds(tree.root);
 
     // FORK 2026-05-23: when the tree has no active LLM calls, the job is
     // done and the panel should return to its default ("blank") state.
@@ -614,7 +637,7 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
       card.appendChild(empty);
     } else {
       const treeBlock = el("div", "pf-tree");
-      treeBlock.appendChild(renderNodeRecursive(tree.root, 0, trail));
+      treeBlock.appendChild(renderNodeRecursive(tree.root, 0, trail, knownSkillIds));
       card.appendChild(treeBlock);
     }
 
@@ -626,7 +649,7 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     if (!treeIdle) {
       const rootOwnedTrail = filterRootTrail(trail, tree);
       if (rootOwnedTrail.length > 0) {
-        card.appendChild(renderTrail(rootOwnedTrail, "root"));
+        card.appendChild(renderTrail(rootOwnedTrail, "root", knownSkillIds));
       }
     }
 
@@ -638,10 +661,15 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
    * For non-root nodes the row is clickable to expand the subagent's own
    * trail slice (filterNodeTrail below).
    */
-  function renderNodeRecursive(node: TreeNode, depth: number, trail: TrailEvent[]): HTMLElement {
+  function renderNodeRecursive(
+    node: TreeNode,
+    depth: number,
+    trail: TrailEvent[],
+    knownSkillIds: Set<string>,
+  ): HTMLElement {
     const wrap = el("div", `pf-branch pf-branch-depth-${Math.min(depth, 5)}`);
     const isRoot = depth === 0;
-    const row = renderNode(node, !isRoot);
+    const row = renderNode(node, !isRoot, knownSkillIds);
 
     // Make subagent rows clickable to expand their own trail slice.
     const expandKey = `node:${node.runId}`;
@@ -682,10 +710,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     if (needsChildrenContainer) {
       const childrenEl = el("div", "pf-children");
       if (!isRoot && isExpanded && hasOwnTrail) {
-        childrenEl.appendChild(renderTrail(nodeTrail, `node-${node.runId}`, /*inline*/ true));
+        childrenEl.appendChild(
+          renderTrail(nodeTrail, `node-${node.runId}`, knownSkillIds, /*inline*/ true),
+        );
       }
       for (const child of node.children) {
-        childrenEl.appendChild(renderNodeRecursive(child, depth + 1, trail));
+        childrenEl.appendChild(renderNodeRecursive(child, depth + 1, trail, knownSkillIds));
       }
       wrap.appendChild(childrenEl);
     }
@@ -785,7 +815,7 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     return bar;
   }
 
-  function renderNode(node: TreeNode, isChild: boolean): HTMLElement {
+  function renderNode(node: TreeNode, isChild: boolean, knownSkillIds: Set<string>): HTMLElement {
     const row = el("div", `pf-node ${isChild ? "pf-child" : "pf-root"}`);
     // FORK 2026-05-30: child = subagent → use its stable per-subagent identity color
     // (glyph dot, glow, model name) so the row matches the subagent's chat sub-bubble.
@@ -851,7 +881,11 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     modelWrap.appendChild(modelName);
     if (isChild && node.label && node.label !== shortModel) {
       const label = el("span", "pf-label");
-      label.textContent = node.label;
+      // FORK 2026-06-06 — a skill-backed node label renders in BROCA yellow.
+      // colorSkillTokens HTML-escapes its input and only wraps it in a
+      // .broca-skill span when it is EXACTLY a known skill id, so innerHTML is
+      // safe here (non-skill labels come back escaped, unchanged).
+      label.innerHTML = colorSkillTokens(node.skill ?? node.label, knownSkillIds);
       modelWrap.appendChild(label);
     }
     row.appendChild(modelWrap);
@@ -903,7 +937,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
    * When `inline=true`, the block is rendered as a nested child of a
    * subagent row (no outer header, smaller visual weight).
    */
-  function renderTrail(trail: TrailEvent[], groupId: string, inline = false): HTMLElement {
+  function renderTrail(
+    trail: TrailEvent[],
+    groupId: string,
+    knownSkillIds: Set<string>,
+    inline = false,
+  ): HTMLElement {
     const wrap = el("div", `pf-trail${inline ? " pf-trail-inline" : ""}`);
     if (!inline) {
       const header = el("div", "pf-trail-header");
@@ -948,16 +987,20 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
 
     for (const entry of combined) {
       if (entry.kind === "evt") {
-        list.appendChild(renderTrailItem(entry.evt));
+        list.appendChild(renderTrailItem(entry.evt, knownSkillIds));
       } else {
-        list.appendChild(renderTrailGroup(entry.label, entry.evts, groupId));
+        list.appendChild(renderTrailGroup(entry.label, entry.evts, groupId, knownSkillIds));
       }
     }
     wrap.appendChild(list);
     return wrap;
   }
 
-  function renderTrailItem(evt: TrailEvent, indented = false): HTMLElement {
+  function renderTrailItem(
+    evt: TrailEvent,
+    knownSkillIds: Set<string>,
+    indented = false,
+  ): HTMLElement {
     const item = el(
       "div",
       `pf-trail-item pf-trail-${evt.kind}${indented ? " pf-trail-item-sub" : ""}`,
@@ -970,7 +1013,10 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     item.appendChild(iconEl);
     if (evt.label && !indented) {
       const lbl = el("span", "pf-trail-label");
-      lbl.textContent = evt.label;
+      // FORK 2026-06-06 — a trail label that is EXACTLY a known skill id renders
+      // in BROCA yellow; any other label comes back HTML-escaped, unchanged
+      // (structured-only — never colors arbitrary prose).
+      lbl.innerHTML = colorSkillTokens(evt.label, knownSkillIds);
       item.appendChild(lbl);
     } else {
       item.appendChild(el("span", "pf-trail-label-placeholder"));
@@ -982,7 +1028,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     return item;
   }
 
-  function renderTrailGroup(label: string, evts: TrailEvent[], groupId: string): HTMLElement {
+  function renderTrailGroup(
+    label: string,
+    evts: TrailEvent[],
+    groupId: string,
+    knownSkillIds: Set<string>,
+  ): HTMLElement {
     const groupKey = `group:${groupId}:${label}`;
     const isExpanded = expanded.has(groupKey);
     const ordered = [...evts].toSorted((a, b) => b.ts - a.ts);
@@ -997,7 +1048,8 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     caret.textContent = isExpanded ? "▾" : "▸";
     header.appendChild(caret);
     const lbl = el("span", "pf-trail-label");
-    lbl.textContent = label;
+    // FORK 2026-06-06 — group label colored when it is exactly a known skill id.
+    lbl.innerHTML = colorSkillTokens(label, knownSkillIds);
     header.appendChild(lbl);
     const msg = el("span", "pf-trail-msg");
     msg.textContent = `${evts.length} events · latest: ${latestEvt.message}`;
@@ -1009,7 +1061,7 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     if (isExpanded) {
       const sub = el("div", "pf-trail-group-body");
       for (const e of ordered) {
-        sub.appendChild(renderTrailItem(e, /*indented*/ true));
+        sub.appendChild(renderTrailItem(e, knownSkillIds, /*indented*/ true));
       }
       wrap.appendChild(sub);
     }
