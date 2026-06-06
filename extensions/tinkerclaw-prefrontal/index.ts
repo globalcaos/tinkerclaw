@@ -267,6 +267,11 @@ export default function register(api: OpenClawPluginApi) {
         label: event.label,
         // oxlint-disable-next-line typescript-eslint/no-explicit-any
         model: (event as any).model,
+        // BROCA visibility (2026-06-06): carry skill onto the run when the spawn
+        // event provides it (e.g. a skill-backed recipe step), so the tree node is
+        // colored. Pass-through: undefined when the event omits it (back-compat).
+        // oxlint-disable-next-line typescript-eslint/no-explicit-any
+        skill: (event as any).skill,
         createdAt: Date.now(),
         startedAt: Date.now(),
       };
