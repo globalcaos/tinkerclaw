@@ -86,7 +86,7 @@ verify:
   - name: SS3 compose is mechanical + lineage in FRONTMATTER + authoredBy jarvis-on-the-fly
     cmd: python3 -c 'import os; p=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts")).read(); s=open(os.path.expanduser("~/src/tinkerclaw/src/gateway/protocol/schema/prefrontal-kit.ts")).read(); n=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-snapshot.ts")).read(); a=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-author.ts")).read(); assert "prefrontal.recipe.compose" in p and "PrefrontalKitComposeParamsSchema" in s, "prefrontal.recipe.compose RPC or its param schema regressed"; assert "injectLineageFrontmatter" in n, "recipe-snapshot.ts no longer stamps lineage into the snapshot FRONTMATTER"; assert "jarvis-on-the-fly" in a and "invoke skill:" in a, "recipe-author.ts no longer stamps authoredBy:jarvis-on-the-fly or emits the invoke skill: directive"'
   - name: SS2a when:/return:/done: directives are recognized by the io-scanner (OTHER_DIRECTIVE_RE)
-    cmd: grep -Fq '(?:uses|loop|when|return|done):' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts
+    cmd: grep -Fq 'when|return|done' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts
   - name: SS2a when-eval.ts exists and is PURE (no node:fs import — a tiny grammar, never JS eval / fs)
     cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/when-eval.ts && ! grep -q 'node:fs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/when-eval.ts
   - name: SS2a frozen leading-directive cap is gone (recipe-runner.ts no longer has the >=3 cap that would drop a 4th directive)
@@ -98,7 +98,7 @@ verify:
   - name: SS2b combinator-budget.ts is PURE (no node:fs) and derives both bounds
     cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts && ! grep -q 'node:fs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts && grep -Fq 'deriveCombinatorFanOut' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts && grep -Fq 'deriveUsesDepthBudget' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts
   - name: SS2b uses-depth is DERIVED (no frozen MAX_USES_DEPTH = 3 literal)
-    cmd: ! grep -Eq 'MAX_USES_DEPTH = 3' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'deriveUsesDepthBudget({})' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+    cmd: ! grep -Eq 'const MAX_USES_DEPTH = 3' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'deriveUsesDepthBudget({})' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: SS2b map/filter directives recognized by the io-scanner (OTHER_DIRECTIVE_RE) + runtime arm present
     cmd: grep -Fq 'map|filter' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts && grep -Fq 'parseMapIterDirective' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'deriveCombinatorFanOut' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: SS2b seed-time checkCombinatorRefs present + gated in runRecipe

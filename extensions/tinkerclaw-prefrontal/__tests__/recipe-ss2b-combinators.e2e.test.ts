@@ -14,26 +14,32 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Plan } from "../../../src/gateway/protocol/schema/prefrontal-plan.js";
 import { runRecipe } from "../recipe-runner.js";
 
-// makeScriptedStore copied verbatim from recipe-when-return.integration.test.ts (lines 15-87).
 interface StepCall {
   stepIndex: number;
   status: Plan["steps"][number]["status"];
   note?: string;
   artifact?: string;
   output?: unknown;
+  session?: string;
 }
 
-function makeScriptedStore(scripts: Record<number, string[]>) {
-  let plan: Plan | null = null;
+// Session-keyed mock: one Plan per sessionKey (sub-kits get their own session),
+// per-(session,step) attempt counters, and scripts keyed by `${session}::${step}`
+// with a bare `${step}` fallback (so a uniform sub-kit can be scripted once).
+function makeScriptedStore(scripts: Record<string, string[]>) {
+  const plans: Record<string, Plan> = {};
   const stepCalls: StepCall[] = [];
-  const attempts: Record<number, number> = {};
-  let closed: { status: string } | null = null;
-  const copy = (): Plan => JSON.parse(JSON.stringify(plan));
+  const attempts: Record<string, number> = {};
+  const closedBy: Record<string, { status: string }> = {};
+  let root: string | null = null;
+  const copy = (s: string): Plan => JSON.parse(JSON.stringify(plans[s]));
+  const scriptFor = (s: string, step: number): string[] =>
+    scripts[`${s}::${step}`] ?? scripts[String(step)] ?? ["auto-done"];
   return {
     calls: stepCalls,
-    getClosed: () => closed,
-    async get(_s: string): Promise<Plan | null> {
-      return plan ? copy() : null;
+    getClosed: () => (root ? (closedBy[root] ?? null) : null),
+    async get(sessionKey: string): Promise<Plan | null> {
+      return plans[sessionKey] ? copy(sessionKey) : null;
     },
     async set(p: {
       sessionKey: string;
@@ -42,7 +48,8 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
       kitRef?: string;
       steps: Array<{ title: string }>;
     }): Promise<Plan> {
-      plan = {
+      if (root === null) root = p.sessionKey;
+      plans[p.sessionKey] = {
         sessionKey: p.sessionKey,
         runId: p.runId,
         intent: p.intent,
@@ -52,8 +59,8 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
         status: "in_progress",
         currentStep: 0,
         steps: p.steps.map((s) => ({ title: s.title, status: "pending" as const })),
-      };
-      return copy();
+      } as Plan;
+      return copy(p.sessionKey);
     },
     async step(p: StepCall & { sessionKey: string; outputKind?: "json" }): Promise<Plan> {
       stepCalls.push({
@@ -62,14 +69,17 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
         note: p.note,
         artifact: p.artifact,
         output: p.output,
+        session: p.sessionKey,
       });
-      if (!plan) throw new Error("no plan");
+      const plan = plans[p.sessionKey];
+      if (!plan) throw new Error(`no plan for ${p.sessionKey}`);
       const st = plan.steps[p.stepIndex];
       if (!st) throw new Error("step out of range");
       if (p.status === "in_progress") {
-        const n = attempts[p.stepIndex] ?? 0;
-        attempts[p.stepIndex] = n + 1;
-        const notes = scripts[p.stepIndex] ?? ["auto-done"];
+        const key = `${p.sessionKey}::${p.stepIndex}`;
+        const n = attempts[key] ?? 0;
+        attempts[key] = n + 1;
+        const notes = scriptFor(p.sessionKey, p.stepIndex);
         st.note = notes[Math.min(n, notes.length - 1)];
         st.status = "done";
         plan.currentStep = p.stepIndex;
@@ -78,12 +88,15 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
         if (p.note !== undefined) st.note = p.note;
         if (p.artifact !== undefined) st.artifact = p.artifact;
         if (p.output !== undefined) st.output = p.output;
-        if (p.outputKind !== undefined) st.outputKind = p.outputKind;
+        if (p.outputKind !== undefined) (st as Plan["steps"][number]).outputKind = p.outputKind;
       }
-      return copy();
+      return copy(p.sessionKey);
     },
-    async close(p: { status: string }): Promise<{ ok: true; archivedTo: string }> {
-      closed = { status: p.status };
+    async close(p: {
+      sessionKey: string;
+      status: string;
+    }): Promise<{ ok: true; archivedTo: string }> {
+      closedBy[p.sessionKey] = { status: p.status };
       return { ok: true, archivedTo: "/dev/null" };
     },
   };
@@ -135,8 +148,10 @@ describe("SS2b combinator recipes e2e", () => {
 
   it("if-then-else runs the then-branch and skips the else", async () => {
     const store = makeScriptedStore({
-      0: ['```json\n{"cond":true,"thenKit":"echo","elseKit":"echo"}\n```'],
-      1: ['```json\n{"v":"then"}\n```'],
+      // root ite1 step 0 (Decide); the then-branch echo runs in ite1::uses::1 at the
+      // echo step 0 (bare "0" fallback).
+      "ite1::0": ['```json\n{"cond":true,"thenKit":"echo","elseKit":"echo"}\n```'],
+      "0": ['```json\n{"v":"x"}\n```'],
     });
     const spawned: string[] = [];
     const res = await runRecipe({
@@ -151,14 +166,19 @@ describe("SS2b combinator recipes e2e", () => {
       },
     });
     expect(res.ok).toBe(true);
-    // step 3 (Else) guarded off (cond==true) → settled done with the skipped note.
-    const step3 = store.calls.filter((c) => c.stepIndex === 2 && c.status === "done").pop();
+    // step 3 (Else), in the ROOT session ite1, guarded off (cond==true) → settled
+    // done with the skipped note (the else-branch sub-kit never dispatches).
+    const step3 = store.calls
+      .filter((c) => c.stepIndex === 2 && c.status === "done" && c.session === "ite1")
+      .pop();
     expect(step3?.note ?? "").toMatch(/skipped \(when:/);
   });
 
   it("map fans the worker out over the array", async () => {
     const store = makeScriptedStore({
-      0: ['```json\n{"items":["x","y"],"worker":"echo"}\n```'],
+      // root map1 step 0; each echo element-run (map1::map::1::i) yields its step-0 value.
+      "map1::0": ['```json\n{"items":["x","y"],"worker":"echo"}\n```'],
+      "0": ['```json\n{"v":"x"}\n```'],
     });
     const workerSpawns: string[] = [];
     const res = await runRecipe({
@@ -178,9 +198,10 @@ describe("SS2b combinator recipes e2e", () => {
 
   it("compose threads kit1 then kit2 (both dispatched)", async () => {
     const store = makeScriptedStore({
-      0: ['```json\n{"kit1":"echo","kit2":"echo","seed":"s"}\n```'],
-      1: ['```json\n{"v":"first"}\n```'],
-      2: ['```json\n{"v":"second"}\n```'],
+      // root comp1 step 0 (Plan); kit1 runs in comp1::uses::1, kit2 in comp1::uses::2,
+      // each at the echo step 0 (bare "0" fallback).
+      "comp1::0": ['```json\n{"kit1":"echo","kit2":"echo","seed":"s"}\n```'],
+      "0": ['```json\n{"v":"x"}\n```'],
     });
     const echoRuns: string[] = [];
     const res = await runRecipe({
@@ -200,7 +221,10 @@ describe("SS2b combinator recipes e2e", () => {
 
   it("filter keeps elements whose predicate worker returnValue is truthy", async () => {
     const store = makeScriptedStore({
-      0: ['```json\n{"items":["keep","drop"],"worker":"echo"}\n```'],
+      // root filt1 step 0; each predicate echo (filt1::filter::1::i) yields a truthy
+      // step-0 value, so all elements are kept.
+      "filt1::0": ['```json\n{"items":["keep","drop"],"worker":"echo"}\n```'],
+      "0": ['```json\n{"v":"x"}\n```'],
     });
     const res = await runRecipe({
       kitRef: "globalcaos/filter",
@@ -211,7 +235,11 @@ describe("SS2b combinator recipes e2e", () => {
       _spawnStep: async () => ({ ok: true, runId: "mock" }),
     });
     expect(res.ok).toBe(true);
-    const filtOut = store.calls.filter((c) => c.stepIndex === 1 && c.output !== undefined).pop();
+    // the Filter step's array output lives in the ROOT session filt1 (filter by
+    // session so the per-element echo sub-runs don't shadow the parent step).
+    const filtOut = store.calls
+      .filter((c) => c.stepIndex === 1 && c.session === "filt1" && c.output !== undefined)
+      .pop();
     expect(Array.isArray(filtOut?.output)).toBe(true);
   });
 });
