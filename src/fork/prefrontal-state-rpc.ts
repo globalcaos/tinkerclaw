@@ -70,6 +70,10 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
     const parallelismCap = readNum(p, "parallelismCap");
     const inFlightLabels = readStrArray(p, "inFlightLabels");
     const note = readStr(p, "note");
+    // BROCA visibility (2026-06-06): optional per-turn id + current-step skill id.
+    // Both back-compat (omitted when absent → old clients/payloads unaffected).
+    const turnId = readStr(p, "turnId");
+    const skillId = readStr(p, "skillId");
 
     emitAgentEvent({
       runId,
@@ -84,6 +88,8 @@ export const forkPrefrontalStateHandlers: GatewayRequestHandlers = {
         inFlightLabels,
         note,
         ts: Date.now(),
+        ...(turnId ? { turnId } : {}),
+        ...(skillId ? { skillId } : {}),
         ...(sessionKey ? { sessionKey } : {}),
       },
       ...(sessionKey ? { sessionKey } : {}),
