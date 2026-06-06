@@ -16,7 +16,12 @@ export interface Port {
   name: string;
   /** A `steps.<n>.out[.<path>]` reference into a prior step's typed output. */
   from: string;
-  /** Optional schema the bound value must satisfy (reserved for SS2+). */
+  /**
+   * Optional schema the bound value must satisfy. SS2b: when the port carries a
+   * combinator's kit argument, this schema is `{"type":"string"}` and the bound
+   * value is a `kitRef` string — validated by `parseKitRefValue` at dispatch time
+   * (the runner-as-kit-factory edge), not by Ajv shape alone.
+   */
   schema?: JsonSchema;
 }
 
@@ -32,7 +37,7 @@ const DIRECTIVE_RE = /^(out|in):\s*(.+)$/;
 // never matters, and never treat them as prose that ends the io block.
 // `invoke skill:` (SS3) is a sibling directive (keyword + " skill:"), so the
 // pattern matches that two-word form, not a bare `invoke:`.
-const OTHER_DIRECTIVE_RE = /^(?:uses|loop|when|return|done):|^invoke\s+skill:/i;
+const OTHER_DIRECTIVE_RE = /^(?:uses|loop|when|return|done|map|filter):|^invoke\s+skill:/i;
 // A typed-port value must be a JSON object/array. This guards against a prose
 // line that merely begins with "out:"/"in:" (e.g. "out: of scope, skip") — such
 // a line is left as prose, NOT parsed (and never throws the whole run).
@@ -132,6 +137,27 @@ export function parseStepRef(ref: string): { stepNumber: number; path: string } 
   const m = STEP_REF_RE.exec(ref.trim());
   if (!m) return null;
   return { stepNumber: parseInt(m[1], 10), path: m[2] ?? "" };
+}
+
+// SS2b: a `kitRef` value — `owner/slug` or a bare `slug` (each segment
+// [a-z0-9][a-z0-9-]*). The runner dispatches such a value as a sub-kit (the
+// kit-factory edge). This mirrors parseUsesDirective's static-slug normalization,
+// factored out so the dynamic-uses resolution path validates identically.
+const KITREF_RE = /^([a-z0-9][a-z0-9-]*)(?:\/([a-z0-9][a-z0-9-]*))?$/;
+
+/**
+ * Normalize a `kitRef` VALUE (e.g. a step's typed output bound onto a combinator's
+ * kit port) to a canonical `owner/slug`, or null when malformed. A bare slug
+ * adopts the `globalcaos/` owner (same default as a static `uses:` slug). Rejects
+ * uppercase, whitespace, `..`, empty, more than two segments, and anything that is
+ * a `{{…}}` template or a `steps.…` ref (those are resolved BEFORE this is called).
+ */
+export function parseKitRefValue(ref: string): string | null {
+  if (typeof ref !== "string") return null;
+  const t = ref.trim();
+  const m = KITREF_RE.exec(t);
+  if (!m) return null;
+  return m[2] ? t : `globalcaos/${m[1]}`;
 }
 
 const TEMPLATE_RE = /\{\{\s*(steps\.\d+\.out(?:\.[^}\s]+)?)\s*\}\}/g;
