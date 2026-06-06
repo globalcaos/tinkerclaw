@@ -128,7 +128,7 @@ describe("SS2a when: guard", () => {
     const store = makeScriptedStore({ 0: ['```json\n{"passed": false}\n```'] });
     const spawned: string[] = [];
     const res = await runRecipe({
-      kitRef: "guard-demo",
+      kitRef: "globalcaos/guard-demo",
       sessionKey: "s1",
       intent: "test",
       planStore: store as never,
@@ -139,8 +139,8 @@ describe("SS2a when: guard", () => {
       },
     });
     expect(res.ok).toBe(true);
-    expect(spawned).toContain("guard-demo:step-0");
-    expect(spawned).not.toContain("guard-demo:step-1"); // step 2 guarded off → never spawned
+    expect(spawned).toContain("globalcaos/guard-demo:step-0");
+    expect(spawned).not.toContain("globalcaos/guard-demo:step-1"); // step 2 guarded off → never spawned
     const step1 = store.calls.filter((c) => c.stepIndex === 1 && c.status === "done").pop();
     expect(step1?.note ?? "").toMatch(/skipped \(when:/);
   });
@@ -149,7 +149,7 @@ describe("SS2a when: guard", () => {
     const store = makeScriptedStore({ 0: ['```json\n{"passed": true}\n```'], 1: ["did the work"] });
     const spawned: string[] = [];
     const res = await runRecipe({
-      kitRef: "guard-demo",
+      kitRef: "globalcaos/guard-demo",
       sessionKey: "s2",
       intent: "test",
       planStore: store as never,
@@ -160,7 +160,7 @@ describe("SS2a when: guard", () => {
       },
     });
     expect(res.ok).toBe(true);
-    expect(spawned).toContain("guard-demo:step-1");
+    expect(spawned).toContain("globalcaos/guard-demo:step-1");
   });
 });
 
@@ -212,7 +212,7 @@ describe("SS2a return:/done: early-exit", () => {
     });
     const spawned: string[] = [];
     const res = await runRecipe({
-      kitRef: "exit-demo",
+      kitRef: "globalcaos/exit-demo",
       sessionKey: "e1",
       intent: "test",
       planStore: store as never,
@@ -225,7 +225,7 @@ describe("SS2a return:/done: early-exit", () => {
     expect(res.ok).toBe(true);
     expect(res.returnValue).toEqual({ verdict: "stop here" });
     expect(store.getClosed()?.status).toBe("done"); // NOT "aborted"
-    expect(spawned).toContain("exit-demo:step-1");
-    expect(spawned).not.toContain("exit-demo:step-2"); // later group never dispatched
+    expect(spawned).toContain("globalcaos/exit-demo:step-1");
+    expect(spawned).not.toContain("globalcaos/exit-demo:step-2"); // later group never dispatched
   });
 });
