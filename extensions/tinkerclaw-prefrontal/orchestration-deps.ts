@@ -19,6 +19,7 @@
  */
 
 import { createOrchestrationRuntime, type AgentOpts } from "./orchestration-runtime.js";
+import { classifyError } from "./recipe-types.js";
 
 /** Minimal structural type for the gateway-call function (matches src/gateway/call.js). */
 export type CallGateway = <T>(args: {
@@ -80,6 +81,15 @@ export interface ProductionRuntimeOpts {
   runTimeoutSeconds?: number;
   /** Phase sink (wire to fork.prefrontal.setRecipe at the call site for the panel). */
   onPhase?: (title: string) => void;
+  /**
+   * SS5b: remaining per-run token allowance threaded down to a spawn. STRUCTURALLY
+   * DERIVED BUT INERT until agent.wait carries the reason — the budget arm in
+   * spawnTextVia keys off the wait response's `status:'exhausted'` /
+   * `stopReason:'budget-exhausted'`, not this number; this field is the declared
+   * threading point for when that signal lands (mirrors recovery-budget.ts's
+   * "structurally-derived-but-inert until wired" gap).
+   */
+  remainingTokenBudget?: number;
 }
 
 /**
@@ -114,7 +124,11 @@ export async function spawnTextVia(
     throw new Error(`orchestration spawn failed: ${spawn?.note ?? "no childSessionKey/runId"}`);
   }
   const { childSessionKey, runId } = spawn;
-  const wait = await callGateway<{ status?: "ok" | "timeout" | "error"; error?: string }>({
+  const wait = await callGateway<{
+    status?: "ok" | "timeout" | "error" | "exhausted";
+    error?: string;
+    stopReason?: string;
+  }>({
     method: "agent.wait",
     params: { runId, timeoutMs: runTimeoutSeconds * 1000 },
     timeoutMs: runTimeoutSeconds * 1000 + 5_000,
@@ -127,6 +141,15 @@ export async function spawnTextVia(
   // the next stage with an empty task.
   if (wait?.status === "timeout")
     throw new Error(`orchestration run timed out after ${runTimeoutSeconds}s`);
+  // SS5b budget arm: a subagent that exhausted its token/dispatch budget must
+  // surface as a CLASSIFIED 'budget-exceeded' (a hard, non-recoverable limit —
+  // retry has zero expected value), so parallel/pipeline null-isolation drops the
+  // leg rather than poisoning the next stage. STRUCTURALLY DERIVED BUT INERT until
+  // agent.wait carries the reason: the gateway does not yet emit
+  // status:'exhausted' / stopReason:'budget-exhausted', so this arm never fires in
+  // production today — it is wired ahead of that signal (mirrors recovery-budget.ts).
+  if (wait && (wait.status === "exhausted" || wait.stopReason === "budget-exhausted"))
+    throw classifyError("budget-exceeded", "subagent exhausted its budget");
   const hist = await callGateway<{ messages?: unknown }>({
     method: "chat.history",
     params: { sessionKey: childSessionKey, limit: 30 },
