@@ -30,6 +30,7 @@ import {
   type PrefrontalKitReadParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { createSubsystemLogger } from "../../src/logging/subsystem.js";
+import { createEventStore } from "../../src/memory/engram/event-store.js";
 import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
 import { createSkillLibrary } from "../../src/memory/engram/skill-library.js";
 import {
@@ -90,6 +91,34 @@ function check<T>(v: Validator, p: unknown, name: string): T {
       `${name}: invalid params: ${(v.errors ?? []).map((e) => `${e.instancePath || "(root)"} ${e.message}`).join("; ")}`,
     );
   return p as T;
+}
+
+/**
+ * U1 fitness PRODUCER (seam A) — append ONE `recipe:<owner/slug>` attribution marker
+ * into a session's engram event store so sleep-consolidation's attributeRecipe() can
+ * credit the episode's outcome to the recipe (the producer that was missing, leaving
+ * empirical fitness inert). Direct raw append (it does not flow through the ingestion
+ * reconciler) so the marker always lands; a `turnId: 0` system_event with no
+ * `[session_start]` content can neither flip inferOutcome (which keys off the LAST
+ * event) nor split an episode. Best-effort: a failed append must never break a run.
+ */
+export function stampRecipeAttribution(
+  engramBaseDir: string,
+  sessionKey: string,
+  recipeTag: string,
+): void {
+  try {
+    createEventStore({ baseDir: engramBaseDir, sessionKey }).append({
+      turnId: 0,
+      sessionKey,
+      kind: "system_event",
+      content: `[recipe_attribution] ${recipeTag}`,
+      tokens: 0,
+      metadata: { tags: [recipeTag] },
+    });
+  } catch {
+    // attribution must never break the run
+  }
 }
 
 // ─── Canonical kit frontmatter shape ───────────────────────────────────────
@@ -1015,11 +1044,21 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       // runner; outcomes route back via onSkillOutcome → fork.skill.recordOutcome.
       // Needed at SEED time too: compileSteps lifts a skill's outputSchema so the
       // port-wiring check validates downstream `in:` ports (also in dry-run).
-      const skillLibrary = createSkillLibrary({
-        baseDir:
-          deps.engramBaseDir ??
-          path.join(process.env.OPENCLAW_HOME ?? homedir(), ".openclaw", "engram"),
-      });
+      // SS4/U1: ONE engram base dir for this run so the skill library, the
+      // recipe-fitness PRODUCER (onTag, below) and the fitnessSuccessRate CONSUMER
+      // (runRecipe, below) all hit the SAME on-disk store the gateway ingests turn
+      // events into — co-locating the attribution marker with the run's episode.
+      const engramBaseDir =
+        deps.engramBaseDir ??
+        path.join(process.env.OPENCLAW_HOME ?? homedir(), ".openclaw", "engram");
+      const skillLibrary = createSkillLibrary({ baseDir: engramBaseDir });
+
+      // SS1 follow-up (U1 fitness CONSUMER): fold the recipe's empirical success
+      // rate into runRecipe so the J16-derived re-dispatch + recovery budgets respond
+      // to how reliable THIS recipe has been. Keyed by the full owner/slug kitRef —
+      // the same id recipe-fitness.attributeRecipe stores under. undefined (no record
+      // / no engram) → the runner's neutral 0.5 default (back-compat).
+      const fitnessSuccessRate = makeFitnessLookup(engramBaseDir)(p.kitRef);
 
       if (p.dryRun) {
         // Dry-run: return the dispatch plan without spawning anything.
@@ -1032,6 +1071,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
           ownRecipesDir: deps.ownRecipesDir,
           recipeInstallSandbox: deps.recipeInstallSandbox,
           skillLibrary,
+          fitnessSuccessRate,
         });
         return {
           ok: result.ok,
@@ -1059,6 +1099,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         ownRecipesDir: deps.ownRecipesDir,
         recipeInstallSandbox: deps.recipeInstallSandbox,
         skillLibrary,
+        fitnessSuccessRate,
         // FORK 2026-05-30 (Upgrade 5): durable checkpointing. Auto-resume an
         // interrupted in_progress plan only when resume:true is explicitly passed
         // (no silent re-attach — the architect's policy). `resume` is now part of
@@ -1136,6 +1177,15 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
               },
             },
           }).catch(() => {});
+          // U1 fitness PRODUCER (seam A): the trail event above is observability-only
+          // and never reached the engram event store — which is why empirical fitness
+          // stayed inert. On run START, append ONE attribution marker into THIS
+          // session's engram store so the tag rides into the run's episode and
+          // recipe-fitness.attributeRecipe() can credit the episode outcome to this
+          // recipe at consolidation. Once per run (start only); best-effort.
+          if (ev.phase === "start") {
+            stampRecipeAttribution(engramBaseDir, ev.sessionKey, ev.tag);
+          }
         },
         // SS1: forward typed-output schema-mismatch re-dispatch trails to the
         // prefrontal trail (same loopback + fire-and-forget pattern as the sinks
