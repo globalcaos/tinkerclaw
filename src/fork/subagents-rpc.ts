@@ -54,6 +54,59 @@ function readBool(params: Record<string, unknown>, key: string): boolean | undef
   return typeof v === "boolean" ? v : undefined;
 }
 
+function readStrArr(params: Record<string, unknown>, key: string): string[] | undefined {
+  const v = params[key];
+  if (!Array.isArray(v)) {
+    return undefined;
+  }
+  const out = v
+    .filter((x): x is string => typeof x === "string")
+    .map((x) => x.trim())
+    .filter((x) => x.length > 0);
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * SS5b-C1 spawn-budget validation at the RPC boundary.
+ *
+ * Rejects malformed budgets (non-integer or negative maxTokens/maxToolCalls)
+ * with an INVALID_REQUEST-style error, and normalizes the allowTools allow-list
+ * in place (trim already applied by readStrArr; here we lowercase + dedup so the
+ * eventual tool gate matches case-insensitively against a clean set).
+ *
+ * Mutates spawnParams in place and returns it for convenience. Throws an Error
+ * on the first validation failure; the handler maps that to ErrorCodes.INVALID_REQUEST.
+ */
+export function validateSpawnBudget(spawnParams: SpawnSubagentParams): SpawnSubagentParams {
+  const checkBudgetNumber = (value: number | undefined, label: string): void => {
+    if (value === undefined) {
+      return;
+    }
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(
+        `fork.subagents.spawn: '${label}' must be a non-negative integer (got ${String(value)}).`,
+      );
+    }
+  };
+  checkBudgetNumber(spawnParams.maxTokens, "maxTokens");
+  checkBudgetNumber(spawnParams.maxToolCalls, "maxToolCalls");
+
+  if (spawnParams.allowTools !== undefined) {
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const name of spawnParams.allowTools) {
+      const lower = name.trim().toLowerCase();
+      if (!lower || seen.has(lower)) {
+        continue;
+      }
+      seen.add(lower);
+      normalized.push(lower);
+    }
+    spawnParams.allowTools = normalized;
+  }
+  return spawnParams;
+}
+
 export const forkSubagentsHandlers: GatewayRequestHandlers = {
   "fork.subagents.spawn": async ({ params, respond }) => {
     const p = params ?? {};
@@ -83,7 +136,22 @@ export const forkSubagentsHandlers: GatewayRequestHandlers = {
       sandbox: (readStr(p, "sandbox") as SpawnSubagentParams["sandbox"]) ?? undefined,
       lightContext: readBool(p, "lightContext"),
       expectsCompletionMessage: readBool(p, "expectsCompletionMessage"),
+      allowTools: readStrArr(p, "allowTools"),
+      maxTokens: readNum(p, "maxTokens"),
+      maxToolCalls: readNum(p, "maxToolCalls"),
     };
+
+    // SS5b-C1: validate + normalize the spawn budget before we spawn anything.
+    // A bad budget is a client error, so it maps to INVALID_REQUEST (not the
+    // generic UNAVAILABLE the spawn try/catch below would otherwise produce).
+    try {
+      validateSpawnBudget(spawnParams);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(`fork.subagents.spawn rejected (invalid budget): ${msg}`);
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, msg));
+      return;
+    }
 
     const ctx: SpawnSubagentContext = {
       // Parent session defaults to main if not provided. This is the key lever
@@ -113,6 +181,16 @@ export const forkSubagentsHandlers: GatewayRequestHandlers = {
       }
       log.info(
         `fork.subagents.spawn ok childSessionKey=${result.childSessionKey} runId=${result.runId} task.len=${task.length}`,
+      );
+      // SS5b-C1: enforce allowTools here once the tool-gate lands.
+      // The budget is validated + normalized above but NOT yet enforced on the
+      // child run; log what was requested so it is observable until enforcement ships.
+      log.info(
+        `fork.subagents.spawn budget (enforcement pending) allowTools=${
+          spawnParams.allowTools ? spawnParams.allowTools.join(",") : "<none>"
+        } maxTokens=${spawnParams.maxTokens ?? "<none>"} maxToolCalls=${
+          spawnParams.maxToolCalls ?? "<none>"
+        }`,
       );
       respond(
         true,
