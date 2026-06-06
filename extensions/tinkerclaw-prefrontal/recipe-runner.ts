@@ -30,6 +30,7 @@ import AjvPkg from "ajv";
 import { parse as parseYaml } from "yaml";
 import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
 import type { SkillLibrary } from "../../src/memory/engram/skill-library.js";
+import { deriveCombinatorFanOut, deriveUsesDepthBudget } from "./combinator-budget.js";
 import type { PlanStore } from "./plan-store.js";
 import {
   resolveStepRefs,
@@ -37,6 +38,8 @@ import {
   stripStepIoDirectives,
   validateTypedNote,
   parseStepRef,
+  parseKitRefValue,
+  dotGet,
   type JsonSchema,
   type Port,
 } from "./recipe-types.js";
@@ -250,8 +253,12 @@ export function withPriorArtifacts(task: string, prior: PriorArtifact[]): string
   return `## Prior step outputs\n${lines.join("\n")}\n\n---\n\n${task}`;
 }
 
-/** Max depth for `uses:` sub-kit recursion — recipes calling recipes. */
-const MAX_USES_DEPTH = 3;
+/** Max depth for `uses:` sub-kit recursion — recipes calling recipes. J16: DERIVED
+ * (floor 3), not a frozen constant. With no dispatch budget threaded this is 3 —
+ * numerically identical to the old `MAX_USES_DEPTH = 3` — and derives UPWARD when a
+ * budget signal is wired (recipe-rpcs does not yet thread one — documented follow-up,
+ * same gap as fitnessSuccessRate). Computed once at module load. */
+const MAX_USES_DEPTH = deriveUsesDepthBudget({});
 
 export interface RecipeRunResult {
   ok: boolean;
@@ -277,7 +284,9 @@ interface StepDispatch {
   title: string;
   task: string;
   label: string;
-  /** FORK: if set, this step runs another kit (owner/slug) instead of a plain subagent. */
+  /** FORK: if set, this step runs another kit (owner/slug) instead of a plain subagent.
+   * SS2b: may also be an unresolved `{{steps.N.out.path}}` template (isDynamicUsesRef);
+   * executeOnce resolves it against prior outputs + validates via parseKitRefValue. */
   usesKitRef?: string;
   /** FORK 2026-05-30: if set, this step repeats (count / until-dry / until-marker). */
   loop?: LoopSpec;
@@ -289,6 +298,12 @@ interface StepDispatch {
   whenGuard?: string;
   /** SS2a: a `return:`/`done:` marker; closes the plan after this step (early-exit). */
   earlyExit?: boolean;
+  /** SS2b: a `map: steps.N.out` ref — fan dispatch.usesKitRef out over this array. */
+  mapOver?: string;
+  /** SS2b: a `filter: steps.N.out` ref — keep elements of this array passing keepWhen. */
+  filterOver?: string;
+  /** SS2b: the `keep:` predicate for a filter (evaluated per element with {{item}} substituted). */
+  keepWhen?: string;
 }
 
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
@@ -304,22 +319,32 @@ function leadingDirectives(body: string): string[] {
       if (out.length > 0) break; // a blank after directives ends the block
       continue; // skip leading blank lines
     }
-    if (!/^(?:uses|loop|when|return|done):|^invoke\s+skill:/i.test(line)) break; // first prose line ends the block
+    if (!/^(?:uses|loop|when|return|done|map|filter|keep):|^invoke\s+skill:/i.test(line)) break; // first prose line ends the block
     out.push(line);
   }
   return out;
 }
 
 /** The composition seam: a leading `uses: <kit>` directive runs another kit
- * instead of a plain subagent. Bare slugs normalize to `globalcaos/<slug>`. */
+ * instead of a plain subagent. A STATIC bare slug normalizes to `globalcaos/<slug>`.
+ * SS2b: a `{{steps.N.out.path}}` / `{{param}}` template is returned RAW (unresolved)
+ * — executeOnce resolves it at dispatch time (the kit-factory edge), then validates
+ * via parseKitRefValue. isDynamicUsesRef distinguishes the two forms. */
 export function parseUsesDirective(body: string): string | undefined {
   for (const line of leadingDirectives(body)) {
+    const tpl = /^uses:\s*(\{\{[^}]+\}\})\s*$/.exec(line);
+    if (tpl) return tpl[1];
     const m = /^uses:\s*([a-z0-9][a-z0-9-]*(?:\/[a-z0-9][a-z0-9-]*)?)\s*$/i.exec(line);
     if (!m) continue;
     const ref = m[1];
     return ref.includes("/") ? ref : `globalcaos/${ref}`;
   }
   return undefined;
+}
+
+/** SS2b: is a `uses:` ref a `{{…}}` template (resolved at dispatch) vs a static slug? */
+export function isDynamicUsesRef(ref: string | undefined): boolean {
+  return typeof ref === "string" && ref.startsWith("{{") && ref.endsWith("}}");
 }
 
 /** SS3: a leading `invoke skill:<id>` directive calls a stdlib skill primitive
@@ -348,6 +373,52 @@ export function parseEarlyExitDirective(body: string): boolean {
     if (/^(?:return|done):\s*$/i.test(line)) return true;
   }
   return false;
+}
+
+/** SS2b: a leading `map: steps.<n>.out[.path]` directive — fan a worker out over
+ * the array at that ref. Recognized ONLY when the remainder parses as a
+ * steps.<n>.out reference (else it is PROSE, e.g. "map: the files in src/"). */
+export function parseMapIterDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^map:\s*(\S+)\s*$/i.exec(line);
+    if (!m) continue;
+    return parseStepRef(m[1]) ? m[1] : undefined;
+  }
+  return undefined;
+}
+
+/** SS2b: a leading `filter: steps.<n>.out[.path]` directive — keep the elements of
+ * that array that pass a `keep:` predicate (or a predicate-kit's truthy returnValue).
+ * Prose-collision guarded exactly like parseMapIterDirective. */
+export function parseFilterIterDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^filter:\s*(\S+)\s*$/i.exec(line);
+    if (!m) continue;
+    return parseStepRef(m[1]) ? m[1] : undefined;
+  }
+  return undefined;
+}
+
+/** SS2b: a leading `keep: <when-expr over {{item}}>` predicate for a filter step. */
+export function parseKeepDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^keep:\s*(.+\S)\s*$/i.exec(line);
+    if (m) return m[1].trim();
+  }
+  return undefined;
+}
+
+/** SS2b: resolve a dynamic `uses: {{steps.N.out.path}}` template against prior
+ * steps' typed outputs (mirrors resolveStepRefs), then normalize+validate it as a
+ * kitRef. Returns the canonical owner/slug, or null when unresolvable/malformed. */
+export function resolveKitRefTemplate(
+  rawRef: string,
+  outputsByStep: Map<number, unknown>,
+): string | null {
+  const resolved = resolveStepRefs(rawRef, outputsByStep).trim();
+  // resolveStepRefs leaves an unresolvable ref verbatim → still a {{…}} → reject.
+  if (resolved.startsWith("{{")) return null;
+  return parseKitRefValue(resolved);
 }
 
 // ─── Recipe loops (FORK 2026-05-30) ─────────────────────────────────────────
@@ -491,6 +562,10 @@ export interface CompileStep {
   out?: JsonSchema;
   in?: Port[];
   when?: string;
+  /** SS2b: a STATIC `uses:` kitRef (already normalized to owner/slug). */
+  usesKitRef?: string;
+  /** SS2b: a DYNAMIC `uses: {{steps.N.out.path}}` worker template (unresolved). */
+  usesWorkerRef?: string;
 }
 
 /**
@@ -583,6 +658,55 @@ export function checkWhenRefs(steps: CompileStep[]): string[] {
             `step ${consumerNumber} when: step ${ref.stepNumber} out: schema has no field "${firstSegment}"`,
           );
         }
+      }
+    }
+  });
+  return errors;
+}
+
+/**
+ * SS2b: seed-time combinator-ref validation (mirrors checkPortWiring / checkWhenRefs).
+ *  - A STATIC `uses:` kitRef must parse via parseKitRefValue and must NOT be the
+ *    host kit itself (a self-cycle reachable at depth 0). Cross-kit cycles through
+ *    runtime data are caught at dispatch by the _usesChain guard (documented).
+ *  - A DYNAMIC `uses: {{steps.N.out.path}}` worker ref must be a well-formed ref to
+ *    a strictly-EARLIER step that declares an `out:` schema (existence-only — the
+ *    bound value's kitRef validity is re-checked at dispatch by parseKitRefValue).
+ */
+export function checkCombinatorRefs(steps: CompileStep[], hostKitRef: string): string[] {
+  const errors: string[] = [];
+  steps.forEach((step, i) => {
+    const consumerNumber = i + 1;
+    if (step.usesKitRef) {
+      const norm = parseKitRefValue(step.usesKitRef);
+      if (!norm) {
+        errors.push(`step ${consumerNumber} uses: "${step.usesKitRef}" is not a valid kitRef`);
+      } else if (norm === hostKitRef) {
+        errors.push(`step ${consumerNumber} uses: "${norm}" is the host kit itself (self-cycle)`);
+      }
+    }
+    if (step.usesWorkerRef) {
+      const inner = step.usesWorkerRef.replace(/^\{\{\s*|\s*\}\}$/g, "");
+      const ref = parseStepRef(inner);
+      if (!ref) {
+        errors.push(
+          `step ${consumerNumber} uses: "${step.usesWorkerRef}" is not a {{steps.<n>.out…}} reference`,
+        );
+        return;
+      }
+      if (ref.stepNumber < 1 || ref.stepNumber > steps.length) {
+        errors.push(
+          `step ${consumerNumber} uses: references step ${ref.stepNumber} which does not exist`,
+        );
+        return;
+      }
+      if (ref.stepNumber >= consumerNumber) {
+        errors.push(`step ${consumerNumber} uses: step ${ref.stepNumber} must precede it`);
+        return;
+      }
+      const producer = steps[ref.stepNumber - 1];
+      if (!producer.out) {
+        errors.push(`step ${consumerNumber} uses: step ${ref.stepNumber} declares no out: schema`);
       }
     }
   });
@@ -861,11 +985,15 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         const sk = sid ? opts.skillLibrary.read(sid) : undefined;
         if (sk?.outputSchema) out = sk.outputSchema;
       }
+      const cleaned = stripStepIoDirectives(s.body);
+      const usesRef = parseUsesDirective(cleaned);
       return {
         title: s.title,
         out,
         in: io.in,
-        when: parseWhenDirective(stripStepIoDirectives(s.body)),
+        when: parseWhenDirective(cleaned),
+        usesKitRef: usesRef && !isDynamicUsesRef(usesRef) ? usesRef : undefined,
+        usesWorkerRef: usesRef && isDynamicUsesRef(usesRef) ? usesRef : undefined,
       };
     });
   } catch (err) {
@@ -889,6 +1017,14 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       ok: false,
       planId: "",
       errorMessage: `recipe-runner: when-guard check failed:\n - ${whenErrors.join("\n - ")}`,
+    };
+  }
+  const combErrors = checkCombinatorRefs(compileSteps, opts.kitRef);
+  if (combErrors.length > 0) {
+    return {
+      ok: false,
+      planId: "",
+      errorMessage: `recipe-runner: combinator-ref check failed:\n - ${combErrors.join("\n - ")}`,
     };
   }
 
@@ -952,6 +1088,9 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         skillId,
         whenGuard,
         earlyExit,
+        mapOver: parseMapIterDirective(cleanBody),
+        filterOver: parseFilterIterDirective(cleanBody),
+        keepWhen: parseKeepDirective(cleanBody),
       };
     }),
   );
@@ -1207,7 +1346,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       // ended with, so the loop wrapper can decide whether to run again.
       const executeOnce = async (
         progressNote: string,
-      ): Promise<{ ok: boolean; note: string | null }> => {
+      ): Promise<{ ok: boolean; note: string | null; subReturnValue?: unknown }> => {
         // SS3: an `invoke skill:` step fails CLOSED if the skill is absent or
         // deprecated (no silent fallthrough to a procedure-less spawn). The
         // procedure + output contract were already lifted into dispatch.task /
@@ -1222,7 +1361,127 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             };
           }
         }
+        // SS2b: a `map:`/`filter:` step fans dispatch.usesKitRef out over an array
+        // resolved from a prior step's typed output. This is SIBLING dispatch: the
+        // worker runs once per element passing _depth UNCHANGED (the whole map step
+        // costs +1 depth, applied by the parent's group dispatch — per-element runs
+        // do NOT each increment depth). Width = deriveCombinatorFanOut(arrayLength)
+        // (= arrayLength with no budget threaded — J16, never a frozen cap).
+        if ((dispatch.mapOver || dispatch.filterOver) && dispatch.usesKitRef) {
+          const iterRef = dispatch.mapOver ?? dispatch.filterOver!;
+          const parsedRef = parseStepRef(iterRef);
+          if (!parsedRef) {
+            return {
+              ok: false,
+              note: `map/filter ref ${iterRef} is not a steps.<n>.out reference`,
+            };
+          }
+          // Resolve the array + (dynamic) worker from prior outputs.
+          const live = await store.get(opts.sessionKey);
+          const outputsByStep = new Map<number, unknown>();
+          if (live) {
+            for (const p of collectPriorArtifacts(live, dispatch.stepIndex)) {
+              if (p.output !== undefined) outputsByStep.set(p.stepIndex + 1, p.output);
+            }
+          }
+          const arr = dotGet(outputsByStep.get(parsedRef.stepNumber), parsedRef.path);
+          if (!Array.isArray(arr)) {
+            return { ok: false, note: `map/filter: ${iterRef} did not resolve to an array` };
+          }
+          let workerRef = dispatch.usesKitRef;
+          if (isDynamicUsesRef(workerRef)) {
+            const w = resolveKitRefTemplate(workerRef, outputsByStep);
+            if (!w) {
+              return {
+                ok: false,
+                note: `map/filter worker ${workerRef} did not resolve to a kitRef`,
+              };
+            }
+            workerRef = w;
+          }
+          const chain = opts._usesChain ?? [opts.kitRef];
+          const depth = opts._depth ?? 0;
+          if (depth >= MAX_USES_DEPTH) {
+            return {
+              ok: false,
+              note: `composition depth limit (${MAX_USES_DEPTH}) reached at ${workerRef}`,
+            };
+          }
+          const fanOut = deriveCombinatorFanOut({ arrayLength: arr.length });
+          const collected: unknown[] = [];
+          for (let i = 0; i < fanOut; i++) {
+            const item = arr[i];
+            const itemText = typeof item === "string" ? item : JSON.stringify(item);
+            // filter `keep:` predicate over {{item}}/{{index}} (text-substituted, then evaluateWhen).
+            if (dispatch.filterOver && dispatch.keepWhen) {
+              const expr = dispatch.keepWhen
+                .replaceAll("{{item}}", JSON.stringify(itemText))
+                .replaceAll("{{index}}", String(i));
+              let keep: boolean;
+              try {
+                keep = evaluateWhen(expr, new Map());
+              } catch {
+                keep = false;
+              }
+              if (!keep) continue;
+            }
+            // SIBLING sub-run: _depth + 1 ONCE for the whole map step (depth+1 here is
+            // the single increment; each element reuses the SAME depth, not depth+i).
+            const sub = await runRecipe({
+              kitRef: workerRef,
+              sessionKey: `${opts.sessionKey}::${dispatch.mapOver ? "map" : "filter"}::${dispatch.stepIndex}::${i}`,
+              intent: `↳ ${dispatch.title} [${i}]`,
+              parameters: { ...(opts.parameters ?? {}), item: itemText, index: String(i) },
+              planStore: store,
+              ownRecipesDir,
+              recipeInstallSandbox,
+              _depth: depth + 1,
+              _usesChain: [...chain, workerRef],
+              onRecipeState: opts.onRecipeState,
+            });
+            if (!sub.ok) {
+              return {
+                ok: false,
+                note: `map/filter element ${i} (${workerRef}) failed: ${sub.errorMessage ?? "unknown"}`,
+              };
+            }
+            if (dispatch.mapOver) {
+              collected.push(sub.returnValue);
+            } else {
+              // predicate-kit filter: keep the ELEMENT when the worker returnValue is truthy.
+              if (sub.returnValue) collected.push(item);
+            }
+          }
+          return {
+            ok: true,
+            note: `${dispatch.mapOver ? "mapped" : "filtered"} ${workerRef} over ${arr.length} → ${collected.length}`,
+            subReturnValue: collected,
+          };
+        }
+
         if (dispatch.usesKitRef) {
+          // SS2b: a dynamic `uses: {{steps.N.out.path}}` template is resolved here,
+          // BEFORE the depth/cycle guards, against prior steps' typed outputs. The
+          // concrete owner/slug then feeds the existing _usesChain/_depth guards
+          // unchanged. A resolve failure is a recorded step error (never silent).
+          let resolvedKitRef = dispatch.usesKitRef;
+          if (isDynamicUsesRef(dispatch.usesKitRef)) {
+            const live = await store.get(opts.sessionKey);
+            const outputsByStep = new Map<number, unknown>();
+            if (live) {
+              for (const p of collectPriorArtifacts(live, dispatch.stepIndex)) {
+                if (p.output !== undefined) outputsByStep.set(p.stepIndex + 1, p.output);
+              }
+            }
+            const r = resolveKitRefTemplate(dispatch.usesKitRef, outputsByStep);
+            if (!r) {
+              return {
+                ok: false,
+                note: `dynamic uses: ${dispatch.usesKitRef} did not resolve to a valid kitRef`,
+              };
+            }
+            resolvedKitRef = r;
+          }
           // Seed the chain with THIS kit's own ref so a self-`uses:` is caught at
           // depth 0 (review finding: an unseeded chain let a self-referencing
           // root kit re-execute once before the guard fired).
@@ -1231,13 +1490,13 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           if (depth >= MAX_USES_DEPTH) {
             return {
               ok: false,
-              note: `composition depth limit (${MAX_USES_DEPTH}) reached at ${dispatch.usesKitRef}`,
+              note: `composition depth limit (${MAX_USES_DEPTH}) reached at ${resolvedKitRef}`,
             };
           }
-          if (chain.includes(dispatch.usesKitRef)) {
+          if (chain.includes(resolvedKitRef)) {
             return {
               ok: false,
-              note: `composition cycle: ${dispatch.usesKitRef} already on stack [${chain.join(" → ")}]`,
+              note: `composition cycle: ${resolvedKitRef} already on stack [${chain.join(" → ")}]`,
             };
           }
           try {
@@ -1245,11 +1504,11 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
               sessionKey: opts.sessionKey,
               stepIndex: dispatch.stepIndex,
               status: "in_progress",
-              note: progressNote || `↳ running ${dispatch.usesKitRef}`,
+              note: progressNote || `↳ running ${resolvedKitRef}`,
             });
           } catch {}
           const sub = await runRecipe({
-            kitRef: dispatch.usesKitRef,
+            kitRef: resolvedKitRef,
             sessionKey: `${opts.sessionKey}::uses::${dispatch.stepIndex}`,
             intent: `↳ ${dispatch.title}`,
             parameters: opts.parameters,
@@ -1257,7 +1516,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             ownRecipesDir,
             recipeInstallSandbox,
             _depth: depth + 1,
-            _usesChain: [...chain, dispatch.usesKitRef],
+            _usesChain: [...chain, resolvedKitRef],
             // FORK 2026-05-31: sub-kits surface their own recipe-state too (latest
             // emit wins in the panel, so the header tracks the active sub-recipe).
             onRecipeState: opts.onRecipeState,
@@ -1265,12 +1524,16 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           if (!sub.ok) {
             return {
               ok: false,
-              note: `sub-kit ${dispatch.usesKitRef} failed: ${sub.errorMessage ?? "unknown"}`,
+              note: `sub-kit ${resolvedKitRef} failed: ${sub.errorMessage ?? "unknown"}`,
             };
           }
+          // SS2b: carry the sub-kit's returnValue up so compose threads it and
+          // map/filter aggregate it. The prose note stays the human-readable digest
+          // (backward-compatible: plain uses: recipes with no out: behave as before).
           return {
             ok: true,
-            note: `composed ${dispatch.usesKitRef} (${sub.results?.length ?? 0} sub-steps)`,
+            note: `composed ${resolvedKitRef} (${sub.results?.length ?? 0} sub-steps)`,
+            subReturnValue: sub.returnValue,
           };
         }
 
@@ -1381,8 +1644,17 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             fitnessSuccessRate: opts.fitnessSuccessRate,
           });
           let attempt = 0;
-          let validation = validateTypedNote(r.note, validate);
-          while (!validation.ok && attempt < maxRedispatch) {
+          // SS2b: a dynamic/static `uses:` step adopts the sub-kit's returnValue as
+          // its own typed output — validate the sub value directly (no subagent ran
+          // for this step, so there is no note to re-dispatch against).
+          let validation =
+            r.subReturnValue !== undefined
+              ? validateTypedNote(
+                  "```json\n" + JSON.stringify(r.subReturnValue) + "\n```",
+                  validate,
+                )
+              : validateTypedNote(r.note, validate);
+          while (!validation.ok && r.subReturnValue === undefined && attempt < maxRedispatch) {
             attempt++;
             emitTrail({
               kind: "schema-mismatch",
