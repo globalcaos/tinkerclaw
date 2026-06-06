@@ -81,7 +81,11 @@ describe("createProductionOrchestrationRuntime", () => {
     const { call } = mockGateway([{ role: "assistant", content: "ok" }]);
     const rt = createProductionOrchestrationRuntime({ callGateway: call });
     const res = await rt.parallel([() => rt.agent("a"), () => rt.agent("b")]);
-    expect(res).toEqual(["ok", "ok"]);
+    // SS5b: parallel() now returns Settled<T> partials, not raw values.
+    expect(res).toEqual([
+      { ok: true, value: "ok" },
+      { ok: true, value: "ok" },
+    ]);
   });
 
   it("throws a classified 'budget-exceeded' error when the wait reports status:'exhausted'", async () => {
