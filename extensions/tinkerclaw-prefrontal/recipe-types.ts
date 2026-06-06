@@ -194,16 +194,20 @@ export interface ClassifiedError {
  * consults. A retry MAY help ONLY for a transient timeout, a recoverable output-shape
  * mismatch, or a spawn failure. Everything else is a hard limit — retry is futile.
  *
- * OVERRIDE (SS5a, 2026-06-06): `execution-error` is DELIBERATELY excluded. An
- * unclassified failure that surfaced as a bare execution-error has no diagnosable
- * transient cause, so the runner must NEVER auto-retry it — it can only be caught by
- * fallback / continue-partial or recorded via markError. This corrects the
- * micro-design/plan default (which listed execution-error as recoverable).
+ * `execution-error` (the generic "the step ran but reported error" / catch-all) IS
+ * recoverable BY DEFAULT: retry is always opt-in via `onError: retry`, so retrying an
+ * errored step the author explicitly marked retryable is the intent (bounded by
+ * deriveRecoveryRetryBudget). The ONE place we must NOT retry — markError's auto-path
+ * for a TRULY-unclassified failure (no ClassifiedError supplied) — passes an explicit
+ * `recoverable:false` to classifyError, so a bare execution-error there stays terminal
+ * while a classified step-failure remains retryable. Hard limits (budget-exceeded,
+ * guard-eval-error, depth-limit, skill-not-found, map-filter-resolution) are futile → excluded.
  */
 const RECOVERABLE_KINDS: ReadonlySet<ErrorKind> = new Set<ErrorKind>([
   "schema-mismatch",
   "timeout",
   "spawn-failure",
+  "execution-error",
 ]);
 
 /**
