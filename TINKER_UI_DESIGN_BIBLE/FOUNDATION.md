@@ -84,7 +84,7 @@ High-altitude; the owning optic carries the detail.
 - Prompts follow the **latest** model standards; system-prompt blocks in priority order. _(bible, tool-loop)_
 - **Recipes evolve continuously and autonomously** — made safe by reversibility and observability, not by constraints on change. _(subagents-and-recipes)_
 - **Recipes are matched to intent before every execution**, however trivial it seems; mismatches become signals that grow the catalog. _(subagents-and-recipes)_
-- Decisions derive from the live situation, not frozen lists/thresholds (model choice, budget, effort). _(auth-routing, config-shape)_
+- Decisions derive from the live situation, not frozen lists/thresholds — model choice, budget, effort, **and every quantity bound** (timeout, retry, loop/recursion cap, concurrency, cache/result size). A hard quantity threshold that can kill a near-done task or amputate a capability is a bug; a frozen number is at most a safety CEILING, never the working value, and the system applies adaptive pressure before it rather than a cliff. Categorical capability/permission boundaries (the PII split §8, security gates, tool whitelists) stay hard. _(design-principles #19, auth-routing, config-shape, subagents-and-recipes)_
 
 **Reliability**
 
