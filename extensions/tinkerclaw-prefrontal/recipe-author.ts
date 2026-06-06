@@ -14,6 +14,7 @@
  */
 
 import type { JsonSchema, Port } from "./recipe-types.js";
+import { collectWhenRefs } from "./when-eval.js";
 
 export interface RecipeStepSpec {
   title: string;
@@ -26,6 +27,10 @@ export interface RecipeStepSpec {
   in?: Port[];
   /** SS3: if set, this step invokes a stdlib skill primitive by id (`invoke skill:`). */
   invokeSkill?: string;
+  /** SS2a: a `when:` guard expression over prior steps' typed outputs. */
+  when?: string;
+  /** SS2a: emit a `return:` early-exit marker (closes the plan after this step). */
+  earlyExit?: boolean;
 }
 
 export interface RecipeSpec {
@@ -131,6 +136,24 @@ export function validateRecipeSpec(spec: unknown): RecipeValidationResult {
                   `step ${i} port ${j} from must be a steps.<n>.out[.<path>] reference — got ${JSON.stringify(port.from)}`,
                 );
             });
+          }
+        }
+        // SS2a: a when: guard must be a non-empty expression whose refs point to
+        // strictly-earlier steps (existence-only; the runner's checkWhenRefs re-checks fields).
+        if (st.when !== undefined) {
+          if (typeof st.when !== "string" || st.when.trim() === "") {
+            errors.push(`step ${i + 1}: when: must be a non-empty string`);
+          } else {
+            for (const refStr of collectWhenRefs(st.when)) {
+              const m = /^steps\.(\d+)\.out/.exec(refStr);
+              if (!m) {
+                errors.push(`step ${i + 1}: when: "${refStr}" is not a steps.<n>.out reference`);
+                continue;
+              }
+              const n = parseInt(m[1], 10);
+              if (n < 1 || n >= i + 1)
+                errors.push(`step ${i + 1}: when: step ${n} must precede it`);
+            }
           }
         }
       }
@@ -245,7 +268,11 @@ export function buildRecipeMd(spec: RecipeSpec): string {
     if (st.in !== undefined) body.push(`in: ${JSON.stringify(st.in)}`);
     // SS3: invoke a stdlib skill primitive inline (sibling directive of out:/in:/uses:).
     if (st.invokeSkill) body.push(`invoke skill: ${st.invokeSkill}`);
-    if (st.out !== undefined || st.in !== undefined || st.invokeSkill) body.push("");
+    // SS2a: control-flow directives (guard + early-exit), siblings of the above.
+    if (st.when) body.push(`when: ${st.when}`);
+    if (st.earlyExit) body.push(`return:`);
+    if (st.out !== undefined || st.in !== undefined || st.invokeSkill || st.when || st.earlyExit)
+      body.push("");
     if (st.tools && st.tools.length > 0) body.push(`**Tools:** ${st.tools.join(", ")}`);
     if (st.doneWhen) body.push(`**Done when:** ${st.doneWhen}`);
     if (st.tools?.length || st.doneWhen) body.push("");
