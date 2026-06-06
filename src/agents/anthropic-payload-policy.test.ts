@@ -9,6 +9,7 @@ type TestPayload = {
   messages: Array<{ role: string; content: unknown }>;
   service_tier?: string;
   system?: unknown;
+  tools?: unknown;
 };
 
 function textBlock(text: string, cache_control?: { type: "ephemeral"; ttl?: "1h" }) {
@@ -220,6 +221,110 @@ describe("anthropic payload policy", () => {
     applyAnthropicPayloadPolicyToParams(payload, policy);
 
     expect(payload.system).toEqual([textBlock("Follow policy.", { type: "ephemeral" })]);
+  });
+
+  it("tags only the last tool with cache_control and leaves earlier tools untouched", () => {
+    const policy = resolveAnthropicPayloadPolicy({
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com/v1",
+      cacheRetention: "short",
+      enableCacheControl: true,
+    });
+    const payload: TestPayload = {
+      ...simpleTextPayload(),
+      tools: [
+        { name: "first_tool", input_schema: { type: "object" } },
+        { name: "second_tool", input_schema: { type: "object" } },
+        { name: "last_tool", input_schema: { type: "object" } },
+      ],
+    };
+
+    applyAnthropicPayloadPolicyToParams(payload, policy);
+
+    expect(payload.tools).toEqual([
+      { name: "first_tool", input_schema: { type: "object" } },
+      { name: "second_tool", input_schema: { type: "object" } },
+      {
+        name: "last_tool",
+        input_schema: { type: "object" },
+        cache_control: { type: "ephemeral" },
+      },
+    ]);
+  });
+
+  it("does not tag any tool when cache control is disabled", () => {
+    const policy = resolveAnthropicPayloadPolicy({
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com/v1",
+      cacheRetention: "none",
+      enableCacheControl: true,
+    });
+    const payload: TestPayload = {
+      ...simpleTextPayload(),
+      tools: [
+        { name: "first_tool", input_schema: { type: "object" } },
+        { name: "last_tool", input_schema: { type: "object" } },
+      ],
+    };
+
+    applyAnthropicPayloadPolicyToParams(payload, policy);
+
+    expect(payload.tools).toEqual([
+      { name: "first_tool", input_schema: { type: "object" } },
+      { name: "last_tool", input_schema: { type: "object" } },
+    ]);
+  });
+
+  it("preserves an existing tool cache_control instead of overwriting it", () => {
+    const policy = resolveAnthropicPayloadPolicy({
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com/v1",
+      cacheRetention: "long",
+      enableCacheControl: true,
+    });
+    const payload: TestPayload = {
+      ...simpleTextPayload(),
+      tools: [
+        { name: "first_tool", input_schema: { type: "object" } },
+        {
+          name: "last_tool",
+          input_schema: { type: "object" },
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+    };
+
+    applyAnthropicPayloadPolicyToParams(payload, policy);
+
+    expect(payload.tools).toEqual([
+      { name: "first_tool", input_schema: { type: "object" } },
+      {
+        name: "last_tool",
+        input_schema: { type: "object" },
+        cache_control: { type: "ephemeral" },
+      },
+    ]);
+  });
+
+  it("is a no-op when tools is empty or absent", () => {
+    const policy = resolveAnthropicPayloadPolicy({
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: "https://api.anthropic.com/v1",
+      cacheRetention: "short",
+      enableCacheControl: true,
+    });
+
+    const emptyToolsPayload: TestPayload = { ...simpleTextPayload(), tools: [] };
+    expect(() => applyAnthropicPayloadPolicyToParams(emptyToolsPayload, policy)).not.toThrow();
+    expect(emptyToolsPayload.tools).toEqual([]);
+
+    const noToolsPayload = simpleTextPayload();
+    expect(() => applyAnthropicPayloadPolicyToParams(noToolsPayload, policy)).not.toThrow();
+    expect(noToolsPayload).not.toHaveProperty("tools");
   });
 
   it("strips the boundary even when cache retention is disabled", () => {

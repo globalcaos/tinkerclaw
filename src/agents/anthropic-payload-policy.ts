@@ -130,6 +130,25 @@ function stripAnthropicSystemPromptBoundary(system: unknown): void {
   }
 }
 
+export function applyAnthropicCacheControlToTools(
+  tools: unknown,
+  cacheControl: AnthropicEphemeralCacheControl,
+): void {
+  if (!Array.isArray(tools) || tools.length === 0) {
+    return;
+  }
+
+  const lastTool = tools[tools.length - 1];
+  if (!lastTool || typeof lastTool !== "object") {
+    return;
+  }
+
+  const record = lastTool as Record<string, unknown>;
+  if (record.cache_control === undefined) {
+    record.cache_control = cacheControl;
+  }
+}
+
 function applyAnthropicCacheControlToMessages(
   messages: unknown,
   cacheControl: AnthropicEphemeralCacheControl,
@@ -218,6 +237,9 @@ export function applyAnthropicPayloadPolicyToParams(
   if (!policy.cacheControl) {
     return;
   }
+
+  // Tag the final tool definition so the tool block participates in the cache prefix.
+  applyAnthropicCacheControlToTools(payloadObj.tools, policy.cacheControl);
 
   // Preserve Anthropic cache-write scope by only tagging the trailing user turn.
   applyAnthropicCacheControlToMessages(payloadObj.messages, policy.cacheControl);
