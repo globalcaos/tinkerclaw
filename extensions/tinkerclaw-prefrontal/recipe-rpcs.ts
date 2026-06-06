@@ -1098,6 +1098,10 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
               parallelismCap: state.parallelismCap,
               inFlightLabels: state.inFlightLabels,
               sessionKey: state.sessionKey,
+              // BROCA visibility (2026-06-06): forward the per-turn id + the current
+              // step's skill so the panel can scope + color the composition.
+              turnId: state.turnId,
+              skillId: state.skillId,
             },
           }).catch(() => {});
         },
