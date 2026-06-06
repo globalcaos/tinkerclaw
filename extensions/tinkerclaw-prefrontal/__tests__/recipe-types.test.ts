@@ -181,13 +181,13 @@ describe("parseKitRefValue (SS2b kitRef value)", () => {
 });
 
 describe("SS5a isRecoverableKind (single source of truth for auto-retry)", () => {
-  it("recoverable ONLY for the transient set {schema-mismatch, timeout, spawn-failure}", () => {
+  it("recoverable for the transient set {schema-mismatch, timeout, spawn-failure, execution-error}", () => {
     expect(isRecoverableKind("schema-mismatch")).toBe(true);
     expect(isRecoverableKind("timeout")).toBe(true);
     expect(isRecoverableKind("spawn-failure")).toBe(true);
   });
-  it("execution-error is NON-recoverable — never auto-retry an unclassified failure (OVERRIDE)", () => {
-    expect(isRecoverableKind("execution-error")).toBe(false);
+  it("execution-error is recoverable by default (a retryable-marked step that errors can retry; markError's auto-path forces false for a truly-unclassified failure)", () => {
+    expect(isRecoverableKind("execution-error")).toBe(true);
   });
   it("hard-limit kinds are NOT recoverable", () => {
     for (const k of [
@@ -210,8 +210,10 @@ describe("SS5a isRecoverableKind (single source of truth for auto-retry)", () =>
     expect(e.recoverable).toBe(true);
     expect(e.details).toEqual({ stepIndex: 2 });
     const x = classifyError("execution-error", "boom");
-    expect(x.recoverable).toBe(false);
+    expect(x.recoverable).toBe(true);
     expect(x.details).toBeUndefined();
+    // the markError auto-path forces recoverable:false for a truly-unclassified failure
+    expect(classifyError("execution-error", "unknown", undefined, false).recoverable).toBe(false);
   });
   it("classifyError honors an explicit recoverable override", () => {
     expect(classifyError("timeout", "now terminal", undefined, false).recoverable).toBe(false);
