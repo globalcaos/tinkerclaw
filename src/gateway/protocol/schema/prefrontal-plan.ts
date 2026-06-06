@@ -24,6 +24,17 @@ export const PlanStepSchema = Type.Object(
     // Not length-bounded — this is the canonical value downstream steps bind to.
     output: Type.Optional(Type.Unknown()),
     outputKind: Type.Optional(Type.Literal("json")),
+    // SS5a: a step's ClassifiedError, persisted durably (mirrors `output`).
+    // `kind` is a free Type.String (NOT a literal union) to keep prefrontal-plan
+    // decoupled from recipe-types' ErrorKind.
+    error: Type.Optional(
+      Type.Object({
+        kind: Type.String({ maxLength: 64 }),
+        message: Type.String({ maxLength: 4000 }),
+        recoverable: Type.Boolean(),
+        details: Type.Optional(Type.Unknown()),
+      }),
+    ),
     startedAt: Type.Optional(Type.String({ format: "date-time" })),
     completedAt: Type.Optional(Type.String({ format: "date-time" })),
   },
