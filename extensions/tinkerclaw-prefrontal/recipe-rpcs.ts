@@ -1224,6 +1224,19 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
             params: { skillId, success },
           }).catch(() => {});
         },
+        // OVERSEER keep-going wire: when the overseer loop decides the run isn't
+        // done, re-prompt the (possibly idle) parent session to drive Jarvis
+        // onward. Same loopback callGateway + fire-and-forget pattern as the sinks
+        // above — a stalled re-prompt never blocks or fails the run. Crucially the
+        // message is NOT prefixed with the ⟦OVERSEER⟧ marker, so it renders as a
+        // right-anchored USER bubble (the nudge that actually advances the agent)
+        // rather than an amber overseer aside.
+        onKeepGoing: (sessionKey, message) => {
+          void callGateway({
+            method: "sessions.send",
+            params: { key: sessionKey, message },
+          }).catch(() => {});
+        },
       });
 
       // Surface progress/completion back into the (possibly closed) parent turn.
