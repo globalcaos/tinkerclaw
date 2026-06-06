@@ -13,6 +13,7 @@
 | Analysis      | blue   | investigate, dependency-analysis                                                       |
 | Security      | red    | incident-response, credential-rotation                                                 |
 | Communication | green  | daily-report, jarvis-report                                                            |
+| Combinators   | teal   | if-then-else, map, filter, compose                                                     |
 
 ## Quick Reference
 
@@ -40,6 +41,10 @@
 | credential-rotation  | rotate, credentials, keys, tokens, secrets                                       | inventory, generate, deploy, verify, revoke-old                            | standard |
 | daily-report         | daily, status, standup, what happened                                            | gather, summarize, format, deliver                                         | light    |
 | jarvis-report        | report for jarvis, structured report, incident                                   | gather, analyze, structure, deliver                                        | standard |
+| if-then-else         | branch, if/else, conditional, choose branch                                      | decide, then, else                                                         | light    |
+| map                  | map, for each, per element, fan out, iterate                                     | produce, map                                                               | standard |
+| filter               | filter, keep, select, where, predicate                                           | produce, filter                                                            | standard |
+| compose              | compose, pipeline, chain, then-then, thread through                              | plan, first, second                                                        | standard |
 
 ## How Recipes Work
 

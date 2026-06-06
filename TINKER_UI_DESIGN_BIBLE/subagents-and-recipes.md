@@ -93,6 +93,18 @@ verify:
     cmd: ! grep -Fq 'out.length >= 3' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: SS2a early-exit is a third terminal state (recipe-runner.ts settles return:/done: as outcome: "early-exit")
     cmd: grep -Fq 'outcome: "early-exit"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: SS2b kitRef value vocabulary (parseKitRefValue + KITREF_RE) present in recipe-types.ts
+    cmd: grep -Fq 'export function parseKitRefValue' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts
+  - name: SS2b combinator-budget.ts is PURE (no node:fs) and derives both bounds
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts && ! grep -q 'node:fs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts && grep -Fq 'deriveCombinatorFanOut' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts && grep -Fq 'deriveUsesDepthBudget' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/combinator-budget.ts
+  - name: SS2b uses-depth is DERIVED (no frozen MAX_USES_DEPTH = 3 literal)
+    cmd: ! grep -Eq 'MAX_USES_DEPTH = 3' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'deriveUsesDepthBudget({})' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: SS2b map/filter directives recognized by the io-scanner (OTHER_DIRECTIVE_RE) + runtime arm present
+    cmd: grep -Fq 'map|filter' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts && grep -Fq 'parseMapIterDirective' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'deriveCombinatorFanOut' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: SS2b seed-time checkCombinatorRefs present + gated in runRecipe
+    cmd: grep -Fq 'export function checkCombinatorRefs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'combinator-ref check failed' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: SS2b the four combinator recipes exist on disk
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/if-then-else.recipe.md && test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/map.recipe.md && test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/filter.recipe.md && test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/compose.recipe.md
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
