@@ -1024,13 +1024,18 @@ function sleep(ms: number): Promise<void> {
 // move is required — old kit.md definitions keep loading unchanged.
 const RECIPE_FILENAMES = ["recipe.md", "kit.md"] as const;
 
-async function loadRecipeText(
+export async function loadRecipeText(
   kitRef: string,
   ownRecipesDir: string,
   recipeInstallSandbox: string,
 ): Promise<string> {
   const [owner, slug] = kitRef.split("/");
   const candidates: string[] = [];
+  // OVERLAY (first-readable-wins): the OPENCLAW_HOME recipes overlay is probed
+  // BEFORE the own-recipes dir, so an installed/overridden copy wins over the
+  // bundled definition. Same dual-read (recipe.md preferred, kit.md legacy).
+  const overlayDir = resolveRecipeOverlayDir();
+  for (const fname of RECIPE_FILENAMES) candidates.push(join(overlayDir, slug, fname));
   for (const fname of RECIPE_FILENAMES) candidates.push(join(ownRecipesDir, slug, fname));
   for (const fname of RECIPE_FILENAMES)
     candidates.push(join(recipeInstallSandbox, owner, slug, fname));
@@ -1078,6 +1083,17 @@ export function collectStepResults(plan: Plan): StepResult[] {
 // layouts share the same repo root, so this resolves correctly regardless of
 // bundle depth. recipes/ is preferred; kits/ is the legacy fallback (dual-read).
 // Falls back to the legacy 3-up resolve so behavior never gets worse.
+//
+// The OVERLAY recipes dir lives under OPENCLAW_HOME (the runtime/workspace home),
+// defaulting to `<HOME>/.openclaw/recipes`. loadRecipeText probes it FIRST so an
+// installed or overridden recipe copy wins over the bundled definition.
+export function resolveRecipeOverlayDir(): string {
+  return join(
+    process.env.OPENCLAW_HOME ?? join(process.env.HOME ?? "/tmp", ".openclaw"),
+    "recipes",
+  );
+}
+
 export function resolveOwnRecipesDir(startDir: string): string {
   const MAX_LEVELS = 8;
   let dir = startDir;
