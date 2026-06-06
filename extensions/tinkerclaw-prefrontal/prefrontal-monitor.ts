@@ -16,6 +16,10 @@ export interface SubagentRunInfo {
   task: string;
   label?: string;
   model?: string;
+  /** BROCA visibility (2026-06-06): the skill this subagent's recipe step invokes
+   * (if any), surfaced onto the tree node so the UI can color skill-backed nodes.
+   * Populated from the spawn event when it carries skill metadata. */
+  skill?: string;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
@@ -62,6 +66,9 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
       model: run.model ?? "unknown",
       provider,
       label: run.label ?? run.task.slice(0, 60),
+      // BROCA visibility (2026-06-06): carry the run's skill onto the tree node
+      // (PrefrontalTreeNode.skill) so the UI colors skill-backed nodes.
+      ...(run.skill ? { skill: run.skill } : {}),
       status,
       progress: stored?.progress ?? 0,
       lastEventAge: age,
