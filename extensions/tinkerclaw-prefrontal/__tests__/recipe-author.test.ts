@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { validateRecipeSpec, buildRecipeMd, type RecipeSpec } from "../recipe-author.js";
-import { parseKitStepsAndParallelism } from "../recipe-runner.js";
+import {
+  parseKitStepsAndParallelism,
+  parseWhenDirective,
+  parseEarlyExitDirective,
+} from "../recipe-runner.js";
 import { parseStepIoDirectives } from "../recipe-types.js";
 
 describe("SS1 typed ports", () => {
@@ -118,5 +122,55 @@ describe("buildRecipeMd round-trips through the runner parser", () => {
     const md = buildRecipeMd({ ...good, parallelismGroups: undefined });
     const parsed = parseKitStepsAndParallelism(md);
     expect(parsed.parallelism?.groups).toEqual([[0], [1]]);
+  });
+});
+
+/**
+ * SS2a (2026-06-06): author emits when:/return: directives + validates them.
+ * Target: recipe-author.ts (buildRecipeMd emit, validateRecipeSpec).
+ * Bible anchor: subagents-and-recipes.md (SS2 verify: block).
+ * Bug-history: a machine-authored recipe must round-trip through the runner's parsers.
+ * Catches: an emitted directive the runner cannot parse; a when: with a non-prior ref accepted at author time.
+ */
+const ss2aBase: RecipeSpec = {
+  slug: "auth-ss2",
+  title: "Auth SS2",
+  summary: "demo",
+  tags: ["demo"],
+  steps: [
+    {
+      title: "Produce",
+      out: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+      body: "Produce.",
+    },
+    {
+      title: "Maybe",
+      when: "steps.1.out.ok == true",
+      earlyExit: true,
+      body: "Conditionally finish.",
+    },
+  ],
+};
+
+describe("SS2a author", () => {
+  it("emits when:/return: directives the runner can parse back", () => {
+    const md = buildRecipeMd(ss2aBase);
+    const stepBody = md.split("### 2. Maybe")[1];
+    expect(parseWhenDirective(stepBody)).toBe("steps.1.out.ok == true");
+    expect(parseEarlyExitDirective(stepBody)).toBe(true);
+  });
+
+  it("validates a sound spec", () => {
+    expect(validateRecipeSpec(ss2aBase).ok).toBe(true);
+  });
+
+  it("rejects a when: that references a non-prior step", () => {
+    const bad: RecipeSpec = {
+      ...ss2aBase,
+      steps: [{ title: "A", when: "steps.2.out.ok == true", body: "x" }, ss2aBase.steps[0]],
+    };
+    const res = validateRecipeSpec(bad);
+    expect(res.ok).toBe(false);
+    expect(res.errors.join()).toMatch(/when:/);
   });
 });
