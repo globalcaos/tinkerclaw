@@ -373,6 +373,78 @@ describe("spawnSubagentDirect seam flow", () => {
     });
   });
 
+  it("forwards the normalized spawn budget to the agent run when supplied", async () => {
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+    hoisted.callGatewayMock.mockImplementation(
+      async (request: { method?: string; params?: unknown }) => {
+        calls.push(request);
+        if (request.method === "agent") {
+          return { runId: "run-budget", status: "accepted", acceptedAt: 1000 };
+        }
+        if (request.method?.startsWith("sessions.")) {
+          return { ok: true };
+        }
+        return {};
+      },
+    );
+    installSessionStoreCaptureMock(hoisted.updateSessionStoreMock);
+
+    const result = await spawnSubagentDirect(
+      {
+        task: "verify budget forwarding",
+        allowTools: ["read", "grep"],
+        maxTokens: 1234,
+        maxToolCalls: 7,
+      },
+      {
+        agentSessionKey: "agent:main:main",
+        agentChannel: "discord",
+      },
+    );
+
+    expect(result.status).toBe("accepted");
+    const agentCall = calls.find((call) => call.method === "agent");
+    expect(agentCall?.params).toMatchObject({
+      allowTools: ["read", "grep"],
+      maxTokens: 1234,
+      maxToolCalls: 7,
+    });
+  });
+
+  it("omits spawn budget keys from the agent run when not supplied", async () => {
+    const calls: Array<{ method?: string; params?: unknown }> = [];
+    hoisted.callGatewayMock.mockImplementation(
+      async (request: { method?: string; params?: unknown }) => {
+        calls.push(request);
+        if (request.method === "agent") {
+          return { runId: "run-no-budget", status: "accepted", acceptedAt: 1000 };
+        }
+        if (request.method?.startsWith("sessions.")) {
+          return { ok: true };
+        }
+        return {};
+      },
+    );
+    installSessionStoreCaptureMock(hoisted.updateSessionStoreMock);
+
+    const result = await spawnSubagentDirect(
+      {
+        task: "verify budget omission",
+      },
+      {
+        agentSessionKey: "agent:main:main",
+        agentChannel: "discord",
+      },
+    );
+
+    expect(result.status).toBe("accepted");
+    const agentCall = calls.find((call) => call.method === "agent");
+    const params = agentCall?.params as Record<string, unknown>;
+    expect(params).not.toHaveProperty("allowTools");
+    expect(params).not.toHaveProperty("maxTokens");
+    expect(params).not.toHaveProperty("maxToolCalls");
+  });
+
   it("does not duplicate long subagent task text in the initial user message (#72019)", async () => {
     const calls: Array<{ method?: string; params?: unknown }> = [];
     hoisted.callGatewayMock.mockImplementation(
