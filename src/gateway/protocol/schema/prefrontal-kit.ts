@@ -69,6 +69,18 @@ export const PrefrontalKitListParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+// BROCA visibility (2026-06-06): read a single recipe parsed into the BrocaRecipe
+// shape (for the UI panel). Resolves a LOCAL recipe by kitRef/slug/path; falls
+// back to Journey recipe.get when not local. Read-only.
+export const PrefrontalKitReadParamsSchema = Type.Object(
+  {
+    kitRef: Type.Optional(Type.String({ pattern: "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$" })),
+    slug: Type.Optional(Type.String({ pattern: "^[a-z0-9-]+$" })),
+    path: Type.Optional(Type.String()),
+  },
+  { additionalProperties: false },
+);
+
 export const PrefrontalKitRunParamsSchema = Type.Object(
   {
     kitRef: Type.String({ pattern: "^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$" }),
@@ -173,5 +185,6 @@ export type PrefrontalKitGetParams = Static<typeof PrefrontalKitGetParamsSchema>
 export type PrefrontalKitInstallParams = Static<typeof PrefrontalKitInstallParamsSchema>;
 export type PrefrontalKitPublishParams = Static<typeof PrefrontalKitPublishParamsSchema>;
 export type PrefrontalKitListParams = Static<typeof PrefrontalKitListParamsSchema>;
+export type PrefrontalKitReadParams = Static<typeof PrefrontalKitReadParamsSchema>;
 export type PrefrontalKitRunParams = Static<typeof PrefrontalKitRunParamsSchema>;
 export type PrefrontalKitOrchestrateParams = Static<typeof PrefrontalKitOrchestrateParamsSchema>;
