@@ -228,6 +228,7 @@ import { splitSdkTools } from "../tool-split.js";
 import { mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import { createEmbeddedAgentSessionWithResourceLoader } from "./attempt-session.js";
+import { evaluateSpawnBudget } from "./spawn-budget.js";
 export { buildContextEnginePromptCacheInfo } from "./attempt.context-engine-helpers.js";
 import {
   resolveAttemptWorkspaceBootstrapRouting,
@@ -2042,6 +2043,7 @@ export async function runEmbeddedAttempt(
         err.name = "TimeoutError";
         return err;
       };
+      const makeBudgetAbortReason = () => new Error("budget-exhausted");
       const makeAbortError = (signal: AbortSignal): Error => {
         const reason = getAbortReason(signal);
         // If the reason is already an Error, preserve it to keep the original message
@@ -2122,7 +2124,11 @@ export async function runEmbeddedAttempt(
           toolResultFormat: params.toolResultFormat,
           shouldEmitToolResult: params.shouldEmitToolResult,
           shouldEmitToolOutput: params.shouldEmitToolOutput,
-          onToolResult: params.onToolResult,
+          onToolResult: (payload: Parameters<NonNullable<typeof params.onToolResult>>[0]) => {
+            const result = params.onToolResult?.(payload);
+            checkSpawnBudget();
+            return result;
+          },
           onReasoningStream: params.onReasoningStream,
           onReasoningEnd: params.onReasoningEnd,
           onBlockReply: params.onBlockReply,
@@ -2130,7 +2136,11 @@ export async function runEmbeddedAttempt(
           blockReplyBreak: params.blockReplyBreak,
           blockReplyChunking: params.blockReplyChunking,
           onPartialReply: params.onPartialReply,
-          onAssistantMessageStart: params.onAssistantMessageStart,
+          onAssistantMessageStart: () => {
+            const result = params.onAssistantMessageStart?.();
+            checkSpawnBudget();
+            return result;
+          },
           onAgentEvent: params.onAgentEvent,
           onBeforeLifecycleTerminal: () => {
             // Clear embedded-run activity before emitting terminal lifecycle events so
@@ -2168,6 +2178,31 @@ export async function runEmbeddedAttempt(
         getCompactionCount,
       } = subscription;
       const getLastCompactionTokensAfter = (): number | undefined => undefined;
+
+      // Per-spawn token / tool-call budget watchdog (SS5b). When a spawn meets or
+      // exceeds either cap, abort the run and stamp stopReason:'budget-exhausted'.
+      // NOTE: status:'exhausted' is intentionally NOT used — agent-job.ts (line ~28)
+      // exposes a CLOSED status union; downstream orchestration (orchestration-deps.ts)
+      // fires off stopReason:'budget-exhausted' instead.
+      let budgetExhausted = false;
+      const checkSpawnBudget = (): void => {
+        if (budgetExhausted) {
+          return;
+        }
+        const budgetParams = params as { maxTokens?: number; maxToolCalls?: number };
+        const exceeded = evaluateSpawnBudget({
+          total: getUsageTotals()?.total ?? 0,
+          toolCalls: toolMetas.length,
+          maxTokens: budgetParams.maxTokens,
+          maxToolCalls: budgetParams.maxToolCalls,
+        });
+        if (!exceeded) {
+          return;
+        }
+        budgetExhausted = true;
+        setTerminalLifecycleMeta({ stopReason: "budget-exhausted" });
+        abortRun(false, makeBudgetAbortReason());
+      };
 
       const queueHandle: EmbeddedPiQueueHandle & {
         kind: "embedded";
@@ -3026,6 +3061,11 @@ export async function runEmbeddedAttempt(
           prePromptMessageCount,
         });
         attemptUsage = getUsageTotals();
+        // Defensive: if the budget watchdog tripped, ensure the terminal
+        // stopReason is stamped exactly once even if the abort path raced.
+        if (budgetExhausted) {
+          setTerminalLifecycleMeta({ stopReason: "budget-exhausted" });
+        }
         cacheBreak = cacheObservabilityEnabled
           ? completePromptCacheObservation({
               sessionId: params.sessionId,
