@@ -117,6 +117,18 @@ verify:
     cmd: grep -Fq 'export interface ClassifiedError' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts && grep -Fq 'export function isRecoverableKind' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts
   - name: SS5a plan-store.ts durably persists PlanStep.error (error64 base64 line, like artifact64/output64)
     cmd: grep -Fq 'error64:${' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/plan-store.ts
+  - name: SS4 step-struggle reader present + PURE (no node:fs) — per-step plan-archive struggle signal
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/step-struggle.ts && ! grep -q 'node:fs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/step-struggle.ts && grep -Fq 'export function readStepStruggle' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/step-struggle.ts
+  - name: SS4 struggle thresholds are DERIVED, never frozen (no const MIN_RUNS / const FLOOR)
+    cmd: grep -Fq 'export function deriveMinRuns' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/step-struggle.ts && grep -Fq 'export function deriveStruggleThreshold' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/step-struggle.ts && ! grep -Eq 'const (MIN_RUNS|FLOOR|STRUGGLE_THRESHOLD) = ' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/step-struggle.ts
+  - name: SS4 rewrite_step_text mutation op + proposeStepRewrites present in recipe-evolution.ts
+    cmd: grep -Fq '"rewrite_step_text"' ~/src/tinkerclaw/src/memory/engram/recipe-evolution.ts && grep -Fq 'export function proposeStepRewrites' ~/src/tinkerclaw/src/memory/engram/recipe-evolution.ts
+  - name: SS4 step-rewrite apply branch + buildStepRewritePrompt present in recipe-apply.ts
+    cmd: grep -Fq 'export function buildStepRewritePrompt' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts && grep -Fq 'input.op === "rewrite_step_text"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-apply.ts
+  - name: SS4 optimizeRecipe orchestrator present (recipe-optimize.ts) and proposes-only by default (kill-switch reused)
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'export function optimizeRecipe' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts && grep -Fq 'isApplyEnabled' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-optimize.ts
+  - name: SS4 prefrontal.recipe.optimize RPC present (mirrors applyProposal)
+    cmd: grep -Fq '"prefrontal.recipe.optimize"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && grep -Fq 'optimizeRecipe' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
