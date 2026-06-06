@@ -1437,6 +1437,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
               recipeInstallSandbox,
               _depth: depth + 1,
               _usesChain: [...chain, workerRef],
+              _spawnStep: opts._spawnStep,
               onRecipeState: opts.onRecipeState,
             });
             if (!sub.ok) {
@@ -1517,6 +1518,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
             recipeInstallSandbox,
             _depth: depth + 1,
             _usesChain: [...chain, resolvedKitRef],
+            _spawnStep: opts._spawnStep,
             // FORK 2026-05-31: sub-kits surface their own recipe-state too (latest
             // emit wins in the panel, so the header tracks the active sub-recipe).
             onRecipeState: opts.onRecipeState,
