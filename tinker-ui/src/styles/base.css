@@ -12,6 +12,9 @@
   --muted: #9a8e7a;
   --accent: #c19a6b;
   --accent2: #a07d50;
+  /* BROCA skill-highlight (swappable). yellow now. */
+  --skill-highlight: #e3b341;
+  --skill-highlight-dim: rgba(227, 179, 65, 0.55);
   --green: #6b8e23;
   --red: #cd5c5c;
   --yellow: #d4a017;
@@ -6078,3 +6081,14 @@ code.fs-link.fs-link-error {
 
 /* FORK 2026-06-04c — graph titles permanent (no longer hover-only). */
 .pg-name{opacity:1;}
+
+/* ---- BROCA program rendering ---- */
+.broca-skill { color: var(--skill-highlight); font-weight: 500; }
+.broca-recipe-link { color: var(--skill-highlight); cursor: pointer; text-decoration: none; }
+.broca-recipe-link:hover { text-decoration: underline; }
+.broca-kw { color: var(--skill-highlight-dim); font-family: ui-monospace, monospace; }
+.broca-program { font-size: 12px; line-height: 1.5; }
+.broca-step { padding: 2px 0; }
+.broca-step__code { font-family: ui-monospace, monospace; }
+.broca-step__prose { color: var(--muted); padding-left: 1.4em; }
+.broca-step--live { box-shadow: inset 2px 0 0 var(--skill-highlight); background: rgba(227,179,65,0.06); }
