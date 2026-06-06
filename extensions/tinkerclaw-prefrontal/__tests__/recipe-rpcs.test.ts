@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BRIDGED_SKILLS_DIRNAME } from "../cc-skills-bridge.js";
+import { buildRecipeMd } from "../recipe-author.js";
 import {
   createMarketplace,
   type MarketplaceFetch,
@@ -93,6 +94,78 @@ async function writeLocalKit(slug: string, md: string): Promise<void> {
   await fs.writeFile(path.join(dir, "kit.md"), md, "utf8");
   invalidateRecipeIndexCache();
 }
+
+// ─── BROCA visibility: recipe.read returns the verbatim BrocaRecipe shape ────
+
+describe("BROCA recipe.read", () => {
+  it("returns a parsed BrocaRecipe for a local recipe (verbatim contract keys)", async () => {
+    const md = buildRecipeMd({
+      slug: "broca-read-demo",
+      title: "BROCA Read Demo",
+      summary: "demo",
+      tags: ["demo"],
+      category: "operations",
+      steps: [
+        { title: "Invoke", invokeSkill: "echo", doneWhen: "echo returns", body: "Call echo." },
+        {
+          title: "Produce",
+          out: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+          body: "Produce a value.",
+        },
+        {
+          title: "Consume",
+          in: [{ name: "ok", from: "steps.2.out.ok" }],
+          when: "steps.2.out.ok == true",
+          earlyExit: true,
+          body: "Consume and finish.",
+        },
+      ],
+    });
+    await writeLocalKit("broca-read-demo", md);
+    const rpcs = createRecipeRpcs(baseDeps());
+    const res: any = await rpcs["prefrontal.recipe.read"]({ slug: "broca-read-demo" });
+
+    expect(res.recipe.slug).toBe("broca-read-demo");
+    expect(res.recipe.title).toBe("BROCA Read Demo");
+    expect(res.recipe.summary).toBe("demo");
+    expect(res.recipe.category).toBe("operations");
+    expect(res.recipe.steps).toHaveLength(3);
+    const [s1, s2, s3] = res.recipe.steps;
+    expect(s1).toMatchObject({ n: 1, title: "Invoke", skillId: "echo", prose: "echo returns" });
+    expect(s2).toMatchObject({ n: 2, title: "Produce" });
+    expect(s2.out).toBeTruthy();
+    expect(s3).toMatchObject({
+      n: 3,
+      title: "Consume",
+      when: "steps.2.out.ok == true",
+      returns: true,
+    });
+    expect(s3.ins).toEqual([{ name: "ok", from: "steps.2.out.ok" }]);
+  });
+
+  it("resolves by kitRef (owner/slug) too", async () => {
+    const md = buildRecipeMd({
+      slug: "broca-byref",
+      title: "ByRef",
+      summary: "",
+      tags: [],
+      steps: [{ title: "One", body: "do the thing" }],
+    });
+    await writeLocalKit("broca-byref", md);
+    const rpcs = createRecipeRpcs(baseDeps());
+    const res: any = await rpcs["prefrontal.recipe.read"]({ kitRef: "globalcaos/broca-byref" });
+    expect(res.recipe.slug).toBe("broca-byref");
+    expect(res.recipe.steps[0]).toMatchObject({ n: 1, title: "One" });
+  });
+
+  it("falls back to Journey recipe.get when not a local recipe", async () => {
+    const fetchJsonImpl = vi.fn().mockResolvedValue({ slug: "remote", title: "Remote", steps: [] });
+    const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl }));
+    const res: any = await rpcs["prefrontal.recipe.read"]({ kitRef: "someone/remote-kit" });
+    expect(fetchJsonImpl).toHaveBeenCalled();
+    expect(res.recipe.slug).toBe("remote");
+  });
+});
 
 // ─── U11: recipe.install bridges a CC SKILL.md ───────────────────────────────
 

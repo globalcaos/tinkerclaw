@@ -16,6 +16,7 @@ import {
   PrefrontalKitComposeParamsSchema,
   PrefrontalKitMatchParamsSchema,
   PrefrontalKitOrchestrateParamsSchema,
+  PrefrontalKitReadParamsSchema,
   type PrefrontalKitSearchParams,
   type PrefrontalKitGetParams,
   type PrefrontalKitInstallParams,
@@ -26,6 +27,7 @@ import {
   type PrefrontalKitComposeParams,
   type PrefrontalKitMatchParams,
   type PrefrontalKitOrchestrateParams,
+  type PrefrontalKitReadParams,
 } from "../../src/gateway/protocol/schema/prefrontal-kit.js";
 import { createSubsystemLogger } from "../../src/logging/subsystem.js";
 import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
@@ -56,6 +58,7 @@ import {
   matchRecipesDetailed,
   invalidateRecipeIndexCache,
 } from "./recipe-matcher.js";
+import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
 import { parseUsesDirective, runRecipe } from "./recipe-runner.js";
 import { snapshotKit } from "./recipe-snapshot.js";
 import { RecipeStore } from "./recipe-store.js";
@@ -74,6 +77,7 @@ const vAuthor = ajv.compile(PrefrontalKitAuthorParamsSchema);
 const vCompose = ajv.compile(PrefrontalKitComposeParamsSchema);
 const vMatch = ajv.compile(PrefrontalKitMatchParamsSchema);
 const vOrchestrate = ajv.compile(PrefrontalKitOrchestrateParamsSchema);
+const vRead = ajv.compile(PrefrontalKitReadParamsSchema);
 
 type Validator = ReturnType<typeof ajv.compile>;
 
@@ -437,6 +441,66 @@ export interface KitRpcsDeps {
   engramBaseDir?: string;
 }
 
+// ─── BROCA visibility (2026-06-06): recipe.read return contract ──────────────
+// These interfaces mirror tinker-ui/src/panels/broca.ts VERBATIM — the UI is
+// coded against these exact keys. Keep in sync with the panel.
+interface BrocaPort {
+  name: string;
+  from: string;
+}
+interface BrocaStep {
+  n: number;
+  title: string;
+  prose?: string;
+  skillId?: string;
+  usesKitRef?: string;
+  ins?: BrocaPort[];
+  out?: unknown;
+  when?: string;
+  returns?: boolean;
+}
+interface BrocaRecipe {
+  slug: string;
+  title: string;
+  summary?: string;
+  category?: string;
+  signature?: string;
+  steps: BrocaStep[];
+  lineage?: {
+    composedFrom?: string;
+    composedSkills?: string[];
+    composedRecipes?: string[];
+    sourceQuery?: string;
+  };
+}
+
+/**
+ * Extract the optional lineage block from a recipe's frontmatter (the nested
+ * `lineage:` shape recipe-snapshot.injectLineageFrontmatter stamps). Returns
+ * undefined when absent/malformed.
+ */
+function extractLineage(md: string): BrocaRecipe["lineage"] | undefined {
+  const fm = /^---\n([\s\S]+?)\n---/.exec(md);
+  if (!fm) return undefined;
+  let obj: Record<string, unknown> | null = null;
+  try {
+    obj = parseYaml(fm[1]) as Record<string, unknown> | null;
+  } catch {
+    return undefined;
+  }
+  const l = obj?.lineage;
+  if (!l || typeof l !== "object") return undefined;
+  const ln = l as Record<string, unknown>;
+  const out: NonNullable<BrocaRecipe["lineage"]> = {};
+  if (typeof ln.composedFrom === "string") out.composedFrom = ln.composedFrom;
+  if (typeof ln.sourceQuery === "string") out.sourceQuery = ln.sourceQuery;
+  if (Array.isArray(ln.composedSkills))
+    out.composedSkills = ln.composedSkills.filter((x): x is string => typeof x === "string");
+  if (Array.isArray(ln.composedRecipes))
+    out.composedRecipes = ln.composedRecipes.filter((x): x is string => typeof x === "string");
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function createRecipeRpcs(deps: KitRpcsDeps) {
   const fetchJson =
     deps.fetchJsonImpl ??
@@ -773,6 +837,79 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       // ── Merge: our kits first, then downloaded ────────────────────────────
       const kits = [...ownKitsMapped, ...downloadedKits];
       return { kits };
+    },
+
+    "prefrontal.recipe.read": async (raw: unknown) => {
+      const p = check<PrefrontalKitReadParams>(vRead, raw, "prefrontal.recipe.read");
+      const slug = p.slug ?? (p.kitRef ? p.kitRef.split("/")[1] : undefined);
+
+      // Resolve a LOCAL recipe md (ours, then downloaded), mirroring recipe.list.
+      let md: string | null = null;
+      if (typeof p.path === "string" && p.path.trim()) {
+        try {
+          md = await fs.readFile(p.path, "utf-8");
+        } catch {
+          md = null;
+        }
+      }
+      if (md === null && slug) {
+        // DUAL-READ: recipe.md (canonical) then kit.md (legacy), under ownRecipesDir.
+        for (const fname of ["recipe.md", "kit.md"]) {
+          try {
+            md = await fs.readFile(path.join(deps.ownRecipesDir, slug, fname), "utf-8");
+            break;
+          } catch {
+            // try next filename / fall through to downloaded
+          }
+        }
+      }
+      if (md === null && (p.kitRef || slug)) {
+        try {
+          const owner = p.kitRef ? p.kitRef.split("/")[0] : undefined;
+          const entries = await deps.store.list(owner ? { owner } : {});
+          const match = entries.find((e) =>
+            p.kitRef ? `${e.owner}/${e.slug}` === p.kitRef : e.slug === slug,
+          );
+          if (match) md = await fs.readFile(match.path, "utf-8");
+        } catch {
+          // downloaded lookup failed — fall through to Journey
+        }
+      }
+
+      if (md !== null) {
+        const spec = parseRecipeMd(md);
+        const steps: BrocaStep[] = spec.steps.map((st, i) => {
+          const proseRaw = st.doneWhen ?? firstSentence(recipeStepProse(st.body));
+          const usesKitRef = parseUsesDirective(st.body);
+          const step: BrocaStep = { n: i + 1, title: st.title };
+          if (proseRaw && proseRaw.trim()) step.prose = proseRaw.trim();
+          if (st.invokeSkill) step.skillId = st.invokeSkill;
+          if (usesKitRef) step.usesKitRef = usesKitRef;
+          if (st.in) step.ins = st.in.map((port) => ({ name: port.name, from: port.from }));
+          if (st.out !== undefined) step.out = st.out;
+          if (st.when) step.when = st.when;
+          if (st.earlyExit) step.returns = true;
+          return step;
+        });
+        const recipe: BrocaRecipe = { slug: spec.slug, title: spec.title, steps };
+        if (spec.summary) recipe.summary = spec.summary;
+        if (spec.category) recipe.category = spec.category;
+        const lineage = extractLineage(md);
+        if (lineage) recipe.lineage = lineage;
+        return { recipe };
+      }
+
+      // Fallback: not a local recipe → Journey recipe.get (same path recipe.get uses).
+      if (!p.kitRef) {
+        throw new Error(
+          "prefrontal.recipe.read: no local recipe for the given slug/path and no kitRef to fetch from Journey",
+        );
+      }
+      const ref = await resolveRef(p.kitRef, undefined);
+      const kit: any = await fetchJson(
+        `/api/kits/${p.kitRef}${ref ? `?ref=${encodeURIComponent(ref)}` : ""}`,
+      );
+      return { recipe: kit };
     },
 
     "prefrontal.recipe.publish": async (raw: unknown) => {
