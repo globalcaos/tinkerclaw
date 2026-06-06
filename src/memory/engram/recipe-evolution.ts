@@ -31,7 +31,12 @@ export type MutationOp =
   | "remove_step"
   | "reorder"
   | "tighten_criteria"
-  | "loosen_criteria";
+  | "loosen_criteria"
+  // SS4 (2026-06-06): rewrite a single STRUGGLING step's instruction prose. Unlike
+  // the fitness-driven ops above, this is driven by the per-step plan-archive
+  // struggle signal (step-struggle.ts) and applied by recipe-apply's step-rewrite
+  // branch (one step body changed, patch version bump, all 5 rails reused).
+  | "rewrite_step_text";
 
 export interface MutationProposal {
   recipeId: string;
@@ -184,4 +189,81 @@ export function proposeMutations(
   }
 
   return proposals;
+}
+
+/**
+ * SS4: the input to per-step sharpening — a recipe's struggling-step list (from
+ * step-struggle.readStepStruggle, mapped to this fs-free shape so engram stays
+ * decoupled from the Prefrontal extension's StruggleReport type).
+ */
+export interface StepRewriteSignal {
+  /** The recipe's canonical owner/slug. */
+  kitRef: string;
+  /** The recipe's current version number (for MutationProposal.baseVersion). */
+  baseVersion: number;
+  /** One entry per step the derived thresholds flagged as struggling. */
+  struggling: Array<{
+    stepIndex: number;
+    title: string;
+    /** Modal ClassifiedError.kind over the failing runs. */
+    dominantKind?: string;
+    failureRate: number;
+    runs: number;
+    failures: number;
+  }>;
+}
+
+/**
+ * SS4: the recoverable error kinds — a step failing dominantly with one of these is
+ * a STRONG sharpening signal (the prose can plausibly fix it). A non-recoverable
+ * dominant kind (a hard limit) is never auto-promotable: prose alone won't fix it.
+ * Mirrors recipe-types.isRecoverableKind WITHOUT importing the extension (engram is
+ * a different subsystem) — kept as a local set, single-owner here.
+ */
+const SS4_RECOVERABLE_DOMINANT_KINDS: ReadonlySet<string> = new Set([
+  "schema-mismatch",
+  "timeout",
+  "spawn-failure",
+  "execution-error",
+]);
+
+/** SS4: derived min-runs floor for autoPromote evidence (mirrors step-struggle.deriveMinRuns;
+ * kept local so engram does not import the prefrontal extension). NOT a frozen constant. */
+function ss4MinRuns(runs: number): number {
+  return Math.max(2, Math.ceil(Math.sqrt(Math.max(0, runs))));
+}
+
+/**
+ * SS4: propose one `rewrite_step_text` mutation per struggling step. Proposes-only
+ * (never applies — recipe-apply's step-rewrite branch does that, gated by
+ * RECIPE_AUTOAPPLY_ENABLED). A proposal is autoPromotable ONLY on a strong signal:
+ * a RECOVERABLE dominant kind over a WELL-EVIDENCED step (failures >= 2× the derived
+ * min-runs). Every step-text rewrite is reversible (snapshot-before-write), so this
+ * is bounded autonomy.
+ */
+export function proposeStepRewrites(signal: StepRewriteSignal): MutationProposal[] {
+  return signal.struggling.map((s) => {
+    const recoverable =
+      s.dominantKind !== undefined && SS4_RECOVERABLE_DOMINANT_KINDS.has(s.dominantKind);
+    const wellEvidenced = s.failures >= 2 * ss4MinRuns(s.runs);
+    const autoPromotable = recoverable && wellEvidenced;
+    const kindNote = s.dominantKind ? ` (dominant failure: ${s.dominantKind})` : "";
+    return {
+      recipeId: signal.kitRef,
+      baseVersion: signal.baseVersion,
+      op: "rewrite_step_text" as const,
+      payload: {
+        stepIndex: s.stepIndex,
+        stepTitle: s.title,
+        dominantKind: s.dominantKind,
+        failureRate: s.failureRate,
+        runs: s.runs,
+        failures: s.failures,
+      },
+      rationale: `step ${s.stepIndex + 1} "${s.title}" failed ${s.failures}/${s.runs} (${(s.failureRate * 100).toFixed(0)}%)${kindNote} — sharpen its instruction text`,
+      expectedDelta: { successRate: 0.1 },
+      autoPromotable,
+      needsHumanReview: !autoPromotable,
+    };
+  });
 }

@@ -24,6 +24,8 @@ import {
   DEFAULT_RECIPE_EVOLUTION_CONFIG,
   isAutoPromotable,
   proposeMutations,
+  proposeStepRewrites,
+  type StepRewriteSignal,
 } from "./recipe-evolution.js";
 import { type RecipeFitness } from "./recipe-fitness.js";
 import { runSleepConsolidation } from "./sleep-consolidation.js";
@@ -268,5 +270,90 @@ describe("runSleepConsolidation recipe-evolution autoPromotable count", () => {
     // runs=1 < minRuns(3) → proposeMutations returns nothing → 0 proposals, 0 auto.
     expect(result.recipeMutationsProposed).toBe(0);
     expect(result.recipeMutationsAutoPromotable).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SS4: proposeStepRewrites — per-step sharpening proposals from a struggle report
+// ---------------------------------------------------------------------------
+describe("proposeStepRewrites (SS4 step-text sharpening)", () => {
+  const KIT = "globalcaos/demo";
+  function signal(over: Partial<StepRewriteSignal> = {}): StepRewriteSignal {
+    return {
+      kitRef: KIT,
+      baseVersion: 3,
+      struggling: [
+        {
+          stepIndex: 1,
+          title: "Act",
+          dominantKind: "timeout",
+          failureRate: 0.8,
+          runs: 10,
+          failures: 8,
+        },
+      ],
+      ...over,
+    };
+  }
+
+  it("emits one rewrite_step_text proposal per struggling step, carrying the step payload", () => {
+    const props = proposeStepRewrites(signal());
+    expect(props).toHaveLength(1);
+    const p = props[0];
+    expect(p.op).toBe("rewrite_step_text");
+    expect(p.recipeId).toBe(KIT);
+    expect(p.baseVersion).toBe(3);
+    expect(p.payload).toMatchObject({
+      stepIndex: 1,
+      stepTitle: "Act",
+      dominantKind: "timeout",
+      failureRate: 0.8,
+    });
+    expect(p.rationale).toMatch(/Act/);
+    expect(p.rationale).toMatch(/timeout/);
+  });
+
+  it("emits NO proposals for an empty struggle list", () => {
+    expect(proposeStepRewrites(signal({ struggling: [] }))).toHaveLength(0);
+  });
+
+  it("a strong, well-evidenced, recoverable-kind signal is autoPromotable (needsHumanReview false)", () => {
+    // failures 16 >= 2*deriveMinRuns(20)?  deriveMinRuns(20)=ceil(sqrt 20)=5 → 2*5=10; 16>=10 ✓; timeout is recoverable.
+    const props = proposeStepRewrites(
+      signal({
+        struggling: [
+          {
+            stepIndex: 0,
+            title: "X",
+            dominantKind: "timeout",
+            failureRate: 0.9,
+            runs: 20,
+            failures: 18,
+          },
+        ],
+      }),
+    );
+    expect(props[0].autoPromotable).toBe(true);
+    expect(props[0].needsHumanReview).toBe(false);
+  });
+
+  it("a weak / non-recoverable-kind signal stays human-gated", () => {
+    // guard-eval-error is non-recoverable → never autoPromotable, regardless of evidence.
+    const props = proposeStepRewrites(
+      signal({
+        struggling: [
+          {
+            stepIndex: 0,
+            title: "X",
+            dominantKind: "guard-eval-error",
+            failureRate: 0.9,
+            runs: 20,
+            failures: 18,
+          },
+        ],
+      }),
+    );
+    expect(props[0].autoPromotable).toBe(false);
+    expect(props[0].needsHumanReview).toBe(true);
   });
 });
