@@ -33,6 +33,7 @@ describe("matchRecipesDetailed — scoring + confidence", () => {
   const index: RecipeIndexEntry[] = [
     {
       slug: "debug",
+      owner: "globalcaos",
       title: "Debug & Fix",
       summary: "reproduce diagnose fix verify",
       tags: ["debug", "bug", "crash", "error"],
@@ -41,6 +42,7 @@ describe("matchRecipesDetailed — scoring + confidence", () => {
     },
     {
       slug: "write-paper",
+      owner: "globalcaos",
       title: "Write Paper",
       summary: "draft a manuscript",
       tags: ["paper", "write"],
@@ -93,6 +95,7 @@ describe("fitnessFeedbackDelta — non-negative fitness boost", () => {
 describe("scoreRecipe — feedback delta is additive, base is a floor", () => {
   const kit: RecipeIndexEntry = {
     slug: "debug",
+    owner: "globalcaos",
     title: "Debug & Fix",
     summary: "reproduce diagnose fix verify",
     tags: ["debug", "bug", "crash", "error"],
@@ -125,7 +128,8 @@ describe("scoreRecipe — feedback delta is additive, base is a floor", () => {
   it("re-ranks: a proven kit overtakes an equally-relevant unproven one", () => {
     const a: RecipeIndexEntry = { ...kit, slug: "a" };
     const b: RecipeIndexEntry = { ...kit, slug: "b" };
-    const feedback = (slug: string) => (slug === "b" ? 0.95 : undefined);
+    // Fitness is keyed by the canonical `owner/slug` recipeId, not the bare slug.
+    const feedback = (key: string) => (key === "globalcaos/b" ? 0.95 : undefined);
     const sa = scoreRecipe(prompt, tokens, a, feedback);
     const sb = scoreRecipe(prompt, tokens, b, feedback);
     expect(sb).toBeGreaterThan(sa);
@@ -152,6 +156,7 @@ describe("ratingScoreDelta — clamped ±0.2 popularity nudge", () => {
 describe("scoreRecipe — rating composes with feedback (precedence base → feedback → rating)", () => {
   const kit: RecipeIndexEntry = {
     slug: "debug",
+    owner: "globalcaos",
     title: "Debug & Fix",
     summary: "reproduce diagnose fix verify",
     tags: ["debug", "bug", "crash", "error"],
@@ -182,7 +187,8 @@ describe("scoreRecipe — rating composes with feedback (precedence base → fee
     // recipe A: high fitness, no rating. recipe B: no fitness, max rating.
     const a: RecipeIndexEntry = { ...kit, slug: "a" };
     const b: RecipeIndexEntry = { ...kit, slug: "b" };
-    const feedback = (slug: string) => (slug === "a" ? 0.95 : undefined);
+    // Fitness is keyed by the canonical `owner/slug`; rating stays keyed by bare slug.
+    const feedback = (key: string) => (key === "globalcaos/a" ? 0.95 : undefined);
     const rating = (slug: string) => (slug === "b" ? 2 : undefined);
     const sa = scoreRecipe(prompt, tokens, a, feedback, rating);
     const sb = scoreRecipe(prompt, tokens, b, feedback, rating);
@@ -301,11 +307,13 @@ describe("seedPlanFromPrompt — threads feedback + rating into the match", () =
 
   it("consults the deps' feedback + rating lookups while scoring at the seed call site", async () => {
     invalidateRecipeIndexCache();
-    // Proof that the producer fires: the injected lookups are CONSULTED with the
-    // catalog slug during the real turn-start scoring pass. seedPlanFromPrompt calls
-    // its sibling matchRecipesDetailed directly (intra-module), so we assert behaviour
-    // (the lookups being invoked) rather than spying the local call.
-    const feedback = vi.fn((slug: string) => (slug === "debug" ? 0.95 : undefined));
+    // Proof that the producer fires: the injected lookups are CONSULTED during the
+    // real turn-start scoring pass. seedPlanFromPrompt calls its sibling
+    // matchRecipesDetailed directly (intra-module), so we assert behaviour (the lookups
+    // being invoked) rather than spying the local call. Fitness is consulted by the
+    // canonical `owner/slug` recipeId (the `debug` kit md has no `owner:` frontmatter →
+    // defaults to 'globalcaos'); rating stays keyed by the bare slug.
+    const feedback = vi.fn((key: string) => (key === "globalcaos/debug" ? 0.95 : undefined));
     const rating = vi.fn((slug: string) => (slug === "debug" ? 2 : undefined));
     const planStore = {
       get: vi.fn().mockResolvedValue(null),
@@ -320,7 +328,7 @@ describe("seedPlanFromPrompt — threads feedback + rating into the match", () =
       feedback,
       rating,
     });
-    expect(feedback).toHaveBeenCalledWith("debug");
+    expect(feedback).toHaveBeenCalledWith("globalcaos/debug");
     expect(rating).toHaveBeenCalledWith("debug");
     // And the high-fitness boost made the match seed a plan (end-to-end effect).
     expect(outcome.matches.some((m) => m.slug === "debug")).toBe(true);
@@ -341,5 +349,48 @@ describe("seedPlanFromPrompt — threads feedback + rating into the match", () =
       planStore,
     });
     expect(outcome.matches.some((m) => m.slug === "debug")).toBe(true);
+  });
+});
+
+// matcher-fitness-key: the matcher must look up empirical fitness by the EXACT
+// canonical `owner/slug` recipeId, NOT the bare slug. recipe-fitness.loadRecipeFitness
+// resolves an exact `owner/slug` key first and only falls back to a lossy bare-slug
+// suffix scan otherwise — that suffix scan cross-pollutes when two owners share a slug.
+// Passing `owner + "/" + slug` keeps the lookup on the exact-key path.
+describe("scoreRecipe — fitness lookup is keyed by exact owner/slug", () => {
+  const prompt = "debug the crash, it throws an error";
+  const tokens = new Set(
+    (prompt.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((t) => t.length > 2),
+  );
+  const make = (over: Partial<RecipeIndexEntry>): RecipeIndexEntry => ({
+    slug: "foo",
+    owner: "globalcaos",
+    title: "Debug & Fix",
+    summary: "reproduce diagnose fix verify",
+    tags: ["debug", "bug", "crash", "error"],
+    composes: [],
+    path: "/nope",
+    ...over,
+  });
+
+  it("an own-kit entry is boosted via the EXACT owner/slug key (not the suffix scan)", () => {
+    const own = make({ slug: "foo", owner: "globalcaos" });
+    // An archive keyed ONLY by the exact canonical id 'globalcaos/foo' — undefined
+    // for any other key, including the bare slug 'foo'. So a boost can ONLY land if
+    // the matcher passes owner + "/" + slug.
+    const feedback = (key: string) => (key === "globalcaos/foo" ? 0.95 : undefined);
+    const lexicalBase = scoreRecipe(prompt, tokens, own);
+    const boosted = scoreRecipe(prompt, tokens, own, feedback);
+    expect(boosted).toBe(lexicalBase + fitnessFeedbackDelta(0.95));
+    expect(boosted).toBeGreaterThan(lexicalBase);
+  });
+
+  it("a same-slug different-owner entry does NOT cross-pollute (no boost)", () => {
+    const other = make({ slug: "foo", owner: "someone-else" });
+    // Same exact-key archive: keyed for 'globalcaos/foo' only. The different-owner
+    // entry resolves to 'someone-else/foo' → undefined → no boost (floor preserved).
+    const feedback = (key: string) => (key === "globalcaos/foo" ? 0.95 : undefined);
+    const lexicalBase = scoreRecipe(prompt, tokens, other);
+    expect(scoreRecipe(prompt, tokens, other, feedback)).toBe(lexicalBase);
   });
 });

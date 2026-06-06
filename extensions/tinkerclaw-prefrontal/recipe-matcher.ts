@@ -28,6 +28,13 @@ import type { EmbedFn } from "./semantic-matcher.js";
 
 export interface RecipeIndexEntry {
   slug: string;
+  /**
+   * Canonical kit owner. Combined with `slug` it forms the `owner/slug` recipeId
+   * the fitness store (recipe-fitness.loadRecipeFitness) keys by exactly. Author-
+   * owned kits default to 'globalcaos' (the same currentOwner constant used at
+   * index.ts + recipe-rpcs.ts); a kit's frontmatter `owner:` overrides it.
+   */
+  owner: string;
   title: string;
   summary: string;
   tags: string[];
@@ -219,6 +226,10 @@ async function scanRecipeDir(dir: string): Promise<RecipeIndexEntry[]> {
       : [];
     index.push({
       slug: typeof parsed.slug === "string" ? parsed.slug : slug,
+      // Frontmatter `owner:` wins; author-owned kits default to 'globalcaos' (the
+      // same constant used at index.ts:currentOwner + recipe-rpcs.ts), so the
+      // fitness lookup below hits the exact `owner/slug` recipeId key.
+      owner: typeof parsed.owner === "string" ? parsed.owner : "globalcaos",
       title: typeof parsed.title === "string" ? parsed.title : slug,
       summary: typeof parsed.summary === "string" ? parsed.summary : "",
       tags,
@@ -377,7 +388,10 @@ export function scoreRecipe(
   }
   // PRECEDENCE base → feedback → rating:
   // 1) Post-base-score empirical-fitness boost (base is the floor; delta is >= 0).
-  if (feedback) score += fitnessFeedbackDelta(feedback(kit.slug));
+  // Key fitness by the EXACT canonical `owner/slug` recipeId so the store hits its
+  // exact-key branch, not the lossy bare-slug suffix scan (which cross-pollutes
+  // when two owners share a slug). Ratings stay keyed by bare slug.
+  if (feedback) score += fitnessFeedbackDelta(feedback(kit.owner + "/" + kit.slug));
   // 2) Clamped marketplace-rating tie-breaker LAST (±0.2 — weakest signal).
   if (rating) score += ratingScoreDelta(rating(kit.slug));
   return score;
