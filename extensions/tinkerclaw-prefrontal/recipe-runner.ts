@@ -41,6 +41,7 @@ import {
   type Port,
 } from "./recipe-types.js";
 import { deriveRedispatchBudget } from "./redispatch-budget.js";
+import { evaluateWhen, collectWhenRefs } from "./when-eval.js";
 
 // SS1: shared Ajv for validating typed step outputs (mirrors recipe-rpcs.ts).
 const AjvCtor = AjvPkg as unknown as typeof import("ajv").default;
@@ -259,6 +260,8 @@ export interface RecipeRunResult {
   errorMessage?: string;
   /** Per-step results harvested from the plan after the run settles. */
   results?: StepResult[];
+  /** SS2a: the value carried by a `return:`/`done:` early-exit (the exiting step's output). */
+  returnValue?: unknown;
 }
 
 export interface StepResult {
@@ -282,6 +285,10 @@ interface StepDispatch {
   outSchema?: JsonSchema;
   /** SS3: if set, this step invokes a stdlib skill primitive (by id) inline. */
   skillId?: string;
+  /** SS2a: a `when:` guard expression; the step runs only if it evaluates true. */
+  whenGuard?: string;
+  /** SS2a: a `return:`/`done:` marker; closes the plan after this step (early-exit). */
+  earlyExit?: boolean;
 }
 
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
@@ -297,9 +304,8 @@ function leadingDirectives(body: string): string[] {
       if (out.length > 0) break; // a blank after directives ends the block
       continue; // skip leading blank lines
     }
-    if (!/^(?:uses|loop):|^invoke\s+skill:/i.test(line)) break; // first prose line ends the block
+    if (!/^(?:uses|loop|when|return|done):|^invoke\s+skill:/i.test(line)) break; // first prose line ends the block
     out.push(line);
-    if (out.length >= 3) break;
   }
   return out;
 }
@@ -325,6 +331,23 @@ export function parseInvokeSkillDirective(body: string): string | undefined {
     if (m) return m[1];
   }
   return undefined;
+}
+
+/** SS2a: a leading `when: <expr>` guard. Returns the raw expression (non-empty), or undefined. */
+export function parseWhenDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^when:\s*(.+\S)\s*$/i.exec(line);
+    if (m) return m[1].trim();
+  }
+  return undefined;
+}
+
+/** SS2a: a bare leading `return:` / `done:` early-exit marker (nothing after the colon). */
+export function parseEarlyExitDirective(body: string): boolean {
+  for (const line of leadingDirectives(body)) {
+    if (/^(?:return|done):\s*$/i.test(line)) return true;
+  }
+  return false;
 }
 
 // ─── Recipe loops (FORK 2026-05-30) ─────────────────────────────────────────
@@ -467,6 +490,7 @@ export interface CompileStep {
   title: string;
   out?: JsonSchema;
   in?: Port[];
+  when?: string;
 }
 
 /**
@@ -512,6 +536,51 @@ export function checkPortWiring(steps: CompileStep[]): string[] {
         if (!(firstSegment in props)) {
           errors.push(
             `step ${consumerNumber} port "${port.name}": step ${ref.stepNumber} out: schema has no field "${firstSegment}"`,
+          );
+        }
+      }
+    }
+  });
+  return errors;
+}
+
+/**
+ * SS2a: verify every `when:` reference resolves to a real, EARLIER producer step
+ * whose `out:` schema declares the referenced field. Existence-only (matches
+ * checkPortWiring); run at seed time so a mis-guarded recipe fails fast.
+ */
+export function checkWhenRefs(steps: CompileStep[]): string[] {
+  const errors: string[] = [];
+  steps.forEach((step, i) => {
+    if (!step.when) return;
+    const consumerNumber = i + 1;
+    for (const refStr of collectWhenRefs(step.when)) {
+      const ref = parseStepRef(refStr);
+      if (!ref) {
+        errors.push(`step ${consumerNumber} when: "${refStr}" is not a steps.<n>.out reference`);
+        continue;
+      }
+      if (ref.stepNumber < 1 || ref.stepNumber > steps.length) {
+        errors.push(
+          `step ${consumerNumber} when: references step ${ref.stepNumber} which does not exist`,
+        );
+        continue;
+      }
+      if (ref.stepNumber >= consumerNumber) {
+        errors.push(`step ${consumerNumber} when: step ${ref.stepNumber} must precede it`);
+        continue;
+      }
+      const producer = steps[ref.stepNumber - 1];
+      if (!producer.out) {
+        errors.push(`step ${consumerNumber} when: step ${ref.stepNumber} declares no out: schema`);
+        continue;
+      }
+      const firstSegment = ref.path.split(".")[0];
+      if (firstSegment) {
+        const props = (producer.out as { properties?: Record<string, unknown> }).properties ?? {};
+        if (!(firstSegment in props)) {
+          errors.push(
+            `step ${consumerNumber} when: step ${ref.stepNumber} out: schema has no field "${firstSegment}"`,
           );
         }
       }
@@ -792,7 +861,12 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         const sk = sid ? opts.skillLibrary.read(sid) : undefined;
         if (sk?.outputSchema) out = sk.outputSchema;
       }
-      return { title: s.title, out, in: io.in };
+      return {
+        title: s.title,
+        out,
+        in: io.in,
+        when: parseWhenDirective(stripStepIoDirectives(s.body)),
+      };
     });
   } catch (err) {
     return {
@@ -807,6 +881,14 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       ok: false,
       planId: "",
       errorMessage: `recipe-runner: port-wiring check failed:\n - ${wiringErrors.join("\n - ")}`,
+    };
+  }
+  const whenErrors = checkWhenRefs(compileSteps);
+  if (whenErrors.length > 0) {
+    return {
+      ok: false,
+      planId: "",
+      errorMessage: `recipe-runner: when-guard check failed:\n - ${whenErrors.join("\n - ")}`,
     };
   }
 
@@ -857,6 +939,8 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       const label = `${opts.kitRef}:step-${idx}`;
       const usesKitRef = parseUsesDirective(cleanBody);
       const loop = parseLoopDirective(cleanBody);
+      const whenGuard = parseWhenDirective(cleanBody);
+      const earlyExit = parseEarlyExitDirective(cleanBody);
       return {
         stepIndex: idx,
         title: step.title,
@@ -866,6 +950,8 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         loop,
         outSchema: effectiveOut,
         skillId,
+        whenGuard,
+        earlyExit,
       };
     }),
   );
@@ -1249,6 +1335,31 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         return { ok: true, note: await readNote() };
       };
 
+      // SS2a: a `when:` guard gates this step. Evaluate it against prior steps'
+      // typed outputs (earlier-steps-only, from collectPriorArtifacts). A false
+      // guard SKIPS the step as DONE — a guarded-off step is a successful no-op,
+      // not a failure. A guard-eval error is a recorded step error (never silent).
+      if (dispatch.whenGuard) {
+        let pass: boolean;
+        try {
+          const live = await store.get(opts.sessionKey);
+          const outputsByStep = new Map<number, unknown>();
+          if (live) {
+            for (const p of collectPriorArtifacts(live, dispatch.stepIndex)) {
+              if (p.output !== undefined) outputsByStep.set(p.stepIndex + 1, p.output);
+            }
+          }
+          pass = evaluateWhen(dispatch.whenGuard, outputsByStep);
+        } catch (err) {
+          return markError(`when: guard evaluation failed: ${String(err)}`);
+        }
+        if (!pass) {
+          await persistArtifact(`skipped (when: ${dispatch.whenGuard} = false)`);
+          settleSkillOutcome(true);
+          return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
+        }
+      }
+
       // ── No loop: single execution ──
       if (!dispatch.loop) {
         let r = await executeOnce("");
@@ -1294,6 +1405,13 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           }
           await persistTypedArtifact(r.note, validation.value);
           settleSkillOutcome(true);
+          if (dispatch.earlyExit) {
+            return {
+              stepIndex: dispatch.stepIndex,
+              outcome: "early-exit" as const,
+              returnValue: validation.value,
+            };
+          }
           return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
         }
 
@@ -1303,6 +1421,13 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         // sub-plan's terminal result becomes the PARENT step's artifact.
         await persistArtifact(r.note);
         settleSkillOutcome(true);
+        if (dispatch.earlyExit) {
+          return {
+            stepIndex: dispatch.stepIndex,
+            outcome: "early-exit" as const,
+            returnValue: r.note,
+          };
+        }
         return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
       }
 
@@ -1329,13 +1454,40 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       const loopNote = `looped ${iter}× (${loop.mode}); last: ${(lastNote ?? "").slice(0, 80)}`;
       await persistArtifact(loopNote);
       settleSkillOutcome(true);
+      if (dispatch.earlyExit) {
+        return {
+          stepIndex: dispatch.stepIndex,
+          outcome: "early-exit" as const,
+          returnValue: lastNote,
+        };
+      }
       return { stepIndex: dispatch.stepIndex, outcome: "done" as const };
     });
 
     const settlements = await Promise.all(settlePromises);
 
+    // SS2a: a `return:`/`done:` early-exit closes the plan as DONE, carrying the
+    // exiting step's value — it is NOT a failure. Check before the error path.
+    const exit = settlements.find((s) => s.outcome === "early-exit");
+    if (exit) {
+      let exitResults: StepResult[] = [];
+      const exitPlan = await store.get(opts.sessionKey);
+      if (exitPlan) {
+        exitResults = collectStepResults(exitPlan);
+      }
+      try {
+        await store.close({ sessionKey: opts.sessionKey, status: "done" });
+      } catch {}
+      return {
+        ok: true,
+        planId,
+        results: exitResults,
+        returnValue: (exit as { returnValue?: unknown }).returnValue,
+      };
+    }
+
     // If any step in this group errored, abort the whole plan
-    const failed = settlements.find((s) => s.outcome !== "done");
+    const failed = settlements.find((s) => s.outcome === "error");
     if (failed) {
       let partialResults: StepResult[] = [];
       const abortPlan = await store.get(opts.sessionKey);
