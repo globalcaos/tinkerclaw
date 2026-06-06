@@ -405,12 +405,24 @@ const plugin = {
             res.end(JSON.stringify({ error: "path and content required" }));
             return true;
           }
-          const resolved = path.isAbsolute(body.path)
-            ? body.path
-            : path.resolve(TINKERCLAW_ROOT, body.path);
+          const OVERLAY_DIR = path.resolve(HOME, ".openclaw/recipes");
+          // Recipe overlay redirect: a save of recipe.md / kit.md whose parent
+          // dir is a slug is rewritten to live under the overlay as recipe.md.
+          let targetPath = body.path;
+          const base = path.basename(body.path);
+          if (base === "recipe.md" || base === "kit.md") {
+            const slug = path.basename(path.dirname(body.path));
+            if (/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
+              targetPath = path.join(OVERLAY_DIR, slug, "recipe.md");
+            }
+          }
+          const resolved = path.isAbsolute(targetPath)
+            ? targetPath
+            : path.resolve(TINKERCLAW_ROOT, targetPath);
           const inTinkerclaw = resolved.startsWith(TINKERCLAW_ROOT + path.sep);
           const inWorkspaceKits = resolved.startsWith(WORKSPACE_KITS + path.sep);
-          if (!inTinkerclaw && !inWorkspaceKits) {
+          const inOverlay = resolved.startsWith(OVERLAY_DIR + path.sep);
+          if (!inTinkerclaw && !inWorkspaceKits && !inOverlay) {
             res.statusCode = 400;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: "Path outside allowed kit directories" }));
