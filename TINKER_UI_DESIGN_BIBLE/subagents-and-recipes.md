@@ -139,10 +139,10 @@ verify:
     cmd: grep -Fq 'allow-tools|max-tokens|max-tool-calls' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'allowTools' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'maxToolCalls' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: SS5b parallel()/pipeline() return catchable Settled<T> partials (orchestration-runtime.ts)
     cmd: grep -Fq 'export type Settled<T>' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-runtime.ts && grep -Fq 'Promise<Array<Settled<T>>>' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-runtime.ts
-  - name: SS5b catchable budget-exceeded arm wired in spawnTextVia (KNOWN-INERT — fires once agent.wait carries exhausted/budget-exhausted)
-    cmd: grep -Fq 'budget-exceeded' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-deps.ts && grep -Fq 'budget-exhausted' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-deps.ts
-  - name: SS5b validateSpawnBudget gates the subagents RPC + C1 tool-gate enforcement marker present (KNOWN-INERT until a tool-gate lands)
-    cmd: grep -Fq 'export function validateSpawnBudget' ~/src/tinkerclaw/src/fork/subagents-rpc.ts && grep -Fq 'SS5b-C1: enforce allowTools here once the tool-gate lands' ~/src/tinkerclaw/src/fork/subagents-rpc.ts
+  - name: SS5b budget enforcement is LIVE — attempt-loop watchdog (evaluateSpawnBudget) stamps stopReason budget-exhausted; orchestration-deps throws catchable budget-exceeded
+    cmd: grep -Fq 'export function evaluateSpawnBudget' ~/src/tinkerclaw/src/agents/embedded-agent-runner/run/spawn-budget.ts && grep -Fq 'checkSpawnBudget' ~/src/tinkerclaw/src/agents/embedded-agent-runner/run/attempt.ts && grep -Fq 'stopReason: "budget-exhausted"' ~/src/tinkerclaw/src/agents/embedded-agent-runner/run/attempt.ts && grep -Fq 'budget-exceeded' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/orchestration-deps.ts
+  - name: SS5b tool-whitelist enforcement is LIVE — allowTools validated at the RPC, forwarded from the spawn, filtered child-side (no longer inert)
+    cmd: grep -Fq 'export function validateSpawnBudget' ~/src/tinkerclaw/src/fork/subagents-rpc.ts && grep -Fq 'allowTools: params.allowTools' ~/src/tinkerclaw/src/agents/subagent-spawn.ts && grep -Fq 'applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow)' ~/src/tinkerclaw/src/agents/embedded-agent-runner/run/attempt.ts
   - name: SS5b spawn budget fields (allowTools/maxToolCalls) on SpawnSubagentParams
     cmd: grep -Fq 'allowTools' ~/src/tinkerclaw/src/agents/subagent-spawn.ts && grep -Fq 'maxToolCalls' ~/src/tinkerclaw/src/agents/subagent-spawn.ts
   - name: SS5b matcher keys recipe fitness by the exact owner/slug recipeId (not the bare slug)
