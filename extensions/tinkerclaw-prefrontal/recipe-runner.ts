@@ -31,6 +31,7 @@ import { parse as parseYaml } from "yaml";
 import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
 import type { SkillLibrary } from "../../src/memory/engram/skill-library.js";
 import { deriveCombinatorFanOut, deriveUsesDepthBudget } from "./combinator-budget.js";
+import { deriveOverseerLoopBudget } from "./overseer-budget.js";
 import type { PlanStore } from "./plan-store.js";
 import {
   resolveStepRefs,
@@ -162,6 +163,15 @@ export interface RecipeRunOptions {
    * Best-effort, fire-and-forget (never throws into the run).
    */
   onSkillOutcome?: (skillId: string, success: boolean) => void;
+  /**
+   * SS5b: OVERSEER keep-going sink. On each supervision pass of the overseer loop
+   * (`loop: until OVERSEER_DONE`) whose verdict is a NUDGE (the note does NOT carry
+   * the OVERSEER_DONE marker), the runner forwards the nudge text here so the caller
+   * can re-prime the supervised task. Mirrors the onTrail/onTag contract exactly:
+   * best-effort, fire-and-forget — every call is wrapped so a broken sink can NEVER
+   * throw into the execution loop. Absent → no-op (the runner stays gateway-decoupled).
+   */
+  onKeepGoing?: (sessionKey: string, message: string) => void;
 }
 
 /** SS1: one classified trail event emitted by the runner (e.g. schema-mismatch). */
@@ -2167,21 +2177,72 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
 
       // ── Loop: repeat until the condition or the hard cap (recipe loops) ──
       const loop = dispatch.loop;
+      // SS5b: the OVERSEER supervision loop (`loop: until OVERSEER_DONE`) does NOT
+      // run a frozen loop.max — its per-iteration ceiling is DERIVED from the live
+      // situation (J16 design-principle #19: a frozen number is at most a safety
+      // CEILING, never the working value). EVERY OTHER loop keeps its author-set
+      // loop.max unchanged. loop.max stays the structural downward cap (already
+      // clamped to HARD_LOOP_MAX=25 by parseLoopDirective), so the derived working
+      // bound min(loop.max, derived) is always in [1, HARD_LOOP_MAX].
+      const isOverseerLoop =
+        loop.mode === "until-marker" && (loop.marker ?? "").toUpperCase() === "OVERSEER_DONE";
       let iter = 0;
       let lastNote: string | null = null;
-      while (iter < loop.max) {
-        const r = await executeOnce(`loop ${iter + 1}/${loop.max} · ${loop.mode}`);
+      let priorNoteLen: number | null = null;
+      // Working ceiling for the current pass: non-overseer loops always use
+      // loop.max; the overseer loop re-derives this each pass from live signals.
+      let workingBound = loop.max;
+      while (iter < workingBound) {
+        const r = await executeOnce(`loop ${iter + 1}/${workingBound} · ${loop.mode}`);
         iter++;
         if (!r.ok) return markError(`loop aborted at iter ${iter}: ${r.note ?? "failed"}`);
         lastNote = r.note;
         if (loop.mode === "until-dry" && isDryNote(r.note)) break;
-        if (
+        const hitMarker =
           loop.mode === "until-marker" &&
-          r.note &&
-          loop.marker &&
-          r.note.toLowerCase().includes(loop.marker.toLowerCase())
-        ) {
-          break;
+          !!r.note &&
+          !!loop.marker &&
+          r.note.toLowerCase().includes(loop.marker.toLowerCase());
+        if (hitMarker) break;
+        if (isOverseerLoop) {
+          // A non-done verdict is a NUDGE: keep going. Surface the nudge text via
+          // the best-effort onKeepGoing sink (fire-and-forget — a broken sink must
+          // never throw into the run; mirrors emitTrail/emitTag).
+          try {
+            opts.onKeepGoing?.(opts.sessionKey, r.note ?? "");
+          } catch {
+            // keep-going observability must never break the run
+          }
+          // gap trend (a simple converging heuristic): the latest verdict/note is
+          // shorter than the prior one → the gap-to-done is shrinking, earn one
+          // more supervision pass.
+          const curLen = (r.note ?? "").length;
+          const gapShrinking = priorNoteLen !== null && curLen < priorNoteLen;
+          priorNoteLen = curLen;
+          // Re-derive the working ceiling for the NEXT pass. min(loop.max, derived)
+          // keeps the author's downward cap; the derived value is the
+          // situation-responsive WORKING bound (>=1, never > loop.max <= 25).
+          workingBound = Math.min(
+            loop.max,
+            deriveOverseerLoopBudget({
+              priorIterations: iter,
+              fitnessSuccessRate: opts.fitnessSuccessRate,
+              gapShrinking,
+            }),
+          );
+          // Pressure signal: emit as iter approaches the ceiling so the caller can
+          // see the overseer is about to fall through to a GRACEFUL partial
+          // settlement (design-principle #19 graceful-degrade — never a hard abort).
+          emitTrail({
+            kind: "overseer-pressure",
+            label: `${opts.kitRef}:step-${dispatch.stepIndex}`,
+            message:
+              iter >= workingBound
+                ? `overseer loop at ${iter}/${workingBound} — at the derived ceiling; will settle a partial if the next verdict is still a nudge`
+                : `overseer loop at ${iter}/${workingBound} — supervising`,
+            sessionKey: opts.sessionKey,
+            payload: { stepIndex: dispatch.stepIndex, iter, workingBound, loopMax: loop.max },
+          });
         }
         // count mode: keep going until loop.max iterations.
       }
