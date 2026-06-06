@@ -20,19 +20,26 @@ interface StepCall {
   note?: string;
   artifact?: string;
   output?: unknown;
+  session?: string;
 }
 
-function makeScriptedStore(scripts: Record<number, string[]>) {
-  let plan: Plan | null = null;
+// Session-keyed mock: one Plan per sessionKey (sub-kits get their own session),
+// per-(session,step) attempt counters, and scripts keyed by `${session}::${step}`
+// with a bare `${step}` fallback (so a uniform sub-kit can be scripted once).
+function makeScriptedStore(scripts: Record<string, string[]>) {
+  const plans: Record<string, Plan> = {};
   const stepCalls: StepCall[] = [];
-  const attempts: Record<number, number> = {};
-  let closed: { status: string } | null = null;
-  const copy = (): Plan => JSON.parse(JSON.stringify(plan));
+  const attempts: Record<string, number> = {};
+  const closedBy: Record<string, { status: string }> = {};
+  let root: string | null = null;
+  const copy = (s: string): Plan => JSON.parse(JSON.stringify(plans[s]));
+  const scriptFor = (s: string, step: number): string[] =>
+    scripts[`${s}::${step}`] ?? scripts[String(step)] ?? ["auto-done"];
   return {
     calls: stepCalls,
-    getClosed: () => closed,
-    async get(_s: string): Promise<Plan | null> {
-      return plan ? copy() : null;
+    getClosed: () => (root ? (closedBy[root] ?? null) : null),
+    async get(sessionKey: string): Promise<Plan | null> {
+      return plans[sessionKey] ? copy(sessionKey) : null;
     },
     async set(p: {
       sessionKey: string;
@@ -41,7 +48,8 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
       kitRef?: string;
       steps: Array<{ title: string }>;
     }): Promise<Plan> {
-      plan = {
+      if (root === null) root = p.sessionKey;
+      plans[p.sessionKey] = {
         sessionKey: p.sessionKey,
         runId: p.runId,
         intent: p.intent,
@@ -51,8 +59,8 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
         status: "in_progress",
         currentStep: 0,
         steps: p.steps.map((s) => ({ title: s.title, status: "pending" as const })),
-      };
-      return copy();
+      } as Plan;
+      return copy(p.sessionKey);
     },
     async step(p: StepCall & { sessionKey: string; outputKind?: "json" }): Promise<Plan> {
       stepCalls.push({
@@ -61,14 +69,17 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
         note: p.note,
         artifact: p.artifact,
         output: p.output,
+        session: p.sessionKey,
       });
-      if (!plan) throw new Error("no plan");
+      const plan = plans[p.sessionKey];
+      if (!plan) throw new Error(`no plan for ${p.sessionKey}`);
       const st = plan.steps[p.stepIndex];
       if (!st) throw new Error("step out of range");
       if (p.status === "in_progress") {
-        const n = attempts[p.stepIndex] ?? 0;
-        attempts[p.stepIndex] = n + 1;
-        const notes = scripts[p.stepIndex] ?? ["auto-done"];
+        const key = `${p.sessionKey}::${p.stepIndex}`;
+        const n = attempts[key] ?? 0;
+        attempts[key] = n + 1;
+        const notes = scriptFor(p.sessionKey, p.stepIndex);
         st.note = notes[Math.min(n, notes.length - 1)];
         st.status = "done";
         plan.currentStep = p.stepIndex;
@@ -77,12 +88,15 @@ function makeScriptedStore(scripts: Record<number, string[]>) {
         if (p.note !== undefined) st.note = p.note;
         if (p.artifact !== undefined) st.artifact = p.artifact;
         if (p.output !== undefined) st.output = p.output;
-        if (p.outputKind !== undefined) st.outputKind = p.outputKind;
+        if (p.outputKind !== undefined) (st as Plan["steps"][number]).outputKind = p.outputKind;
       }
-      return copy();
+      return copy(p.sessionKey);
     },
-    async close(p: { status: string }): Promise<{ ok: true; archivedTo: string }> {
-      closed = { status: p.status };
+    async close(p: {
+      sessionKey: string;
+      status: string;
+    }): Promise<{ ok: true; archivedTo: string }> {
+      closedBy[p.sessionKey] = { status: p.status };
       return { ok: true, archivedTo: "/dev/null" };
     },
   };
@@ -156,12 +170,12 @@ describe("SS2b map iteration", () => {
   });
 
   it("fans the worker out once per element (fan-out = arrayLength) and aggregates returnValues in order", async () => {
-    // step 0 yields {items:[...], worker:"upper"}; each upper run returns {v:...}.
+    // root m1 step 0 yields {items:[...], worker:"upper"}; each upper run (its own
+    // session m1::map::1::i, at the upper-kit step 0 via the bare "0" fallback)
+    // returns {v:"X"}.
     const store = makeScriptedStore({
-      0: ['```json\n{"items":["a","b","c"],"worker":"upper"}\n```'],
-      // the worker (upper) step 0 returns a value each time it is run.
-      // because each element is a SIBLING dispatch reusing the same sub-session key
-      // suffix per index, scripts are keyed by the upper-kit step index (0).
+      "m1::0": ['```json\n{"items":["a","b","c"],"worker":"upper"}\n```'],
+      "0": ['```json\n{"v":"X"}\n```'],
     });
     const workerSpawns: string[] = [];
     const res = await runRecipe({
@@ -181,8 +195,12 @@ describe("SS2b map iteration", () => {
     // {{item}}/{{index}} substituted per element
     expect(workerSpawns.some((t) => t.includes("Uppercase a (index 0)"))).toBe(true);
     expect(workerSpawns.some((t) => t.includes("Uppercase c (index 2)"))).toBe(true);
-    // step 2 (Map) persisted an array output of length 3
-    const mapOut = store.calls.filter((c) => c.stepIndex === 1 && c.output !== undefined).pop();
+    // step 2 (Map), in the ROOT session m1, persisted an array output of length 3.
+    // Filter by session so the per-element upper sub-runs (each persisting their own
+    // step-0 output in m1::map::1::i) don't shadow the parent Map step's output.
+    const mapOut = store.calls
+      .filter((c) => c.stepIndex === 1 && c.session === "m1" && c.output !== undefined)
+      .pop();
     expect(Array.isArray(mapOut?.output)).toBe(true);
     expect((mapOut?.output as unknown[]).length).toBe(3);
   });
