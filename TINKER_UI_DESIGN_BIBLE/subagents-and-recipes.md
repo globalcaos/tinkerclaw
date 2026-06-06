@@ -105,6 +105,18 @@ verify:
     cmd: grep -Fq 'export function checkCombinatorRefs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'combinator-ref check failed' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: SS2b the four combinator recipes exist on disk
     cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/if-then-else.recipe.md && test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/map.recipe.md && test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/filter.recipe.md && test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/combinator/compose.recipe.md
+  - name: SS5a onError recovery directive is parsed by the runner (parseOnErrorDirective)
+    cmd: grep -Fq 'export function parseOnErrorDirective' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: SS5a recovery-budget.ts exists, is PURE (no node:fs), and derives the retry bound (deriveRecoveryRetryBudget)
+    cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recovery-budget.ts && ! grep -q 'node:fs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recovery-budget.ts && grep -Fq 'export function deriveRecoveryRetryBudget' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recovery-budget.ts
+  - name: SS5a onError directive is recognized by the io-scanner (OTHER_DIRECTIVE_RE includes onError)
+    cmd: grep -Fq 'onError):|^invoke' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts
+  - name: SS5a done-partial is a non-aborting settlement outcome in the runner
+    cmd: grep -Fq 'outcome: "done-partial"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: SS5a classified-error envelope present in recipe-types.ts (ClassifiedError + isRecoverableKind)
+    cmd: grep -Fq 'export interface ClassifiedError' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts && grep -Fq 'export function isRecoverableKind' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts
+  - name: SS5a plan-store.ts durably persists PlanStep.error (error64 base64 line, like artifact64/output64)
+    cmd: grep -Fq 'error64:${' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/plan-store.ts
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
