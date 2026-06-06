@@ -443,6 +443,9 @@ export const agentHandlers: GatewayRequestHandlers = {
       inputProvenance?: InputProvenance;
       workspaceDir?: string;
       voiceWakeTrigger?: string;
+      allowTools?: string[];
+      maxTokens?: number;
+      maxToolCalls?: number;
     };
     const senderIsOwner = resolveSenderIsOwnerFromClient(client);
     const allowModelOverride = resolveAllowModelOverrideFromClient(client);
@@ -1196,6 +1199,9 @@ export const agentHandlers: GatewayRequestHandlers = {
           modelRun: request.modelRun === true,
           promptMode: request.promptMode,
           extraSystemPrompt: request.extraSystemPrompt,
+          toolsAllow: request.allowTools,
+          maxTokens: request.maxTokens,
+          maxToolCalls: request.maxToolCalls,
           bootstrapContextMode: request.bootstrapContextMode,
           bootstrapContextRunKind: request.bootstrapContextRunKind,
           acpTurnSource: request.acpTurnSource,

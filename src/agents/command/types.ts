@@ -94,6 +94,12 @@ export type AgentCommandOpts = {
   /** Run kind hint for bootstrap context behavior. */
   bootstrapContextRunKind?: "default" | "heartbeat" | "cron";
   internalEvents?: AgentInternalEvent[];
+  /** Optional per-run tool allow-list; when set, only these tools are exposed to the model. */
+  toolsAllow?: string[];
+  /** Optional per-run output token budget. */
+  maxTokens?: number;
+  /** Optional per-run cap on the number of tool calls. */
+  maxToolCalls?: number;
   inputProvenance?: InputProvenance;
   /** Per-call stream param overrides (best-effort). */
   streamParams?: AgentStreamParams;
