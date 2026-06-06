@@ -526,4 +526,21 @@ fix, pick from this list — extend it only if no tag fits.
 - **Commit:** `d32e44cc24` (shipped together with the cc-bridge dual-path fix above)
 - **Rule:** marker-detection regexes for content emitted by an LLM must tolerate the model's natural surface variants (heading marks, bold wrapping, mixed casing) instead of pinning to one shape. When the splitter returns null the entire reply falls through to a generic render and the user sees raw markers as text — far worse than a slightly permissive regex.
 
+### FIXED [ui-state-clear]: Unsent composer draft lost on hard refresh (2026-06-06)
+
+- **Symptom:** text typed into a tab's chat composer but not yet sent was lost on a hard refresh / crash. Oscar lost a 20-minute prompt this way.
+- **Root cause:** drafts lived only in the in-memory `tabStates` Map (`TabState.draft`), which a hard refresh wipes, plus a SINGLE global `localStorage` key `DRAFT_STORAGE_KEY="tinker-draft"`. On reload only that one global slot was restored — so per-tab drafts were lost and all tabs shared one draft.
+- **Fix:** persist drafts PER TAB in `localStorage` keyed by tab id (`tinker-draft:<tabId>`), replacing the single global key; the composer input listener write-throughs to the active tab's per-tab key + `TabState.draft` on every keystroke; the connect/init flow rehydrates each restored tab's draft and loads the active tab's into the composer; a successful send clears both.
+- **Status / files:** `tinker-ui/src/app.ts` (`saveDraftFor`/`loadDraftFor`/`clearDraftFor`, `DRAFT_STORAGE_KEY_PREFIX`). HMR-live; **uncommitted** (recovery patch jarvis-icu `9fe305a`; lands on develop at next commit). Task `task-mpzzs5nc`.
+- **Recovery tip:** the OLD global `tinker-draft` key is never deleted, so a draft lost under the old code is still recoverable via `localStorage.getItem('tinker-draft')` in the browser console.
+- **Rule:** any in-memory editor state the user can lose to a refresh/crash must write-through to `localStorage` on edit, keyed per owner (per tab), and clear on the success path — never rely on a single global slot.
+
+### FIXED [ui-state-clear]: Auto/renamed tab titles did not survive refresh/restart (reverted to fortune cookie) (2026-06-06)
+
+- **Symptom:** a tab the user renamed or auto-named reverted to its random `FORTUNE_COOKIES` name after a hard refresh or gateway restart.
+- **Root cause:** tab titles persist to `localStorage` (so they survive in storage), but `loadSessions()` re-synced `tab.title` from the server `cookiePhrase` on every `sessions.list` response, clobbering the custom/auto title. The existing protection was a HEURISTIC (`LEGACY_2WORD_PHRASE_RE`) that mis-classified some custom titles as replaceable.
+- **Fix:** an EXPLICIT per-tab `titleLocked` flag (persisted in `localStorage["tinker.tabs"]`), set true on manual rename AND on a successful auto-name; `loadSessions()` no longer overwrites a locked tab's title — it only syncs the server phrase into tabs still showing a default/fortune title. Custom/auto names now survive both refresh and restart. `🏠 Main` force-reset preserved.
+- **Status / files:** `tinker-ui/src/app.ts` (`titleLocked`, `loadSessions` reconciliation). HMR-live; **uncommitted** (recovery patch jarvis-icu `9fe305a`). Task `task-mq0mcb8h`. See `session-naming.md` (the canonical naming contract this amends).
+- **Rule:** protect user-meaningful titles with an EXPLICIT lock flag, not a format heuristic — a heuristic that infers "is this a custom name?" from the string shape will misfire. The server `cookiePhrase` may only fill a tab that has no locked title.
+
 ---

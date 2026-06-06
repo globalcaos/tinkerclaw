@@ -20,6 +20,8 @@ verify:
     cmd: python3 -c 'import subprocess,os; r=subprocess.run(["node",os.path.expanduser("~/src/tinkerclaw/scripts/gen-tinker-ui-registry.mjs")],capture_output=True,text=True,timeout=25); assert r.returncode == 0, f"generator failed: {r.stderr[-300:]}"; assert "anchor" in r.stdout.lower() and "|" in r.stdout, "generator output unexpected shape"'
   - name: §5.65 recipe decision-trail visual elements exist (provenance chip CSS + recipe-supersede trail icon)
     cmd: python3 -c 'import os; css=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/styles/base.css")).read(); ts=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/panels/prefrontal-tree.ts")).read(); assert ".pf-decisions-recipe" in css and ".pf-subtask" in css, "decision-trail CSS classes missing"; assert "TRAIL_ICON_BY_KIND" in ts and "recipe-supersede" in ts and "pf-subtask" in ts, "trail-icon map or subtask render missing"'
+  - name: §5.75 BROCA visibility — skill-highlight token + broca.ts render module + RECIPES-panel coloring (committed 35f46d2/4825c74/041e3e7)
+    cmd: python3 -c 'import os; css=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/styles/base.css")).read(); b=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/panels/broca.ts")).read(); pt=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/panels/prefrontal-tree.ts")).read(); assert "--skill-highlight" in css and ".broca-skill" in css, "skill-highlight token/class missing in base.css"; assert "renderBrocaProgram" in b and "colorSkillTokens" in b, "broca.ts render module missing"; assert "colorSkillTokens" in pt, "RECIPES-panel structured skill-coloring missing"'
 ---
 
 # Tinker UI — layout, visual language, feature registry
@@ -1244,6 +1246,16 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **How it's used:** nothing to do — multi-tab workspaces feel instant on reconnect / page reload.
 - **See also:** §5.5 (tab/session lifecycle + detach), §5.69 (per-tab `tab.title`). Task `task-mppceqsu`.
 - **Files:** `tinker-ui/src/app.ts` (`hydrateTab`, `Promise.allSettled` fan-out on connect).
+
+### 5.75 BROCA recipe visibility — skill-token highlighting + clickable recipe titles + recipe page (2026-06-06)
+
+- **Status:** MIXED. `DEPLOYED` (committed develop, HMR-live): the theme token + `broca.ts` render module + RECIPES-panel skill coloring (`35f46d2`, `4825c74`, `041e3e7`). `DEPLOYED-UNTESTED` (HMR-live in `app.ts`/`prefrontal-tree.ts`, **uncommitted** — recovery patch jarvis-icu `9fe305a`): clickable recipe titles + the `recipe-detail` page + per-tab draft persistence + panel recipe-link. `TBD`: the live "this-prompt" composition panel (needs the server `recipe.read` deployed on a clean build).
+- **Goal:** make the user aware Jarvis is composing recipes on the fly with the **BROCA** recipe-programming system — a colored skill name reads as a _token in a BROCA program_; a recipe title is a doorway into that program.
+- **What the user sees:** (1) skill names render in a distinct, swappable color (yellow now) wherever the system STRUCTURALLY names them — RECIPES panel, the chat recipe banner, recipe-tab cards. (2) recipe titles are clickable → a dedicated single-recipe **page** rendering the recipe as interleaved code + prose. (3) (planned) the RECIPES panel shows THIS prompt's composition live with the current step highlighted.
+- **Mechanism:** one CSS variable `--skill-highlight` (+ `--skill-highlight-dim`) in `styles/base.css` drives `.broca-skill` / `.broca-recipe-link` / `.broca-kw`. A pure render module `tinker-ui/src/panels/broca.ts` (`renderBrocaProgram`, `colorSkillTokens`, types `BrocaRecipe`/`BrocaStep`) does the rendering. `colorSkillTokens` is **structured-only** — it wraps a label ONLY when it exactly matches a known skill id (no prose matching → no false positives). The recipe page calls `prefrontal.recipe.read` and degrades to the recipe-list metadata until that RPC is deployed.
+- **See also:** `subagents-and-recipes.md` (the `prefrontal.recipe.read` RPC + `turnId`/`skillId` composition events that feed this), `session-naming.md` (tab-title persistence interplay), `bug-log.md` (the draft + tab-name fixes shipped alongside). Spec/plan: jarvis-icu `docs/superpowers/{specs,plans}/2026-06-06-broca-recipe-visibility*`.
+- **Files:** `tinker-ui/src/styles/base.css` (`--skill-highlight*`, `.broca-*`), `tinker-ui/src/panels/broca.ts` (+ `broca.test.ts`, 10/10 green), `tinker-ui/src/panels/prefrontal-tree.ts` (`colorSkillTokens` on node/trail labels + recipe-name link), `tinker-ui/src/app.ts` (`recipe-detail` AltTab, `renderRecipeDetail`, `[data-recipe-ref]` click delegation, recipe-card link).
+- **Don't regress:** keep `colorSkillTokens` STRUCTURED-only — never regex skill names out of free chat prose (the deliberate decision; prose matching false-positives on common words like "verify"). The color is a single variable — keep it a `var(--skill-highlight)`, never hard-code yellow.
 
 ## Generated FORK registry
 
