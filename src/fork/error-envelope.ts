@@ -375,7 +375,15 @@ export function classifyRawErrorMessage(raw: string): string {
   ) {
     return "overloaded";
   }
-  if (/rate.?limit|\b429\b|usage limits|too many requests/.test(s)) {
+  // "session limit" is Claude Code's name for the rolling 5-hour usage window; it
+  // arrives as e.g. "You've hit your session limit · resets 12pm (Europe/Madrid)"
+  // with no "rate limit" wording, so match it (and the generic "hit your … limit")
+  // explicitly or it falls through to provider_generic.
+  if (
+    /rate.?limit|\b429\b|usage limits?|too many requests|session limit|hit your (?:session|usage|weekly|5-?hour)|you'?ve hit your .{0,24}\blimit\b/.test(
+      s,
+    )
+  ) {
     return "rate_limited";
   }
   if (/timed out|timeout/.test(s)) {
@@ -393,40 +401,110 @@ export function classifyRawErrorMessage(raw: string): string {
   return "provider_generic";
 }
 
+/** Minutes from now until the next occurrence of wall-clock h:m in IANA `tz`. */
+function minutesUntilLocalTime(h: number, m: number, tz: string): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+    }).formatToParts(new Date());
+    const get = (t: string) => parseInt(parts.find((p) => p.type === t)?.value ?? "NaN", 10);
+    const curH = get("hour") % 24; // some engines render midnight as "24"
+    const curM = get("minute");
+    if (Number.isNaN(curH) || Number.isNaN(curM)) return null;
+    let diff = h * 60 + m - (curH * 60 + curM);
+    if (diff <= 0) diff += 24 * 60; // reset already passed today → next day
+    return diff;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Pin down WHICH rate limit was hit — the rolling 5-hour window, the weekly
- * window, or a short-term per-minute peak — from the raw provider message, so the
- * card states the precise cause instead of a blanket "quota exhausted". (Anthropic
- * server-side 529 limiting is handled separately as `overloaded`, not here.)
+ * Parse a provider-supplied reset time ("resets 12pm (Europe/Madrid)", "resets in
+ * 2h", …) into a hint that tells the user WHEN they can prompt again — the absolute
+ * reset plus, when a timezone is given, an approximate countdown computed at the
+ * moment the error is built. Returns "" when no reset is present.
+ */
+function resetHint(raw: string): string {
+  // Clock form: "resets [at] 12[:30][pm] [(Europe/Madrid)]"
+  const clk = raw.match(
+    /reset(?:s|ting|ted)?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]\.?m\.?)?(?:\s*\(([^)]+)\))?/i,
+  );
+  if (clk) {
+    let h = parseInt(clk[1], 10);
+    const min = clk[2] ? parseInt(clk[2], 10) : 0;
+    const ap = clk[3] ? clk[3].toLowerCase().replace(/\./g, "") : "";
+    if (ap === "pm" && h < 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    const tz = clk[4]?.trim() ?? "";
+    const clock = `${clk[1]}${clk[2] ? `:${clk[2]}` : ""}${ap}`;
+    const remaining = tz ? minutesUntilLocalTime(h, min, tz) : null;
+    const rel =
+      remaining !== null
+        ? ` (about ${
+            remaining >= 60 ? `${Math.floor(remaining / 60)}h ${remaining % 60}m` : `${remaining}m`
+          } from when this happened)`
+        : "";
+    return ` You can prompt again when it resets at ${clock}${tz ? ` ${tz}` : ""}.${rel}`;
+  }
+  // Relative form: "resets in 2h 30m" / "try again in 45 minutes"
+  const rel = raw.match(
+    /(?:reset|try again|retry)\w*\s+in\s+(\d+)\s*(h|hours?|m|mins?|minutes?|s|secs?|seconds?)/i,
+  );
+  if (rel) {
+    const unit = /^h/i.test(rel[2]) ? "hour" : /^m/i.test(rel[2]) ? "minute" : "second";
+    return ` You can prompt again in about ${rel[1]} ${unit}${rel[1] === "1" ? "" : "s"}.`;
+  }
+  return "";
+}
+
+/**
+ * Pin down WHICH rate limit was hit — Claude Code's "session" (rolling 5-hour)
+ * limit, the weekly window, or a short-term per-minute peak — from the raw provider
+ * message, so the card states the precise cause AND when the user can prompt again
+ * (parsed from any "resets …" the provider includes). Anthropic server-side 529
+ * limiting is handled separately as `overloaded`, not here.
  */
 export function rateLimitDetail(raw: string): {
   explanation: string;
   suggestedActions: string[];
 } {
   const s = raw.toLowerCase();
-  const m = raw.match(/(?:retry|try again|reset)[^0-9]{0,12}(\d+)\s*s/i);
-  const when = m ? ` (provider says retry in ${m[1]}s)` : "";
+  const reset = resetHint(raw);
+  // Fallback only when there's no parsed reset: surface a bare "retry in Ns".
+  const retrySecs = !reset
+    ? (raw.match(/(?:retry|try again)[^0-9]{0,12}(\d+)\s*s/i)?.[1] ?? "")
+    : "";
+  const when = reset || (retrySecs ? ` (provider says retry in ${retrySecs}s)` : "");
+  const waitAction = reset
+    ? "Wait until the reset time shown above"
+    : "Wait for the window to reset — automatic retry is in progress";
+
+  // Claude Code surfaces the rolling 5-hour window as a "session limit".
+  if (/session limit|hit your session/.test(s)) {
+    return {
+      explanation: `You hit your Claude session limit — the rolling 5-hour usage window. This is your own usage, not a provider fault.${when}`,
+      suggestedActions: [waitAction, "Switch to a different auth profile temporarily"],
+    };
+  }
   if (/weekly|per week|7[\s-]?day/.test(s)) {
     return {
-      explanation: `You hit the Claude subscription's WEEKLY usage limit${when}. This is your own usage and it clears at the next weekly reset.`,
-      suggestedActions: [
-        "Wait for the weekly window to reset",
-        "Switch to a different auth profile temporarily",
-      ],
+      explanation: `You hit the Claude subscription's WEEKLY usage limit. This is your own usage and it clears at the next weekly reset.${when}`,
+      suggestedActions: [waitAction, "Switch to a different auth profile temporarily"],
     };
   }
   if (/5[\s-]?hour|\b5h\b|five[\s-]?hour/.test(s)) {
     return {
-      explanation: `You hit the Claude subscription's rolling 5-HOUR usage limit${when}. This is your own usage and it clears at the next 5-hour reset.`,
-      suggestedActions: [
-        "Wait for the 5-hour window to reset",
-        "Switch to a different auth profile temporarily",
-      ],
+      explanation: `You hit the Claude subscription's rolling 5-HOUR usage limit. This is your own usage and it clears at the next 5-hour reset.${when}`,
+      suggestedActions: [waitAction, "Switch to a different auth profile temporarily"],
     };
   }
   if (/per minute|requests per|tokens per|too many requests|\b429\b/.test(s)) {
     return {
-      explanation: `Short-term PEAK rate limit${when}: too many requests or tokens per minute. This is a burst limit (your peak consumption, not your overall 5-hour or weekly quota) and clears within about a minute.`,
+      explanation: `Short-term PEAK rate limit: too many requests or tokens per minute. This is a burst limit (your peak consumption, not your overall 5-hour or weekly quota) and clears within about a minute.${when}`,
       suggestedActions: [
         "Wait ~60s — automatic retry is in progress",
         "Reduce concurrent requests if this keeps happening",
@@ -434,11 +512,8 @@ export function rateLimitDetail(raw: string): {
     };
   }
   return {
-    explanation: `The provider is rate-limiting requests${when}. The exact window (5-hour, weekly, or short-term peak) wasn't named in the error; it usually clears on its own.`,
-    suggestedActions: [
-      "Wait for the limit to reset — automatic retry is in progress",
-      "Switch to a different auth profile temporarily",
-    ],
+    explanation: `The provider is rate-limiting requests. The exact window (5-hour, weekly, or short-term peak) wasn't named in the error; it usually clears on its own.${when}`,
+    suggestedActions: [waitAction, "Switch to a different auth profile temporarily"],
   };
 }
 
