@@ -93,6 +93,11 @@ export const PrefrontalKitRunParamsSchema = Type.Object(
     // (done rows skipped) instead of force-restarting at step 0. Default policy
     // (architect directive): no silent re-attach — a bare run always force-restarts.
     resume: Type.Optional(Type.Boolean()),
+    // BROCA P1.1 (2026-06-07, ask-for-missing / Seam 5 Wiring-B): opt INTO the
+    // runner's durable-pause branch for an unmet required param. Additive +
+    // default-absent ⇒ false → the SHIPPED missing-var clear-fail is byte-identical
+    // unless the caller explicitly asks for the durable ask loopback.
+    askIfMissing: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
