@@ -97,6 +97,18 @@ const GW_WS = import.meta.env.DEV
   : `ws${window.location.protocol === "https:" ? "s" : ""}://${window.location.host}`;
 const BASE = import.meta.env.BASE_URL ?? "/";
 
+// FORK 2026-06-07 — auto full-reload on any dev HMR update. This app renders once at
+// import time with no granular hot-accept, so a Vite hot-swap replaces the module but
+// never re-paints the DOM — which is why structural UI edits looked "stuck" until a
+// manual hard refresh. Self-accepting with location.reload() makes dev edits actually
+// appear live, matching the "dev server loads code directly" expectation. Dev-only:
+// import.meta.hot is undefined (and this block stripped) in the production build.
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    location.reload();
+  });
+}
+
 let ws: WebSocket | null = null;
 let connected = false;
 let pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
@@ -1148,7 +1160,11 @@ function viewedSessionBusy(): boolean {
 // prefrontal, so the panel ignored the toggle and went stale. The setter
 // syncs BOTH switches' chrome and re-renders BOTH panels so they can never
 // disagree and neither toggle is dead.
-const SCOPE_TOGGLE_IDS = ["budget-scope-toggle", "prefrontal-scope-toggle"];
+const SCOPE_TOGGLE_IDS = [
+  "budget-scope-toggle",
+  "prefrontal-scope-toggle",
+  "amygdala-scope-toggle",
+];
 function syncScopeToggleChrome(): void {
   for (const id of SCOPE_TOGGLE_IDS) {
     const toggle = document.getElementById(id);
@@ -1174,6 +1190,8 @@ function setBudgetScope(next: "session" | "all"): void {
   syncScopeToggleChrome();
   updateBudgetPanel();
   updatePrefrontalTree();
+  if (budgetScope === "all") void fetchAmygdalaAll();
+  else renderAmygdalaPanel();
 }
 
 let tabs: Tab[] = [];
@@ -1496,6 +1514,73 @@ function archiveDraft(tabId: string, text: string): void {
     /* quota / disabled storage — ignore */
   }
 }
+// FORK 2026-06-07 — task-editor draft persistence. An HMR auto-refresh (an agent touching ANY
+// UI file) reloads the page and wipes an in-progress inline task edit. Persist each field per
+// (taskId, field) to localStorage, seed the editor on open, clear on a confirmed save, and
+// auto-reopen the pending edit after a refresh — same idea as the chat composer draft.
+const TASK_DRAFT_PREFIX = "tinker-taskdraft:";
+function taskDraftKey(taskId: string, field: string): string {
+  return `${TASK_DRAFT_PREFIX}${taskId}:${field}`;
+}
+function saveTaskDraft(taskId: string, field: string, value: string): void {
+  try {
+    if (value && value.length) localStorage.setItem(taskDraftKey(taskId, field), value);
+    else localStorage.removeItem(taskDraftKey(taskId, field));
+  } catch {
+    /* ignore */
+  }
+}
+function loadTaskDraft(taskId: string, field: string): string | null {
+  try {
+    return localStorage.getItem(taskDraftKey(taskId, field));
+  } catch {
+    return null;
+  }
+}
+function clearTaskDraft(taskId: string, field: string): void {
+  try {
+    localStorage.removeItem(taskDraftKey(taskId, field));
+  } catch {
+    /* ignore */
+  }
+}
+/** The single most-recent pending task-edit draft (one in-flight edit is the common case), or null. */
+function pendingTaskDraft(): { taskId: string; field: string; value: string } | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(TASK_DRAFT_PREFIX)) continue;
+      const rest = k.slice(TASK_DRAFT_PREFIX.length);
+      const idx = rest.lastIndexOf(":");
+      if (idx <= 0) continue;
+      return {
+        taskId: rest.slice(0, idx),
+        field: rest.slice(idx + 1),
+        value: localStorage.getItem(k) || "",
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+// One delegated listener persists EVERY keystroke in the inline task-name (.exec-task-title-edit)
+// and task-description (.exec-task-context-edit) editors — both carry dataset.taskId — so an HMR
+// refresh can never lose an in-progress task edit. (Seed-on-open + auto-reopen live in the editors
+// and loadExecTasks below.)
+document.addEventListener(
+  "input",
+  (ev) => {
+    const el = ev.target as HTMLElement | null;
+    const tid = (el as HTMLInputElement | HTMLTextAreaElement | null)?.dataset?.taskId;
+    if (!el || !tid) return;
+    if (el.classList.contains("exec-task-title-edit"))
+      saveTaskDraft(tid, "text", (el as HTMLInputElement).value);
+    else if (el.classList.contains("exec-task-context-edit"))
+      saveTaskDraft(tid, "context", (el as HTMLTextAreaElement).value);
+  },
+  true,
+);
 /** Clear a tab's persisted draft. ONLY call on a CONFIRMED send — a failed send MUST keep the draft.
  *  Archives the cleared text into the recent-drafts ring first, so even a sent draft stays recoverable. */
 function clearDraftFor(tabId: string): void {
@@ -1967,6 +2052,78 @@ function gwConnect() {
   });
 }
 
+// FORK 2026-06-07 — AMYGDALA live panel: stream gate decisions into the right rail
+// (the learned-intuition plugin broadcasts one `amygdala-decision` per tool call).
+interface AmygdalaLiveDecision {
+  phase?: string;
+  ts?: number;
+  tool?: string;
+  target?: string;
+  decision?: string;
+  blocked?: boolean;
+  enforced?: boolean;
+  reason?: string;
+  mode?: string;
+  prudence?: number;
+  disagreement?: number;
+}
+const amygdalaLive: AmygdalaLiveDecision[] = [];
+let amygdalaAll: AmygdalaLiveDecision[] = [];
+function pushAmygdalaDecision(d: AmygdalaLiveDecision): void {
+  amygdalaLive.unshift({ ...d, ts: d.ts ?? Date.now() });
+  if (amygdalaLive.length > 60) amygdalaLive.pop();
+  if (budgetScope !== "all") renderAmygdalaPanel();
+}
+async function fetchAmygdalaAll(): Promise<void> {
+  try {
+    const f = await req<{ decisions?: AmygdalaLiveDecision[] }>("amygdala.feed", {});
+    amygdalaAll = f.decisions ?? [];
+  } catch {
+    /* keep stale */
+  }
+  renderAmygdalaPanel();
+}
+function renderAmygdalaPanel(): void {
+  const body = document.getElementById("amygdala-body");
+  if (!body) return;
+  const list = budgetScope === "all" ? amygdalaAll : amygdalaLive;
+  const count = document.getElementById("amygdala-count");
+  if (count) count.textContent = list.length ? String(list.length) : "";
+  if (!list.length) {
+    body.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px">${budgetScope === "all" ? "No gate decisions recorded yet." : "Idle — gate decisions stream here live as the agent runs tools."}</div>`;
+    return;
+  }
+  body.innerHTML = list
+    .map((d) => {
+      const col =
+        d.enforced || d.decision === "hard_block"
+          ? "var(--red)"
+          : d.decision === "soft_block"
+            ? "#f59e0b"
+            : "#4ade80";
+      const verb = d.enforced
+        ? "BLOCKED"
+        : d.decision === "hard_block"
+          ? "would block"
+          : d.decision === "soft_block"
+            ? "would flag"
+            : "allowed";
+      const meta = `${d.mode ?? ""}${typeof d.prudence === "number" ? ` · p=${d.prudence.toFixed(2)}` : ""}`;
+      const t = d.ts ? new Date(d.ts).toLocaleTimeString() : "";
+      return `<div style="border:1px solid rgba(255,255,255,0.07);border-left:3px solid ${col};border-radius:8px;padding:6px 9px;margin:5px 6px;background:rgba(0,0,0,0.28)">
+        <div style="display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;font-size:11px">
+          <b style="color:${col}">${verb}</b>
+          <span style="font-family:monospace">${escapeHtml(d.tool ?? "?")}</span>
+          <span style="font-family:monospace;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.target ?? "")}</span>
+          <span style="margin-left:auto;color:var(--muted)">${escapeHtml(meta)}</span>
+          <span style="color:var(--muted)">${t}</span>
+        </div>
+        ${d.reason ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(d.reason)}</div>` : ""}
+      </div>`;
+    })
+    .join("");
+}
+
 function onFrame(f: unknown) {
   if (f.type === "event") {
     if (f.event === "connect.challenge") {
@@ -2174,7 +2331,11 @@ function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
         };
       };
       void req("debug.dumpUiSnapshot", {
-        html: messagesEl.outerHTML,
+        html:
+          "<!--SNAPVER:amy-panel-2026-06-07d-->" +
+          (document.querySelector(".right-panels")?.outerHTML ?? "<!--NO-RIGHT-PANELS-->") +
+          "\n<!--CHAT-AREA-->\n" +
+          messagesEl.outerHTML,
         url: location.href,
         viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
         computedStyles: {
@@ -3184,6 +3345,12 @@ function onEvent(evt: unknown) {
         currentPlan,
       );
       updatePrefrontalTree();
+    }
+
+    // FORK 2026-06-07 — AMYGDALA live: the learned-intuition plugin broadcasts a
+    // gate decision per tool call; stream it into the right-rail Amygdala panel.
+    if (p?.stream === "lifecycle" && p.data?.phase === "amygdala-decision") {
+      pushAmygdalaDecision(p.data as AmygdalaLiveDecision);
     }
 
     // FORK 2026-04-20: Jarvis publishes a discrete trail event via
@@ -7913,7 +8080,6 @@ function init() {
       <button class="nav-btn" data-tab="debug" data-hint="Debug"><svg viewBox="0 0 24 24" style="stroke:#f87171"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3 3 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg></button>
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
       <button class="nav-btn" data-tab="recipes" data-hint="Recipes"><svg viewBox="0 0 24 24" style="stroke:#d4a574"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="12" y1="17" y2="17"/><line x1="8" x2="10" y1="9" y2="9"/></svg></button>
-      <button class="nav-btn" data-tab="amygdala" data-hint="Amygdala"><svg viewBox="0 0 24 24" style="stroke:#f472b6"><circle cx="12" cy="12" r="2.5"/><path d="M12 3a4 4 0 0 0-4 4c-2 0-3.2 1.5-3.2 3.4 0 1.4.8 2.5 1.9 3"/><path d="M12 3a4 4 0 0 1 4 4c2 0 3.2 1.5 3.2 3.4 0 1.4-.8 2.5-1.9 3"/><path d="M6.7 13.4C5.4 13.8 4.5 15 4.5 16.5c0 2 1.7 3.5 4 3.5 1.9 0 3.5-1.2 3.5-3"/><path d="M17.3 13.4c1.3.4 2.2 1.6 2.2 3.1 0 2-1.7 3.5-4 3.5-1.9 0-3.5-1.2-3.5-3"/></svg></button>
     </nav>
     <div class="topbar">
       <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=4" alt="T" style="height:76px;width:auto" onmouseenter="this.src='${BASE}icon-neon.png?v=1'" onmouseleave="this.src='${BASE}icon.png?v=4'"><img src="${BASE}icon-neon.png?v=1" style="display:none" aria-hidden="true"></div>
@@ -8000,6 +8166,16 @@ function init() {
         </div>
         <div id="prefrontal-graph" class="rpanel-body prefrontal-graph-container"></div>
         <div id="recipe-progress" class="recipe-progress-container" style="display:none"></div>
+      </div>
+      <div class="rpanel" id="amygdala-panel">
+        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span>
+          <span class="ct-switch" id="amygdala-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
+            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label" data-scope="all">All</span>
+          </span>
+        </div>
+        <div id="amygdala-body" class="rpanel-body"><div style="color:var(--muted);font-size:12px;padding:8px">Idle — gate decisions stream here live as the agent runs tools.</div></div>
       </div>
     </div>
     <div class="context-timeline" id="context-timeline"></div>
@@ -9626,7 +9802,7 @@ function init() {
     const input = document.createElement("input");
     input.type = "text";
     input.className = "exec-task-title-edit";
-    input.value = current;
+    input.value = loadTaskDraft(taskId, "text") ?? current;
     input.dataset.taskId = taskId;
     if (wasFulltitle) input.dataset.fulltitle = "1";
     labelEl.replaceWith(input);
@@ -9637,6 +9813,7 @@ function init() {
     const restore = () => {
       if (resolved) return;
       resolved = true;
+      clearTaskDraft(taskId, "text"); // explicit cancel / no-op edit — discard the persisted draft
       const span = document.createElement("span");
       if (wasFulltitle) {
         span.className = "exec-task-fulltitle-text";
@@ -9707,7 +9884,7 @@ function init() {
     const priorHeight = Math.max(80, ctxEl.offsetHeight);
     const textarea = document.createElement("textarea");
     textarea.className = "exec-task-context-edit";
-    textarea.value = current;
+    textarea.value = loadTaskDraft(taskId, "context") ?? current;
     textarea.dataset.taskId = taskId;
     textarea.style.height = `${priorHeight}px`;
     // Hide the pencil while editing — restored by the next render on save.
@@ -9729,6 +9906,7 @@ function init() {
     const restore = () => {
       if (resolved) return;
       resolved = true;
+      clearTaskDraft(taskId, "context"); // explicit cancel / no-op edit — discard the persisted draft
       // Trigger a re-render so the markdown body comes back intact. Cheaper
       // than reconstructing the rendered HTML inline.
       void loadExecTasks();
@@ -9933,6 +10111,36 @@ function init() {
     input.addEventListener("pointerdown", (ev) => ev.stopPropagation());
   }
 
+  // FORK 2026-06-07 — after a render, re-open the single pending inline task edit (rename or
+  // description) so an HMR auto-refresh restores what the user was typing. A draft that already
+  // matches the stored task (the edit was saved) is cleared, not reopened.
+  function restorePendingTaskEdits(): void {
+    const p = pendingTaskDraft();
+    if (!p) return;
+    const t = execLastTasks.find((x) => x.id === p.taskId);
+    if (t) {
+      const cur = p.field === "context" ? (t.context_md ?? "") : t.text;
+      if (p.value.trim() === (cur ?? "").trim()) {
+        clearTaskDraft(p.taskId, p.field); // already saved → nothing to restore
+        return;
+      }
+    }
+    const row = document.querySelector(
+      `.exec-task[data-task-id="${p.taskId}"]`,
+    ) as HTMLElement | null;
+    if (!row) return; // task not currently visible (filtered / collapsed group) — keep the draft
+    if (p.field === "text") {
+      openInlineTaskTitleEdit(row, p.taskId);
+    } else if (p.field === "context") {
+      if (execExpandedId !== p.taskId) {
+        execExpandedId = p.taskId; // the description editor lives in the drawer — expand, then re-run
+        void loadExecTasks();
+      } else {
+        openInlineTaskContextEdit(row, p.taskId);
+      }
+    }
+  }
+
   async function loadExecTasks(): Promise<void> {
     const panel = ensureExecPanel();
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
@@ -10082,6 +10290,11 @@ function init() {
       }
       // Today's busy % chip — independent fetch, doesn't block render
       void loadExecBusyChip();
+      try {
+        restorePendingTaskEdits();
+      } catch {
+        /* auto-reopen is best-effort — the draft stays in localStorage regardless */
+      }
     } catch (err) {
       // FORK 2026-05-11 — distinguish transient "WS not connected yet" from
       // real errors. The req() helper rejects with literal "disconnected"
@@ -12368,9 +12581,6 @@ function init() {
         case "recipes":
           await renderRecipesTab(body, sub);
           break;
-        case "amygdala":
-          await renderAmygdalaTab(body, sub);
-          break;
         case "recipe-detail":
           await renderRecipeDetail(body, sub);
           break;
@@ -14010,7 +14220,7 @@ function init() {
       // of hanging the panel on "Loading…" forever.
       feed = await Promise.race([
         req<AmygdalaFeed>("amygdala.feed", {}),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 15000)),
       ]);
     } catch {
       sub.textContent = "amygdala";
