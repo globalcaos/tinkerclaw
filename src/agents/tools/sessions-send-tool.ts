@@ -45,6 +45,17 @@ const SessionsSendToolSchema = Type.Object({
 type GatewayCaller = typeof callGateway;
 const SESSIONS_SEND_REPLY_HISTORY_LIMIT = 50;
 
+// Marker prepended to messages delivered into the INTERNAL Tinker-UI chat so the
+// UI can render agent-originated sends distinctly. It MUST NOT reach external
+// channels (WhatsApp/SMS/Matrix/etc.): it is applied ONLY when the outbound
+// channel is INTERNAL_MESSAGE_CHANNEL, and never to the shared `message` value
+// that the A2A announce flow can forward verbatim to a real recipient.
+const AGENT_MESSAGE_MARKER = "⟦AGENT⟧ ";
+
+function markInternalAgentMessage(text: string, channel: GatewayMessageChannel): string {
+  return channel === INTERNAL_MESSAGE_CHANNEL ? `${AGENT_MESSAGE_MARKER}${text}` : text;
+}
+
 async function startAgentRun(params: {
   callGateway: GatewayCaller;
   runId: string;
@@ -272,8 +283,13 @@ export function createSessionsSendTool(opts?: {
         requesterChannel: opts?.agentChannel,
         targetSessionKey: displayKey,
       });
+      // This send always targets the INTERNAL Tinker-UI chat (channel below is
+      // INTERNAL_MESSAGE_CHANNEL, deliver:false). Mark the copy used for THIS
+      // send only; the shared `message` is reused by the A2A announce path,
+      // which can deliver to a real external recipient, so it stays unmarked.
+      const outboundMessage = markInternalAgentMessage(message, INTERNAL_MESSAGE_CHANNEL);
       const sendParams = {
-        message,
+        message: outboundMessage,
         sessionKey: resolvedKey,
         idempotencyKey,
         deliver: false,
