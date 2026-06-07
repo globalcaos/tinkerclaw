@@ -301,6 +301,12 @@ export interface RecipeRunResult {
   results?: StepResult[];
   /** SS2a: the value carried by a `return:`/`done:` early-exit (the exiting step's output). */
   returnValue?: unknown;
+  /**
+   * SS-params (2026-06-07): the structured classification of a seed-time failure
+   * (e.g. the `missing-var` clear-fail). Additive — present only on the failing
+   * paths that classify their error; `errorMessage` remains the human surface.
+   */
+  error?: ClassifiedError;
 }
 
 export interface StepResult {
@@ -887,6 +893,30 @@ export function checkParamRefs(
   return errors;
 }
 
+/**
+ * SS-params (2026-06-07): the clear-fail backstop. AFTER the RPC-ingress precedence
+ * merge + validateParams have produced the RESOLVED param map, any declared param
+ * still flagged `required:true` with no resolved value (undefined OR empty string)
+ * is a hard `missing-var`. Returns one {name,prompt} per missing var so the runner
+ * can FAIL CLEARLY (list every name + its prompt + how to set it) — it never blocks
+ * and waits (the interactive ask-loop is a separate follow-up). The `prompt` is the
+ * param's `description` (a public-safe name/prompt — never a value, of which there is
+ * none), falling back to a generic `value for "<name>"`.
+ */
+export function checkRequiredVars(
+  decls: Record<string, RecipeParamSpec> | undefined,
+  resolved: Record<string, string>,
+): { name: string; prompt: string }[] {
+  if (!decls) return [];
+  const missing: { name: string; prompt: string }[] = [];
+  for (const [name, d] of Object.entries(decls)) {
+    if (d.required && (resolved[name] === undefined || resolved[name] === "")) {
+      missing.push({ name, prompt: d.description ?? `value for "${name}"` });
+    }
+  }
+  return missing;
+}
+
 // ─── Parameter substitution ───────────────────────────────────────────────────
 
 function substituteParameters(text: string, params: Record<string, string>): string {
@@ -1455,6 +1485,27 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
 
   // Build dispatch plan (used for both dryRun output and live dispatch)
   const params = opts.parameters ?? {};
+
+  // SS-params (2026-06-07): clear-fail backstop. `params` here is the RESOLVED map
+  // (RPC ingress already ran the precedence merge + validateParams). If a declared
+  // `required:true` param STILL has no value, fail CLEARLY here — before any step
+  // is dispatched (no spawn, no plan seed) — listing every missing name + prompt +
+  // how to supply it. No ask/wait (the interactive round-trip is a separate P1.1).
+  const missingVars = checkRequiredVars(declaredParams, params);
+  if (missingVars.length > 0) {
+    const list = missingVars.map((m) => `${m.name} — ${m.prompt}`).join("; ");
+    return {
+      ok: false,
+      planId: "",
+      errorMessage:
+        `recipe-runner: missing required variable(s): ${list}. ` +
+        `Set them with \`openclaw recipe set-var ${opts.kitRef} <name> <value>\` ` +
+        `(values stay private in ~/.openclaw/recipe-vars.json).`,
+      error: classifyError("missing-var", `missing required variable(s): ${list}`, {
+        missingVars,
+      }),
+    };
+  }
   const dispatchGroups: StepDispatch[][] = groups.map((groupIndices) =>
     groupIndices.map((idx) => {
       const step = kit.steps[idx];

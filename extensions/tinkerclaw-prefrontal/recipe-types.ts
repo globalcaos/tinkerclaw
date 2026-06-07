@@ -173,6 +173,7 @@ export type ErrorKind =
   | "guard-eval-error"
   | "sub-kit-failure"
   | "map-filter-resolution"
+  | "missing-var"
   | "depth-limit"
   | "skill-not-found"
   | "recovery-exhausted"
@@ -202,6 +203,10 @@ export interface ClassifiedError {
  * `recoverable:false` to classifyError, so a bare execution-error there stays terminal
  * while a classified step-failure remains retryable. Hard limits (budget-exceeded,
  * guard-eval-error, depth-limit, skill-not-found, map-filter-resolution) are futile → excluded.
+ *
+ * `missing-var` (a required recipe param/var had no resolved value) is DELIBERATELY
+ * excluded too: a retry cannot conjure a value the caller never supplied — the only
+ * remedy is to set it (it fails CLEARLY, it does not block-and-wait).
  */
 const RECOVERABLE_KINDS: ReadonlySet<ErrorKind> = new Set<ErrorKind>([
   "schema-mismatch",
