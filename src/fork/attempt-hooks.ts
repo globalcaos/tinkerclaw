@@ -1148,17 +1148,17 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * FRACTAL SECOND PASS: After every agent response, enqueue a system event
- * that triggers a mandatory fractal reflection cycle.
+ * ⚠️ DEAD (v3) — SUPERSEDED by the `tinkerclaw-fractal-reflection` plugin (v4, gated by
+ * `fork.cognitive.fractal="extension"`). This in-process injector no longer fires: the inline
+ * caller was removed as dead code (see the "FRACTAL REFLECTION v4 — moved to the plugin" note
+ * earlier in this file, ~line 879). Kept only for git-history reference.
  *
- * v3 (2026-03-28): Fixed the race condition from v1/v2.
- * - v1: Used `openclaw system event` CLI → raced with user messages (swallowed)
- * - v2: Disabled entirely → fractal became an inline prompt suggestion (unreliable)
- * - v3: Uses in-process enqueueSystemEvent() + requestHeartbeatNow()
- *        The system event queue is FIFO — fractal fires before pending user messages.
- *        Infinite loop prevention via session type check.
+ * ➡️ The LIVE fractal prompt is `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md` —
+ *    edit THERE. `src/fork/fractal-prompt.md` is now just a MOVED-pointer stub.
  *
- * The fractal prompt lives in src/fork/fractal-prompt.md for easy editing.
+ * Historical v3 (2026-03-28): in-process enqueueSystemEvent() + requestHeartbeatNow(); FIFO
+ * system-event queue so fractal fired before pending user messages; loop-prevention via session
+ * type check. (v1: `openclaw system event` CLI raced with user messages; v2: disabled.)
  */
 
 let _fractalPromptCache: string | null = null;
