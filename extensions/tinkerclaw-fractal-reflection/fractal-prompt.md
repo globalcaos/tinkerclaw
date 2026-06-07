@@ -141,6 +141,10 @@ If the task was trivial (one tool call, one response): write _"No recipe needed.
 
 Why: every hard-won operational insight gets encoded, so the next time the situation arises — even in a different session — the structured path is already there.
 
+### 6b. ORCA — did you edit independent files SERIALLY when you should have parallelized?
+
+If this turn changed 2+ files whose edits are INDEPENDENT (disjoint), the default is **ORCA** (the parallel multi-agent coding orchestrator), not hand-editing them one at a time. ORCA drafts each unit's patch in parallel, applies per-file-serialized (disjoint files concurrent; shared files lease-serialized + auto-re-derived), and commits each unit cleanly without ever sweeping a parallel session's uncommitted WIP. The rule: **independent files → ORCA by default; one file, or tightly-coupled edits to a single file → a direct edit is correct** (say _"ORCA not applicable."_). If you serial-edited independent files this turn, name it as a miss and use ORCA next time. Invoke: `Workflow` with `scriptPath: docs/superpowers/parallel-implement.workflow.js`, `args:{repoRoot, units:[{id,task,writes:[paths]}], worktreePerAgent?}`. See the `orca` skill + bible `subagents-and-recipes.md`.
+
 ### 7. PREEMPT — have you done this same action before? Encode the trigger
 
 If you performed an action this turn that you have done two or more times (in session or across sessions), this is a compounding opportunity:
