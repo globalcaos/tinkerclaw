@@ -1227,14 +1227,15 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         // OVERSEER keep-going wire: when the overseer loop decides the run isn't
         // done, re-prompt the (possibly idle) parent session to drive Jarvis
         // onward. Same loopback callGateway + fire-and-forget pattern as the sinks
-        // above — a stalled re-prompt never blocks or fails the run. Crucially the
-        // message is NOT prefixed with the ⟦OVERSEER⟧ marker, so it renders as a
-        // right-anchored USER bubble (the nudge that actually advances the agent)
-        // rather than an amber overseer aside.
+        // above — a stalled re-prompt never blocks or fails the run. The message
+        // IS prefixed with the ⟦OVERSEER⟧ marker so it renders as the electric-blue
+        // right-anchored Overseer bubble. This targets the run's own internal
+        // session (the Tinker-UI chat), so marking it is safe and the
+        // fire-and-forget contract is unchanged.
         onKeepGoing: (sessionKey, message) => {
           void callGateway({
             method: "sessions.send",
-            params: { key: sessionKey, message },
+            params: { key: sessionKey, message: `⟦OVERSEER⟧ ${message}` },
           }).catch(() => {});
         },
       });
