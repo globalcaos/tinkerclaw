@@ -167,6 +167,10 @@ verify:
     cmd: grep -Fq '"missing-var"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts && grep -Fq 'export function checkRequiredVars' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: P0 SS5b spawn-flag fix — the spawn CLI forwards allow-tools/max-tokens/max-tool-calls so enforcement reaches the recipe spawn path
     cmd: grep -Fq 'allow-tools' ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs && grep -Fq 'max-tool-calls' ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
+  - name: BROCA CONTEXT+MEMORY resolution tiers — recipe.run resolves still-unresolved vars from conversation context then engram BEFORE any ask (resolve-before-asking; J16-derived timeouts; run-scoped)
+    cmd: grep -Fq '"context"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-var-store.ts && grep -Fq '"memory"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-var-store.ts && grep -Fq 'export function deriveContextTimeoutMs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-context.ts && grep -Fq 'fork.memory.search' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-memory.ts && grep -Fq 'export async function resolveContextMemoryTiers' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-tiers.ts && grep -Fq 'resolveContextMemoryTiers' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts
+  - name: CONTEXT/MEMORY tiers NEVER auto-resolve a secret var — secret-skip guard present (an inferred credential is a hint, not ground truth → falls through to the confirmed ask)
+    cmd: grep -Fq 'secret === true' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-tiers.ts
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
