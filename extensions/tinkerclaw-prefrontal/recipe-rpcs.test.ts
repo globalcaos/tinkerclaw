@@ -740,6 +740,98 @@ describe("recipe-rpcs", () => {
     }
   });
 
+  // ─── BROCA P1.1 ASK-FOR-MISSING WIRING (Seam 5 Wiring-B) ─────────────────────────
+  // recipe.run must arm the runner's durable-pause branch (interactiveMode +
+  // onAskVar loopback + injected resolver) ONLY when askIfMissing:true; absent ⇒
+  // interactiveMode:false and NO onAskVar/_askResolver so the shipped clear-fail is
+  // byte-identical. These tests capture the opts handed to runRecipe.
+
+  it("prefrontal.recipe.run arms interactiveMode + a missing-var onAskVar loopback when askIfMissing:true", async () => {
+    let captured: kitRunner.RecipeRunOptions | undefined;
+    const runKitSpy = vi
+      .spyOn(kitRunner, "runRecipe")
+      .mockImplementation(async (opts: kitRunner.RecipeRunOptions) => {
+        captured = opts;
+        return { ok: true, planId: "test-plan", results: [] };
+      });
+    callGatewaySpy.mockClear();
+    try {
+      const rpcs = createRecipeRpcs({
+        store,
+        baseUrl: "https://www.journeykits.ai",
+        apiKey: null,
+        recipeInstallSandbox: store.rootDirPublic(),
+        ownRecipesDir,
+        planStore: {} as never,
+      });
+      await rpcs["prefrontal.recipe.run"]({
+        kitRef: "globalcaos/debug",
+        sessionKey: "agent:main:main",
+        intent: "debug it",
+        askIfMissing: true,
+      });
+
+      expect(runKitSpy).toHaveBeenCalled();
+      expect(captured?.interactiveMode).toBe(true);
+      expect(typeof captured?.onAskVar).toBe("function");
+      expect(typeof captured?._askResolver).toBe("function");
+
+      // Firing the onAskVar sink forwards a missing-var trailEvent (names + prompts only).
+      callGatewaySpy.mockClear();
+      captured!.onAskVar!({
+        sessionKey: "agent:main:main",
+        kitRef: "globalcaos/debug",
+        missingVars: [{ name: "target", prompt: "which repo?" }],
+      });
+      const askCall = callGatewaySpy.mock.calls.find(
+        (c) =>
+          (c[0] as { method?: string })?.method === "fork.prefrontal.trailEvent" &&
+          ((c[0] as { params?: { kind?: string } })?.params?.kind ?? "") === "missing-var",
+      );
+      expect(askCall).toBeTruthy();
+      const params = (askCall![0] as { params?: Record<string, unknown> }).params!;
+      expect(params.label).toBe("globalcaos/debug:ask");
+      expect(String(params.message)).toContain("target — which repo?");
+      const payload = params.payload as { recipeId?: string; missingVars?: unknown[] };
+      expect(payload.recipeId).toBe("globalcaos/debug");
+      expect(payload.missingVars).toHaveLength(1);
+    } finally {
+      runKitSpy.mockRestore();
+    }
+  });
+
+  it("prefrontal.recipe.run leaves interactiveMode false and omits onAskVar/_askResolver without the flag", async () => {
+    let captured: kitRunner.RecipeRunOptions | undefined;
+    const runKitSpy = vi
+      .spyOn(kitRunner, "runRecipe")
+      .mockImplementation(async (opts: kitRunner.RecipeRunOptions) => {
+        captured = opts;
+        return { ok: true, planId: "test-plan", results: [] };
+      });
+    try {
+      const rpcs = createRecipeRpcs({
+        store,
+        baseUrl: "https://www.journeykits.ai",
+        apiKey: null,
+        recipeInstallSandbox: store.rootDirPublic(),
+        ownRecipesDir,
+        planStore: {} as never,
+      });
+      await rpcs["prefrontal.recipe.run"]({
+        kitRef: "globalcaos/debug",
+        sessionKey: "agent:main:main",
+        intent: "debug it",
+      });
+
+      expect(runKitSpy).toHaveBeenCalled();
+      expect(captured?.interactiveMode).toBe(false);
+      expect(captured?.onAskVar).toBeUndefined();
+      expect(captured?._askResolver).toBeUndefined();
+    } finally {
+      runKitSpy.mockRestore();
+    }
+  });
+
   describe("prefrontal.recipe.compose (SS3)", () => {
     it("mechanically composes a recipe of invoke skill: steps from search hits", async () => {
       // stub fork.skill.search (the handler's only callGateway call)

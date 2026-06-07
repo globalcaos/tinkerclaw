@@ -49,6 +49,7 @@ import {
   isApplyEnabled,
   type ApplyProposalInput,
 } from "./recipe-apply.js";
+import { makeAskResolver } from "./recipe-ask-resolver.js";
 import {
   buildRecipeMd,
   validateRecipeSpec,
@@ -1176,6 +1177,47 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         }).catch(() => {});
       }
 
+      // BROCA P1.1 (2026-06-07, ask-for-missing / Seam 5 Wiring-B): when the caller
+      // opts in with askIfMissing:true, arm the runner's durable-pause branch — set
+      // interactiveMode, wire a fire-and-forget onAskVar loopback (names + prompts
+      // ONLY, never a value) that surfaces the missing-var prompt(s) to the operator,
+      // and inject the durable resolver that owns the chat.history poll + VarStore
+      // persist (so the runner stays gateway-decoupled). When the flag is ABSENT we
+      // pass ONLY interactiveMode:false and omit onAskVar/_askResolver, so the SHIPPED
+      // missing-var clear-fail is byte-identical. Spread into BOTH the dry-run and the
+      // live runRecipe opts. (The resolver reuses the same varStore + declaredParams
+      // already resolved at ingress.)
+      const askWiring = {
+        interactiveMode: p.askIfMissing === true,
+        ...(p.askIfMissing === true
+          ? {
+              onAskVar: (ev: {
+                sessionKey: string;
+                kitRef: string;
+                missingVars: { name: string; prompt: string }[];
+              }) => {
+                void callGateway({
+                  method: "fork.prefrontal.trailEvent",
+                  params: {
+                    kind: "missing-var",
+                    label: `${ev.kitRef}:ask`,
+                    message: `Recipe needs: ${ev.missingVars
+                      .map((m) => `${m.name} — ${m.prompt}`)
+                      .join("; ")}. Reply with each value.`,
+                    sessionKey: ev.sessionKey,
+                    payload: { recipeId: ev.kitRef, missingVars: ev.missingVars },
+                  },
+                }).catch(() => {});
+              },
+              _askResolver: makeAskResolver({
+                callGateway: (args) => callGateway(args as Parameters<typeof callGateway>[0]),
+                varStore,
+                declaredParams,
+              }),
+            }
+          : {}),
+      };
+
       if (p.dryRun) {
         // Dry-run: return the dispatch plan without spawning anything.
         const result = await runRecipe({
@@ -1188,6 +1230,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
           recipeInstallSandbox: deps.recipeInstallSandbox,
           skillLibrary,
           fitnessSuccessRate,
+          ...askWiring,
         });
         return {
           ok: result.ok,
@@ -1216,6 +1259,11 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         recipeInstallSandbox: deps.recipeInstallSandbox,
         skillLibrary,
         fitnessSuccessRate,
+        // BROCA P1.1 (2026-06-07, ask-for-missing / Seam 5 Wiring-B): the same
+        // interactiveMode/onAskVar/_askResolver wiring computed once above — armed
+        // only when askIfMissing:true (else interactiveMode:false + no sinks, so the
+        // shipped clear-fail is byte-identical).
+        ...askWiring,
         // FORK 2026-05-30 (Upgrade 5): durable checkpointing. Auto-resume an
         // interrupted in_progress plan only when resume:true is explicitly passed
         // (no silent re-attach — the architect's policy). `resume` is now part of
