@@ -18,6 +18,7 @@
  *   openclaw-spawn-subagent --task "Research X" [--model claude-code/claude-opus-4-7]
  *     [--label short-name] [--parent agent:main:main] [--thinking medium]
  *     [--timeout 600] [--json]
+ *     [--allow-tools Read,Grep,Glob] [--max-tokens 8000] [--max-tool-calls 40]
  *
  * Environment:
  *   OPENCLAW_GATEWAY_URL     default: http://127.0.0.1:18789 (WS derived)
@@ -31,7 +32,9 @@ import { WebSocket } from "ws";
 const argv = process.argv.slice(2);
 function flag(name, fallback = undefined) {
   const i = argv.indexOf(`--${name}`);
-  if (i < 0) {return fallback;}
+  if (i < 0) {
+    return fallback;
+  }
   return argv[i + 1];
 }
 function boolFlag(name) {
@@ -50,18 +53,26 @@ const LABEL = flag("label");
 const THINKING = flag("thinking");
 const PARENT = flag("parent") ?? flag("parentSessionKey") ?? "agent:main:main";
 const TIMEOUT = flag("timeout");
+const ALLOW_TOOLS = flag("allow-tools");
+const MAX_TOKENS = flag("max-tokens") != null ? Number.parseInt(flag("max-tokens"), 10) : undefined;
+const MAX_TOOL_CALLS =
+  flag("max-tool-calls") != null ? Number.parseInt(flag("max-tool-calls"), 10) : undefined;
 const EMIT_JSON = boolFlag("json");
 const WS_URL = (process.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789")
   .replace(/^http/, "ws")
   .replace(/\/$/, "");
 
 function resolveToken() {
-  if (process.env.OPENCLAW_GATEWAY_TOKEN) {return process.env.OPENCLAW_GATEWAY_TOKEN;}
+  if (process.env.OPENCLAW_GATEWAY_TOKEN) {
+    return process.env.OPENCLAW_GATEWAY_TOKEN;
+  }
   const cfgPath = path.join(os.homedir(), ".openclaw", "openclaw.json");
   try {
     const cfg = JSON.parse(fs.readFileSync(cfgPath, "utf-8"));
     const t = cfg?.gateway?.auth?.token ?? cfg?.gateway?.controlUi?.auth?.token;
-    if (typeof t === "string" && t) {return t;}
+    if (typeof t === "string" && t) {
+      return t;
+    }
   } catch {}
   return "";
 }
@@ -104,7 +115,9 @@ const done = (code, payload) => {
   } else {
     console.error("spawn failed:", payload?.error ?? payload ?? "unknown");
   }
-  try { ws.close(); } catch {}
+  try {
+    ws.close();
+  } catch {}
   process.exit(code);
 };
 
@@ -139,6 +152,17 @@ ws.on("message", (buf) => {
           thinking: THINKING,
           parentSessionKey: PARENT,
           runTimeoutSeconds: TIMEOUT ? Number(TIMEOUT) : undefined,
+          ...(ALLOW_TOOLS
+            ? {
+                allowTools: ALLOW_TOOLS.split(",")
+                  .map((t) => t.trim())
+                  .filter(Boolean),
+              }
+            : {}),
+          ...(MAX_TOKENS != null && Number.isFinite(MAX_TOKENS) ? { maxTokens: MAX_TOKENS } : {}),
+          ...(MAX_TOOL_CALLS != null && Number.isFinite(MAX_TOOL_CALLS)
+            ? { maxToolCalls: MAX_TOOL_CALLS }
+            : {}),
         }),
       )
       .then((res) => done(res?.ok ? 0 : 1, res))
@@ -147,10 +171,15 @@ ws.on("message", (buf) => {
   }
   if (frame.type === "res") {
     const p = pending.get(frame.id);
-    if (!p) {return;}
+    if (!p) {
+      return;
+    }
     pending.delete(frame.id);
-    if (frame.ok) {p.resolve(frame.payload);}
-    else {p.reject(frame.error);}
+    if (frame.ok) {
+      p.resolve(frame.payload);
+    } else {
+      p.reject(frame.error);
+    }
   }
 });
 
