@@ -1,4 +1,8 @@
 import MarkdownIt from "markdown-it";
+// FORK 2026-06-06 — BROCA recipe visibility: shared render module for the
+// single-recipe (recipe-detail) page. renderBrocaProgram turns a parsed recipe
+// into interleaved code+prose; BrocaRecipe is the read DTO shape.
+import { renderBrocaProgram, type BrocaRecipe } from "./panels/broca.js";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
@@ -142,6 +146,15 @@ let budgetUsageData: unknown = null;
 let _forensicMode = false;
 // FORK: Active recipe step name for thinking indicator + message tags
 let activeRecipeStep: string | null = null;
+// FORK 2026-06-06 — BROCA recipe visibility: the recipe-detail page is reached
+// by clicking any .broca-recipe-link (chat banner, RECIPES panel, recipe card).
+// currentRecipeRef holds the selected recipe's slug/ref; lastRecipeList is the
+// most recent prefrontal.recipe.list result, used as a graceful-degradation
+// metadata fallback for the detail page when prefrontal.recipe.read is not yet
+// deployed. recipeRefListenerAttached guards the single delegated click wiring.
+let currentRecipeRef: string | null = null;
+let lastRecipeList: any[] = [];
+let recipeRefListenerAttached = false;
 let budgetScope: "session" | "all" = "session";
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
 
@@ -167,6 +180,11 @@ interface Tab {
   sessionKey: string | null; // null = unattached
   title: string;
   isAttached: boolean;
+  // FORK 2026-06-06 — u2-tab-naming: once a tab gets a deliberate title (manual rename OR a
+  // successful auto-name), lock it so loadSessions() never overwrites it with the server
+  // fortune-cookie phrase. Persisted to localStorage via saveTabs(), so custom/auto names
+  // survive both a hard refresh AND a gateway restart.
+  titleLocked?: boolean;
 }
 
 // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts:
@@ -922,6 +940,10 @@ function saveCurrentTabState() {
   const ta = $("chat-textarea") as HTMLTextAreaElement | null;
   if (ta) {
     s.draft = ta.value;
+    // FORK 2026-06-06: write-through the unsent draft to its per-tab
+    // localStorage slot so it survives a hard refresh regardless of which
+    // tab is active at refresh time.
+    saveDraftFor(activeTabId, ta.value);
   }
   tabStates.set(activeTabId, s);
 }
@@ -1428,7 +1450,63 @@ function restoreProviderErrors() {
 }
 const collapsedModelSections = new Set<string>(["configured"]);
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
-const DRAFT_STORAGE_KEY = "tinker-draft";
+// FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — drafts are now
+// persisted PER TAB. The old single global key `tinker-draft` meant a hard
+// refresh (which wipes the in-memory tabStates Map) restored at most ONE
+// draft and all tabs shared it. We now key by tab id: `tinker-draft:<tabId>`.
+const DRAFT_STORAGE_KEY_PREFIX = "tinker-draft:";
+/** localStorage key holding the unsent composer draft for a given tab. */
+function draftStorageKey(tabId: string): string {
+  return DRAFT_STORAGE_KEY_PREFIX + tabId;
+}
+/** Read a tab's persisted unsent draft ("" if none). */
+function loadDraftFor(tabId: string): string {
+  try {
+    return localStorage.getItem(draftStorageKey(tabId)) || "";
+  } catch {
+    return "";
+  }
+}
+/** Write-through a tab's unsent draft to localStorage (or remove it when empty). */
+function saveDraftFor(tabId: string, value: string): void {
+  try {
+    if (value) {
+      localStorage.setItem(draftStorageKey(tabId), value);
+    } else {
+      localStorage.removeItem(draftStorageKey(tabId));
+    }
+  } catch {
+    /* quota / disabled storage — ignore */
+  }
+}
+// FORK 2026-06-07 — recent-drafts ring: a capped backup of drafts so a cleared/sent draft (or one
+// about to be lost to a crash/close) stays recoverable. Inspect via localStorage["tinker-draft-history"].
+const DRAFT_HISTORY_KEY = "tinker-draft-history";
+const DRAFT_HISTORY_MAX = 30;
+function archiveDraft(tabId: string, text: string): void {
+  if (!text || !text.trim()) return;
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DRAFT_HISTORY_KEY) || "[]");
+    const arr = Array.isArray(parsed) ? parsed : [];
+    if (arr.length && arr[arr.length - 1]?.text === text) return; // dedup consecutive
+    arr.push({ tabId, text, ts: Date.now() });
+    while (arr.length > DRAFT_HISTORY_MAX) arr.shift();
+    localStorage.setItem(DRAFT_HISTORY_KEY, JSON.stringify(arr));
+  } catch {
+    /* quota / disabled storage — ignore */
+  }
+}
+/** Clear a tab's persisted draft. ONLY call on a CONFIRMED send — a failed send MUST keep the draft.
+ *  Archives the cleared text into the recent-drafts ring first, so even a sent draft stays recoverable. */
+function clearDraftFor(tabId: string): void {
+  try {
+    const cur = localStorage.getItem(draftStorageKey(tabId));
+    if (cur) archiveDraft(tabId, cur);
+    localStorage.removeItem(draftStorageKey(tabId));
+  } catch {
+    /* ignore */
+  }
+}
 // Runs restored from sessionStorage that haven't been confirmed by a lifecycle event yet
 const unconfirmedRuns = new Set<string>();
 // Pending delayed deletes for activeRuns — cancelled when a fallback model re-uses the same runId
@@ -1773,6 +1851,94 @@ function updateRecipeProgress(data: unknown) {
   document.head.appendChild(rpStyle);
 }
 
+// FORK 2026-06-06 — u2-tab-naming: subtle "renaming in progress" shimmer. While an auto-name's
+// async LLM call is running we keep the tab's CURRENT title (icon + words) visible and gently
+// pulse it, rather than swapping in a placeholder. The keyframe lives here (injected from JS, no
+// separate CSS file) and is toggled via the .tab-renaming class on the tab element.
+{
+  const tnStyle = document.createElement("style");
+  tnStyle.id = "tab-renaming-styles";
+  tnStyle.textContent = `
+    @keyframes tab-rename-pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+    .tab.tab-renaming .tab-title { animation: tab-rename-pulse 1.1s ease-in-out infinite; }
+  `;
+  document.head.appendChild(tnStyle);
+}
+
+// FORK 2026-06-06 — u2-tab-naming: tab-icon helpers (relevance + uniqueness).
+// Match a single leading emoji (the convention is "<emoji> <words>" for every named tab).
+const LEADING_EMOJI_RE = /^(\p{Extended_Pictographic}️?(?:‍\p{Extended_Pictographic}️?)*)/u;
+
+function leadingEmoji(title: string): string | null {
+  const m = (title || "").trim().match(LEADING_EMOJI_RE);
+  return m ? m[1] : null;
+}
+
+// Icons already used as the leading emoji of some OTHER tab — so a freshly generated title can
+// avoid duplicating them. `exceptTabId` is the tab being renamed (its own current icon is fine).
+function inUseTabIcons(exceptTabId: string): Set<string> {
+  const used = new Set<string>();
+  for (const t of tabs) {
+    if (t.id === exceptTabId) continue;
+    const e = leadingEmoji(t.title);
+    if (e) used.add(e);
+  }
+  return used;
+}
+
+// Keyword → emoji map (all values exist in EMOJI_CATALOG). Used when the LLM returns no emoji, to
+// derive one RELEVANT to the summary text before falling back to the AUTO_NAME_ICON sentinel.
+const SUMMARY_EMOJI_RULES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(bug|fix|error|crash|broken|debug)\b/i, "🐛"],
+  [/\b(test|spec|qa|coverage)\b/i, "🧪"],
+  [/\b(build|compile|bundle|deploy|ship|release)\b/i, "🏗️"],
+  [/\b(refactor|cleanup|clean up|tidy|rewrite)\b/i, "🧹"],
+  [/\b(config|setting|option|env|environment)\b/i, "⚙️"],
+  [/\b(auth|login|token|password|secret|credential|security|secure)\b/i, "🔒"],
+  [/\b(api|endpoint|request|http|fetch|server|gateway)\b/i, "📡"],
+  [/\b(database|db|sql|query|schema|store|storage)\b/i, "🗃️"],
+  [/\b(ui|css|style|design|layout|theme|frontend|button|panel)\b/i, "🎨"],
+  [/\b(doc|docs|documentation|readme|note|notes|write[- ]?up)\b/i, "📝"],
+  [/\b(paper|research|study|analysis|analyse|analyze)\b/i, "📚"],
+  [/\b(idea|brainstorm|plan|design|propose|proposal)\b/i, "💡"],
+  [/\b(data|stat|stats|metric|metrics|chart|graph)\b/i, "📊"],
+  [/\b(money|cost|price|pay|invoice|loan|budget|finance)\b/i, "💰"],
+  [/\b(email|mail|message|reply|inbox|outbound)\b/i, "✉️"],
+  [/\b(search|find|lookup|locate)\b/i, "🔍"],
+  [/\b(ai|model|llm|neural|brain|cognit|agent)\b/i, "🧠"],
+  [/\b(tool|tooling|script|automation|cron|pipeline)\b/i, "🔧"],
+  [/\b(file|files|folder|upload|download|attach)\b/i, "📁"],
+  [/\b(time|schedule|calendar|deadline|date)\b/i, "🗓️"],
+  [/\b(home|house|main|workshop)\b/i, "🏠"],
+];
+
+function summaryToEmoji(text: string): string | null {
+  for (const [re, emoji] of SUMMARY_EMOJI_RULES) {
+    if (re.test(text)) return emoji;
+  }
+  return null;
+}
+
+// Pick a leading icon for an auto-named tab: prefer `preferred`, then a summary-derived emoji,
+// then the AUTO_NAME_ICON sentinel — but never one already in use by another tab. If the first
+// choice collides, walk EMOJI_CATALOG for the next free emoji so all tab icons stay distinct.
+function pickUniqueTabIcon(preferred: string | null, summary: string, exceptTabId: string): string {
+  const used = inUseTabIcons(exceptTabId);
+  const candidates: string[] = [];
+  if (preferred) candidates.push(preferred);
+  const mapped = summaryToEmoji(summary);
+  if (mapped) candidates.push(mapped);
+  candidates.push(AUTO_NAME_ICON);
+  for (const c of candidates) {
+    if (c && !used.has(c)) return c;
+  }
+  for (const c of EMOJI_CATALOG) {
+    if (!used.has(c)) return c;
+  }
+  // Everything's taken (extremely unlikely) — fall back to the preferred/sentinel.
+  return preferred || AUTO_NAME_ICON;
+}
+
 // ─── Gateway ───
 function uuid() {
   return crypto.randomUUID();
@@ -1866,12 +2032,34 @@ function onFrame(f: unknown) {
               tabStates.set(t.id, freshTabState());
             }
           }
+          // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — a hard
+          // refresh wiped the in-memory tabStates Map, so freshTabState() seeded
+          // every tab with draft="". Re-hydrate each restored tab's TabState.draft
+          // from its per-tab localStorage slot so unsent text is not lost.
+          for (const t of tabs) {
+            const st = tabStates.get(t.id);
+            if (st) {
+              st.draft = loadDraftFor(t.id);
+            }
+          }
           // Restore previous active tab if it still exists, otherwise default to main.
           // FORK (2026-04-21): prevActiveTabId comes from localStorage on hard refresh
           // (module-level init above), so the user's pre-refresh sub-session stays focused.
           const prevTabExists = tabs.some((t) => t.id === prevActiveTabId);
           activeTabId = prevTabExists ? prevActiveTabId : "tab-main";
           saveActiveTabId();
+          // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — load the
+          // ACTIVE tab's persisted draft into the composer so the textarea shows
+          // the saved unsent text after a hard refresh (background tabs keep
+          // theirs in TabState.draft, hydrated just above).
+          {
+            const draftTa = $("chat-textarea") as HTMLTextAreaElement | null;
+            if (draftTa) {
+              const activeState = tabStates.get(activeTabId);
+              draftTa.value = activeState?.draft ?? loadDraftFor(activeTabId);
+              draftTa.dispatchEvent(new Event("input")); // auto-resize
+            }
+          }
           // Restore the session key from the active tab
           const activeTab = tabs.find((t) => t.id === activeTabId);
           if (activeTab?.isAttached && activeTab.sessionKey) {
@@ -3389,6 +3577,11 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
     //     server's current cookiePhrase (post-canonicalisation heal)
     // Gemini-generated titles (free-form short strings) aren't in
     // fortuneSet, so they're never resynced.
+    // FORK 2026-06-06 — u2-tab-naming: never overwrite a LOCKED title (manual rename or a
+    // successful auto-name). titleLocked is persisted to localStorage, so custom/auto names
+    // survive a gateway restart too — only tabs still showing a default/fortune title get the
+    // server cookiePhrase synced in, effectively retiring the fortune-cookie name from view.
+    if (tab.titleLocked) continue;
     const isStaleFortune = fortuneSet.has(tab.title) && tab.title !== serverPhrase;
     const tabNeedsSync = !tab.title || looksLikeLegacy2WordPhrase(tab.title) || isStaleFortune;
     if (tabNeedsSync && tab.title !== serverPhrase) {
@@ -3660,9 +3853,10 @@ async function generateTabTitle(tab: Tab) {
     return;
   }
 
-  // FORK 2026-06-04 — task-mpzcjw6n-n45zs: ask for the CURRENT topic, weighting recent messages,
-  // and NO emoji (we prepend the AUTO_NAME_ICON sentinel ourselves below).
-  const prompt = `Summarize what this conversation is CURRENTLY about in 1-3 words (a short tab title), weighting the MOST RECENT messages most heavily — the topic may have drifted from how it started. Reply with ONLY the title: no quotes, no punctuation, no emoji. Example: Fix auth bug. Here is the conversation (oldest to newest):\n\n${pairs.join("\n")}`;
+  // FORK 2026-06-06 — u2-tab-naming: ask for the CURRENT topic, weighting recent messages, and
+  // request ONE leading emoji RELEVANT to the topic followed by a short title. We keep that emoji
+  // (subject to the uniqueness pass below); if the model returns none we derive a relevant one.
+  const prompt = `Summarize what this conversation is CURRENTLY about as a short tab title, weighting the MOST RECENT messages most heavily — the topic may have drifted from how it started. Reply with ONLY: one single emoji that is RELEVANT to the topic, then a space, then 1-3 words. No quotes, no extra punctuation. Example: 🔧 Fix auth bug. Here is the conversation (oldest to newest):\n\n${pairs.join("\n")}`;
 
   try {
     // Try local Ollama first (free, fast)
@@ -3683,11 +3877,18 @@ async function generateTabTitle(tab: Tab) {
 
     console.log("[tabs] ollama response:", JSON.stringify(ollamaRes));
     if (title && title.length > 0 && title.length <= 40) {
-      // FORK 2026-06-04 \u2014 task-mpzcjw6n-n45zs: auto-named tabs get the distinct AUTO_NAME_ICON
-      // sentinel (not the fortune-cookie emoji) so the user can tell auto-named tabs apart.
-      // Strip any emoji the LLM added despite the instruction, then prepend the sentinel.
-      const stripped = title.replace(/^(\p{Emoji_Presentation}|\p{Emoji}\uFE0F?)\s*/u, "").trim();
-      tab.title = `${AUTO_NAME_ICON} ${stripped}`;
+      // FORK 2026-06-06 \u2014 u2-tab-naming: KEEP a relevant leading emoji.
+      // 1) split off any leading emoji the LLM returned (per the prompt) from the word part.
+      const preferred = leadingEmoji(title);
+      const words = preferred ? title.slice(preferred.length).trim() : title.trim();
+      // 2) choose a final icon that is RELEVANT to the summary and NOT already used by another tab
+      //    (preferred LLM emoji \u2192 summary-mapped emoji \u2192 AUTO_NAME_ICON sentinel \u2192 next free catalog
+      //    emoji). This guarantees every tab's leading icon is distinct.
+      const icon = pickUniqueTabIcon(preferred, words, tab.id);
+      tab.title = words ? `${icon} ${words}` : `${icon} ${title.trim()}`;
+      // 3) lock the title so loadSessions() won't clobber it with the server fortune-cookie phrase;
+      //    persists via saveTabs() so it survives hard refresh AND gateway restart.
+      tab.titleLocked = true;
       console.log("[tabs] title updated to:", tab.title);
       renderTabs();
       saveTabs();
@@ -3883,15 +4084,44 @@ async function send(text: string) {
   // reply (💬 ANSWER → 🧠 AMYGDALA → 🌿 FRACTAL).
   const messageForGateway = fullPromptForDebug;
 
+  // FORK 2026-06-07 — the saved draft is dropped ONLY on a CONFIRMED send. A failed send (e.g. the
+  // gateway is down / restarting) MUST keep the draft and put the text back in the composer, so a
+  // failed "enter" can never lose what you typed.
+  const draftTabId = activeTabId;
+  let sendOk = false;
   await req("chat.send", {
     sessionKey,
     message: messageForGateway,
     idempotencyKey: uuid(),
-  }).catch((e) => {
-    console.error(e);
-    sending = false;
-    updateBtn();
-  });
+  })
+    .then(() => {
+      sendOk = true;
+    })
+    .catch((e) => {
+      console.error(e);
+      sending = false;
+      updateBtn();
+    });
+  if (draftTabId) {
+    if (sendOk) {
+      // confirmed → safe to drop the saved draft (clearDraftFor archives it into the ring first)
+      clearDraftFor(draftTabId);
+      const st = tabStates.get(draftTabId);
+      if (st) st.draft = "";
+    } else {
+      // FAILED — keep the draft persisted and restore the text into the composer so it's not lost.
+      saveDraftFor(draftTabId, text);
+      const st = tabStates.get(draftTabId);
+      if (st) st.draft = text;
+      if (activeTabId === draftTabId) {
+        const ta2 = $("chat-textarea") as HTMLTextAreaElement | null;
+        if (ta2 && !ta2.value.trim()) {
+          ta2.value = text;
+          ta2.dispatchEvent(new Event("input"));
+        }
+      }
+    }
+  }
   // FORK: After first message in a tab session, refresh to canonicalize key
   if (isFirstMessage) {
     loadSessions();
@@ -4694,6 +4924,7 @@ function formatHHMMSS(ms: number): string {
 // session as a user-role prompt (Jarvis sees it as input) but renders as a LEFT amber
 // "Overseer" bubble, so it reads as the Overseer's own voice on the assistant side.
 const OVERSEER_MARKER = "⟦OVERSEER⟧";
+const AGENT_MARKER = "⟦AGENT⟧";
 const OVERSEER_COLOR = "#d97706";
 
 function renderUserBubbleWithPromptToggle(
@@ -4705,10 +4936,11 @@ function renderUserBubbleWithPromptToggle(
 ): string {
   if (userText.startsWith(OVERSEER_MARKER)) {
     const body = userText.slice(OVERSEER_MARKER.length).trim();
-    return (
-      `<div class="msg assistant msg-overseer" data-msg-idx="${idx}" style="--overseer-color:${OVERSEER_COLOR}">` +
-      `<span class="msg-overseer-badge">🔭 Overseer</span>${md(body)}</div>`
-    );
+    return `<div class="msg user msg-agent" data-msg-idx="${idx}"><span class="msg-agent-badge">🔭 Overseer</span>${md(body)}</div>`;
+  }
+  if (userText.startsWith(AGENT_MARKER)) {
+    const body = userText.slice(AGENT_MARKER.length).trim();
+    return `<div class="msg user msg-agent" data-msg-idx="${idx}"><span class="msg-agent-badge">🤖 Agent</span>${md(body)}</div>`;
   }
   // FORK 2026-05-09 (Feature A, simplified): timestamp lives on the bubble
   // itself as a `data-timestamp` attribute. CSS uses a `::after` pseudo-
@@ -6399,17 +6631,22 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
       } else if (action === "auto") {
         const t = tabs.find((tt) => tt.id === tabId);
         if (t) {
-          // FORK 2026-06-04 — task-mpzcjw6n (auto-rename fix): immediate visual feedback while the
-          // (local-LLM) summary runs; revert if it produced nothing (empty tab / no model / failure).
-          const prev = t.title;
-          const placeholder = `${AUTO_NAME_ICON} …`;
-          t.title = placeholder;
-          renderTabs();
-          void generateTabTitle(t).then(() => {
-            if (t.title === placeholder) {
-              t.title = prev;
-              renderTabs();
-            }
+          // FORK 2026-06-06 — u2-tab-naming: while the (local-LLM) summary runs, KEEP the tab's
+          // current title (icon + words) visible and gently pulse it via the .tab-renaming class —
+          // do NOT swap in a placeholder. generateTabTitle replaces the title on success; on
+          // failure/empty it leaves the title untouched. Either way we remove the pulse when done.
+          const setRenaming = (on: boolean) => {
+            const el = document.querySelector<HTMLElement>(
+              `#tab-bar-scroll [data-tab-id="${t.id}"]`,
+            );
+            if (el) el.classList.toggle("tab-renaming", on);
+          };
+          setRenaming(true);
+          void generateTabTitle(t).finally(() => {
+            setRenaming(false);
+            // generateTabTitle re-renders on success (dropping the class with the old node); ensure
+            // the class is cleared on the current node too in the no-change path.
+            setRenaming(false);
           });
         }
       }
@@ -6453,6 +6690,10 @@ function openTabRename(tabId: string, x: number, y: number) {
       const v = input.value.trim();
       if (v) {
         tab.title = v;
+        // FORK 2026-06-06 — u2-tab-naming: a manual rename is a deliberate title; lock it so
+        // loadSessions() won't overwrite it with the server fortune-cookie phrase. Persisted via
+        // saveTabs() → survives hard refresh AND gateway restart.
+        tab.titleLocked = true;
         saveTabs();
         renderTabs();
         updateSessionsPanel();
@@ -7672,6 +7913,7 @@ function init() {
       <button class="nav-btn" data-tab="debug" data-hint="Debug"><svg viewBox="0 0 24 24" style="stroke:#f87171"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3 3 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg></button>
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
       <button class="nav-btn" data-tab="recipes" data-hint="Recipes"><svg viewBox="0 0 24 24" style="stroke:#d4a574"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="12" y1="17" y2="17"/><line x1="8" x2="10" y1="9" y2="9"/></svg></button>
+      <button class="nav-btn" data-tab="amygdala" data-hint="Amygdala"><svg viewBox="0 0 24 24" style="stroke:#f472b6"><circle cx="12" cy="12" r="2.5"/><path d="M12 3a4 4 0 0 0-4 4c-2 0-3.2 1.5-3.2 3.4 0 1.4.8 2.5 1.9 3"/><path d="M12 3a4 4 0 0 1 4 4c2 0 3.2 1.5 3.2 3.4 0 1.4-.8 2.5-1.9 3"/><path d="M6.7 13.4C5.4 13.8 4.5 15 4.5 16.5c0 2 1.7 3.5 4 3.5 1.9 0 3.5-1.2 3.5-3"/><path d="M17.3 13.4c1.3.4 2.2 1.6 2.2 3.1 0 2-1.7 3.5-4 3.5-1.9 0-3.5-1.2-3.5-3"/></svg></button>
     </nav>
     <div class="topbar">
       <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=4" alt="T" style="height:76px;width:auto" onmouseenter="this.src='${BASE}icon-neon.png?v=1'" onmouseleave="this.src='${BASE}icon.png?v=4'"><img src="${BASE}icon-neon.png?v=1" style="display:none" aria-hidden="true"></div>
@@ -7841,8 +8083,11 @@ function init() {
   });
 
   const ta = $("chat-textarea") as HTMLTextAreaElement;
+  // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — seed the composer
+  // from the ACTIVE tab's per-tab draft. (The connect/init flow also loads this
+  // once activeTabId is resolved; this is the early best-effort for activeTabId.)
   try {
-    ta.value = localStorage.getItem(DRAFT_STORAGE_KEY) || "";
+    ta.value = loadDraftFor(activeTabId);
   } catch {}
   function autoResizeTA() {
     ta.style.height = "auto";
@@ -7850,9 +8095,34 @@ function init() {
   }
   ta.addEventListener("input", () => {
     autoResizeTA();
+    // FORK 2026-06-06: persist the unsent draft to the ACTIVE tab's per-tab key
+    // AND mirror it into that tab's TabState.draft so a tab switch (which
+    // restores from TabState) and a hard refresh (which restores from
+    // localStorage) both show the right text.
+    if (activeTabId) {
+      saveDraftFor(activeTabId, ta.value);
+      const st = tabStates.get(activeTabId);
+      if (st) {
+        st.draft = ta.value;
+      }
+    }
+  });
+  // FORK 2026-06-07 — durability: force-persist + ring-archive the current composer draft when the
+  // tab is hidden or the page is about to unload, so Chrome's localStorage flush lag / an unexpected
+  // close can't drop the latest keystrokes.
+  const flushDraftNow = () => {
     try {
-      localStorage.setItem(DRAFT_STORAGE_KEY, ta.value);
-    } catch {}
+      if (activeTabId && ta.value) {
+        saveDraftFor(activeTabId, ta.value);
+        archiveDraft(activeTabId, ta.value);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  window.addEventListener("beforeunload", flushDraftNow);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushDraftNow();
   });
   // Size to fit restored draft + focus
   if (ta.value) {
@@ -7863,23 +8133,21 @@ function init() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (ta.value.trim()) {
+        // FORK 2026-06-07 — do NOT clear the saved draft here. send() clears it ONLY on a
+        // CONFIRMED send (and restores it on failure), so a failed send can't lose the draft.
         send(ta.value);
         ta.value = "";
         ta.style.height = "auto";
-        try {
-          localStorage.removeItem(DRAFT_STORAGE_KEY);
-        } catch {}
       }
     }
   });
   $("action-btn")!.addEventListener("click", () => {
     if (ta.value.trim()) {
+      // FORK 2026-06-07 — clearing is owned by send() (clears on confirmed send, restores on
+      // failure) so a failed send never loses the draft.
       send(ta.value);
       ta.value = "";
       ta.style.height = "auto";
-      try {
-        localStorage.removeItem(DRAFT_STORAGE_KEY);
-      } catch {}
       ta.focus();
     }
   });
@@ -8297,8 +8565,8 @@ function init() {
     "kpi.moltbook.posts": { icon: "📝", label: "Moltbook posts" },
     "graph.moltbook.comments": { icon: "💬", label: "Moltbook comments" },
     "graph.moltbook.followers": { icon: "👥", label: "Moltbook followers" },
-    "graph.github.traffic.views14d": { icon: "👁", label: "Repo views" },
-    "graph.github.traffic.clones14d": { icon: "⬇", label: "Repo clones" },
+    "graph.github.traffic.views14d": { icon: "👁", label: "Repo views/day" },
+    "graph.github.traffic.clones14d": { icon: "⬇", label: "Repo clones/day" },
     "graph.clawhub.installs": { icon: "🧩", label: "ClawHub installs" },
     "kpi.inbound.organic": { icon: "🔗", label: "Organic inbound links" },
     "graph.inbound.ours": { icon: "🔗", label: "Inbound links (ours)" },
@@ -8408,7 +8676,13 @@ function init() {
       // views vs cumulative clones), and cumulative running-totals where clearer.
       const SERIES_STYLE: Record<
         string,
-        { color?: string; dash?: boolean; cumulative?: boolean; axis?: "left" | "right"; label?: string }
+        {
+          color?: string;
+          dash?: boolean;
+          cumulative?: boolean;
+          axis?: "left" | "right";
+          label?: string;
+        }
       > = {
         // NOT cumulative: clones14d is GitHub's trailing-14-day rolling total; summing
         // daily snapshots double-counts each clone ~14× (the bogus "~50k"). Show the
@@ -8419,14 +8693,30 @@ function init() {
         // solid line = external (organic / others created), dashed = ours (we
         // created). Same color pairs the two lines of a target visually.
         "graph.inbound.tinkerclaw.external": { color: "#8ECAE6", label: "tinkerclaw · external" },
-        "graph.inbound.tinkerclaw.ours": { color: "#8ECAE6", dash: true, label: "tinkerclaw · ours" },
-        "graph.inbound.thetinkerzone.external": { color: "#F4A261", label: "thetinkerzone · external" },
-        "graph.inbound.thetinkerzone.ours": { color: "#F4A261", dash: true, label: "thetinkerzone · ours" },
+        "graph.inbound.tinkerclaw.ours": {
+          color: "#8ECAE6",
+          dash: true,
+          label: "tinkerclaw · ours",
+        },
+        "graph.inbound.thetinkerzone.external": {
+          color: "#F4A261",
+          label: "thetinkerzone · external",
+        },
+        "graph.inbound.thetinkerzone.ours": {
+          color: "#F4A261",
+          dash: true,
+          label: "thetinkerzone · ours",
+        },
         "graph.inbound.sprintpaper.external": { color: "#c084fc", label: "sprintpaper · external" },
-        "graph.inbound.sprintpaper.ours": { color: "#c084fc", dash: true, label: "sprintpaper · ours" },
-        // FORK 2026-06-05 — ClawHub: no series. Verified our globalcaos/jarvis-voice
-        // 404s on clawhub.ai (clawskills.sh's "4.5k" was a bad mirror). Add a line
-        // only when we re-publish a real skill and confirm it live on clawhub.ai.
+        "graph.inbound.sprintpaper.ours": {
+          color: "#c084fc",
+          dash: true,
+          label: "sprintpaper · ours",
+        },
+        // FORK 2026-06-06 — ClawHub REINSTATED (appeal #2517). Our globalcaos/jarvis-voice
+        // is live again — verified on clawhub.ai: 3 downloads, 0 stars (the "4.5k" was a
+        // bad clawskills.sh mirror). Ours-only; add lines as we re-publish more skills.
+        "graph.clawhub.jarvis-voice": { color: "#fbbf24", label: "jarvis-voice (ours)" },
       };
       const presenceGroups = new Map<string, GGroup>();
       for (const { metric, observations } of obsLists) {
@@ -11759,7 +12049,11 @@ function init() {
     | "config"
     | "debug"
     | "logs"
-    | "recipes";
+    | "recipes"
+    // FORK 2026-06-06 — BROCA recipe visibility: a detail view reached by clicking
+    // a recipe title (NOT a top-level nav button). switchTab("recipe-detail")
+    // routes here; it is intentionally absent from the visible nav bar.
+    | "recipe-detail";
 
   const TAB_COLORS: Record<AltTab, string> = {
     overview: "#4ade80",
@@ -11774,6 +12068,7 @@ function init() {
     debug: "#f87171",
     logs: "#94a3b8",
     recipes: "#d4a574",
+    "recipe-detail": "#e3b341",
   };
 
   function switchTab(tab: string) {
@@ -11807,6 +12102,25 @@ function init() {
     applyExecPanelVisibility();
     altView.classList.add("alt-active");
     renderAltView(tab as AltTab);
+  }
+
+  // FORK 2026-06-06 — BROCA recipe visibility: a single delegated listener (whole
+  // document) for any .broca-recipe-link / [data-recipe-ref] element rendered by
+  // renderBrocaProgram, the recipe-card link, the chat banner, or the RECIPES
+  // panel. Clicking it selects the recipe and opens the dedicated recipe-detail
+  // page. Guarded so it is attached exactly once. This does NOT remove the
+  // existing openKitModal handler (that fires on [data-recipe-file]).
+  if (!recipeRefListenerAttached) {
+    recipeRefListenerAttached = true;
+    document.addEventListener("click", (e) => {
+      const el = (e.target as HTMLElement).closest("[data-recipe-ref]") as HTMLElement | null;
+      if (!el) return;
+      const ref = el.dataset.recipeRef;
+      if (!ref) return;
+      e.preventDefault();
+      currentRecipeRef = ref;
+      switchTab("recipe-detail");
+    });
   }
 
   // ─── Alt-view helpers ───
@@ -12053,6 +12367,12 @@ function init() {
           break;
         case "recipes":
           await renderRecipesTab(body, sub);
+          break;
+        case "amygdala":
+          await renderAmygdalaTab(body, sub);
+          break;
+        case "recipe-detail":
+          await renderRecipeDetail(body, sub);
           break;
       }
     } catch (e) {
@@ -13658,6 +13978,101 @@ function init() {
 
   // FORK 2026-05-14 — Recipes tab is kit.md-only. Single data shape from
   // prefrontal.kit.list. No RECIPE_CATALOG. No two-path render logic.
+  // FORK 2026-06-07 (Amygdala feedback loop / M−1.A): show exactly what the
+  // AMYGDALA gate does — live prudence decisions + the current personality nudge.
+  async function renderAmygdalaTab(body: Element, sub: Element) {
+    type AmygdalaDecision = {
+      ts: string;
+      tool: string;
+      target: string;
+      decision: string;
+      blocked: boolean;
+      enforced: boolean;
+      reason?: string;
+      mode: string;
+      prudence?: number;
+      disagreement?: number;
+    };
+    type AmygdalaFeed = {
+      ready: boolean;
+      mode: string;
+      onnxAvailable: boolean;
+      observeOnly: boolean;
+      phase: number;
+      alphas: { prudence: number; personality: number };
+      nudge?: { adjustments?: string[]; strength?: number } | null;
+      decisions: AmygdalaDecision[];
+      counts: { total: number; flagged: number; enforced: number };
+    };
+    let feed: AmygdalaFeed;
+    try {
+      // Race a timeout so a missing/unregistered RPC degrades gracefully instead
+      // of hanging the panel on "Loading…" forever.
+      feed = await Promise.race([
+        req<AmygdalaFeed>("amygdala.feed", {}),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 4000)),
+      ]);
+    } catch {
+      sub.textContent = "amygdala";
+      body.innerHTML = `<div class="alt-placeholder"><span style="color:var(--muted)">AMYGDALA feed unavailable — the <code>amygdala.feed</code> gateway method isn't responding. The learned-intuition plugin may need a rebuild + gateway restart.</span></div>`;
+      return;
+    }
+    const f = feed;
+    sub.textContent = `${f.counts.total} decisions · ${f.counts.flagged} flagged · ${f.counts.enforced} enforced`;
+    const col = (d: AmygdalaDecision) =>
+      d.enforced || d.decision === "hard_block"
+        ? "var(--red)"
+        : d.decision === "soft_block"
+          ? "#f59e0b"
+          : "#4ade80";
+    const verb = (d: AmygdalaDecision) =>
+      d.enforced
+        ? "BLOCKED"
+        : d.decision === "hard_block"
+          ? "would hard-block"
+          : d.decision === "soft_block"
+            ? "would soft-block"
+            : "allowed";
+    const pill = (s: string, border = "var(--border, #333)") =>
+      `<span style="border:1px solid ${border};border-radius:10px;padding:1px 8px;font-size:11px;white-space:nowrap">${s}</span>`;
+    const nudge = (f.nudge?.adjustments ?? [])
+      .map(
+        (a) =>
+          `<div style="font-size:12px;color:var(--fg,#ddd);padding:4px 0;border-top:1px solid var(--border,#222)">${altEsc(a)}</div>`,
+      )
+      .join("");
+    const rows = f.decisions.length
+      ? f.decisions
+          .map(
+            (d) => `
+          <div style="border-left:3px solid ${col(d)};padding:6px 10px;margin:4px 0;background:rgba(255,255,255,0.02)">
+            <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:12px">
+              <b style="color:${col(d)}">${verb(d)}</b>
+              <span style="font-family:monospace">${altEsc(d.tool)}</span>
+              <span style="font-family:monospace;color:var(--muted)">${altEsc(d.target)}</span>
+              <span style="color:var(--muted);font-size:11px">${altEsc(d.mode)}${typeof d.prudence === "number" ? ` · p=${d.prudence.toFixed(2)}` : ""}${typeof d.disagreement === "number" ? ` · Δ=${d.disagreement.toFixed(2)}` : ""}</span>
+              <span style="margin-left:auto;color:var(--muted);font-size:11px">${altEsc(new Date(d.ts).toLocaleTimeString())}</span>
+            </div>
+            ${d.reason ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${altEsc(d.reason)}</div>` : ""}
+          </div>`,
+          )
+          .join("")
+      : `<div class="alt-placeholder"><span style="color:var(--muted)">No gate decisions yet this session — AMYGDALA records the next tool call here.</span></div>`;
+    body.innerHTML = `
+      <div style="padding:10px 14px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          ${pill(`mode: <b>${altEsc(f.mode)}</b>${f.onnxAvailable ? "" : " (rule fallback)"}`, f.onnxAvailable ? "#4ade80" : "#f59e0b")}
+          ${pill(`phase ${f.phase}`)}
+          ${pill(f.observeOnly ? "observe-only" : "ENFORCING", f.observeOnly ? "var(--border, #333)" : "var(--red)")}
+          ${pill(`α prudence ${f.alphas.prudence}`)}
+          ${pill(`α personality ${f.alphas.personality}`)}
+        </div>
+        ${nudge ? `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:6px 0">Personality nudge${typeof f.nudge?.strength === "number" ? ` · strength ${f.nudge.strength}` : ""}</div>${nudge}` : ""}
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:12px 0 6px">Prudence decisions (most recent first)</div>
+        ${rows}
+      </div>`;
+  }
+
   async function renderRecipesTab(body: Element, sub: Element) {
     // ── Normalized kit type — single shape for ours + downloaded ──
     type NormalizedKit = {
@@ -13678,6 +14093,10 @@ function init() {
     try {
       const res = await req<{ kits: NormalizedKit[] }>("prefrontal.recipe.list", {});
       allKits = res.kits ?? [];
+      // FORK 2026-06-06 — stash the fetched kits for the recipe-detail page's
+      // graceful-degradation fallback (used when prefrontal.recipe.read is not
+      // yet deployed on this gateway).
+      lastRecipeList = allKits;
     } catch {
       listErr = true;
     }
@@ -13706,7 +14125,11 @@ function init() {
       const isDownloaded = kit.source === "downloaded";
       let h = `<div class="recipe-card" data-recipe-file="${altEsc(kit.path)}" title="Click to view kit details">`;
       h += `<div class="recipe-card-header">`;
-      h += `<span class="recipe-name">${altEsc(displayName)}</span>`;
+      // FORK 2026-06-06 — BROCA recipe visibility: the recipe name is now a
+      // clickable .broca-recipe-link carrying data-recipe-ref=<slug>, which the
+      // delegated [data-recipe-ref] listener routes to the recipe-detail page.
+      // The card keeps its data-recipe-file attribute for openKitModal back-compat.
+      h += `<a class="broca-recipe-link" data-recipe-ref="${altEsc(kit.slug)}">${altEsc(displayName)}</a>`;
       if (isDownloaded) {
         h += `<span class="recipe-kit-external" title="Downloaded recipe">↗</span>`;
       }
@@ -14061,6 +14484,114 @@ function init() {
       if (!file) return;
       void openKitModal(file);
     });
+  }
+
+  // ═══════════════ RECIPE DETAIL (single-recipe page) ═══════════════
+  // FORK 2026-06-06 — BROCA recipe visibility: dedicated single-recipe page.
+  // Reached via switchTab("recipe-detail") after a .broca-recipe-link click sets
+  // currentRecipeRef. Tries the server-of-truth prefrontal.recipe.read RPC and
+  // renders the full interleaved BROCA program; if that RPC is unavailable (it is
+  // NOT deployed on develop yet) or errors, it falls back to the metadata from
+  // the last prefrontal.recipe.list result. It NEVER throws.
+  async function renderRecipeDetail(body: Element, sub: Element) {
+    const backLink = `<div class="recipe-detail-back" style="margin-bottom:12px"><a class="broca-recipe-link" data-recipe-back="1" style="cursor:pointer">← back to recipes</a></div>`;
+    const wireBack = () => {
+      body.querySelector("[data-recipe-back]")?.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        switchTab("recipes");
+      });
+    };
+
+    if (!currentRecipeRef) {
+      sub.textContent = "no recipe selected";
+      body.innerHTML = `${backLink}<div class="recipe-no-results">No recipe selected. Pick a recipe from the Recipes tab.</div>`;
+      wireBack();
+      return;
+    }
+
+    const ref = currentRecipeRef;
+    sub.textContent = ref;
+
+    // Build the metadata fallback (from the last recipe.list result) up front so
+    // it is available whether recipe.read fails OR is undeployed.
+    const fallbackKit = lastRecipeList.find((k) => k && k.slug === ref) as
+      | {
+          slug?: string;
+          title?: string;
+          summary?: string;
+          category?: string;
+          tags?: string[];
+          triggers?: string[];
+        }
+      | undefined;
+
+    function renderFallback(note: string): void {
+      const title = fallbackKit?.title?.trim() || ref;
+      const meta: string[] = [];
+      if (fallbackKit?.category) meta.push(`Category: ${altEsc(fallbackKit.category)}`);
+      if (fallbackKit?.tags?.length) meta.push(`Tags: ${altEsc(fallbackKit.tags.join(", "))}`);
+      if (fallbackKit?.triggers?.length)
+        meta.push(`Triggers: ${altEsc(fallbackKit.triggers.join(", "))}`);
+      const summary = fallbackKit?.summary?.trim()
+        ? `<div class="recipe-summary" style="margin:8px 0">${altEsc(fallbackKit.summary.trim())}</div>`
+        : `<div class="recipe-summary-placeholder">(no summary)</div>`;
+      body.innerHTML =
+        backLink +
+        `<div class="recipe-detail-header"><h3 style="margin:0 0 4px">${altEsc(title)}</h3>` +
+        (meta.length
+          ? `<div class="recipe-detail-meta muted" style="font-size:12px">${meta.join(" · ")}</div>`
+          : "") +
+        `</div>` +
+        summary +
+        `<div class="muted" style="font-size:11px;margin-top:10px">${altEsc(note)}</div>`;
+      wireBack();
+    }
+
+    body.innerHTML = `${backLink}<div class="alt-placeholder"><span>Loading recipe…</span></div>`;
+
+    let recipe: BrocaRecipe | null = null;
+    try {
+      const res = await req<{ recipe?: BrocaRecipe }>("prefrontal.recipe.read", { slug: ref });
+      recipe = res?.recipe ?? null;
+    } catch {
+      recipe = null;
+    }
+
+    // recipe.read undeployed/errored OR returned nothing → metadata fallback.
+    if (!recipe || !Array.isArray(recipe.steps)) {
+      renderFallback("Full BROCA program loads once prefrontal.recipe.read is deployed.");
+      return;
+    }
+
+    // Full render: header (title/category/triggers/lineage) + the BROCA program.
+    const meta: string[] = [];
+    if (recipe.category) meta.push(`Category: ${altEsc(recipe.category)}`);
+    const triggers = (recipe as { triggers?: string[] }).triggers;
+    if (triggers?.length) meta.push(`Triggers: ${altEsc(triggers.join(", "))}`);
+    const lineage = recipe.lineage;
+    const lineageBits: string[] = [];
+    if (lineage?.composedFrom) lineageBits.push(`composed from ${altEsc(lineage.composedFrom)}`);
+    if (lineage?.composedSkills?.length)
+      lineageBits.push(`skills: ${altEsc(lineage.composedSkills.join(", "))}`);
+    if (lineage?.composedRecipes?.length)
+      lineageBits.push(`recipes: ${altEsc(lineage.composedRecipes.join(", "))}`);
+    if (lineage?.sourceQuery) lineageBits.push(`from query: ${altEsc(lineage.sourceQuery)}`);
+
+    body.innerHTML =
+      backLink +
+      `<div class="recipe-detail-header"><h3 style="margin:0 0 4px">${altEsc(recipe.title || ref)}</h3>` +
+      (recipe.summary
+        ? `<div class="recipe-summary" style="margin:4px 0 8px">${altEsc(recipe.summary)}</div>`
+        : "") +
+      (meta.length
+        ? `<div class="recipe-detail-meta muted" style="font-size:12px">${meta.join(" · ")}</div>`
+        : "") +
+      (lineageBits.length
+        ? `<div class="recipe-detail-lineage muted" style="font-size:11px;margin-top:4px">${lineageBits.join(" · ")}</div>`
+        : "") +
+      `</div>` +
+      `<div class="recipe-detail-program" style="margin-top:12px">${renderBrocaProgram(recipe, { linkTitle: false })}</div>`;
+    wireBack();
   }
 
   // ─── Tab bar events ───
