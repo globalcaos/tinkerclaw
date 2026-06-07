@@ -1,30 +1,46 @@
 export const meta = {
-  name: 'publish-paper-summary',
-  description: 'Publish J-series paper summaries to thetinkerzone.com as DRAFT posts, replicating the proven J1 template (woody, Building Jarvis category, PDF via SFTP).',
-  whenToUse: 'Fan out the J1 post template to the other papers. args.folders = ["J2_instant_recall", ...]. All posts created as DRAFT for review.',
-  phases: [{ title: 'Publish', detail: 'one agent per paper: read → assets → SFTP pdf → REST images → draft post' }],
-}
+  name: "publish-paper-summary",
+  description:
+    "Publish J-series paper summaries to thetinkerzone.com as DRAFT posts, replicating the proven J1 template (woody, Building Jarvis category, PDF via SFTP).",
+  whenToUse:
+    'Fan out the J1 post template to the other papers. args.folders = ["J2_instant_recall", ...]. All posts created as DRAFT for review.',
+  phases: [
+    {
+      title: "Publish",
+      detail: "one agent per paper: read → assets → SFTP pdf → REST images → draft post",
+    },
+  ],
+};
 
-const BASE = '/home/globalcaos/Documents/AI_reports/Papers'
-const A = (typeof args === 'string' ? (() => { try { return JSON.parse(args) } catch { return {} } })() : (args || {}))
-const FOLDERS = Array.isArray(A.folders) && A.folders.length ? A.folders : []
+const BASE = "~/Documents/AI_reports/Papers";
+const A =
+  typeof args === "string"
+    ? (() => {
+        try {
+          return JSON.parse(args);
+        } catch {
+          return {};
+        }
+      })()
+    : args || {};
+const FOLDERS = Array.isArray(A.folders) && A.folders.length ? A.folders : [];
 
 const SCHEMA = {
-  type: 'object',
+  type: "object",
   additionalProperties: false,
-  required: ['folder', 'ok'],
+  required: ["folder", "ok"],
   properties: {
-    folder: { type: 'string' },
-    ok: { type: 'boolean' },
-    draftId: { type: 'integer' },
-    editLink: { type: 'string' },
-    previewLink: { type: 'string' },
-    pdfUrl: { type: 'string' },
-    featuredImageId: { type: 'integer' },
-    hasStatCards: { type: 'boolean' },
-    notes: { type: 'string' },
+    folder: { type: "string" },
+    ok: { type: "boolean" },
+    draftId: { type: "integer" },
+    editLink: { type: "string" },
+    previewLink: { type: "string" },
+    pdfUrl: { type: "string" },
+    featuredImageId: { type: "integer" },
+    hasStatCards: { type: "boolean" },
+    notes: { type: "string" },
   },
-}
+};
 
 function pubPrompt(folder) {
   return `Publish ONE paper as a DRAFT summary post on thetinkerzone.com (a blog for AI-agent BUILDERS/tinkerers — write conversion copy, not academic prose). Folder: ${BASE}/${folder}.
@@ -63,23 +79,31 @@ Do NOT place the main figure inline in the body — it is the FEATURED image (th
 POST https://thetinkerzone.com/wp-json/wp/v2/posts with: title, status:"draft", content:<the HTML>, excerpt:<the hook, one sentence>, categories:[29] (Building Jarvis), featured_media:<main-figure id>, comment_status:"open".
 
 == VERIFY before returning ==
-GET the new draft (context=edit): confirm status=draft, the pdfUrl is in content, featured_media is the main-figure id, categories include 29. Return folder, ok, draftId, editLink (https://thetinkerzone.com/wp-admin/post.php?post=<id>&action=edit), previewLink (https://thetinkerzone.com/?p=<id>&preview=true), pdfUrl, featuredImageId, hasStatCards, notes.`
+GET the new draft (context=edit): confirm status=draft, the pdfUrl is in content, featured_media is the main-figure id, categories include 29. Return folder, ok, draftId, editLink (https://thetinkerzone.com/wp-admin/post.php?post=<id>&action=edit), previewLink (https://thetinkerzone.com/?p=<id>&preview=true), pdfUrl, featuredImageId, hasStatCards, notes.`;
 }
 
-phase('Publish')
-if (!FOLDERS.length) { return { error: 'no folders given in args.folders' } }
-log(`Publishing ${FOLDERS.length} paper(s) as drafts, throttled in batches of 3 (avoids API rate-limits).`)
-const CHUNK = 3
-const results = []
-for (let i = 0; i < FOLDERS.length; i += CHUNK) {
-  const batch = FOLDERS.slice(i, i + CHUNK)
-  log(`batch ${Math.floor(i / CHUNK) + 1}: ${batch.join(', ')}`)
-  const r = await parallel(batch.map((f) => () =>
-    agent(pubPrompt(f), { label: `publish:${f}`, phase: 'Publish', schema: SCHEMA })
-  ))
-  results.push(...r)
+phase("Publish");
+if (!FOLDERS.length) {
+  return { error: "no folders given in args.folders" };
 }
-const done = results.filter(Boolean)
+log(
+  `Publishing ${FOLDERS.length} paper(s) as drafts, throttled in batches of 3 (avoids API rate-limits).`,
+);
+const CHUNK = 3;
+const results = [];
+for (let i = 0; i < FOLDERS.length; i += CHUNK) {
+  const batch = FOLDERS.slice(i, i + CHUNK);
+  log(`batch ${Math.floor(i / CHUNK) + 1}: ${batch.join(", ")}`);
+  const r = await parallel(
+    batch.map(
+      (f) => () => agent(pubPrompt(f), { label: `publish:${f}`, phase: "Publish", schema: SCHEMA }),
+    ),
+  );
+  results.push(...r);
+}
+const done = results.filter(Boolean);
 // agent returns the absolute folder path; FOLDERS are short names → match by endsWith
-const failed = FOLDERS.filter((f) => !done.some((d) => d && d.folder && d.folder.endsWith(f) && d.ok))
-return { mode: 'publish-drafts', results: done, failed }
+const failed = FOLDERS.filter(
+  (f) => !done.some((d) => d && d.folder && d.folder.endsWith(f) && d.ok),
+);
+return { mode: "publish-drafts", results: done, failed };
