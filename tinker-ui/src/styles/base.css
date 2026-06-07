@@ -6048,6 +6048,27 @@ code.fs-link.fs-link-error {
   vertical-align: baseline;
 }
 
+/* FORK 2026-06-07: AGENT bubble. A Claude-Code agent / Overseer keep-going prompt that is
+   DRIVING Jarvis renders right-anchored like a user message (it inherits align-self:flex-end
+   from .msg.user) but in ELECTRIC BLUE instead of the moss-green user colour, so it reads as
+   an external pilot steering Jarvis rather than Oscar speaking. */
+.msg.user.msg-agent {
+  border: 1px solid #0a84ff;
+  background: color-mix(in srgb, #0a84ff 14%, transparent);
+  color: #dbeeff;
+}
+.msg-agent-badge {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: #0a84ff;
+  vertical-align: baseline;
+}
+
 /* FORK 2026-06-04 — Exec-mode Pulse presence graphs (grouped multi-line + axes). */
 .pg-chart{margin:8px 0 12px;}
 .pg-head{display:flex;align-items:center;gap:6px;margin-bottom:2px;}
