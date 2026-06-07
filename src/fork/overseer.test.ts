@@ -57,7 +57,7 @@ describe("activation + shouldRunOverseer (bounded)", () => {
 });
 
 describe("buildOverseerContext", () => {
-  it("includes the task, role-labelled transcript, and the completion question", () => {
+  it("includes the task, role-labelled transcript, and the completion-directive ask", () => {
     const ctx = buildOverseerContext("ship the feature", [
       { role: "user", text: "build X" },
       { role: "assistant", text: "done-ish" },
@@ -65,9 +65,16 @@ describe("buildOverseerContext", () => {
     expect(ctx).toContain("ship the feature");
     expect(ctx).toContain("USER: build X");
     expect(ctx).toContain("JARVIS: done-ish");
-    expect(ctx).toContain("fully complete");
+    expect(ctx).toContain("completion directive");
+    expect(ctx).toContain("every remaining gap");
   });
-  it("bounds the window to the last N turns", () => {
+  it("by default includes the FULL transcript — all there is in the chat, no window", () => {
+    const msgs = Array.from({ length: 40 }, (_, i) => ({ role: "user", text: `m${i}` }));
+    const ctx = buildOverseerContext("t", msgs); // no windowTurns → entire conversation
+    expect(ctx).toContain("m0");
+    expect(ctx).toContain("m39");
+  });
+  it("bounds the window to the last N turns only when windowTurns is given", () => {
     const msgs = Array.from({ length: 40 }, (_, i) => ({ role: "user", text: `m${i}` }));
     const ctx = buildOverseerContext("t", msgs, 5);
     expect(ctx).toContain("m39");

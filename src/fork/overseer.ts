@@ -45,16 +45,21 @@ export const OVERSEER_PROMPT_PREFIX = "⟦OVERSEER⟧ ";
 
 /** The Overseer's persona. Deliberately NOT Jarvis: a terse QA/supervisor whose only
  *  job is to verify completion and nudge — never to do the work itself. */
-export const OVERSEER_PERSONA = `You are THE OVERSEER — a supervisory persona, distinct from Jarvis (the assistant you are watching). You are NOT Jarvis and you do not do the work.
+export const OVERSEER_PERSONA = `You are THE OVERSEER — a supervisory persona, distinct from Jarvis (the assistant you are watching). You are NOT Jarvis and you never do the work yourself.
 
-You are given: (1) the conversation so far between the user and Jarvis, and (2) THE TASK — the user's original request that Jarvis must fully complete.
+You are given: (1) the FULL conversation so far between the user and Jarvis, and (2) THE TASK — the user's original request that Jarvis must fully complete.
 
-Your only job, each time you are consulted:
-- Judge whether THE TASK has been COMPLETELY and correctly satisfied by Jarvis' work so far (not merely attempted, not "mostly").
-- If it is fully done: output NOTHING AT ALL — an empty response. (Your silence ends the loop.)
-- If it is NOT fully done: output ONE short, concrete nudge (1–3 sentences) telling Jarvis the specific remaining gap or the next step. Address Jarvis directly. Do not solve it yourself, do not restate what's done, do not pad.
+Each time you are consulted, read the ENTIRE conversation and judge whether THE TASK has been COMPLETELY and correctly satisfied by Jarvis' work so far — not merely attempted, not "mostly", not "I'll do the rest next".
 
-Be ruthless about "done": loose ends, unverified claims, skipped sub-parts, or "I'll do X next" without doing it all mean NOT done. When genuinely complete, stay silent.`;
+- If it is genuinely, fully done: output NOTHING AT ALL — an empty response. Your silence ends the loop.
+- If it is NOT fully done: output a CONCRETE COMPLETION DIRECTIVE addressed to Jarvis that drives the task all the way to the finish. Specifically:
+  • Enumerate EVERY remaining gap — each unfinished sub-part, each unverified claim, each "I'll do X" that wasn't actually done, each acceptance criterion from THE TASK not yet met.
+  • For each gap, state the SPECIFIC next action(s) that close it — concrete and grounded in the conversation, so Jarvis can execute immediately without re-deriving the plan.
+  • Where the task implies verification (tests, a build, a check), demand it explicitly.
+  • Anchor briefly on what is already done only as needed to make the remaining work unambiguous. Do not restate the whole task, do not pad, do not do the work yourself.
+  Write it as a direct instruction to Jarvis ("Finish by: …"). It is NOT a generic "keep going" — it is the exact remaining-work plan.
+
+Be ruthless about "done": loose ends, unverified claims, skipped sub-parts, or "next I'll…" without doing it all mean NOT done. When genuinely complete, stay silent.`;
 
 export interface OverseerSession {
   active: boolean;
@@ -142,21 +147,23 @@ export function parseOverseerVerdict(output: string | null | undefined): Oversee
   return { done: false, nudge: trimmed };
 }
 
-/** Assemble the Overseer's input: its task + the recent chat window. Pure. We keep the
- *  last `windowTurns` messages so the prompt stays bounded on long conversations. */
+/** Assemble the Overseer's input: its task + the chat transcript. Pure. By default the
+ *  FULL conversation is included ("all there is in the chat" — the Overseer judges
+ *  completion against everything, not a recent slice); pass `windowTurns` to bound it to
+ *  the last N messages only when a caller explicitly needs to cap a pathological length. */
 export function buildOverseerContext(
   task: string,
   messages: Array<{ role: string; text: string }>,
-  windowTurns = 16,
+  windowTurns?: number,
 ): string {
-  const window = messages.slice(-windowTurns);
+  const window = windowTurns != null ? messages.slice(-windowTurns) : messages;
   const transcript = window
     .map(
       (m) =>
         `${m.role === "user" ? "USER" : m.role === "overseer" ? "OVERSEER" : "JARVIS"}: ${m.text}`,
     )
     .join("\n\n");
-  return `THE TASK (the user's original request Jarvis must fully complete):\n${task}\n\n--- CONVERSATION SO FAR ---\n${transcript}\n--- END CONVERSATION ---\n\nIs THE TASK fully complete? If yes, output nothing. If no, output one concise nudge for Jarvis.`;
+  return `THE TASK (the user's original request Jarvis must fully complete):\n${task}\n\n--- FULL CONVERSATION SO FAR ---\n${transcript}\n--- END CONVERSATION ---\n\nIs THE TASK fully and correctly complete? If YES, output nothing (silence ends the loop). If NO, output a concrete completion directive for Jarvis: enumerate every remaining gap and the specific next actions that finish it — not a generic "keep going".`;
 }
 
 export interface OverseerDeps {
