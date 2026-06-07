@@ -12,13 +12,19 @@
  *     label. Jarvis answers → the Overseer is consulted again → loop.
  *   - Silence (done) cuts the loop.
  *
- * Bounded by construction: at most MAX_OVERSEER_ITERATIONS nudges per task, so the
- * loop is constitutionally incapable of running away (cf. recipe-loop HARD_LOOP_MAX).
+ * Bounded by construction: a DERIVED working budget (deriveOverseerLoopBudget — sized
+ * to the live situation per design-principle #19: recipe fitness + whether the
+ * gap-to-done is shrinking), clamped to OVERSEER_LOOP_HARD_CEILING, so the loop is
+ * constitutionally incapable of running away (cf. recipe-loop HARD_LOOP_MAX) WITHOUT a
+ * frozen quantity threshold. The old fixed MAX_OVERSEER_ITERATIONS=5 was the exact #19
+ * anti-pattern; it is gone.
  *
  * The orchestration is dependency-injected (spawnOverseer / injectPrompt / emitBubble)
  * so the pure decision logic is unit-testable without a live gateway, and the real
  * wiring (attempt-hooks → subagent spawn → chat.send) lives at the call site.
  */
+
+import { deriveOverseerLoopBudget } from "./overseer-budget.js";
 
 /** Stable identity for the Overseer everywhere (UI bubble colour + label). */
 export const OVERSEER_LABEL = "Overseer";
@@ -26,8 +32,11 @@ export const OVERSEER_LABEL = "Overseer";
  *  as its own voice, not one of the rotating subagent colours. */
 export const OVERSEER_COLOR = "#d97706";
 
-/** Hard ceiling on nudges per task — the loop can never exceed this. */
-export const MAX_OVERSEER_ITERATIONS = 5;
+/** Structural safety CEILING on overseer nudges per task — the DERIVED working budget
+ *  (deriveOverseerLoopBudget) can never exceed this. Per design-principle #19 a frozen
+ *  number is at most a ceiling, never the working value; matches the `overseer` recipe's
+ *  `max 25` directive + recipe-runner HARD_LOOP_MAX. */
+export const OVERSEER_LOOP_HARD_CEILING = 25;
 
 /** Sentinel prepended to an injected nudge so Jarvis receives it as a prompt while the
  *  Tinker UI renders it as a left "Overseer" bubble. MUST match OVERSEER_MARKER in
@@ -53,14 +62,44 @@ export interface OverseerSession {
   task: string;
   /** How many nudges have been issued this task. */
   iteration: number;
+  /** Recipe fitness success rate [0,1] threaded at activation; drives the derived
+   *  budget (a shakier recipe earns more supervision passes). Omitted → derivation
+   *  defaults to 0.5. */
+  fitnessSuccessRate?: number;
+  /** Length of the previous nudge — to detect a shrinking gap-to-done (a shorter
+   *  nudge than last time = progress, which earns one more supervision pass). */
+  lastNudgeLen?: number;
+  /** Derived per cycle: the latest nudge was shorter than the prior one. Feeds the
+   *  next cycle's working-budget derivation. */
+  gapShrinking?: boolean;
 }
 
 const sessions = new Map<string, OverseerSession>();
 
+/** The DERIVED working ceiling on nudges for this session RIGHT NOW — sized to the live
+ *  situation (recipe fitness + whether the gap-to-done is shrinking), clamped to the
+ *  structural ceiling. Never a frozen constant (design-principle #19). `priorIterations`
+ *  is deliberately OMITTED: the caller compares `iteration < bound`, which already counts
+ *  progress; passing it too would double-count the decay and over-tighten to one nudge. */
+export function overseerWorkingBound(s: OverseerSession): number {
+  return Math.min(
+    OVERSEER_LOOP_HARD_CEILING,
+    deriveOverseerLoopBudget({
+      fitnessSuccessRate: s.fitnessSuccessRate,
+      gapShrinking: s.gapShrinking ?? false,
+    }),
+  );
+}
+
 /** Activate the Overseer for a session against a task (called when the overseer
- *  recipe matches). Resets the iteration counter. */
-export function activateOverseer(sessionKey: string, task: string): void {
-  sessions.set(sessionKey, { active: true, task, iteration: 0 });
+ *  recipe matches). Resets the iteration counter. `fitnessSuccessRate`, when the caller
+ *  knows the overseer recipe's historical reliability, sizes the derived budget. */
+export function activateOverseer(
+  sessionKey: string,
+  task: string,
+  fitnessSuccessRate?: number,
+): void {
+  sessions.set(sessionKey, { active: true, task, iteration: 0, fitnessSuccessRate });
 }
 
 export function deactivateOverseer(sessionKey: string): void {
@@ -74,10 +113,11 @@ export function getOverseerSession(sessionKey: string): OverseerSession | undefi
   return sessions.get(sessionKey);
 }
 
-/** Whether the Overseer should run after the just-completed Jarvis turn. Pure. */
+/** Whether the Overseer should run after the just-completed Jarvis turn. Pure. The
+ *  bound is the DERIVED working budget for this session, not a frozen constant. */
 export function shouldRunOverseer(sessionKey: string): boolean {
   const s = sessions.get(sessionKey);
-  return !!s && s.active && s.iteration < MAX_OVERSEER_ITERATIONS;
+  return !!s && s.active && s.iteration < overseerWorkingBound(s);
 }
 
 export interface OverseerVerdict {
@@ -159,15 +199,18 @@ export async function maybeRunOverseer(
       reason: "inactive",
     };
   }
-  if (s.iteration >= MAX_OVERSEER_ITERATIONS) {
+  const bound = overseerWorkingBound(s);
+  if (s.iteration >= bound) {
     deactivateOverseer(sessionKey);
-    deps.log?.(`[overseer] max iterations (${MAX_OVERSEER_ITERATIONS}) reached — stopping`);
+    deps.log?.(
+      `[overseer] derived budget (${bound}) reached after ${s.iteration} nudge(s) — stopping`,
+    );
     return {
       ran: false,
       done: false,
       nudged: false,
       iteration: s.iteration,
-      reason: "max-iterations",
+      reason: "budget-reached",
     };
   }
 
@@ -187,9 +230,16 @@ export async function maybeRunOverseer(
     return { ran: true, done: true, nudged: false, iteration: s.iteration, reason: "done" };
   }
 
+  // gap trend (a simple converging heuristic, mirroring the recipe-runner overseer
+  // loop): a nudge SHORTER than the previous one means the remaining gap-to-done is
+  // shrinking → the NEXT cycle's derived budget earns one more pass. Computed before
+  // we overwrite lastNudgeLen; feeds overseerWorkingBound() on the following turn.
+  const nudge = verdict.nudge as string;
+  s.gapShrinking = s.lastNudgeLen != null && nudge.length < s.lastNudgeLen;
+  s.lastNudgeLen = nudge.length;
   s.iteration += 1;
-  await deps.injectPrompt(sessionKey, verdict.nudge as string);
-  deps.log?.(`[overseer] nudge #${s.iteration} injected`);
+  await deps.injectPrompt(sessionKey, nudge);
+  deps.log?.(`[overseer] nudge #${s.iteration} injected (budget ${bound})`);
   return { ran: true, done: false, nudged: true, iteration: s.iteration, reason: "nudged" };
 }
 

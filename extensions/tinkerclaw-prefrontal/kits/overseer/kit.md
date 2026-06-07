@@ -54,13 +54,13 @@ When this recipe matches, the session activates **The Overseer** (`src/fork/over
 
 - The Overseer is a **distinct persona** from Jarvis (a terse QA/supervisor; it never does the work itself).
 - After **each** Jarvis turn completes, the Overseer is consulted with the **chat window + the original task**.
-- If the task is **not** fully done, the Overseer emits **one concise nudge**, which is injected into Jarvis' session as a prompt (Jarvis sees it as input) and rendered as a **left-side bubble in the Overseer's amber colour with an "Overseer" label**.
+- If the task is **not** fully done, the Overseer emits **one concise nudge**, which is injected into Jarvis' session as a prompt (Jarvis sees it as input) and rendered as a **right-anchored electric-blue bubble with an "Overseer" label** (the `⟦OVERSEER⟧` marker).
 - Jarvis answers the nudge → the Overseer is consulted again → loop.
 - When the Overseer judges the task **complete, it stays silent** — which cuts the loop.
 
-Bounded: at most **5 nudges** per task (`MAX_OVERSEER_ITERATIONS`), so the loop can never run away.
+Bounded: the number of nudges per task is a **derived working budget** (`deriveOverseerLoopBudget`, sized to the live situation — recipe reliability and whether the gap-to-done is shrinking), clamped to a structural ceiling of 25. Per design-principle #19 the ceiling is a safety limit, never the target — the loop almost always ends far sooner, the moment the Overseer goes silent. There is no frozen nudge count.
 
 ### 1. Engage the Overseer supervisory loop
 
-done-when: the Overseer judges the original task complete (it goes silent) or the nudge cap is reached
-As your **FIRST action**, call the `fork.overseer.activate` RPC with `{ "sessionKey": "<this session's key>", "task": "<the user's original request, verbatim>" }` to engage the supervisory loop. Then proceed to do the work normally. After each of your turns, the Overseer (a separate persona) automatically verifies completion against the original task and, if anything is unfinished, injects a nudge — which arrives as a prompt prefixed `⟦OVERSEER⟧` and renders as a left amber "Overseer" bubble. Keep working until the Overseer goes silent (the loop self-terminates; it is also capped at 5 nudges).
+done-when: the Overseer judges the original task complete (it goes silent) or the derived supervision budget is reached
+As your **FIRST action**, call the `fork.overseer.activate` RPC with `{ "sessionKey": "<this session's key>", "task": "<the user's original request, verbatim>" }` to engage the supervisory loop. Then proceed to do the work normally. After each of your turns, the Overseer (a separate persona) automatically verifies completion against the original task and, if anything is unfinished, injects a nudge — which arrives as a prompt prefixed `⟦OVERSEER⟧` and renders as a right-anchored electric-blue "Overseer" bubble. Keep working until the Overseer goes silent (the loop self-terminates; it is also bounded by a derived budget clamped to a ceiling of 25, never a fixed count).
