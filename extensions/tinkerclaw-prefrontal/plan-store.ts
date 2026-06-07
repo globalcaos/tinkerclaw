@@ -116,6 +116,24 @@ export class PlanStore {
     return plan;
   }
 
+  /**
+   * BROCA P1.1 (ask-for-missing): set the PLAN-LEVEL status (durable pause writer).
+   * Distinct from step() — this mutates plan.status (e.g. 'blocked-awaiting-input'),
+   * not a step's status. Reads the plan, sets plan.status, bumps plan.updated, then
+   * writeLocked + onMutation. The plan-level status line round-trips as a free string
+   * (renderPlanMd writes `status: ${plan.status}`; parsePlanMd reads it back as-is),
+   * so any PlanStatusSchema literal — including 'blocked-awaiting-input' — persists.
+   */
+  async setStatus(sessionKey: string, status: Plan["status"]): Promise<Plan> {
+    const plan = await this.get(sessionKey);
+    if (!plan) throw new Error(`plan-store: no plan for sessionKey=${sessionKey}`);
+    plan.status = status;
+    plan.updated = new Date().toISOString();
+    await this.writeLocked(sessionKey, plan);
+    this.opts.onMutation?.(sessionKey, plan);
+    return plan;
+  }
+
   async get(sessionKey: string): Promise<Plan | null> {
     const fp = this.filePath(sessionKey);
     try {

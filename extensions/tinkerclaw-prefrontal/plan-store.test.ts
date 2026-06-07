@@ -90,6 +90,42 @@ describe("PlanStore", () => {
     expect(plan!.steps[0].note).toBe("long note here");
   });
 
+  it("setStatus persists a plan-level status (blocked-awaiting-input), bumps updated, and fires onMutation", async () => {
+    const mutations: Array<{ sessionKey: string; status: string | null }> = [];
+    const s = new PlanStore({
+      rootDir: dir,
+      onMutation: (sessionKey, plan) =>
+        mutations.push({ sessionKey, status: plan ? plan.status : null }),
+    });
+    const created = await s.set({
+      sessionKey: "agent:main:main",
+      intent: "need input",
+      runId: "r1",
+      steps: [{ title: "A" }],
+    });
+    expect(created.status).toBe("in_progress");
+    const setCalls = mutations.length;
+    const updatedBefore = created.updated;
+    // Ensure the ISO timestamp can advance (ms resolution).
+    await new Promise((r) => setTimeout(r, 2));
+
+    const paused = await s.setStatus("agent:main:main", "blocked-awaiting-input");
+    expect(paused.status).toBe("blocked-awaiting-input");
+    expect(paused.updated >= updatedBefore).toBe(true);
+    expect(mutations.length).toBe(setCalls + 1);
+    expect(mutations[mutations.length - 1]).toEqual({
+      sessionKey: "agent:main:main",
+      status: "blocked-awaiting-input",
+    });
+
+    // Re-read from disk → exercises renderPlanMd → parsePlanMd round-trip of the
+    // new plan-level status literal.
+    const reread = await s.get("agent:main:main");
+    expect(reread).not.toBeNull();
+    expect(reread!.status).toBe("blocked-awaiting-input");
+    expect(reread!.updated).toBe(paused.updated);
+  });
+
   it("close archives the file under archive/<YYYY-MM-DD>/ and removes the live plan", async () => {
     await store.set({
       sessionKey: "agent:main:main",
