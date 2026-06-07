@@ -2332,7 +2332,7 @@ function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
       };
       void req("debug.dumpUiSnapshot", {
         html:
-          "<!--SNAPVER:amy-panel-2026-06-07d-->" +
+          "<!--SNAPVER:amy-panel-2026-06-07e-->" +
           (document.querySelector(".right-panels")?.outerHTML ?? "<!--NO-RIGHT-PANELS-->") +
           "\n<!--CHAT-AREA-->\n" +
           messagesEl.outerHTML,
@@ -6550,10 +6550,17 @@ function updateChat(skipScroll = false) {
     }
   }
 
-  // FORK 2026-06-04 — bug task-mpwfiot2 (Queuing a prompt): render queued-but-not-yet-committed
-  // prompts as TRAILING bubbles, after the running turn's transcript and just above the thinking
-  // indicator. They are deliberately NOT in messages[] (see send()), so the still-streaming turn's
-  // continuation/tool bubbles can never land after them. Flushed into messages[] on turn-final.
+  // FORK 2026-06-07 — bug task-mq3gn32d (Prompt hopping): the running turn's thinking/tool
+  // indicator must render ABOVE the queued bubble. So emit the thinking indicator FIRST, then the
+  // queued-but-not-yet-committed prompts as the very last (bottom-most) bubbles — grayed, pinned to
+  // the bottom in "queuing mode" exactly like Claude Code. The still-streaming turn's
+  // continuation/tool output therefore always appears above the queued prompt, never below it.
+  // Queued prompts are deliberately NOT in messages[] (see send()); they are flushed into
+  // messages[] at turn-final, which splices them into their correct chronological position (in the
+  // middle, within the thinking/tool stream) once the turn that was reading them completes.
+  if (activeRuns.size > 0 || sending) {
+    h += renderThinkingIndicator();
+  }
   for (let k = 0; k < pendingQueuedSends.length; k++) {
     h += renderMsg(
       pendingQueuedSends[k],
@@ -6562,10 +6569,6 @@ function updateChat(skipScroll = false) {
       globalResultMap,
       globalToolNames,
     );
-  }
-
-  if (activeRuns.size > 0 || sending) {
-    h += renderThinkingIndicator();
   }
   // FORK: Preserve manually-opened fractal <details> across DOM rebuilds.
   // Without this, every streaming update collapses fractals the user expanded.
@@ -8141,6 +8144,16 @@ function init() {
       </div>
     </div>
     <div class="right-panels">
+      <div class="rpanel" id="amygdala-panel">
+        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span>
+          <span class="ct-switch" id="amygdala-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
+            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label" data-scope="all">All</span>
+          </span>
+        </div>
+        <div id="amygdala-body" class="rpanel-body"><div style="color:var(--muted);font-size:12px;padding:8px">Idle — gate decisions stream here live as the agent runs tools.</div></div>
+      </div>
       <div class="rpanel" id="sessions-panel">
         <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
@@ -8166,16 +8179,6 @@ function init() {
         </div>
         <div id="prefrontal-graph" class="rpanel-body prefrontal-graph-container"></div>
         <div id="recipe-progress" class="recipe-progress-container" style="display:none"></div>
-      </div>
-      <div class="rpanel" id="amygdala-panel">
-        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span>
-          <span class="ct-switch" id="amygdala-scope-toggle">
-            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
-            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
-            <span class="ct-switch-label" data-scope="all">All</span>
-          </span>
-        </div>
-        <div id="amygdala-body" class="rpanel-body"><div style="color:var(--muted);font-size:12px;padding:8px">Idle — gate decisions stream here live as the agent runs tools.</div></div>
       </div>
     </div>
     <div class="context-timeline" id="context-timeline"></div>
