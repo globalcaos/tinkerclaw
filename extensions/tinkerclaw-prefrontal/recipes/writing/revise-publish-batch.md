@@ -49,7 +49,7 @@ Recipes are playbooks; the executable layer is **ultracode** (the `Workflow` too
 
 Two supervision modes — pick by how the work runs:
 
-- **Interactive / multi-turn drive** (you revise papers across several of your own turns): call `fork.overseer.activate` with `{ sessionKey, task: "<user's original request, verbatim>" }` FIRST. The Overseer (`src/fork/overseer.ts`) checks after each turn whether **every** actionable paper was revised AND compiled, and nudges (amber bubble, ≤5×) until done.
+- **Interactive / multi-turn drive** (you revise papers across several of your own turns): call `fork.overseer.activate` with `{ sessionKey, task: "<user's original request, verbatim>" }` FIRST. The Overseer (`src/fork/overseer.ts`) checks after each turn whether **every** actionable paper was revised AND compiled, and nudges (right-anchored electric-blue `⟦OVERSEER⟧` bubble, bounded by a derived budget — not a fixed count) until done.
 - **Single background ultracode run** (one `Workflow` call fans out all papers): the workflow returns a per-paper result array — that IS the completion signal. Do NOT rely on the Overseer here (it watches _your_ turns, and would fire prematurely while the run is still in flight). Instead, when the run returns, run a **completeness check**: diff the returned results against the requested folder list, and re-launch `mode:full` for any paper that is missing or has `ok:false`. The pilot proved this self-report is reliable; the diff is the guarantee.
 
 Skip both for a `triage`-only run — there is nothing to enforce yet.

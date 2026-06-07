@@ -7,7 +7,8 @@ import {
   parseOverseerVerdict,
   buildOverseerContext,
   maybeRunOverseer,
-  MAX_OVERSEER_ITERATIONS,
+  overseerWorkingBound,
+  OVERSEER_LOOP_HARD_CEILING,
   _resetOverseerState,
   type OverseerDeps,
 } from "./overseer.js";
@@ -47,10 +48,11 @@ describe("activation + shouldRunOverseer (bounded)", () => {
     deactivateOverseer("s");
     expect(shouldRunOverseer("s")).toBe(false);
   });
-  it("at the iteration cap, does not run", () => {
-    activateOverseer("s", "t");
-    getOverseerSession("s")!.iteration = MAX_OVERSEER_ITERATIONS;
-    expect(shouldRunOverseer("s")).toBe(false);
+  it("at the derived budget, does not run (no frozen cap)", () => {
+    activateOverseer("s", "t", 1.0); // a perfectly reliable recipe → smallest derived budget
+    expect(shouldRunOverseer("s")).toBe(true); // iteration 0 < derived bound
+    getOverseerSession("s")!.iteration = overseerWorkingBound(getOverseerSession("s")!);
+    expect(shouldRunOverseer("s")).toBe(false); // reached the derived bound
   });
 });
 
@@ -125,14 +127,24 @@ describe("maybeRunOverseer — the loop", () => {
     expect(getOverseerSession("s")!.active).toBe(false);
   });
 
-  it("cannot exceed MAX_OVERSEER_ITERATIONS nudges", async () => {
-    activateOverseer("s", "t");
-    const { deps, injected } = mockDeps("keep going");
-    for (let i = 0; i < MAX_OVERSEER_ITERATIONS + 3; i++) {
-      await maybeRunOverseer("s", "t", msgs, deps);
+  it("nudge count is DERIVED from recipe fitness, never frozen, and is ceiling-bounded", async () => {
+    // A perfectly reliable recipe earns the FEWEST supervision passes…
+    activateOverseer("hi", "t", 1.0);
+    const hi = mockDeps("keep going");
+    for (let i = 0; i < OVERSEER_LOOP_HARD_CEILING + 3; i++) {
+      await maybeRunOverseer("hi", "t", msgs, hi.deps);
     }
-    expect(injected.length).toBe(MAX_OVERSEER_ITERATIONS);
-    expect(getOverseerSession("s")!.active).toBe(false);
+    // …a shaky one (low fitness) earns MORE — proving the bound responds to the situation.
+    activateOverseer("lo", "t", 0.0);
+    const lo = mockDeps("keep going");
+    for (let i = 0; i < OVERSEER_LOOP_HARD_CEILING + 3; i++) {
+      await maybeRunOverseer("lo", "t", msgs, lo.deps);
+    }
+    expect(hi.injected.length).toBeGreaterThanOrEqual(1); // always at least one pass
+    expect(lo.injected.length).toBeGreaterThan(hi.injected.length); // derived, not a constant
+    expect(lo.injected.length).toBeLessThanOrEqual(OVERSEER_LOOP_HARD_CEILING); // ceiling holds
+    expect(getOverseerSession("hi")!.active).toBe(false); // loop self-terminated at its budget
+    expect(getOverseerSession("lo")!.active).toBe(false);
   });
 
   it("spawn error → reported, no injection, stays active for retry next turn", async () => {

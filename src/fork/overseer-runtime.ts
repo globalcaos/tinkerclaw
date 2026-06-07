@@ -11,7 +11,8 @@
  *     overseer recipe (or Jarvis, or a manual trigger) can engage it for a session.
  *
  * Safety: everything is try/caught and fire-and-forget — the Overseer can NEVER break a
- * Jarvis turn. The loop is bounded by MAX_OVERSEER_ITERATIONS in overseer.ts. It only
+ * Jarvis turn. The loop is bounded by a DERIVED working budget (overseerWorkingBound) in
+ * overseer.ts — sized to the live situation, clamped to a structural ceiling. It only
  * runs in the main session (isAutomatedSession skips subagents/cron/heartbeats), so the
  * Overseer's own spawned run cannot recursively trigger another Overseer.
  */
@@ -133,8 +134,8 @@ function buildOverseerDeps(jarvisSessionKey: string): OverseerDeps {
     },
 
     // Inject the nudge as a prompt into Jarvis' session (sessions.send, the same path
-    // fractal-inject uses). The ⟦OVERSEER⟧ sentinel makes the UI render it as a left
-    // amber Overseer bubble while Jarvis receives it as input.
+    // fractal-inject uses). The ⟦OVERSEER⟧ sentinel makes the UI render it as a
+    // right-anchored electric-blue Overseer bubble while Jarvis receives it as input.
     injectPrompt: async (sessionKey: string, nudge: string): Promise<void> => {
       const { callGateway } = await import("../gateway/call.js");
       await callGateway<{ status?: string }>({
@@ -167,9 +168,7 @@ export async function maybeRunOverseerFromHook(
       messages,
       buildOverseerDeps(sessionKey),
     );
-    log.info(
-      `[overseer] cycle on ${sessionKey}: ${outcome.reason} (iteration ${outcome.iteration}/${"5"})`,
-    );
+    log.info(`[overseer] cycle on ${sessionKey}: ${outcome.reason} (nudge ${outcome.iteration})`);
   } catch (err) {
     // The Overseer must never break a turn.
     log.warn(
@@ -201,7 +200,13 @@ export const forkOverseerHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    activateOverseer(sessionKey, task);
+    // Optional: the overseer recipe's historical reliability, used to size the derived
+    // supervision budget (a shakier recipe earns more passes). Validated to [0,1];
+    // anything else → undefined (the derivation falls back to its 0.5 default).
+    const fitnessRaw = (p as Record<string, unknown>).fitnessSuccessRate;
+    const fitnessSuccessRate =
+      typeof fitnessRaw === "number" && fitnessRaw >= 0 && fitnessRaw <= 1 ? fitnessRaw : undefined;
+    activateOverseer(sessionKey, task, fitnessSuccessRate);
     log.info(`[overseer] activated for ${sessionKey}`);
     respond(true, { ok: true, sessionKey }, undefined);
   },
