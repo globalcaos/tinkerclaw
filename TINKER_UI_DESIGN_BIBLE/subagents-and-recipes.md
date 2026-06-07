@@ -155,6 +155,18 @@ verify:
     cmd: test -f ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/overseer/recipe.md && grep -Fq 'loop: until OVERSEER_DONE' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/overseer/recipe.md && grep -Fq 'export function deriveOverseerLoopBudget' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/overseer-budget.ts && grep -Fq 'deriveOverseerLoopBudget(' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'onKeepGoing' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: Prompt caching — the tools array gets a cache_control breakpoint (tools->system->messages), the highest-ROI budget-prompting win
     cmd: grep -Fq 'export function applyAnthropicCacheControlToTools' ~/src/tinkerclaw/src/agents/anthropic-payload-policy.ts && grep -Fq 'applyAnthropicCacheControlToTools(payloadObj.tools' ~/src/tinkerclaw/src/agents/anthropic-payload-policy.ts
+  - name: P0 typed recipe parameters — RecipeParamSpec declared (recipe-author) + parsed (recipe-parse) so recipes are fill-in-the-blank functions
+    cmd: grep -Fq 'export interface RecipeParamSpec' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-author.ts && grep -Fq 'RecipeParamSpec' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-parse.ts
+  - name: P0 param validation at run ingress (validateParams) + seed-time checkParamRefs gate (scans prose only, not directive templates)
+    cmd: grep -Fq 'export function validateParams' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'export function checkParamRefs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: P0 private VarStore — recipe-vars.json, chmod 600 on every write (real values never in the public recipe .md)
+    cmd: grep -Fq 'export function createVarStore' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-var-store.ts && grep -Fq 'recipe-vars.json' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-var-store.ts && grep -Fq '0o600' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-var-store.ts
+  - name: P0 recipe-vars.json is PRIVATE by construction — ~/.openclaw/.gitignore ignores /* and does NOT whitelist it
+    cmd: grep -Fq '/*' ~/.openclaw/.gitignore && ! grep -Fq 'recipe-vars' ~/.openclaw/.gitignore
+  - name: P0 missing-var clear-fail gate — missing-var ErrorKind + checkRequiredVars (no silent pass, no block-and-wait)
+    cmd: grep -Fq '"missing-var"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-types.ts && grep -Fq 'export function checkRequiredVars' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: P0 SS5b spawn-flag fix — the spawn CLI forwards allow-tools/max-tokens/max-tool-calls so enforcement reaches the recipe spawn path
+    cmd: grep -Fq 'allow-tools' ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs && grep -Fq 'max-tool-calls' ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
