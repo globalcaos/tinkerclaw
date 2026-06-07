@@ -775,7 +775,15 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     bar.appendChild(icon);
 
     const id = el("span", "pf-recipe-id");
-    id.textContent = recipe.recipeId;
+    // FORK 2026-06-06 — render the recipe NAME as a clickable .broca-recipe-link
+    // so clicking it in the RECIPES panel navigates to the recipe page (the
+    // [data-recipe-ref] click handler lives in app.ts). HTML-escape recipeId for
+    // BOTH the visible text and the data-recipe-ref attribute (innerHTML below).
+    const escRecipeId = String(recipe.recipeId).replace(
+      /[&<>"']/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string,
+    );
+    id.innerHTML = `<a class="broca-recipe-link" data-recipe-ref="${escRecipeId}">${escRecipeId}</a>`;
     bar.appendChild(id);
 
     if (recipe.step != null) {
