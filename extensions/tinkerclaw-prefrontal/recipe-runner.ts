@@ -33,6 +33,7 @@ import type { SkillLibrary } from "../../src/memory/engram/skill-library.js";
 import { deriveCombinatorFanOut, deriveUsesDepthBudget } from "./combinator-budget.js";
 import { deriveOverseerLoopBudget } from "./overseer-budget.js";
 import type { PlanStore } from "./plan-store.js";
+import type { RecipeParamSpec } from "./recipe-author.js";
 import {
   resolveStepRefs,
   parseStepIoDirectives,
@@ -667,6 +668,8 @@ function resolveGroups(kit: ParsedRecipe): number[][] {
 /** SS1: a step reduced to just the fields the port-wiring check needs. */
 export interface CompileStep {
   title: string;
+  /** SS-params: the step's cleaned body text — scanned for {{token}} refs by checkParamRefs. */
+  body?: string;
   out?: JsonSchema;
   in?: Port[];
   when?: string;
@@ -851,6 +854,39 @@ export function checkOnErrorRefs(steps: CompileStep[], hostKitRef: string): stri
   return errors;
 }
 
+/**
+ * SS-params (2026-06-07): seed-time parameter-ref validation (mirrors
+ * checkOnErrorRefs). Collect every `{{token}}` across all step bodies and
+ * hard-fail any token that is neither a declared parameter nor a recognized
+ * NON-param ref. EXCLUDED (not a param, resolved elsewhere at dispatch):
+ *   - `steps.<n>.out…`  (typed prior-step output refs)
+ *   - `item` / `index`  (map/filter per-element bindings)
+ * Any remaining `{{token}}` MUST name a declared param — so a typo'd / undeclared
+ * `{{token}}` fails fast at seed instead of silently surviving substitution.
+ */
+export function checkParamRefs(
+  steps: CompileStep[],
+  decls: Record<string, RecipeParamSpec> | undefined,
+): string[] {
+  const errors: string[] = [];
+  const declared = new Set(Object.keys(decls ?? {}));
+  const TOKEN_RE = /\{\{\s*([^}]+?)\s*\}\}/g;
+  steps.forEach((step, i) => {
+    const consumerNumber = i + 1;
+    const body = step.body ?? "";
+    for (const m of body.matchAll(TOKEN_RE)) {
+      const token = m[1].trim();
+      if (/^steps\.\d+\.out/.test(token)) continue; // typed prior-step output ref
+      if (token === "item" || token === "index") continue; // map/filter per-element binding
+      if (declared.has(token)) continue; // a declared parameter
+      errors.push(
+        `step ${consumerNumber}: {{${token}}} is not a declared parameter (declare it under params: or use a steps.<n>.out / item / index ref)`,
+      );
+    }
+  });
+  return errors;
+}
+
 // ─── Parameter substitution ───────────────────────────────────────────────────
 
 function substituteParameters(text: string, params: Record<string, string>): string {
@@ -859,6 +895,188 @@ function substituteParameters(text: string, params: Record<string, string>): str
     result = result.replaceAll(`{{${key}}}`, value);
   }
   return result;
+}
+
+// ─── SS-params: run-ingress parameter validation ───────────────────────────────
+
+/** SS-params: the boolean truthy/falsy literals a `boolean` param coerces from. */
+const BOOL_TRUE = new Set(["true", "1", "yes"]);
+const BOOL_FALSE = new Set(["false", "0", "no"]);
+
+/**
+ * SS-params (2026-06-07): tolerantly normalize a recipe's `params:` frontmatter
+ * block into typed RecipeParamSpec decls. Mirrors recipe-parse.ts EXACTLY (the
+ * panel/runner READER) — kept self-contained here (no import of parseRecipeMd,
+ * which would create a recipe-parse ↔ recipe-runner import cycle). validateRecipeSpec
+ * is the hard authoring gate; this stays lenient.
+ */
+export function parseParamsFromText(kitText: string): Record<string, RecipeParamSpec> | undefined {
+  const fmMatch = /^---\n([\s\S]+?)\n---/.exec(kitText);
+  if (!fmMatch) return undefined;
+  let fm: Record<string, unknown> | null = null;
+  try {
+    fm = parseYaml(fmMatch[1]) as Record<string, unknown> | null;
+  } catch {
+    return undefined;
+  }
+  if (!fm || typeof fm.params !== "object" || fm.params === null || Array.isArray(fm.params)) {
+    return undefined;
+  }
+  const acc: Record<string, RecipeParamSpec> = {};
+  for (const [name, raw] of Object.entries(fm.params as Record<string, unknown>)) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const r = raw as Record<string, unknown>;
+    const spec: RecipeParamSpec = { type: (r.type as RecipeParamSpec["type"]) ?? "string" };
+    if (typeof r.required === "boolean") spec.required = r.required;
+    if (r.default !== undefined) spec.default = r.default;
+    if (typeof r.secret === "boolean") spec.secret = r.secret;
+    if (typeof r.description === "string") spec.description = r.description;
+    if (typeof r.pattern === "string") spec.pattern = r.pattern;
+    if (Array.isArray(r.enum)) spec.enum = r.enum.filter((e): e is string => typeof e === "string");
+    acc[name] = spec;
+  }
+  return Object.keys(acc).length > 0 ? acc : undefined;
+}
+
+/**
+ * SS-params: load a recipe's DECLARED params (the `params:` frontmatter block),
+ * reusing loadRecipeText's path resolution. Returns undefined when the recipe is
+ * unreadable or declares no params (back-compat: an un-parameterized recipe runs
+ * untouched). Never throws — a missing recipe just yields undefined here, and the
+ * real load error surfaces inside runRecipe.
+ */
+export async function loadRecipeParams(
+  kitRef: string,
+  ownRecipesDir: string,
+  recipeInstallSandbox: string,
+): Promise<Record<string, RecipeParamSpec> | undefined> {
+  let text: string;
+  try {
+    text = await loadRecipeText(kitRef, ownRecipesDir, recipeInstallSandbox);
+  } catch {
+    return undefined;
+  }
+  return parseParamsFromText(text);
+}
+
+/**
+ * SS-params (2026-06-07): run-ingress validation + coercion of caller-provided
+ * parameter values against a recipe's declared param specs. PURE (no I/O). The
+ * single fail-before-spawn gate for both dry-run and live runs.
+ *
+ *  - undefined / empty decls → pass-through: {ok:true, values: provided ?? {}, errors:[]}
+ *    (an un-parameterized recipe is untouched — back-compat).
+ *  - unknown provided key (not in decls) → reject.
+ *  - missing required (no value, no default) → reject, naming the description.
+ *  - a declared key absent from provided but with a `default` → the default is filled.
+ *  - each value is COERCED to a string per its type:
+ *      string      → as-is; if `pattern` is set the value must match it
+ *      number      → String(finite); a non-finite value rejects
+ *      boolean     → true/false/1/0/yes/no → 'true' | 'false'; anything else rejects
+ *      enum        → must be a member of decls.enum (else reject)
+ *      list<string>→ CSV: trim each element, drop empties, re-join with ','
+ */
+export function validateParams(
+  decls: Record<string, RecipeParamSpec> | undefined,
+  provided: Record<string, string> | undefined,
+): { ok: boolean; values: Record<string, string>; errors: string[] } {
+  const given = provided ?? {};
+  if (!decls || Object.keys(decls).length === 0) {
+    return { ok: true, values: { ...given }, errors: [] };
+  }
+  const errors: string[] = [];
+  const values: Record<string, string> = {};
+
+  // 1) reject any provided key that is not declared.
+  for (const key of Object.keys(given)) {
+    if (!(key in decls)) errors.push(`unknown parameter "${key}" (not declared by this recipe)`);
+  }
+
+  // 2) per declared param: required/default handling + typed coercion.
+  for (const [name, spec] of Object.entries(decls)) {
+    const hasValue = Object.prototype.hasOwnProperty.call(given, name);
+    if (!hasValue) {
+      if (spec.default !== undefined) {
+        // fill the declared default (already type-validated at author time).
+        if (spec.type === "list<string>" && Array.isArray(spec.default)) {
+          values[name] = (spec.default as unknown[]).map((x) => String(x)).join(",");
+        } else {
+          values[name] = String(spec.default);
+        }
+        continue;
+      }
+      if (spec.required) {
+        const desc = spec.description ? ` — ${spec.description}` : "";
+        errors.push(`missing required parameter "${name}"${desc}`);
+      }
+      continue; // optional with no default → simply unset
+    }
+
+    const raw = given[name];
+    switch (spec.type) {
+      case "string": {
+        if (spec.pattern) {
+          let re: RegExp | null = null;
+          try {
+            re = new RegExp(spec.pattern);
+          } catch {
+            re = null;
+          }
+          if (re && !re.test(raw)) {
+            errors.push(`parameter "${name}" must match /${spec.pattern}/ — got "${raw}"`);
+            continue;
+          }
+        }
+        values[name] = raw;
+        break;
+      }
+      case "number": {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) {
+          errors.push(`parameter "${name}" must be a finite number — got "${raw}"`);
+          continue;
+        }
+        values[name] = String(n);
+        break;
+      }
+      case "boolean": {
+        const lc = raw.trim().toLowerCase();
+        if (BOOL_TRUE.has(lc)) values[name] = "true";
+        else if (BOOL_FALSE.has(lc)) values[name] = "false";
+        else {
+          errors.push(
+            `parameter "${name}" must be a boolean (true/false/1/0/yes/no) — got "${raw}"`,
+          );
+          continue;
+        }
+        break;
+      }
+      case "enum": {
+        const members = spec.enum ?? [];
+        if (!members.includes(raw)) {
+          errors.push(`parameter "${name}" must be one of ${members.join("|")} — got "${raw}"`);
+          continue;
+        }
+        values[name] = raw;
+        break;
+      }
+      case "list<string>": {
+        const items = raw
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        values[name] = items.join(",");
+        break;
+      }
+      default: {
+        // an unrecognized type should never reach here (author-time validated);
+        // pass the raw value through rather than dropping it.
+        values[name] = raw;
+      }
+    }
+  }
+
+  return { ok: errors.length === 0, values, errors };
 }
 
 // ─── Spawn helper ─────────────────────────────────────────────────────────────
@@ -1169,6 +1387,8 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       const usesRef = parseUsesDirective(cleaned);
       return {
         title: s.title,
+        // SS-params: carry the cleaned body so checkParamRefs can scan {{token}} refs.
+        body: cleaned,
         out,
         in: io.in,
         when: parseWhenDirective(cleaned),
@@ -1214,6 +1434,20 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       ok: false,
       planId: "",
       errorMessage: `recipe-runner: onError-ref check failed:\n - ${onErrorErrors.join("\n - ")}`,
+    };
+  }
+
+  // SS-params (2026-06-07): every {{token}} in a step body must be a declared
+  // parameter (or a steps.<n>.out / item / index ref). Thread the recipe's parsed
+  // `params:` frontmatter as the declared set so an undeclared/typo'd token fails
+  // fast at seed — before any step executes (FOUNDATION: contracts at boundaries).
+  const declaredParams = parseParamsFromText(kitText);
+  const paramRefErrors = checkParamRefs(compileSteps, declaredParams);
+  if (paramRefErrors.length > 0) {
+    return {
+      ok: false,
+      planId: "",
+      errorMessage: `recipe-runner: param-ref check failed:\n - ${paramRefErrors.join("\n - ")}`,
     };
   }
 

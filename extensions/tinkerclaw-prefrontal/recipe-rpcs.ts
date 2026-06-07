@@ -63,7 +63,13 @@ import {
 } from "./recipe-matcher.js";
 import { optimizeRecipe } from "./recipe-optimize.js";
 import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
-import { parseUsesDirective, resolveRecipeOverlayDir, runRecipe } from "./recipe-runner.js";
+import {
+  loadRecipeParams,
+  parseUsesDirective,
+  resolveRecipeOverlayDir,
+  runRecipe,
+  validateParams,
+} from "./recipe-runner.js";
 import { snapshotKit } from "./recipe-snapshot.js";
 import { RecipeStore } from "./recipe-store.js";
 
@@ -1072,13 +1078,34 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       // / no engram) → the runner's neutral 0.5 default (back-compat).
       const fitnessSuccessRate = makeFitnessLookup(engramBaseDir)(p.kitRef);
 
+      // SS-params (2026-06-07): validate + coerce the caller-provided parameter
+      // values against the recipe's DECLARED params BEFORE spawning anything. The
+      // single fail-before-spawn gate for BOTH dry-run and live: an unknown key, a
+      // missing required value, or a type/pattern/enum mismatch is refused here so
+      // no subagent is ever dispatched with a bad parameter set. An un-parameterized
+      // recipe (no `params:` block) passes through untouched (back-compat).
+      const declaredParams = await loadRecipeParams(
+        p.kitRef,
+        deps.ownRecipesDir,
+        deps.recipeInstallSandbox,
+      );
+      const validation = validateParams(declaredParams, p.parameters);
+      if (!validation.ok) {
+        return {
+          ok: false,
+          planId: "",
+          ...(p.dryRun ? { dryRun: true } : {}),
+          errorMessage: `prefrontal.recipe.run: parameter validation failed:\n - ${validation.errors.join("\n - ")}`,
+        };
+      }
+
       if (p.dryRun) {
         // Dry-run: return the dispatch plan without spawning anything.
         const result = await runRecipe({
           kitRef: p.kitRef,
           sessionKey: p.sessionKey,
           intent: p.intent,
-          parameters: p.parameters,
+          parameters: validation.values,
           dryRun: true,
           ownRecipesDir: deps.ownRecipesDir,
           recipeInstallSandbox: deps.recipeInstallSandbox,
@@ -1105,7 +1132,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         kitRef: p.kitRef,
         sessionKey: p.sessionKey,
         intent: p.intent,
-        parameters: p.parameters,
+        parameters: validation.values,
         dryRun: false,
         planStore: deps.planStore,
         ownRecipesDir: deps.ownRecipesDir,
