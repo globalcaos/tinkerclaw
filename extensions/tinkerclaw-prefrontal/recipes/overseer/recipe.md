@@ -30,9 +30,15 @@ nudging until the task is truly finished, then goes silent.
 
 ## When to Use
 
-- A request with several sub-parts that are easy to half-finish.
+- **A job done across distinct steps** — several sub-parts that are easy to half-finish.
+- **Any task suspicious it will not complete in a single turn** — large or open-ended
+  work where Jarvis is likely to stop at "mostly done" or "I'll do X next".
 - Anything end-to-end where "I'll do X next" without doing it would slip through.
 - When the user explicitly asks you to oversee, see it through, or not stop until done.
+
+(The runtime engages this loop automatically on these shapes — an explicit overseer
+keyword, a multi-step plan, or a request that reads as multi-step — so it covers the
+cases above without the user having to ask.)
 
 ## Steps
 
@@ -45,18 +51,21 @@ done-when: the Overseer judges THE TASK fully and correctly complete (it returns
 Each iteration spawns a fresh completion-assessor under the OVERSEER persona
 contract — it is NOT Jarvis and never does the work itself. Give it two things:
 THE TASK (the run intent — the user's original request that must be fully
-satisfied) and the recent chat window (pulled via `chat.history`, the last ~16
-turns so the prompt stays bounded). Ask it the single question: is THE TASK fully
-and correctly complete (not merely attempted, not "mostly")?
+satisfied) and the **FULL conversation** (pulled via `chat.history` — all there is
+in the chat, so completion is judged against everything, not a recent slice). Ask
+it the single question: is THE TASK fully and correctly complete (not merely
+attempted, not "mostly")?
 
 Interpret its answer with the same semantics as `parseOverseerVerdict`: an empty /
 whitespace-only response, or a bare done-marker (e.g. `done`, `completed`, `✅`,
-`lgtm`), means COMPLETE — silence ends the loop. Anything substantive is a nudge
-(the specific remaining gap or next step) and means NOT done.
+`lgtm`), means COMPLETE — silence ends the loop. Anything substantive is a
+**concrete completion directive** — it enumerates every remaining gap and the
+specific next actions that finish them, drawn from the full conversation, NEVER a
+generic "keep going" — and means NOT done.
 
 - When COMPLETE: emit a step note containing the literal token `OVERSEER_DONE`.
   That marker is what breaks the `until OVERSEER_DONE` loop; the run is finished.
-- When INCOMPLETE: send the assessor's keep-going prompt to Jarvis' own session
+- When INCOMPLETE: send the assessor's completion directive to Jarvis' own session
   (via `chat.send`) so Jarvis receives it as input and continues working. This
   injected prompt is the _user-side_ of the conversation — it renders as a
   right-anchored user bubble and MUST NOT carry the OVERSEER marker prefix, since
