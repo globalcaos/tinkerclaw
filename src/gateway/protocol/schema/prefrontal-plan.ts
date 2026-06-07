@@ -11,6 +11,10 @@ export const PlanStatusSchema = Type.Union([
   Type.Literal("in_progress"),
   Type.Literal("done"),
   Type.Literal("aborted"),
+  // BROCA P1.1 (ask-for-missing): durable pause while the agent waits on the
+  // human to supply a missing required input. Additive — existing plans validate
+  // unchanged; Plan/PlanStep Static types widen automatically.
+  Type.Literal("blocked-awaiting-input"),
 ]);
 
 export const PlanStepSchema = Type.Object(
