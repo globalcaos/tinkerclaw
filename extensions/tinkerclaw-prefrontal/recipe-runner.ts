@@ -173,6 +173,40 @@ export interface RecipeRunOptions {
    * throw into the execution loop. Absent → no-op (the runner stays gateway-decoupled).
    */
   onKeepGoing?: (sessionKey: string, message: string) => void;
+  /**
+   * BROCA P1.1 (2026-06-07, ask-for-missing / Seam 4): opt INTO the durable-pause
+   * branch at the missing-var clear-fail. Default false → the clear-fail is
+   * byte-identical to the shipped behavior (no ask, no wait, no plan seeded). When
+   * true AND onAskVar AND a planStore are present, an unmet required param durably
+   * pauses the plan (status blocked-awaiting-input on disk) and awaits a resolver.
+   */
+  interactiveMode?: boolean;
+  /**
+   * BROCA P1.1: fire-and-forget ask sink. Called ONCE when an interactive run hits
+   * a missing required var — the caller surfaces the prompt(s) to the human. Same
+   * wrapped/never-throws contract as onCheckpoint/onKeepGoing: a broken sink can
+   * never throw into the run. Absent → no durable pause (falls to clear-fail).
+   */
+  onAskVar?: (ev: {
+    sessionKey: string;
+    kitRef: string;
+    missingVars: { name: string; prompt: string }[];
+  }) => void;
+  /**
+   * BROCA P1.1: resolver SEAM (mirrors _spawnStep) — awaited under a J16-derived
+   * timeout to obtain the human's answers for the missing vars. Production wires a
+   * real resolver (gateway round-trip + VarStore persistence — a later wave); tests
+   * inject one directly. Returns the {name:value} answers, or null on timeout /
+   * decline. Absent → a default no-op resolver that returns null (clear-fail). The
+   * runner stays gateway-decoupled: it does NOT persist answers to a VarStore — the
+   * resolver owns whatever it persists.
+   */
+  _askResolver?: (ev: {
+    sessionKey: string;
+    kitRef: string;
+    missingVars: { name: string; prompt: string }[];
+    timeoutMs: number;
+  }) => Promise<Record<string, string> | null>;
 }
 
 /** SS1: one classified trail event emitted by the runner (e.g. schema-mismatch). */
@@ -1381,6 +1415,36 @@ export function resolveOwnRecipesDir(startDir: string): string {
   return resolve(startDir, "..", "..", "..", "extensions", "tinkerclaw-prefrontal", "recipes");
 }
 
+/**
+ * BROCA P1.1 (2026-06-07): derive — NEVER freeze — the wait budget for a durable
+ * ask-for-missing-input pause, co-located with the deriveSpawnBudget philosophy.
+ *
+ * J16 (FOUNDATION §1, "fractal not fixed"): how long the agent should hold a plan
+ * blocked-awaiting-input is NOT a constant. It is a function of the live situation:
+ *   - missingVarCount : more values to gather earns more time
+ *   - stepCount       : a longer recipe is worth waiting on (capped at 12 steps)
+ *   - confidence      : a shaky recipe (low fitness) earns a longer grace window
+ * base = 60s + 30s/missing + 5s*min(stepCount,12), scaled by (1 + uncertainty)
+ * where uncertainty = 1 - clamp01(fitnessSuccessRate ?? 0.5); floored at base.
+ * The coefficients are a derivation, not the answer; the OUTPUT responds to the
+ * inputs (proven by recipe-runner-ask.integration.test.ts). Do NOT collapse this
+ * to a literal — that would re-introduce a frozen ASK_TIMEOUT (the J16 anti-pattern).
+ */
+export function deriveAskTimeoutMs(signals: {
+  missingVarCount: number;
+  fitnessSuccessRate?: number;
+  stepCount: number;
+}): number {
+  const clamp01 = (v: number): number => Math.max(0, Math.min(1, v));
+  const base =
+    60000 +
+    30000 * Math.max(0, signals.missingVarCount) +
+    5000 * Math.min(Math.max(0, signals.stepCount), 12);
+  const uncertainty = 1 - clamp01(signals.fitnessSuccessRate ?? 0.5); // [0,1]
+  const derived = Math.round(base * (1 + uncertainty));
+  return Math.max(base, derived);
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult> {
@@ -1498,12 +1562,26 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
 
   // SS-params (2026-06-07): clear-fail backstop. `params` here is the RESOLVED map
   // (RPC ingress already ran the precedence merge + validateParams). If a declared
-  // `required:true` param STILL has no value, fail CLEARLY here — before any step
-  // is dispatched (no spawn, no plan seed) — listing every missing name + prompt +
-  // how to supply it. No ask/wait (the interactive round-trip is a separate P1.1).
-  const missingVars = checkRequiredVars(declaredParams, params);
-  if (missingVars.length > 0) {
-    const list = missingVars.map((m) => `${m.name} — ${m.prompt}`).join("; ");
+  // `required:true` param STILL has no value, fail CLEARLY — listing every missing
+  // name + prompt + how to supply it.
+  //
+  // BROCA P1.1 (2026-06-07, durable-pause branch / Seam 4): when the caller opts
+  // into interactiveMode AND wires an onAskVar sink AND a planStore is present, we
+  // do NOT clear-fail immediately. Instead we durably PAUSE: seed the plan, write
+  // status `blocked-awaiting-input` to disk BEFORE asking (so a crash mid-wait is
+  // recoverable), fire onAskVar (fire-and-forget, wrapped), and await the injected
+  // resolver under a J16-DERIVED timeout (deriveAskTimeoutMs — never a frozen const).
+  // If the human supplies the missing value(s), merge them into params, re-check,
+  // flip status back to `in_progress`, and FALL THROUGH to the normal dispatch path.
+  // On timeout / null / still-missing we keep the SHIPPED clear-fail return. When
+  // NOT interactive the clear-fail below is byte-identical to before this branch.
+  //
+  // NOTE: the runner does NOT persist answers to a VarStore — it stays
+  // gateway-decoupled; durable VarStore persistence is wired in a later wave via
+  // the resolver the RPC supplies (the resolver owns whatever it persists).
+  let interactiveSeedRunId: string | null = null;
+  const buildMissingVarFail = (missing: { name: string; prompt: string }[]): RecipeRunResult => {
+    const list = missing.map((m) => `${m.name} — ${m.prompt}`).join("; ");
     return {
       ok: false,
       planId: "",
@@ -1512,9 +1590,84 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         `Set them with \`openclaw recipe set-var ${opts.kitRef} <name> <value>\` ` +
         `(values stay private in ~/.openclaw/recipe-vars.json).`,
       error: classifyError("missing-var", `missing required variable(s): ${list}`, {
-        missingVars,
+        missingVars: missing,
       }),
     };
+  };
+  let missingVars = checkRequiredVars(declaredParams, params);
+  if (missingVars.length > 0) {
+    if (opts.interactiveMode && opts.onAskVar && opts.planStore) {
+      // Durable pause: seed the plan first so setStatus has a plan to mutate, then
+      // mark it blocked-awaiting-input ON DISK before we ask anyone.
+      const askStore = opts.planStore;
+      try {
+        const seeded = await askStore.set({
+          sessionKey: opts.sessionKey,
+          intent: opts.intent,
+          runId: `kit-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`,
+          kitRef: opts.kitRef,
+          steps: kit.steps.map((s) => ({ title: s.title })),
+        });
+        interactiveSeedRunId = seeded.runId;
+      } catch {
+        // could not seed → fall back to the shipped clear-fail (no durable pause).
+        return buildMissingVarFail(missingVars);
+      }
+      try {
+        await askStore.setStatus(opts.sessionKey, "blocked-awaiting-input");
+      } catch {
+        // status write failed → fall back to clear-fail; the plan exists but we
+        // cannot reliably mark the pause, so do not enter the wait.
+        return buildMissingVarFail(missingVars);
+      }
+      // Fire-and-forget ask sink (same wrapped/never-throws contract as onCheckpoint).
+      try {
+        opts.onAskVar({ sessionKey: opts.sessionKey, kitRef: opts.kitRef, missingVars });
+      } catch {
+        // ask observability must never break the run
+      }
+      const timeoutMs = deriveAskTimeoutMs({
+        missingVarCount: missingVars.length,
+        fitnessSuccessRate: opts.fitnessSuccessRate,
+        stepCount: kit.steps.length,
+      });
+      // Default resolver returns null (no answer) — production wires a real resolver.
+      const resolver =
+        opts._askResolver ?? (async (): Promise<Record<string, string> | null> => null);
+      let answers: Record<string, string> | null = null;
+      try {
+        answers = await resolver({
+          sessionKey: opts.sessionKey,
+          kitRef: opts.kitRef,
+          missingVars,
+          timeoutMs,
+        });
+      } catch {
+        answers = null;
+      }
+      if (answers) {
+        Object.assign(params, answers);
+        missingVars = checkRequiredVars(declaredParams, params);
+        if (missingVars.length === 0) {
+          // Unblocked: flip the durable status back and FALL THROUGH to dispatch.
+          try {
+            await askStore.setStatus(opts.sessionKey, "in_progress");
+          } catch {
+            // non-fatal: dispatch still proceeds; the board may show stale status.
+          }
+        } else {
+          // Still missing after the answer → clear-fail (plan stays blocked on disk).
+          return buildMissingVarFail(missingVars);
+        }
+      } else {
+        // timeout / null / declined → keep the SHIPPED clear-fail. The plan stays
+        // blocked-awaiting-input on disk (a durable record of the unmet need).
+        return buildMissingVarFail(missingVars);
+      }
+    } else {
+      // Non-interactive (or no sink / no store): the SHIPPED clear-fail, unchanged.
+      return buildMissingVarFail(missingVars);
+    }
   }
   const dispatchGroups: StepDispatch[][] = groups.map((groupIndices) =>
     groupIndices.map((idx) => {
@@ -1710,10 +1863,15 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
     ? collectPriorArtifacts(existing!, startIndex)
     : [];
 
-  // Seed the plan (fresh run) OR keep the existing one (resume).
+  // Seed the plan (fresh run) OR keep the existing one (resume) OR reuse the plan
+  // the BROCA P1.1 durable-pause branch already seeded (interactiveSeedRunId set).
   let planId: string;
   if (resuming) {
     planId = existing!.runId;
+  } else if (interactiveSeedRunId) {
+    // The interactive ask-branch already seeded this plan and flipped it back to
+    // in_progress; reuse it rather than re-seeding (which would wipe the status).
+    planId = interactiveSeedRunId;
   } else {
     try {
       const result = await store.set({
