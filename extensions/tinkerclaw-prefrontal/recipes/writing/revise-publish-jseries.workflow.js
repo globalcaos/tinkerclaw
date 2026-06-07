@@ -17,7 +17,7 @@ export const meta = {
   ],
 };
 
-const BASE = "/home/user/Documents/AI_reports/Papers";
+const BASE = "~/Documents/AI_reports/Papers";
 const FOLDERS = [
   "J1_total_recall",
   "J2_instant_recall",
@@ -86,7 +86,7 @@ function triagePrompt(folder) {
 
 1. List the folder and pick the GENUINELY latest version of the paper. WARNING: the newest content is NOT always the highest-dated filename — most folders also contain an UNDATED \`<topic>.md\` (e.g. curiosity-motivation.md, total-recall.md) that is frequently the real current version with a HIGHER vX.Y in its header than any dated file. Candidates = dated \`YYYY-MM-DD-codename-vX.Y.md\` files AND the undated \`<topic>.md\`. Open each candidate's header, compare version numbers, and pick the highest. IGNORE supporting files that are NOT the paper: \`sota-expansion-*\`, \`*-review-*\`, \`*-critique*\`, \`*-references*\`, \`*-synthesis*\`, \`*-brief*\`, \`*-revision-*\`, \`gemini-*\`, \`diagram-suggestions.md\`, \`improvement_notes.md\`. Record the chosen absolute path and version.
 2. Read ${BASE}/${folder}/improvement_notes.md (if absent, look for a sibling *-improvement-notes.md or the J-series-status table).
-3. Read the latest paper md. Also cross-check the newest /home/user/.openclaw/workspace/memory/projects/papers/J-series-status-*.md (highest date) — its status column says whether this paper's notes were already addressed in a prior batch.
+3. Read the latest paper md. Also cross-check the newest ~/.openclaw/workspace/memory/projects/papers/J-series-status-*.md (highest date) — its status column says whether this paper's notes were already addressed in a prior batch.
 
 Classify the improvement notes:
 - "actionable": concrete pending improvement items NOT yet reflected in the latest paper version.
@@ -130,7 +130,7 @@ function compilePrompt(r, t) {
 Steps:
 1. Grep the md for ![](...) refs. REGENERATE every referenced figure with Napkin — do NOT reuse a pre-existing image just because it is on disk. Stale TikZ/PNGs from earlier passes routinely embed exactly what the self-containment rule forbids (sibling-paper names, "this paper", "Serra 202X" labels baked INTO the figure — invisible to a markdown text grep). Delete the old images/<name>.{png,pdf,tex} for each referenced figure before regenerating.
 2. Generate each figure with NAPKIN (Oscar's chosen diagram tool — beautiful conceptual PNGs):
-   bash /home/user/.openclaw/jarvis-workspace/.claude/skills/napkin-diagrams/scripts/napkin-generate.sh --file <section.md> ${BASE}/${t.folder}/images/<name>.png --variations 4 --style formal-balanced
+   bash ~/.openclaw/jarvis-workspace/.claude/skills/napkin-diagrams/scripts/napkin-generate.sh --file <section.md> ${BASE}/${t.folder}/images/<name>.png --variations 4 --style formal-balanced
    Feed it the FULL relevant paper section (200+ words), not a summary — Napkin's layout engine needs rich context. It emits up to 4 variations; pick the best. The figure's OWN CONTENT must be self-contained: NO sibling-paper names/codenames, NO "this paper", NO "Serra 202X" labels inside the diagram — describe adjacent mechanisms generically ("an external indexing layer", "a nightly consolidation process"). Requires NAPKIN_API_TOKEN in ~/.openclaw/credentials/napkin.env — if ABSENT, report figure as "napkin-token-missing" and fall back to a clean self-contained TikZ figure. Convert any ASCII box-art to a real figure either way. One figure failing does not abort.
    SCALING: a tall portrait diagram overflows the text block ("Float too large for page by Npt", caption collides with the footer). Constrain every embedded figure to the page: \\includegraphics[width=\\linewidth,height=0.85\\textheight,keepaspectratio]{...} (or \\resizebox), so it never exceeds the text height.
 3. Run ${BASE}/md-to-tex.sh on the md to produce the dated .tex (YYYY-MM-DD-codename-vX.Y.tex).
