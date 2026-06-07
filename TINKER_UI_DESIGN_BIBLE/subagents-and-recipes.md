@@ -171,6 +171,10 @@ verify:
     cmd: grep -Fq '"context"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-var-store.ts && grep -Fq '"memory"' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-var-store.ts && grep -Fq 'export function deriveContextTimeoutMs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-context.ts && grep -Fq 'fork.memory.search' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-memory.ts && grep -Fq 'export async function resolveContextMemoryTiers' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-tiers.ts && grep -Fq 'resolveContextMemoryTiers' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts
   - name: CONTEXT/MEMORY tiers NEVER auto-resolve a secret var — secret-skip guard present (an inferred credential is a hint, not ground truth → falls through to the confirmed ask)
     cmd: grep -Fq 'secret === true' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-resolve-tiers.ts
+  - name: BROCA P1.1 ask-for-missing — durable blocked-awaiting-input pause + J16-derived wait (LAST resort after context/memory; never a frozen timeout)
+    cmd: grep -Fq 'blocked-awaiting-input' ~/src/tinkerclaw/src/gateway/protocol/schema/prefrontal-plan.ts && grep -Fq 'async setStatus' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/plan-store.ts && grep -Fq 'interactiveMode' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'export function deriveAskTimeoutMs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
+  - name: BROCA P1.1 ask is OPT-IN (askIfMissing) with clear-fail the default; the resolver persists the answer (asked-once-then-reused, secret-confirm)
+    cmd: grep -Fq 'askIfMissing' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && grep -Fq 'export function makeAskResolver' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-ask-resolver.ts
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
