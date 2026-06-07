@@ -8,7 +8,12 @@
  * kit.md text (the prefrontal.recipe.read RPC).
  */
 import { parse as parseYaml } from "yaml";
-import type { RecipeSpec, RecipeStepSpec } from "./recipe-author.js";
+import type {
+  RecipeSpec,
+  RecipeStepSpec,
+  RecipeParamSpec,
+  RecipeParamType,
+} from "./recipe-author.js";
 import {
   parseKitStepsAndParallelism,
   parseInvokeSkillDirective,
@@ -74,6 +79,27 @@ export function parseRecipeMd(md: string): RecipeSpec {
     : [];
   const category = typeof fm.category === "string" ? fm.category : undefined;
 
+  // SS-params: tolerantly normalize the params: frontmatter into typed specs.
+  // This is the panel/runner READER — stay lenient; validateRecipeSpec is the hard gate.
+  let params: Record<string, RecipeParamSpec> | undefined;
+  if (fm.params && typeof fm.params === "object" && !Array.isArray(fm.params)) {
+    const acc: Record<string, RecipeParamSpec> = {};
+    for (const [name, raw] of Object.entries(fm.params as Record<string, unknown>)) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const r = raw as Record<string, unknown>;
+      const spec: RecipeParamSpec = { type: (r.type as RecipeParamType) ?? "string" };
+      if (typeof r.required === "boolean") spec.required = r.required;
+      if (r.default !== undefined) spec.default = r.default;
+      if (typeof r.secret === "boolean") spec.secret = r.secret;
+      if (typeof r.description === "string") spec.description = r.description;
+      if (typeof r.pattern === "string") spec.pattern = r.pattern;
+      if (Array.isArray(r.enum))
+        spec.enum = r.enum.filter((e): e is string => typeof e === "string");
+      acc[name] = spec;
+    }
+    if (Object.keys(acc).length > 0) params = acc;
+  }
+
   const parsed = parseKitStepsAndParallelism(md);
   const steps: RecipeStepSpec[] = parsed.steps.map((s) => {
     const io = parseStepIoDirectives(s.body);
@@ -94,5 +120,6 @@ export function parseRecipeMd(md: string): RecipeSpec {
   const out: RecipeSpec = { slug, title, summary, tags, steps };
   if (category) out.category = category;
   if (parsed.parallelism?.groups) out.parallelismGroups = parsed.parallelism.groups;
+  if (params) out.params = params;
   return out;
 }
