@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import type { RecipeParamSpec } from "./recipe-author.js";
 import { createVarStore, mergePrecedence, envVarName } from "./recipe-var-store.js";
+import type { PrecedenceResult } from "./recipe-var-store.js";
 
 describe("recipe-var-store: VarStore", () => {
   let baseDir: string;
@@ -170,5 +171,35 @@ describe("recipe-var-store: mergePrecedence (one assertion per tier)", () => {
     const store = createVarStore(baseDir);
     const { resolvedParams } = mergePrecedence(undefined, { x: "y" }, store, "owner/slug", {});
     expect(resolvedParams).toEqual({ x: "y" });
+  });
+});
+
+describe("recipe-var-store: VarSource provenance tiers (context/memory)", () => {
+  it("a provenance record can carry 'context'/'memory' tiers (accepted + renders)", () => {
+    // The masked provenance trail records WHERE each value came from. 'context' and
+    // 'memory' are valid tiers (recorded by the caller, not by mergePrecedence). A
+    // PrecedenceResult carrying them must type-check and round-trip its provenance.
+    const result: PrecedenceResult = {
+      resolvedParams: { a: "from-ctx", b: "from-mem" },
+      provenance: { a: "context", b: "memory" },
+    };
+    expect(result.provenance.a).toBe("context");
+    expect(result.provenance.b).toBe("memory");
+    // renders in a trail-style stringification without loss
+    expect(JSON.stringify(result.provenance)).toContain("context");
+    expect(JSON.stringify(result.provenance)).toContain("memory");
+  });
+
+  it("mergePrecedence still stamps 'unresolved' for a fully-unresolved decl (unchanged)", () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "recipe-vars-tiers-"));
+    try {
+      const store = createVarStore(baseDir);
+      const noSource: Record<string, RecipeParamSpec> = { v: { type: "string", required: true } };
+      const { resolvedParams, provenance } = mergePrecedence(noSource, {}, store, "owner/slug", {});
+      expect(resolvedParams.v).toBeUndefined();
+      expect(provenance.v).toBe("unresolved");
+    } finally {
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
   });
 });

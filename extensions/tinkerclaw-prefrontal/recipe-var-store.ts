@@ -143,6 +143,8 @@ export type VarSource =
   | "call-site"
   | "recipe-store"
   | "global-store"
+  | "context"
+  | "memory"
   | "env"
   | "default"
   | "unresolved";
