@@ -170,10 +170,13 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     category: "rate_limit",
     fatal: false,
     headline: "Rate limited",
+    // NOTE: when `raw` is available, buildErrorEnvelope() replaces this with the
+    // precise window (5-hour / weekly / short-term peak) via rateLimitDetail().
+    // This static text is only the fallback when the cause can't be pinned down.
     explanation:
-      "The provider is rejecting requests because the 5-hour or weekly quota is exhausted. This will clear when the quota resets.",
+      "The provider is rate-limiting requests. The exact window (5-hour, weekly, or short-term peak) is named from the error when the provider includes it.",
     suggestedActions: [
-      "Wait for the quota to reset",
+      "Wait for the limit to reset — automatic retry is in progress",
       "Switch to a different auth profile temporarily",
     ],
     // 🚦 traffic-light — slow down, auto-recovers
@@ -182,9 +185,13 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
   overloaded: {
     category: "overload",
     fatal: false,
-    headline: "Provider overloaded",
-    explanation: "The provider returned HTTP 529 (overloaded). Automatic retry is in progress.",
-    suggestedActions: ["Wait — retry is automatic"],
+    headline: "Anthropic temporarily limiting requests (not your usage)",
+    explanation:
+      "Anthropic returned HTTP 529 — its own servers are temporarily overloaded or rate-limiting on their side. This is NOT your 5-hour or weekly usage limit and does not count against your quota; it clears on its own, usually within a few minutes. Automatic retry is in progress.",
+    suggestedActions: [
+      "Wait — automatic retry is in progress",
+      "If it persists for many minutes, check https://status.anthropic.com",
+    ],
     // 🌊 wave — too much traffic, will drain
     icon: "🌊",
   },
@@ -356,11 +363,20 @@ export function classifyRawErrorMessage(raw: string): string {
   if (/credit balance is too low|insufficient.*balance|quota.*exhausted/.test(s)) {
     return "billing_insufficient";
   }
-  if (/rate.?limit|429|usage limits|too many requests/.test(s)) {
-    return "rate_limited";
-  }
-  if (/overloaded|529|temporarily unavailable/.test(s)) {
+  // Anthropic server-side limiting (HTTP 529) — explicitly NOT the user's quota.
+  // This MUST be checked BEFORE the rate-limit branch: the raw string often ALSO
+  // contains the words "rate limited" (e.g. "Server is temporarily limiting
+  // requests (not your usage limit) · Rate limited"), which would otherwise
+  // mis-route to rate_limited and falsely claim the user's quota is exhausted.
+  if (
+    /not your usage limit|server is temporarily limiting|overloaded|\b529\b|temporarily unavailable/.test(
+      s,
+    )
+  ) {
     return "overloaded";
+  }
+  if (/rate.?limit|\b429\b|usage limits|too many requests/.test(s)) {
+    return "rate_limited";
   }
   if (/timed out|timeout/.test(s)) {
     return "timeout";
@@ -375,6 +391,55 @@ export function classifyRawErrorMessage(raw: string): string {
     return "incomplete_turn";
   }
   return "provider_generic";
+}
+
+/**
+ * Pin down WHICH rate limit was hit — the rolling 5-hour window, the weekly
+ * window, or a short-term per-minute peak — from the raw provider message, so the
+ * card states the precise cause instead of a blanket "quota exhausted". (Anthropic
+ * server-side 529 limiting is handled separately as `overloaded`, not here.)
+ */
+export function rateLimitDetail(raw: string): {
+  explanation: string;
+  suggestedActions: string[];
+} {
+  const s = raw.toLowerCase();
+  const m = raw.match(/(?:retry|try again|reset)[^0-9]{0,12}(\d+)\s*s/i);
+  const when = m ? ` (provider says retry in ${m[1]}s)` : "";
+  if (/weekly|per week|7[\s-]?day/.test(s)) {
+    return {
+      explanation: `You hit the Claude subscription's WEEKLY usage limit${when}. This is your own usage and it clears at the next weekly reset.`,
+      suggestedActions: [
+        "Wait for the weekly window to reset",
+        "Switch to a different auth profile temporarily",
+      ],
+    };
+  }
+  if (/5[\s-]?hour|\b5h\b|five[\s-]?hour/.test(s)) {
+    return {
+      explanation: `You hit the Claude subscription's rolling 5-HOUR usage limit${when}. This is your own usage and it clears at the next 5-hour reset.`,
+      suggestedActions: [
+        "Wait for the 5-hour window to reset",
+        "Switch to a different auth profile temporarily",
+      ],
+    };
+  }
+  if (/per minute|requests per|tokens per|too many requests|\b429\b/.test(s)) {
+    return {
+      explanation: `Short-term PEAK rate limit${when}: too many requests or tokens per minute. This is a burst limit (your peak consumption, not your overall 5-hour or weekly quota) and clears within about a minute.`,
+      suggestedActions: [
+        "Wait ~60s — automatic retry is in progress",
+        "Reduce concurrent requests if this keeps happening",
+      ],
+    };
+  }
+  return {
+    explanation: `The provider is rate-limiting requests${when}. The exact window (5-hour, weekly, or short-term peak) wasn't named in the error; it usually clears on its own.`,
+    suggestedActions: [
+      "Wait for the limit to reset — automatic retry is in progress",
+      "Switch to a different auth profile temporarily",
+    ],
+  };
 }
 
 export interface BuildEnvelopeInput {
@@ -407,14 +472,24 @@ export function buildErrorEnvelope(input: BuildEnvelopeInput): ErrorEnvelope {
   const raw = input.raw?.trim() ?? "";
   const code = input.code ?? classifyRawErrorMessage(raw);
   const entry = lookup(code);
+  // For a genuine user rate-limit, name the precise window (5-hour / weekly /
+  // peak) from the raw message rather than the generic static text. Skipped when
+  // the caller supplied its own explanation.
+  let explanation = input.explanation ?? entry.explanation;
+  let suggestedActions = input.suggestedActions ?? entry.suggestedActions;
+  if (code === "rate_limited" && input.explanation === undefined && raw) {
+    const detail = rateLimitDetail(raw);
+    explanation = detail.explanation;
+    if (input.suggestedActions === undefined) suggestedActions = detail.suggestedActions;
+  }
   return {
     kind: "error",
     id: makeId(),
     fatal: input.fatal ?? entry.fatal,
     category: entry.category,
     headline: input.headline ?? entry.headline,
-    explanation: input.explanation ?? entry.explanation,
-    suggestedActions: input.suggestedActions ?? entry.suggestedActions,
+    explanation,
+    suggestedActions,
     icon: entry.icon,
     llm: input.llm,
     sessionKey: input.sessionKey,
