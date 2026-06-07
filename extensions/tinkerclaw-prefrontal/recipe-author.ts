@@ -33,6 +33,31 @@ export interface RecipeStepSpec {
   earlyExit?: boolean;
 }
 
+/** SS-params (2026-06-07): the 5 supported recipe-parameter value types. */
+export type RecipeParamType = "string" | "number" | "boolean" | "enum" | "list<string>";
+
+/**
+ * SS-params: a typed declaration for one recipe parameter. Names + types + prompts
+ * + constraints ONLY ever reach the published .md — real values live in the private
+ * VarStore (~/.openclaw/recipe-vars.json). A `secret:true` default is never emitted
+ * (PII boundary; see buildRecipeMd).
+ */
+export interface RecipeParamSpec {
+  type: RecipeParamType;
+  /** default false. */
+  required?: boolean;
+  /** must match `type` when present (and required must be absent/false). */
+  default?: unknown;
+  /** default false — masked in every emit; default stripped from the .md. */
+  secret?: boolean;
+  /** the prompt shown to the user / panel. */
+  description?: string;
+  /** string-only: a RegExp source the value must match. */
+  pattern?: string;
+  /** enum-only: the allowed values (required when type === "enum"). */
+  enum?: string[];
+}
+
 export interface RecipeSpec {
   slug: string;
   title: string;
@@ -46,6 +71,8 @@ export interface RecipeSpec {
   /** 0-based step-index groups; serial chains = one index per group. */
   parallelismGroups?: number[][];
   parallelismNotes?: string;
+  /** SS-params: typed parameter declarations (name → spec). */
+  params?: Record<string, RecipeParamSpec>;
   constraints?: string[];
   safetyNotes?: string[];
   failuresOvercome?: string[];
@@ -160,6 +187,94 @@ export function validateRecipeSpec(spec: unknown): RecipeValidationResult {
     });
   }
 
+  // SS-params: typed parameter declarations. Names + types + prompts + constraints
+  // only; values never live here. Reserved names collide with the {{…}} namespace.
+  const PARAM_TYPES: RecipeParamType[] = ["string", "number", "boolean", "enum", "list<string>"];
+  if (s.params !== undefined) {
+    if (s.params === null || typeof s.params !== "object" || Array.isArray(s.params)) {
+      errors.push("params must be an object mapping name → spec");
+    } else {
+      for (const [name, raw] of Object.entries(s.params as Record<string, unknown>)) {
+        if (name === "item" || name === "index" || /^steps\./.test(name)) {
+          errors.push(`params.${name} is a reserved name (item/index/steps.* collide with {{…}})`);
+          continue;
+        }
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          errors.push(`params.${name} is not an object`);
+          continue;
+        }
+        const p = raw as Partial<RecipeParamSpec>;
+        if (typeof p.type !== "string" || !PARAM_TYPES.includes(p.type as RecipeParamType)) {
+          errors.push(`params.${name}.type must be one of ${PARAM_TYPES.join("|")}`);
+        }
+        if (p.required !== undefined && typeof p.required !== "boolean")
+          errors.push(`params.${name}.required must be a boolean`);
+        if (p.secret !== undefined && typeof p.secret !== "boolean")
+          errors.push(`params.${name}.secret must be a boolean`);
+        // enum presence ↔ type === "enum".
+        if (p.type === "enum") {
+          if (
+            !Array.isArray(p.enum) ||
+            p.enum.length === 0 ||
+            !p.enum.every((e) => typeof e === "string")
+          )
+            errors.push(`params.${name}.enum must be a non-empty string[] when type is "enum"`);
+        } else if (p.enum !== undefined) {
+          errors.push(`params.${name}.enum is only allowed when type is "enum"`);
+        }
+        // pattern: string-only, must compile.
+        if (p.pattern !== undefined) {
+          if (p.type !== "string") {
+            errors.push(`params.${name}.pattern is only allowed when type is "string"`);
+          } else if (typeof p.pattern !== "string") {
+            errors.push(`params.${name}.pattern must be a string`);
+          } else {
+            try {
+              new RegExp(p.pattern);
+            } catch {
+              errors.push(`params.${name}.pattern is not a valid RegExp: ${p.pattern}`);
+            }
+          }
+        }
+        // default: cannot coexist with required; must satisfy type (+ pattern when string).
+        if (p.default !== undefined) {
+          if (p.required === true) {
+            errors.push(`params.${name}: required and default are mutually exclusive`);
+          }
+          const d = p.default;
+          switch (p.type) {
+            case "string":
+              if (typeof d !== "string") errors.push(`params.${name}.default must be a string`);
+              else if (typeof p.pattern === "string") {
+                try {
+                  if (!new RegExp(p.pattern).test(d))
+                    errors.push(`params.${name}.default must match /${p.pattern}/`);
+                } catch {
+                  /* pattern compile error already reported above */
+                }
+              }
+              break;
+            case "number":
+              if (typeof d !== "number" || !Number.isFinite(d))
+                errors.push(`params.${name}.default must be a finite number`);
+              break;
+            case "boolean":
+              if (typeof d !== "boolean") errors.push(`params.${name}.default must be a boolean`);
+              break;
+            case "list<string>":
+              if (!Array.isArray(d) || !d.every((e) => typeof e === "string"))
+                errors.push(`params.${name}.default must be a string[]`);
+              break;
+            case "enum":
+              if (typeof d !== "string" || !(Array.isArray(p.enum) && p.enum.includes(d)))
+                errors.push(`params.${name}.default must be a member of its enum`);
+              break;
+          }
+        }
+      }
+    }
+  }
+
   // Parallelism groups: in-range, non-overlapping, full coverage.
   if (s.parallelismGroups !== undefined) {
     const stepCount = Array.isArray(s.steps) ? s.steps.length : 0;
@@ -248,6 +363,22 @@ export function buildRecipeMd(spec: RecipeSpec): string {
   if (spec.parallelismNotes) {
     fm.push("  notes: |");
     for (const line of spec.parallelismNotes.split("\n")) fm.push(`    ${line}`);
+  }
+  // SS-params: emit declared params as inline-flow YAML maps (round-trip cleanly via
+  // the `yaml` parser). A secret:true param NEVER emits its default — values stay private.
+  if (spec.params && Object.keys(spec.params).length > 0) {
+    fm.push("params:");
+    for (const [name, param] of Object.entries(spec.params)) {
+      const safe: RecipeParamSpec = param.secret ? { ...param, default: undefined } : param;
+      const fields: string[] = [`type: ${JSON.stringify(safe.type)}`];
+      if (safe.required) fields.push("required: true");
+      if (safe.default !== undefined) fields.push(`default: ${JSON.stringify(safe.default)}`);
+      if (safe.secret) fields.push("secret: true");
+      if (safe.description) fields.push(`description: ${JSON.stringify(safe.description)}`);
+      if (safe.pattern) fields.push(`pattern: ${JSON.stringify(safe.pattern)}`);
+      if (safe.enum) fields.push(`enum: [${safe.enum.map((e) => JSON.stringify(e)).join(", ")}]`);
+      fm.push(`  ${name}: { ${fields.join(", ")} }`);
+    }
   }
   fm.push("---", "");
 
