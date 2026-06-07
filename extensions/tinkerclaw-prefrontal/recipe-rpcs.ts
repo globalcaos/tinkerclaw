@@ -49,7 +49,12 @@ import {
   isApplyEnabled,
   type ApplyProposalInput,
 } from "./recipe-apply.js";
-import { buildRecipeMd, validateRecipeSpec, type RecipeSpec } from "./recipe-author.js";
+import {
+  buildRecipeMd,
+  validateRecipeSpec,
+  type RecipeSpec,
+  type RecipeParamSpec,
+} from "./recipe-author.js";
 import {
   bumpVersion,
   makeRatingLookup,
@@ -64,7 +69,7 @@ import {
 import { optimizeRecipe } from "./recipe-optimize.js";
 import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
 import {
-  loadRecipeParams,
+  loadRecipeText,
   parseUsesDirective,
   resolveRecipeOverlayDir,
   runRecipe,
@@ -72,6 +77,7 @@ import {
 } from "./recipe-runner.js";
 import { snapshotKit } from "./recipe-snapshot.js";
 import { RecipeStore } from "./recipe-store.js";
+import { createVarStore, mergePrecedence, SECRET_MASK, type VarStore } from "./recipe-var-store.js";
 
 const recipeApplyLog = createSubsystemLogger("recipe-apply");
 
@@ -1078,25 +1084,75 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       // / no engram) → the runner's neutral 0.5 default (back-compat).
       const fitnessSuccessRate = makeFitnessLookup(engramBaseDir)(p.kitRef);
 
-      // SS-params (2026-06-07): validate + coerce the caller-provided parameter
-      // values against the recipe's DECLARED params BEFORE spawning anything. The
-      // single fail-before-spawn gate for BOTH dry-run and live: an unknown key, a
-      // missing required value, or a type/pattern/enum mismatch is refused here so
-      // no subagent is ever dispatched with a bad parameter set. An un-parameterized
-      // recipe (no `params:` block) passes through untouched (back-compat).
-      const declaredParams = await loadRecipeParams(
+      // BROCA Unit 3 (§4): the private value store + resolution-precedence merge.
+      // varBaseDir is the `.openclaw` ROOT (NOT /engram) so recipe-vars.json sits
+      // outside every ~/.openclaw/.gitignore whitelist → unpushable to the public
+      // fork by construction (PII boundary). Recipe .md files carry param names +
+      // types + prompts ONLY; real values live here, chmod 600.
+      const varBaseDir = process.env.OPENCLAW_HOME ?? `${homedir()}/.openclaw`;
+      const varStore: VarStore = createVarStore(varBaseDir);
+
+      // Load the recipe's DECLARED params (Unit 1's `params:` frontmatter) so we can
+      // resolve them. parseRecipeMd is tolerant; the runner's static gate is the hard
+      // check. A load failure here is non-fatal: undefined decls → un-parameterized
+      // recipe → the merge/validate are no-ops (overlay, back-compat).
+      let declaredParams: Record<string, RecipeParamSpec> | undefined;
+      try {
+        const md = await loadRecipeText(
+          p.kitRef,
+          deps.ownRecipesDir ?? "",
+          deps.recipeInstallSandbox ?? "",
+        );
+        declaredParams = parseRecipeMd(md).params;
+      } catch {
+        declaredParams = undefined;
+      }
+
+      // Precedence merge (§4.3): call-site > recipe-scope > global > env > default.
+      // Then Unit 2's validateParams coerces/defaults/rejects. Fail BEFORE any spawn
+      // (both dry-run and live) on a validation error.
+      const { resolvedParams, provenance } = mergePrecedence(
+        declaredParams,
+        p.parameters,
+        varStore,
         p.kitRef,
-        deps.ownRecipesDir,
-        deps.recipeInstallSandbox,
       );
-      const validation = validateParams(declaredParams, p.parameters);
+      const validation = validateParams(declaredParams, resolvedParams);
       if (!validation.ok) {
         return {
           ok: false,
           planId: "",
-          ...(p.dryRun ? { dryRun: true } : {}),
-          errorMessage: `prefrontal.recipe.run: parameter validation failed:\n - ${validation.errors.join("\n - ")}`,
+          errorMessage: `prefrontal.recipe.run: invalid parameters:\n - ${validation.errors.join("\n - ")}`,
         };
+      }
+      const mergedParameters = validation.values;
+
+      // Provenance trail (§4.4): one masked, fire-and-forget trailEvent recording the
+      // source of each resolved param — secret values are NEVER shown (mask only),
+      // proving values come from the private store, never the public recipe file.
+      // Same loopback callGateway + fire-and-forget pattern as onCheckpoint below.
+      if (declaredParams && Object.keys(provenance).length > 0) {
+        const lines = Object.entries(provenance).map(([name, src]) => {
+          const secret =
+            varStore.isSecret(p.kitRef, name) || declaredParams?.[name]?.secret === true;
+          const shown = secret
+            ? `${SECRET_MASK} [secret]`
+            : (mergedParameters[name] ?? "(unresolved)");
+          return `${name} ← ${src}: ${shown}`;
+        });
+        void callGateway({
+          method: "fork.prefrontal.trailEvent",
+          params: {
+            kind: "recipe-params",
+            label: `${p.kitRef}:params`,
+            message: `resolved params — ${lines.join("; ")}`,
+            sessionKey: p.sessionKey,
+            payload: {
+              recipeId: p.kitRef,
+              provenance,
+            },
+          },
+        }).catch(() => {});
       }
 
       if (p.dryRun) {
@@ -1105,7 +1161,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
           kitRef: p.kitRef,
           sessionKey: p.sessionKey,
           intent: p.intent,
-          parameters: validation.values,
+          parameters: mergedParameters,
           dryRun: true,
           ownRecipesDir: deps.ownRecipesDir,
           recipeInstallSandbox: deps.recipeInstallSandbox,
@@ -1132,7 +1188,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         kitRef: p.kitRef,
         sessionKey: p.sessionKey,
         intent: p.intent,
-        parameters: validation.values,
+        parameters: mergedParameters,
         dryRun: false,
         planStore: deps.planStore,
         ownRecipesDir: deps.ownRecipesDir,
