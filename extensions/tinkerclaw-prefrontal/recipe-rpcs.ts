@@ -68,6 +68,7 @@ import {
 } from "./recipe-matcher.js";
 import { optimizeRecipe } from "./recipe-optimize.js";
 import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
+import { resolveContextMemoryTiers } from "./recipe-resolve-tiers.js";
 import {
   loadRecipeText,
   parseUsesDirective,
@@ -1117,6 +1118,26 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         varStore,
         p.kitRef,
       );
+
+      // BROCA CONTEXT+MEMORY tiers (Seam 3): for any declared NON-SECRET param P0
+      // left 'unresolved', try to resolve it from the run intent/conversation
+      // (CONTEXT) then the episodic engram (MEMORY) BEFORE validateParams — so
+      // Jarvis never asks a human for a value it was probably just told / has
+      // recalled. Secrets are excluded up front (they flow through the confirmed
+      // ASK). RUN-SCOPED: the resolved values are NOT persisted to the VarStore;
+      // the masked provenance trail below records the tier ('context'/'memory')
+      // automatically. Best-effort — never throws into the run.
+      await resolveContextMemoryTiers({
+        declaredParams,
+        resolvedParams,
+        provenance,
+        intent: p.intent,
+        sessionKey: p.sessionKey,
+        fitnessSuccessRate,
+        stepCount: 1,
+        callGateway,
+      }).catch(() => {});
+
       const validation = validateParams(declaredParams, resolvedParams);
       if (!validation.ok) {
         return {
