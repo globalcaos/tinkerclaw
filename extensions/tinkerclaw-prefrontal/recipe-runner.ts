@@ -877,17 +877,27 @@ export function checkParamRefs(
   const errors: string[] = [];
   const declared = new Set(Object.keys(decls ?? {}));
   const TOKEN_RE = /\{\{\s*([^}]+?)\s*\}\}/g;
+  // Leading directives (uses/when/map/onError/allow-tools/max-tokens/max-tool-calls/in/out/
+  // invoke skill) carry their OWN {{template}} resolution with fail-closed semantics — they
+  // are NOT prose param substitution, so their tokens must not be flagged here (e.g. SS5b
+  // max-tokens:{{x}} intentionally fails closed to the derived bound rather than erroring).
+  // Only the prose body is scanned for undeclared param refs.
+  const DIRECTIVE_LINE_RE =
+    /^\s*(?:uses|loop|when|return|done|map|filter|keep|onError|allow-tools|max-tokens|max-tool-calls|in|out)\s*:|^\s*invoke\s+skill\s*:/i;
   steps.forEach((step, i) => {
     const consumerNumber = i + 1;
     const body = step.body ?? "";
-    for (const m of body.matchAll(TOKEN_RE)) {
-      const token = m[1].trim();
-      if (/^steps\.\d+\.out/.test(token)) continue; // typed prior-step output ref
-      if (token === "item" || token === "index") continue; // map/filter per-element binding
-      if (declared.has(token)) continue; // a declared parameter
-      errors.push(
-        `step ${consumerNumber}: {{${token}}} is not a declared parameter (declare it under params: or use a steps.<n>.out / item / index ref)`,
-      );
+    for (const line of body.split("\n")) {
+      if (DIRECTIVE_LINE_RE.test(line)) continue;
+      for (const m of line.matchAll(TOKEN_RE)) {
+        const token = m[1].trim();
+        if (/^steps\.\d+\.out/.test(token)) continue; // typed prior-step output ref
+        if (token === "item" || token === "index") continue; // map/filter per-element binding
+        if (declared.has(token)) continue; // a declared parameter
+        errors.push(
+          `step ${consumerNumber}: {{${token}}} is not a declared parameter (declare it under params: or use a steps.<n>.out / item / index ref)`,
+        );
+      }
     }
   });
   return errors;
