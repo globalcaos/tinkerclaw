@@ -24,6 +24,10 @@ import {
   type GGroup,
 } from "./panels/presence-graph.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
+// FORK 2026-06-08 — bug "queued prompts stick forever + show in every tab": pure, unit-tested
+// helpers that scope the queued-send array by session (render only the active tab's entries; settle
+// a session's entries when ITS turn ends, independent of which tab is viewed). See queued-sends.ts.
+import { queuedForSession, settleQueuedSession } from "./queued-sends.js";
 // FORK 2026-05-30: shared per-subagent identity color (chat sub-bubble + RECIPES
 // panel row + thinking-row all import the SAME function so colors always match).
 import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
@@ -2069,19 +2073,53 @@ interface AmygdalaLiveDecision {
 }
 const amygdalaLive: AmygdalaLiveDecision[] = [];
 let amygdalaAll: AmygdalaLiveDecision[] = [];
+let amygdalaSelected: number | null = null;
 function pushAmygdalaDecision(d: AmygdalaLiveDecision): void {
   amygdalaLive.unshift({ ...d, ts: d.ts ?? Date.now() });
-  if (amygdalaLive.length > 60) amygdalaLive.pop();
+  if (amygdalaLive.length > 100) amygdalaLive.pop();
   if (budgetScope !== "all") renderAmygdalaPanel();
 }
 async function fetchAmygdalaAll(): Promise<void> {
   try {
     const f = await req<{ decisions?: AmygdalaLiveDecision[] }>("amygdala.feed", {});
     amygdalaAll = f.decisions ?? [];
+    // FORK 2026-06-07: seed the live (session) view from the persisted feed on first
+    // load, so a UI refresh repopulates instead of showing Idle. Guard on empty to
+    // avoid duplicating live events that arrived before this resolved.
+    if (!amygdalaLive.length && amygdalaAll.length) amygdalaLive.push(...amygdalaAll);
   } catch {
     /* keep stale */
   }
   renderAmygdalaPanel();
+}
+function amygdalaVerb(d: AmygdalaLiveDecision): { col: string; verb: string } {
+  const col =
+    d.enforced || d.decision === "hard_block"
+      ? "var(--red)"
+      : d.decision === "soft_block"
+        ? "#f59e0b"
+        : "#4ade80";
+  const verb = d.enforced
+    ? "BLOCKED"
+    : d.decision === "hard_block"
+      ? "would block"
+      : d.decision === "soft_block"
+        ? "would flag"
+        : "allowed";
+  return { col, verb };
+}
+function amygdalaDetailHtml(d: AmygdalaLiveDecision): string {
+  const { col, verb } = amygdalaVerb(d);
+  const isOnnx = d.mode === "onnx";
+  const p = typeof d.prudence === "number" ? d.prudence : null;
+  const dis = typeof d.disagreement === "number" ? d.disagreement : null;
+  const row = (k: string, v: string) =>
+    `<div style="display:flex;gap:8px;font-size:10px;line-height:1.5"><span style="color:var(--muted);min-width:70px">${k}</span><span style="font-family:monospace;word-break:break-all">${v}</span></div>`;
+  const net =
+    isOnnx && p !== null
+      ? `<div style="margin-top:6px"><div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px">Network output</div><div style="position:relative;height:7px;border-radius:4px;background:rgba(255,255,255,0.06);margin:4px 0"><div style="position:absolute;left:0;top:0;height:7px;border-radius:4px;width:${Math.round(p * 100)}%;background:${col}"></div><div title="block threshold 0.90" style="position:absolute;left:90%;top:-2px;width:1px;height:11px;background:var(--red)"></div></div><div style="font-size:9px;color:var(--muted)">prudence p=${p.toFixed(3)} — blocks above 0.90 (red mark)${dis !== null ? ` · ensemble Δ=${dis.toFixed(3)} — flags above 0.30` : ""}</div></div>`
+      : `<div style="margin-top:6px;font-size:9px;color:var(--muted);line-height:1.5">Rule-based observe layer — no neural score. The ONNX gate (10 nets &rarr; a prudence score judged against the <b>0.90</b> block threshold and <b>0.30</b> disagreement-flag threshold) runs for native OpenClaw tool calls; cc-bridge / Claude-Code tools are screened here by destructive-pattern heuristics instead.</div>`;
+  return `<div style="border-top:1px solid rgba(255,255,255,0.09);margin-top:3px;padding:7px 9px;background:rgba(0,0,0,0.4)"><div style="font-size:10px;color:${col};font-weight:600;margin-bottom:4px">${verb} &middot; ${escapeHtml(d.tool ?? "?")}</div>${row("target", escapeHtml(d.target ?? "&mdash;"))}${row("decision", `${escapeHtml(d.decision ?? "allow")}${d.enforced ? " (enforced)" : d.blocked ? " (observe-only)" : ""}`)}${row("mode", isOnnx ? "onnx (neural gate)" : "rules (heuristic)")}${d.reason ? row("reason", escapeHtml(d.reason)) : ""}${net}</div>`;
 }
 function renderAmygdalaPanel(): void {
   const body = document.getElementById("amygdala-body");
@@ -2090,39 +2128,32 @@ function renderAmygdalaPanel(): void {
   const count = document.getElementById("amygdala-count");
   if (count) count.textContent = list.length ? String(list.length) : "";
   if (!list.length) {
-    body.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px">${budgetScope === "all" ? "No gate decisions recorded yet." : "Idle — gate decisions stream here live as the agent runs tools."}</div>`;
+    body.innerHTML = `<div style="color:var(--muted);font-size:11px;padding:8px">${budgetScope === "all" ? "No gate decisions recorded yet." : "Idle &mdash; gate decisions stream here live as the agent runs tools."}</div>`;
     return;
   }
-  body.innerHTML = list
-    .map((d) => {
-      const col =
-        d.enforced || d.decision === "hard_block"
-          ? "var(--red)"
-          : d.decision === "soft_block"
-            ? "#f59e0b"
-            : "#4ade80";
-      const verb = d.enforced
-        ? "BLOCKED"
-        : d.decision === "hard_block"
-          ? "would block"
-          : d.decision === "soft_block"
-            ? "would flag"
-            : "allowed";
-      const meta = `${d.mode ?? ""}${typeof d.prudence === "number" ? ` · p=${d.prudence.toFixed(2)}` : ""}`;
+  if (amygdalaSelected !== null && amygdalaSelected >= list.length) amygdalaSelected = null;
+  const rows = list
+    .map((d, i) => {
+      const { col, verb } = amygdalaVerb(d);
       const t = d.ts ? new Date(d.ts).toLocaleTimeString() : "";
-      return `<div style="border:1px solid rgba(255,255,255,0.07);border-left:3px solid ${col};border-radius:8px;padding:6px 9px;margin:5px 6px;background:rgba(0,0,0,0.28)">
-        <div style="display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;font-size:11px">
-          <b style="color:${col}">${verb}</b>
-          <span style="font-family:monospace">${escapeHtml(d.tool ?? "?")}</span>
-          <span style="font-family:monospace;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.target ?? "")}</span>
-          <span style="margin-left:auto;color:var(--muted)">${escapeHtml(meta)}</span>
-          <span style="color:var(--muted)">${t}</span>
-        </div>
-        ${d.reason ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(d.reason)}</div>` : ""}
-      </div>`;
+      const full = `${verb} — ${d.tool ?? "?"} ${d.target ?? ""}${d.reason ? " — " + d.reason : ""}`;
+      const sel = amygdalaSelected === i;
+      const line = `<div class="amy-line" data-i="${i}" title="${escapeHtml(full)}" style="cursor:pointer;border-left:2px solid ${col};padding:2px 7px;font-size:10px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${sel ? "background:rgba(255,255,255,0.06);" : ""}"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${col};margin-right:5px;vertical-align:middle"></span><span style="font-family:monospace">${escapeHtml(d.tool ?? "?")}</span> <span style="color:var(--muted)">${escapeHtml(d.target ?? "")}</span> <span style="color:var(--muted);font-size:9px">${t}</span></div>`;
+      return line + (sel ? amygdalaDetailHtml(d) : "");
     })
     .join("");
+  body.innerHTML = `<div style="border:1px solid rgba(255,255,255,0.08);border-radius:8px;background:rgba(0,0,0,0.28);overflow:hidden"><div style="max-height:240px;overflow-y:auto">${rows}</div></div>`;
 }
+// FORK 2026-06-07: click a feed line to toggle its detail (network output + thresholds).
+document.addEventListener("click", (ev) => {
+  const line = (ev.target as HTMLElement).closest(".amy-line") as HTMLElement | null;
+  if (!line) return;
+  const host = document.getElementById("amygdala-body");
+  if (!host || !host.contains(line)) return;
+  const i = Number(line.dataset.i);
+  amygdalaSelected = amygdalaSelected === i ? null : i;
+  renderAmygdalaPanel();
+});
 
 function onFrame(f: unknown) {
   if (f.type === "event") {
@@ -2144,6 +2175,7 @@ function onFrame(f: unknown) {
       })
         .then((hello: unknown) => {
           connected = true;
+          void fetchAmygdalaAll(); // seed persisted Amygdala feed on connect
           const defs = hello?.snapshot?.sessionDefaults;
           if (defs?.mainSessionKey) {
             sessionKey = defs.mainSessionKey;
@@ -2332,7 +2364,7 @@ function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
       };
       void req("debug.dumpUiSnapshot", {
         html:
-          "<!--SNAPVER:amy-panel-2026-06-07e-->" +
+          "<!--SNAPVER:amy-panel-2026-06-07i-->" +
           (document.querySelector(".right-panels")?.outerHTML ?? "<!--NO-RIGHT-PANELS-->") +
           "\n<!--CHAT-AREA-->\n" +
           messagesEl.outerHTML,
@@ -2555,6 +2587,24 @@ function onEvent(evt: unknown) {
     const isViewedMain = p.sessionKey === sessionKey || sessionKeyMatches(p.sessionKey);
     const isViewedSubagent = !isViewedMain && chatEventIsSubagentOfView(p.sessionKey);
     if (!isViewedMain && !isViewedSubagent) {
+      // FORK 2026-06-08 — bug "queued prompts stick forever": this chat event is for a session the
+      // user is NOT currently viewing, so the handler below (including the queue flush) is skipped.
+      // But if THIS event says that session's turn just ended, we must still drop any prompts queued
+      // under it — otherwise they stay "queued" forever (the old global queue was only ever drained
+      // by the viewed session's own final). We do NOT splice into the live transcript here (that is
+      // a different tab); loadChat re-fetches the authoritative server history when that tab opens.
+      if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+        const settled = settleQueuedSession(
+          pendingQueuedSends,
+          p.sessionKey,
+          false,
+          sessionKeyMatches,
+        );
+        if (settled.remaining.length !== pendingQueuedSends.length) {
+          pendingQueuedSends = settled.remaining;
+          updateChat();
+        }
+      }
       return;
     }
     bumpActiveRunActivity(p);
@@ -2709,11 +2759,20 @@ function onEvent(evt: unknown) {
       // were kept OUT of messages[] until now so the turn's own continuation/tool bubbles could
       // never land after them ("queued prompt in the middle of the last answer").
       if (pendingQueuedSends.length > 0) {
-        for (const qm of pendingQueuedSends) {
-          delete qm._queued;
+        // FORK 2026-06-08: flush ONLY the prompts queued under the session whose turn just ended
+        // (= the viewed session here, since we are past the viewed-session guard). Other tabs'
+        // queued prompts stay put — previously this drained the WHOLE global array into whichever
+        // tab was on screen, dumping one session's queued prompt into another's transcript.
+        const settled = settleQueuedSession(
+          pendingQueuedSends,
+          p.sessionKey,
+          true,
+          sessionKeyMatches,
+        );
+        for (const qm of settled.commit) {
           messages.push(qm);
         }
-        pendingQueuedSends = [];
+        pendingQueuedSends = settled.remaining;
       }
       // Defensive: clear any _queued styling that slipped into messages[] directly.
       for (const m of messages) {
@@ -4227,7 +4286,10 @@ async function send(text: string) {
     _promptStartedAt: Date.now(),
     ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
     ...(briefingPath ? { _briefingPath: briefingPath } : {}),
-    ...(isQueued ? { _queued: true } : {}),
+    // FORK 2026-06-08: tag the queued bubble with the session it was queued under so it renders
+    // ONLY in its own tab and can be settled when THAT session's turn ends (not just when the
+    // session happens to be the one on screen). Fixes "stuck queued" + "queued in every tab".
+    ...(isQueued ? { _queued: true, _queuedSession: sessionKey } : {}),
   };
   if (isQueued) {
     // FORK 2026-06-04 — bug task-mpwfiot2: hold the queued bubble OUT of messages[] (see the
@@ -4743,11 +4805,9 @@ function saveInjectToggles(t: InjectToggles): void {
 }
 let injectToggles = loadInjectToggles();
 function applyInjectToggleChrome(): void {
-  const amy = document.getElementById("tb-amygdala");
+  // FORK 2026-06-07: amygdala top button + per-turn section removed; the live
+  // Amygdala panel stays always-visible in the right rail. Only fractal toggles.
   const fra = document.getElementById("tb-fractal");
-  if (amy) {
-    amy.classList.toggle("tb-active", injectToggles.amygdala);
-  }
   if (fra) {
     fra.classList.toggle("tb-active", injectToggles.fractal);
   }
@@ -4815,36 +4875,22 @@ async function buildInjectedPrompt(userText: string): Promise<string> {
     );
   }
 
-  const wantAmy = injectToggles.amygdala;
+  // FORK 2026-06-07: amygdala per-turn section removed (served no purpose — the
+  // live panel is the feedback loop). Only the fractal section remains.
   const wantFra = injectToggles.fractal;
-  if (!wantAmy && !wantFra) {
+  if (!wantFra) {
     return userText;
   }
-  const sections: string[] = ["💬 ANSWER"];
-  if (wantAmy) {
-    sections.push("🧠 AMYGDALA");
-  }
-  if (wantFra) {
-    sections.push("🌿 FRACTAL");
-  }
-  const order = sections.join(" → ");
   const extras: string[] = [];
   extras.push(
-    `\n\n---\n\n**Structure this turn's reply as labelled sections in this exact order: ${order}.** Each marker on its own line, blank line between sections. The UI parses markers and renders each section as a separate bubble; the first is expanded, later ones collapsed.`,
+    "\n\n---\n\n**Structure this turn's reply as labelled sections in this exact order: 💬 ANSWER → 🌿 FRACTAL.** Each marker on its own line, blank line between sections. The UI parses markers and renders each section as a separate bubble; the first is expanded, later ones collapsed.",
   );
   extras.push(
     "\n\n**💬 ANSWER** — your complete substantive reply, markdown freely, natural prose.",
   );
-  if (wantAmy) {
-    extras.push(
-      "\n\n**🧠 AMYGDALA** — follow the amygdala rules in your system prompt (post-turn diagnostic of Prudence + Personality ensembles). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-learned-intuition/amygdala-prompt.md`.",
-    );
-  }
-  if (wantFra) {
-    extras.push(
-      "\n\n**🌿 FRACTAL** — follow the fractal rules in your system prompt (MEMORY / PATTERN / RIPPLE / IMPROVE, ACTION-prefix when you changed something). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`.",
-    );
-  }
+  extras.push(
+    "\n\n**🌿 FRACTAL** — follow the fractal rules in your system prompt (MEMORY / PATTERN / RIPPLE / IMPROVE, ACTION-prefix when you changed something). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`.",
+  );
   return userText + extras.join("");
 }
 
@@ -6561,14 +6607,12 @@ function updateChat(skipScroll = false) {
   if (activeRuns.size > 0 || sending) {
     h += renderThinkingIndicator();
   }
-  for (let k = 0; k < pendingQueuedSends.length; k++) {
-    h += renderMsg(
-      pendingQueuedSends[k],
-      messages.length + k,
-      false,
-      globalResultMap,
-      globalToolNames,
-    );
+  // FORK 2026-06-08: render ONLY the queued prompts that belong to the tab on screen. The queue is
+  // one global array shared by all tabs; without this filter a prompt queued in one tab showed as a
+  // "queued" bubble in EVERY tab.
+  const visibleQueued = queuedForSession(pendingQueuedSends, sessionKey, sessionKeyMatches);
+  for (let k = 0; k < visibleQueued.length; k++) {
+    h += renderMsg(visibleQueued[k], messages.length + k, false, globalResultMap, globalToolNames);
   }
   // FORK: Preserve manually-opened fractal <details> across DOM rebuilds.
   // Without this, every streaming update collapses fractals the user expanded.
@@ -8109,10 +8153,9 @@ function init() {
                the primary "mode" toggle in the topbar (per SPEC §0a / §7.1),
                so it sits before the per-feature toggles. -->
           <span id="tb-exec" class="topbar-icon-btn" data-hint="Exec mode — Control Panel HUD">🎯</span>
-          <!-- FORK 2026-04-18: Amygdala + Fractal injection toggles.
-               Enabled = Jarvis replies with 💬 ANSWER + 🧠 AMYGDALA (gut-read)
-               + 🌿 FRACTAL (post-reflection). Disable for speed. -->
-          <span id="tb-amygdala" class="topbar-icon-btn tb-active" data-hint="Amygdala (gut read)">🧠</span>
+          <!-- FORK 2026-04-18: Fractal injection toggle. Enabled = Jarvis adds a
+               🌿 FRACTAL (post-reflection) section. Disable for speed.
+               (Amygdala button + section removed 2026-06-07.) -->
           <span id="tb-fractal" class="topbar-icon-btn tb-active" data-hint="Fractal reflection">🌿</span>
           <span id="tb-voice" class="topbar-icon-btn tb-active" data-hint="Voice">🔊</span>
           <span id="tb-timeline" class="topbar-icon-btn tb-active" data-hint="Timeline">📊</span>
@@ -8144,16 +8187,6 @@ function init() {
       </div>
     </div>
     <div class="right-panels">
-      <div class="rpanel" id="amygdala-panel">
-        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span>
-          <span class="ct-switch" id="amygdala-scope-toggle">
-            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
-            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
-            <span class="ct-switch-label" data-scope="all">All</span>
-          </span>
-        </div>
-        <div id="amygdala-body" class="rpanel-body"><div style="color:var(--muted);font-size:12px;padding:8px">Idle — gate decisions stream here live as the agent runs tools.</div></div>
-      </div>
       <div class="rpanel" id="sessions-panel">
         <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
@@ -8179,6 +8212,16 @@ function init() {
         </div>
         <div id="prefrontal-graph" class="rpanel-body prefrontal-graph-container"></div>
         <div id="recipe-progress" class="recipe-progress-container" style="display:none"></div>
+      </div>
+      <div class="rpanel" id="amygdala-panel">
+        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span>
+          <span class="ct-switch" id="amygdala-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
+            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label" data-scope="all">All</span>
+          </span>
+        </div>
+        <div id="amygdala-body" class="rpanel-body"><div style="color:var(--muted);font-size:12px;padding:8px">Idle — gate decisions stream here live as the agent runs tools.</div></div>
       </div>
     </div>
     <div class="context-timeline" id="context-timeline"></div>
@@ -8369,15 +8412,9 @@ function init() {
     });
   }
 
-  // ─── Amygdala + Fractal injection toggles (FORK 2026-04-18) ───
-  const amyBtn = $("tb-amygdala")!;
+  // ─── Fractal injection toggle (FORK 2026-04-18; amygdala removed 2026-06-07) ───
   const fraBtn = $("tb-fractal")!;
   applyInjectToggleChrome();
-  amyBtn.addEventListener("click", () => {
-    injectToggles = { ...injectToggles, amygdala: !injectToggles.amygdala };
-    saveInjectToggles(injectToggles);
-    applyInjectToggleChrome();
-  });
   fraBtn.addEventListener("click", () => {
     injectToggles = { ...injectToggles, fractal: !injectToggles.fractal };
     saveInjectToggles(injectToggles);
