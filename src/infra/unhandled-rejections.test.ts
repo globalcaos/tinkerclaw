@@ -1,10 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
+  classifyUnhandledRejection,
+  CONTAINED_REJECTION_CRASH_LOOP_MAX,
+  CONTAINED_REJECTION_CRASH_LOOP_WINDOW_MS,
   isAbortError,
   isBenignUncaughtExceptionError,
   isTransientNetworkError,
   isTransientSqliteError,
   isTransientUnhandledRejectionError,
+  recordContainedUnhandledRejection,
+  resetContainedUnhandledRejectionTrackerForTest,
 } from "./unhandled-rejections.js";
 
 describe("isAbortError", () => {
@@ -255,6 +260,80 @@ describe("isTransientSqliteError", () => {
     const error = new Error("database is locked");
 
     expect(isTransientSqliteError(error)).toBe(false);
+  });
+});
+
+describe("classifyUnhandledRejection", () => {
+  it("classifies OOM / worker codes as fatal (still exits)", () => {
+    expect(
+      classifyUnhandledRejection(Object.assign(new Error("oom"), { code: "ERR_OUT_OF_MEMORY" })),
+    ).toBe("fatal");
+  });
+
+  it("classifies configuration errors as config (still exits)", () => {
+    expect(
+      classifyUnhandledRejection(Object.assign(new Error("bad"), { code: "INVALID_CONFIG" })),
+    ).toBe("config");
+  });
+
+  it("classifies AbortError as abort (survives)", () => {
+    const error = new Error("x");
+    error.name = "AbortError";
+    expect(classifyUnhandledRejection(error)).toBe("abort");
+  });
+
+  it("classifies transient network errors as transient (survives)", () => {
+    expect(
+      classifyUnhandledRejection(Object.assign(new Error("reset"), { code: "ECONNRESET" })),
+    ).toBe("transient");
+  });
+
+  it("contains an unrecognized generic error (the inverted default — gateway must survive)", () => {
+    expect(classifyUnhandledRejection(new Error("Something went wrong"))).toBe("contain");
+  });
+
+  it("contains a playwright-core CDP assertion error (the browser-relay crash class, 2026-06-08/09)", () => {
+    // Reproduces the exact gateway-death signature: an Assertion error thrown
+    // deep inside playwright-core's CDP transport, surfacing as an unhandled
+    // rejection no try/catch of ours can reach. It must NOT kill the gateway.
+    const assertErr = new Error("Assertion error");
+    assertErr.stack =
+      "Error: Assertion error\n" +
+      "    at assert (/x/node_modules/playwright-core/lib/utils/isomorphic/assert.js:26:11)\n" +
+      "    at CRSession._onMessage (/x/node_modules/playwright-core/lib/server/chromium/crConnection.js:129:31)";
+    expect(classifyUnhandledRejection(assertErr)).toBe("contain");
+  });
+});
+
+describe("recordContainedUnhandledRejection (crash-loop circuit breaker)", () => {
+  beforeEach(() => {
+    resetContainedUnhandledRejectionTrackerForTest();
+  });
+
+  it("does not trip below the threshold", () => {
+    let tripped = false;
+    for (let i = 0; i < CONTAINED_REJECTION_CRASH_LOOP_MAX - 1; i++) {
+      tripped = recordContainedUnhandledRejection(1_000 + i);
+    }
+    expect(tripped).toBe(false);
+  });
+
+  it("trips at the threshold within the rolling window", () => {
+    let tripped = false;
+    for (let i = 0; i < CONTAINED_REJECTION_CRASH_LOOP_MAX; i++) {
+      tripped = recordContainedUnhandledRejection(1_000 + i);
+    }
+    expect(tripped).toBe(true);
+  });
+
+  it("does not trip when rejections are spread beyond the window", () => {
+    let tripped = false;
+    for (let i = 0; i < CONTAINED_REJECTION_CRASH_LOOP_MAX + 5; i++) {
+      tripped = recordContainedUnhandledRejection(
+        i * (CONTAINED_REJECTION_CRASH_LOOP_WINDOW_MS + 1),
+      );
+    }
+    expect(tripped).toBe(false);
   });
 });
 
