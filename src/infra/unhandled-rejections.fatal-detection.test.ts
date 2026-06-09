@@ -7,11 +7,22 @@ vi.mock("../terminal/restore.js", () => ({
   restoreTerminalState: restoreTerminalStateMock,
 }));
 
+// The contained-rejection path writes a forensic stability bundle. Stub it so
+// the test never touches the real ~/.openclaw/logs/stability directory.
+vi.mock("../logging/diagnostic-stability-bundle.js", () => ({
+  writeDiagnosticStabilityBundleForFailureSync: vi.fn(() => ({
+    status: "skipped",
+    reason: "empty",
+  })),
+}));
+
 import { resetFatalErrorHooksForTest } from "./fatal-error-hooks.js";
 import {
+  CONTAINED_REJECTION_CRASH_LOOP_MAX,
   installUnhandledRejectionHandler,
   isUncaughtExceptionHandled,
   registerUncaughtExceptionHandler,
+  resetContainedUnhandledRejectionTrackerForTest,
 } from "./unhandled-rejections.js";
 
 describe("installUnhandledRejectionHandler - fatal detection", () => {
@@ -28,6 +39,7 @@ describe("installUnhandledRejectionHandler - fatal detection", () => {
   beforeEach(() => {
     exitCalls = [];
     resetFatalErrorHooksForTest();
+    resetContainedUnhandledRejectionTrackerForTest();
 
     vi.spyOn(process, "exit").mockImplementation((code?: string | number | null): never => {
       if (code !== undefined && code !== null) {
@@ -196,17 +208,19 @@ describe("installUnhandledRejectionHandler - fatal detection", () => {
       );
     });
 
-    it("exits on generic errors without code", () => {
+    it("CONTAINS generic errors without code instead of crashing the gateway", () => {
       const genericErr = new Error("Something went wrong");
 
-      expectExitCodeFromUnhandled(genericErr, [1], "unhandled rejection");
+      // Inverted default (2026-06-09): an unrecognized rejection is contained,
+      // not fatal. No process.exit, no terminal restore — the gateway survives.
+      expectExitCodeFromUnhandled(genericErr, []);
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        "[openclaw] Unhandled promise rejection:",
+        "[openclaw] Unhandled promise rejection (CONTAINED — gateway continuing):",
         expect.stringContaining("Something went wrong"),
       );
     });
 
-    it("exits on non-transient Slack request errors", () => {
+    it("CONTAINS non-transient Slack request errors instead of crashing the gateway", () => {
       const slackErr = Object.assign(
         new Error("A request error occurred: invalid request payload"),
         {
@@ -214,7 +228,40 @@ describe("installUnhandledRejectionHandler - fatal detection", () => {
         },
       );
 
-      expectExitCodeFromUnhandled(slackErr, [1], "unhandled rejection");
+      expectExitCodeFromUnhandled(slackErr, []);
+    });
+
+    it("CONTAINS the browser-relay / playwright-core CDP assertion error (2026-06-08/09 crash class)", () => {
+      const assertErr = new Error("Assertion error");
+      assertErr.stack =
+        "Error: Assertion error\n" +
+        "    at assert (/x/node_modules/playwright-core/lib/utils/isomorphic/assert.js:26:11)\n" +
+        "    at CRSession._onMessage (/x/node_modules/playwright-core/lib/server/chromium/crConnection.js:129:31)";
+
+      expectExitCodeFromUnhandled(assertErr, []);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "[openclaw] Unhandled promise rejection (CONTAINED — gateway continuing):",
+        expect.stringContaining("Assertion error"),
+      );
+    });
+
+    it("exits ONLY when the contained-rejection crash-loop breaker trips", () => {
+      exitCalls = [];
+      restoreTerminalStateMock.mockClear();
+
+      // Up to the threshold-minus-one, the gateway survives every rejection.
+      for (let i = 0; i < CONTAINED_REJECTION_CRASH_LOOP_MAX - 1; i++) {
+        emitUnhandled(new Error(`contained ${i}`));
+      }
+      expect(exitCalls).toEqual([]);
+
+      // The straw that trips the breaker — now (and only now) the process exits
+      // for a clean recovery, because it is genuinely wedged.
+      emitUnhandled(new Error("the straw"));
+      expect(exitCalls).toEqual([1]);
+      expect(restoreTerminalStateMock).toHaveBeenCalledWith("unhandled rejection crash loop", {
+        resumeStdinIfPaused: false,
+      });
     });
 
     it("does not exit on AbortError and logs suppression warning", () => {

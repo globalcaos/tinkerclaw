@@ -1,4 +1,5 @@
 import process from "node:process";
+import { writeDiagnosticStabilityBundleForFailureSync } from "../logging/diagnostic-stability-bundle.js";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { restoreTerminalState } from "../terminal/restore.js";
 import {
@@ -424,6 +425,82 @@ export function isUncaughtExceptionHandled(error: unknown): boolean {
   return false;
 }
 
+/**
+ * The action the gateway takes for an unhandled rejection. Pure, side-effect
+ * free — so the policy can be unit-tested without installing the process hook.
+ *
+ * FOUNDATION (TINKER_UI_DESIGN_BIBLE/failures.md M14 — subsystem fault
+ * isolation): a long-lived gateway must never let one subsystem's async throw
+ * take down the whole process. Only a small, curated class of genuinely
+ * unrecoverable failures (`fatal`, `config`) is allowed to exit. EVERYTHING
+ * else we don't specifically recognize is `contain`ed: logged loudly + a
+ * forensic stability bundle is written, but the process keeps running so chat,
+ * crons, channels, and memory survive. The crash-loop breaker (below) is the
+ * ONLY path from `contain` back to exit, so a genuinely wedged process (a tight
+ * rejection loop) still dies for a clean recovery instead of spinning forever.
+ */
+export type UnhandledRejectionAction =
+  | "abort"
+  | "benign-go-exit"
+  | "fatal"
+  | "config"
+  | "transient"
+  | "contain";
+
+export function classifyUnhandledRejection(reason: unknown): UnhandledRejectionAction {
+  // AbortError — intentional cancellation (e.g. during shutdown). Survive.
+  if (isAbortError(reason)) {
+    return "abort";
+  }
+  // ProcessExitedError(null) from @whatsmeow-node — normal Go-subprocess
+  // shutdown signal, not a crash (see isBenignGoProcessExit). Survive.
+  if (isBenignGoProcessExit(reason)) {
+    return "benign-go-exit";
+  }
+  // Genuinely unrecoverable runtime failures (OOM, worker init). Exit.
+  if (isFatalError(reason)) {
+    return "fatal";
+  }
+  // Misconfiguration that requires an operator fix. Exit.
+  if (isConfigError(reason)) {
+    return "config";
+  }
+  // Known transient network/SQLite blips. Survive.
+  if (isTransientUnhandledRejectionError(reason)) {
+    return "transient";
+  }
+  // DEFAULT: contain. An unrecognized rejection (e.g. the browser-relay /
+  // Playwright CDP assert that escapes from a setImmediate and can't be caught
+  // by any try/catch of ours) must NOT crash the gateway — log it, capture a
+  // forensic bundle, and keep running.
+  return "contain";
+}
+
+// Crash-loop circuit breaker for the `contain` path. If the gateway takes more
+// than CONTAINED_REJECTION_CRASH_LOOP_MAX contained rejections within
+// CONTAINED_REJECTION_CRASH_LOOP_WINDOW_MS, the process is wedged (tight
+// rejection loop) and should exit so a clean instance can take over. This is a
+// last-resort exit on a genuine wedge — NOT a routine restart-on-crash crutch.
+export const CONTAINED_REJECTION_CRASH_LOOP_WINDOW_MS = 60_000;
+export const CONTAINED_REJECTION_CRASH_LOOP_MAX = 25;
+
+let containedRejectionTimestamps: number[] = [];
+
+/**
+ * Records a contained unhandled rejection and reports whether the crash-loop
+ * threshold has been crossed within the rolling window.
+ */
+export function recordContainedUnhandledRejection(now: number = Date.now()): boolean {
+  containedRejectionTimestamps.push(now);
+  const cutoff = now - CONTAINED_REJECTION_CRASH_LOOP_WINDOW_MS;
+  containedRejectionTimestamps = containedRejectionTimestamps.filter((ts) => ts >= cutoff);
+  return containedRejectionTimestamps.length >= CONTAINED_REJECTION_CRASH_LOOP_MAX;
+}
+
+export function resetContainedUnhandledRejectionTrackerForTest(): void {
+  containedRejectionTimestamps = [];
+}
+
 export function installUnhandledRejectionHandler(): void {
   const exitWithTerminalRestore = (reason: string, error?: unknown, hookReason = reason) => {
     for (const message of runFatalErrorHooks({ reason: hookReason, error })) {
@@ -433,51 +510,78 @@ export function installUnhandledRejectionHandler(): void {
     process.exit(1);
   };
 
+  // Contain an unrecognized rejection: log loudly, write a forensic stability
+  // bundle (so we keep full diagnostics WITHOUT killing the process), and only
+  // exit if the crash-loop breaker trips.
+  const containUnhandledRejection = (reason: unknown): void => {
+    console.error(
+      "[openclaw] Unhandled promise rejection (CONTAINED — gateway continuing):",
+      formatUncaughtError(reason),
+    );
+    try {
+      const forensic = writeDiagnosticStabilityBundleForFailureSync(
+        "unhandled_rejection_contained",
+        reason,
+      );
+      if ("message" in forensic && forensic.message) {
+        console.error("[openclaw]", forensic.message);
+      }
+    } catch (writeErr) {
+      // Forensic logging must never itself crash the rejection handler.
+      console.error(
+        "[openclaw] Failed to write contained-rejection stability bundle:",
+        writeErr instanceof Error ? (writeErr.stack ?? writeErr.message) : writeErr,
+      );
+    }
+    if (recordContainedUnhandledRejection()) {
+      console.error(
+        `[openclaw] FATAL: unhandled-rejection crash loop (${CONTAINED_REJECTION_CRASH_LOOP_MAX}+ within ${Math.round(
+          CONTAINED_REJECTION_CRASH_LOOP_WINDOW_MS / 1000,
+        )}s) — process wedged; exiting for a clean recovery.`,
+      );
+      exitWithTerminalRestore(
+        "unhandled rejection crash loop",
+        reason,
+        "unhandled_rejection_crash_loop",
+      );
+    }
+  };
+
   process.on("unhandledRejection", (reason, _promise) => {
     if (isUnhandledRejectionHandled(reason)) {
       return;
     }
 
-    // AbortError is typically an intentional cancellation (e.g., during shutdown)
-    // Log it but don't crash - these are expected during graceful shutdown
-    if (isAbortError(reason)) {
-      console.warn("[openclaw] Suppressed AbortError:", formatUncaughtError(reason));
-      return;
+    switch (classifyUnhandledRejection(reason)) {
+      case "abort":
+        console.warn("[openclaw] Suppressed AbortError:", formatUncaughtError(reason));
+        return;
+      case "benign-go-exit":
+        console.warn(
+          "[openclaw] Suppressed benign Go-subprocess exit signal:",
+          formatUncaughtError(reason),
+        );
+        return;
+      case "fatal":
+        console.error("[openclaw] FATAL unhandled rejection:", formatUncaughtError(reason));
+        exitWithTerminalRestore("fatal unhandled rejection", reason, "fatal_unhandled_rejection");
+        return;
+      case "config":
+        console.error(
+          "[openclaw] CONFIGURATION ERROR - requires fix:",
+          formatUncaughtError(reason),
+        );
+        exitWithTerminalRestore("configuration error", reason, "configuration_error");
+        return;
+      case "transient":
+        console.warn(
+          "[openclaw] Non-fatal unhandled rejection (continuing):",
+          formatUncaughtError(reason),
+        );
+        return;
+      case "contain":
+        containUnhandledRejection(reason);
+        return;
     }
-
-    // ProcessExitedError(null) from @whatsmeow-node — see isBenignGoProcessExit
-    // doc above. Normal shutdown signal, not a crash; gateway should keep
-    // running so the whatsapp plugin can reconnect or be left disconnected
-    // until manually restarted.
-    if (isBenignGoProcessExit(reason)) {
-      console.warn(
-        "[openclaw] Suppressed benign Go-subprocess exit signal:",
-        formatUncaughtError(reason),
-      );
-      return;
-    }
-
-    if (isFatalError(reason)) {
-      console.error("[openclaw] FATAL unhandled rejection:", formatUncaughtError(reason));
-      exitWithTerminalRestore("fatal unhandled rejection", reason, "fatal_unhandled_rejection");
-      return;
-    }
-
-    if (isConfigError(reason)) {
-      console.error("[openclaw] CONFIGURATION ERROR - requires fix:", formatUncaughtError(reason));
-      exitWithTerminalRestore("configuration error", reason, "configuration_error");
-      return;
-    }
-
-    if (isTransientUnhandledRejectionError(reason)) {
-      console.warn(
-        "[openclaw] Non-fatal unhandled rejection (continuing):",
-        formatUncaughtError(reason),
-      );
-      return;
-    }
-
-    console.error("[openclaw] Unhandled promise rejection:", formatUncaughtError(reason));
-    exitWithTerminalRestore("unhandled rejection", reason, "unhandled_rejection");
   });
 }
