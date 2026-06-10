@@ -63,14 +63,9 @@ function resolvePromptFile(plugin: string, file: string, envVar: string): string
   return candidates;
 }
 const PROMPT_FILES: Array<{ label: string; paths: string[] }> = [
-  {
-    label: "amygdala",
-    paths: resolvePromptFile(
-      "tinkerclaw-learned-intuition",
-      "amygdala-prompt.md",
-      "TINKERCLAW_AMYGDALA_PROMPT",
-    ),
-  },
+  // FORK 2026-06-07: amygdala-prompt.md no longer loaded — the per-turn 🧠 AMYGDALA
+  // section was removed (it reported on inert ensembles; the live panel is the
+  // feedback loop). Fractal stays.
   {
     label: "fractal",
     paths: resolvePromptFile(

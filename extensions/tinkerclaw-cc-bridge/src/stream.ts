@@ -214,8 +214,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             toolCallId,
             args: argsRecord,
             purpose: narration || undefined,
+            // FORK 2026-06-07 (Phase 1a): mark cc-bridge tool starts so the
+            // learned-intuition plugin runs the REAL prudence ensemble on them.
+            ccBridge: true,
           },
         });
+        // FORK 2026-06-07 (Phase 1a): the per-tool gate decision is now produced by
+        // the learned-intuition plugin (it owns the ONNX prudence nets). It subscribes
+        // to the `ccBridge` tool-start event emitted just above, runs the REAL ensemble,
+        // and emits + persists the amygdala-decision. The rule-based stand-in lived here.
         // FORK 2026-04-25: also buffer the event so onTurnComplete can persist
         // it as a `customType: "cc-bridge-tool"` entry. Without this, history
         // reload in Tinker shows only the user prompt + 64-char opener.
