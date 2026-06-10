@@ -19,6 +19,8 @@ verify:
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-subscribe.handlers.lifecycle.ts")).read(); assert "handleAgentEnd" in t and "phase: \"end\"" in t and "phase: \"error\"" in t and "emitAgentEvent" in t, "handleAgentEnd no longer emits a lifecycle:end (or :error) event via emitAgentEvent — the UI trusts these emissions to clear the thinking indicator. Restore the emission or expect stuck thinking indicators that can only be cleared by browser refresh."'
   - name: shutdown-frame handler enrolls activeRuns into unconfirmedRuns (FORK 2026-05-24 — graceful-restart prune wouldn't fire otherwise)
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); block = re.search(r"f\.event === \"shutdown\".*?f\.payload\?\.restartExpectedMs.*?\}", t, re.S); assert block, "the shutdown-frame handler in app.ts is missing or has been refactored — re-locate and verify it still adds runIds to unconfirmedRuns"; assert "unconfirmedRuns.add(runId)" in block.group(0), "the shutdown-frame handler no longer enrolls activeRuns into unconfirmedRuns. Without this, an in-tab graceful restart leaves stale activeRuns entries forever (no lifecycle:end will ever come from the dead gateway process), the prefrontal panel shows the indicator + clock frozen at the pre-restart state, and only a page reload clears the ghost. See bug-log.md FIXED 2026-05-24 ghost-run."'
+  - name: in-flight steer is wired end-to-end (FORK 2026-06-10 / P4 — a mid-answer message folds into the live cc-bridge turn instead of next-turn-only)
+    cmd: python3 -c 'import os; R=lambda p: open(os.path.expanduser(p)).read(); assert "steer(text: string): boolean" in R("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker.ts"), "worker.steer() primitive missing — mid-turn stdin injection gone"; assert "tryInflightSteer(sessionId, combined)" in R("~/src/tinkerclaw/src/agents/embedded-agent-runner/runs.ts"), "flushSteerBuffer no longer routes through the in-flight steer hook — mid-turn steer regressed to next-turn-only"; reg=R("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/inflight-worker-registry.ts"); assert "registerInflightSteerHook(" in reg and "worker.steer(text)" in reg, "cc-bridge no longer bridges worker.steer into the core in-flight steer hook"'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
@@ -145,6 +147,26 @@ sequenceDiagram
   WS->>UI: activeRuns.delete(runId)
   Note over UI: indicator clears, panel goes idle
 ```
+
+## In-flight steer — mid-turn message folds into the live turn (FORK 2026-06-10 / P4)
+
+A message sent while a cc-bridge turn is in flight now **folds into the current answer**, matching Claude Code (whose own loop drains its message queue between tool rounds). Previously a mid-turn message could only run as a **separate next turn** (pi steeringQueue → next `worker.send`), because pi-agent-core cannot inject between claude-cli's internal tool rounds — the whole claude-cli agentic loop is one opaque `worker.send`.
+
+**Why it works:** `claude -p --input-format stream-json` drains additional `{"type":"user",...}` stdin lines mid-turn, between its internal tool rounds (verified empirically 2026-06-10: a stdin user-line injected during a tool chain was acknowledged before the turn's `result` line). So writing to the live subprocess's stdin reaches the model mid-answer.
+
+**The path:**
+
+1. `worker.steer(text)` (`extensions/tinkerclaw-cc-bridge/src/worker.ts`) writes one user line to the already-open persistent stdin — WITHOUT touching `currentTurn`/`turnQueue`/`kill` (the live turn keeps owning its `result`). No-ops between turns; EPIPE-safe.
+2. `extensions/tinkerclaw-cc-bridge/src/inflight-worker-registry.ts` tracks `openclawSessionId → live worker` (set around `worker.send` in `stream.ts`) and registers a hook into the core via `registerInflightSteerHook` (`src/agents/embedded-agent-runner/inflight-steer-hook.ts`, stored on `globalThis[Symbol.for(...)]` so it crosses the core/extension bundle split).
+3. `runs.ts flushSteerBuffer` calls `tryInflightSteer(sessionId, combined)` FIRST; if a live worker accepts it (folds in), it RETURNS and does NOT also `handle.queueMessage` — so the message is delivered exactly once. Only with no live worker does it fall back to the pi steeringQueue (next-turn, old behaviour).
+
+So: during a live turn → mid-turn fold (`worker.steer`); between turns → next turn (pi steeringQueue → `worker.send`). The 300ms debounce still batches rapid messages into one injection.
+
+**Don't regress (in-flight steer):**
+
+- The two delivery paths MUST stay mutually exclusive (the early `return` in `flushSteerBuffer` after a successful `tryInflightSteer`). Calling both = the message delivered twice (once mid-turn, once as the next round).
+- `worker.steer` MUST NOT touch `currentTurn`/`turnQueue`/`kill` — it only writes stdin. Mutating `currentTurn` would orphan the in-flight `send()` promise (caller hangs); killing would defeat the whole "queue not SIGTERM" point.
+- The hook MUST live on `globalThis[Symbol.for(...)]`, not a module-level var — the registrar (cc-bridge) and caller (core) can be separate runtime bundles.
 
 ## Don't regress
 

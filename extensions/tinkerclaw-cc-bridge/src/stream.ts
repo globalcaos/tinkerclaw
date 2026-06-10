@@ -19,6 +19,7 @@ import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { buildErrorEnvelope } from "../../../src/fork/error-envelope.js";
 import { emitAgentEvent } from "../../../src/infra/agent-events.js";
 import { DEFAULT_CWD, DEFAULT_DISALLOWED_TOOLS, PROVIDER_ID } from "./defaults.js";
+import { registerInflightWorker, unregisterInflightWorker } from "./inflight-worker-registry.js";
 import type {
   CcContentBlock,
   CcStreamStdoutAssistantMessage,
@@ -855,10 +856,24 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
 
       try {
         worker.on("stream_line", onStreamLine);
-        const finalLine = await worker.send({
-          userText,
-          signal: options?.signal,
-        });
+        // FORK (P4): mark this worker as the live turn for the session so a
+        // mid-answer steered message folds into THIS turn via worker.steer
+        // (live claude-cli stdin). Cleared in the finally whether send resolves
+        // or throws — the steer window is exactly the duration of worker.send.
+        if (openclawSessionId) {
+          registerInflightWorker(openclawSessionId, worker);
+        }
+        let finalLine: Awaited<ReturnType<typeof worker.send>>;
+        try {
+          finalLine = await worker.send({
+            userText,
+            signal: options?.signal,
+          });
+        } finally {
+          if (openclawSessionId) {
+            unregisterInflightWorker(openclawSessionId, worker);
+          }
+        }
         worker.off("stream_line", onStreamLine);
         clearInterval(watchdog);
         clearInterval(heartbeat);
