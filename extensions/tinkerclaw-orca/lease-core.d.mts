@@ -63,5 +63,8 @@ export function renew(opts: {
   now?: number;
 }): { renewed: boolean };
 export function runCli(argv: string[]): number;
-export const DEFAULT_ROOT: string;
-export const DEFAULT_TTL_MS: number;
+// `declare` so the runtime bundler (rolldown/tsdown) parses this declaration
+// file as ambient — without it, `export const X: T;` (no initializer) is a parse
+// error when the bundler treats .d.mts as a normal module. tsgo reads it the same.
+export declare const DEFAULT_ROOT: string;
+export declare const DEFAULT_TTL_MS: number;
