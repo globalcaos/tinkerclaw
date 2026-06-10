@@ -22,17 +22,20 @@ import type Database from "better-sqlite3";
 import type { ControlPanelResolvedConfig } from "../paths.js";
 import { getDb } from "../store/db.js";
 import { addMetric, recordObservation } from "../store/observations.js";
+import { ga4Sessions } from "./ga4.js";
+import { githubTrafficDaily } from "./github-traffic.js";
 import { githubForks, githubOpenIssues, githubStargazers } from "./github.js";
 import { localStateValue } from "./localstate.js";
 import { moltbookKarma, moltbookPosts, moltbookComments, moltbookFollowers } from "./moltbook.js";
 import { npmDownloadsMonthly, npmDownloadsWeekly } from "./npm.js";
 import { demoWebsiteVisits } from "./website.js";
-import { ga4Sessions } from "./ga4.js";
 
 export type PollerFn = (args: string) => Promise<number>;
 
 export const POLLER_REGISTRY: Map<string, PollerFn> = new Map([
   ["github.stargazers", githubStargazers],
+  // FORK 2026-06-05 — real DAILY clones/views (gh CLI), replaces 14d-total-as-daily.
+  ["github.traffic.daily", githubTrafficDaily],
   ["github.forks", githubForks],
   ["github.open_issues", githubOpenIssues],
   ["npm.downloads.weekly", npmDownloadsWeekly],
@@ -120,20 +123,25 @@ const SEED_KPIS: SeedSpec[] = [
   // the 08:00 online-engagement cron) so we need no GitHub-traffic auth.
   {
     id: "graph.github.traffic.views14d",
-    source: "localstate:engagement-state.json#github.traffic.tinkerclaw_14d.views",
+    source: "github.traffic.daily:views:globalcaos/tinkerclaw",
     cadence_seconds: 86400,
     template: "sparkline",
   },
   {
     id: "graph.github.traffic.clones14d",
-    source: "localstate:engagement-state.json#github.traffic.tinkerclaw_14d.clones",
+    source: "github.traffic.daily:clones:globalcaos/tinkerclaw",
     cadence_seconds: 86400,
     template: "sparkline",
   },
-  // FORK 2026-06-05 — ClawHub: NO seeds. Verified live that clawhub.ai/globalcaos/
-  // jarvis-voice 404s — our skill is NOT on ClawHub (the clawskills.sh "4.5k" was a
-  // bad mirror). The only "jarvis voice" skills on ClawHub are copies by others.
-  // Re-add a seed here only when we actually re-publish a skill and verify it live.
+  // FORK 2026-06-06 — ClawHub REINSTATED (appeal #2517). Our jarvis-voice is live
+  // again (clawhub.ai verified: 3 downloads). Tracks via engagement-state until a
+  // clawskills/clawhub scraper poller is wired. Add lines as we re-publish skills.
+  {
+    id: "graph.clawhub.jarvis-voice",
+    source: "localstate:engagement-state.json#clawhub.our_skills.jarvis-voice.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
   // Inbound links — fed by the weekly Inbound-Marketing cron's audit
   // (inbound-campaign-state.json); pollers error+retry until it first exists.
   // FORK 2026-06-05 — split per destination target × {external (organic, others
