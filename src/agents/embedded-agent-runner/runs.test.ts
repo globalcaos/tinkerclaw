@@ -1,11 +1,13 @@
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerInflightSteerHook } from "./inflight-steer-hook.js";
 import {
   __testing,
   abortEmbeddedPiRun,
   clearActiveEmbeddedRun,
   consumeEmbeddedRunModelSwitch,
   getActiveEmbeddedRunSnapshot,
+  queueEmbeddedPiMessage,
   requestEmbeddedRunModelSwitch,
   setActiveEmbeddedRun,
   updateActiveEmbeddedRunSnapshot,
@@ -25,6 +27,81 @@ function createRunHandle(
     abort,
   };
 }
+
+describe("queueEmbeddedPiMessage in-flight steer (P4)", () => {
+  afterEach(() => {
+    __testing.resetActiveEmbeddedRuns();
+    registerInflightSteerHook(null);
+    vi.restoreAllMocks();
+  });
+
+  it("folds a steered message into the live provider worker (inflight hook) and does NOT also pi-steer", async () => {
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      setActiveEmbeddedRun("sess-live", {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+      });
+      const steered: Array<[string, string]> = [];
+      registerInflightSteerHook((sid, text) => {
+        steered.push([sid, text]);
+        return true; // a live worker accepted it
+      });
+
+      expect(queueEmbeddedPiMessage("sess-live", "fold me in")).toBe(true);
+      await vi.advanceTimersByTimeAsync(350); // past the 300ms debounce
+
+      expect(steered).toEqual([["sess-live", "fold me in"]]);
+      expect(queueMessage).not.toHaveBeenCalled(); // NOT re-delivered as a next round
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back to the pi steeringQueue when no live worker accepts (hook returns false)", async () => {
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      setActiveEmbeddedRun("sess-fallback", {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+      });
+      registerInflightSteerHook(() => false); // no live provider worker
+
+      queueEmbeddedPiMessage("sess-fallback", "queue me");
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(queueMessage).toHaveBeenCalledWith("queue me"); // existing next-round path
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("batches rapid steers into one injection before handing to the hook", async () => {
+    vi.useFakeTimers();
+    try {
+      setActiveEmbeddedRun("sess-batch", createRunHandle());
+      const steered: string[] = [];
+      registerInflightSteerHook((_sid, text) => {
+        steered.push(text);
+        return true;
+      });
+
+      queueEmbeddedPiMessage("sess-batch", "one");
+      queueEmbeddedPiMessage("sess-batch", "two");
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(steered).toEqual(["one\n\ntwo"]); // 300ms debounce coalesced both
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("embedded-agent runner run registry", () => {
   afterEach(() => {
