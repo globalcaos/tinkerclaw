@@ -64,18 +64,28 @@ Do not pretend the choice is free. State the trade-off in chat as part of the de
 **Tools:** openclaw-control-panel
 **Done when:** A Control Panel task exists in the `jarvis-bookmarks` axis with the full context block (see template below).
 
-Create the bookmark via:
+Create the bookmark via the **`control-panel.tasks.add`** gateway method (NOT `tasks.create` — that name is unregistered and will fail with "unknown method"). Required field: `text` (the title). Put ALL the detail in `context_md`. The `jarvis-bookmarks` axis already exists — use it directly.
+
+Because `context_md` is markdown that usually contains apostrophes, quotes, and backticks, **build the call in Python** so the body doesn't have to survive shell quoting:
 
 ```bash
-openclaw gateway call control-panel.tasks.create --params '{
-  "priority_axis": "jarvis-bookmarks",
-  "text": "<one-line summary>",
-  "status": "open",
-  "context_md": "<the template below, filled in>"
-}'
+python3 - <<'PY'
+import json, subprocess
+params = {
+    "text": "<meaningful one-line title>",
+    "priority_axis": "jarvis-bookmarks",
+    "status": "open",
+    "source": "conversation",
+    "hands": "either",
+    "context_md": "<the full template below, filled in>",
+}
+r = subprocess.run(["openclaw","gateway","call","control-panel.tasks.add",
+                    "--params", json.dumps(params)], capture_output=True, text=True, timeout=90)
+print(r.stdout or r.stderr)
+PY
 ```
 
-If `jarvis-bookmarks` does not exist as an axis yet, use `meta` and tag the title with `[BOOKMARK]` as a fallback — flag this to the user as a one-line note ("Tagged in meta because jarvis-bookmarks axis isn't registered yet").
+Fallback only if the gateway call genuinely fails: write the same content to a `*-BOOKMARK.md` file in `~/.openclaw/workspace/` and flag to the user that it's a file, not a tracked task, so they know it won't appear in the task list.
 
 **Context template (fill every field — partial bookmarks are useless):**
 
