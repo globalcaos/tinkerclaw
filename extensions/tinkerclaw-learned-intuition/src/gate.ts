@@ -63,6 +63,27 @@ const NEUTRAL_PERSONALITY: PersonalityOutput = {
 };
 
 /**
+ * FORK 2026-06-10 (Phase 0 — de-saturation): default per-network conformal
+ * quantile, used until the Phase-2 calibration loop computes real per-network
+ * quantiles from labeled outcomes (`updateConformalQuantiles`, currently never
+ * called; the `conformal_calibration` table, currently never written).
+ *
+ * The original 0.9 default, applied to UNCALIBRATED nonconformity scores, made
+ * the inclusion rule `(1 - p) <= q` admit any outcome class with probability
+ * >= 0.1, and the `anyDangerous` shortcut admit "dangerous" whenever any net's
+ * stop >= 0.1. With one chronically mushy net (arch E: stop≈0.30 on every input)
+ * the prediction set was {safe,needs-review,dangerous} on ~99% of actions, so
+ * `determineGate` returned soft_block on 1229/1229 live evaluations (zero allows).
+ *
+ * 0.5 means "a class enters the prediction set only if some network assigns it
+ * MAJORITY probability" — it respects the ensemble's actual confidence. Replaying
+ * the 1229 logged situations: ~63% become a clean {safe} → allow, ~37% still flag.
+ * This is NOT calibrated coverage; it is a sane pre-calibration sensitivity that
+ * Phase 2 replaces with measured quantiles.
+ */
+const DEFAULT_CONFORMAL_QUANTILE = 0.5;
+
+/**
  * AmygdalaGate: runs all 10 ONNX models and returns a full AmygdalaEvaluation.
  *
  * Lifecycle:
@@ -91,7 +112,11 @@ export class AmygdalaGate {
   constructor(config: AmygdalaConfig) {
     this.config = config;
     for (const key of ARCH_KEYS) {
-      this.conformalQuantiles.set(key, [0.9, 0.9, 0.9]);
+      this.conformalQuantiles.set(key, [
+        DEFAULT_CONFORMAL_QUANTILE,
+        DEFAULT_CONFORMAL_QUANTILE,
+        DEFAULT_CONFORMAL_QUANTILE,
+      ]);
       this.calibrationQuality.set(key, 1.0);
     }
   }
@@ -479,7 +504,11 @@ export class AmygdalaGate {
 
     for (const key of ARCH_KEYS) {
       const quality = this.calibrationQuality.get(key) ?? 1.0;
-      const quantiles = this.conformalQuantiles.get(key) ?? [0.9, 0.9, 0.9];
+      const quantiles = this.conformalQuantiles.get(key) ?? [
+        DEFAULT_CONFORMAL_QUANTILE,
+        DEFAULT_CONFORMAL_QUANTILE,
+        DEFAULT_CONFORMAL_QUANTILE,
+      ];
       const out = byArch[key];
 
       const probs = [
