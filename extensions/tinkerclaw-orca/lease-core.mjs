@@ -16,6 +16,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const DEFAULT_ROOT = path.join(os.homedir(), ".openclaw", "run", "orca-leases");
 export const DEFAULT_TTL_MS = 300_000;
@@ -61,17 +62,124 @@ function defaultIsAlive(pid) {
 
 // A held lease is "stale" (reclaimable) when its TTL has elapsed, or when its
 // holder process is dead on THIS host (we can't probe a foreign host's pid).
+//
+// pid-liveness reclaim is OPT-IN: it fires only for a real, positive pid — i.e.
+// a long-lived in-process holder (the ORCA workflow run) that anchors the lease
+// to its own process. The hook/CLI path records pid 0 because its OWNER is a
+// Claude Code SESSION that outlives the ephemeral `node lease-core.mjs` process;
+// there is no live pid to probe, so those leases are governed by TTL alone.
+// (Without this guard every short-lived CLI acquirer would instantly look
+// "dead-pid" and steal every other session's lease — no protection at all.)
 function isStale(lease, now, isAlive) {
   if (!lease) return true;
   const ttl = typeof lease.ttlMs === "number" ? lease.ttlMs : DEFAULT_TTL_MS;
   if (now > (lease.acquiredAt ?? 0) + ttl) return true;
-  if (lease.host === HOST && !isAlive(lease.pid)) return true;
+  if (
+    lease.host === HOST &&
+    typeof lease.pid === "number" &&
+    lease.pid > 0 &&
+    !isAlive(lease.pid)
+  ) {
+    return true;
+  }
   return false;
 }
 
-function writeLease(file, data) {
+// ── Atomic write primitives ──────────────────────────────────────────────────
+// Lease writes MUST be atomic. A plain fs.writeFileSync truncates-then-writes, so
+// a concurrent reader can observe an empty/partial file → JSON.parse fails →
+// readLease returns null → isStale(null) is true → a LIVE lease gets stolen with
+// no TTL expiry and no dead pid. We avoid that entirely:
+//   • CREATE  via fs.linkSync — the new record is fully written to a temp file,
+//     then linked into place in ONE atomic step that also FAILS (EEXIST) if the
+//     slot is taken. That gives O_EXCL-style mutual exclusion AND atomic content.
+//   • REPLACE via fs.renameSync — atomic on a single filesystem: a reader sees
+//     either the complete old file or the complete new one, never a torn write.
+function tmpName(file) {
+  return `${file}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+}
+
+/** Create `file` with `data` only if absent. Returns true if created, false if it already existed. */
+function atomicCreate(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data), "utf8");
+  const tmp = tmpName(file);
+  fs.writeFileSync(tmp, JSON.stringify(data), "utf8");
+  try {
+    fs.linkSync(tmp, file); // atomic appear-or-EEXIST
+    return true;
+  } catch (err) {
+    if (err && err.code === "EEXIST") return false;
+    throw err;
+  } finally {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      /* temp already gone */
+    }
+  }
+}
+
+/** Atomically replace `file`'s contents with `data` (caller must already hold the right to write). */
+function atomicReplace(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = tmpName(file);
+  fs.writeFileSync(tmp, JSON.stringify(data), "utf8");
+  fs.renameSync(tmp, file); // atomic replace
+}
+
+// ── Per-lease critical-section lock ──────────────────────────────────────────
+// Atomic writes make individual reads/writes safe, but STEALING a stale lease is
+// a read→check→write sequence: two acquirers could both read the same stale lease
+// and both decide to steal (double-grant). We serialize that sequence with a
+// short-lived O_EXCL lock file per lease. The section is microseconds, contention
+// is low (a handful of sessions), and a lock older than LOCK_TTL_MS is reclaimed
+// so a crash mid-section can't wedge a file forever.
+const LOCK_TTL_MS = 5000;
+const LOCK_MAX_WAIT_MS = 6000; // > LOCK_TTL_MS, so a dead holder's lock is always reclaimed within the spin
+
+function sleepMs(ms) {
+  // synchronous sleep without busy-spinning the CPU
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Run `fn` while holding `file`'s exclusive lock. Falls back to running `fn` unlocked only if the lock can't be taken within the bound (a dead-holder edge that the stale reclaim almost always resolves first). */
+function withLeaseLock(file, fn) {
+  const lock = `${file}.lock`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const start = Date.now();
+  for (;;) {
+    try {
+      const fd = fs.openSync(lock, "wx"); // O_EXCL — atomic claim
+      try {
+        fs.writeSync(fd, String(Date.now()));
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        return fn();
+      } finally {
+        try {
+          fs.rmSync(lock, { force: true });
+        } catch {
+          /* already gone */
+        }
+      }
+    } catch (err) {
+      if (!err || err.code !== "EEXIST") throw err;
+      // Lock is held. Reclaim it if stale (holder crashed mid-section).
+      try {
+        const ts = Number(fs.readFileSync(lock, "utf8"));
+        if (!Number.isFinite(ts) || Date.now() - ts > LOCK_TTL_MS) {
+          fs.rmSync(lock, { force: true });
+          continue;
+        }
+      } catch {
+        continue; // lock vanished between EEXIST and read → retry immediately
+      }
+      if (Date.now() - start > LOCK_MAX_WAIT_MS) return fn(); // give up waiting → best-effort
+      sleepMs(2);
+    }
+  }
 }
 
 /**
@@ -105,24 +213,29 @@ export function acquire(opts) {
     path: relPath,
   };
 
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  try {
-    fs.writeFileSync(file, JSON.stringify(record), { encoding: "utf8", flag: "wx" });
+  // Fast path: a free slot is claimed atomically + exclusively with no lock.
+  if (atomicCreate(file, record)) {
     return { allowed: true, holder: record, leaseFile: file };
-  } catch (err) {
-    if (!err || err.code !== "EEXIST") throw err;
   }
 
-  const existing = readLease(file);
-  if (existing && existing.owner === owner) {
-    writeLease(file, record); // same owner → refresh
-    return { allowed: true, holder: record, leaseFile: file };
-  }
-  if (isStale(existing, now, isAlive)) {
-    writeLease(file, record); // steal a stale lease
-    return { allowed: true, holder: record, leaseFile: file };
-  }
-  return { allowed: false, holder: existing, leaseFile: file };
+  // The slot is taken. Resolve refresh-vs-steal-vs-blocked inside the critical
+  // section so two acquirers can't both steal the same stale lease.
+  return withLeaseLock(file, () => {
+    const existing = readLease(file);
+    if (!existing) {
+      atomicReplace(file, record); // vanished under us → take it (we hold the lock)
+      return { allowed: true, holder: record, leaseFile: file };
+    }
+    if (existing.owner === owner) {
+      atomicReplace(file, record); // same owner → refresh
+      return { allowed: true, holder: record, leaseFile: file };
+    }
+    if (isStale(existing, now, isAlive)) {
+      atomicReplace(file, record); // steal a stale lease (serialized by the lock)
+      return { allowed: true, holder: record, leaseFile: file };
+    }
+    return { allowed: false, holder: existing, leaseFile: file };
+  });
 }
 
 /** Release (repo, path) — only the owner may. Returns { released }. */
@@ -138,6 +251,47 @@ export function release(opts) {
     /* already gone */
   }
   return { released: true };
+}
+
+/**
+ * Release EVERY lease held by `owner`, across every repo under the root. This
+ * is the Stop-hook primitive: when an agent session ends, free everything it
+ * still holds in one sweep so no file stays wedged for the next session.
+ * Returns { released } (count). Other owners' leases are untouched.
+ */
+export function releaseAllByOwner(opts) {
+  const { owner, root = DEFAULT_ROOT } = opts;
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return { released: 0 };
+  }
+  let released = 0;
+  for (const ent of dirs) {
+    if (!ent.isDirectory()) continue;
+    const dir = path.join(root, ent.name);
+    let names = [];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".lease")) continue;
+      const file = path.join(dir, name);
+      const lease = readLease(file);
+      if (lease && lease.owner === owner) {
+        try {
+          fs.rmSync(file, { force: true });
+          released += 1;
+        } catch {
+          /* race: already gone */
+        }
+      }
+    }
+  }
+  return { released };
 }
 
 /** Current holder of (repo, path), if any. Returns { held, holder }. */
@@ -177,14 +331,19 @@ function reclaimStaleInDir(dir, now, isAlive) {
   for (const name of names) {
     if (!name.endsWith(".lease")) continue;
     const file = path.join(dir, name);
-    if (isStale(readLease(file), now, isAlive)) {
+    if (!isStale(readLease(file), now, isAlive)) continue; // cheap pre-check
+    // Re-check under the lock so we never evict a lease an acquirer just
+    // refreshed in the window between our read and our remove.
+    const removed = withLeaseLock(file, () => {
+      if (!isStale(readLease(file), now, isAlive)) return false;
       try {
         fs.rmSync(file, { force: true });
-        reclaimed += 1;
+        return true;
       } catch {
-        /* race: already gone */
+        return false; // already gone
       }
-    }
+    });
+    if (removed) reclaimed += 1;
   }
   return reclaimed;
 }
@@ -224,8 +383,125 @@ export function renew(opts) {
     now = Date.now(),
   } = opts;
   const file = leaseFile(root, repo, relPath);
-  const existing = readLease(file);
-  if (!existing || existing.owner !== owner) return { renewed: false };
-  writeLease(file, { ...existing, acquiredAt: now, ttlMs });
-  return { renewed: true };
+  return withLeaseLock(file, () => {
+    const existing = readLease(file);
+    if (!existing || existing.owner !== owner) return { renewed: false };
+    atomicReplace(file, { ...existing, acquiredAt: now, ttlMs });
+    return { renewed: true };
+  });
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// CLI — `node lease-core.mjs <cmd> --repo R --path P --owner O [--ttl MS] …`
+//
+// This is the contract the Edit/Write PreToolUse hook depends on. ONE source of
+// truth: the hook runs this exact file as a subprocess; the gateway plugin
+// imports the same functions. Output is ALWAYS JSON to stdout. Exit codes:
+//   0 = allowed / ok        (acquire won, or a non-acquire command succeeded)
+//   3 = lease DENIED        (acquire blocked by another live owner)
+//   1 = usage / infra error (bad args, unknown command, exception)
+// The hook treats 3 as a real "no" (deny/warn) and 1/other as fail-OPEN (allow).
+// ───────────────────────────────────────────────────────────────────────────
+
+function parseArgs(argv) {
+  const out = {};
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (!a.startsWith("--")) continue;
+    const key = a.slice(2);
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      out[key] = true; // bare flag
+    } else {
+      out[key] = next;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+function emit(obj) {
+  process.stdout.write(`${JSON.stringify(obj)}\n`);
+}
+
+/** Dispatch one CLI invocation. Returns the process exit code. */
+export function runCli(argv) {
+  const cmd = argv[0];
+  const a = parseArgs(argv.slice(1));
+  const root = typeof a.root === "string" ? a.root : DEFAULT_ROOT;
+  const ttlMs = typeof a.ttl === "string" ? Number(a.ttl) : DEFAULT_TTL_MS;
+  // Default pid 0 → TTL-governed (the owner is a session, not this node process).
+  // Pass --pid N to anchor pid-liveness to a real long-lived holder.
+  const pid = typeof a.pid === "string" ? Number(a.pid) : 0;
+  const need = (...keys) => {
+    for (const k of keys) {
+      if (typeof a[k] !== "string" || !a[k]) throw new Error(`missing required --${k}`);
+    }
+  };
+
+  switch (cmd) {
+    case "acquire": {
+      need("repo", "path", "owner");
+      const r = acquire({
+        repo: a.repo,
+        path: a.path,
+        owner: a.owner,
+        sessionId: typeof a.session === "string" ? a.session : a.owner,
+        pid,
+        ttlMs,
+        intent: typeof a.intent === "string" ? a.intent : "",
+        root,
+      });
+      emit(r);
+      return r.allowed ? 0 : 3;
+    }
+    case "release": {
+      need("repo", "path", "owner");
+      emit(release({ repo: a.repo, path: a.path, owner: a.owner, root }));
+      return 0;
+    }
+    case "release-all": {
+      need("owner");
+      emit(releaseAllByOwner({ owner: a.owner, root }));
+      return 0;
+    }
+    case "renew": {
+      need("repo", "path", "owner");
+      emit(renew({ repo: a.repo, path: a.path, owner: a.owner, ttlMs, root }));
+      return 0;
+    }
+    case "status": {
+      need("repo", "path");
+      emit(status({ repo: a.repo, path: a.path, root }));
+      return 0;
+    }
+    case "list": {
+      need("repo");
+      const leases = list({ repo: a.repo, root });
+      emit({ leases, count: leases.length });
+      return 0;
+    }
+    case "gc": {
+      need("repo");
+      emit(gc({ repo: a.repo, root }));
+      return 0;
+    }
+    case "gc-all": {
+      emit(gcAll({ root }));
+      return 0;
+    }
+    default:
+      throw new Error(`unknown command: ${cmd ?? "(none)"}`);
+  }
+}
+
+const invokedDirectly =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  try {
+    process.exitCode = runCli(process.argv.slice(2));
+  } catch (err) {
+    emit({ error: err instanceof Error ? err.message : String(err) });
+    process.exitCode = 1;
+  }
 }

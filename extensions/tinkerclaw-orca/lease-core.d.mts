@@ -32,6 +32,9 @@ export function release(opts: { repo: string; path: string; owner: string; root?
   released: boolean;
   holder?: LeaseRecord;
 };
+export function releaseAllByOwner(opts: { owner: string; root?: string }): {
+  released: number;
+};
 export function status(opts: { repo: string; path: string; root?: string }): {
   held: boolean;
   holder?: LeaseRecord;
@@ -59,5 +62,6 @@ export function renew(opts: {
   root?: string;
   now?: number;
 }): { renewed: boolean };
+export function runCli(argv: string[]): number;
 export const DEFAULT_ROOT: string;
 export const DEFAULT_TTL_MS: number;
