@@ -272,6 +272,20 @@ export async function applySessionsPatchToStore(params: {
     }
   }
 
+  // FORK 2026-06-10 — u3-tab-naming: mark whether the cookiePhrase above is a
+  // user-chosen / auto DISPLAY NAME so the sessions.list lazy-mint won't
+  // overwrite it. Cleared automatically when cookiePhrase is cleared.
+  if ("cookiePhraseUserSet" in patch) {
+    if (patch.cookiePhraseUserSet === true) {
+      next.cookiePhraseUserSet = true;
+    } else {
+      delete next.cookiePhraseUserSet;
+    }
+  }
+  if (next.cookiePhrase === undefined) {
+    delete next.cookiePhraseUserSet;
+  }
+
   if ("thinkingLevel" in patch) {
     const raw = patch.thinkingLevel;
     if (raw === null) {
