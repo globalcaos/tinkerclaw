@@ -1357,6 +1357,33 @@ code.fs-link.fs-link-error {
   border-left: 1px solid var(--border);
   margin-left: 1px;
 }
+/* Narration details — peeled 'Commentary' block; reads as a sibling of the reasoning group */
+.narration-details {
+  margin: 2px 0;
+  border-left: 1px solid var(--border);
+  margin-left: 1px;
+  padding-left: 4px;
+}
+.narration-details > summary {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.8;
+  cursor: pointer;
+  user-select: none;
+  border-left: 2px solid var(--green);
+  border-radius: 0 4px 4px 0;
+  background: var(--surface2);
+  font-weight: 500;
+  transition:
+    color 0.1s,
+    background 0.1s;
+}
+.narration-details > summary:hover {
+  color: var(--text);
+  opacity: 1;
+  background: rgba(107, 142, 35, 0.1);
+}
 .msg.assistant.streaming {
   border-left: 2px solid var(--accent);
   opacity: 0.85;
