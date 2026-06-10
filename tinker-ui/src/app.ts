@@ -28,6 +28,10 @@ import { mountResponseTreemap } from "./panels/response-treemap.js";
 // helpers that scope the queued-send array by session (render only the active tab's entries; settle
 // a session's entries when ITS turn ends, independent of which tab is viewed). See queued-sends.ts.
 import { queuedForSession, settleQueuedSession } from "./queued-sends.js";
+// FORK 2026-06-10 (amygdala retirement): the 3-section reply split/render logic
+// lives in its own unit-tested module. Recognises only 💬 ANSWER / 🌿 FRACTAL;
+// the retired 🧠 AMYGDALA section is no longer split or compacted (live panel owns it).
+import { renderSectionedReply, splitSectionedReply } from "./sectioned-reply.js";
 // FORK 2026-05-30: shared per-subagent identity color (chat sub-bubble + RECIPES
 // panel row + thinking-row all import the SAME function so colors always match).
 import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
@@ -4449,11 +4453,10 @@ function md(text: string): string {
     /<strong>Jarvis:<\/strong>\s*<em>(.*?)<\/em>/gi,
     '<strong>Jarvis:</strong> <span class="jarvis-voice">$1</span>',
   );
-  // AMYGDALA personality nudge styling (pink)
-  h = h.replace(
-    /<strong>🧠 AMYGDALA:<\/strong>\s*<em>(.*?)<\/em>/gi,
-    '<strong style="color:#FF69B4">🧠 AMYGDALA:</strong> <em style="color:#FF69B4">$1</em>',
-  );
+  // FORK 2026-06-10 (amygdala retirement): the pink "🧠 AMYGDALA:" inline-nudge
+  // styling was removed. The per-turn amygdala section is retired — any residual
+  // amygdala text the model still emits renders as plain inline prose, not a
+  // special pink-highlighted line. Fractal styling stays.
   // Fractal reflection styling (green)
   h = h.replace(
     /<strong>🌿 FRACTAL:<\/strong>\s*<em>(.*?)<\/em>/gi,
@@ -4780,21 +4783,22 @@ function extractFilePaths(text: string): string[] {
 // This replaces the two-turn sessions.steer dance the old fractal-reflection
 // plugin used, eliminating the lane-race entirely.
 const AMY_FRA_TOGGLES_KEY = "tinker-amy-fra-toggles";
-type InjectToggles = { amygdala: boolean; fractal: boolean };
+// FORK 2026-06-10 (amygdala retirement): the `amygdala` toggle is gone — the
+// per-turn amygdala injection was removed, so only the fractal toggle remains.
+type InjectToggles = { fractal: boolean };
 function loadInjectToggles(): InjectToggles {
   try {
     const raw = localStorage.getItem(AMY_FRA_TOGGLES_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       return {
-        amygdala: parsed.amygdala !== false,
         fractal: parsed.fractal !== false,
       };
     }
   } catch {
     /* fall through */
   }
-  return { amygdala: true, fractal: true };
+  return { fractal: true };
 }
 function saveInjectToggles(t: InjectToggles): void {
   try {
@@ -4894,105 +4898,9 @@ async function buildInjectedPrompt(userText: string): Promise<string> {
   return userText + extras.join("");
 }
 
-// FORK 2026-04-18: 3-section response splitter. Detects the AMYGDALA / ANSWER /
-// FRACTAL markers in an assistant message and returns the three pieces plus
-// any prefix/suffix text. Used by renderMsg to render each section in its own
-// bubble (amygdala + fractal collapsed, answer expanded by default).
-type SectionedReply = {
-  amygdala?: string;
-  answer?: string;
-  fractal?: string;
-  other?: string;
-};
-// Markers tolerate: optional markdown heading marks (#, ##, ###, ####), optional
-// bold wrapping (** or __), optional colon, optional space between emoji and
-// label. Opus has been observed emitting all of:
-//   `💬 ANSWER:`, `💬 **ANSWER**`, `💬 **ANSWER:**`, `## 💬 ANSWER`,
-//   `### 💬 ANSWER`, `**💬 ANSWER**`
-// — all of which must match. FORK 2026-05-24: added `#{0,4}\s*` after the
-// leading anchor because the model started emitting `## 💬 ANSWER` (a
-// markdown H2 heading) and the splitter was returning null → renderSectioned-
-// Reply never fired → the answer + amygdala + fractal rendered as one big
-// jumbled assistant bubble with the section markers as literal text.
-// FORK 2026-05-26 (task-mpkw1a0b-9jsfy):
-//
-// 1. Anchor was `(^|\n)`. Observed model output:
-//    "…resolved.💬 ANSWER\n\nBookmarking…" — no newline between the
-//    previous sentence's terminator and the marker. Anchor now accepts
-//    `.!?` too; the terminator stays attached to the preface via an
-//    offset in pushMarker below.
-//
-// 2. Trailing decoration regex was `\s*:?\s*(?:\*\*|__)?\s*:?\s*`. The
-//    `\s*` BEFORE `(?:\*\*|__)?` let the regex eat across a paragraph
-//    break into the following bold title: "💬 ANSWER\n\n**Title**"
-//    was being consumed as "💬 ANSWER\n\n**" (marker), leaving
-//    "Title**" with a dangling closing `**` in the rendered bubble.
-//    Trailing now requires the closing bold-marker to be DIRECTLY
-//    attached to `ANSWER` (or after a colon attached to ANSWER) — no
-//    intervening whitespace. Still covers the documented variants:
-//      `💬 ANSWER:`, `💬 **ANSWER**`, `💬 **ANSWER:**`,
-//      `## 💬 ANSWER`, `### 💬 ANSWER`, `**💬 ANSWER**`.
-const AMY_MARKER_RE =
-  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*(?:🧠|🫀)\s*(?:\*\*|__)?\s*AMYGDALA:?(?:\*\*|__)?:?\s*/i;
-const ANS_MARKER_RE =
-  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*💬\s*(?:\*\*|__)?\s*ANSWER:?(?:\*\*|__)?:?\s*/i;
-const FRA_MARKER_RE =
-  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?:?(?:\*\*|__)?:?\s*/i;
-function splitSectionedReply(text: string): SectionedReply | null {
-  if (!text) {
-    return null;
-  }
-  // `text.search(regex)` returns the first match position; multiple marker
-  // occurrences (rare — claude echoing its own section header) would still be
-  // handled because we only care about the FIRST occurrence of each.
-  const amyIdx = text.search(AMY_MARKER_RE);
-  const ansIdx = text.search(ANS_MARKER_RE);
-  const fraIdx = text.search(FRA_MARKER_RE);
-  if (amyIdx < 0 && ansIdx < 0 && fraIdx < 0) {
-    return null;
-  }
-  // Split by whichever markers exist, in order of appearance.
-  const markers: { key: "amygdala" | "answer" | "fractal"; start: number; hdrLen: number }[] = [];
-  const pushMarker = (idx: number, key: "amygdala" | "answer" | "fractal", re: RegExp) => {
-    if (idx < 0) {
-      return;
-    }
-    const m = text.slice(idx).match(re);
-    if (!m) {
-      return;
-    }
-    // FORK 2026-05-26 — if the anchor captured a sentence terminator
-    // (`.`/`!`/`?`), that character belongs to the previous sentence's
-    // preface, not the marker. Shift the marker start one byte forward
-    // and trim its header length so the period stays with the
-    // narration when we slice the preface.
-    const prefix = m[1] ?? "";
-    const skip = prefix && /[.!?]/.test(prefix) ? 1 : 0;
-    markers.push({ key, start: idx + skip, hdrLen: m[0].length - skip });
-  };
-  pushMarker(amyIdx, "amygdala", AMY_MARKER_RE);
-  pushMarker(ansIdx, "answer", ANS_MARKER_RE);
-  pushMarker(fraIdx, "fractal", FRA_MARKER_RE);
-  markers.sort((a, b) => a.start - b.start);
-  const result: SectionedReply = {};
-  const preface = text.slice(0, markers[0]?.start ?? 0).trim();
-  if (preface) {
-    result.other = preface;
-  }
-  for (let i = 0; i < markers.length; i++) {
-    const m = markers[i];
-    if (!m) {
-      continue;
-    }
-    const bodyStart = m.start + m.hdrLen;
-    const bodyEnd = markers[i + 1]?.start ?? text.length;
-    const body = text.slice(bodyStart, bodyEnd).trim();
-    if (body) {
-      result[m.key] = body;
-    }
-  }
-  return result;
-}
+// FORK 2026-06-10 (amygdala retirement): the 3-section reply splitter
+// (splitSectionedReply) moved to ./sectioned-reply.ts and now recognises only
+// 💬 ANSWER / 🌿 FRACTAL — the retired 🧠 AMYGDALA marker is no longer a section.
 // FORK 2026-05-09: Detect and reconstruct _fullPrompt / _briefingPath for
 // historical user messages loaded from chat.history. The gateway persists the
 // FULL injected prompt as the user message body (that is what was actually
@@ -5198,115 +5106,10 @@ function renderUserBubbleWithPromptToggle(
   );
 }
 
-// FORK 2026-05-25 (task-mpkw1a0b-9jsfy "Response rendering"): strip any
-// residual section-marker text from a section's BODY. The splitter consumes
-// only the FIRST occurrence of each marker; if the model echoes a marker
-// inline ("see the 💬 ANSWER section above"), the duplicate stays as plain
-// prose and leaks into the rendered bubble. This scrub removes any standalone
-// marker phrase from the body. Heuristic — won't touch a marker that's part
-// of a longer sentence (those are rare; the false positive of stripping a
-// legitimate mention would be worse than leaking the rare duplicate).
-const RESIDUAL_MARKER_RE =
-  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*(?:💬\s*(?:\*\*|__)?\s*ANSWER|🧠\s*(?:\*\*|__)?\s*AMYGDALA|🫀\s*(?:\*\*|__)?\s*AMYGDALA|🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?)\s*:?\s*(?:\*\*|__)?\s*:?\s*(?=\n|$)/gi;
-function scrubResidualSectionMarkers(text: string): string {
-  return text.replace(RESIDUAL_MARKER_RE, (_match, prefix) => prefix ?? "");
-}
-
-function renderSectionedReply(sec: SectionedReply, elapsed: string = ""): string {
-  // Visual order: THINKING (collapsed) → ANSWER (expanded) → AMYGDALA (collapsed)
-  // → FRACTAL (collapsed). Matches the instructed emission order. The splitter
-  // records whichever sections it found, regardless of position in the text;
-  // this renderer forces the canonical on-screen order.
-  //
-  // IMPORTANT: if the splitter found amygdala OR fractal but NO answer marker,
-  // the pre-marker content ("other") is actually the answer — promote it.
-  // Otherwise the answer text falls on the floor.
-  // FORK 2026-05-09 (Feature B): the elapsed-chip is appended to the ANSWER
-  // bubble (the visible main reply). When sectioned answer falls through to
-  // raw `other`, attach to that bubble instead.
-  // FORK 2026-05-25 (task-mpkw1a0b-9jsfy): fold pre-answer narration
-  // (sec.other) INTO the amygdala body so it's compacted under the
-  // existing reasoning surface, not rendered as a separate bubble.
-  // Per user: "Pre-answer bubble needs to be compacted into the
-  // reasoning." When amygdala already has content, prepend sec.other
-  // with a thin separator. When amygdala doesn't exist but sec.other
-  // does, promote sec.other to be the amygdala body.
-  // FORK 2026-05-25 (same task): strip residual section markers from
-  // the answer body before rendering. The model occasionally echoes
-  // the marker text inside its own answer body; the splitter only
-  // consumes the FIRST marker per section.
-  let h = "";
-  const hasAnyMarker = Boolean(sec.answer || sec.amygdala || sec.fractal);
-  const mergedAmygdala =
-    sec.other && hasAnyMarker
-      ? sec.amygdala
-        ? `${sec.other}\n\n---\n\n${sec.amygdala}`
-        : sec.other
-      : sec.amygdala;
-  const effectiveAnswer =
-    sec.answer ?? (sec.other && (sec.amygdala || sec.fractal) ? sec.other : undefined);
-  if (effectiveAnswer) {
-    h += `<div class="msg assistant">${md(scrubResidualSectionMarkers(effectiveAnswer))}${elapsed}</div>`;
-  } else if (sec.other && !sec.amygdala && !sec.fractal) {
-    // No markers at all — fall back to raw
-    h += `<div class="msg assistant">${md(sec.other)}${elapsed}</div>`;
-  }
-  // FORK 2026-05-30 ("Amygdala/Fractal" task): the compacted views now show a
-  // one-line content summary, and if the turn changed an internal md (or code)
-  // file, that is surfaced FIRST (📝 file — change), replacing the summary and
-  // styled distinctly so a file mutation never hides behind a generic label.
-  const detectFileChange = (t: string): { file: string; change: string } | null => {
-    const verb = /\b(chang|updat|edit|wrote|writ|modif|append|added|creat|remov|delet)/i;
-    const fileRe = /([\w./-]+\.(?:md|markdown|ts|tsx|js|mjs|json|py|css|sh))/i;
-    for (const raw of t.split("\n")) {
-      const fm = fileRe.exec(raw);
-      if (fm && verb.test(raw)) {
-        const change = raw
-          .replace(/[*_`#>]/g, "")
-          .replace(/^\s*[-+]\s*/, "")
-          .trim();
-        return { file: fm[1], change: change.length > 110 ? change.slice(0, 110) + "…" : change };
-      }
-    }
-    return null;
-  };
-  const firstLine = (t: string): string => {
-    for (const raw of t.split("\n")) {
-      const ln = raw.replace(/[*_`#>]/g, "").trim();
-      if (ln && !/^[-=]{2,}$/.test(ln)) return ln.length > 90 ? ln.slice(0, 90) + "…" : ln;
-    }
-    return "";
-  };
-  const artifactSummary = (t: string, fallback: string): { html: string; cls: string } => {
-    const fc = detectFileChange(t);
-    if (fc) {
-      return {
-        html: `📝 <strong>${esc(fc.file)}</strong> — ${esc(fc.change)}`,
-        cls: " artifact-filechange",
-      };
-    }
-    const ln = firstLine(t);
-    return { html: ln ? esc(ln) : fallback, cls: "" };
-  };
-  if (mergedAmygdala) {
-    const s = artifactSummary(mergedAmygdala, "<em>Amygdala</em> — gut read");
-    h +=
-      `<details class="msg msg-amygdala">` +
-      `<summary class="amygdala-summary${s.cls}">🧠 ${s.html}</summary>` +
-      `<div class="amygdala-body">${md(mergedAmygdala)}</div>` +
-      `</details>`;
-  }
-  if (sec.fractal) {
-    const s = artifactSummary(sec.fractal, "<em>Fractal</em> — reflection");
-    h +=
-      `<details class="fractal-details">` +
-      `<summary class="fractal-summary${s.cls}">🌿 ${s.html}</summary>` +
-      `<div class="msg msg-fractal">${md(sec.fractal)}</div>` +
-      `</details>`;
-  }
-  return h;
-}
-
+// FORK 2026-06-10 (amygdala retirement): renderSectionedReply +
+// scrubResidualSectionMarkers moved to ./sectioned-reply.ts. The renderer no
+// longer fabricates a collapsed 🧠 amygdala block; pre-answer narration folds
+// into the ANSWER bubble inline. 🌿 FRACTAL rendering is preserved there.
 // FORK 2026-04-17: ErrorEnvelope rendering ---------------------------------
 // See `src/fork/error-envelope.ts` on the server side. Servers deliver a
 // structured envelope as an assistant-text payload prefixed with the sentinel
@@ -5707,8 +5510,8 @@ function renderMsg(
       // reintroduce the format "blinking" class which depended on neighbouring stream state).
       {
         const sectioned = splitSectionedReply(text);
-        if (sectioned && (sectioned.answer || sectioned.amygdala || sectioned.fractal)) {
-          h += renderSectionedReply(sectioned, elapsedChip(msg, idx));
+        if (sectioned && (sectioned.answer || sectioned.fractal)) {
+          h += renderSectionedReply(sectioned, elapsedChip(msg, idx), md, esc);
           return h;
         }
       }
@@ -5868,8 +5671,8 @@ function renderMsg(
         // (see the string-content path above for the full rationale). Run unconditionally.
         {
           const sectioned2 = splitSectionedReply(text);
-          if (sectioned2 && (sectioned2.answer || sectioned2.amygdala || sectioned2.fractal)) {
-            h += renderSectionedReply(sectioned2, elapsedChip(msg, idx));
+          if (sectioned2 && (sectioned2.answer || sectioned2.fractal)) {
+            h += renderSectionedReply(sectioned2, elapsedChip(msg, idx), md, esc);
             return h;
           }
         }
