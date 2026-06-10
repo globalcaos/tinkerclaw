@@ -44,6 +44,8 @@ export type GatewaySessionRow = {
    * use it as the primary display string in renderSessionRow.
    */
   cookiePhrase?: string;
+  /** FORK 2026-06-10 — u3-tab-naming: mirrors SessionEntry.cookiePhraseUserSet; TRUE when cookiePhrase is a user/auto display name (not a fortune), so the client can lock the tab title. */
+  cookiePhraseUserSet?: boolean;
   /**
    * FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts. Soft-delete timestamp.
    * sessions.list omits rows where this is set unless the caller passes
