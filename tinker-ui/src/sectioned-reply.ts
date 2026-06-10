@@ -104,6 +104,107 @@ export function scrubResidualSectionMarkers(text: string): string {
   return text.replace(RESIDUAL_MARKER_RE, (_match, prefix) => prefix ?? "");
 }
 
+// Separate a leading run of inter-tool NARRATION from the answer body. With the
+// cc-bridge brain, Claude Code emits between-step narration ("let me check X",
+// "let me pull Y") as VISIBLE TEXT that fuses into the SAME block as the final
+// answer, so the narration shows at the top of the answer bubble. This pure,
+// dependency-free, content-local heuristic peels ONLY the leading run of complete
+// first-person action sentences at the very start of the text. It is conservative
+// by construction: it never blanks the answer, and if the first sentence is not
+// narration it is a pure no-op.
+const NARRATION_OPENERS = [
+  "let me",
+  "i'll",
+  "i will",
+  "now i ",
+  "now let me",
+  "next i ",
+  "next, i",
+  "next let me",
+  "first i ",
+  "first, i",
+  "first let me",
+];
+// Closings / answer-content phrases that share a "let me …" opener but are NOT
+// inter-tool narration — never peel these.
+const NARRATION_EXCLUDE = [
+  "let me know",
+  "let me explain",
+  "let me clarify",
+  "let me summari",
+  "let me show",
+  "let me walk",
+];
+const NARRATION_ACTION_VERBS = new Set([
+  "check",
+  "pull",
+  "look",
+  "read",
+  "verify",
+  "confirm",
+  "inspect",
+  "trace",
+  "grep",
+  "search",
+  "run",
+  "open",
+  "see",
+  "find",
+  "get",
+  "start",
+  "scan",
+  "fetch",
+  "query",
+  "test",
+  "examine",
+  "gather",
+  "probe",
+  "dig",
+  "review",
+  "write",
+  "build",
+  "load",
+]);
+function isNarrationSentence(sentence: string): boolean {
+  const s = sentence.trim().toLowerCase();
+  if (!s || s.length > 200) {
+    return false;
+  }
+  if (NARRATION_EXCLUDE.some((ex) => s.startsWith(ex))) {
+    return false;
+  }
+  if (!NARRATION_OPENERS.some((op) => s.startsWith(op))) {
+    return false;
+  }
+  // Must contain at least one action verb token to count as inter-tool narration.
+  const words = s.split(/[^a-z']+/);
+  return words.some((w) => NARRATION_ACTION_VERBS.has(w));
+}
+export function splitLeadingNarration(text: string): { narration: string; answer: string } {
+  if (!text) {
+    return { narration: "", answer: text };
+  }
+  // Split into sentences on a terminator boundary; keep it simple — if there is
+  // no split point the whole text is a single "sentence".
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  let n = 0;
+  while (n < sentences.length && isNarrationSentence(sentences[n] ?? "")) {
+    n++;
+  }
+  // No leading narration → pure no-op.
+  if (n === 0) {
+    return { narration: "", answer: text };
+  }
+  // GUARD: every sentence is narration (no trailing non-narration answer) →
+  // never blank the answer; return it whole as the answer.
+  if (n >= sentences.length) {
+    return { narration: "", answer: text };
+  }
+  const narration = sentences.slice(0, n).join(" ").trim();
+  const answer = sentences.slice(n).join(" ").trim();
+  return { narration, answer };
+}
+
 // Render a split reply into HTML. `md` (markdown→HTML) and `esc` (HTML-escape)
 // are injected so this module stays free of the DOM/markdown-it dependencies in
 // app.ts and remains unit-testable.
@@ -119,22 +220,31 @@ export function renderSectionedReply(
   esc: (s: string) => string,
 ): string {
   let h = "";
-  // Fold any pre-marker narration (sec.other) into the answer so it renders
-  // inline and nothing falls on the floor. When there is no ANSWER marker but a
-  // FRACTAL one exists, promote sec.other to be the answer body. (Previously
-  // sec.other was diverted into a fabricated collapsed amygdala block — that is
-  // exactly the behaviour being retired.)
-  const effectiveAnswer = sec.answer
-    ? sec.other
-      ? `${sec.other}\n\n${sec.answer}`
-      : sec.answer
-    : sec.other && sec.fractal
-      ? sec.other
-      : undefined;
-  if (effectiveAnswer) {
-    h += `<div class="msg assistant">${md(scrubResidualSectionMarkers(effectiveAnswer))}${elapsed}</div>`;
-  } else if (sec.other && !sec.fractal) {
-    // No markers at all — fall back to raw.
+  // Pre-marker narration (sec.other) PLUS any leading inter-tool narration peeled
+  // off the answer body itself (cc-bridge emits "let me check X" between steps as
+  // visible text fused into the same block as the final answer) are surfaced in a
+  // collapsed Commentary block ABOVE the answer bubble — not folded inline. The
+  // retired 🧠 AMYGDALA section is gone; this is a plain reasoning-style surface,
+  // never a fabricated amygdala block.
+  const peel = sec.answer ? splitLeadingNarration(sec.answer) : { narration: "", answer: "" };
+  const leadingNarration = [sec.other, peel.narration].filter(Boolean).join("\n\n");
+  // Answer body: the de-narrated answer when an ANSWER marker exists; else, when
+  // there is no answer but a fractal, keep sec.other as the body (unchanged
+  // fractal-only behaviour); else undefined.
+  const answerBody = sec.answer ? peel.answer : sec.other && sec.fractal ? sec.other : undefined;
+  if (leadingNarration) {
+    h +=
+      `<details class="reasoning-group narration-details">` +
+      `<summary class="reasoning-header">▸ Commentary</summary>` +
+      `<div class="reasoning-content">` +
+      `<div class="msg assistant msg-thinking">` +
+      `<span class="thinking-label">Commentary:</span> ${md(scrubResidualSectionMarkers(leadingNarration))}` +
+      `</div></div></details>`;
+  }
+  if (answerBody) {
+    h += `<div class="msg assistant">${md(scrubResidualSectionMarkers(answerBody))}${elapsed}</div>`;
+  } else if (sec.other && !sec.fractal && !leadingNarration) {
+    // No markers at all and nothing peeled — fall back to raw.
     h += `<div class="msg assistant">${md(sec.other)}${elapsed}</div>`;
   }
   // The compacted fractal view shows a one-line content summary; if the turn

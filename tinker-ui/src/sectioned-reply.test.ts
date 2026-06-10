@@ -3,6 +3,7 @@ import {
   splitSectionedReply,
   renderSectionedReply,
   scrubResidualSectionMarkers,
+  splitLeadingNarration,
 } from "./sectioned-reply";
 
 // Identity stubs — the structural assertions below (which bubbles/classes are
@@ -97,6 +98,72 @@ describe("renderSectionedReply — no fabricated amygdala block, fractal preserv
     expect(h).toContain("narration only");
     expect(h).toContain("fractal-details");
     expect(h).not.toContain("msg-amygdala");
+  });
+});
+
+describe("splitLeadingNarration — peels leading cc-bridge inter-tool narration only", () => {
+  it("is a pure no-op when the first sentence is not narration", () => {
+    expect(splitLeadingNarration("The value is 5.")).toEqual({
+      narration: "",
+      answer: "The value is 5.",
+    });
+  });
+
+  it("peels a single leading narration sentence off the answer", () => {
+    const r = splitLeadingNarration("Let me check the config.\n\nThe value is 5.");
+    expect(r.narration).toBe("Let me check the config.");
+    expect(r.answer).toBe("The value is 5.");
+  });
+
+  it("accumulates consecutive leading narration sentences, stops at the answer", () => {
+    const r = splitLeadingNarration("Let me check X. Now I will read Y. The answer is Z.");
+    expect(r.narration).toContain("Let me check X.");
+    expect(r.narration).toContain("Now I will read Y.");
+    expect(r.answer).toBe("The answer is Z.");
+  });
+
+  it("GUARD: never blanks the answer when every sentence is narration", () => {
+    expect(splitLeadingNarration("Let me check the config.")).toEqual({
+      narration: "",
+      answer: "Let me check the config.",
+    });
+  });
+
+  it("EXCLUDE: 'let me know …' closing is answer content, not peeled", () => {
+    expect(
+      splitLeadingNarration("Let me know if you need anything else. The data is ready."),
+    ).toEqual({
+      narration: "",
+      answer: "Let me know if you need anything else. The data is ready.",
+    });
+  });
+});
+
+describe("renderSectionedReply — leading narration becomes a collapsed Commentary block, not inline", () => {
+  it("emits narration-details + Commentary when sec.other is set, and does NOT inline sec.other into the answer .msg bubble", () => {
+    const h = render({ other: "Let me check.", answer: "The answer" });
+    expect(h).toContain("narration-details");
+    expect(h).toContain("Commentary");
+    // The narration text lives only inside the Commentary block — the answer
+    // .msg bubble (after the </details>) must not contain it.
+    const afterDetails = h.slice(h.indexOf("</details>") + "</details>".length);
+    expect(afterDetails).toContain("The answer");
+    expect(afterDetails).not.toContain("Let me check.");
+  });
+
+  it("peels leading narration fused into the answer body itself into the Commentary block", () => {
+    const h = render({ answer: "Let me check the config. The value is 5." });
+    expect(h).toContain("narration-details");
+    expect(h).toContain("Let me check the config.");
+    const afterDetails = h.slice(h.indexOf("</details>") + "</details>".length);
+    expect(afterDetails).toContain("The value is 5.");
+    expect(afterDetails).not.toContain("Let me check the config.");
+  });
+
+  it("no Commentary block for a plain answer with no leading narration", () => {
+    const h = render({ answer: "Hello world." });
+    expect(h).not.toContain("narration-details");
+    expect(h).toContain("Hello world.");
   });
 });
 
