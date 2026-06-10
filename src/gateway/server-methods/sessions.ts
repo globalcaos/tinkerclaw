@@ -278,6 +278,19 @@ function rejectWebchatSessionMutation(params: {
   return true;
 }
 
+const DISPLAY_NAME_PATCH_KEYS = new Set(["key", "cookiePhrase", "cookiePhraseUserSet"]);
+// FORK 2026-06-10 — u3-tab-naming: a patch that ONLY sets the display name
+// (cookiePhrase / cookiePhraseUserSet) is safe to accept from the Tinker UI
+// webchat client so a renamed/auto-named tab persists server-side. Every other
+// session-metadata mutation stays behind rejectWebchatSessionMutation.
+function isDisplayNameOnlyPatch(params: { [k: string]: unknown }): boolean {
+  const keys = Object.keys(params).filter((k) => params[k] !== undefined);
+  return (
+    keys.some((k) => k === "cookiePhrase" || k === "cookiePhraseUserSet") &&
+    keys.every((k) => DISPLAY_NAME_PATCH_KEYS.has(k))
+  );
+}
+
 function buildDashboardSessionKey(agentId: string): string {
   return `agent:${agentId}:dashboard:${randomUUID()}`;
 }
@@ -1326,7 +1339,12 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     if (!key) {
       return;
     }
-    if (rejectWebchatSessionMutation({ action: "patch", client, isWebchatConnect, respond })) {
+    // FORK 2026-06-10 — u3-tab-naming: allow a display-name-ONLY patch from the
+    // Tinker UI webchat client (durable server-side tab names); block all else.
+    if (
+      !isDisplayNameOnlyPatch(p as unknown as { [k: string]: unknown }) &&
+      rejectWebchatSessionMutation({ action: "patch", client, isWebchatConnect, respond })
+    ) {
       return;
     }
 
