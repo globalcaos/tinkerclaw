@@ -185,6 +185,7 @@ export const SessionsPatchParamsSchema = Type.Object(
      * to null to clear. See bible session-naming.md for the full contract.
      */
     cookiePhrase: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+    cookiePhraseUserSet: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
