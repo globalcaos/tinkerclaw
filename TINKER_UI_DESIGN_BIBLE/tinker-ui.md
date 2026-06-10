@@ -902,12 +902,13 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Global hint:** `#global-hint` CSS changed from `white-space: pre` to `pre-wrap` with `max-width: 280px` so longer fortune text wraps instead of rendering as a single clamped line.
 - **Files:** `app.ts` (FORTUNE_COOKIES array, persistence functions, renderTabs, renderSessionRow, attachSessionToTab, createTab, classifySession), `base.css` (.tab-title, #global-hint)
 
-### 5.43 Colored Brain Systems — AMYGDALA & FRACTAL Tags (2026-03-23)
+### 5.43 Colored Brain Systems — AMYGDALA & FRACTAL Tags (2026-03-23, AMYGDALA tag removed 2026-06-10)
 
-- **Status:** `DEPLOYED`
-- **What:** System-generated messages from the AMYGDALA (personality thermostat) and FRACTAL (recursive reflection) cognitive subsystems render with distinct colored tags in the chat. AMYGDALA tags render in pink (`#ff69b4`), FRACTAL tags in fern green (`#2ECC71`). Tags use markdown bold+italic (`***TAG***`) instead of HTML spans for cross-channel compatibility (WhatsApp, Telegram).
-- **Detection:** Messages containing `AMYGDALA` or `FRACTAL` prefixes in system event text.
-- **Files:** `app.ts` (renderMsg detection), `base.css` (tag color classes)
+- **Status:** `FRACTAL DEPLOYED; AMYGDALA RETIRED 2026-06-10`
+- **What:** System-generated messages from the FRACTAL (recursive reflection) cognitive subsystem render with a distinct colored tag in the chat — fern green (`#2ECC71`). Tags use markdown bold+italic (`***TAG***`) instead of HTML spans for cross-channel compatibility (WhatsApp, Telegram).
+- **FORK 2026-06-10 (amygdala retirement):** the pink `🧠 AMYGDALA:` inline-tag styling was **removed** from `md()` in `app.ts`. The per-turn amygdala reply section is retired (the always-on Amygdala side panel is the gate-decision surface now); any residual amygdala text the model emits from session-history habit renders as plain inline prose, not a pink-highlighted line. FRACTAL green stays.
+- **Detection:** Messages containing a `FRACTAL` prefix in system event text.
+- **Files:** `app.ts` (renderMsg detection + `md()` green-styling), `base.css` (tag color classes)
 
 ### 5.44 WhatsApp Thinking Reaction — persona-aware heartbeat + done-separator (2026-02-18, **upgraded 2026-05-04, verified end-to-end 2026-05-09**)
 
@@ -1225,9 +1226,18 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Status:** `DEPLOYED-UNTESTED` (HMR-live in `tinker-ui/src/app.ts`, uncommitted)
 - **What the user sees:** a completed reply that carries the three-section answer / amygdala / fractal structure now always renders as a proper **final answer** bubble — even if it landed in a non-final stream slot. Previously such a bubble could show up as a plain thinking bubble with the raw section markers visible, because the splitter (`splitSectionedReply`) was gated behind `!isThinking` (a POSITION-based test): a structured reply that didn't occupy the last slot was never split.
 - **Why it changed:** appearance is now decided by **structure, not position** — `splitSectionedReply` runs unconditionally at both `renderMsg` detection sites. Because the check is content-local, it cannot reintroduce the earlier "blinking" class flicker.
-- **How it's used:** nothing to do — structured replies just look right (clean answer + collapsed amygdala/fractal sections) regardless of where in the stream they finalised.
-- **See also:** §5.8 / §5.8c (thinking-vs-final classification); bug-log.md (root cause of the raw-markers-in-a-thinking-bubble regression). Task `task-mpwf4x8s`.
-- **Files:** `tinker-ui/src/app.ts` (`splitSectionedReply` run unconditionally at both `renderMsg` detection sites).
+- **How it's used:** nothing to do — structured replies just look right (clean answer + collapsed fractal section) regardless of where in the stream they finalised. **(2026-06-10: amygdala is no longer a recognised section — see §5.74.)**
+- **See also:** §5.8 / §5.8c (thinking-vs-final classification); §5.74 (amygdala section retired); bug-log.md (root cause of the raw-markers-in-a-thinking-bubble regression). Task `task-mpwf4x8s`.
+- **Files:** `tinker-ui/src/sectioned-reply.ts` (`splitSectionedReply` run unconditionally at both `renderMsg` detection sites; extracted from `app.ts` 2026-06-10).
+
+### 5.74 Amygdala per-turn reply section RETIRED — UI no longer compacts (or fabricates) it (2026-06-10)
+
+- **Status:** `DEPLOYED` (vite build + gateway restart) — split/render logic extracted to a unit-tested module.
+- **What the user sees:** the per-turn `🧠 AMYGDALA` "gut read" bubble is **gone**. The chat no longer renders a collapsed `🧠` reasoning block, and — critically — no longer **fabricates** one out of pre-answer narration. The per-turn reply is just `💬 ANSWER` (expanded, inline) → `🌿 FRACTAL` (collapsed). The Amygdala lives only in the always-on right-rail side panel (live gate-decision stream) now.
+- **Two root causes fixed (both in the UI, the only place that still touched amygdala):** (1) the splitter still recognised a `🧠/🫀 AMYGDALA` marker and carved a collapsed `<details class="msg msg-amygdala">` block; (2) `renderSectionedReply` **fabricated** an amygdala block from `sec.other` (pre-answer narration) whenever ANY marker (answer OR fractal) was present — so even an amygdala-free reply with one leading sentence got a phantom collapsed `🧠` block. Both removed. (The produce-side was already clean: per-turn injection asks only `💬 ANSWER → 🌿 FRACTAL`; `worker.ts` PROMPT_FILES dropped amygdala-prompt.md; live SOUL.md + fractal-prompt clean. Residual emissions are claude-cli `--resume` session-history habit, which decays.)
+- **New behaviour:** `splitSectionedReply` recognises only `💬 ANSWER` / `🌿 FRACTAL`. A residual `🧠 AMYGDALA` header the model still emits falls into `other`/answer and folds **inline** into the ANSWER bubble; the bare marker line is scrubbed by `scrubResidualSectionMarkers` so it reads as clean prose — no `🧠` label, no collapsed block. (Per Oscar 2026-06-10: show inline as plain text, lossless — the habit fades over new turns.)
+- **Don't-regress:** keep the `🌿 FRACTAL` split + collapsed `<details class="fractal-details">` render intact; keep the live `#amygdala-panel` side panel + `amygdala.feed` RPC + `amygdala-scope-toggle`; keep `reconstructInjectionFields`'s `"Structure this turn's reply as labelled sections"` sentinel (the live ANSWER→FRACTAL injection still emits it). Do NOT re-add a `🧠` marker to the splitter or a `msg-amygdala` emitter.
+- **Files:** `tinker-ui/src/sectioned-reply.ts` (NEW — pure, `md`/`esc` injected), `tinker-ui/src/sectioned-reply.test.ts` (NEW — 10 cases incl. the two regression bugs above), `tinker-ui/src/app.ts` (imports the module; twin call sites; removed pink `🧠 AMYGDALA:` styling + dead `InjectToggles.amygdala`), `extensions/tinkerclaw-cc-bridge/personas/jarvis-default.md` (dropped `🧠` from the marker list), **deleted** `extensions/tinkerclaw-learned-intuition/amygdala-prompt.md` (orphaned).
 
 ### 5.73 Queued prompts render as a trailing "queued" bubble (2026-06-04)
 
