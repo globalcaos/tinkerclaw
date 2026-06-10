@@ -2,8 +2,8 @@
 file: panels.md
 purpose: Spatial layout + visibility contract for every Tinker UI panel. Defines which panels live where, which can coexist, and what happens when the user switches modes/tabs. The contract is enforceable — bugs like "Control Panel stays visible when I click Sessions" are caught by the verify blocks in this frontmatter.
 audience: AI
-last_verified: 2026-06-01
-last_verified_commit: 18e618d241
+last_verified: 2026-06-10
+last_verified_commit: HEAD
 single_owner: yes — panel-layout facts live here, not in tinker-ui.md. tinker-ui.md owns the visual language (chip styles, fonts, colors); this file owns the SPATIAL contract.
 see_also: tinker-ui.md (visual language, chip families, per-component design), flows.md (event flows that drive panel updates), topology.md (which process renders the UI)
 verify:
@@ -16,7 +16,7 @@ verify:
   - name: prefrontal panel is render-always (no conditional return that suppresses it entirely)
     cmd: bash -lc 'cd ~/src/tinkerclaw && grep -q "renderPlanSection\\|renderInferredPlan\\|prefrontalCtrl.update" tinker-ui/src/app.ts || (echo "prefrontal panel render path is missing"; exit 1)'
   - name: prefrontal re-renders on user-driven view changes (FORK 2026-05-17 — session-switch + scope toggle, not only WS events)
-    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "function setBudgetScope(" in t, "the single budgetScope setter is gone — the Models and Prefrontal scope toggles will re-diverge and one of them stops working"; assert re.search(r"\[\s*.budget-scope-toggle.\s*,\s*.prefrontal-scope-toggle.\s*\]", t), "both scope toggles must be bound through the one setter — the prefrontal-scope-toggle was a dead control with no handler (2026-05-17 bug)"; assert re.search(r"function switchToTab\b[\s\S]{0,1600}(updatePrefrontalTree\(\)|refreshViewedSessionIndicators\(\))", t), "switchToTab no longer refreshes prefrontal (directly or via refreshViewedSessionIndicators, which calls updatePrefrontalTree) — it goes stale and shows the prior session thinking no matter which session you select (2026-05-17 / 2026-06-04 bug)"'
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "function setBudgetScope(" in t, "the single budgetScope setter is gone — the Models and Prefrontal scope toggles will re-diverge and one of them stops working"; _s=re.search(r"SCOPE_TOGGLE_IDS\s*=\s*\[(.*?)\]", t, re.S); assert _s and "budget-scope-toggle" in _s.group(1) and "prefrontal-scope-toggle" in _s.group(1) and re.search(r"of\s+SCOPE_TOGGLE_IDS", t), "both scope toggles must bind through the one SCOPE_TOGGLE_IDS -> setBudgetScope path — the prefrontal-scope-toggle was a dead control with no handler (2026-05-17 bug)"; assert re.search(r"function switchToTab\b[\s\S]{0,1600}(updatePrefrontalTree\(\)|refreshViewedSessionIndicators\(\))", t), "switchToTab no longer refreshes prefrontal (directly or via refreshViewedSessionIndicators, which calls updatePrefrontalTree) — it goes stale and shows the prior session thinking no matter which session you select (2026-05-17 / 2026-06-04 bug)"'
 ---
 
 # Tinker UI panel system
