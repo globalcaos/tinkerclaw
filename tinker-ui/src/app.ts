@@ -1275,6 +1275,22 @@ function loadTabs() {
   }
 }
 
+// FORK 2026-06-10 — u3-tab-naming: persist a DELIBERATE (manual rename or auto-name) tab title to
+// the server session store via sessions.patch, so the name is durable across ANY restart, browser,
+// or device — not just this browser's localStorage. cookiePhraseUserSet=true tells the gateway's
+// lazy-mint to never overwrite it with a random fortune cookie. Fire-and-forget; the next
+// sessions.list surfaces it back as the session's cookiePhrase.
+function persistTabNameToServer(tab: Tab) {
+  if (!tab.sessionKey || !tab.isAttached || tab.id === "tab-main") return;
+  const title = tab.title?.trim();
+  if (!title) return;
+  req("sessions.patch", {
+    key: tab.sessionKey,
+    cookiePhrase: title,
+    cookiePhraseUserSet: true,
+  }).catch(() => {});
+}
+
 const $ = (id: string) => document.getElementById(id);
 const app = $("app")!;
 
@@ -3795,23 +3811,32 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   const fortuneSet = new Set(FORTUNE_COOKIES);
   for (const s of sessions) {
     if (!s || typeof (s as { key?: unknown }).key !== "string") continue;
-    const sess = s as { key: string; cookiePhrase?: string };
+    const sess = s as { key: string; cookiePhrase?: string; cookiePhraseUserSet?: boolean };
     const serverPhrase = sess.cookiePhrase;
-    if (!serverPhrase || looksLikeLegacy2WordPhrase(serverPhrase)) continue;
+    if (!serverPhrase) continue;
     const tab = tabsByKey.get(sess.key) ?? findTabByMatch(tabsByKey, sess.key);
     if (!tab) continue;
-    // Sync conditions:
+    // FORK 2026-06-06 — u2-tab-naming: never overwrite a LOCKED title (manual rename or a
+    // successful auto-name) with the server fortune. A locked tab's title always wins while it
+    // still exists in this browser's localStorage.
+    if (tab.titleLocked) continue;
+    // FORK 2026-06-10 — u3-tab-naming: the server holds a USER-SET / auto display name (durable in
+    // sessions.json). This tab is unlocked — either a default/fortune title, or a tab whose lock
+    // was lost when browser localStorage was cleared on a computer restart. Adopt the server name
+    // AND re-lock it, so renamed/auto names RETURN after any restart/browser/device change instead
+    // of reverting to the fortune cookie. Shape-agnostic (a user name may look like anything).
+    if (sess.cookiePhraseUserSet) {
+      tab.title = serverPhrase;
+      tab.titleLocked = true;
+      tabTitlesChanged = true;
+      continue;
+    }
+    if (looksLikeLegacy2WordPhrase(serverPhrase)) continue;
+    // Sync conditions for an unlocked, non-user-set tab:
     //   - empty title (initial render)
     //   - legacy 2-word title (from the wrong first-pass mints)
-    //   - title IS a known fortune phrase but doesn't match the
-    //     server's current cookiePhrase (post-canonicalisation heal)
-    // Gemini-generated titles (free-form short strings) aren't in
-    // fortuneSet, so they're never resynced.
-    // FORK 2026-06-06 — u2-tab-naming: never overwrite a LOCKED title (manual rename or a
-    // successful auto-name). titleLocked is persisted to localStorage, so custom/auto names
-    // survive a gateway restart too — only tabs still showing a default/fortune title get the
-    // server cookiePhrase synced in, effectively retiring the fortune-cookie name from view.
-    if (tab.titleLocked) continue;
+    //   - title IS a known fortune phrase but doesn't match the server's current cookiePhrase
+    // Auto/manual titles are locked (handled above), so they're never resynced here.
     const isStaleFortune = fortuneSet.has(tab.title) && tab.title !== serverPhrase;
     const tabNeedsSync = !tab.title || looksLikeLegacy2WordPhrase(tab.title) || isStaleFortune;
     if (tabNeedsSync && tab.title !== serverPhrase) {
@@ -4038,40 +4063,36 @@ async function generateTabTitle(tab: Tab) {
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
   const tabMessages =
     tab.sessionKey === sessionKey ? messages : (tabStates.get(tab.id)?.messages ?? []);
-  // FORK 2026-06-04 — task-mpzcjw6n-n45zs: recency-weighted sampling. We still take the last
-  // TAB_TITLE_INTERVAL Q&A pairs from the END of the transcript, but give the MOST RECENT turn a
-  // much bigger char budget than older ones so the summary tracks topic drift (the chat may have
-  // moved on from how it started). `processed` counts messages newest-first.
-  const pairs: string[] = [];
-  let count = 0;
-  let processed = 0;
-  for (let i = tabMessages.length - 1; i >= 0 && count < TAB_TITLE_INTERVAL; i--) {
-    const m = tabMessages[i];
-    if (!m?.content) {
-      continue;
-    }
-    const text = Array.isArray(m.content)
+  // FORK 2026-06-10 — u3-tab-naming: build the summary primarily from the USER's
+  // own prompts (their intent — short + signal-dense), recency-weighted, and fall
+  // back to the latest assistant reply only when the user's prompts are too thin.
+  const msgText = (m: unknown): string => {
+    if (!m?.content) return "";
+    const t = Array.isArray(m.content)
       ? m.content
           .filter((b: unknown) => b.type === "text")
           .map((b: unknown) => b.text)
           .join(" ")
       : String(m.content);
-    if (!text.trim()) {
-      continue;
-    }
-    const role = (m.role || "").toLowerCase();
-    if (role === "user" || role === "assistant") {
-      // Newest 2 messages (the latest user+assistant turn) get the lion's share of context.
-      const budget = processed < 2 ? 500 : 150;
-      pairs.unshift(`${role}: ${text.slice(0, budget)}`);
-      processed++;
-      if (role === "user") {
-        count++;
-      }
+    return t.trim();
+  };
+  const userPrompts: string[] = [];
+  let lastAssistant = "";
+  for (let i = tabMessages.length - 1; i >= 0; i--) {
+    const m = tabMessages[i];
+    const role = (m?.role || "").toLowerCase();
+    const text = msgText(m);
+    if (!text) continue;
+    if (role === "user") {
+      // Newest prompt gets the lion's share of the budget.
+      userPrompts.unshift(text.slice(0, userPrompts.length === 0 ? 600 : 200));
+      if (userPrompts.length >= TAB_TITLE_INTERVAL) break;
+    } else if (role === "assistant" && !lastAssistant) {
+      lastAssistant = text.slice(0, 200);
     }
   }
 
-  if (pairs.length === 0) {
+  if (userPrompts.length === 0) {
     return;
   }
 
@@ -4083,10 +4104,31 @@ async function generateTabTitle(tab: Tab) {
     return;
   }
 
-  // FORK 2026-06-06 — u2-tab-naming: ask for the CURRENT topic, weighting recent messages, and
-  // request ONE leading emoji RELEVANT to the topic followed by a short title. We keep that emoji
-  // (subject to the uniqueness pass below); if the model returns none we derive a relevant one.
-  const prompt = `Summarize what this conversation is CURRENTLY about as a short tab title, weighting the MOST RECENT messages most heavily — the topic may have drifted from how it started. Reply with ONLY: one single emoji that is RELEVANT to the topic, then a space, then 1-3 words. No quotes, no extra punctuation. Example: 🔧 Fix auth bug. Here is the conversation (oldest to newest):\n\n${pairs.join("\n")}`;
+  // FORK 2026-06-10 — u3-tab-naming: gather the OTHER tabs' deliberate (locked) names so the model
+  // can make THIS one distinct, then ask for a short, specific, prompt-driven title with one
+  // relevant leading emoji.
+  const siblingTitles = tabs
+    .filter((t) => t.id !== tab.id && t.id !== "tab-main" && t.titleLocked && t.title)
+    .map((t) => {
+      const e = leadingEmoji(t.title);
+      return (e ? t.title.slice(e.length) : t.title).trim();
+    })
+    .filter((s) => s.length > 0)
+    .slice(0, 8);
+  const prompt = [
+    `Give this chat tab a SHORT, SPECIFIC name (it shows in a narrow tab strip) that captures what I am working on in THIS conversation and what makes it DIFFERENT from my other tabs.`,
+    `Base it on MY messages below — my intent is what matters; the assistant's replies are only secondary context.`,
+    siblingTitles.length
+      ? `My OTHER tabs are already named: ${siblingTitles.join("; ")}. Make THIS name clearly distinct from those — name what is unique here; do not reuse their words or settle for a generic shared theme.`
+      : "",
+    `Reply with ONLY: one emoji relevant to the topic, then a space, then 2-4 words. No quotes, no trailing punctuation. Examples: 🔧 Auth token refresh — 📊 Q3 revenue model — 🐛 Flaky CI retries.`,
+    ``,
+    `My recent messages (oldest to newest):`,
+    userPrompts.map((p) => `- ${p}`).join("\n"),
+    lastAssistant ? `\n(Assistant context, secondary: ${lastAssistant})` : "",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
 
   try {
     // Try local Ollama first (free, fast)
@@ -4106,7 +4148,7 @@ async function generateTabTitle(tab: Tab) {
     }
 
     console.log("[tabs] ollama response:", JSON.stringify(ollamaRes));
-    if (title && title.length > 0 && title.length <= 40) {
+    if (title && title.length > 0 && title.length <= 48) {
       // FORK 2026-06-06 \u2014 u2-tab-naming: KEEP a relevant leading emoji.
       // 1) split off any leading emoji the LLM returned (per the prompt) from the word part.
       const preferred = leadingEmoji(title);
@@ -4122,6 +4164,9 @@ async function generateTabTitle(tab: Tab) {
       console.log("[tabs] title updated to:", tab.title);
       renderTabs();
       saveTabs();
+      // FORK 2026-06-10 — u3-tab-naming: persist the auto-name server-side so it survives any
+      // restart/browser/device, not just this browser's localStorage.
+      persistTabNameToServer(tab);
       updateSessionsPanel();
     } else {
       console.log("[tabs] title rejected — length:", title?.length, "value:", title);
@@ -6712,6 +6757,9 @@ function openTabRename(tabId: string, x: number, y: number) {
         // saveTabs() → survives hard refresh AND gateway restart.
         tab.titleLocked = true;
         saveTabs();
+        // FORK 2026-06-10 — u3-tab-naming: also persist server-side (durable across any
+        // restart/browser/device, not just this browser's localStorage).
+        persistTabNameToServer(tab);
         renderTabs();
         updateSessionsPanel();
       }
@@ -6880,6 +6928,9 @@ function attachSessionToTab(key: string) {
   // sessions where the topic phrase is more meaningful than the cookie.
   if (sess?.cookiePhrase) {
     tab.title = sess.cookiePhrase;
+    // FORK 2026-06-10 — u3-tab-naming: a user-set / auto server name is deliberate; lock it so it
+    // isn't treated as a replaceable fortune.
+    if ((sess as { cookiePhraseUserSet?: boolean }).cookiePhraseUserSet) tab.titleLocked = true;
   } else if (sess?.label) {
     tab.title = sess.label.slice(0, 30);
   }
@@ -7756,6 +7807,9 @@ function updateSessionsPanel() {
         const sess = sessions.find((s: unknown) => s.key === key);
         if (sess?.cookiePhrase) {
           newTab.title = sess.cookiePhrase;
+          // FORK 2026-06-10 — u3-tab-naming: lock a deliberate (user/auto) server name.
+          if ((sess as { cookiePhraseUserSet?: boolean }).cookiePhraseUserSet)
+            newTab.titleLocked = true;
         } else if (sess?.label) {
           newTab.title = sess.label.slice(0, 30);
         }
