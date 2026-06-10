@@ -2,17 +2,17 @@
 file: auth-routing.md
 purpose: Which model gets picked, in what order, when does fallback fire, when is billing gated
 audience: AI
-last_verified: 2026-05-11
+last_verified: 2026-06-10
 last_verified_commit: HEAD
 single_owner: yes — model routing + auth profile order + billing logic live here
 see_also: config-shape.md (where these keys are read), failures.md (M1 idle watchdog, billing failures)
 verify:
   - name: anthropic auth order is cli-gm only (subscription, not metered api)
     cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); assert cfg["auth"]["order"]["anthropic"] == ["anthropic:cli-gm"]'
-  - name: claude-code/claude-opus-4-7 is rank 2 in the models panel
-    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); assert cfg["agents"]["defaults"]["models"]["claude-code/claude-opus-4-7"]["rank"] == 2'
-  - name: primary model is claude-code/claude-opus-4-7
-    cmd: python3 -c 'import json,os; cfg = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); assert cfg["agents"]["defaults"]["model"]["primary"] == "claude-code/claude-opus-4-7"'
+  - name: primary model is a flat-rate subscription model (cli-gm / claude-code), never a metered api model
+    cmd: python3 -c 'import json,os; cfg=json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); p=cfg["agents"]["defaults"]["model"]["primary"]; assert p.startswith("claude-code/"), f"primary {p} is metered, not the flat-rate subscription"'
+  - name: primary model is the best-ranked subscription model (rank table is cron-updated daily — derive it per design-principles.md, never freeze a model name)
+    cmd: python3 -c 'import json,os; cfg=json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); d=cfg["agents"]["defaults"]; p=d["model"]["primary"]; subs={k:v["rank"] for k,v in d["models"].items() if k.startswith("claude-code/") and isinstance(v,dict) and "rank" in v}; best=min(subs,key=subs.get); assert p==best, f"primary {p} != best-ranked subscription model {best} @ rank {subs[best]}"'
 ---
 
 # Auth + model routing
@@ -21,31 +21,35 @@ verify:
 
 Source of truth: `agents.defaults.models[<provider/model>].rank` in `openclaw.json`. Updated by the `model-rank-refresh` cron at 06:30 daily, fetching the Artificial Analysis Intelligence Index leaderboard.
 
-Current snapshot (2026-05-11):
+**The primary is DERIVED, not frozen (design-principles.md #19).** `agents.defaults.model.primary` is the **best-ranked _subscription_ (cli-gm / `claude-code/*`) model** — never a metered model, however highly the leaderboard ranks it. The rank numbers churn daily; the routing rule does not. The frontmatter `verify:` enforces the derived rule (primary is a `claude-code/*` model AND equals the lowest-rank `claude-code/*` entry), so it survives a new model landing at the top instead of re-breaking on every cron run. The table below is a dated snapshot, illustrative only.
 
-| Rank | Model                         | Alias        | Tier                  | Notes                                 |
-| ---- | ----------------------------- | ------------ | --------------------- | ------------------------------------- |
-| 1    | openai/gpt-5.5                | —            | metered               |                                       |
-| 2    | claude-code/claude-opus-4-7   | —            | subscription (cli-gm) | **PRIMARY** for agents.defaults.model |
-| 3    | google/gemini-3.1-pro-preview | gemini       | metered               |                                       |
-| 4    | openai/gpt-5.4                | gpt54        | metered               |                                       |
-| 5    | openai/gpt-5.3-codex          | —            | metered               |                                       |
-| 6    | claude-code/claude-sonnet-4-6 | sonnet       | subscription (cli-gm) |                                       |
-| 7    | openai/gpt-5.4-mini           | —            | metered               |                                       |
-| 8    | google/gemini-3-flash-preview | gemini-flash | metered               |                                       |
-| 9    | openai/gpt-5.4-nano           | —            | metered               |                                       |
-| 10   | google/gemini-3-pro-preview   | —            | metered               |                                       |
-| 11   | openai/gpt-5.4-pro            | —            | metered               |                                       |
-| 12   | openai/gpt-5.2-pro            | gpt          | metered               |                                       |
-| 13   | openai/o3                     | —            | metered               |                                       |
-| 14   | google/gemini-2.5-pro         | —            | metered               |                                       |
-| 15   | openai/gpt-5.2                | —            | metered               |                                       |
-| 16   | openai/gpt-5.1                | —            | metered               |                                       |
-| 17   | openai/gpt-4.1                | —            | metered               |                                       |
-| 18   | openai/gpt-4o                 | —            | metered               |                                       |
-| 19   | google/gemini-2.5-flash       | —            | metered               |                                       |
-| 20   | google/gemini-2.0-flash       | —            | metered               |                                       |
-| 21   | claude-code/claude-haiku-4-5  | haiku        | subscription (cli-gm) |                                       |
+Current snapshot (2026-06-10):
+
+| Rank | Model                           | Alias        | Tier                  | Notes                                           |
+| ---- | ------------------------------- | ------------ | --------------------- | ----------------------------------------------- |
+| 1    | claude-code/claude-opus-4-8     | —            | subscription (cli-gm) | **PRIMARY** for agents.defaults.model           |
+| 2    | openai/gpt-5.5                  | —            | metered               | top leaderboard rank, but metered → not primary |
+| 3    | claude-code/claude-opus-4-7     | —            | subscription (cli-gm) | prior primary                                   |
+| 4    | google/gemini-3.1-pro-preview   | gemini       | metered               |                                                 |
+| 5    | google/gemini-3.5-flash-preview | —            | metered               |                                                 |
+| 6    | openai/gpt-5.3-codex            | —            | metered               |                                                 |
+| 7    | claude-code/claude-sonnet-4-6   | sonnet       | subscription (cli-gm) |                                                 |
+| 8    | openai/gpt-5.4-mini             | —            | metered               |                                                 |
+| 9    | openai/gpt-5.4-nano             | —            | metered               |                                                 |
+| 10   | claude-code/claude-haiku-4-5    | haiku        | subscription (cli-gm) |                                                 |
+| 11   | openai/o3                       | —            | metered               |                                                 |
+| 12   | openai/gpt-5.4                  | gpt54        | metered               |                                                 |
+| 13   | google/gemini-3-flash-preview   | gemini-flash | metered               |                                                 |
+| 14   | google/gemini-3-pro-preview     | —            | metered               |                                                 |
+| 15   | openai/gpt-5.4-pro              | —            | metered               |                                                 |
+| 16   | openai/gpt-5.2-pro              | gpt          | metered               |                                                 |
+| 17   | google/gemini-2.5-pro           | —            | metered               |                                                 |
+| 18   | openai/gpt-5.2                  | —            | metered               |                                                 |
+| 19   | openai/gpt-5.1                  | —            | metered               |                                                 |
+| 20   | openai/gpt-4.1                  | —            | metered               |                                                 |
+| 21   | openai/gpt-4o                   | —            | metered               |                                                 |
+| 22   | google/gemini-2.5-flash         | —            | metered               |                                                 |
+| 23   | google/gemini-2.0-flash         | —            | metered               |                                                 |
 
 ## Provider routing
 
@@ -85,7 +89,7 @@ The fork patched the upstream failover bug 2026-02-19 (bible §11.x):
 
 - **Removed early `throw` for unclassified errors** in `model-fallback.ts` (was line 355-357). This unblocks the failover chain when the error doesn't match a known category.
 - **Order:** OAuth (subscription) FIRST, then API (pay-per-use). Exhaust flat-rate before metering.
-- **Primary switched from opus-4-6 → sonnet-4-6 → opus-4-7** (today's primary).
+- **Primary switched opus-4-6 → sonnet-4-6 → opus-4-7 → opus-4-8** (today's primary, 2026-06-10 — opus-4-8 entered the leaderboard at rank 1 and is a subscription model, so the derived rule promoted it automatically).
 
 ### Billing gate (2026-03-20, DEPLOYED)
 
