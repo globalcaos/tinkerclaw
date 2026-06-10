@@ -14,10 +14,11 @@
  * and `~/.openclaw/cognitive/personality-nudge.json`.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { onAgentEvent, emitAgentEvent } from "../../src/infra/agent-events.js";
 import { decodePersonalityNudge } from "./src/personality-decoder.js";
 import { generateTargetVector, DEFAULT_TARGET_DIMENSIONS } from "./src/personality-seed.js";
 import { evaluateRuleBased } from "./src/rule-based-gate.js";
@@ -30,6 +31,10 @@ const COGNITIVE_DIR = join(homedir(), ".openclaw", "cognitive");
 const LEARNED_INTUITION_STATE_PATH = join(COGNITIVE_DIR, "learned-intuition.json");
 const PERSONALITY_NUDGE_PATH = join(COGNITIVE_DIR, "personality-nudge.json");
 const DATA_DIR = join(homedir(), ".openclaw", "data");
+const AMYGDALA_DECISIONS_PATH = join(DATA_DIR, "amygdala-decisions.jsonl");
+// FORK 2026-06-07: register() runs ~5×/gateway boot; attach the cc-bridge prudence
+// listener ONCE per process or every tool call gets evaluated (and recorded) N times.
+let ccBridgePrudenceListenerAttached = false;
 
 // -- Helpers --
 
@@ -279,6 +284,24 @@ export default definePluginEntry({
     // net entirely). Null until the first tool call of the session.
     let lastPersonalityEmbedding: Float32Array | null = null;
 
+    // FORK 2026-06-07 (Amygdala feedback loop / M−1.A): keep a ring buffer of the
+    // most recent gate decisions so the Tinker UI can SHOW exactly what AMYGDALA
+    // does, and broadcast each one live. The gate previously only logged them.
+    interface AmygdalaDecisionRecord {
+      ts: string;
+      tool: string;
+      target: string;
+      decision: string; // allow | soft_block | hard_block
+      blocked: boolean;
+      enforced: boolean; // actually aborted (vs observe-only)
+      reason?: string;
+      mode: "onnx" | "rules";
+      prudence?: number;
+      disagreement?: number;
+    }
+    const recentDecisions: AmygdalaDecisionRecord[] = [];
+    const MAX_DECISIONS = 200;
+
     // -- Hook: before_tool_call --
     api.on(
       "before_tool_call",
@@ -321,6 +344,42 @@ export default definePluginEntry({
           const personEmb = result.evaluation?.personality?.combined_embedding;
           if (personEmb && personEmb.length > 0) {
             lastPersonalityEmbedding = personEmb;
+          }
+
+          // FORK 2026-06-07 (Amygdala feedback loop): record + broadcast this decision
+          // so the Tinker UI can show exactly what the gate just did.
+          const evAny = result.evaluation as unknown as {
+            prudence?: { combined?: { confidence?: number }; disagreement?: number };
+          } | null;
+          const enforced =
+            result.blocked && (result.decision === "hard_block" || !(observeOnly || phase === 1));
+          const record: AmygdalaDecisionRecord = {
+            ts: new Date().toISOString(),
+            tool: event.toolName,
+            target: String(target).slice(0, 200),
+            decision: result.decision,
+            blocked: result.blocked,
+            enforced,
+            reason: result.response?.reason,
+            mode: result.ruleBasedFallback ? "rules" : "onnx",
+            prudence:
+              typeof evAny?.prudence?.combined?.confidence === "number"
+                ? evAny.prudence.combined.confidence
+                : undefined,
+            disagreement:
+              typeof evAny?.prudence?.disagreement === "number"
+                ? evAny.prudence.disagreement
+                : undefined,
+          };
+          recentDecisions.push(record);
+          if (recentDecisions.length > MAX_DECISIONS) recentDecisions.shift();
+          try {
+            (api as unknown as { broadcast?: (e: string, p: unknown) => void }).broadcast?.(
+              "amygdala-decision",
+              record,
+            );
+          } catch {
+            /* broadcast is best-effort */
           }
 
           if (result.blocked) {
@@ -388,6 +447,171 @@ export default definePluginEntry({
       } catch (err) {
         log.error(`[learned-intuition] personality nudge error: ${err}`);
       }
+    });
+
+    // FORK 2026-06-07 (Phase 1a): cc-bridge tools bypass the native before_tool_call
+    // gate (Claude Code owns its tool loop), so the prudence nets never saw them. Here
+    // we subscribe to cc-bridge tool-start events (marked `ccBridge`) and run the SAME
+    // hook.evaluate the native gate uses — so the REAL ONNX prudence verdict appears in
+    // the feed for the way Jarvis actually runs. Observe-only: the tool already executed
+    // by the time we see the event, so we report (enforced:false), never abort.
+    if (!ccBridgePrudenceListenerAttached) {
+      ccBridgePrudenceListenerAttached = true;
+      onAgentEvent((evt) => {
+        const d = evt.data as Record<string, unknown> | undefined;
+        if (!d || evt.stream !== "tool" || d.phase !== "start" || d.ccBridge !== true) {
+          return;
+        }
+        void (async () => {
+          try {
+            await ensureInit();
+            if (!hookReady) {
+              return;
+            }
+            const toolName = String(d.name ?? "?");
+            const args = (d.args ?? {}) as Record<string, unknown>;
+            const target =
+              (args.path as string) ||
+              (args.file_path as string) ||
+              (args.command as string) ||
+              (args.target as string) ||
+              toolName;
+            const result = await hook.evaluate(
+              { type: toolName, target, metadata: args },
+              {
+                topic: "active-session",
+                emotionalState: "calm",
+                effortHoursEstimate: 0.5,
+                correctionCount24h: 0,
+                automationDepth: 1,
+                confirmationEnabled: false,
+                confirmationLevel: "none",
+                sessionDuration: 0,
+                actionCount: 0,
+                topicCentroid: null,
+                recentTranscripts: [],
+              },
+            );
+            const personEmb = result.evaluation?.personality?.combined_embedding;
+            if (personEmb && personEmb.length > 0) {
+              lastPersonalityEmbedding = personEmb;
+            }
+            const evAny = result.evaluation as unknown as {
+              prudence?: { combined?: number; disagreement?: number };
+            } | null;
+            const record: AmygdalaDecisionRecord = {
+              ts: new Date().toISOString(),
+              tool: toolName,
+              target: String(target).slice(0, 200),
+              decision: result.decision,
+              blocked: result.blocked,
+              enforced: false, // cc-bridge: observe-only, the tool already ran
+              reason: result.response?.reason,
+              mode: result.ruleBasedFallback ? "rules" : "onnx",
+              prudence:
+                typeof evAny?.prudence?.combined === "number" ? evAny.prudence.combined : undefined,
+              disagreement:
+                typeof evAny?.prudence?.disagreement === "number"
+                  ? evAny.prudence.disagreement
+                  : undefined,
+            };
+            recentDecisions.push(record);
+            if (recentDecisions.length > MAX_DECISIONS) recentDecisions.shift();
+            try {
+              mkdirSync(DATA_DIR, { recursive: true });
+              appendFileSync(AMYGDALA_DECISIONS_PATH, JSON.stringify(record) + "\n");
+            } catch {
+              /* persistence is best-effort */
+            }
+            emitAgentEvent({
+              runId: evt.runId,
+              sessionKey: evt.sessionKey,
+              stream: "lifecycle",
+              data: { phase: "amygdala-decision", ...record },
+            });
+          } catch (err) {
+            log.warn(
+              `[learned-intuition] cc-bridge prudence eval failed: ${(err as Error).message}`,
+            );
+          }
+        })();
+      });
+    }
+
+    // FORK 2026-06-07 (Amygdala feedback loop / M−1.A): expose the live feed to the
+    // Tinker UI — recent gate decisions (most recent first), the current personality
+    // nudge, mode/alphas, and rollup counts.
+    api.registerGatewayMethod("amygdala.feed", async ({ respond }) => {
+      let nudge: unknown = null;
+      try {
+        if (existsSync(PERSONALITY_NUDGE_PATH)) {
+          nudge = JSON.parse(readFileSync(PERSONALITY_NUDGE_PATH, "utf-8"));
+        }
+      } catch {
+        /* ignore */
+      }
+      let state: unknown = null;
+      try {
+        if (existsSync(LEARNED_INTUITION_STATE_PATH)) {
+          state = JSON.parse(readFileSync(LEARNED_INTUITION_STATE_PATH, "utf-8"));
+        }
+      } catch {
+        /* ignore */
+      }
+      // FORK 2026-06-07: merge the durable cc-bridge decision log (JSONL) with the
+      // in-memory native ring, newest-first. cc-bridge tools bypass the native gate,
+      // so this file is the only durable source for Claude-Code runs; merging it here
+      // makes the feed survive a UI refresh and a gateway restart.
+      type FeedDecision = Record<string, unknown> & { ts?: number | string };
+      let persisted: FeedDecision[] = [];
+      try {
+        if (existsSync(AMYGDALA_DECISIONS_PATH)) {
+          let lines = readFileSync(AMYGDALA_DECISIONS_PATH, "utf-8").split("\n").filter(Boolean);
+          if (lines.length > 1200) {
+            lines = lines.slice(-400);
+            try {
+              writeFileSync(AMYGDALA_DECISIONS_PATH, lines.join("\n") + "\n");
+            } catch {
+              /* ignore trim failure */
+            }
+          }
+          persisted = lines
+            .map((l) => {
+              try {
+                return JSON.parse(l) as FeedDecision;
+              } catch {
+                return null;
+              }
+            })
+            .filter((d): d is FeedDecision => d !== null);
+        }
+      } catch {
+        /* ignore */
+      }
+      const tms = (d: FeedDecision): number =>
+        typeof d.ts === "number" ? d.ts : d.ts ? Date.parse(String(d.ts)) || 0 : 0;
+      const merged = [...persisted, ...(recentDecisions as unknown as FeedDecision[])]
+        .sort((a, b) => tms(b) - tms(a))
+        .slice(0, 300);
+      respond(true, {
+        ready: hookReady,
+        mode: hook.useRuleBasedFallback ? "rules" : "onnx",
+        onnxAvailable: !hook.useRuleBasedFallback,
+        observeOnly,
+        phase,
+        alphas: {
+          prudence: amygdalaConfig.trust.alpha_prudence,
+          personality: amygdalaConfig.trust.alpha_personality,
+        },
+        nudge,
+        state,
+        decisions: merged,
+        counts: {
+          total: merged.length,
+          flagged: merged.filter((d) => Boolean(d.blocked)).length,
+          enforced: merged.filter((d) => Boolean(d.enforced)).length,
+        },
+      });
     });
 
     log.info(
