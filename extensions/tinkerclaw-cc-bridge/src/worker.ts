@@ -842,6 +842,41 @@ export class ClaudeCodeWorker extends EventEmitter {
     });
   }
 
+  /**
+   * Inject an ADDITIONAL user-message line onto the already-open persistent
+   * stdin during a LIVE turn — claude-cli (stream-json input) accepts extra
+   * user messages mid-turn and folds them into the current turn. Unlike send(),
+   * this does NOT start a new turn and does NOT abort: it must NOT touch
+   * currentTurn / turnQueue / kill, so the in-flight turn keeps owning the
+   * eventual `result` line. Returns true iff the line was written.
+   *
+   * Only meaningful while a turn is in flight (currentTurn !== null); between
+   * turns there is no live claude turn to consume the line, so we no-op. This is
+   * the queue-not-SIGTERM primitive for in-flight prompts: a new prompt steers
+   * the live worker instead of aborting + respawning it.
+   */
+  steer(text: string): boolean {
+    if (!this.proc || !this.running || !this.currentTurn) {
+      return false;
+    }
+    const line = serializeStdinLine({
+      type: "user",
+      message: { role: "user", content: text },
+      ...(this.sessionId ? { session_id: this.sessionId } : {}),
+    });
+    try {
+      this.proc.stdin.write(line);
+      return true;
+    } catch (err) {
+      // Write-after-end / EPIPE: never throw (an unhandled rejection crashes
+      // this gateway — see bible failures.md / the playwright-relay incident).
+      log.warn(
+        `steer stdin write failed [${this.sessionKey}]: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
+
   kill(signal: NodeJS.Signals = "SIGTERM"): void {
     if (this.proc) {
       try {
