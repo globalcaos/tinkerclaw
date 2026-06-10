@@ -166,15 +166,12 @@ export function list(opts) {
   return out;
 }
 
-/** Reclaim stale leases for a repo. Returns { reclaimed }. */
-export function gc(opts) {
-  const { repo, root = DEFAULT_ROOT, now = Date.now(), isAlive = defaultIsAlive } = opts;
-  const dir = repoDir(root, repo);
+function reclaimStaleInDir(dir, now, isAlive) {
   let names = [];
   try {
     names = fs.readdirSync(dir);
   } catch {
-    return { reclaimed: 0 };
+    return 0;
   }
   let reclaimed = 0;
   for (const name of names) {
@@ -187,6 +184,30 @@ export function gc(opts) {
       } catch {
         /* race: already gone */
       }
+    }
+  }
+  return reclaimed;
+}
+
+/** Reclaim stale leases for one repo. Returns { reclaimed }. */
+export function gc(opts) {
+  const { repo, root = DEFAULT_ROOT, now = Date.now(), isAlive = defaultIsAlive } = opts;
+  return { reclaimed: reclaimStaleInDir(repoDir(root, repo), now, isAlive) };
+}
+
+/** Reclaim stale leases across EVERY repo under the root (the janitor sweep). */
+export function gcAll(opts = {}) {
+  const { root = DEFAULT_ROOT, now = Date.now(), isAlive = defaultIsAlive } = opts;
+  let dirs = [];
+  try {
+    dirs = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return { reclaimed: 0 };
+  }
+  let reclaimed = 0;
+  for (const ent of dirs) {
+    if (ent.isDirectory()) {
+      reclaimed += reclaimStaleInDir(path.join(root, ent.name), now, isAlive);
     }
   }
   return { reclaimed };

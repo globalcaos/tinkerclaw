@@ -1,0 +1,31 @@
+{
+  "id": "tinkerclaw-orca",
+  "name": "ORCA Lease Registry",
+  "description": "ORCA's cross-session file-lease registry: independent agents (Claude Code sessions, Jarvis, ORCA runs) serialize per-file with fast handoff on ONE working tree — no branches, no merges. Exposes orca.lease.* RPCs over atomic on-disk leases + a stale-lease GC janitor.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": false,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "leaseTtlMs": {
+        "type": "integer",
+        "minimum": 5000,
+        "description": "Default lease time-to-live in ms when a caller omits one. After this, a held lease is reclaimable. Default 300000 (5 min)."
+      },
+      "janitorCadenceMs": {
+        "type": "integer",
+        "minimum": 5000,
+        "description": "How often the background janitor sweeps stale leases. Default 60000 (60s)."
+      }
+    }
+  },
+  "uiHints": {
+    "leaseTtlMs": {
+      "label": "Lease TTL (ms)",
+      "help": "Default per-file lease lifetime before it can be stolen."
+    }
+  }
+}

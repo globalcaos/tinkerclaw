@@ -5,7 +5,7 @@ import path from "node:path";
 // Tests for the cross-session file-lease core. Dependency-free; run with:
 //   node --test extensions/tinkerclaw-orca/lease-core.test.mjs
 import { test } from "node:test";
-import { acquire, release, status, list, gc, renew } from "./lease-core.mjs";
+import { acquire, release, status, list, gc, gcAll, renew } from "./lease-core.mjs";
 
 function freshRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "orca-lease-test-"));
@@ -101,6 +101,16 @@ test("list returns the held paths for a repo; gc reclaims stale ones", () => {
   const g = gc({ root, repo: REPO, now: 1_002_000, isAlive: () => true });
   assert.equal(g.reclaimed, 1); // only a.ts expired
   assert.equal(list({ root, repo: REPO }).length, 1);
+});
+
+test("gcAll reclaims stale leases across every repo under the root", () => {
+  const root = freshRoot();
+  acquire(base({ root, repo: "/r1", path: "a.ts", now: 1_000_000, ttlMs: 1000 }));
+  acquire(base({ root, repo: "/r2", path: "b.ts", now: 1_000_000, ttlMs: 999999 }));
+  const g = gcAll({ root, now: 1_002_000, isAlive: () => true });
+  assert.equal(g.reclaimed, 1); // r1/a.ts expired; r2/b.ts still valid
+  assert.equal(list({ root, repo: "/r1" }).length, 0);
+  assert.equal(list({ root, repo: "/r2" }).length, 1);
 });
 
 test("renew extends a held lease for its owner", () => {
