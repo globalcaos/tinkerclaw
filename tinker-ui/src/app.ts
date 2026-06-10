@@ -31,7 +31,11 @@ import { queuedForSession, settleQueuedSession } from "./queued-sends.js";
 // FORK 2026-06-10 (amygdala retirement): the 3-section reply split/render logic
 // lives in its own unit-tested module. Recognises only 💬 ANSWER / 🌿 FRACTAL;
 // the retired 🧠 AMYGDALA section is no longer split or compacted (live panel owns it).
-import { renderSectionedReply, splitSectionedReply } from "./sectioned-reply.js";
+import {
+  renderSectionedReply,
+  splitSectionedReply,
+  splitLeadingNarration,
+} from "./sectioned-reply.js";
 // FORK 2026-05-30: shared per-subagent identity color (chat sub-bubble + RECIPES
 // panel row + thinking-row all import the SAME function so colors always match).
 import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
@@ -5637,7 +5641,19 @@ function renderMsg(
           h += `<details class="msg-subagent-details${saLive ? " is-live" : ""}" data-subagent-id="${esc(saId)}"${saOpen} style="--subagent-color:${c}"><summary class="msg-subagent-summary">${badge}${liveDot}</summary><div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div></details>`;
         } else {
           // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
-          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
+          // FORK 2026-06-10: peel leading narration off the plain final-answer path
+          // into a collapsible "Commentary" block (final answers only, !isThinking).
+          // Empty narration (the default) => byte-identical output to before.
+          let answerText = text;
+          let commentaryHtml = "";
+          if (!isThinking) {
+            const sln = splitLeadingNarration(text);
+            if (sln.narration) {
+              commentaryHtml = `<details class="reasoning-group narration-details"><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"><span class="thinking-label">Commentary:</span> ${md(sln.narration)}</div></div></details>`;
+              answerText = sln.answer;
+            }
+          }
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
         }
       }
     } else {
@@ -5774,7 +5790,19 @@ function renderMsg(
               ? `<div class="recipe-step-tag">${esc(activeRecipeStep)}</div>`
               : "";
           // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
-          h += `<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}</div>`;
+          // FORK 2026-06-10: peel leading narration off the plain final-answer path
+          // into a collapsible "Commentary" block (final answers only, !isThinking).
+          // Empty narration (the default) => byte-identical output to before.
+          let answerText = text;
+          let commentaryHtml = "";
+          if (!isThinking) {
+            const sln = splitLeadingNarration(text);
+            if (sln.narration) {
+              commentaryHtml = `<details class="reasoning-group narration-details"><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"><span class="thinking-label">Commentary:</span> ${md(sln.narration)}</div></div></details>`;
+              answerText = sln.answer;
+            }
+          }
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}</div>`;
         }
       } else {
         h += renderSystemMsg(text, idx);
