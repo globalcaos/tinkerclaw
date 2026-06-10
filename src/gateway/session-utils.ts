@@ -1496,6 +1496,7 @@ export function buildGatewaySessionRow(params: {
     // an audit signal (only reaches the client when includeDeleted is
     // requested, since the lister filters by default).
     cookiePhrase: entry?.cookiePhrase,
+    cookiePhraseUserSet: entry?.cookiePhraseUserSet,
     deletedAt: entry?.deletedAt,
     derivedTitle,
     lastMessagePreview,
@@ -1654,9 +1655,16 @@ export function listSessionsFromStore(params: {
       // "agent:main:tinker:abc"). After today's fortuneForKey strips
       // the `agent:<id>:` prefix before hashing, both sides agree on
       // the same phrase; this loop drives the in-memory store toward
-      // that agreement on the next sessions.list. Customised phrases
-      // can't reach this path — sessions.patch from webchat is
-      // rejected — so there's nothing to trample.
+      // that agreement on the next sessions.list. User-customised
+      // phrases NOW reach this path (the Tinker UI persists them via
+      // sessions.patch with cookiePhraseUserSet=true); the guard
+      // immediately above skips them so they are never trampled.
+      // FORK 2026-06-10 — u3-tab-naming: never overwrite a user-set / auto
+      // DISPLAY NAME. A manual rename or auto-name from the Tinker UI is
+      // persisted into cookiePhrase via sessions.patch with
+      // cookiePhraseUserSet=true; the lazy-mint must leave it untouched so the
+      // name is durable server-side (survives any restart/browser/device).
+      if (entry.cookiePhraseUserSet) continue;
       const canonicalPhrase = fortuneForKey(key);
       if (entry.cookiePhrase === canonicalPhrase) continue;
       entry.cookiePhrase = canonicalPhrase;
