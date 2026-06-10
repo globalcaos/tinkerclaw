@@ -2,11 +2,20 @@
 file: session-naming.md
 purpose: Single source of truth for how every visible name on a session is generated, persisted, and rendered. Captures the current state, the divergence bugs we hit, and the unified contract.
 audience: AI
-last_verified: 2026-05-24
+last_verified: 2026-06-10
 last_verified_commit: HEAD
-single_owner: yes — anything about session/tab naming, fortune cookies, label-resolution priority lives ONLY here. cookiePhrase, tab.title, label, displayName all funnel through one chain documented below.
+single_owner: yes — anything about session/tab naming, fortune cookies, label-resolution priority lives ONLY here. cookiePhrase, tab.title, label, displayName, cookiePhraseUserSet all funnel through one chain documented below.
 see_also: tinker-ui.md §5.69 (sessions list — server-resolver hardening), bug-log.md FIXED [config-dead-code] 2026-05-24 (gateway-rebuild gotcha that hid Bug 1 of `task-mpjhzu3j-ma9ts` for two hours).
-status: DEPLOYED 2026-05-24 second pass — the unified contract below is what ships. The first pass invented a server-side 2-word generator that was wrong; deleted. The user-curated FORTUNE_COOKIES pool (200+ long greetings with emoji) is the only phrase source.
+status: DEPLOYED. 2026-06-10 (u3-tab-naming) made user-set / auto tab names DURABLE SERVER-SIDE (see "Server-durable user-set names" below) — they now survive ANY restart, browser, or device, not just this browser's localStorage. The server DOES lazy-mint a key-derived fortune `cookiePhrase` (FORTUNE_COOKIES pool) for sessions that have no deliberate name; the mint now SKIPS any session flagged `cookiePhraseUserSet`. The auto-title (Ollama) was also retuned to lean on the user's prompts and stay distinct from sibling tabs. (History: 2026-05-24 second pass made the FORTUNE_COOKIES pool the only phrase source; the first-pass 2-word generator was deleted.)
+verify:
+  - name: lazy-mint skips a user-set cookiePhrase (never trample a deliberate name)
+    cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/src/gateway/session-utils.ts")).read(); i=t.find("const canonicalPhrase = fortuneForKey(key)"); assert i!=-1, "lazy-mint canonicalPhrase line missing"; assert "cookiePhraseUserSet) continue" in t[max(0,i-800):i], "lazy-mint must skip cookiePhraseUserSet before re-minting the fortune"'
+  - name: SessionEntry and sessions.patch schema carry cookiePhraseUserSet
+    cmd: python3 -c 'import os; assert "cookiePhraseUserSet" in open(os.path.expanduser("~/src/tinkerclaw/src/config/sessions/types.ts")).read(); assert "cookiePhraseUserSet" in open(os.path.expanduser("~/src/tinkerclaw/src/gateway/protocol/schema/sessions.ts")).read()'
+  - name: webchat guard exempts only display-name-only patches
+    cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/src/gateway/server-methods/sessions.ts")).read(); assert "isDisplayNameOnlyPatch" in t and "DISPLAY_NAME_PATCH_KEYS" in t'
+  - name: Tinker UI persists deliberate names server-side
+    cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "persistTabNameToServer" in t and "cookiePhraseUserSet" in t'
 ---
 
 # Session-naming contract
@@ -35,8 +44,8 @@ Four callsites currently set `tab.title`:
 3. **`attachSessionToTab(key)`** (`app.ts:5302`) — when the user clicks a row in the sessions panel to open it in the active tab.
    - Prefers `sess.cookiePhrase` (the server's burned-in value, which is itself a `FORTUNE_COOKIES` entry); falls through to `sess.label.slice(0, 30)` if no phrase yet.
 
-4. **Auto-title** (Gemini-generated topic phrase from the chat content) — fires after the first turn.
-   - Sets `tab.title` to a topic summary like `"🔧 Fix auth bug"`. The user-meaningful customisation path; should always win over the random fortune.
+4. **Auto-title** (LOCAL OLLAMA-generated topic phrase from the chat content) — fires on assistant-turn `end` at user-turn 1 then every `TAB_TITLE_INTERVAL` (=5) turns, via `generateTabTitle()` (`app.ts`). The user-meaningful customisation path; wins over the random fortune, sets `titleLocked`, AND persists server-side via `sessions.patch {cookiePhrase, cookiePhraseUserSet:true}`.
+   - **u3-tab-naming (2026-06-10):** the prompt is built PRIMARILY from the user's own recent prompts (recency-weighted; assistant replies are secondary context only) and is fed the OTHER open tabs' deliberate (locked) names with an instruction to make THIS title distinct + specific. Output = one relevant emoji + 2-4 words (≤48 chars); a unique leading emoji is enforced via `pickUniqueTabIcon`. (The bible previously said "Gemini"; the live path is local Ollama at `localhost:11434`.)
 
 5. **`loadTabs()`** restore at module load — reads `localStorage["tinker.tabs"]` and restores `tab.title` for previously-persisted tabs. No new minting.
 
@@ -82,43 +91,26 @@ After ~a week or two of normal use, `LEGACY_2WORD_PHRASE_RE` + the migration bra
 
 ## Don't regress
 
-- Never re-introduce a server-side `cookiePhrase` generator. `cookiePhrase` is stored-only; the client owns the mint.
-- Never re-introduce a 2-word format. `FORTUNE_COOKIES` is the only pool.
-- Auto-title (Gemini topic phrase) STILL wins over cookiePhrase. Don't break that by clobbering `tab.title` unconditionally. The `looksLikeLegacy2WordPhrase` gate IS what protects auto-titles — any title that doesn't match the legacy regex is treated as user-meaningful.
-- **(2026-06-06, in progress)** Prefer the EXPLICIT `titleLocked` flag over the `LEGACY_2WORD_PHRASE_RE` heuristic to decide whether `loadSessions()` may overwrite a `tab.title`. A locked title (manual rename or successful auto-name) is NEVER clobbered by the server `cookiePhrase`. See the amendment section below.
+- The server lazy-mint (`listSessionsFromStore` → `fortuneForKey(key)`) generates a fortune `cookiePhrase` ONLY for sessions with no deliberate name. It MUST keep skipping any entry flagged `cookiePhraseUserSet` — never re-stamp a fortune over a user-set / auto name. (The old rule "no server-side generator at all" is obsolete: the key-derived mint is intentional; what matters is that it never tramples a deliberate name.)
+- Never re-introduce a 2-word format. `FORTUNE_COOKIES` is the only fortune pool.
+- A deliberate name (manual rename OR successful auto-name) is protected by TWO layers that must stay in lockstep: client `titleLocked` (localStorage cache) AND server `cookiePhraseUserSet` (durable). `loadSessions()` must never clobber a locked tab, and must ADOPT + lock a server `cookiePhraseUserSet` name on an unlocked tab (restore-after-wipe). Don't reduce this back to the `LEGACY_2WORD_PHRASE_RE` shape heuristic.
+- Keep the webchat write path NARROW: only a display-name-only patch (`isDisplayNameOnlyPatch`) is exempt from `rejectWebchatSessionMutation`. Never broaden the exemption to other session-metadata fields, and never touch the `sessions.pluginPatch` guard.
+- The auto-title (`generateTabTitle`) must stay PROMPT-focused (the user's own messages are the primary signal) and sibling-DISTINCT (fed the other open tabs' names). Don't revert it to summarising the whole transcript or ignoring sibling tabs. See the amendment section below.
 
-## In-progress amendment: explicit title-lock (2026-06-06)
+## Title-lock + server-durable user-set names (DEPLOYED — u2 2026-06-06, u3 2026-06-10)
 
-**Status:** HMR-live, **uncommitted** (recovery patch jarvis-icu `9fe305a`; not yet on develop).
+**u2 (committed, `49524980a67`): explicit `titleLocked`.** The old `LEGACY_2WORD_PHRASE_RE` heuristic inferred "is this title user-meaningful?" from string shape and could mis-fire (a custom/auto title clobbered by the server `cookiePhrase` on the next `loadSessions()` — the bug "renamed/auto titles don't survive restart"). Fix: a persisted per-tab boolean `titleLocked` (in `localStorage["tinker.tabs"]`), set TRUE on manual rename AND on a successful auto-name. `loadSessions()` reconciliation never overwrites a `titleLocked` tab's title. The `🏠 Main` force-reset is preserved.
 
-The `LEGACY_2WORD_PHRASE_RE` heuristic (above) infers "is this title user-meaningful?" from string shape — and can mis-fire: a custom/auto title could be clobbered by the server `cookiePhrase` on the next `loadSessions()`, which is exactly the bug "renamed/auto titles don't survive restart." Fix: a persisted per-tab boolean `titleLocked` (in `localStorage["tinker.tabs"]`), set TRUE on manual rename AND on a successful auto-name. `loadSessions()` reconciliation now **never overwrites a `titleLocked` tab's title**; it only syncs the server phrase into tabs whose title is still a default/fortune (unlocked). Custom/auto names then survive both hard refresh AND gateway restart (localStorage is browser-side, independent of the gateway). The `🏠 Main` force-reset is preserved. The legacy regex + its migration branch can be retired once `titleLocked` ships. See `bug-log.md` FIXED [ui-state-clear] (2026-06-06, tab titles).
+**u3 (committed 2026-06-10): the name is now DURABLE SERVER-SIDE.** `titleLocked` alone only protected a name while THIS browser's localStorage survived — so a manual/auto name was still LOST when a computer restart cleared/replaced the browser store (different profile, ephemeral/relay browser, origin change), at which point the tab fell back to the server's re-minted fortune `cookiePhrase`. The proper fix persists the deliberate name in `sessions.json` so it is independent of any browser:
 
-## Verify (proposed for next ship)
+- **`SessionEntry.cookiePhraseUserSet?: boolean`** (`src/config/sessions/types.ts`), mirrored on the list-row type (`src/gateway/session-utils.types.ts`) and surfaced by `buildGatewaySessionRow`. TRUE means `cookiePhrase` holds a user-chosen / auto DISPLAY NAME, not a random fortune.
+- **Lazy-mint skip** (`session-utils.ts` `listSessionsFromStore`): `if (entry.cookiePhraseUserSet) continue;` BEFORE the `fortuneForKey(key)` re-mint, so the fortune never overwrites a deliberate name. (Retires the old, now-false comment "customised phrases can't reach this path".)
+- **Write path** (`sessions-patch.ts` + schema `sessions.ts`): `sessions.patch` accepts `cookiePhraseUserSet`; it is auto-cleared when `cookiePhrase` is cleared.
+- **Webchat guard** (`server-methods/sessions.ts`): a display-name-ONLY patch (`isDisplayNameOnlyPatch` = keys ⊆ {key, cookiePhrase, cookiePhraseUserSet}) is exempt from `rejectWebchatSessionMutation`, so the Tinker UI (a webchat client, NOT CONTROL_UI) can persist a name. Every other session-metadata mutation stays blocked; the `sessions.pluginPatch` guard is untouched.
+- **Client** (`app.ts`): `openTabRename` and `generateTabTitle` call `persistTabNameToServer(tab)` → `sessions.patch {key, cookiePhrase: tab.title, cookiePhraseUserSet:true}` (fire-and-forget). On load, when a session has `cookiePhraseUserSet`, `loadSessions()` reconciliation ADOPTS the server name AND re-locks the tab (`titleLocked=true`) regardless of phrase shape — this is what brings a renamed/auto name back after a localStorage wipe. The two attach paths (`attachSessionToTab`, side-panel open) also lock the tab when the server name is user-set.
 
-```yaml
-verify:
-  - name: server-side cookie-phrase generator REMOVED (FORK 2026-05-24 second pass)
-    cmd: |
-      python3 -c '
-      import os
-      assert not os.path.exists(os.path.expanduser("~/src/tinkerclaw/src/gateway/session-cookie-phrase.ts")), "session-cookie-phrase.ts must not exist — server-side generation was the wrong approach (2-word output) and was removed. cookiePhrase is now stored-only; client mints from FORTUNE_COOKIES."
-      '
-  - name: addTab uses randomFortune (the FORTUNE_COOKIES pool)
-    cmd: |
-      python3 -c '
-      import re, os
-      t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read()
-      m = re.search(r"function addTab\([^{]*\{(.*?)^\}", t, re.S | re.M)
-      assert m, "addTab block not found"
-      block = m.group(1)
-      assert "randomFortune()" in block, "addTab must mint via randomFortune() from FORTUNE_COOKIES"
-      assert "randomCookiePhrase" not in block, "randomCookiePhrase (legacy 2-word) must not appear"
-      '
-  - name: sessions.patch schema accepts cookiePhrase
-    cmd: |
-      python3 -c '
-      import os
-      t = open(os.path.expanduser("~/src/tinkerclaw/src/gateway/protocol/schema/sessions.ts")).read()
-      assert "cookiePhrase: Type.Optional" in t, "SessionsPatchParamsSchema must accept cookiePhrase or the client cannot persist the burned-in name"
-      '
-```
+Net: `localStorage["tinker.tabs"]` is now a fast CACHE; `sessions.json`'s `cookiePhrase` (+ `cookiePhraseUserSet`) is the durable source of truth for a deliberate name. Custom/auto names survive hard refresh, gateway restart, **computer restart, a different browser, AND a different device**. See `bug-log.md` FIXED [ui-state-clear] (2026-06-06) + the u3 entry (2026-06-10).
+
+## Verify
+
+The executable invariants for this optic live in this file's YAML **frontmatter** `verify:` block (run by `pnpm bible:invariants`): the lazy-mint skips `cookiePhraseUserSet`; `SessionEntry` + the `sessions.patch` schema carry the flag; the webchat guard exempts only display-name-only patches; and the Tinker UI persists deliberate names server-side.
