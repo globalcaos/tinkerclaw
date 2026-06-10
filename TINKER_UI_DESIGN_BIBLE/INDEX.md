@@ -32,6 +32,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "is this string safe to publish?" → `pii-boundary.md`
    - "where does memory dir X live, who writes it?" → `memory-layout.md`
    - "how do subagents, kits, and plans work?" → `subagents-and-recipes.md`
+   - "how do concurrent agents serialize edits on one tree (cross-session file leases)?" → `orca-leases.md`
    - "how should fork-side unit tests be scoped and named?" → `unit-tests.md`
    - "what's the WhatsApp trigger contract / LID rescue rules / chat-rhythm format?" → `wa-triggers.md`
    - "what's the public-fork branch model / push authority / merge gate?" → `branch-policy.md`
