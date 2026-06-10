@@ -296,6 +296,16 @@ export type SessionEntry = {
    */
   cookiePhrase?: string;
   /**
+   * FORK 2026-06-10 — u3-tab-naming: TRUE when `cookiePhrase` holds a
+   * user-chosen or auto-generated DISPLAY NAME (persisted from the Tinker UI
+   * via sessions.patch), NOT a random fortune cookie. The sessions.list
+   * lazy-mint MUST NOT overwrite `cookiePhrase` while this is set, so a
+   * renamed / auto-named tab survives any restart, browser, or device
+   * (durable server-side, independent of browser localStorage). Cleared when
+   * `cookiePhrase` is cleared.
+   */
+  cookiePhraseUserSet?: boolean;
+  /**
    * FORK 2026-05-24 (bug task-mpjhzu3j-ma9ts, "Tabs behavior" part 1):
    * Soft-delete timestamp (epoch ms). When set, the entry is hidden
    * from sessions.list by default (the entry remains in the store and
