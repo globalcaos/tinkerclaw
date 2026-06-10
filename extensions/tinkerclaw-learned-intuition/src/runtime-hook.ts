@@ -23,6 +23,22 @@ import type {
   PersonalityNudge,
 } from "./types.js";
 
+// -- Read-only short-circuit --
+
+// FORK 2026-06-10 (Phase 0): unambiguous LOCAL read-only tools cannot cause a
+// destructive side effect, so they short-circuit to "allow" in evaluate()
+// WITHOUT waking the neural gate (which, while uncalibrated, soft-blocked 100%
+// of actions — including plain file reads). AEGIS rule checks still run first in
+// evaluate(), so reading a credential file is still hard-blocked. Conservative
+// on purpose: Bash is NOT listed (it can `rm -rf`), and external calls
+// (WebFetch/WebSearch) are excluded since they are not pure local reads.
+const READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "ls", "notebookread", "toolsearch"]);
+
+/** Whether a tool name is an unambiguous local read-only operation. */
+export function isReadOnlyTool(toolName: string): boolean {
+  return READ_ONLY_TOOLS.has(toolName.trim().toLowerCase());
+}
+
 // -- AEGIS integration --
 
 export interface AegisResult {
@@ -134,6 +150,14 @@ export class AmygdalaHook {
 
     // AMYGDALA disabled
     if (!this.config.enabled || !this.initialized) {
+      return { blocked: false, decision: "allow", evaluation: null, ruleBasedFallback: false };
+    }
+
+    // Step 1.5 (FORK 2026-06-10, Phase 0): read-only short-circuit. AEGIS already
+    // ran above, so a credential read is still blocked; any OTHER unambiguous
+    // local read carries no destructive risk and is allowed without invoking the
+    // (currently over-flagging) learned gate.
+    if (isReadOnlyTool(action.type)) {
       return { blocked: false, decision: "allow", evaluation: null, ruleBasedFallback: false };
     }
 
