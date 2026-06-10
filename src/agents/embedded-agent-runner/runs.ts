@@ -5,6 +5,7 @@ import {
 } from "../../logging/diagnostic.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import { tryInflightSteer } from "./inflight-steer-hook.js";
 
 type EmbeddedPiQueueHandle = {
   queueMessage: (text: string) => Promise<void>;
@@ -75,12 +76,25 @@ function flushSteerBuffer(sessionId: string) {
     return;
   }
   steerBuffers.delete(sessionId);
+  const combined = buf.texts.join("\n\n");
+  // FORK P4 (in-flight steer): try to fold the message INTO the live provider
+  // turn first — cc-bridge writes it to the running claude-cli stdin, which
+  // picks it up between tool rounds (like Claude Code), so it changes the
+  // current answer instead of waiting for the whole turn + a separate next turn.
+  // Only fall back to the pi-agent-core steeringQueue (next-round delivery) when
+  // no live provider worker accepts it. Mutually exclusive — never both, or the
+  // message would be delivered twice.
+  if (tryInflightSteer(sessionId, combined)) {
+    diag.debug(
+      `steer flush: folded into live turn sessionId=${sessionId} chars=${combined.length}`,
+    );
+    return;
+  }
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (!handle) {
     diag.debug(`steer flush skipped: sessionId=${sessionId} reason=no_active_run`);
     return;
   }
-  const combined = buf.texts.join("\n\n");
   diag.debug(
     `steer flush: sessionId=${sessionId} messages=${buf.texts.length} chars=${combined.length}`,
   );
