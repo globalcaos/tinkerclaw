@@ -4360,9 +4360,9 @@ async function send(text: string) {
     updateChat();
     scrollChat();
     // FORK 2026-06-11 — tinkerui-slider: /clear rotated `sessionKey` (above, for
-    // non-main tabs); re-paint the strip so its model badge + slider reflect the
+    // non-main tabs); re-paint the Models panel so the thinking slider reflects the
     // freshly-rotated key rather than the archived session's state.
-    renderThinkStrip();
+    updateBudgetPanel();
 
     // Server-side cascade. Fire-and-forget; failures are non-fatal — worst
     // case the next chat.send auto-creates a fresh entry on the new key.
@@ -7427,6 +7427,21 @@ function updateBudgetPanel() {
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
   el.innerHTML = html;
 
+  // FORK 2026-06-11 — tinkerui-slider: place the per-tab 8-stop thinking slider
+  // directly UNDER the active tab's model row. The active model id is read from the
+  // viewed session (sessionKey); model ids are simple (e.g.
+  // claude-code/claude-opus-4-8) so the raw id is safe inside the attribute
+  // selector. Slider markup is built by renderThinkingSlider() from the same
+  // session, and re-renders here on every tab switch / session update via
+  // refreshViewedSessionIndicators() -> updateBudgetPanel().
+  const activeModel = sessions.find((s) => (s as any).key === sessionKey)?.model;
+  if (activeModel) {
+    const row = el.querySelector('.model-row[data-model-id="' + activeModel + '"]');
+    if (row) {
+      row.insertAdjacentHTML("afterend", renderThinkingSlider());
+    }
+  }
+
   // Bind collapse toggles
   el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
     label.addEventListener("click", () => {
@@ -7623,7 +7638,7 @@ function renderModelRow(
   const nameParts =
     esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
 
-  return `<div class="model-row${liveClass}${errorClass}"${glowStyle}>
+  return `<div class="model-row${liveClass}${errorClass}" data-model-id="${esc(id)}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${barsHtml}
     ${costHtml}
@@ -7776,39 +7791,32 @@ function thinkStopIndexForLevel(level: unknown): number {
   return i >= 0 ? i : 0;
 }
 
-// FORK 2026-06-11 — tinkerui-slider: (re)paint the chat-area thinking strip from
-// the CURRENTLY-VIEWED session. Reads the established `sessionKey` module global
-// and the `sessions` list (see attachSessionToTab ~line 7072 for the canonical
-// `sessions.find((s) => s.key === sessionKey)` lookup). Built imperatively so the
-// dynamic bits never enter the .chat-area tagged-template innerHTML (where a stray
-// backtick crashes the page to black — see app.ts:8154). The .tab-think-* CSS is
-// owned by a sibling unit; this only owns the markup + state.
-function renderThinkStrip(): void {
-  const strip = $("tab-think-strip");
-  if (!strip) {
-    return;
-  }
+// FORK 2026-06-11 — tinkerui-slider: build the per-tab 8-stop thinking slider for
+// the Models side panel (#budget-panel). Reads the CURRENTLY-VIEWED session via the
+// `sessionKey` module global + `sessions` list, indexes into THINK_STOPS, and
+// returns plain-string-concatenated markup that updateBudgetPanel() inserts
+// directly UNDER the active tab's model row. Plain '+' concatenation (no nested
+// template literals) keeps the path uniform; the .model-think-* CSS is owned by a
+// sibling unit. The slider re-renders on tab switch / session update via the
+// existing refreshViewedSessionIndicators() -> updateBudgetPanel() path, so it
+// always reflects + follows the active tab.
+function renderThinkingSlider(): string {
   const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
-    | { model?: string; thinkingLevel?: string }
+    | { thinkingLevel?: string }
     | undefined;
-  const rawModel = active?.model ?? "";
-  const modelLabel = rawModel ? modelName(rawModel) || rawModel : "auto";
   const idx = thinkStopIndexForLevel(active?.thinkingLevel);
   const stop = THINK_STOPS[idx] ?? THINK_STOPS[0];
-  // Plain string '+' concatenation — NO nested template literals (this is set as
-  // innerHTML; the no-backtick rule is about not breaking the .chat-area template,
-  // and keeping this branch backtick-free keeps the whole strip path uniform).
-  strip.innerHTML =
-    '<span class="tab-think-model" title="Active model for this tab">' +
-    esc(modelLabel) +
-    "</span>" +
-    '<input type="range" class="tab-think-slider" min="0" max="7" step="1" value="' +
+  return (
+    '<div class="model-think-slider-row">' +
+    '<input type="range" class="model-think-slider" min="0" max="7" step="1" value="' +
     String(idx) +
     '" aria-label="Thinking level">' +
-    '<span class="tab-think-label">' +
+    '<span class="model-think-label">' +
     esc(stop.label) +
     "</span>" +
-    '<span class="tab-think-hint">applies next message</span>';
+    '<span class="model-think-hint">applies next message</span>' +
+    "</div>"
+  );
 }
 
 function updateSessionsPanel() {
@@ -7816,11 +7824,9 @@ function updateSessionsPanel() {
   if (!el) {
     return;
   }
-  // FORK 2026-06-11 — tinkerui-slider: the sessions refresh is the central
-  // viewed-session re-derive path (called from refreshViewedSessionIndicators),
-  // so the strip's model badge + slider track the active session here — picking
-  // up the model once a run reports it and the level after any write.
-  renderThinkStrip();
+  // FORK 2026-06-11 — tinkerui-slider: the thinking slider now lives in the Models
+  // side panel (#budget-panel); it re-paints via refreshViewedSessionIndicators()
+  // -> updateBudgetPanel(), so there is no per-tab strip to repaint here.
   const countEl = $("sessions-count");
   if (countEl) {
     countEl.textContent = `(${sessions.length})`;
@@ -8254,13 +8260,10 @@ function init() {
     <div class="alt-view" id="alt-view"></div>
     <div class="chat-area">
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
-      <!-- FORK 2026-06-11 — tinkerui-slider: per-tab model badge + 8-stop thinking
-           slider, shown under the active model and above the composer. This div
-           is a STATIC placeholder (NO backticks, NO dynamic interpolation — the
-           enclosing innerHTML is a tagged template literal and an inner backtick
-           crashes the page to black, see app.ts:8154). renderThinkStrip() fills
-           it imperatively from the viewed session. .tab-think-* CSS = sibling unit. -->
-      <div class="tab-think-strip" id="tab-think-strip"></div>
+      <!-- FORK 2026-06-11 — tinkerui-slider: the per-tab 8-stop thinking slider was
+           RELOCATED from this chat-area strip into the Models side panel
+           (#budget-panel), rendered directly under the active tab's model row by
+           renderThinkingSlider()/updateBudgetPanel(). No chat-area control here. -->
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
         <button id="action-btn" disabled>Send</button>
@@ -8453,17 +8456,19 @@ function init() {
       ta.focus();
     }
   });
-  // FORK 2026-06-11 — tinkerui-slider: OWN listeners for the chat-area thinking
-  // strip. The altView `change` delegate (~line 12563) is scoped to #alt-view and
-  // will NOT catch a chat-area control, so the strip wires its own handlers here.
-  // `input` updates the .tab-think-label live as the user drags; `change` (drag
-  // release) persists. The patch is ONLY { thinkingLevel } — any other field
-  // trips rejectWebchatSessionMutation (~app.ts:3897). Index 0 -> null (= Off).
-  const thinkStrip = $("tab-think-strip");
-  if (thinkStrip) {
-    const readStop = (e: Event) => {
+  // FORK 2026-06-11 — tinkerui-slider: delegated listeners for the thinking slider,
+  // now rendered INSIDE the Models side panel (#budget-panel) directly under the
+  // active tab's model row (see renderThinkingSlider + updateBudgetPanel). `input`
+  // updates the sibling .model-think-label live as the user drags; `change` (drag
+  // release) persists. The patch is ONLY { thinkingLevel } — any other field trips
+  // rejectWebchatSessionMutation (~app.ts:3897). Index 0 -> null (= Off). Bound on
+  // the panel element (which is re-innerHTML'd every render) so the delegate keeps
+  // catching freshly-rendered sliders.
+  const budgetPanelEl = $("budget-panel");
+  if (budgetPanelEl) {
+    const readThinkStop = (e: Event) => {
       const slider = (e.target as HTMLElement).closest(
-        ".tab-think-slider",
+        ".model-think-slider",
       ) as HTMLInputElement | null;
       if (!slider) {
         return null;
@@ -8471,22 +8476,24 @@ function init() {
       const idx = Math.max(0, Math.min(THINK_STOPS.length - 1, Number(slider.value) || 0));
       return THINK_STOPS[idx] ?? THINK_STOPS[0];
     };
-    thinkStrip.addEventListener("input", (e) => {
-      const stop = readStop(e);
+    budgetPanelEl.addEventListener("input", (e) => {
+      const stop = readThinkStop(e);
       if (!stop) {
         return;
       }
-      const label = thinkStrip.querySelector(".tab-think-label");
+      const row = (e.target as HTMLElement).closest(".model-think-slider-row");
+      const label = row?.querySelector(".model-think-label");
       if (label) {
         label.textContent = stop.label;
       }
     });
-    thinkStrip.addEventListener("change", (e) => {
-      const stop = readStop(e);
+    budgetPanelEl.addEventListener("change", (e) => {
+      const stop = readThinkStop(e);
       if (!stop) {
         return;
       }
-      const label = thinkStrip.querySelector(".tab-think-label");
+      const row = (e.target as HTMLElement).closest(".model-think-slider-row");
+      const label = row?.querySelector(".model-think-label");
       if (label) {
         label.textContent = stop.label;
       }
@@ -8498,9 +8505,6 @@ function init() {
       }
     });
   }
-  // Paint the strip once for the initial viewed session (refreshViewedSessionIndicators
-  // keeps it in sync thereafter via updateSessionsPanel).
-  renderThinkStrip();
   // Session-select dropdown removed — tabs handle session switching now
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
