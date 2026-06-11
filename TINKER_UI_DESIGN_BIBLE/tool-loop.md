@@ -221,6 +221,20 @@ Jarvis runs on the real `claude` CLI consuming the flat-rate Claude Code subscri
 
 cc-bridge worker reads `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md` at spawn time and appends it via `--append-system-prompt` so the fractal-reflection instructions live inside claude's own session rather than per-turn. **FORK 2026-06-10 (amygdala retirement):** the per-turn `🧠 AMYGDALA` reply section was retired — `amygdala-prompt.md` is no longer loaded (`PROMPT_FILES` in `worker.ts` holds only the fractal entry) and the file has been deleted. The always-on Amygdala side panel (gate-decision stream) is the feedback surface now; the per-turn reply is just `💬 ANSWER → 🌿 FRACTAL`.
 
+#### Amygdala PreToolUse hook — pre-execution enforcement on the primary runner (FORK 2026-06-11, v3.1)
+
+> **The "observe-only on cc-bridge is a physics limit" claim is RETRACTED.** It was a spawn-config choice, not physics.
+
+The long-standing story elsewhere in this file — the gateway only _observes_ cc-bridge tool calls (it sees `stream:"tool"` events _after_ claude-cli already ran the tool, so it can never block) — held only because cc-bridge never wired claude-cli's own hook system. claude-cli (v2.1.x) accepts `--settings <file>` whose JSON can register a **PreToolUse hook**, and a PreToolUse hook can return a `deny` permission decision that **synchronously blocks the tool — even under `--permission-mode bypassPermissions`** (the bridge's mode). So there _is_ a pre-execution seam; it was simply unused.
+
+v3.1 wires it:
+
+- The `tinkerclaw-learned-intuition` extension compiles its AEGIS rule set (single source of truth: `src/rule-based-gate.ts` `AEGIS_RULES`) into `~/.openclaw/data/amygdala/policy.json` and writes a claude-cli settings file `~/.openclaw/data/amygdala/cc-hook-settings.json` registering a dependency-free hook script (`hook/amygdala-pretooluse.mjs`, staged into the data dir by `src/policy-snapshot.ts`).
+- `extensions/tinkerclaw-cc-bridge/src/worker.ts` pushes `--settings <that file>` into the claude spawn argv **iff the file exists** (`AMYGDALA_CC_HOOK_SETTINGS_PATH` in `defaults.ts`). Presence is the enable signal; the amygdala extension owns the file's lifecycle (writes it when `hookEnforcement` is on, deletes it when off). Absent file → identical prior behavior.
+- The hook reads the PreToolUse payload on stdin, matches the policy rules, and on an **enforced** match prints `{hookSpecificOutput:{permissionDecision:"deny",…}}`. It is **fail-open** (any error → exit 0, allow), **<100 ms**, and spools every decision to `hook-decisions.jsonl`, which the extension ingests into the live feed — real enforced denials, previously invisible (the strongest feedback signal).
+- **Enforce tiers (anti-cry-wolf):** only destructive-EXECUTION rules (`rm -rf /`, `mkfs`, `dd of=/dev/*`, `DROP/TRUNCATE/DELETE`, force-push main, credential exfil) deny; credential-PATTERN rules (a `.env` path, the bare word "password") are observe-only. Scope `"exec"` means a rule matches only execution-tool command text — a `.sql` file containing `DROP TABLE` is content, not an execution, so file-content tools are not scanned in v1.
+- The **native** `before_tool_call` path (non-cc-bridge tools) was _also_ never actually blocking: it returned `{abort,message}`, but the host honours `{block,blockReason}` (see `src/plugins/hook-types.ts` `PluginHookBeforeToolCallResult` + `src/agents/pi-tools.before-tool-call.ts` `if (hookResult?.block)`). v3.1 returns the correct shape, so the native hard floor now actually denies. Config keys: `config-shape.md`. The rule list has a single owner: `rule-based-gate.ts`.
+
 #### `combinedSystemPrompt` block order (FORK 2026-05-21)
 
 The cc-bridge worker assembles `--append-system-prompt` from blocks in this order. Persona answers WHO I am; ethical-rules answer WHAT I will and will not do; the remaining blocks answer HOW the mechanics work. Asimov-style priority ordering matches document order — earlier blocks preempt later ones when there's tension.
