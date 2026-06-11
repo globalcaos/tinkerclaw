@@ -110,7 +110,15 @@ export type CcContentBlock =
       tool_use_id: string;
       content: string | CcContentBlock[];
       is_error?: boolean;
-    };
+    }
+  | { type: "server_tool_use"; id: string; name: string; input: unknown }
+  | {
+      type: "web_search_tool_result";
+      tool_use_id: string;
+      content: string | CcContentBlock[];
+      is_error?: boolean;
+    }
+  | { type: "redacted_thinking"; data?: string };
 
 export interface CcUsage {
   input_tokens?: number;
