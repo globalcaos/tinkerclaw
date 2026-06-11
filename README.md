@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-604020?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-8B6914?style=for-the-badge" alt="Hundreds of fork commits"></a>
-  <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-11-C0834D?style=for-the-badge" alt="11 papers"></a>
+  <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-15-C0834D?style=for-the-badge" alt="15 papers"></a>
   <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-22+-8B6914?style=for-the-badge" alt="22+ skills"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-604020?style=for-the-badge" alt="MIT License"></a>
 </p>
@@ -24,79 +24,26 @@
 ### _Our agent improves its own brain after every conversation. Everyone else's is still reading from a script. Want yours to do the same?_
 
 <p align="center">
-  <a href="docs/papers/fractal-reasoning/fractal-reasoning.md"><img src="https://img.shields.io/badge/🌿_Fractal_Thinking-learns_from_patterns-8B6914?style=for-the-badge" alt="Fractal Thinking"></a>
-  <a href="docs/papers/humor-embeddings/humor-embeddings.md"><img src="https://img.shields.io/badge/😂_Computational_Humor-Data_principle-C0834D?style=for-the-badge" alt="Computational Humor"></a>
-  <a href="docs/papers/agent-security/agent-security.md"><img src="https://img.shields.io/badge/🔐_Safer_than_NeMo-at_a_fraction_of_cost-604020?style=for-the-badge" alt="Safer than NeMo"></a>
+  <a href="https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/"><img src="https://img.shields.io/badge/🌿_Fractal_Thinking-learns_from_patterns-8B6914?style=for-the-badge" alt="Fractal Thinking"></a>
+  <a href="https://thetinkerzone.com/humor-embeddings-laughter-from-inverted-memory-bisociation-in-computational-embedding-space/"><img src="https://img.shields.io/badge/😂_Computational_Humor-Data_principle-C0834D?style=for-the-badge" alt="Computational Humor"></a>
+  <a href="https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/"><img src="https://img.shields.io/badge/🔐_Safer_than_NeMo-at_a_fraction_of_cost-604020?style=for-the-badge" alt="Safer than NeMo"></a>
 </p>
 
-No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Eleven research papers and four months of 24/7 operation made the difference.
+No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Fifteen research papers and four months of 24/7 operation made the difference.
 
-**TinkerClaw's agent gets smarter every single day.** Eleven research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
+**TinkerClaw's agent gets smarter every single day.** Fifteen research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
 
-- 🌿 **It thinks about its own thinking.** When something breaks, it doesn't just fix the bug — it asks _why the bug exists_, then fixes the system that produced it. Like a mechanic who doesn't just patch the flat tire but asks "why do I keep getting flats on this road?" ([Fractal Reasoning](docs/papers/fractal-reasoning/fractal-reasoning.md))
+- 🌿 **It thinks about its own thinking.** When something breaks, it doesn't just fix the bug — it asks _why the bug exists_, then fixes the system that produced it. Like a mechanic who doesn't just patch the flat tire but asks "why do I keep getting flats on this road?" ([Fractal Reasoning](https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/))
 
-- 😂 **It has a genuine sense of humor.** Not "tell me a joke" — a fresh perspective on the world, like Data noticing things about humanity that humans take for granted. Computational humor from embedding geometry. ([Humor Embeddings](docs/papers/humor-embeddings/humor-embeddings.md))
+- 😂 **It has a genuine sense of humor.** Not "tell me a joke" — a fresh perspective on the world, like Data noticing things about humanity that humans take for granted. Computational humor from embedding geometry. ([Humor Embeddings](https://thetinkerzone.com/humor-embeddings-laughter-from-inverted-memory-bisociation-in-computational-embedding-space/))
 
-- 🔐 **It's safer than NeMo Guardrails — at a fraction of the cost.** 10 neural networks trained on real catastrophic failures, not hand-written rules. A pilot's checklist ✈️, not traffic laws for a car that can't see the road. Zero credential leaks in 8+ weeks. ([Agent Security](docs/papers/agent-security/agent-security.md) · [Learned Intuition](docs/papers/learned-intuition/learned-intuition.md))
+- 🔐 **It's safer than NeMo Guardrails — at a fraction of the cost.** 10 neural networks trained on real catastrophic failures, not hand-written rules. A pilot's checklist ✈️, not traffic laws for a car that can't see the road. Zero credential leaks in four months. ([AEGIS](https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/) · [Learned Intuition](https://thetinkerzone.com/learned-intuition-a-reflex-layer-that-stops-your-agent-before-it-does-the-wrong-thing/))
 
-- ⏳ **It never freezes. It never forgets.** That spinning cursor everyone hates? That's compaction — your agent tearing pages out of its own textbook 📖 to stay under the token limit. We stopped entirely. Zero compaction events. ([Total Recall](docs/papers/total-recall/total-recall.md) · [Sleep Consolidation](docs/papers/sleep-consolidation/sleep-consolidation.md))
-
-<table>
-  <tr>
-    <td align="center" width="16.66%">
-      <a href="https://openai.com/">
-        <picture>
-          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/openai-light.svg">
-          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/openai.svg" alt="OpenAI" height="28">
-        </picture>
-      </a>
-    </td>
-    <td align="center" width="16.66%">
-      <a href="https://github.com/">
-        <picture>
-          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/github-light.svg">
-          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/github.svg" alt="GitHub" height="28">
-        </picture>
-      </a>
-    </td>
-    <td align="center" width="16.66%">
-      <a href="https://www.nvidia.com/">
-        <picture>
-          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/nvidia.svg">
-          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/nvidia-dark.svg" alt="NVIDIA" height="28">
-        </picture>
-      </a>
-    </td>
-    <td align="center" width="16.66%">
-      <a href="https://vercel.com/">
-        <picture>
-          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/vercel-light.svg">
-          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/vercel.svg" alt="Vercel" height="24">
-        </picture>
-      </a>
-    </td>
-    <td align="center" width="16.66%">
-      <a href="https://blacksmith.sh/">
-        <picture>
-          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/blacksmith-light.svg">
-          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/blacksmith.svg" alt="Blacksmith" height="28">
-        </picture>
-      </a>
-    </td>
-    <td align="center" width="16.66%">
-      <a href="https://www.convex.dev/">
-        <picture>
-          <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/convex-light.svg">
-          <img src="https://raw.githubusercontent.com/openclaw/openclaw/main/docs/assets/sponsors/convex.svg" alt="Convex" height="24">
-        </picture>
-      </a>
-    </td>
-  </tr>
-</table>
+- ⏳ **It never freezes. It never forgets.** That spinning cursor everyone hates? That's compaction — your agent tearing pages out of its own textbook 📖 to stay under the token limit. We stopped entirely. Zero compaction events. ([Total Recall](https://thetinkerzone.com/total-recall-pointer-based-compaction-and-task-conditioned-retrieval-for-persistent-llm-agents/) · [Sleep Consolidation](https://thetinkerzone.com/sleep-consolidation-how-nightly-prompting-makes-a-stateless-agent-get-better-over-time/))
 
 - 💸 **It shows you exactly where the money goes.** A calorie counter for your AI's diet 🍕 — every token, every cost, in real time. That 40K-token spike? You'll see it and prevent it tomorrow. ([Tinker UI](#-tinker-ui--see-why-sessions-get-expensive))
 
-- 🌙 **It rewrites its own instructions while you sleep.** 15+ overnight crons, each self-improving. 14 autonomous improvements in 30 days, zero human prompts. Day 1 mediocre. Day 30 expert. ([Sleep Consolidation](docs/papers/sleep-consolidation/sleep-consolidation.md))
+- 🌙 **It rewrites its own instructions while you sleep.** 15+ overnight crons, each self-improving. 14 autonomous improvements in 30 days, zero human prompts. Day 1 mediocre. Day 30 expert. ([Sleep Consolidation](https://thetinkerzone.com/sleep-consolidation-how-nightly-prompting-makes-a-stateless-agent-get-better-over-time/))
 
 <p align="center">
   <img src="docs/assets/workshop-hero.png" alt="The Tinker Workshop — where AI agents learn to improve themselves" width="480">
@@ -104,15 +51,15 @@ No other agent has learned to think about its own thinking, developed computatio
   <em>Built in a workshop, not a lab. Every feature started as a real problem on a real workbench.</em>
 </p>
 
-- 🧬 **Its personality adapts from your corrections, not from a file.** Tell it it dropped its humor — the neural thermostat adjusts. Tomorrow it won't make the same mistake. ([Learned Intuition](docs/papers/learned-intuition/learned-intuition.md))
+- 🧬 **Its personality adapts from your corrections, not from a file.** Tell it it dropped its humor — the neural thermostat adjusts. Tomorrow it won't make the same mistake. ([Learned Intuition](https://thetinkerzone.com/learned-intuition-a-reflex-layer-that-stops-your-agent-before-it-does-the-wrong-thing/))
 
-- 👤 **It knows who it is and who you are.** No more "as an AI, I don't have context." Identity persists across sessions, restarts, and weeks. ([Identity Persistence](docs/papers/identity-persistence/identity-persistence.md))
+- 👤 **It knows who it is and who you are.** No more "as an AI, I don't have context." Identity persists across sessions, restarts, and weeks. ([Identity Persistence](https://thetinkerzone.com/identity-persistence-keeping-an-llm-agents-personality-stable-across-sessions-model-swaps-and-restarts/))
 
-- ⚡ **It finds memories instantly.** O(1) concept lookup, not brute-force search. Like a librarian who knows exactly which shelf, not one who reads every book. ([Instant Recall](docs/papers/instant-recall/instant-recall.md))
+- ⚡ **It finds memories instantly.** O(1) concept lookup, not brute-force search. Like a librarian who knows exactly which shelf, not one who reads every book. ([Instant Recall](https://thetinkerzone.com/instant-recall-a-pre-computed-concept-index-for-o1-memory-retrieval-in-persistent-ai-agents/))
 
-- 🎭 **It makes cheap models smarter than expensive ones.** Multiple AI models debating each other — cognitive diversity as a computational resource. ([Round Table](docs/papers/round-table/round-table.md))
+- 🎭 **It makes cheap models smarter than expensive ones.** Multiple AI models debating each other — cognitive diversity as a computational resource. ([Round Table](https://thetinkerzone.com/round-table-exploiting-cognitive-diversity-as-a-computational-resource-in-persistent-ai-agents/))
 
-- 🔍 **It explores gaps before they become failures.** Proactive curiosity, not reactive scrambling. ([Curiosity Motivation](docs/papers/curiosity-motivation/curiosity-motivation.md))
+- 🔍 **It explores gaps before they become failures.** Proactive curiosity, not reactive scrambling. ([The Wondering Machine](https://thetinkerzone.com/the-wondering-machine-giving-an-llm-the-drive-to-learn-on-its-own/))
 
 Not whitepapers. Every paper describes a production system running right now. The €850 bill was the trigger. Zero compaction was the breakthrough. Daily self-improvement is where we are now.
 
@@ -195,7 +142,7 @@ We call it fractal thinking because it operates in levels of depth — automatic
 
 All automatic. Nobody asked for any of that.
 
-In 30 days, this process produced **14 autonomous improvements** to the agent's own processes — without a single human prompt ([CEREBELLUM paper](#-every-paper-saves-you-tokens)).
+In 30 days, this process produced **14 autonomous improvements** to the agent's own processes — without a single human prompt ([Sleep Consolidation](https://thetinkerzone.com/sleep-consolidation-how-nightly-prompting-makes-a-stateless-agent-get-better-over-time/)).
 
 ---
 
@@ -234,15 +181,15 @@ No manual setup. Every morning. Getting better each time.
 
 Every night, while you sleep, the agent runs a chain of autonomous processes. The entire cycle costs **~€1/night**.
 
-| Cron                        | What it does                                                                                                                                 |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| 🍷 **Wind Down**            | Like a glass of wine with the diary — reviews what worked and what didn't, improves its own instructions                                     |
-| 😴 **Memory Consolidation** | Like REM sleep — turns raw daily logs into structured long-term memory. **49% context reduction** ([ENGRAM](#-every-paper-saves-you-tokens)) |
-| 🧹 **Cleaning Lady**        | Controls disk usage, prunes stale context, keeps the workspace lean                                                                          |
-| 🔍 **Auto-Evolution**       | Scouts AI news for improvements that can be applied directly to the system                                                                   |
-| 📰 **Group Summary**        | Scans message groups, extracts what matters, discards noise                                                                                  |
-| 🛒 **Opportunity Hunter**   | Browses marketplaces for deals matching your interests — a personal shopper that never sleeps                                                |
-| 🤵 **Butler**               | Remembers birthdays, suggests gifts, tracks appointments. If it's been too long since you sent flowers, it mentions it — diplomatically      |
+| Cron                        | What it does                                                                                                                                                                                                                                  |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🍷 **Wind Down**            | Like a glass of wine with the diary — reviews what worked and what didn't, improves its own instructions                                                                                                                                      |
+| 😴 **Memory Consolidation** | Like REM sleep — turns raw daily logs into structured long-term memory. **49% context reduction** ([Total Recall](https://thetinkerzone.com/total-recall-pointer-based-compaction-and-task-conditioned-retrieval-for-persistent-llm-agents/)) |
+| 🧹 **Cleaning Lady**        | Controls disk usage, prunes stale context, keeps the workspace lean                                                                                                                                                                           |
+| 🔍 **Auto-Evolution**       | Scouts AI news for improvements that can be applied directly to the system                                                                                                                                                                    |
+| 📰 **Group Summary**        | Scans message groups, extracts what matters, discards noise                                                                                                                                                                                   |
+| 🛒 **Opportunity Hunter**   | Browses marketplaces for deals matching your interests — a personal shopper that never sleeps                                                                                                                                                 |
+| 🤵 **Butler**               | Remembers birthdays, suggests gifts, tracks appointments. If it's been too long since you sent flowers, it mentions it — diplomatically                                                                                                       |
 
 These are just the ones with personality. **15+ total crons**, each with its own logic and self-improvement capability.
 
@@ -250,7 +197,7 @@ These are just the ones with personality. **15+ total crons**, each with its own
 
 ### 📊 The Research
 
-All eleven papers are linked in the [intro above](#the-singularity-point-). Each one started as a real problem, became a research paper, became a production system. Read them — they're the best proof that this isn't marketing.
+All fifteen papers are published at **[thetinkerzone.com](https://thetinkerzone.com/)** and linked in the [intro above](#the-singularity-point-). Each one started as a real problem, became a research paper, became a production system. Read them — they're the best proof that this isn't marketing.
 
 ---
 
@@ -271,12 +218,12 @@ Day 1: mediocre. Day 30: genuinely useful.
 
 ## 🤖 Multi-Model Support
 
-| Provider      | Model                      | Use Case                            | Status    |
-| ------------- | -------------------------- | ----------------------------------- | --------- |
-| **Anthropic** | Claude Opus 4.5 / Sonnet 4 | Primary chat, coding, complex tasks | ✅ Active |
-| **Google**    | Gemini 3 Pro               | Failover, large context, vision     | ✅ Active |
-| **OpenAI**    | GPT-4o / o3                | Cross-model review, metered tasks   | ✅ Active |
-| **Ollama**    | Local models (qwen3, etc.) | Heartbeat, background tasks         | ✅ Active |
+| Provider      | Model                                              | Use Case                            | Status    |
+| ------------- | -------------------------------------------------- | ----------------------------------- | --------- |
+| **Anthropic** | Claude Fable 5 / Opus 4.8 / Sonnet 4.6 / Haiku 4.5 | Primary chat, coding, complex tasks | ✅ Active |
+| **Google**    | Gemini 3 Pro                                       | Failover, large context, vision     | ✅ Active |
+| **OpenAI**    | GPT-5.x                                            | Cross-model review, metered tasks   | ✅ Active |
+| **Ollama**    | Local models (qwen3, etc.)                         | Heartbeat, background tasks         | ✅ Active |
 
 ### Failover Chain
 
@@ -301,9 +248,9 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 
 ### 💬 Messaging & Channels
 
-| Skill                                                                  | What it does                                                                                     |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | 3-rule security gate — agent speaks only when spoken to, in the right chat, by the right person. |
+| Skill                                                                  | What it does                                                                                                                                                                       |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | Five agents in one group means five replies and a tripled bill — Protocol v2 adds congestion control and budget-aware scheduling so they know when to talk and when to stay quiet. |
 
 ### 📹 Media & Content
 
@@ -382,7 +329,7 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 
 ## 📖 The Field Guide
 
-32 lessons from 6 weeks of running AI agents 24/7.
+32 lessons from four months of running AI agents 24/7.
 
 > _"Read is free, send is not."_
 >
@@ -391,6 +338,29 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 > _"A stuck sub-agent is burning money. Kill fast, respawn small."_
 
 **📖 [Read the Field Guide →](docs/guides/field-guide.md)**
+
+---
+
+## ✅ Dos & Don'ts — Field-Tested
+
+Hard-won from running this 24/7. The short version of the Field Guide:
+
+**Do**
+
+- **Draft, don't send.** Read is free; send is not. The agent prepares outbound actions — a human pulls the trigger.
+- **Make safety structural, not optional.** The safest skills can't send or delete because the code physically lacks the function — not because a flag is set.
+- **Commit only your own files.** Stage what you changed, never `git add -A` — it sweeps in a parallel session's work.
+- **Kill a stuck sub-agent fast, respawn small.** A silent sub-agent is burning money.
+- **Send cheap work to cheap models.** Haiku heartbeats, Sonnet crons — save the frontier model for the hard turn.
+- **Keep one funnel story everywhere.** README, ClawHub, thetinkerzone — the same positioning line, or scattered downloads never add up to authority.
+
+**Don't**
+
+- **Don't let an agent send or delete by code.** If it can, eventually it will.
+- **Don't bulk-publish near-identical names.** That's the spam-filter trigger that delisted our whole catalog once.
+- **Don't trust a mirror or a cached CLI for live state.** Check the real surface.
+- **Don't leak config or secrets into public posts.** The PII boundary is non-negotiable.
+- **Don't hand-link an in-repo file when a canonical web post exists.** Link the source of truth so it stays fresh.
 
 ---
 
