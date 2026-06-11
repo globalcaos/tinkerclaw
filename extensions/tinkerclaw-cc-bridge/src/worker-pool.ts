@@ -28,10 +28,23 @@
 import { getLatestResumeSessionIdByOpenclawSessionId, getResumeSessionId } from "./session-map.js";
 import { ClaudeCodeWorker, type WorkerSpawnParams } from "./worker.js";
 
+// FORK 2026-06-11 (the lag fix): normalize a think level for comparison so
+// `off` / empty / undefined all collapse to `undefined` and compare EQUAL —
+// that way merely toggling between equivalent "no extra thinking" states
+// never triggers a spurious cold respawn. Any other value is trimmed +
+// lowercased so `Think` and `think ` are the same level.
+const normLevel = (l?: string): string | undefined =>
+  !l || l.trim().toLowerCase() === "off" ? undefined : l.trim().toLowerCase();
+
 /** Minimal worker surface the pool depends on (lets tests inject a fake). */
 export interface PoolWorker {
   readonly sessionKey: string;
   sessionId: string | null;
+  // FORK 2026-06-11: the think level the worker was SPAWNED with, if the
+  // concrete worker exposes it (the test FakeWorker does). The real
+  // ClaudeCodeWorker keeps its spawn params private, so the pool also tracks
+  // the spawned level itself (see `spawnedThinkLevel`) and falls back to that.
+  readonly thinkLevel?: string;
   isAlive(): boolean;
   isBusy(): boolean;
   kill(signal?: NodeJS.Signals): void;
@@ -58,6 +71,16 @@ const DEFAULT_IDLE_TTL_MS = 15 * 60_000;
 export class SessionWorkerPool {
   private workers = new Map<string, PoolWorker>();
   private lastUsedAt = new Map<string, number>();
+  // FORK 2026-06-11 (the lag fix): the think level each live worker was
+  // SPAWNED with, keyed by sessionKey. The real ClaudeCodeWorker keeps its
+  // spawn params private, so `existing.thinkLevel` is `undefined` in
+  // production; this map is the authoritative record we compare against.
+  private spawnedThinkLevel = new Map<string, string | undefined>();
+  // FORK 2026-06-11 (the lag fix): when a think-level change arrives mid-turn
+  // we must NOT kill the busy worker; we record the pending change here so the
+  // caller can apply it (e.g. surface a notice / force a respawn next turn)
+  // via `takeThinkLevelPending`. running = level the busy worker is using.
+  private lastThinkLevelPending = new Map<string, { requested?: string; running?: string }>();
   private readonly createWorker: (params: WorkerSpawnParams) => PoolWorker;
   private readonly maxWorkers: number;
   private readonly idleTtlMs: number;
@@ -74,9 +97,40 @@ export class SessionWorkerPool {
     const now = this.now();
     const existing = this.workers.get(params.sessionKey);
     if (existing && existing.isAlive()) {
-      this.lastUsedAt.set(params.sessionKey, now);
-      this.sweep(now, params.sessionKey);
-      return existing as ClaudeCodeWorker;
+      // FORK 2026-06-11 (the lag fix): a warm worker bakes its think level into
+      // MAX_THINKING_TOKENS at spawn time, so a per-session thinkLevel change
+      // is INVISIBLE until the subprocess is respawned. Detect the change and
+      // act on it here instead of silently handing back the stale worker.
+      // The worker's own spawn params are private (existing.thinkLevel is
+      // undefined for the real worker), so prefer our recorded spawned level.
+      const existingLevel = existing.thinkLevel ?? this.spawnedThinkLevel.get(params.sessionKey);
+      const levelChanged = normLevel(existingLevel) !== normLevel(params.thinkLevel);
+      if (levelChanged && !existing.isBusy()) {
+        // Safe to respawn: idle worker. Evict the warm cache and FALL THROUGH
+        // to the create path below, which re-derives resumeSessionId from the
+        // (still-live or persisted) sessionId so `--resume` re-attaches the
+        // SAME claude conversation — history is preserved, only the warm
+        // subprocess is lost, and the next turn spawns with the new
+        // MAX_THINKING_TOKENS. Do NOT return here.
+        this.lastThinkLevelPending.delete(params.sessionKey);
+        this.evict(params.sessionKey, existing);
+      } else if (levelChanged && existing.isBusy()) {
+        // NEVER kill a worker mid-turn. Record the pending change so the
+        // caller can apply it (the next idle getOrCreate will respawn).
+        this.lastThinkLevelPending.set(params.sessionKey, {
+          requested: params.thinkLevel,
+          running: existingLevel,
+        });
+        this.lastUsedAt.set(params.sessionKey, now);
+        this.sweep(now, params.sessionKey);
+        return existing as ClaudeCodeWorker;
+      } else {
+        // No change — hand back the warm worker as before.
+        this.lastThinkLevelPending.delete(params.sessionKey);
+        this.lastUsedAt.set(params.sessionKey, now);
+        this.sweep(now, params.sessionKey);
+        return existing as ClaudeCodeWorker;
+      }
     }
     if (existing && existing.sessionId && !params.resumeSessionId) {
       params = { ...params, resumeSessionId: existing.sessionId };
@@ -113,6 +167,10 @@ export class SessionWorkerPool {
     });
     this.workers.set(params.sessionKey, worker);
     this.lastUsedAt.set(params.sessionKey, now);
+    // FORK 2026-06-11 (the lag fix): record the think level this worker was
+    // spawned with so a later turn can detect a change (the real worker keeps
+    // its spawn params private).
+    this.spawnedThinkLevel.set(params.sessionKey, params.thinkLevel);
     this.sweep(now, params.sessionKey);
     return worker as ClaudeCodeWorker;
   }
@@ -155,10 +213,29 @@ export class SessionWorkerPool {
     worker.kill("SIGTERM");
     this.workers.delete(key);
     this.lastUsedAt.delete(key);
+    // FORK 2026-06-11 (the lag fix): drop the recorded spawned level + any
+    // pending change for an evicted key so it can't go stale.
+    this.spawnedThinkLevel.delete(key);
+    this.lastThinkLevelPending.delete(key);
   }
 
   get(sessionKey: string): ClaudeCodeWorker | undefined {
     return this.workers.get(sessionKey) as ClaudeCodeWorker | undefined;
+  }
+
+  /**
+   * FORK 2026-06-11 (the lag fix): read-once the think-level change that
+   * arrived while this session's worker was mid-turn (so it couldn't be
+   * respawned immediately). Returns `{ requested, running }` once, then
+   * clears it — the caller applies the change (e.g. forces a respawn next
+   * idle turn / surfaces a notice). Returns undefined if no change is pending.
+   */
+  takeThinkLevelPending(sessionKey: string): { requested?: string; running?: string } | undefined {
+    const v = this.lastThinkLevelPending.get(sessionKey);
+    if (v) {
+      this.lastThinkLevelPending.delete(sessionKey);
+    }
+    return v;
   }
 
   killAll(): void {
@@ -167,6 +244,8 @@ export class SessionWorkerPool {
     }
     this.workers.clear();
     this.lastUsedAt.clear();
+    this.spawnedThinkLevel.clear();
+    this.lastThinkLevelPending.clear();
   }
 }
 
