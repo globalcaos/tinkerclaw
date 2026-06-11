@@ -1,4 +1,9 @@
 import MarkdownIt from "markdown-it";
+// FORK 2026-06-11 (fractal v3, bible §5.67b) — fractal dock renderer lives in its
+// own one-concern module (the sectioned-reply.ts extraction precedent); app.ts
+// keeps only the KNOWN_STREAMS entry, the stream:"fractal" dispatch, and the
+// dock-anchor lookup over app.ts-owned message state.
+import { upsertFractalDock } from "./fractal-dock.js";
 // FORK 2026-06-06 — BROCA recipe visibility: shared render module for the
 // single-recipe (recipe-detail) page. renderBrocaProgram turns a parsed recipe
 // into interleaved code+prose; BrocaRecipe is the read DTO shape.
@@ -3289,6 +3294,60 @@ function onEvent(evt: unknown) {
       updateBudgetPanel();
       return;
     }
+    // FORK 2026-06-11 (fractal v3, bible §5.67b) — STREAM:"fractal" consumer.
+    // The fractal-reflection plugin emits its envelope under the MAIN session's
+    // sessionKey (lane runIds ride inside data), so gate exactly like the effort
+    // consumer above. The renderer body lives in fractal-dock.ts (one concern,
+    // the sectioned-reply.ts precedent); app.ts owns only this dispatch + the
+    // dock-anchor lookup that reads app.ts-owned message state.
+    if (p?.stream === "fractal" && sessionKeyMatches(p.sessionKey)) {
+      const d = p.data ?? {};
+      const parentRunId = typeof d.parentRunId === "string" ? d.parentRunId : "";
+      if (!parentRunId) return;
+      // Anchor tagging (the _reasoningRunId/_subagentId precedent): answer
+      // bubbles carry NO runId in messages[]. The pending stub fires at the
+      // parent's agent_end — after the final chat message landed and the run's
+      // _reasoningRunId bubble was purged — so the last real assistant bubble
+      // IS the parent's answer; later events for the same parent reuse the tag
+      // instead of re-guessing.
+      // TODO(fractal-v3): heuristic, not a real runId mapping (none exists in
+      // messages[] for answer bubbles). If the first fractal event arrives
+      // after the user moved on, the tag may miss and the dock falls back to
+      // the module's orphan rendering. Replace when answer messages gain a
+      // real runId stamp at chat-final. Do NOT add new global state here.
+      const alreadyTagged = messages.some((m) => (m as any)._fractalParentRunId === parentRunId);
+      const parentStillStreaming = messages.some(
+        (m) => (m as any)._isReasoning && (m as any)._reasoningRunId === parentRunId,
+      );
+      if (!alreadyTagged && !parentStillStreaming) {
+        for (let k = messages.length - 1; k >= 0; k--) {
+          const mm = messages[k] as any;
+          if (
+            (mm.role || "").toLowerCase() === "assistant" &&
+            !mm._isReasoning &&
+            !mm._temporary &&
+            !mm._subagentId
+          ) {
+            mm._fractalParentRunId = parentRunId;
+            break;
+          }
+        }
+        // Flush the data-fractal-parent-run attribute into the DOM so the
+        // anchor lookup below can find the bubble (skipScroll: a dock filling
+        // in minutes later must not yank the viewport).
+        updateChat(true);
+      }
+      upsertFractalDock(d, (runForAnchor: string) => {
+        const container = $("messages");
+        if (!container) return null;
+        const escaped =
+          typeof CSS !== "undefined" && typeof CSS.escape === "function"
+            ? CSS.escape(runForAnchor)
+            : runForAnchor;
+        return container.querySelector<HTMLElement>(`[data-fractal-parent-run="${escaped}"]`);
+      });
+      return;
+    }
     // FORK 2026-05-28 — cc-bridge text-block boundary. Anthropic's streaming
     // protocol guarantees content_block_delta carries an index field; cc-
     // bridge emits this event whenever the active text block index advances
@@ -4019,7 +4078,14 @@ function onEvent(evt: unknown) {
     // novel events are visible instead of silently dropped. Does not touch the
     // tool/lifecycle/assistant/thinking paths. (server-tool web_search/web_fetch
     // need no edit — existing friendly labels already cover them.)
-    const KNOWN_STREAMS = new Set(["tool", "lifecycle", "assistant", "thinking", "effort"]);
+    const KNOWN_STREAMS = new Set([
+      "tool",
+      "lifecycle",
+      "assistant",
+      "thinking",
+      "effort",
+      "fractal",
+    ]);
     if (
       p?.stream &&
       !KNOWN_STREAMS.has(p.stream) &&
@@ -5943,7 +6009,15 @@ function renderMsg(
               answerText = sln.answer;
             }
           }
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          // FORK 2026-06-11 (fractal v3, bible §5.67b): answer bubbles carry no
+          // runId in the DOM — when the stream:"fractal" consumer tags this
+          // message with _fractalParentRunId (the data-subagent-id precedent),
+          // emit it as data-fractal-parent-run so the dock-anchor lookup can
+          // find the element across innerHTML rebuilds.
+          const fractalAnchorAttr = (msg as any)._fractalParentRunId
+            ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
+            : "";
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       }
     } else {
@@ -6102,7 +6176,12 @@ function renderMsg(
               answerText = sln.answer;
             }
           }
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          // FORK 2026-06-11 (fractal v3, bible §5.67b): twin of the string-content
+          // path above — emit the _fractalParentRunId tag as a DOM attribute.
+          const fractalAnchorAttr = (msg as any)._fractalParentRunId
+            ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
+            : "";
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       } else {
         h += renderSystemMsg(text, idx);
