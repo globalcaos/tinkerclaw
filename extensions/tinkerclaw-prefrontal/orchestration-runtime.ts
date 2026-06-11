@@ -32,6 +32,13 @@ export interface AgentOpts {
   schema?: JsonSchema;
   /** Display label for the spawned agent (observability). */
   label?: string;
+  /**
+   * Optional leaf model for this unit. The production runtime COERCES this to a
+   * `claude-code/*` model (subscription-billed cc-sp-* worker) — a non-claude-code
+   * value is overridden, never honoured, so a fan-out can't silently spill onto
+   * the metered API. Omit to inherit the runtime's default leaf model.
+   */
+  model?: string;
 }
 
 export interface OrchestrationDeps {

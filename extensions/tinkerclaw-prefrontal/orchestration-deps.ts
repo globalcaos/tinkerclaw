@@ -39,6 +39,29 @@ export type CallGateway = <T>(args: {
 
 const ADMIN_SCOPES = ["operator.admin"];
 
+/**
+ * Default leaf model for orchestration fan-out. MUST be a `claude-code/*` model so
+ * every spawned unit is a subscription-billed cc-sp-* worker — the entire reason
+ * ultracode-style workflows route through the gateway instead of native forked
+ * `claude` processes (which trip Anthropic's overage classifier and bill metered).
+ * opus-4-8 is a stable catalog id; a script may override per-unit via agent({model}),
+ * but only with another claude-code/* model (see coerceClaudeCodeModel).
+ */
+const DEFAULT_LEAF_MODEL = "claude-code/claude-opus-4-8";
+
+/**
+ * BILLING GUARD: force a `claude-code/*` leaf model. A claude-code/* request is
+ * honoured; ANY other value (or none) falls back to DEFAULT_LEAF_MODEL. This makes
+ * subscription billing a STRUCTURAL property of the fan-out rather than a lucky
+ * default — a stray metered/raw model id can never reach fork.subagents.spawn from
+ * here, so a leaf can't silently spill onto the €/token API.
+ */
+function coerceClaudeCodeModel(requested: string | undefined): string {
+  return typeof requested === "string" && requested.startsWith("claude-code/")
+    ? requested
+    : DEFAULT_LEAF_MODEL;
+}
+
 interface HistoryMessage {
   role?: string;
   content?: unknown;
@@ -82,6 +105,12 @@ export interface ProductionRuntimeOpts {
   /** Phase sink (wire to fork.prefrontal.setRecipe at the call site for the panel). */
   onPhase?: (title: string) => void;
   /**
+   * Default leaf model for spawned units. COERCED to claude-code/* (see
+   * coerceClaudeCodeModel) so billing safety holds regardless of value. Default
+   * DEFAULT_LEAF_MODEL. Per-unit override via agent({model}).
+   */
+  leafModel?: string;
+  /**
    * SS5b: remaining per-run token allowance threaded down to a spawn. STRUCTURALLY
    * DERIVED BUT INERT until agent.wait carries the reason — the budget arm in
    * spawnTextVia keys off the wait response's `status:'exhausted'` /
@@ -102,7 +131,11 @@ export async function spawnTextVia(
   label: string,
   parentSessionKey: string,
   runTimeoutSeconds: number,
+  model?: string,
 ): Promise<string> {
+  // Pin a claude-code/* model on EVERY spawn here (the billing guard is centralized
+  // so no caller can bypass it). Omitted/non-claude-code → DEFAULT_LEAF_MODEL.
+  const leafModel = coerceClaudeCodeModel(model);
   const spawn = await callGateway<{
     ok?: boolean;
     childSessionKey?: string;
@@ -113,6 +146,7 @@ export async function spawnTextVia(
     params: {
       task,
       label,
+      model: leafModel,
       parentSessionKey,
       runTimeoutSeconds,
       expectsCompletionMessage: false,
@@ -166,15 +200,25 @@ export async function spawnTextVia(
  */
 export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts) {
   const parentSessionKey = opts.parentSessionKey ?? "agent:main:main";
-  const runTimeoutSeconds = opts.runTimeoutSeconds ?? 60;
+  // 60s starved real fan-out units: a leaf doing actual work (not a one-word reply)
+  // routinely needs minutes, and the 60s default silently timed them out mid-task
+  // (confirmed in the first orchestrate smoke). 300s is the per-unit wall-clock
+  // budget; a unit that still overruns fails cleanly (parallel/pipeline
+  // null-isolation drops the leg). Callers may lower it via runTimeoutSeconds.
+  const runTimeoutSeconds = opts.runTimeoutSeconds ?? 300;
+  const defaultLeafModel = coerceClaudeCodeModel(opts.leafModel);
   const spawn = async (prompt: string, agentOpts?: AgentOpts): Promise<{ finalText: string }> => {
     const label = agentOpts?.label ?? "orchestration-agent";
+    // Per-unit model override (agent({model})) is coerced; otherwise the (already
+    // coerced) default leaf model. Either way the spawn is claude-code/* = cc-sp-*.
+    const model = agentOpts?.model ? coerceClaudeCodeModel(agentOpts.model) : defaultLeafModel;
     const finalText = await spawnTextVia(
       opts.callGateway,
       prompt,
       label,
       parentSessionKey,
       runTimeoutSeconds,
+      model,
     );
     return { finalText };
   };
