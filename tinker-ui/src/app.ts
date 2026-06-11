@@ -2804,6 +2804,12 @@ function onEvent(evt: unknown) {
           delete m._queued;
         }
       }
+      // FORK 2026-06-11 — discard the live reasoning bubble for this run on turn
+      // end. The final answer (or its reconciled bubbles) supersedes the
+      // cumulative reasoning preview; leaving it would double-render the thinking.
+      messages = messages.filter(
+        (m) => !((m as any)._isReasoning && (m as any)._reasoningRunId === p.runId),
+      );
       if (p.state !== "error") {
         // ─── Continuation merge ───
         // Before promoting, merge sentence fragments: if an assistant text
@@ -3094,6 +3100,35 @@ function onEvent(evt: unknown) {
         updateChat();
       }
     }
+    // FORK 2026-06-11 — STREAM:"thinking" consumer (cc-bridge reasoning deltas).
+    // d.text is the CUMULATIVE reasoning text for this run, so OVERWRITE the
+    // bubble's text on every event (never append). Render as a type:"text"
+    // block tagged _isReasoning — renderMsg's content-block loop has NO
+    // thinking-block arm, so type:"thinking" would render EMPTY. The bubble is
+    // _temporary (discarded on turn end) and is force-excluded from the
+    // thinkingSet classifier via its _isReasoning flag.
+    if (p?.stream === "thinking" && sessionKeyMatches(p.sessionKey)) {
+      const d = p.data ?? {};
+      const text = typeof d.text === "string" ? d.text : "";
+      if (!text) return;
+      let idx = messages.findIndex(
+        (m) => (m as any)._reasoningRunId === p.runId && (m as any)._isReasoning,
+      );
+      if (idx < 0) {
+        messages.push({
+          role: "assistant",
+          content: [{ type: "text", text }],
+          _isReasoning: true,
+          _reasoningRunId: p.runId,
+          _temporary: true,
+        } as any);
+      } else {
+        const blk = (messages[idx].content as any[]).find((b) => b.type === "text");
+        if (blk) blk.text = text;
+      }
+      updateChat();
+      return;
+    }
     // FORK 2026-05-28 — cc-bridge text-block boundary. Anthropic's streaming
     // protocol guarantees content_block_delta carries an index field; cc-
     // bridge emits this event whenever the active text block index advances
@@ -3110,6 +3145,25 @@ function onEvent(evt: unknown) {
       sessionKeyMatches(p.sessionKey)
     ) {
       streamMsgIdx = -1;
+      return;
+    }
+    // FORK 2026-06-11 — cc-bridge turn-incomplete phase event (sibling hook to
+    // the model-gated end/error handler below). This event carries NO model, so
+    // it never reaches the `p.data?.model`-gated lifecycle block; stamp the last
+    // real assistant bubble with _turnIncomplete so renderMsg shows the badge.
+    if (
+      p?.stream === "lifecycle" &&
+      p.data?.phase === "turn-incomplete" &&
+      sessionKeyMatches(p.sessionKey)
+    ) {
+      for (let k = messages.length - 1; k >= 0; k--) {
+        const mm = messages[k] as any;
+        if ((mm.role || "").toLowerCase() === "assistant" && !mm._isReasoning && !mm._temporary) {
+          mm._turnIncomplete = String(p.data.subtype || "incomplete");
+          break;
+        }
+      }
+      updateChat();
       return;
     }
     // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
@@ -3634,6 +3688,27 @@ function onEvent(evt: unknown) {
           }, 800);
         }
       } else if (p.data.phase === "end" || p.data.phase === "error") {
+        // FORK 2026-06-11 — turn-incomplete badge (model-gated hook). If the run
+        // ended in an abandoned/blocked liveness state, stamp the last real
+        // assistant bubble so renderMsg surfaces a ⚠ incomplete badge.
+        const incomplete =
+          p.data.livenessState === "abandoned" || p.data.livenessState === "blocked";
+        if (incomplete) {
+          for (let k = messages.length - 1; k >= 0; k--) {
+            const mm = messages[k] as any;
+            if (
+              (mm.role || "").toLowerCase() === "assistant" &&
+              !mm._isReasoning &&
+              !mm._temporary
+            ) {
+              mm._turnIncomplete = String(
+                p.data.livenessState || p.data.stopReason || "incomplete",
+              );
+              break;
+            }
+          }
+          updateChat();
+        }
         // FORK 2026-04-20: implicit trail entry on subagent completion.
         {
           const sk = typeof p.data.sessionKey === "string" ? p.data.sessionKey : "";
@@ -3756,6 +3831,37 @@ function onEvent(evt: unknown) {
               .catch(() => {});
           }
         }, 500);
+      }
+    }
+    // FORK 2026-06-11 — generic fallback for UNKNOWN streams (e.g. future
+    // server-tool/lifecycle channels). Known streams are handled above; for any
+    // other stream, surface a thin one-line system bubble on a terminal phase so
+    // novel events are visible instead of silently dropped. Does not touch the
+    // tool/lifecycle/assistant/thinking paths. (server-tool web_search/web_fetch
+    // need no edit — existing friendly labels already cover them.)
+    const KNOWN_STREAMS = new Set(["tool", "lifecycle", "assistant", "thinking"]);
+    if (
+      p?.stream &&
+      !KNOWN_STREAMS.has(p.stream) &&
+      (!p.sessionKey || sessionKeyMatches(p.sessionKey))
+    ) {
+      const phase = typeof p.data?.phase === "string" ? p.data.phase : "";
+      const title =
+        typeof p.data?.title === "string"
+          ? p.data.title
+          : typeof p.data?.name === "string"
+            ? p.data.name
+            : "";
+      const summary = typeof p.data?.summary === "string" ? p.data.summary : "";
+      if (!phase || phase === "end" || phase === "error") {
+        const line =
+          `[${p.stream}${phase ? `:${phase}` : ""}]${title ? ` ${title}` : ""}${summary ? ` — ${summary}` : ""}`.trim();
+        messages.push({
+          role: "system",
+          content: [{ type: "text", text: line }],
+          _temporary: true,
+        } as any);
+        updateChat();
       }
     }
   }
@@ -5638,7 +5744,7 @@ function renderMsg(
           const saOpen = expandedSubagents.has(saId) ? " open" : "";
           const liveDot = saLive ? `<span class="msg-subagent-live" title="streaming"></span>` : "";
           const badge = `<span class="msg-subagent-badge" style="background:${c}">${esc(saLabel)}</span>`;
-          h += `<details class="msg-subagent-details${saLive ? " is-live" : ""}" data-subagent-id="${esc(saId)}"${saOpen} style="--subagent-color:${c}"><summary class="msg-subagent-summary">${badge}${liveDot}</summary><div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}</div></details>`;
+          h += `<details class="msg-subagent-details${saLive ? " is-live" : ""}" data-subagent-id="${esc(saId)}"${saOpen} style="--subagent-color:${c}"><summary class="msg-subagent-summary">${badge}${liveDot}</summary><div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div></details>`;
         } else {
           // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
           // FORK 2026-06-10: peel leading narration off the plain final-answer path
@@ -5653,7 +5759,7 @@ function renderMsg(
               answerText = sln.answer;
             }
           }
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}</div>`;
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       }
     } else {
@@ -5737,6 +5843,16 @@ function renderMsg(
             return h;
           }
         }
+        // FORK 2026-06-11 — live reasoning bubble (cc-bridge stream:"thinking").
+        // Render BEFORE the overload/error/thinkingPrefix guards so the cumulative
+        // reasoning text shows as a plain .msg-thinking bubble. Empty text => no
+        // bubble (keeps a half-arrived reasoning stream from flashing an empty box).
+        if ((msg as any)._isReasoning) {
+          const rtext = (content.find((b: any) => b.type === "text")?.text ?? "").toString();
+          if (!rtext.trim()) return h;
+          h += `<div class="msg assistant msg-thinking"><span class="thinking-label">Thinking:</span> ${md(rtext)}</div>`;
+          return h;
+        }
         const errorClass = msg._isError ? " msg-error" : "";
         const retryBtn =
           msg._isError && msg._retryProvider
@@ -5802,7 +5918,7 @@ function renderMsg(
               answerText = sln.answer;
             }
           }
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}</div>`;
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       } else {
         h += renderSystemMsg(text, idx);
@@ -6339,7 +6455,13 @@ function updateChat(skipScroll = false) {
         }
         // FORK: System messages (warnings, errors, retries, prefrontal) must NEVER
         // collapse into reasoning groups — they are user-facing status updates.
-        if (m._isWarning || m._isError || m._isOverloadRetry || m._isPrefrontal) {
+        if (
+          m._isWarning ||
+          m._isError ||
+          m._isOverloadRetry ||
+          m._isPrefrontal ||
+          (m as any)._isReasoning
+        ) {
           continue;
         }
         assistantTextIndices.push(j);
