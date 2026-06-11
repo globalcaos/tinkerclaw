@@ -6159,3 +6159,103 @@ code.fs-link.fs-link-error {
 .broca-step__code { font-family: ui-monospace, monospace; }
 .broca-step__prose { color: var(--muted); padding-left: 1.4em; }
 .broca-step--live { box-shadow: inset 2px 0 0 var(--skill-highlight); background: rgba(227,179,65,0.06); }
+
+/* ---- Per-tab thinking strip (thin horizontal control in the chat-area chrome) ---- */
+.tab-think-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.tab-think-model {
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  font-size: 10px;
+  font-family: "SF Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.tab-think-label {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-family: "SF Mono", monospace;
+  flex-shrink: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab-think-hint {
+  font-size: 9px;
+  color: var(--muted);
+  opacity: 0.65;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+/* Native <input type=range> restyled for the dark theme (no range precedent in repo). */
+.tab-think-slider {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 60px;
+  max-width: 180px;
+  height: 14px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.tab-think-slider:focus {
+  outline: none;
+}
+/* WebKit track */
+.tab-think-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+/* WebKit thumb */
+.tab-think-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--accent2);
+  box-shadow: 0 0 0 1px var(--bg);
+  transition: background 0.12s;
+}
+.tab-think-slider:hover::-webkit-slider-thumb,
+.tab-think-slider:focus::-webkit-slider-thumb {
+  background: var(--text);
+}
+/* Firefox track */
+.tab-think-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+/* Firefox thumb */
+.tab-think-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--accent2);
+  box-shadow: 0 0 0 1px var(--bg);
+  transition: background 0.12s;
+}
+.tab-think-slider:hover::-moz-range-thumb,
+.tab-think-slider:focus::-moz-range-thumb {
+  background: var(--text);
+}
