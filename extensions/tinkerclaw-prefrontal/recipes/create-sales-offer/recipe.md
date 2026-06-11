@@ -80,7 +80,7 @@ params:
   pricing_model:
     {
       type: "string",
-      description: "Pricing + discount rules (concrete figures; any promo discount as its own non-cumulative line).",
+      description: "Pricing + discount rules (concrete figures). The final sale price is the single most-scrutinised value. Discount is OFF by default — applied ONLY when an explicit gating condition is met (e.g. first offer to a group, or a multi-unit order); as its own non-cumulative line.",
     }
   product_specific_constraints:
     {
@@ -123,7 +123,7 @@ Read the customer's project knowledge from {{knowledge_source}} (their fact shee
 **Tools:** Bash
 **Done when:** You know the sections to produce and have the template.
 
-Start from {{offer_template}}. Produce the sections in {{doc_sections}} — a generic product intro, the customer's real current state (their own vocabulary), the operative description, included components, price + volume scaling, assumptions, work plan, sale conditions, and bank/legal.
+Start from {{offer_template}}. Produce the sections in {{doc_sections}} — a generic product intro, the customer's real current state (their own vocabulary), the operative description, included components, price + volume scaling, assumptions, work plan, sale conditions, and bank/legal. The product intro is **fixed, generic boilerplate** reused verbatim across every offer — do NOT customise it per customer (so it stays correct and never has to be re-edited).
 
 ### 3. Keep it short and dense
 
@@ -131,11 +131,18 @@ Start from {{offer_template}}. Produce the sections in {{doc_sections}} — a ge
 
 The document must be as SHORT and detailed as possible. Do NOT add justifications or explanatory rationale that bloat it (why something was chosen, advantages, motivations) — that reasoning lives in the project knowledge, NOT in the offer. Use the installation's real vocabulary, not generic terms.
 
+Two rules that carry real commercial/legal weight:
+
+- **Under-promise capabilities.** Every claim about what the product DOES is future leverage for the customer to withhold payment or demand more work for the same price. State capabilities as _can / may / depending on configuration_, never as guaranteed, and make each one factually exact (don't inherit overstatements from the template).
+- **The offer reassures, it does not alarm.** Don't surface internal worries or product concerns as highlighted problems or as extra price lines. Such caveats belong in the **final legal clauses** (conditions), in small print — not in the current-state section or the price table.
+
 ### 4. Apply the fixed terms + pricing model
 
 **Done when:** The fixed values and the discount rule are in place.
 
-Apply the fixed terms in {{fixed_terms}} (common to every offer) and the {{pricing_model}}: concrete figures, never [to confirm]. If a promotional discount applies, put it as its own line and make clear it is NOT cumulative with the volume scaling.
+Apply the fixed terms in {{fixed_terms}} (common to every offer) and the {{pricing_model}}: concrete figures, never [to confirm].
+
+The **final sale price is the most important value in the document — check it many times.** Discount is **OFF by default**: apply one only when an explicit gating condition in {{pricing_model}} is met (e.g. first offer to a group, or a multi-unit order) AND you are completely sure it applies. **Never replicate a discount, an optional line, or a total copied from another customer's offer** — derive each figure from {{pricing_model}} for THIS customer. If there are justified ways to raise the cost, weigh them rather than rounding down. When a discount does apply, put it on its own line, not cumulative with the volume scaling.
 
 ### 5. Reflect product-specific constraints
 
@@ -148,7 +155,9 @@ Reflect {{product_specific_constraints}} where relevant (e.g. a fail-safe integr
 **Tools:** Bash
 **Done when:** The document exists with the correct name and structure.
 
-Copy {{offer_template}} (or the customer's canonical version if one exists) and rewrite it preserving the template's formatting (e.g. python-docx with a setter that keeps the first run's format). Name it per {{naming_convention}}, with the number per {{offer_number_format}}; no '(draft)' tag, no date. Save it to {{output_dir}}.
+Copy {{offer_template}} (or the customer's canonical version if one exists) and rewrite it preserving the template's formatting. Reuse the real template file — clone its style-prototype paragraphs and tables via python-docx (a setter that keeps each run's format) and swap only the body; do NOT regenerate via markdown→docx (that strips header/footer/logo/fonts/styles). Name it per {{naming_convention}}, with the number per {{offer_number_format}}; no '(draft)' tag, no date. Save it to {{output_dir}}.
+
+Then **verify VISUALLY** that it respects the template: render to PDF and look at the first page plus a table page (header + logo, footer, fonts, styled tables present). "Preserves formatting" fails silently — confirm with your eyes, not just a structural check.
 
 ### 7. Hand to the reviewer
 
@@ -161,8 +170,11 @@ Tell {{reviewer}} the version and exactly what to confirm (the final number, pri
 - Offer written in {{offer_language}}.
 - SHORT + dense — no rationale that bloats it (reasoning lives in project knowledge, not the offer).
 - The installation's real vocabulary, not generic terms.
-- Concrete prices, never [to confirm]; a promo discount is its own line, not cumulative with volume scaling.
+- Capabilities stated as _can / may / depending on configuration_, never guaranteed (any claim is future leverage for the customer); concerns go in the final legal clauses, not as problems or price lines. The offer reassures, not alarms.
+- The product intro is fixed generic boilerplate, reused verbatim, not customised per customer.
+- Concrete prices, never [to confirm]. The final price is the most-scrutinised value; discount is OFF by default (only on an explicit gating rule, and only if completely sure), never copied from another customer's offer.
 - Reflect product-specific + fail-safe constraints where relevant.
+- Generate by cloning the real template (python-docx), never markdown→docx; verify the result visually.
 - Name per {{naming_convention}}.
 - The agent drafts; {{reviewer}} reviews and sends.
 
@@ -174,3 +186,5 @@ Tell {{reviewer}} the version and exactly what to confirm (the final number, pri
 ## Failures Overcome
 
 - Earlier versions hardcoded the customer's data + the business's specifics inside the recipe — now the recipe is GENERIC (typed variables), the customer data lives in project knowledge, and the business specifics live in the private VarStore. This is the shareable-bare-bones + private-variables pattern.
+- A draft copied another customer's promotional discount, an optional line, and computed total — wrong on all three. The fix is encoded above: discount OFF by default (gated, only if completely sure), the final price scrutinised many times, figures derived for THIS customer (never inherited from another offer), capabilities hedged (any claim = future leverage), product concerns kept to the legal clauses (not problems/price lines), and the intro a fixed generic block. The two things that really matter in an offer are: don't give the customer ammunition (capabilities), and lock down the final sale price.
+- A draft was regenerated via markdown→pandoc and lost the whole template (header, logo, footer, fonts, styled tables). Fix: clone the real template's style prototypes via python-docx and verify the output visually.
