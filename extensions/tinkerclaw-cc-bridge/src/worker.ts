@@ -472,6 +472,28 @@ export class ClaudeCodeWorker extends EventEmitter {
     const openClawCutoff = systemPromptBody.indexOf(OPENCLAW_SYSPROMPT_CUTOFF);
     const personaOnly =
       openClawCutoff > 0 ? systemPromptBody.slice(0, openClawCutoff).trim() : systemPromptBody;
+    // FORK 2026-06-11 (subagent task-delivery fix): OpenClaw places a spawned
+    // subagent's task in the system prompt under "## Your Role", but
+    // buildSubagentSystemPrompt appends that block AFTER the "You are a personal
+    // assistant running inside OpenClaw" sentinel — so the strip above DROPS it
+    // and every cc-sp-* subagent wakes up with NO task (confirmed empirically via
+    // BOTH the prefrontal orchestrate runtime and openclaw-spawn-subagent.mjs:
+    // the child's own thinking reads "I don't see a clear **Your Role** section").
+    // Re-extract ONLY the "## Your Role" block (the task description) and keep it:
+    // it carries no OpenClaw harness verbs (sessions_spawn et al. live in the
+    // later "## Sub-Agent Spawning" / tool-catalog sections that the strip still
+    // drops), so it stays billing-classifier-safe. Self-gating: the main agent's
+    // prompt has no "## Your Role", so subagentRoleBlock is "" there (no-op).
+    const extractSubagentRoleBlock = (full: string): string => {
+      const start = full.indexOf("## Your Role");
+      if (start < 0) {
+        return "";
+      }
+      const rest = full.slice(start);
+      const end = rest.indexOf("\n## Rules");
+      return (end >= 0 ? rest.slice(0, end) : rest).trim();
+    };
+    const subagentRoleBlock = openClawCutoff > 0 ? extractSubagentRoleBlock(systemPromptBody) : "";
     void rulesBody;
     // FORK 2026-04-27: order matters. Put the narration block RIGHT AFTER the
     // persona, before the dense subagent-helper / tool-choice text. When
@@ -490,6 +512,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     // rules ahead of narration etc. makes that ordering match document order.
     const combinedSystemPrompt = [
       personaOnly,
+      subagentRoleBlock ? `\n\n${subagentRoleBlock}\n` : "",
       ethicalRulesBody,
       orchestrationDispositionBody,
       narrationBody,
