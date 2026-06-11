@@ -36,7 +36,7 @@ The helper speaks the fork's WS RPC `fork.subagents.spawn`, which wraps the same
 <spawn_guidelines>
 
 - Spawn only when the work actually parallelises. Small tasks stay inline.
-- Pick the model by task weight: `claude-code/claude-haiku-4-5` for minimal tasks (lookups, format), `claude-code/claude-sonnet-4-6` for standard work, and `claude-code/claude-fable-5` (the flagship — slightly pricier, far stronger) for genuinely hard reasoning OR when a fix keeps failing and you are going in circles — escalate the stuck unit to Fable to break the loop instead of re-running the same model.
+- Pick the model by task weight (relative cost 1×/3×/5×/10×): `claude-code/claude-haiku-4-5` for minimal tasks (lookups, format — separate budget, ≈free), `claude-code/claude-sonnet-4-6` for standard work, `claude-code/claude-opus-4-8` for hard single-shot reasoning, and `claude-code/claude-fable-5` (the flagship — 2× opus sticker but ~⅓ tokens on long tasks, lead grows with complexity) for genuinely hard work OR when a fix keeps failing and you are going in circles. ESCALATE MODEL BEFORE EFFORT: fable at medium thinking beats opus at max, and is usually cheaper than the retries it eliminates. The full model × effort matrix lives in the orchestration-disposition block.
 - Always pass a short `--label` so the Prefrontal tree stays readable.
 - Do NOT narrate dispatches in chat. The user watches the Prefrontal panel for orchestration; chat stays focused on substantive output. Use the recipe-state CLI below to publish what is happening behind the scenes.
   </spawn_guidelines>

@@ -38,19 +38,35 @@ Every unit becomes its own subscription-billed `cc-sp-*` worker, runs concurrent
 "maximum effort" — reach for it WHENEVER work parallelizes, even small batches.
 
 Pick the leaf model PER UNIT by weight (`agent(task, {model})`) — this is the main
-cost lever, and it is cheap to fan out wide:
+cost lever, and it is cheap to fan out wide. Omitting `{model}` uses the runtime
+default (sonnet). Compose quality patterns inside the script — adversarial verify,
+judge-panel, loop-until-dry — when correctness matters more than speed.
 
-- `claude-code/claude-haiku-4-5` — cheap, billed against a SEPARATE budget. DEFAULT
-  for parallel scanning / extraction / classification; fan out generously.
-- `claude-code/claude-sonnet-4-6` — standard implementation, synthesis, drafting.
-- `claude-code/claude-fable-5` — the flagship: slightly pricier, far stronger. Use
-  for genuinely HARD reasoning, AND as the escalation when a fix keeps failing or
-  you are going in circles — move the stuck unit (or your own approach) to Fable to
-  break the loop, rather than re-trying the same model and getting the same dead end.
+### Model × effort heuristic (cost-aware; relative output cost 1× / 3× / 5× / 10×)
 
-Omitting `{model}` uses the runtime default (sonnet). Compose quality patterns
-inside the script — adversarial verify, judge-panel, loop-until-dry — when
-correctness matters more than speed.
+Two independent axes: MODEL = task difficulty (can it do it at all);
+EFFORT/thinking = task depth (how much deliberation this instance needs).
+
+| model (claude-code/…)                                                                                      | low effort                                             | medium                                | high                                       | max                                        |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------- | ------------------------------------------ | ------------------------------------------ |
+| `claude-haiku-4-5` (1×, SEPARATE budget ≈ free)                                                            | ✅ scans, lookups, extraction, classify — fan out wide | ✅ light drafting                     | ⚠️ ceiling — wrong model if it needs this  | ❌ false economy: burns tokens circling    |
+| `claude-sonnet-4-6` (3×, default)                                                                          | ✅ routine edits                                       | ✅ standard implementation, synthesis | ⚠️ consider opus                           | —                                          |
+| `claude-opus-4-8` (5×)                                                                                     | ⚠️ overkill for easy work                              | ✅ workhorse: solid implementation    | ✅ hard single-shot reasoning              | ⚠️ you probably need fable                 |
+| `claude-fable-5` (10× sticker; ~⅓ tokens on long tasks → effective ≪ sticker; lead GROWS with task length) | ❌ wasteful                                            | ✅ hard problems, first try           | ✅ long/complex work nothing else finishes | ✅ research-grade, days-of-work-equivalent |
+
+Rules:
+
+1. Haiku = breadth, never depth. Never push it past medium effort.
+2. Sonnet/opus medium = the implementation workhorses; opus high for genuinely
+   hard single-shot reasoning.
+3. ESCALATE MODEL BEFORE EFFORT. A fix failing repeatedly / going in circles →
+   fable at medium beats opus at max, and is usually cheaper than the retries it
+   eliminates. Do not re-run the same model into the same dead end.
+4. Fable high/max is the "this would take a team days" tier (big migrations,
+   research-grade analysis) — never table-formatting.
+5. Wasted effort on an easy task is pure cost; starved effort on a hard task
+   costs MORE via retries. When unsure between two cells, prefer the stronger
+   model at moderate effort over the weaker model at max effort.
 
 Discipline: dispatch only when work parallelizes; pick the model by task weight;
 always pass a short `--label`. Do NOT narrate dispatch mechanics in chat — the
