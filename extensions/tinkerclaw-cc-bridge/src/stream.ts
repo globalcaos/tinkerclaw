@@ -18,7 +18,12 @@ import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import { buildErrorEnvelope } from "../../../src/fork/error-envelope.js";
 import { emitAgentEvent } from "../../../src/infra/agent-events.js";
-import { DEFAULT_CWD, DEFAULT_DISALLOWED_TOOLS, PROVIDER_ID } from "./defaults.js";
+import {
+  DEFAULT_CWD,
+  DEFAULT_DISALLOWED_TOOLS,
+  maxOutputTokensFor,
+  PROVIDER_ID,
+} from "./defaults.js";
 import { registerInflightWorker, unregisterInflightWorker } from "./inflight-worker-registry.js";
 import type {
   CcContentBlock,
@@ -29,6 +34,7 @@ import type {
   CcStreamStdoutUserMessage,
   CcUsage,
 } from "./protocol.js";
+import { thinkLevelToMaxThinkingTokens } from "./thinking-budget.js";
 import { recordToolEvent } from "./tool-buffer.js";
 import { getPool } from "./worker-pool.js";
 import type { WorkerEvent } from "./worker.js";
@@ -183,6 +189,46 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // name must match the writer EXACTLY or it silently flatlines.
       const thinkLevel = pipedOptions.__openclawThinkLevel;
       const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt, openclawSessionId);
+      // FORK 2026-06-11: per-call EFFORT truth-tuple stream. Computed
+      // server-side so it reports the same facts at EVERY UI level (incl
+      // Auto), independent of whether the client requested thinking. The
+      // configured budget mirrors worker.ts:628-630 — the actual
+      // MAX_THINKING_TOKENS the worker pins for this run (undefined for
+      // off/unset → reported as 0). `hadRealThinking` distinguishes a genuine
+      // reasoning stream from the lone "[redacted reasoning]" placeholder
+      // (≤18 chars) pushed by the redacted_thinking arm.
+      const configuredBudget = thinkLevelToMaxThinkingTokens(
+        thinkLevel,
+        maxOutputTokensFor(model.id),
+      );
+      let lastEffortEmitAt = 0;
+      let sawRedactedThinking = false;
+      const emitEffort = (final: boolean, extra?: Record<string, unknown>) => {
+        if (!runId) {
+          return;
+        }
+        const now = Date.now();
+        if (!final && now - lastEffortEmitAt < 1500) {
+          return;
+        }
+        lastEffortEmitAt = now;
+        emitAgentEvent({
+          runId,
+          sessionKey: openclawSessionKey,
+          stream: "effort",
+          data: {
+            phase: final ? "final" : "live",
+            thinkLevel: thinkLevel ?? "off",
+            configuredBudget: configuredBudget ?? 0,
+            thinkingChars: accumulatedThinking.length,
+            hadRealThinking:
+              accumulatedThinking.length > 0 &&
+              !(sawRedactedThinking && accumulatedThinking.length <= 18),
+            redacted: sawRedactedThinking,
+            ...(extra ?? {}),
+          },
+        });
+      };
       const toolLastNarration = new Map<string, string>();
       let pendingToolNarration = "";
       // FORK 2026-04-27: per-block-index cumulative state so each text /
@@ -501,6 +547,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         pushStart();
         pushThinkingStart();
         accumulatedThinking += delta;
+        emitEffort(false);
         log.info(
           `[duprep] thinking_delta sessionKey=${sessionKey} delta.len=${delta.length} accumulated.len=${accumulatedThinking.length} preview=${JSON.stringify(previewDelta(delta))}`,
         );
@@ -811,6 +858,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               // re-emits of the same assistant message push it only ONCE per
               // block index — same dedupe contract as the `thinking` arm.
               if (!blockThinkingSeen.has(bi)) {
+                sawRedactedThinking = true;
                 pushThinkingDelta("[redacted reasoning]");
                 blockThinkingSeen.set(bi, "[redacted reasoning]");
               }
@@ -968,6 +1016,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         log.info(
           `turn result sessionKey=${sessionKey} subtype=${result.subtype} is_error=${result.is_error} num_turns=${result.num_turns} duration_ms=${result.duration_ms} output_tokens=${usage.output} final_text_len=${accumulatedText.length} result_text=${(result.result ?? "").slice(0, 500)}`,
         );
+        // FORK 2026-06-11: fire the FINAL effort tuple ONCE here, where usage +
+        // result are in scope and BEFORE the is_error early-return below — so
+        // the terminal tuple lands on success AND on error/max-turns terminal
+        // paths (the is_error arm returns early without reaching turn end).
+        emitEffort(true, { output_tokens: usage.output, num_turns: result.num_turns });
         // FORK 2026-05-29 (truncation diagnostic): if the model stopped because
         // it hit the output-token ceiling, the answer is genuinely cut mid-
         // generation — distinct from a UI/display truncation. Surface it loudly
