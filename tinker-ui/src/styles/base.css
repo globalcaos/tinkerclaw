@@ -6166,6 +6166,10 @@ code.fs-link.fs-link-error {
 .model-think-slider-row {
   /* vertical stack so the slider can span the full panel width with the
      selected-type label rendered on its own line below it. */
+  /* .model-group-body is a grid (minmax(0,auto) 1fr auto auto); this row is a
+     grid child, so span ALL columns to occupy the full panel width (incl. the
+     space under the green/orange token-usage bars), like .model-row does. */
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   align-items: stretch;
