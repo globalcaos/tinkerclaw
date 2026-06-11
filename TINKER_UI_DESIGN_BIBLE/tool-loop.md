@@ -25,6 +25,10 @@ verify:
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/protocol.ts")).read(); assert "server_tool_use" in t and "web_search_tool_result" in t and "redacted_thinking" in t, "the forward-compat CcContentBlock arms (server_tool_use / web_search_tool_result / redacted_thinking) are missing from protocol.ts — claude-cli currently normalizes WebSearch/WebFetch into plain tool_use/tool_result, but the typed arms must stay so a future schema bump does not fall into the open-ended forward-compat catch-all undecoded"'
   - name: cc-bridge emits a turn-incomplete lifecycle event for any non-success result.subtype (FORK 2026-06-11)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "turn-incomplete" in t, "the phase:\"turn-incomplete\" lifecycle event is missing from stream.ts — error_max_turns / error_during_execution / generic error results no longer badge the run as incomplete. It MUST be emitted from the result/done branch BEFORE the is_error early-return, because done is always stopReason:\"stop\" and pi-ai StopReason has no incomplete member, so a non-success subtype can only be surfaced as a free-form lifecycle event."; assert "flattenResultContent" in t, "the exported flattenResultContent helper is no longer used in stream.ts — tool_result content blocks (string | CcContentBlock[]) must be flattened to plain text through the shared helper"'
+  - name: cc-bridge sets MAX_THINKING_TOKENS as the third native Claude Code env knob on the claude child (FORK 2026-06-11 — per-session thinking budget)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker.ts")).read(); assert "MAX_THINKING_TOKENS" in t, "MAX_THINKING_TOKENS is gone from worker.ts — the per-session thinking-budget knob (the third native Claude Code env var cc-bridge sets on the claude child, alongside CLAUDE_CODE_MAX_OUTPUT_TOKENS) must be in allowedKeys and set from the resolved per-session think level; for level off the var is OMITTED, not set to 0"'
+  - name: the resolved think level rides the pi-ai options smuggle as __openclawThinkLevel into stream.ts (FORK 2026-06-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "__openclawThinkLevel" in t, "__openclawThinkLevel is gone from stream.ts — the per-run think level no longer rides the existing pi-ai options smuggle from attempt.ts into pool.getOrCreate; the worker child will spawn without the per-session thinking budget"'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
@@ -265,6 +269,46 @@ The result/done branch now emits a free-form **`stream:"lifecycle"` `phase:"turn
 #### 3. Exported `flattenResultContent` helper
 
 The `tool_result` content-flattening that was inline in the `user`-role stream-line handler (a `tool_result.content` is `string | CcContentBlock[]`; the array form must be reduced to plain text by concatenating the `text` of its `text` blocks) is now an **exported `flattenResultContent` helper**. It is the single place that turns a `CcContentBlock` `tool_result` payload into the `resultText` string fed to `emitToolResult`, so the array-of-blocks case and the plain-string case decode identically everywhere they appear.
+
+### Per-session thinking budget — `MAX_THINKING_TOKENS` (FORK 2026-06-11)
+
+cc-bridge now sets a **per-session thinking budget** on the spawned `claude` child via the native Claude Code env knob `MAX_THINKING_TOKENS`. This is the **third** native Claude Code env var cc-bridge sets on the child, alongside `CLAUDE_CODE_MAX_OUTPUT_TOKENS` (the output cap) — and like that one it is added to `worker.ts`'s `allowedKeys` so the env scrub (which strips `ANTHROPIC_API_KEY` et al., see Auth) lets it through to the subprocess. It is **set from the resolved per-session think level**: a higher think level buys the model a bigger interleaved-thinking budget for the turn.
+
+#### Level → budget map
+
+The per-session think level maps to a `MAX_THINKING_TOKENS` value as follows:
+
+| level      | `MAX_THINKING_TOKENS`               |
+| ---------- | ----------------------------------- |
+| `off`      | **omitted** (var not set — NOT `0`) |
+| `minimal`  | 2 000                               |
+| `low`      | 4 000                               |
+| `medium`   | 8 000                               |
+| `adaptive` | 8 000                               |
+| `high`     | 16 000                              |
+| `xhigh`    | 22 000                              |
+| `max`      | 28 000                              |
+
+The resolved value is **clamped to `maxOutputTokensFor(model) - 4000`** so the thinking budget can never crowd out the answer — at least 4 000 tokens of the model's output budget are always reserved for the natural-language reply regardless of the level requested. For level `off` the variable is **omitted entirely** (deleted from the child env), not set to `0`: omission lets claude-cli fall back to its own default thinking behaviour, whereas an explicit `0` would be a distinct (and stricter) instruction.
+
+#### The per-run plumbing
+
+The think level is resolved on the core side and travels to the worker spawn through the **existing pi-ai options smuggle** — the same side-channel the run already uses to carry fork-only knobs that pi-ai's typed options shape has no field for:
+
+1. `src/agents/embedded-agent-runner/run/attempt.ts` resolves the per-session think level and writes it onto the pi-ai options as **`__openclawThinkLevel`** (the smuggle key).
+2. `extensions/tinkerclaw-cc-bridge/src/stream.ts` reads `__openclawThinkLevel` off the options and passes it down to `pool.getOrCreate(...)`.
+3. The worker pool threads it into the `worker` spawn, where `worker.ts` maps the level → budget (table above, clamped) and sets `MAX_THINKING_TOKENS` in the child's `env` (omitting it for `off`).
+
+#### Next-message semantics (env is read at child spawn)
+
+`MAX_THINKING_TOKENS`, like every process env var, is read by the `claude` child **at spawn time only** — it cannot change for an already-running subprocess. So a **pooled worker keeps the budget it was spawned with for the life of that process**: changing the session's think level does NOT re-budget the in-flight (or even the next, same-process) turn. The new level takes effect only when the worker is **respawned** (pool eviction / a fresh worker for the session). In practice: bump the level, and the change lands on the next turn that happens to spawn a fresh child — not necessarily the very next message. This mirrors the heartbeat/idle-timeout knobs, which are likewise per-spawn.
+
+**Don't regress:**
+
+- Keep `MAX_THINKING_TOKENS` in `worker.ts`'s `allowedKeys`. If it falls out of the allow-list, the env scrub strips it before spawn and the per-session budget silently reverts to claude-cli's default for every level.
+- For level `off`, **omit** the var — do not set it to `0`. Omission and `0` are different instructions to claude-cli.
+- Keep the clamp to `maxOutputTokensFor(model) - 4000`. Without it, a high/xhigh/max level on a small-output model can starve the answer.
+- The level travels as `__openclawThinkLevel` on the pi-ai options smuggle; do not try to add a typed pi-ai field for it (pi-ai's options shape is upstream-owned — that is exactly why the smuggle exists).
 
 ### Auth
 
