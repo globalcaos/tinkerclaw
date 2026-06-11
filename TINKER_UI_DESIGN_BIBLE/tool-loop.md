@@ -29,6 +29,12 @@ verify:
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker.ts")).read(); assert "MAX_THINKING_TOKENS" in t, "MAX_THINKING_TOKENS is gone from worker.ts — the per-session thinking-budget knob (the third native Claude Code env var cc-bridge sets on the claude child, alongside CLAUDE_CODE_MAX_OUTPUT_TOKENS) must be in allowedKeys and set from the resolved per-session think level; for level off the var is OMITTED, not set to 0"'
   - name: the resolved think level rides the pi-ai options smuggle as __openclawThinkLevel into stream.ts (FORK 2026-06-11)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "__openclawThinkLevel" in t, "__openclawThinkLevel is gone from stream.ts — the per-run think level no longer rides the existing pi-ai options smuggle from attempt.ts into pool.getOrCreate; the worker child will spawn without the per-session thinking budget"'
+  - name: cc-bridge stream.ts emits the server-computed stream:"effort" agent-event (FORK 2026-06-11 — actual-effort telemetry)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "effort" in t and "thinkingChars" in t and "hadRealThinking" in t, "the server-computed stream:\"effort\" agent-event (fields thinkingChars / hadRealThinking / configuredBudget …) is gone from stream.ts — the UI effort chip loses its only honest signal for how much the model actually thought. It is computed SERVER-SIDE from accumulatedThinking so it works at every level incl Auto; do not move the computation to the client (the client never sees accumulatedThinking)."'
+  - name: the think-level-pending lifecycle phase is emitted when a level change is deferred behind a busy warm worker (FORK 2026-06-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "think-level-pending" in t, "the phase:\"think-level-pending\" lifecycle event is missing from stream.ts — when a think-level change lands on a BUSY warm worker the new budget is deferred one turn (env is read at spawn only), and the UI needs this badge to tell the user the new effort applies next turn rather than now. Without it the chip silently lies about the active budget for one turn."'
+  - name: worker-pool getOrCreate compares thinkLevel so a level change is not swallowed by a warm worker (FORK 2026-06-11 — the warm-worker thinkLevel LAG fix)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker-pool.ts")).read(); assert "thinkLevel" in t, "getOrCreate no longer references thinkLevel — it would hand back the warm worker WITHOUT comparing the requested thinkLevel to the one it was spawned with, so a level change is swallowed until the worker happens to be evicted (the warm-worker thinkLevel LAG). On an idle level-change getOrCreate must evict+respawn with the new MAX_THINKING_TOKENS (--resume re-attaches the same claude conversation, history preserved); on a busy worker it must defer one turn and record the pending level."'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
@@ -309,6 +315,59 @@ The think level is resolved on the core side and travels to the worker spawn thr
 - For level `off`, **omit** the var — do not set it to `0`. Omission and `0` are different instructions to claude-cli.
 - Keep the clamp to `maxOutputTokensFor(model) - 4000`. Without it, a high/xhigh/max level on a small-output model can starve the answer.
 - The level travels as `__openclawThinkLevel` on the pi-ai options smuggle; do not try to add a typed pi-ai field for it (pi-ai's options shape is upstream-owned — that is exactly why the smuggle exists).
+
+### Per-session effort visibility — warm-worker LAG fix, the `stream:"effort"` contract, Auto semantics, honest limits (FORK 2026-06-11)
+
+The per-session thinking budget above (`MAX_THINKING_TOKENS`) is set at child **spawn time only**. That spawn-time-only nature created a latency bug, and surfacing "how much did the model actually think this turn" to the UI needed a new server-computed event. Both are documented here.
+
+#### (a) The warm-worker `thinkLevel` LAG + fix
+
+**Root cause:** `worker-pool.ts` `getOrCreate(params)` returned the warm pooled worker the instant it was alive (`existing && existing.isAlive() → return existing`) **without comparing `params.thinkLevel` to the level the warm worker was spawned with**. Because `MAX_THINKING_TOKENS` is read by the `claude` child only at spawn, a level change made on a session that already had a warm worker was **silently swallowed** — the new budget did not take effect until the worker happened to be evicted (idle-TTL or LRU) and respawned, which could be many turns later. The slider moved, the chip claimed the new level, but the running process kept the old budget. That is the **warm-worker `thinkLevel` LAG**.
+
+**Fix:** `getOrCreate` now compares the requested `thinkLevel` against the warm worker's spawned level and, on a change, does one of two things depending on whether the worker is busy:
+
+- **idle warm worker (`!isBusy()`)** → **evict + respawn** with the new `MAX_THINKING_TOKENS`. Respawn uses `--resume <sessionId>` (the same path the post-eviction code already takes), so claude-cli **re-attaches the same conversation thread — history is preserved**; only the env-baked thinking budget changes. The new level is live on **this** turn.
+- **busy warm worker (`isBusy()`, mid-turn)** → **defer one turn**: the in-flight turn keeps the budget it was spawned with (env can't change for a running process), the new level is **recorded as pending**, and a **`phase:"think-level-pending"`** lifecycle event is emitted so the UI can badge "new effort applies next turn." The pending level is consumed on the next `getOrCreate` for that session (which respawns the now-idle worker with the new budget).
+
+**Don't regress:** `getOrCreate` MUST keep comparing `thinkLevel` before handing back a warm worker; deleting that comparison reintroduces the LAG. Never kill a **busy** worker to apply a level change — that orphans the in-flight `send()` promise and defeats the queue-not-SIGTERM contract; defer instead.
+
+#### (b) The `stream:"effort"` agent-event contract
+
+cc-bridge's `stream.ts` now emits a **`stream:"effort"`** agent event (same `emitAgentEvent` envelope as the `phase:"start"`/`phase:"end"` lifecycle events) so the UI can show **how much the model actually thought** this turn — not just the requested cap. It is emitted **throttled-live** during the turn (so the chip animates as thinking accumulates) and **once-final** at turn end. Fields:
+
+| field              | meaning                                                                                                                 |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `phase`            | `"live"` for the throttled mid-turn emits, `"final"` for the single end-of-turn emit                                    |
+| `thinkLevel`       | the resolved per-session level for this turn (`""`/Auto, `off`, `minimal`…`max`)                                        |
+| `configuredBudget` | the `MAX_THINKING_TOKENS` value the child was spawned with (the **requested cap**; omitted/null for Auto and for `off`) |
+| `thinkingChars`    | `accumulatedThinking.length` so far — the **actual-effort** measure (CHARACTERS of real thinking)                       |
+| `hadRealThinking`  | boolean — true once any non-empty thinking delta has arrived (distinguishes "thought" from "answered cold")             |
+| `redacted`         | true when the thinking was present but its size is hidden (redacted-thinking block) — present-but-size-unknown          |
+| `output_tokens`    | from the result usage; **mixes thinking + answer** (there is no separate thinking-token count — see honest limits)      |
+| `num_turns`        | claude-cli's internal turn count for the run                                                                            |
+
+**Computed SERVER-SIDE.** The values are derived inside `stream.ts` from `accumulatedThinking` (and the result usage), so the chip works **at every level including Auto** — the client never sees `accumulatedThinking`, only the converted text deltas, so it could not compute `thinkingChars` itself. **Per-subagent automatically**: `attempt.ts` re-wraps the `streamFn` per attempt, so each spawned subagent's run goes through its own `stream.ts` instance and emits its own `effort` events — no per-subagent wiring needed.
+
+#### (c) The `think-level-pending` lifecycle phase
+
+When a level change lands on a **busy** warm worker (see (a)), `stream.ts` emits a free-form **`stream:"lifecycle"` `phase:"think-level-pending"`** event carrying the pending level. The UI reads it to badge that the **new effort applies on the next turn**, not the in-flight one. Like `phase:"turn-incomplete"`, it is an **additive** badge — it does not replace `phase:"end"` and does not ride the pi-ai `StopReason` enum (which has no member for it).
+
+#### (d) AUTO semantics (`thinkLevel === ""`)
+
+`thinkLevel === ""` (the Auto stop) means **`MAX_THINKING_TOKENS` is OMITTED** from the child env — the model **decides its own thinking budget** for the turn. Auto is **NOT** `off`, and **NOT** a fixed tier: a live Auto turn was observed producing **3 381 chars of real thinking**. **Never set the env to `0`** for Auto (or for `off`) — `0` is a distinct, stricter instruction to claude-cli; omission is the only correct encoding for "let the model choose."
+
+**⚠ Red herring — the gateway-log `thinking.len` field is ALWAYS `0`.** The `[duprep] … thinking.len=N` / `progress … thinking.len=N` log lines in `stream.ts` report `0` even on a turn with thousands of chars of real thinking, so DO NOT use `thinking.len` to judge whether the model thought. The real thinking measure is **`accumulated.len` / `accumulatedThinking.length`** (the same value `thinkingChars` carries in the effort event). Reading `thinking.len` as "the model didn't think" is the trap.
+
+#### (e) HONEST LIMITS — there is no provider reasoning-token count
+
+There is **no provider-reported reasoning-token count** available to cc-bridge: claude-cli's usage payload (`CcUsage`) has **no thinking-token field**, and `output_tokens` **mixes thinking + answer** in one number. So the honest "actual effort" measure is **thinking CHARACTERS (`thinkingChars`) plus the `hadRealThinking` boolean** — never a fabricated reasoning-token number. Do not synthesize a "reasoning tokens: N" figure; if a token-shaped number is shown anywhere it can only be `configuredBudget` (the requested cap) or `output_tokens` (the mixed total), each labelled as such. **Non-claude providers do not route through cc-bridge**, so they emit **no `effort` event at all** — the chip is a claude-code-only surface, and its absence on other providers is correct, not a bug.
+
+**Don't regress (effort visibility):**
+
+- `thinkingChars` / `hadRealThinking` MUST be computed in `stream.ts` from `accumulatedThinking`, never on the client (the client lacks the raw thinking stream).
+- Never read the log `thinking.len` field as the effort measure — it is always `0`; use `accumulatedThinking.length`.
+- For Auto (`""`) and `off`, OMIT `MAX_THINKING_TOKENS`; never write `0`.
+- Never present `output_tokens` or any token number as a "reasoning-token count" — there is no such count; the honest effort measure is chars + a boolean.
 
 ### Auth
 
