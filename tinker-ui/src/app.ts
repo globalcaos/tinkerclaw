@@ -7394,6 +7394,16 @@ function updateBudgetPanel() {
     html += '<div class="model-group-body">';
     for (let i = 0; i < chain.length; i++) {
       renderAuthKeyRows(chain[i], "");
+      // FORK 2026-06-11 — tinkerui-slider: render the per-tab 8-stop thinking
+      // slider INLINE, directly under the #1 (primary) model row inside the
+      // FALLBACK CHAIN card's .model-group-body, so it ALWAYS appears. This
+      // replaces the old post-innerHTML querySelector insertion keyed on the
+      // session's .model field (which is empty until a run reports it, so the
+      // slider never showed). renderThinkingSlider() reads the active session's
+      // thinkingLevel directly — no activeModel dependency.
+      if (i === 0) {
+        html += renderThinkingSlider();
+      }
     }
     html += "</div></div>";
   }
@@ -7426,21 +7436,6 @@ function updateBudgetPanel() {
 
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
   el.innerHTML = html;
-
-  // FORK 2026-06-11 — tinkerui-slider: place the per-tab 8-stop thinking slider
-  // directly UNDER the active tab's model row. The active model id is read from the
-  // viewed session (sessionKey); model ids are simple (e.g.
-  // claude-code/claude-opus-4-8) so the raw id is safe inside the attribute
-  // selector. Slider markup is built by renderThinkingSlider() from the same
-  // session, and re-renders here on every tab switch / session update via
-  // refreshViewedSessionIndicators() -> updateBudgetPanel().
-  const activeModel = sessions.find((s) => (s as any).key === sessionKey)?.model;
-  if (activeModel) {
-    const row = el.querySelector('.model-row[data-model-id="' + activeModel + '"]');
-    if (row) {
-      row.insertAdjacentHTML("afterend", renderThinkingSlider());
-    }
-  }
 
   // Bind collapse toggles
   el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
@@ -7638,7 +7633,7 @@ function renderModelRow(
   const nameParts =
     esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
 
-  return `<div class="model-row${liveClass}${errorClass}" data-model-id="${esc(id)}"${glowStyle}>
+  return `<div class="model-row${liveClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${barsHtml}
     ${costHtml}
