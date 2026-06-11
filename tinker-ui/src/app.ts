@@ -4359,6 +4359,10 @@ async function send(text: string) {
 
     updateChat();
     scrollChat();
+    // FORK 2026-06-11 — tinkerui-slider: /clear rotated `sessionKey` (above, for
+    // non-main tabs); re-paint the strip so its model badge + slider reflect the
+    // freshly-rotated key rather than the archived session's state.
+    renderThinkStrip();
 
     // Server-side cascade. Fire-and-forget; failures are non-fatal — worst
     // case the next chat.send auto-creates a fresh entry on the new key.
@@ -7750,11 +7754,73 @@ const GROUP_LABELS: Record<string, string> = {
 
 const GROUP_ORDER = ["pinned", "whatsapp", "cron", "subagent", "other"];
 
+// FORK 2026-06-11 — tinkerui-slider: per-tab model badge + 8-stop thinking slider.
+// The 8 stops IN ORDER (index 0 = Off = '' / null). The slider's min=0 max=7
+// step=1 maps directly onto this array; the level STRING is what sessions.update
+// persists (index 0 -> null). Module-level so the markup, the listener and the
+// re-render helper share one source of truth.
+const THINK_STOPS: { lvl: string; label: string }[] = [
+  { lvl: "", label: "Off" },
+  { lvl: "minimal", label: "Minimal" },
+  { lvl: "low", label: "Low" },
+  { lvl: "medium", label: "Medium" },
+  { lvl: "adaptive", label: "Adaptive" },
+  { lvl: "high", label: "High" },
+  { lvl: "xhigh", label: "xHigh" },
+  { lvl: "max", label: "Max" },
+];
+
+function thinkStopIndexForLevel(level: unknown): number {
+  const lv = typeof level === "string" ? level : "";
+  const i = THINK_STOPS.findIndex((s) => s.lvl === lv);
+  return i >= 0 ? i : 0;
+}
+
+// FORK 2026-06-11 — tinkerui-slider: (re)paint the chat-area thinking strip from
+// the CURRENTLY-VIEWED session. Reads the established `sessionKey` module global
+// and the `sessions` list (see attachSessionToTab ~line 7072 for the canonical
+// `sessions.find((s) => s.key === sessionKey)` lookup). Built imperatively so the
+// dynamic bits never enter the .chat-area tagged-template innerHTML (where a stray
+// backtick crashes the page to black — see app.ts:8154). The .tab-think-* CSS is
+// owned by a sibling unit; this only owns the markup + state.
+function renderThinkStrip(): void {
+  const strip = $("tab-think-strip");
+  if (!strip) {
+    return;
+  }
+  const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
+    | { model?: string; thinkingLevel?: string }
+    | undefined;
+  const rawModel = active?.model ?? "";
+  const modelLabel = rawModel ? modelName(rawModel) || rawModel : "auto";
+  const idx = thinkStopIndexForLevel(active?.thinkingLevel);
+  const stop = THINK_STOPS[idx] ?? THINK_STOPS[0];
+  // Plain string '+' concatenation — NO nested template literals (this is set as
+  // innerHTML; the no-backtick rule is about not breaking the .chat-area template,
+  // and keeping this branch backtick-free keeps the whole strip path uniform).
+  strip.innerHTML =
+    '<span class="tab-think-model" title="Active model for this tab">' +
+    esc(modelLabel) +
+    "</span>" +
+    '<input type="range" class="tab-think-slider" min="0" max="7" step="1" value="' +
+    String(idx) +
+    '" aria-label="Thinking level">' +
+    '<span class="tab-think-label">' +
+    esc(stop.label) +
+    "</span>" +
+    '<span class="tab-think-hint">applies next message</span>';
+}
+
 function updateSessionsPanel() {
   const el = $("sessions-list");
   if (!el) {
     return;
   }
+  // FORK 2026-06-11 — tinkerui-slider: the sessions refresh is the central
+  // viewed-session re-derive path (called from refreshViewedSessionIndicators),
+  // so the strip's model badge + slider track the active session here — picking
+  // up the model once a run reports it and the level after any write.
+  renderThinkStrip();
   const countEl = $("sessions-count");
   if (countEl) {
     countEl.textContent = `(${sessions.length})`;
@@ -8188,6 +8254,13 @@ function init() {
     <div class="alt-view" id="alt-view"></div>
     <div class="chat-area">
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
+      <!-- FORK 2026-06-11 — tinkerui-slider: per-tab model badge + 8-stop thinking
+           slider, shown under the active model and above the composer. This div
+           is a STATIC placeholder (NO backticks, NO dynamic interpolation — the
+           enclosing innerHTML is a tagged template literal and an inner backtick
+           crashes the page to black, see app.ts:8154). renderThinkStrip() fills
+           it imperatively from the viewed session. .tab-think-* CSS = sibling unit. -->
+      <div class="tab-think-strip" id="tab-think-strip"></div>
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
         <button id="action-btn" disabled>Send</button>
@@ -8380,6 +8453,54 @@ function init() {
       ta.focus();
     }
   });
+  // FORK 2026-06-11 — tinkerui-slider: OWN listeners for the chat-area thinking
+  // strip. The altView `change` delegate (~line 12563) is scoped to #alt-view and
+  // will NOT catch a chat-area control, so the strip wires its own handlers here.
+  // `input` updates the .tab-think-label live as the user drags; `change` (drag
+  // release) persists. The patch is ONLY { thinkingLevel } — any other field
+  // trips rejectWebchatSessionMutation (~app.ts:3897). Index 0 -> null (= Off).
+  const thinkStrip = $("tab-think-strip");
+  if (thinkStrip) {
+    const readStop = (e: Event) => {
+      const slider = (e.target as HTMLElement).closest(
+        ".tab-think-slider",
+      ) as HTMLInputElement | null;
+      if (!slider) {
+        return null;
+      }
+      const idx = Math.max(0, Math.min(THINK_STOPS.length - 1, Number(slider.value) || 0));
+      return THINK_STOPS[idx] ?? THINK_STOPS[0];
+    };
+    thinkStrip.addEventListener("input", (e) => {
+      const stop = readStop(e);
+      if (!stop) {
+        return;
+      }
+      const label = thinkStrip.querySelector(".tab-think-label");
+      if (label) {
+        label.textContent = stop.label;
+      }
+    });
+    thinkStrip.addEventListener("change", (e) => {
+      const stop = readStop(e);
+      if (!stop) {
+        return;
+      }
+      const label = thinkStrip.querySelector(".tab-think-label");
+      if (label) {
+        label.textContent = stop.label;
+      }
+      if (sessionKey) {
+        req("sessions.update", {
+          key: sessionKey,
+          patch: { thinkingLevel: stop.lvl || null },
+        }).catch(() => {});
+      }
+    });
+  }
+  // Paint the strip once for the initial viewed session (refreshViewedSessionIndicators
+  // keeps it in sync thereafter via updateSessionsPanel).
+  renderThinkStrip();
   // Session-select dropdown removed — tabs handle session switching now
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
