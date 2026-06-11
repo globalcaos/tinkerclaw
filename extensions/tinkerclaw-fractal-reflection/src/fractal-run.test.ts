@@ -186,7 +186,8 @@ describe("runTriage", () => {
     expect(row.findings?.[0]).toMatchObject({
       kind: "staleness-artifact",
       recurrenceCount: 3,
-      evidence: { path: file, verbatimQuote: "the quoted line is here" },
+      path: file,
+      quote: "the quoted line is here",
     });
     expect(ledger.recurrenceCount).toHaveBeenCalledWith("staleness-artifact", file);
     expect(row.abstainedFindings).toBe(0);

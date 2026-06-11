@@ -192,7 +192,7 @@ export class FractalLedger {
       if (row.escalated) {
         escalatedCount += 1;
       }
-      if (row.abstained) {
+      if ((row.abstainedFindings ?? 0) > 0) {
         abstainedCount += 1;
       }
       if (status === "acted" || status === "applied") {
