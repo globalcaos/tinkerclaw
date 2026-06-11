@@ -7770,7 +7770,7 @@ const GROUP_ORDER = ["pinned", "whatsapp", "cron", "subagent", "other"];
 // persists (index 0 -> null). Module-level so the markup, the listener and the
 // re-render helper share one source of truth.
 const THINK_STOPS: { lvl: string; label: string }[] = [
-  { lvl: "", label: "Off" },
+  { lvl: "", label: "Auto" },
   { lvl: "minimal", label: "Minimal" },
   { lvl: "low", label: "Low" },
   { lvl: "medium", label: "Medium" },
@@ -7809,7 +7809,6 @@ function renderThinkingSlider(): string {
     '<span class="model-think-label">' +
     esc(stop.label) +
     "</span>" +
-    '<span class="model-think-hint">applies next message</span>' +
     "</div>"
   );
 }
