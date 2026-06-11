@@ -1919,6 +1919,7 @@ export async function runEmbeddedAttempt(
             __openclawRunId: pipedRunId,
             __openclawSessionKey: pipedSessionKey,
             __openclawSessionId: pipedSessionId,
+            __openclawThinkLevel: params.thinkLevel,
           } as typeof options;
           return piped(model, context, pipedOptions);
         };
