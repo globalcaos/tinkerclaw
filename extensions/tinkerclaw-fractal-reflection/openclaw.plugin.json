@@ -1,22 +1,65 @@
 {
   "id": "tinkerclaw-fractal-reflection",
+  "name": "Fractal Reflection",
+  "description": "v3 parallel post-turn reflection (bible §5.67a/b — supersedes the v1 in-band follow-up injector): a read-only triage lane grades each finished turn out-of-band, escalates real findings to a budgeted fix lane, records every decision (including skips) in a ledger, and runs under a derived quota governor with suspend/resume kill switch.",
   "activation": {
     "onStartup": true
   },
-  "name": "Fractal Reflection",
-  "description": "Post-turn self-reflection with 4-level framework. The agent reflects on what it did, finds patterns, and improves.",
+  "enabledByDefault": false,
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "debounceMs": {
-        "type": "number",
-        "default": 30000,
-        "description": "Minimum ms between reflections per session"
-      },
       "enabled": {
         "type": "boolean",
-        "default": true
+        "default": true,
+        "description": "Runtime master toggle. The plugin entry itself ships enabledByDefault:false — go-live is an explicit witnessed plugins.entries flag flip (bible §5.67b Deploy)."
+      },
+      "triageArm": {
+        "type": "string",
+        "enum": ["cold", "observer", "fork-warm"],
+        "default": "cold",
+        "description": "Triage transport arm. cold = fresh spawn (Drop 1, zero core code); observer = persistent per-main-session observer fed per-turn delta digests; fork-warm = --fork-session warm-cache fork (locks fixModel/model = parent — caches are per-model)."
+      },
+      "triageThinkLevel": {
+        "type": "string",
+        "default": "low",
+        "description": "Think level for triage-lane spawns. Triage is structurally read-only (disallowedTools), so keep it cheap."
+      },
+      "fixThinkLevel": {
+        "type": "string",
+        "default": "max",
+        "description": "Think level for escalated fix-lane spawns."
+      },
+      "fixModel": {
+        "type": "string",
+        "description": "Optional model override for fix-lane spawns. Default = the parent session's main model. Invalid for models with reasoning:false on thinking arms; fork-warm triage locks model = parent."
+      },
+      "laneConcurrency": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 1,
+        "description": "Concurrency for the fractal command lanes (fractal-triage / fractal-fix)."
+      },
+      "maxFixTurnsCeiling": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 25,
+        "description": "Safety CEILING (design-principle #19) on a fix spawn's --max-turns; the working turn budget is derived per-spawn from the finding's scope and capped here. Exhaustion winds down gracefully (flagged + incomplete:true), never counts toward the circuit breaker."
+      },
+      "maxFixSpawnsPerHour": {
+        "type": "integer",
+        "minimum": 0,
+        "default": 10,
+        "description": "Governor fallback CEILING on fix-lane spawns per hour, used when no fresh quota signal exists (fail-to-neutral throttle branch). The derived pressure score, not this number, is the primary throttle."
+      },
+      "artifactRoots": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [],
+        "description": "Extra filesystem roots the fix lane may treat as artifact targets (in addition to runtime defaults in types.ts)."
       }
     }
   }
