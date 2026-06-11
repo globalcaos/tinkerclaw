@@ -401,6 +401,16 @@ stateDiagram-v2
 
 Every transition emits a provenance trail verb (`searched`/`matched`/`merged`/`composed`/`authored`) the RECIPES panel renders as its decision trail.
 
+## Authoring recipes — the parameterized, shareable pattern (FORK 2026-06-11)
+
+A recipe is authored two ways: the `prefrontal.recipe.author` RPC (validates a RecipeSpec → `buildRecipeMd` → sandboxed write) or by dropping a canonical `recipe.md` on disk (the matcher scans `ownRecipesDir`; same effect). Both land at `extensions/tinkerclaw-prefrontal/recipes/<slug>/recipe.md`.
+
+**GOTCHA — `params` is NOT in the author RPC schema.** `PrefrontalKitAuthorParamsSchema` (prefrontal-kit.ts) is `additionalProperties:false` and has no `params` field, so a `prefrontal.recipe.author` call carrying `params` is rejected (`(root) must NOT have additional properties`). SS-params added `params` to recipe-author.ts's `RecipeSpec` + `buildRecipeMd` + `recipe-parse.ts`, but never to the RPC param schema. → To author a PARAMETERIZED recipe, **write the canonical `recipe.md` directly** (replicate `buildRecipeMd`'s frontmatter incl. the `params:` inline-flow block); the runner + matcher read it fine. (Fix-forward: add `params` to `PrefrontalKitAuthorParamsSchema`.)
+
+**The shareable/private pattern (architect rule, 2026-06-11).** Make every recipe a bare-bones, shareable template: abstract product/business specifics into typed `params` declared in frontmatter and referenced as `{{name}}` in step bodies — the `.md` then contains NO private specifics, so it is reusable by anyone and safe to publish. The real values live ONLY in the PRIVATE VarStore (`~/.openclaw/recipe-vars.json` — gitignored, chmod 600) under the **`"global"`** scope (checked for every recipe in the resolution precedence: call-site → recipe-scope → **global** → env → default → context → memory → ask). Mark genuinely-sensitive vars `secret:true` (default stripped from the `.md`, masked in trails, never auto-resolved from context/memory). Bonus: parameterizing forces the abstraction that makes a recipe generalize beyond our use (e.g. `create-sales-offer` lifted from the SerraVision offer; the `marketing-*` campaign suite). Verified live: the seeded `global` scope resolves `{{owned_site}}` etc. for any recipe declaring them.
+
+Discipline: every `{{param}}` in prose MUST be declared (`checkParamRefs`); names can't be reserved (`item`/`index`/`steps.*`); `required` + `default` are mutually exclusive. Bundle/orchestrator recipes compose others: each step body leads with `uses: <owner/slug>` (runtime recursion, depth ≤ `MAX_USES_DEPTH=3`) — sub-recipes stay standalone-runnable. Because a parameterized `.md` leaks nothing, it is safe to commit/share; `recipe-vars.json` stays gitignored.
+
 ## The OSS-harness upgrades — how recipes/skills/plans LEARN (FORK 06f8647fdc, 2026-06-02)
 
 Twelve OSS-harness upgrades landed together on `develop` (`06f8647fdc` on top of `70ad58e45d`); the five that change how **recipes/kits/plans/skills behave** are owned here (U1, U5, U6, U11, U12). The Cerebellum-side STORES they read/write — `recipe-archive/`, `skill-library/`, `failure-state.json` — are owned by `memory-layout.md`; the gateway RPC SURFACE (`fork.skill.*`, `fork.prefrontal.*`) is owned by `probes.md`. This optic owns the BEHAVIOR.
