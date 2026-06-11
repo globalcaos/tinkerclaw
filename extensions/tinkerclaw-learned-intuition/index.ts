@@ -507,6 +507,63 @@ export default definePluginEntry({
       }
     });
 
+    // -- Hook: llm_input (v3.1 incongruity gut-check, observe-only) --
+    // FORK 2026-06-11 (v3.1): on every user prompt, run the validated clause-cosine
+    // incongruity check (AUROC 0.896). If a request's action clause and purpose
+    // clause don't cohere ("build a chess game so I can water my plants"), surface
+    // an ASK signal in the Amygdala feed. Observe-only — it never blocks or alters
+    // the turn; it just shows the gut-feeling that something doesn't add up. Fires
+    // for cc-bridge too (llm_input runs in attempt.ts, which wraps the provider).
+    api.on("llm_input", async (event: { prompt?: string; runId?: string; sessionId?: string }) => {
+      await ensureInit();
+      if (!hookReady || !event.prompt) return;
+      try {
+        const inc = await hook.checkIncongruity(event.prompt);
+        if (!inc) return;
+        const record: AmygdalaDecisionRecord = {
+          ts: new Date().toISOString(),
+          tool: "user-prompt",
+          target: `${inc.head} ⇏ ${inc.tail}`.slice(0, 200),
+          decision: "soft_block",
+          blocked: false,
+          enforced: false,
+          reason: `Incongruous request (clause coherence ${inc.similarity.toFixed(3)}): the action and its stated purpose don't add up — would ask before acting.`,
+          mode: "novelty",
+          disposition: "ask",
+          signal: "incongruity",
+        };
+        recentDecisions.push(record);
+        if (recentDecisions.length > MAX_DECISIONS) recentDecisions.shift();
+        try {
+          mkdirSync(DATA_DIR, { recursive: true });
+          appendFileSync(AMYGDALA_DECISIONS_PATH, JSON.stringify(record) + "\n");
+        } catch {
+          /* persistence is best-effort */
+        }
+        try {
+          (api as unknown as { broadcast?: (e: string, p: unknown) => void }).broadcast?.(
+            "amygdala-decision",
+            record,
+          );
+        } catch {
+          /* broadcast is best-effort */
+        }
+        if (event.runId) {
+          emitAgentEvent({
+            runId: event.runId,
+            sessionKey: event.sessionId ?? "",
+            stream: "lifecycle",
+            data: { phase: "amygdala-decision", ...record },
+          });
+        }
+        log.info(
+          `[learned-intuition] incongruity flagged (sim=${inc.similarity.toFixed(3)}): "${inc.head}" ⇏ "${inc.tail}" — would ask`,
+        );
+      } catch (err) {
+        log.warn(`[learned-intuition] incongruity check failed: ${(err as Error).message}`);
+      }
+    });
+
     // FORK 2026-06-07 (Phase 1a): cc-bridge tools bypass the native before_tool_call
     // gate (Claude Code owns its tool loop), so the prudence nets never saw them. Here
     // we subscribe to cc-bridge tool-start events (marked `ccBridge`) and run the SAME
