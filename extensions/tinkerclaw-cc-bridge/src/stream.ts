@@ -78,6 +78,31 @@ function extractUserText(messages: Array<{ role: string; content: unknown }>): s
   return "";
 }
 
+// FORK 2026-06-11: flatten a tool_result `content` (string | block[]) into a
+// single string. Extracted verbatim from the inline tool_result arm so the
+// new web_search_tool_result arm (server-side web tools) reuses the EXACT
+// same flattening. Behavior preserved: string -> itself; block[] -> text
+// blocks joined by "\n" with empties filtered; anything else -> "".
+// Exported so the sibling cc-bridge test unit can exercise it directly.
+export function flattenResultContent(content: string | CcContentBlock[]): string {
+  return typeof content === "string"
+    ? content
+    : Array.isArray(content)
+      ? content
+          .map((c) => {
+            if (!c || typeof c !== "object") {
+              return "";
+            }
+            const typedBlock = c as { type?: string; text?: string };
+            return typedBlock.type === "text" && typeof typedBlock.text === "string"
+              ? typedBlock.text
+              : "";
+          })
+          .filter(Boolean)
+          .join("\n")
+      : "";
+}
+
 // FORK 2026-04-20 (extended 2026-04-27): derive a stable per-session
 // worker-pool key. The OpenClaw `createStreamFn` ctx doesn't expose the
 // active session key, and `opts.sessionKey` was always undefined (the
@@ -769,6 +794,17 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 pushThinkingDelta(delta);
                 blockThinkingSeen.set(bi, cumulative);
               }
+            } else if ((typed.type as string) === "redacted_thinking") {
+              // FORK 2026-06-11: extended-thinking blocks that the API redacts
+              // arrive as `redacted_thinking` with no readable `thinking`
+              // field. Surface a single placeholder so the reasoning bubble
+              // isn't silently empty. Gate on blockThinkingSeen so cumulative
+              // re-emits of the same assistant message push it only ONCE per
+              // block index — same dedupe contract as the `thinking` arm.
+              if (!blockThinkingSeen.has(bi)) {
+                pushThinkingDelta("[redacted reasoning]");
+                blockThinkingSeen.set(bi, "[redacted reasoning]");
+              }
             } else if (typed.type === "tool_use" && typeof typed.id === "string") {
               // FORK (2026-04-24): emit a live `stream: "tool"` agent event so
               // the UI shows a tool row with the narration as its title. The
@@ -781,6 +817,25 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 pendingToolNarration.trim(),
               );
               pendingToolNarration = "";
+            } else if ((typed.type as string) === "server_tool_use") {
+              // FORK 2026-06-11: server-side tools (web_search / web_fetch)
+              // surface as `server_tool_use` blocks carrying the lowercase
+              // API tool name — the UI already friendly-labels those. Same
+              // body shape as the tool_use arm; the block is NOT materialized
+              // into AssistantMessage.content (see buildContent rationale).
+              // protocol.ts's CcContentBlock union doesn't model this
+              // discriminant (that file is owned by another unit), so read
+              // the fields through a widened view.
+              const stu = typed as unknown as { id?: unknown; name?: unknown; input?: unknown };
+              if (typeof stu.id === "string") {
+                emitToolStart(
+                  stu.id,
+                  typeof stu.name === "string" ? stu.name : "unknown",
+                  stu.input,
+                  pendingToolNarration.trim(),
+                );
+                pendingToolNarration = "";
+              }
             }
           }
           return;
@@ -794,24 +849,30 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           for (const b of blocks) {
             const typed = b as CcContentBlock;
             if (typed.type === "tool_result" && typeof typed.tool_use_id === "string") {
-              const resultText =
-                typeof typed.content === "string"
-                  ? typed.content
-                  : Array.isArray(typed.content)
-                    ? typed.content
-                        .map((c) => {
-                          if (!c || typeof c !== "object") {
-                            return "";
-                          }
-                          const typedBlock = c as { type?: string; text?: string };
-                          return typedBlock.type === "text" && typeof typedBlock.text === "string"
-                            ? typedBlock.text
-                            : "";
-                        })
-                        .filter(Boolean)
-                        .join("\n")
-                    : "";
-              emitToolResult(typed.tool_use_id, resultText, Boolean(typed.is_error));
+              emitToolResult(
+                typed.tool_use_id,
+                flattenResultContent(typed.content),
+                Boolean(typed.is_error),
+              );
+            } else if ((typed.type as string) === "web_search_tool_result") {
+              // FORK 2026-06-11: server-side web_search results echo back as
+              // a `web_search_tool_result` user block keyed by tool_use_id.
+              // Pair it with its server_tool_use row using the SAME flatten +
+              // emitToolResult path as a normal tool_result. CcContentBlock
+              // (protocol.ts, another unit's file) doesn't model this
+              // discriminant, so read fields through a widened view.
+              const wr = typed as unknown as {
+                tool_use_id?: unknown;
+                content?: unknown;
+                is_error?: unknown;
+              };
+              if (typeof wr.tool_use_id === "string") {
+                emitToolResult(
+                  wr.tool_use_id,
+                  flattenResultContent(wr.content as string | CcContentBlock[]),
+                  Boolean(wr.is_error),
+                );
+              }
             }
           }
           return;
@@ -907,6 +968,22 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           log.warn(
             `TRUNCATION SUSPECT sessionKey=${sessionKey} hit agent-loop cap (error_max_turns) after ${result.num_turns} turns — answer may be cut. final_text_len=${accumulatedText.length}`,
           );
+        }
+
+        // FORK 2026-06-11: surface ANY non-success terminal subtype (e.g.
+        // error_during_execution, error_max_turns, error) as a lifecycle
+        // event so Tinker UI can badge the turn as incomplete instead of
+        // silently rendering whatever partial text streamed. Mirrors the
+        // runId-guard + emitAgentEvent(stream:"lifecycle") pattern from
+        // emitTextBlockBreak. The is_error path below still emits a full
+        // ErrorEnvelope; this also covers non-error-but-not-success subtypes.
+        if (runId && result.subtype && result.subtype !== "success") {
+          emitAgentEvent({
+            runId,
+            sessionKey: openclawSessionKey,
+            stream: "lifecycle",
+            data: { phase: "turn-incomplete", subtype: result.subtype },
+          });
         }
 
         // On provider error (e.g. 401 auth, 400 billing), build a structured
