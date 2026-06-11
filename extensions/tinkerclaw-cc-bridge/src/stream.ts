@@ -387,6 +387,27 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         });
       }
 
+      // FORK 2026-06-11: surface the warm-worker think-level LAG. If the pool
+      // deferred a think-level change because the worker was busy mid-turn,
+      // emit it once so the UI can badge "requested X (pending respawn)" on
+      // this run. Read-once (clears on read), so the badge auto-resolves on
+      // the turn after the worker recycles.
+      if (runId) {
+        const pendingLevel = pool.takeThinkLevelPending(sessionKey);
+        if (pendingLevel) {
+          emitAgentEvent({
+            runId,
+            sessionKey: openclawSessionKey,
+            stream: "lifecycle",
+            data: {
+              phase: "think-level-pending",
+              requested: pendingLevel.requested ?? "off",
+              running: pendingLevel.running ?? "off",
+            },
+          });
+        }
+      }
+
       let streamStarted = false;
       let thinkingStarted = false;
       let thinkingEnded = false;
