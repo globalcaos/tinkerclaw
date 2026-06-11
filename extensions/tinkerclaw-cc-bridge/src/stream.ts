@@ -173,10 +173,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         __openclawRunId?: string;
         __openclawSessionKey?: string;
         __openclawSessionId?: string;
+        __openclawThinkLevel?: string;
       };
       const runId = pipedOptions.__openclawRunId;
       const openclawSessionKey = pipedOptions.__openclawSessionKey;
       const openclawSessionId = pipedOptions.__openclawSessionId;
+      // FORK 2026-06-11: per-run think level smuggled through pi-ai options
+      // (mirrors the other __openclaw* fields). The cast is untyped, so this
+      // name must match the writer EXACTLY or it silently flatlines.
+      const thinkLevel = pipedOptions.__openclawThinkLevel;
       const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt, openclawSessionId);
       const toolLastNarration = new Map<string, string>();
       let pendingToolNarration = "";
@@ -301,6 +306,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         systemPromptAppend: context.systemPrompt,
         disallowedTools,
         model: model.id,
+        // FORK 2026-06-11: thread the per-run think level into the worker so
+        // the spawned Claude Code worker can apply the requested reasoning
+        // budget for this run (WorkerSpawnParams now accepts thinkLevel).
+        thinkLevel,
         // FORK 2026-05-10: thread the openclaw agent sessionId through so
         // session-map can index by it for the across-restart resume path.
         openclawSessionId,
