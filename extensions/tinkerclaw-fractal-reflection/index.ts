@@ -22,9 +22,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { emitFractalEvent, emitPendingStub, StubWatchdog } from "./src/fractal-result.js";
-import { runTriage } from "./src/fractal-run.js";
-import { Governor } from "./src/governor.js";
+import { emitFractalEvent, StubWatchdog } from "./src/fractal-result.js";
+import { runTriage, type FractalRunnerApi } from "./src/fractal-run.js";
+import { FractalGovernor, type UsageSnapshot } from "./src/governor.js";
 import { FractalLedger } from "./src/ledger.js";
 import {
   DEFAULT_FRACTAL_CONFIG,
@@ -72,6 +72,49 @@ type SessionSlot = {
   /** latest-wins: at most ONE queued turn per session; replacing it emits skipped:superseded */
   queued?: QueuedTurn;
 };
+
+/**
+ * Defensive UsageSnapshot extractor over loadProviderUsageSummary()'s output.
+ * The exact summary shape is provider-dependent and the live cc-bridge path has
+ * no fresh quota signal anyway (§5.67b) — so this looks for a recognizable
+ * 5h-window utilization + reset in a few plausible spots and otherwise returns
+ * null, which the governor treats as fail-to-neutral. TODO(Drop 2): pin the
+ * real summary shape once a usage source exists for the subscription path.
+ */
+function extractUsageSnapshot(summary: Record<string, unknown> | null): {
+  utilization5h?: number;
+  resetsAtMs?: number;
+} | null {
+  if (!summary || typeof summary !== "object") {
+    return null;
+  }
+  const candidates: unknown[] = [
+    summary,
+    (summary as { fiveHour?: unknown }).fiveHour,
+    (summary as { primary_window?: unknown }).primary_window,
+    (summary as { anthropic?: { fiveHour?: unknown } }).anthropic?.fiveHour,
+  ];
+  for (const cand of candidates) {
+    if (!cand || typeof cand !== "object") {
+      continue;
+    }
+    const c = cand as Record<string, unknown>;
+    const util = [c.utilization5h, c.utilization, c.used_percent, c.usedPercent].find(
+      (x) => typeof x === "number",
+    ) as number | undefined;
+    if (util === undefined) {
+      continue;
+    }
+    const reset = [c.resetsAtMs, c.resetsAt, c.resetAt].find((x) => typeof x === "number") as
+      | number
+      | undefined;
+    return {
+      utilization5h: util > 1 ? util / 100 : util,
+      ...(reset !== undefined ? { resetsAtMs: reset } : {}),
+    };
+  }
+  return null;
+}
 
 export default definePluginEntry({
   id: "tinkerclaw-fractal-reflection",
@@ -131,7 +174,7 @@ export default definePluginEntry({
     // branch falls back to the maxFixSpawnsPerHour ceiling, the surplus-spend
     // branch disarms). The gateway has no fresh quota signal for the cc-bridge
     // subscription path anyway, so null is an expected steady state, not an error.
-    const readUsage = async (): Promise<unknown> => {
+    const readUsage = async (): Promise<UsageSnapshot | null> => {
       try {
         const mod = (await import("../../src/infra/provider-usage.js")) as {
           loadProviderUsageSummary?: () => Promise<unknown>;
@@ -139,13 +182,14 @@ export default definePluginEntry({
         if (typeof mod.loadProviderUsageSummary !== "function") {
           return null;
         }
-        return await mod.loadProviderUsageSummary();
+        const summary = (await mod.loadProviderUsageSummary()) as Record<string, unknown> | null;
+        return extractUsageSnapshot(summary);
       } catch {
         return null;
       }
     };
-    const governor = new Governor({ cfg, readUsage });
-    const watchdog = new StubWatchdog({ ledger, logger: log });
+    const governor = new FractalGovernor({ now: Date.now, readUsage });
+    const watchdog = new StubWatchdog();
 
     // L2 ownership Set (loop guard): runIds THIS plugin spawned. The sessionKey
     // prefix predicate is the primary guard; the Set answers "did I spawn this run".
@@ -153,6 +197,7 @@ export default definePluginEntry({
     // Single-flight + latest-wins bookkeeping, one slot per sessionKey (§5.67b).
     const sessionSlots = new Map<string, SessionSlot>();
     let lastGovernorMode = "unknown";
+    let lastGovernorPressure: number | null = null;
 
     // -----------------------------------------------------------------------
     // Row helpers — EVERY guard path appends a row: the §5.67b invariant is that
@@ -167,10 +212,10 @@ export default definePluginEntry({
       skipReason?: "quota" | "superseded" | "budget";
       headline?: string;
     }): FractalRow =>
-      // Cast: guard rows carry only the identity/status subset of the U1 row
-      // contract — triage rows (assembled in src/) carry the full field set.
+      // Guard rows carry only the identity/status subset of the row contract —
+      // triage rows (assembled in src/) carry the full field set.
       ({
-        version: 1,
+        v: 1,
         ts: nowIso(),
         parentRunId: params.parentRunId,
         sessionKey: params.sessionKey,
@@ -178,7 +223,7 @@ export default definePluginEntry({
         ...(params.skipReason ? { skipReason: params.skipReason } : {}),
         ...(params.headline ? { headline: params.headline } : {}),
         findings: [],
-      }) as FractalRow;
+      }) satisfies FractalRow;
 
     const appendRow = (row: FractalRow): void => {
       try {
@@ -194,34 +239,51 @@ export default definePluginEntry({
     // -----------------------------------------------------------------------
     const runCycle = async (turn: QueuedTurn): Promise<void> => {
       const { parentRunId, sessionKey, messages } = turn;
-      const row = await runTriage({
-        parentRunId,
-        sessionKey,
-        messages,
-        api,
-        cfg,
-        ledger,
-        // Fires the moment the triage lane spawns: take L2 ownership of the runId
-        // (loop guard), emit the `pending` stub (two-event contract), and arm the
-        // dead-stub watchdog (verified deadness only — never wall-clock-since-spawn).
-        onSpawned: ({ runId }: { runId: string }) => {
-          ownRunIds.add(runId);
-          try {
-            emitPendingStub({ parentRunId, triageRunId: runId, sessionKey });
-          } catch (err) {
-            log.warn(`[fractal-reflection] pending stub emit failed: ${String(err)}`);
-          }
-          watchdog.track({ parentRunId, sessionKey, runId });
+      const row = await runTriage(
+        { api: api as unknown as FractalRunnerApi, cfg, ledger, log },
+        {
+          parentRunId,
+          sessionKey,
+          messages,
+          // Two-event contract: the stub docks a placeholder in the UI instantly.
+          onPending: (stub) => {
+            try {
+              emitFractalEvent(api, sessionKey, stub);
+            } catch (err) {
+              log.warn(`[fractal-reflection] pending stub emit failed: ${String(err)}`);
+            }
+          },
+          // Fires the moment the lane runId is known: take L2 ownership (loop
+          // guard) and arm the dead-stub watchdog (verified deadness only —
+          // never wall-clock-since-spawn).
+          onSpawned: ({ runId }) => {
+            ownRunIds.add(runId);
+            watchdog.track(parentRunId, runId, (death) => {
+              const deadRow = guardRow({
+                parentRunId,
+                sessionKey,
+                status: "error",
+                headline: `triage lane dead (${death.reason}, silence=${death.silenceMs}ms)`,
+              });
+              appendRow(deadRow);
+              try {
+                emitFractalEvent(api, sessionKey, deadRow);
+              } catch (err) {
+                log.warn(`[fractal-reflection] dead-stub event emit failed: ${String(err)}`);
+              }
+              governor.recordOutcome(false, "crash");
+            });
+          },
         },
-      });
+      );
       watchdog.cancel(parentRunId);
       appendRow(row);
       try {
-        emitFractalEvent({ sessionKey, row });
+        emitFractalEvent(api, sessionKey, row);
       } catch (err) {
         log.warn(`[fractal-reflection] final event emit failed: ${String(err)}`);
       }
-      governor.recordOutcome(row);
+      governor.recordOutcome(row.status !== "error");
     };
 
     // -----------------------------------------------------------------------
@@ -280,11 +342,18 @@ export default definePluginEntry({
       // playwright-relay crash class exits the gateway).
       void Promise.resolve()
         .then(() => governor.mode("triage"))
-        .then((mode) => {
-          lastGovernorMode = String(mode);
-          if (mode === "skip") {
+        .then((decision) => {
+          lastGovernorMode = decision.mode;
+          lastGovernorPressure = decision.pressure;
+          if (decision.mode === "skip") {
             appendRow(
-              guardRow({ parentRunId, sessionKey, status: "skipped", skipReason: "quota" }),
+              guardRow({
+                parentRunId,
+                sessionKey,
+                status: "skipped",
+                skipReason: "quota",
+                headline: decision.reason,
+              }),
             );
             return undefined;
           }
@@ -310,7 +379,7 @@ export default definePluginEntry({
           });
           appendRow(row);
           try {
-            governor.recordOutcome(row);
+            governor.recordOutcome(false, "crash");
           } catch {
             // breaker accounting is best-effort on the error path
           }
@@ -361,8 +430,11 @@ export default definePluginEntry({
     // -----------------------------------------------------------------------
     const governorSnapshot = (): Record<string, unknown> => {
       try {
-        const snap = (governor as { snapshot?: () => unknown }).snapshot?.();
-        return snap && typeof snap === "object" ? (snap as Record<string, unknown>) : {};
+        return {
+          breakerState: governor.breakerState(),
+          governorMode: lastGovernorMode,
+          derivedPressure: lastGovernorPressure,
+        };
       } catch {
         return {};
       }
@@ -381,7 +453,7 @@ export default definePluginEntry({
     api.registerGatewayMethod("fractal.stats", async ({ params, respond }) => {
       const p = (params ?? {}) as { windowHours?: unknown };
       const windowHours = Number(p.windowHours ?? 24) || 24;
-      const stats = await ledger.stats({ windowHours });
+      const stats = await ledger.stats(windowHours);
       respond(true, {
         windowHours,
         stats,
@@ -399,7 +471,9 @@ export default definePluginEntry({
       const p = (params ?? {}) as { limit?: unknown; status?: unknown };
       const limit = Math.max(1, Math.min(500, Number(p.limit ?? 50) || 50));
       const status = typeof p.status === "string" && p.status.length > 0 ? p.status : undefined;
-      respond(true, { rows: await ledger.feed({ limit, status }) });
+      respond(true, {
+        rows: await ledger.feed(limit, status ? (row) => row.status === status : undefined),
+      });
     });
 
     api.registerGatewayMethod("fractal.status", async ({ respond }) => {
@@ -429,7 +503,7 @@ export default definePluginEntry({
       });
       appendRow(row);
       try {
-        emitFractalEvent({ sessionKey: "control", row });
+        emitFractalEvent(api, "control", row);
       } catch (err) {
         log.warn(`[fractal-reflection] suspend event emit failed: ${String(err)}`);
       }

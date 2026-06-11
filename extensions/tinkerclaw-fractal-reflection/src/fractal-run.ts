@@ -122,14 +122,17 @@ export type RunTriageDeps = {
 export type RunTriageInput = {
   parentRunId: string;
   /**
-   * The MAIN session's key (from the agent_end ctx) — logging/telemetry only;
-   * the triage run gets its own plugin-minted key (FRACTAL_SESSION_PREFIX).
+   * The MAIN session's key (from the agent_end ctx) — stamped on rows and used
+   * for the event envelope; the triage run itself gets its own plugin-minted
+   * key (FRACTAL_SESSION_PREFIX).
    */
   sessionKey: string;
   /** The agent_end payload's message history. */
   messages: unknown[];
   /** U5 two-event contract: invoked with the pending stub BEFORE the subagent spawn. */
   onPending: (stub: FractalRow) => void;
+  /** Fires the moment the lane runId is known: loop-guard ownership + watchdog wiring. */
+  onSpawned?: (info: { runId: string }) => void;
 };
 
 export type ParsedFinding = {
@@ -459,6 +462,32 @@ async function startTriageRunOrNull(params: {
   }
 }
 
+/**
+ * Runtime mirror of FractalFindingKind (types.ts owns the type; both mirror
+ * triage-prompt.md's axis vocabulary — change all three together). An unknown
+ * kind from the model degrades to "process" instead of corrupting the union.
+ */
+const FINDING_KINDS = new Set([
+  "staleness-online",
+  "staleness-artifact",
+  "security-exposure",
+  "recurring-cost",
+  "people",
+  "commitment",
+  "downstream-dependency",
+  "correctness",
+  "gap",
+  "persistence",
+  "recipe-gap",
+  "recipe-upgrade",
+  "orca-miss",
+  "process",
+]);
+
+function toFindingKind(kind: string): FractalFinding["kind"] {
+  return (FINDING_KINDS.has(kind) ? kind : "process") as FractalFinding["kind"];
+}
+
 async function readRecurrenceCount(
   ledger: TriageLedger,
   kind: string,
@@ -491,12 +520,14 @@ async function readRecurrenceCount(
  * NOTE: usage telemetry is omitted — SubagentWaitResult carries no usage today.
  */
 export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Promise<FractalRow> {
-  const ts = Date.now();
+  const ts = new Date().toISOString();
   let spawnedAtMs: number | undefined;
   let triageRunId: string | undefined;
 
   const errorRow = (message: string): FractalRow => ({
+    v: 1,
     parentRunId: input.parentRunId,
+    sessionKey: input.sessionKey,
     ...(triageRunId !== undefined ? { triageRunId } : {}),
     status: "error",
     headline: message,
@@ -524,7 +555,9 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
 
     // (3) pending stub BEFORE the spawn (U5 two-event contract)
     input.onPending({
+      v: 1,
       parentRunId: input.parentRunId,
+      sessionKey: input.sessionKey,
       status: "pending",
       findings: [],
       abstainedFindings: 0,
@@ -546,6 +579,7 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
       return errorRow("subagent runtime is request-scoped — triage cannot spawn detached");
     }
     triageRunId = runId;
+    input.onSpawned?.({ runId });
     deps.log.info(
       `[fractal-reflection] triage spawned (run=${runId}, parent=${input.parentRunId}, mainSession=${input.sessionKey})`,
     );
@@ -580,14 +614,17 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
     // (7) pre-verify every finding's quote on disk
     const { surviving, abstainedFindings } = await verifyFindingQuotes(parsed.findings);
 
-    // (8) stamp recurrence counts from the ledger
+    // (8) stamp recurrence counts from the ledger. Findings are FLAT per the
+    // canonical contract (src/types.ts mirrors triage-prompt.md's JSON verbatim).
     const findings: FractalFinding[] = [];
     for (const f of surviving) {
       findings.push({
-        kind: f.kind,
-        evidence: { claim: f.claim, path: f.path ?? "", verbatimQuote: f.quote ?? "" },
+        kind: toFindingKind(f.kind),
+        claim: f.claim,
+        ...(f.path !== undefined ? { path: f.path } : {}),
+        ...(f.quote !== undefined ? { quote: f.quote } : {}),
         ...(f.fixHint !== undefined ? { fixHint: f.fixHint } : {}),
-        hard: f.hard,
+        ...(f.hard !== undefined ? { hard: f.hard } : {}),
         recurrenceCount: await readRecurrenceCount(deps.ledger, f.kind, f.path ?? "", deps.log),
       });
     }
@@ -596,7 +633,9 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
     const status: FractalRow["status"] =
       findings.length > 0 ? "flagged" : parsed.verdict === "gap" ? "gap" : "clean";
     return {
+      v: 1,
       parentRunId: input.parentRunId,
+      sessionKey: input.sessionKey,
       triageRunId,
       status,
       verdict: parsed.verdict,

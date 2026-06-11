@@ -108,11 +108,11 @@ describe("Fractal Reflection registration", () => {
     expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining("disabled"));
   });
 
-  it("logs ready message with debounce value", async () => {
+  it("logs the v2 ready message", async () => {
     const onFn = vi.fn();
     const mockApi = {
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
-      pluginConfig: { debounceMs: 15000 },
+      pluginConfig: { enabled: true },
       rootDir: "/test/dir",
       registerTool: vi.fn(),
       registerGatewayMethod: vi.fn(),
@@ -136,6 +136,6 @@ describe("Fractal Reflection registration", () => {
     const mod = await import("../index.js");
     mod.default.register(mockApi as any);
 
-    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining("15000ms"));
+    expect(mockApi.logger.info).toHaveBeenCalledWith(expect.stringContaining("v2 ready"));
   });
 });

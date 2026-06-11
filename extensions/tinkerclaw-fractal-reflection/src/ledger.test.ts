@@ -22,7 +22,7 @@ function makeRow(overrides: Record<string, unknown> = {}): FractalRow {
     verdict: "ok",
     findings: [],
     escalated: false,
-    abstained: false,
+    abstainedFindings: 0,
     ts: Date.now(),
     ...overrides,
   } as unknown as FractalRow;
@@ -104,7 +104,7 @@ describe("FractalLedger", () => {
         usage: { input: 0, output: 2, cacheRead: 90, cacheWrite: 10 },
       }),
     );
-    await ledger.append(makeRow({ status: "clean", abstained: true, timeToDockMs: 200 }));
+    await ledger.append(makeRow({ status: "clean", abstainedFindings: 1, timeToDockMs: 200 }));
     await ledger.append(makeRow({ status: "skipped", skipReason: "quota" }));
     await ledger.append(makeRow({ status: "skipped", skipReason: "superseded" }));
     // outside the 24h window — must be excluded everywhere
