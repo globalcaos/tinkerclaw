@@ -40,14 +40,17 @@ export type CallGateway = <T>(args: {
 const ADMIN_SCOPES = ["operator.admin"];
 
 /**
- * Default leaf model for orchestration fan-out. MUST be a `claude-code/*` model so
- * every spawned unit is a subscription-billed cc-sp-* worker — the entire reason
- * ultracode-style workflows route through the gateway instead of native forked
- * `claude` processes (which trip Anthropic's overage classifier and bill metered).
- * opus-4-8 is a stable catalog id; a script may override per-unit via agent({model}),
- * but only with another claude-code/* model (see coerceClaudeCodeModel).
+ * Default leaf model for orchestration fan-out (used when a unit omits {model}).
+ * MUST be a `claude-code/*` model so every spawned unit is a subscription-billed
+ * cc-sp-* worker — the entire reason workflows route through the gateway instead of
+ * native forked `claude` processes (which trip Anthropic's overage classifier and
+ * bill metered). Default = sonnet: a sensible, cheaper middle. Dynamic workflows are
+ * a STANDING capability (not a max-effort tier), so the default should not be the
+ * priciest model — a script picks `claude-code/claude-haiku-4-5` per-unit for cheap
+ * parallel scanning (separate budget) and `claude-code/claude-opus-4-8` only for hard
+ * reasoning, via agent({model}) (coerced to claude-code/* — see coerceClaudeCodeModel).
  */
-const DEFAULT_LEAF_MODEL = "claude-code/claude-opus-4-8";
+const DEFAULT_LEAF_MODEL = "claude-code/claude-sonnet-4-6";
 
 /**
  * BILLING GUARD: force a `claude-code/*` leaf model. A claude-code/* request is
