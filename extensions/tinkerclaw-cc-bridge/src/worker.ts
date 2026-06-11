@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
 import {
+  AMYGDALA_CC_HOOK_SETTINGS_PATH,
   DEFAULT_BINARY,
   DEFAULT_DISALLOWED_TOOLS,
   DEFAULT_PERMISSION_MODE,
@@ -398,6 +399,15 @@ export class ClaudeCodeWorker extends EventEmitter {
       "--permission-mode",
       DEFAULT_PERMISSION_MODE,
     ];
+    // FORK 2026-06-11 (AMYGDALA v3.1): when the learned-intuition extension has
+    // hook enforcement on it writes this claude-cli settings file (and deletes it
+    // when off). Its presence wires the amygdala pre-execution PreToolUse hook,
+    // which synchronously DENIES destructive-execution AEGIS rules inside
+    // claude-cli — real enforcement on the primary runner, even under
+    // bypassPermissions. Absent → no extra flag, identical behavior.
+    if (fs.existsSync(AMYGDALA_CC_HOOK_SETTINGS_PATH)) {
+      args.push("--settings", AMYGDALA_CC_HOOK_SETTINGS_PATH);
+    }
     const disallowed = this.params.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
     if (disallowed.length > 0) {
       args.push("--disallowedTools", disallowed.join(","));

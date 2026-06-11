@@ -124,6 +124,17 @@ export interface SituationTemplate {
 /** Gate decision from Prudence ensemble */
 export type GateDecision = "allow" | "soft_block" | "hard_block";
 
+/**
+ * v3.1 action disposition — what experience says to do. Decoupled from the
+ * legacy GateDecision enum (kept for schema compat): a novelty "ask" maps to
+ * gate_decision "soft_block" + disposition "ask"; AEGIS maps to "hard_block" +
+ * "block"; an allow maps to "allow" + "proceed".
+ */
+export type Disposition = "proceed" | "ask" | "block";
+
+/** v3.1 salience channel that drove the disposition. */
+export type AmygdalaSignal = "aegis" | "novelty" | "incongruity" | "none";
+
 /** Output from a single Prudence network */
 export interface PrudenceOutput {
   /** Three-way classification: stop, allow, escalate */
@@ -212,6 +223,31 @@ export interface AmygdalaEvaluation {
 export interface AmygdalaConfig {
   /** Master enable/disable switch */
   enabled: boolean;
+
+  /**
+   * v3.1: run the legacy 5-net ONNX prudence/personality ensemble in the
+   * decision path. Default false — the ensemble was retired (trained on
+   * mislabelled data, arch C collapsed, arch E mush; and frozen-MiniLM danger
+   * classification measured below chance). The embedding pipeline is retained
+   * for the novelty channel regardless of this flag.
+   */
+  legacyEnsemble?: boolean;
+
+  /**
+   * v3.1: write the pre-execution PreToolUse hook settings so cc-bridge /
+   * claude-cli denies destructive-execution AEGIS rules synchronously. Default
+   * true. When false the settings file is removed (observe-only spool only).
+   */
+  hookEnforcement?: boolean;
+
+  /** v3.1: novelty channel configuration (k-NN over situation history). */
+  novelty?: {
+    enabled: boolean;
+    k: number;
+    cap: number;
+    minRef: number;
+    recalibrateEvery: number;
+  };
 
   /** Trust ramp coefficients */
   trust: {
