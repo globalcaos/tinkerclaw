@@ -11,6 +11,7 @@
 import { EmbeddingPipeline, EmbeddingWindow } from "./embedding.js";
 import { AmygdalaGate } from "./gate.js";
 import { GitCache } from "./git-cache.js";
+import { segmentByPurpose, judgeIncongruity } from "./incongruity.js";
 import { NoveltyIndex } from "./novelty.js";
 import { decodePersonalityNudge } from "./personality-decoder.js";
 import { evaluateRuleBased } from "./rule-based-gate.js";
@@ -453,6 +454,33 @@ export class AmygdalaHook {
     }
 
     return result;
+  }
+
+  /**
+   * v3.1 incongruity check on a user prompt (validated offline, AUROC 0.896).
+   * Segments the prompt at a purpose connective and, if the action clause and
+   * the purpose clause do not cohere ("build a chess game so I can water my
+   * plants"), returns the verdict so the caller can surface an ASK signal.
+   * Returns null when there is no connective, the clauses cohere, the embedder
+   * is unavailable, or the gate is uninitialised. Observe-only: never blocks.
+   */
+  async checkIncongruity(
+    prompt: string,
+  ): Promise<{ similarity: number; head: string; tail: string } | null> {
+    if (!this.initialized || !prompt) return null;
+    const split = segmentByPurpose(prompt);
+    if (!split) return null;
+    try {
+      const [h, t] = await Promise.all([
+        this.embedder.embed(split.head),
+        this.embedder.embed(split.tail),
+      ]);
+      const verdict = judgeIncongruity(h, t);
+      if (!verdict.incongruous) return null;
+      return { similarity: verdict.similarity, head: split.head, tail: split.tail };
+    } catch {
+      return null;
+    }
   }
 
   /**
