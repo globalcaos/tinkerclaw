@@ -19,14 +19,27 @@
  */
 
 /**
- * Purpose connectives that separate an action clause from its rationale. Matches
- * the validated E3 connective set (AUROC 0.896): purpose ("so I can", "so that",
- * "in order to"), cause ("because"), and sequence ("and then").
+ * Purpose / rationale connectives that separate an action clause from WHY it is
+ * wanted. Purpose ("so I can", "so that", "in order to") and cause ("because").
+ * Deliberately NOT sequence markers like "and then" — "do A and then do B" is
+ * coherent task-batching, not a purpose mismatch, and scanning it produces
+ * false flags.
  */
 const PURPOSE_CONNECTIVES =
-  /\s+(?:so (?:i|we|you) can|so that|so as to|so we can|in order to|so i could|and then|because|para que|porque|a fin de)\s+/i;
+  /\s+(?:so (?:i|we|you) can|so that|so as to|so we can|in order to|so i could|because|para que|porque|a fin de)\s+/i;
 
-export const DEFAULT_INCONGRUITY_THRESHOLD = 0.11;
+/**
+ * cosine(action, purpose) below this → incongruous → ask.
+ * Calibrated on the real all-MiniLM-L6-v2 encoder against the PRODUCTION
+ * segmentation (the connective is stripped, so the purpose clause is e.g.
+ * "water my plants", not "so I can water my plants" — which sits a little higher
+ * in cosine than the experiment's with-connective form). Measured separation:
+ * incongruous anchors ≈ 0.06–0.12, coherent purposes ≈ 0.23–0.40. 0.14 catches
+ * the canonical "chess game / water my plants" (0.115) with margin while leaving
+ * coherent purposes well clear. Observe-only, so erring slightly inclusive is
+ * cheap (a stray "would ask" note never blocks anything).
+ */
+export const DEFAULT_INCONGRUITY_THRESHOLD = 0.14;
 
 export interface ClauseSplit {
   head: string;
