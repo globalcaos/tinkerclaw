@@ -21,7 +21,8 @@ import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/c
 import { onAgentEvent, emitAgentEvent } from "../../src/infra/agent-events.js";
 import { decodePersonalityNudge } from "./src/personality-decoder.js";
 import { generateTargetVector, DEFAULT_TARGET_DIMENSIONS } from "./src/personality-seed.js";
-import { evaluateRuleBased } from "./src/rule-based-gate.js";
+import { writePolicySnapshot, policyPaths } from "./src/policy-snapshot.js";
+import { evaluateAegisEnforced } from "./src/rule-based-gate.js";
 import { AmygdalaHook, type AegisChecker } from "./src/runtime-hook.js";
 import type { AmygdalaConfig, PersonalityNudge } from "./src/types.js";
 
@@ -31,7 +32,12 @@ const COGNITIVE_DIR = join(homedir(), ".openclaw", "cognitive");
 const LEARNED_INTUITION_STATE_PATH = join(COGNITIVE_DIR, "learned-intuition.json");
 const PERSONALITY_NUDGE_PATH = join(COGNITIVE_DIR, "personality-nudge.json");
 const DATA_DIR = join(homedir(), ".openclaw", "data");
+const AMYGDALA_DATA_DIR = join(DATA_DIR, "amygdala");
 const AMYGDALA_DECISIONS_PATH = join(DATA_DIR, "amygdala-decisions.jsonl");
+// v3.1: the pre-execution PreToolUse hook spools its decisions here; the gateway
+// ingests them so REAL enforced denials (the strongest feedback signal) appear
+// in the feed instead of being invisible.
+const HOOK_DECISIONS_PATH = join(AMYGDALA_DATA_DIR, "hook-decisions.jsonl");
 // FORK 2026-06-07: register() runs ~5×/gateway boot; attach the cc-bridge prudence
 // listener ONCE per process or every tool call gets evaluated (and recorded) N times.
 let ccBridgePrudenceListenerAttached = false;
@@ -198,6 +204,8 @@ export default definePluginEntry({
       aegisEnabled?: boolean;
       observeOnly?: boolean;
       modelsDir?: string;
+      legacyEnsemble?: boolean;
+      hookEnforcement?: boolean;
     };
     const log = api.logger;
 
@@ -208,14 +216,41 @@ export default definePluginEntry({
     const phase = cfg.phase ?? 4;
     const observeOnly = cfg.observeOnly ?? true;
     const modelsDir = cfg.modelsDir ?? join(homedir(), "src", "tinkerclaw", "models", "amygdala");
+    // v3.1: the 5-net ONNX ensemble is retired from the decision path (default
+    // off); the pre-execution AEGIS hook is on by default.
+    const legacyEnsemble = cfg.legacyEnsemble === true;
+    const hookEnforcement = cfg.hookEnforcement !== false;
 
     // Ensure data directory exists
-    ensureDir(join(DATA_DIR, "amygdala"));
+    ensureDir(AMYGDALA_DATA_DIR);
 
     // Build full config
     const amygdalaConfig = loadAmygdalaConfig(modelsDir);
     amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.15; // FORK 2026-05-30: max by default
     amygdalaConfig.trust.phase = Math.min(4, Math.max(1, phase)) as 1 | 2 | 3 | 4;
+    amygdalaConfig.legacyEnsemble = legacyEnsemble;
+    amygdalaConfig.hookEnforcement = hookEnforcement;
+    amygdalaConfig.novelty = {
+      enabled: true,
+      k: 10,
+      cap: 5000,
+      minRef: 100,
+      recalibrateEvery: 200,
+    };
+
+    // v3.1: compile the AEGIS rule snapshot + (when enforcement is on) the
+    // claude-cli settings file that wires the pre-execution PreToolUse hook into
+    // every cc-bridge spawn. Done at register() so the artifacts exist before the
+    // next worker spawns. Best-effort: a write failure must not break the gate.
+    try {
+      const snap = writePolicySnapshot(AMYGDALA_DATA_DIR, { hookEnforcement });
+      log.info(
+        `[learned-intuition] policy snapshot written (hookEnforcement=${hookEnforcement}, ` +
+          `settings=${snap.settingsWritten}, hook=${snap.staged ?? "none"})`,
+      );
+    } catch (err) {
+      log.warn(`[learned-intuition] policy snapshot failed: ${(err as Error).message}`);
+    }
 
     // FORK 2026-05-30: wire the AEGIS absolute-veto checker. It was previously
     // unwired (`new AmygdalaHook(config)` with no checker) → the paper's §4.11
@@ -224,10 +259,13 @@ export default definePluginEntry({
     // EVERY tool call AND the post-check even when the ONNX gate allows — so the
     // hard veto holds in both ONNX and rule-based-fallback modes. Disable only by
     // explicit config `aegisEnabled:false`.
+    // v3.1: use the enforce-aware checker so only `enforce:true` destructive
+    // rules hard-block in-process now that the native block is wired through the
+    // host (credential-PATTERN rules stay observe-only — anti-cry-wolf).
     const aegisChecker: AegisChecker = {
       async check(action) {
         const argsStr = action.metadata ? JSON.stringify(action.metadata) : action.target;
-        const r = evaluateRuleBased(action.type, argsStr);
+        const r = evaluateAegisEnforced(action.type, argsStr);
         return {
           blocked: r.decision === "hard_block",
           rule_id: r.rule ?? undefined,
@@ -250,10 +288,18 @@ export default definePluginEntry({
           .initialize()
           .then(() => {
             hookReady = true;
-            const mode = hook.useRuleBasedFallback ? "rule-based" : "onnx";
+            // v3.1 default mode is "novelty" (AEGIS floor + k-NN ask channel);
+            // "onnx"/"rule-based" only when the legacy ensemble is re-enabled.
+            const mode = legacyEnsemble
+              ? hook.useRuleBasedFallback
+                ? "rule-based"
+                : "onnx"
+              : "novelty";
             writeSharedState(mode, !hook.useRuleBasedFallback);
+            const nov = hook.noveltyStatus;
             log.info(
-              `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}`,
+              `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}, ` +
+                `hookEnforcement=${hookEnforcement}, novelty=${nov.enabled ? `ref=${nov.size},thr=${nov.threshold?.toFixed(3)}` : "warming"}`,
             );
             if (hook.useRuleBasedFallback) {
               log.warn(
@@ -295,9 +341,13 @@ export default definePluginEntry({
       blocked: boolean;
       enforced: boolean; // actually aborted (vs observe-only)
       reason?: string;
-      mode: "onnx" | "rules";
+      mode: "onnx" | "rules" | "novelty" | "hook";
       prudence?: number;
       disagreement?: number;
+      // v3.1 fields
+      novelty?: number;
+      disposition?: string; // proceed | ask | block
+      signal?: string; // aegis | novelty | incongruity | none
     }
     const recentDecisions: AmygdalaDecisionRecord[] = [];
     const MAX_DECISIONS = 200;
@@ -349,7 +399,7 @@ export default definePluginEntry({
           // FORK 2026-06-07 (Amygdala feedback loop): record + broadcast this decision
           // so the Tinker UI can show exactly what the gate just did.
           const evAny = result.evaluation as unknown as {
-            prudence?: { combined?: { confidence?: number }; disagreement?: number };
+            prudence?: { combined?: { confidence?: number }; ensemble_disagreement?: number };
           } | null;
           const enforced =
             result.blocked && (result.decision === "hard_block" || !(observeOnly || phase === 1));
@@ -361,15 +411,18 @@ export default definePluginEntry({
             blocked: result.blocked,
             enforced,
             reason: result.response?.reason,
-            mode: result.ruleBasedFallback ? "rules" : "onnx",
+            mode: legacyEnsemble ? (result.ruleBasedFallback ? "rules" : "onnx") : "novelty",
             prudence:
               typeof evAny?.prudence?.combined?.confidence === "number"
                 ? evAny.prudence.combined.confidence
                 : undefined,
             disagreement:
-              typeof evAny?.prudence?.disagreement === "number"
-                ? evAny.prudence.disagreement
+              typeof evAny?.prudence?.ensemble_disagreement === "number"
+                ? evAny.prudence.ensemble_disagreement
                 : undefined,
+            novelty: typeof result.novelty === "number" ? result.novelty : undefined,
+            disposition: result.disposition,
+            signal: result.signal,
           };
           recentDecisions.push(record);
           if (recentDecisions.length > MAX_DECISIONS) recentDecisions.shift();
@@ -393,9 +446,14 @@ export default definePluginEntry({
               log.warn(
                 `[learned-intuition] ${modeTag} ${isAegisHardBlock ? "AEGIS BLOCKED" : "BLOCKED"} ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"}`,
               );
+              // FORK 2026-06-11 (v3.1): the host's before_tool_call dispatcher
+              // honors `{block, blockReason}` (src/plugins/hooks.ts → pi-tools.
+              // before-tool-call.ts: `if (hookResult?.block)`), NOT the
+              // `{abort, message}` shape this returned before — so the native gate
+              // never actually blocked. Return the shape the host reads.
               return {
-                abort: true,
-                message: result.response?.reason ?? "Action blocked by safety gate.",
+                block: true,
+                blockReason: result.response?.reason ?? "Action blocked by safety gate.",
               };
             }
             // Neural soft-block during the trust ramp — observe-only.
@@ -496,8 +554,12 @@ export default definePluginEntry({
             if (personEmb && personEmb.length > 0) {
               lastPersonalityEmbedding = personEmb;
             }
+            // FORK 2026-06-11 (v3.1): fix the null-field bug — `prudence.combined`
+            // is an OBJECT (read `.confidence`), and the disagreement field is
+            // `ensemble_disagreement`, not `disagreement`. In the default novelty
+            // path these are absent; novelty/disposition/signal carry the read.
             const evAny = result.evaluation as unknown as {
-              prudence?: { combined?: number; disagreement?: number };
+              prudence?: { combined?: { confidence?: number }; ensemble_disagreement?: number };
             } | null;
             const record: AmygdalaDecisionRecord = {
               ts: new Date().toISOString(),
@@ -505,15 +567,20 @@ export default definePluginEntry({
               target: String(target).slice(0, 200),
               decision: result.decision,
               blocked: result.blocked,
-              enforced: false, // cc-bridge: observe-only, the tool already ran
+              enforced: false, // cc-bridge observe path: the tool already ran (real enforcement is the PreToolUse hook)
               reason: result.response?.reason,
-              mode: result.ruleBasedFallback ? "rules" : "onnx",
+              mode: legacyEnsemble ? (result.ruleBasedFallback ? "rules" : "onnx") : "novelty",
               prudence:
-                typeof evAny?.prudence?.combined === "number" ? evAny.prudence.combined : undefined,
-              disagreement:
-                typeof evAny?.prudence?.disagreement === "number"
-                  ? evAny.prudence.disagreement
+                typeof evAny?.prudence?.combined?.confidence === "number"
+                  ? evAny.prudence.combined.confidence
                   : undefined,
+              disagreement:
+                typeof evAny?.prudence?.ensemble_disagreement === "number"
+                  ? evAny.prudence.ensemble_disagreement
+                  : undefined,
+              novelty: typeof result.novelty === "number" ? result.novelty : undefined,
+              disposition: result.disposition,
+              signal: result.signal,
             };
             recentDecisions.push(record);
             if (recentDecisions.length > MAX_DECISIONS) recentDecisions.shift();
@@ -588,9 +655,50 @@ export default definePluginEntry({
       } catch {
         /* ignore */
       }
+      // v3.1: ingest the pre-execution hook spool (REAL enforced denials from the
+      // cc-bridge / claude-cli path). Map its rows into the feed's decision shape.
+      let hookRows: FeedDecision[] = [];
+      try {
+        if (existsSync(HOOK_DECISIONS_PATH)) {
+          let lines = readFileSync(HOOK_DECISIONS_PATH, "utf-8").split("\n").filter(Boolean);
+          if (lines.length > 1200) {
+            lines = lines.slice(-400);
+            try {
+              writeFileSync(HOOK_DECISIONS_PATH, lines.join("\n") + "\n");
+            } catch {
+              /* ignore trim failure */
+            }
+          }
+          hookRows = lines
+            .map((l) => {
+              try {
+                const h = JSON.parse(l) as Record<string, unknown>;
+                const dcn = String(h.decision ?? "allow");
+                const mapped =
+                  dcn === "deny" ? "hard_block" : dcn === "observe" ? "soft_block" : "allow";
+                return {
+                  ts: h.ts,
+                  tool: h.tool,
+                  target: h.target,
+                  decision: mapped,
+                  blocked: dcn !== "allow",
+                  enforced: Boolean(h.enforced),
+                  mode: "hook",
+                  signal: "aegis",
+                  reason: h.rule ? `AEGIS [${h.rule}]` : undefined,
+                } as FeedDecision;
+              } catch {
+                return null;
+              }
+            })
+            .filter((d): d is FeedDecision => d !== null);
+        }
+      } catch {
+        /* ignore */
+      }
       const tms = (d: FeedDecision): number =>
         typeof d.ts === "number" ? d.ts : d.ts ? Date.parse(String(d.ts)) || 0 : 0;
-      const merged = [...persisted, ...(recentDecisions as unknown as FeedDecision[])]
+      const merged = [...persisted, ...hookRows, ...(recentDecisions as unknown as FeedDecision[])]
         .sort((a, b) => tms(b) - tms(a))
         .slice(0, 300);
       respond(true, {
