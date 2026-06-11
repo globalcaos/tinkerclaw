@@ -7,11 +7,13 @@ import type { WorkerSpawnParams } from "./worker.js";
 // subprocess is spawned — eviction policy is what we are testing.
 class FakeWorker {
   readonly sessionKey: string;
+  readonly thinkLevel?: string;
   sessionId: string | null = null;
   killed = false;
   private busy: boolean;
   constructor(params: WorkerSpawnParams, busy = false) {
     this.sessionKey = params.sessionKey;
+    this.thinkLevel = params.thinkLevel;
     this.busy = busy;
   }
   isAlive(): boolean {
@@ -31,8 +33,8 @@ class FakeWorker {
   }
 }
 
-function makeParams(sessionKey: string): WorkerSpawnParams {
-  return { sessionKey, cwd: "/tmp" } as WorkerSpawnParams;
+function makeParams(sessionKey: string, thinkLevel?: string): WorkerSpawnParams {
+  return { sessionKey, cwd: "/tmp", thinkLevel } as WorkerSpawnParams;
 }
 
 describe("SessionWorkerPool eviction policy", () => {
@@ -103,6 +105,52 @@ describe("SessionWorkerPool eviction policy", () => {
     const second = pool.getOrCreate(makeParams("A"));
 
     expect(second).toBe(first);
+    expect(created).toHaveLength(1);
+  });
+
+  it("recreates a warm idle worker when thinkLevel changes", () => {
+    const pool = makePool();
+    pool.getOrCreate(makeParams("A", "low"));
+    const first = created[0];
+    expect(first.isBusy()).toBe(false);
+
+    pool.getOrCreate(makeParams("A", "high"));
+
+    // The stale-level worker is evicted and a fresh one spawned in its place.
+    expect(first.killed).toBe(true);
+    expect(created).toHaveLength(2);
+    const second = created[1];
+    expect(second).not.toBe(first);
+    expect(second.thinkLevel).toBe("high");
+    expect(pool.get("A")).toBe(second as unknown as ReturnType<SessionWorkerPool["getOrCreate"]>);
+  });
+
+  it("does NOT recreate a BUSY worker on think-level change; records pending", () => {
+    const pool = makePool();
+    const first = pool.getOrCreate(makeParams("A", "low")) as unknown as FakeWorker;
+    first.setBusy(true);
+
+    const same = pool.getOrCreate(makeParams("A", "high")) as unknown as FakeWorker;
+
+    // A busy worker can't be recycled mid-turn — same instance, still alive,
+    // and the desired level is parked for the worker to pick up next turn.
+    expect(same).toBe(first);
+    expect(first.killed).toBe(false);
+    expect(created).toHaveLength(1);
+    expect(pool.takeThinkLevelPending("A")).toEqual({ requested: "high", running: "low" });
+  });
+
+  it("does NOT recycle on a cosmetic off/empty/undefined level change", () => {
+    const pool = makePool();
+    const first = pool.getOrCreate(makeParams("A", "off")) as unknown as FakeWorker;
+    expect(first.isBusy()).toBe(false);
+
+    const same = pool.getOrCreate(makeParams("A", "")) as unknown as FakeWorker;
+
+    // off / "" / undefined all mean "no thinking budget" — treat as equal so
+    // a no-op toggle doesn't pointlessly kill a warm worker.
+    expect(same).toBe(first);
+    expect(first.killed).toBe(false);
     expect(created).toHaveLength(1);
   });
 });
