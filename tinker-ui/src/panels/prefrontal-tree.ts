@@ -67,6 +67,17 @@ export interface TreeNode {
   toolCalls?: number;
   phase?: string;
   currentToolArg?: string;
+  // FORK 2026-06-11 (tinkerui-effort): per-run reasoning-effort vitals joined from
+  // the `effort` stream via ActiveRunInfo. thinkLevel = the requested level string
+  // ('' / 'off' = Auto); configuredBudget = the requested MAX_THINKING_TOKENS cap
+  // (0 = Auto/uncapped — the model decides); thinkingChars = ACTUAL reasoning text
+  // emitted (CHARS, never tokens — we never fabricate a token count); hadRealThinking
+  // = whether any non-redacted reasoning was seen. HONEST labels only: actual=chars,
+  // requested=cap.
+  thinkLevel?: string;
+  configuredBudget?: number;
+  thinkingChars?: number;
+  hadRealThinking?: boolean;
   children: TreeNode[];
 }
 
@@ -230,6 +241,25 @@ function renderVitals(node: TreeNode): HTMLElement | null {
     bits.push(`${node.toolCalls} tools`);
   if (typeof node.tokens === "number" && node.tokens > 0)
     bits.push(`${fmtTokens(node.tokens)} tok`);
+  // FORK 2026-06-11 (tinkerui-effort): reasoning-effort bit. HONEST labels only —
+  // the cap is the REQUESTED budget (configuredBudget tokens; 0 = Auto/uncapped =
+  // the model decides), and the count is the ACTUAL reasoning emitted measured in
+  // CHARS (never tokens — we have no token count here, so we never invent one). A
+  // ⚠ flags a large requested cap (>=16k) that produced no real thinking (the
+  // "budget set high but the model didn't actually think" mismatch).
+  if (node.thinkLevel != null) {
+    const lvl = !node.thinkLevel || node.thinkLevel === "off" ? "Auto" : node.thinkLevel;
+    let effort = `\u{1f9e0} ${lvl}`;
+    const cap = node.configuredBudget ?? 0;
+    effort += cap > 0 ? ` cap ${Math.round(cap / 1000)}k` : " uncapped";
+    const chars = node.thinkingChars ?? 0;
+    if (chars > 0) {
+      const charsLabel = chars >= 1000 ? (chars / 1000).toFixed(1) + "k" : String(chars);
+      effort += ` ${charsLabel} think chars`;
+    }
+    if (cap >= 16000 && !node.hadRealThinking) effort += " ⚠";
+    bits.push(effort);
+  }
   if (bits.length === 0) return null;
   const v = el("div", "pf-vitals");
   v.textContent = bits.join(" · ");
