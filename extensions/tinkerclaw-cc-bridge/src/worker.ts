@@ -101,6 +101,13 @@ function resolveSpawnSubagentCliPath(): string {
 function resolveRecipeStateCliPath(): string {
   return resolveForkScript("openclaw-recipe-state.mjs", "OPENCLAW_RECIPE_STATE_BIN");
 }
+// FORK 2026-06-11: locate scripts/openclaw-orchestrate.mjs — the dynamic-workflow
+// CLI (prefrontal.recipe.orchestrate wrapper). Lets the disposition prompt teach
+// Jarvis to fan out parallel/pipeline workflows of subscription-billed cc-sp-*
+// units (a STANDING capability, not gated behind any effort tier).
+function resolveOrchestrateCliPath(): string {
+  return resolveForkScript("openclaw-orchestrate.mjs", "OPENCLAW_ORCHESTRATE_BIN");
+}
 function resolveForkScript(name: string, envVar: string): string {
   // FORK 2026-04-28 (bible §5.76): no hardcoded absolute home paths.
   // Order: env override → bundled scripts dir (production via
@@ -263,12 +270,16 @@ function buildEthicalRulesBlock(): string {
 //   1. env var TINKERCLAW_ORCHESTRATION_DISPOSITION_PROMPT
 //   2. extensions/tinkerclaw-cc-bridge/prompts/orchestration-disposition.md (bundled)
 function buildOrchestrationDispositionBlock(): string {
+  const orchestrateBin = resolveOrchestrateCliPath();
   return loadPromptFile({
     plugin: "tinkerclaw-cc-bridge",
     subdir: "prompts",
     file: "orchestration-disposition.md",
     envVar: "TINKERCLAW_ORCHESTRATION_DISPOSITION_PROMPT",
     workspaceFile: false, // generic kit-class → kit mapping; no workspace override
+    substitutions: {
+      ORCHESTRATE_BIN: orchestrateBin || "<not-installed>",
+    },
   });
 }
 
