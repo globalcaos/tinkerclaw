@@ -341,6 +341,14 @@ export type WorkerEvent =
 
 export class ClaudeCodeWorker extends EventEmitter {
   readonly sessionKey: string;
+  /**
+   * FORK 2026-06-11: the think level this worker was SPAWNED with (the value of
+   * `params.thinkLevel` at construction). The worker pool reads this to detect a
+   * warm/idle worker that was spawned with a now-stale thinking budget and
+   * recycle it, so a later turn requesting a different think level doesn't reuse
+   * a child whose `MAX_THINKING_TOKENS` env was baked in at the previous spawn.
+   */
+  readonly thinkLevel?: string;
   private readonly params: WorkerSpawnParams;
   private proc: ChildProcessWithoutNullStreams | null = null;
   private stdoutBuf = "";
@@ -360,6 +368,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     super();
     this.params = params;
     this.sessionKey = params.sessionKey;
+    this.thinkLevel = params.thinkLevel;
   }
 
   async start(): Promise<void> {
