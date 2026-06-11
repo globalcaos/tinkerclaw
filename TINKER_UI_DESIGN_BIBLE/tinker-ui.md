@@ -34,6 +34,8 @@ verify:
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "msg-incomplete-badge" in t, "msg-incomplete-badge (turn-incomplete ⚠ badge) missing in app.ts"'
   - name: §5.8e generic unknown-stream fallback — KNOWN_STREAMS denylist routes unknown streams to renderSystemMsg
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "KNOWN_STREAMS" in t, "KNOWN_STREAMS denylist for the unknown-stream fallback missing in app.ts"'
+  - name: §5.8f per-tab model+thinking-slider strip — tab-think-slider element exists in app.ts (in the .chat-area markup, before .chat-input)
+    cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "tab-think-slider" in t, "tab-think-slider (per-tab model+thinking strip) missing in app.ts"'
 ---
 
 # Tinker UI — layout, visual language, feature registry
@@ -448,6 +450,19 @@ Two toolbar icons toggle panel visibility with smooth CSS grid animations:
 - **Relationship to §5.8 / §5.8c / §5.8d:** §5.8c routes native `type:"thinking"` _content blocks_ into per-tool intermediate temps; §5.8 segments assistant `text` across tool boundaries; §5.8d peels leading narration off a single-block cc-bridge answer. §5.8e is the **live extended-reasoning channel**: it consumes the `stream:"thinking"` agent events into a self-tagged `_isReasoning` bubble that is deliberately _fenced off_ from all three positional mechanisms, so adding live reasoning display can never regress the thinking/answer separation those sections established.
 - **CSS:** `.msg.msg-thinking` (reused from §5.8 — earth-thinking texture, 12px, `#d4c4a8`), `.msg-incomplete-badge` (⚠ turn-incomplete badge)
 - **Files:** `app.ts` (`stream==="thinking"` handler, `_isReasoning` accumulation + classifier skip-guard at ~6342 + dedicated `.msg-thinking` `renderMsg` branch, `_turnIncomplete` dual hook, `KNOWN_STREAMS` fallback), `extensions/tinkerclaw-cc-bridge/src/worker.ts` (`pushThinkingDelta`, `phase:"turn-incomplete"`), `embedded-agent-subscribe.ts` (`emitReasoningStream`, `reasoningMode=="stream"` gate), `base.css` (`.msg-incomplete-badge`)
+
+### 5.8f Per-tab model + thinking-budget strip
+
+- **Status:** `DEPLOYED` (2026-06-11)
+- **What — the capability:** A thin always-visible strip pinned to the bottom of the chat, showing the **active session's model badge** and an **8-stop thinking slider** so the user can read the model and dial the reasoning budget for the current tab without leaving chat or opening the Sessions alt-view. The 8 stops, in order, are: **Off · Minimal · Low · Medium · Adaptive · High · xHigh · Max**.
+- **Markup placement:** the strip is a **child of `.chat-area`, inserted immediately before `.chat-input`** (i.e. between `.messages` and the input bar, so it floats just above the textarea). It carries the id token **`tab-think-slider`** (the `verify:` gate asserts `app.ts` contains this string). It is per-tab: the model badge + the slider's current stop reflect the **active tab's session**, and switching tabs re-reads that session's `model` / `thinkingLevel`.
+- **DON'T-REGRESS invariants** (each is load-bearing — the strip was added _inside_ machinery that punishes the obvious shortcut):
+  1. **NO backticks anywhere in the strip's markup.** The strip lives in the `.chat-area` **tagged-template `innerHTML`** (the same tagged-template region whose hazard is called out at `app.ts:8154-8156`: a nested backtick terminates the literal early and **crashes the whole page to black on load**). Build any dynamic strip content with string concatenation / `&hellip;`-style entities, never an inner template literal.
+  2. **The slider's `change` handler is `.chat-area`-scoped, NOT the `altView` delegate.** The pre-existing per-row thinking `<select>` (§5.13 Sessions panel) is handled by a delegated `change` listener on `altView` matching `.alt-sess-thinking` (`app.ts` ~line 12563). The strip is **not** inside the alt-view, so it MUST register its own chat-area-scoped change handler; do not try to reuse / widen the `altView` delegate, and do not let the strip's class collide with `.alt-sess-thinking`.
+  3. **It saves via `sessions.update { thinkingLevel }` ONLY.** The save call patches **only** `thinkingLevel` (mirroring the per-row select at `app.ts` ~line 12569: `req("sessions.update", { key, patch: { thinkingLevel: value || null } })`). Any **other** session field sent from a webchat client hits the **`rejectWebchatSessionMutation`** guard (`app.ts` ~line 3899) and the whole patch is rejected — so the strip never bundles model or any other field into the same `sessions.update`.
+  4. **Moving the slider applies on the NEXT message, not the in-flight turn.** The thinking budget is read **at cc-bridge worker spawn time** (see `tool-loop.md`), so changing the stop mid-turn cannot retro-budget the running turn — it takes effect on the next user message. This is intended; surface it as expected behavior, not a bug.
+- **Cross-references:** the budget mechanism the slider drives (where/when `thinkingLevel` is consumed at worker spawn) lives in **`tool-loop.md`**; the reasoning bubble the budget _lights up_ (the live extended-thinking `_isReasoning` stream) is **§5.8e**. The per-session-row equivalent control (the `<select>` in the Sessions alt-view) is §5.13.
+- **Files:** `app.ts` (the `tab-think-slider` strip markup inside the `.chat-area` tagged template before `.chat-input`; the chat-area-scoped `change` handler; the per-tab `sessions.update { thinkingLevel }` save), `base.css` (strip + slider styling)
 
 ### 5.9 Context Timeline
 
