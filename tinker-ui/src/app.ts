@@ -1435,6 +1435,22 @@ type ActiveRunInfo = {
   // event when it carries a task/label (the global "all"-scope orchestration view
   // gets task from the richer extension tree broadcast instead).
   task?: string;
+  // FORK 2026-06-11 (tinkerui-effort): reasoning-effort vitals fed from the
+  // `effort` stream. thinkLevel = requested level string ('' / 'off' = Auto);
+  // configuredBudget = requested MAX_THINKING_TOKENS cap in tokens (0 = Auto =
+  // model decides, NOT '0 tok'); thinkingChars = ACTUAL reasoning emitted (CHARS,
+  // never tokens); hadRealThinking = saw any non-redacted reasoning; redacted =
+  // the provider redacted the reasoning. The phase==='final' summary additionally
+  // carries outputTokens/numTurns. pendingThinkLevel records a think-level change
+  // requested mid-flight (requested vs the level actually running).
+  thinkLevel?: string;
+  configuredBudget?: number;
+  thinkingChars?: number;
+  hadRealThinking?: boolean;
+  redacted?: boolean;
+  outputTokens?: number;
+  numTurns?: number;
+  pendingThinkLevel?: { requested?: string; running?: string };
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 
@@ -1772,6 +1788,109 @@ function updatePrefrontalTree() {
     trail: prefrontalTrail,
     plan: currentPlan, // FORK 2026-05-13
   } satisfies PrefrontalDashboardState);
+  // FORK 2026-06-11 (tinkerui-effort): refresh the ?pfdebug truth grid in lockstep
+  // with the panel so the raw effort vitals stay in sync with the rendered chip.
+  updatePfDebugGrid();
+}
+
+// FORK 2026-06-11 (tinkerui-effort) — ?pfdebug=1 (or __pf.enable()) TRUTH GRID.
+// Renders one row per active run from `activeRuns` with the HONEST effort columns
+// so we can audit the chip against the raw stream: runId · sessionKey · thinkLevel
+// · requested budget (cap) · actual thinking (chars) · hadRealThinking · redacted ·
+// output_tokens · num_turns · pending(requested→running). HONEST headers — the
+// budget column is the REQUESTED cap, the thinking column is ACTUAL chars (never
+// tokens). A configuredBudget of 0 renders as the thinkLevel word ('Auto'/'off'),
+// NOT '0 tok'. Redacted rows show '[redacted]' for the thinking cell with
+// hadRealThinking forced false. Gated entirely on PF_DEBUG_STATE.debug; the grid
+// DOM element is created lazily and removed when debug is off.
+function updatePfDebugGrid(): void {
+  const existing = document.getElementById("pf-debug-grid");
+  if (!PF_DEBUG_STATE.debug) {
+    existing?.remove();
+    return;
+  }
+  let grid = existing as HTMLElement | null;
+  if (!grid) {
+    grid = document.createElement("div");
+    grid.id = "pf-debug-grid";
+    grid.style.cssText =
+      "position:fixed;bottom:8px;right:8px;z-index:99999;max-width:min(96vw,920px);" +
+      "max-height:42vh;overflow:auto;background:rgba(12,10,8,0.94);color:#e8d4b0;" +
+      "border:1px solid rgba(193,154,107,0.45);border-radius:8px;padding:6px 8px;" +
+      "font:11px/1.35 ui-monospace,'Courier New',monospace;box-shadow:0 2px 12px rgba(0,0,0,0.5)";
+    document.body.appendChild(grid);
+  }
+  const esc = (s: string): string =>
+    String(s).replace(
+      /[&<>"']/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string,
+    );
+  const cols = [
+    "runId",
+    "sessionKey",
+    "thinkLevel",
+    "requested budget (cap)",
+    "actual thinking (chars)",
+    "hadRealThinking",
+    "redacted",
+    "output_tokens",
+    "num_turns",
+    "pending(req→run)",
+  ];
+  const rows: string[] = [];
+  for (const [runId, info] of activeRuns.entries()) {
+    const lvl = !info.thinkLevel || info.thinkLevel === "off" ? "Auto" : info.thinkLevel;
+    // configuredBudget 0 -> show the level word ('Auto'/'off'), NOT '0 tok'.
+    const cap =
+      info.configuredBudget && info.configuredBudget > 0
+        ? `${Math.round(info.configuredBudget / 1000)}k tok`
+        : info.thinkLevel && info.thinkLevel !== ""
+          ? info.thinkLevel
+          : "Auto";
+    const redacted = info.redacted === true;
+    const had = redacted ? false : info.hadRealThinking === true;
+    const thinkCell = redacted
+      ? "[redacted]"
+      : info.thinkingChars != null
+        ? String(info.thinkingChars)
+        : "-";
+    const pend = info.pendingThinkLevel
+      ? `${info.pendingThinkLevel.requested ?? "?"}→${info.pendingThinkLevel.running ?? "?"}`
+      : "-";
+    const cells = [
+      runId.slice(0, 8),
+      info.sessionKey ?? "-",
+      lvl,
+      cap,
+      thinkCell,
+      String(had),
+      String(redacted),
+      info.outputTokens != null ? String(info.outputTokens) : "-",
+      info.numTurns != null ? String(info.numTurns) : "-",
+      pend,
+    ];
+    rows.push(
+      "<tr>" +
+        cells.map((c) => `<td style="padding:1px 6px;white-space:nowrap">${esc(c)}</td>`).join("") +
+        "</tr>",
+    );
+  }
+  const head =
+    "<tr>" +
+    cols
+      .map(
+        (c) =>
+          `<th style="padding:1px 6px;text-align:left;color:#e8cc93;white-space:nowrap">${esc(c)}</th>`,
+      )
+      .join("") +
+    "</tr>";
+  const body =
+    rows.length > 0
+      ? rows.join("")
+      : `<tr><td colspan="${cols.length}" style="padding:3px 6px;color:#b8a593;font-style:italic">no active runs</td></tr>`;
+  grid.innerHTML =
+    '<div style="color:#d4a574;font-weight:700;margin-bottom:3px">PF effort truth grid (?pfdebug)</div>' +
+    `<table style="border-collapse:collapse"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
 
 function buildPrefrontalTree(): TreeResponse {
@@ -1851,6 +1970,13 @@ function buildPrefrontalTree(): TreeResponse {
     lastEventAge: Math.floor((Date.now() - info.startedAt) / 1000),
     // FORK 2026-05-31: surface the run's task as the subagent sub-line when known.
     ...(info.task ? { summary: info.task } : {}),
+    // FORK 2026-06-11 (tinkerui-effort): carry the reasoning-effort vitals onto the
+    // node so renderVitals draws the effort chip (HONEST: requested cap + actual
+    // think chars, never a fabricated token count).
+    ...(info.thinkLevel != null ? { thinkLevel: info.thinkLevel } : {}),
+    ...(info.configuredBudget != null ? { configuredBudget: info.configuredBudget } : {}),
+    ...(info.thinkingChars != null ? { thinkingChars: info.thinkingChars } : {}),
+    ...(info.hadRealThinking != null ? { hadRealThinking: info.hadRealThinking } : {}),
     children: [],
   });
 
@@ -3129,6 +3255,40 @@ function onEvent(evt: unknown) {
       updateChat();
       return;
     }
+    // FORK 2026-06-11 (tinkerui-effort) — STREAM:"effort" consumer. The gateway
+    // broadcasts a per-run reasoning-effort summary (incremental during the run,
+    // phase==="final" at turn end). Fold it onto the run's ActiveRunInfo so the
+    // call-tree effort chip + the ?pfdebug truth grid can show what was REQUESTED
+    // (thinkLevel + configuredBudget cap) vs what ACTUALLY happened (thinkingChars,
+    // hadRealThinking, redacted, and on final output_tokens/num_turns). Gated on
+    // sessionKey like the tool/thinking branches.
+    if (p?.stream === "effort" && sessionKeyMatches(p.sessionKey)) {
+      const d = p.data ?? {};
+      const r: ActiveRunInfo =
+        activeRuns.get(p.runId) ??
+        ({
+          model: typeof d.model === "string" ? d.model : "",
+          provider: typeof d.provider === "string" ? d.provider : "",
+          startedAt: Date.now(),
+          lastEventAt: Date.now(),
+          sessionKey: typeof p.sessionKey === "string" ? p.sessionKey : undefined,
+          phase: "thinking",
+        } as ActiveRunInfo);
+      if (typeof d.thinkLevel === "string") r.thinkLevel = d.thinkLevel;
+      if (typeof d.configuredBudget === "number") r.configuredBudget = d.configuredBudget;
+      if (typeof d.thinkingChars === "number") r.thinkingChars = d.thinkingChars;
+      if (typeof d.hadRealThinking === "boolean") r.hadRealThinking = d.hadRealThinking;
+      if (typeof d.redacted === "boolean") r.redacted = d.redacted;
+      if (d.phase === "final") {
+        if (typeof d.output_tokens === "number") r.outputTokens = d.output_tokens;
+        if (typeof d.num_turns === "number") r.numTurns = d.num_turns;
+      }
+      activeRuns.set(p.runId, r);
+      r.lastEventAt = Date.now();
+      updatePrefrontalTree();
+      updateBudgetPanel();
+      return;
+    }
     // FORK 2026-05-28 — cc-bridge text-block boundary. Anthropic's streaming
     // protocol guarantees content_block_delta carries an index field; cc-
     // bridge emits this event whenever the active text block index advances
@@ -3164,6 +3324,26 @@ function onEvent(evt: unknown) {
         }
       }
       updateChat();
+      return;
+    }
+    // FORK 2026-06-11 (tinkerui-effort) — think-level-pending lifecycle phase. Fires
+    // when a think-level change is requested mid-flight; the run keeps RUNNING at the
+    // previous level until the next turn applies the requested one. Stamp the pending
+    // requested→running pair onto the run so the truth grid can show the lag.
+    if (
+      p?.stream === "lifecycle" &&
+      p.data?.phase === "think-level-pending" &&
+      sessionKeyMatches(p.sessionKey)
+    ) {
+      const info = activeRuns.get(p.runId);
+      if (info) {
+        info.pendingThinkLevel = {
+          requested: typeof p.data.requested === "string" ? p.data.requested : undefined,
+          running: typeof p.data.running === "string" ? p.data.running : undefined,
+        };
+        info.lastEventAt = Date.now();
+        updatePrefrontalTree();
+      }
       return;
     }
     // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
@@ -3839,7 +4019,7 @@ function onEvent(evt: unknown) {
     // novel events are visible instead of silently dropped. Does not touch the
     // tool/lifecycle/assistant/thinking paths. (server-tool web_search/web_fetch
     // need no edit — existing friendly labels already cover them.)
-    const KNOWN_STREAMS = new Set(["tool", "lifecycle", "assistant", "thinking"]);
+    const KNOWN_STREAMS = new Set(["tool", "lifecycle", "assistant", "thinking", "effort"]);
     if (
       p?.stream &&
       !KNOWN_STREAMS.has(p.stream) &&
@@ -7765,7 +7945,9 @@ const GROUP_LABELS: Record<string, string> = {
 const GROUP_ORDER = ["pinned", "whatsapp", "cron", "subagent", "other"];
 
 // FORK 2026-06-11 — tinkerui-slider: per-tab model badge + 8-stop thinking slider.
-// The 8 stops IN ORDER (index 0 = Off = '' / null). The slider's min=0 max=7
+// The 8 stops IN ORDER (index 0 = Auto = empty string '' / null). Auto means the
+// MAX_THINKING_TOKENS cap is OMITTED so the model decides its own thinking budget
+// — it is NOT off; the model still thinks organically. The slider's min=0 max=7
 // step=1 maps directly onto this array; the level STRING is what sessions.update
 // persists (index 0 -> null). Module-level so the markup, the listener and the
 // re-render helper share one source of truth.
@@ -13109,7 +13291,7 @@ function init() {
               <td style="padding:6px;color:var(--muted);font-size:10px">${altRelTime(s.updatedAt)}</td>
               <td style="padding:6px">
                 <select class="alt-sess-thinking" data-key="${altEsc(s.key)}" style="background:var(--bg);border:1px solid var(--border);color:var(--muted);border-radius:3px;padding:1px 4px;font-size:9px;cursor:pointer" title="Thinking level">
-                  ${["", "low", "medium", "high"].map((v) => `<option value="${v}"${v === thinkLv ? " selected" : ""}>${v || "auto"}</option>`).join("")}
+                  ${["", "low", "medium", "high"].map((v) => `<option value="${v}"${v === thinkLv ? " selected" : ""}>${v || "Auto"}</option>`).join("")}
                 </select>
               </td>
               <td style="padding:6px;text-align:center"><span class="alt-session-del" data-key="${altEsc(s.key)}" style="color:var(--red);cursor:pointer;font-size:10px" title="Delete session">✕</span></td>
