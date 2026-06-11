@@ -1384,6 +1384,20 @@ code.fs-link.fs-link-error {
   opacity: 1;
   background: rgba(107, 142, 35, 0.1);
 }
+/* FORK 2026-06-11 (fractal v3, bible §5.67b) — fractal dock states (renderer: fractal-dock.ts) */
+.fractal-dock > summary {
+  border-left: 2px solid var(--green);
+  color: var(--muted);
+}
+@keyframes fractal-dock-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+.fractal-status-pending { animation: fractal-dock-pulse 2.4s ease-in-out infinite; }
+.fractal-status-clean   { color: var(--muted); }
+.fractal-status-flagged { color: var(--yellow); }
+.fractal-status-error   { color: var(--red); }
+.fractal-orphan         { opacity: 0.55; }
 .msg.assistant.streaming {
   border-left: 2px solid var(--accent);
   opacity: 0.85;
