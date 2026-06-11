@@ -31,6 +31,7 @@ import {
   serializeStdinLine,
 } from "./protocol.js";
 import { setResumeSessionId } from "./session-map.js";
+import { thinkLevelToMaxThinkingTokens } from "./thinking-budget.js";
 
 const log = createSubsystemLogger("tinkerclaw-cc-bridge");
 
@@ -293,6 +294,13 @@ export type WorkerSpawnParams = {
   systemPromptAppend?: string;
   disallowedTools?: string[];
   model?: string;
+  /**
+   * FORK 2026-06-11: per-session think level (e.g. `off` | `think` |
+   * `think_hard` | `ultrathink`). Mapped to Claude Code's native
+   * `MAX_THINKING_TOKENS` env knob at spawn (see `thinkLevelToMaxThinkingTokens`);
+   * `off`/undefined omits the var entirely so the CLI keeps its own default.
+   */
+  thinkLevel?: string;
   resumeSessionId?: string;
   /**
    * FORK 2026-05-04: extra plugin directories to load. Each becomes
@@ -571,6 +579,11 @@ export class ClaudeCodeWorker extends EventEmitter {
       // (if present) wins; otherwise we pin it so the CLI never falls back to
       // a low default that would silently truncate a long answer.
       "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+      // Thinking-token budget — set explicitly below from this session's
+      // think level. Native Claude Code knob (same class as the output-token
+      // ceiling above), so it doesn't read as a harness tell. Omitted for
+      // off/undefined so the CLI keeps its own default.
+      "MAX_THINKING_TOKENS",
     ]);
     const cleanEnv: NodeJS.ProcessEnv = {};
     for (const key of allowedKeys) {
@@ -606,6 +619,18 @@ export class ClaudeCodeWorker extends EventEmitter {
     // when absent.
     if (!cleanEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS) {
       cleanEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokensFor(this.params.model));
+    }
+    // FORK 2026-06-11: pin the thinking-token budget from this session's think
+    // level. MAX_THINKING_TOKENS is a native Claude Code knob (so it doesn't
+    // look like a harness tell). The helper clamps to the model's output
+    // ceiling and returns undefined for off/unset → we OMIT the var entirely
+    // (the CLI keeps its own default), never setting it to 0.
+    const __maxThinking = thinkLevelToMaxThinkingTokens(
+      this.params.thinkLevel,
+      maxOutputTokensFor(this.params.model),
+    );
+    if (__maxThinking !== undefined) {
+      cleanEnv.MAX_THINKING_TOKENS = String(__maxThinking);
     }
     // FORK 2026-04-28 (bible §5.76): probe for the user's claude install at
     // runtime instead of hardcoding an absolute home path. claude-cli
