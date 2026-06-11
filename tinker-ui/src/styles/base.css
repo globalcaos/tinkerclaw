@@ -6255,3 +6255,123 @@ code.fs-link.fs-link-error {
 .model-think-slider:focus::-moz-range-thumb {
   background: var(--text);
 }
+
+/* ── FORK 2026-06-11: EFFORT feedback chip + ?pfdebug=1 truth grid (PREFRONTAL).
+   .pf-effort reuses the .pf-vitals dim sub-line look (same 22px indent, 10.5px,
+   mono, low-opacity) so it reads as another vitals sub-line, not a new widget.
+   It carries TWO conceptually different parts:
+     - the REQUESTED thinking budget (a CAP — a ceiling we asked for), shown
+       muted + dashed-underlined to read as "intended, not yet realised";
+     - the ACTUAL thinking chars the model produced, shown solid in --text.
+   When real thinking actually happened the whole chip gets a subtle --accent
+   tint (.is-thinking). The .is-warn modifier flags the asked-for-a-big-budget-
+   but-got-no-thinking case (⚠) in an --orange warning tint. No new color tokens:
+   --accent / --muted / --text / --orange / --border / --bg-elev / --mono only. */
+.pf-effort {
+  margin: 1px 0 3px 22px;
+  font-size: 10.5px;
+  opacity: 0.7;
+  font-family: var(--mono, monospace);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-elev, rgba(255, 255, 255, 0.03));
+  border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    opacity 0.12s,
+    border-color 0.12s,
+    background 0.12s;
+}
+/* real thinking happened → subtle accent lift (slightly brighter + accent edge). */
+.pf-effort.is-thinking {
+  opacity: 0.85;
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elev, rgba(255, 255, 255, 0.03)));
+}
+.pf-effort:hover {
+  opacity: 1;
+}
+/* the REQUESTED budget (a cap we asked for, not necessarily realised): muted +
+   dashed underline marks it as "intended ceiling", visually distinct from the
+   solid actual-chars figure beside it. */
+.pf-effort .pf-effort-cap {
+  color: var(--muted);
+  text-decoration: underline dashed color-mix(in srgb, var(--muted) 55%, transparent);
+  text-underline-offset: 2px;
+}
+/* the ACTUAL thinking chars the model produced: solid, full-weight foreground. */
+.pf-effort .pf-effort-actual {
+  color: var(--text);
+  font-weight: 600;
+}
+.pf-effort .pf-effort-sep {
+  opacity: 0.4;
+}
+/* asked for a high budget but got ~no thinking → warning tint (⚠ case). */
+.pf-effort.is-warn {
+  opacity: 0.92;
+  color: var(--orange);
+  border-color: color-mix(in srgb, var(--orange) 45%, transparent);
+  background: color-mix(in srgb, var(--orange) 12%, var(--bg-elev, rgba(255, 255, 255, 0.03)));
+}
+.pf-effort.is-warn .pf-effort-cap {
+  color: color-mix(in srgb, var(--orange) 80%, var(--muted));
+  text-decoration-color: color-mix(in srgb, var(--orange) 55%, transparent);
+}
+.pf-effort.is-warn .pf-effort-actual {
+  color: var(--orange);
+}
+
+/* ?pfdebug=1 TRUTH GRID — a developer-only raw-fields table. Monospace, fixed
+   table-layout (columns don't reflow as values change), and DIM-until-hover so
+   it stays visually subordinate to the real panels above it (this is debug
+   plumbing, not product UI). All borders/bg from --border / --bg-elev. */
+.pf-debug-grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 4px 0 8px 22px;
+  max-width: calc(100% - 22px);
+  font-family: var(--mono, monospace);
+  font-size: 9.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  opacity: 0.4;
+  transition: opacity 0.12s;
+}
+.pf-debug-grid:hover {
+  opacity: 0.85;
+}
+.pf-debug-grid th,
+.pf-debug-grid td {
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  padding: 1px 5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.pf-debug-grid th {
+  background: var(--bg-elev, rgba(255, 255, 255, 0.03));
+  color: var(--muted);
+  font-weight: 600;
+  /* label column: narrow + fixed so values get the room. */
+  width: 8.5em;
+}
+.pf-debug-grid td {
+  color: var(--text);
+  word-break: break-all;
+  white-space: normal;
+}
+.pf-debug-grid tr:hover td,
+.pf-debug-grid tr:hover th {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
