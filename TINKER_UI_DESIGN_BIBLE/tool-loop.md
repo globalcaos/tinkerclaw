@@ -21,6 +21,10 @@ verify:
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); block = re.search(r"f\.event === \"shutdown\".*?f\.payload\?\.restartExpectedMs.*?\}", t, re.S); assert block, "the shutdown-frame handler in app.ts is missing or has been refactored — re-locate and verify it still adds runIds to unconfirmedRuns"; assert "unconfirmedRuns.add(runId)" in block.group(0), "the shutdown-frame handler no longer enrolls activeRuns into unconfirmedRuns. Without this, an in-tab graceful restart leaves stale activeRuns entries forever (no lifecycle:end will ever come from the dead gateway process), the prefrontal panel shows the indicator + clock frozen at the pre-restart state, and only a page reload clears the ghost. See bug-log.md FIXED 2026-05-24 ghost-run."'
   - name: in-flight steer is wired end-to-end (FORK 2026-06-10 / P4 — a mid-answer message folds into the live cc-bridge turn instead of next-turn-only)
     cmd: python3 -c 'import os; R=lambda p: open(os.path.expanduser(p)).read(); assert "steer(text: string): boolean" in R("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker.ts"), "worker.steer() primitive missing — mid-turn stdin injection gone"; assert "tryInflightSteer(sessionId, combined)" in R("~/src/tinkerclaw/src/agents/embedded-agent-runner/runs.ts"), "flushSteerBuffer no longer routes through the in-flight steer hook — mid-turn steer regressed to next-turn-only"; reg=R("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/inflight-worker-registry.ts"); assert "registerInflightSteerHook(" in reg and "worker.steer(text)" in reg, "cc-bridge no longer bridges worker.steer into the core in-flight steer hook"'
+  - name: cc-bridge protocol carries the forward-compat server-tool/redacted CcContentBlock arms (FORK 2026-06-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/protocol.ts")).read(); assert "server_tool_use" in t and "web_search_tool_result" in t and "redacted_thinking" in t, "the forward-compat CcContentBlock arms (server_tool_use / web_search_tool_result / redacted_thinking) are missing from protocol.ts — claude-cli currently normalizes WebSearch/WebFetch into plain tool_use/tool_result, but the typed arms must stay so a future schema bump does not fall into the open-ended forward-compat catch-all undecoded"'
+  - name: cc-bridge emits a turn-incomplete lifecycle event for any non-success result.subtype (FORK 2026-06-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "turn-incomplete" in t, "the phase:\"turn-incomplete\" lifecycle event is missing from stream.ts — error_max_turns / error_during_execution / generic error results no longer badge the run as incomplete. It MUST be emitted from the result/done branch BEFORE the is_error early-return, because done is always stopReason:\"stop\" and pi-ai StopReason has no incomplete member, so a non-success subtype can only be surfaced as a free-form lifecycle event."; assert "flattenResultContent" in t, "the exported flattenResultContent helper is no longer used in stream.ts — tool_result content blocks (string | CcContentBlock[]) must be flattened to plain text through the shared helper"'
 ---
 
 # Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
@@ -235,6 +239,32 @@ The bundled default ships ten priority-ordered rules (truth before agreement, pr
 Both paths fire when `--include-partial-messages` is on. The fine-grained handler **MUST** mirror every pushed delta into `blockTextSeen[ev.index] += delta` so the cumulative-handler's slice condition (`cumulative.length > prev.length && cumulative.startsWith(prev)`) doesn't re-push the same text. **Don't regress (commit `d32e44cc24`, 2026-05-24):** before this sync, every block of streamed text was emitted twice — once via fine-grained deltas, once via the cumulative re-push (`prev = ""` → it sliced the whole cumulative as a "new delta"). The duplicate appeared in the rendered bubble as `"Good catches…Good catches…## 💬 ANSWER…"`, and with gap-split bubbles in the mix the `_segmentStart` cursors went past `finalText.length` during tail-recover, surfacing to the user as "truncation."
 
 The `pushStart()` is eager — fires the instant the turn begins so the 4 thinking indicators (chat label, session panel, model glow, prefrontal tree) animate during long tool-call chains.
+
+### Producer additions — forward-compat blocks, turn-incomplete badge, result flattening (FORK 2026-06-11)
+
+Three additions on the cc-bridge **producer** side (the stream→pi-ai converter, `stream.ts`, plus the wire-shape decls in `protocol.ts`). None changes the suppression invariant above; they harden the producer against schema drift and surface non-success terminations.
+
+#### 1. Forward-compat `CcContentBlock` arms
+
+`protocol.ts`'s `CcContentBlock` union gains three named arms — `server_tool_use`, `web_search_tool_result`, and `redacted_thinking` — corresponding to the raw Anthropic server-tool / web-search-result / redacted-thinking block shapes.
+
+**LIVE FACT (why they are inert today):** claude-cli currently **normalizes** its built-in `WebSearch` / `WebFetch` tools into plain `tool_use` / `tool_result` blocks before they ever reach cc-bridge's stdout. So in the present claude-cli schema these three arms **never match** — every web-search round arrives as ordinary `tool_use`/`tool_result` and flows through the existing handlers. The arms are pure **forward-compat**: they fire only if a future claude-cli schema bump starts surfacing the raw Anthropic server-tool blocks (or raw `redacted_thinking`) on the wire. Naming them now keeps such a bump from silently dropping into the open-ended `{ type: string; [key: string]: unknown }` forward-compat catch-all (where it would decode to nothing) and gives the decoder a typed branch to grow into.
+
+**Don't regress:** keep the three named arms even though they are inert. Deleting them as "dead code" is the trap — they are a deliberate landing pad for a schema bump, and `config-shape.md`'s dead-code register should NOT list them as removable.
+
+#### 2. `phase:"turn-incomplete"` lifecycle event
+
+The result/done branch now emits a free-form **`stream:"lifecycle"` `phase:"turn-incomplete"`** agent event (via `emitAgentEvent`, same envelope shape as the `phase:"start"` / `phase:"end"` events) for **any non-success `result.subtype`** — `error_max_turns`, `error_during_execution`, and the generic `error` subtype all badge.
+
+**Placement is load-bearing:** the emit sits in the result/done branch **BEFORE the `is_error` early-return** (the `if (result.is_error && …) { … return; }` block that resets accumulated text to the `__ERR_ENV__` envelope and returns). If it were placed after, the `is_error` path would `return` first and the auth/billing-error and `error_during_execution` cases would never badge. By sitting ahead of that return, every non-success subtype is reported regardless of which downstream arm (envelope-reset, tail-recover, or clean done) ultimately runs.
+
+**Why a free-form lifecycle event and NOT a pi-ai `StopReason`:** the `done` event cc-bridge pushes is **always `stopReason:"stop"`** (pi-agent-core honors the final message and replaces partial content; cc-bridge has no incomplete `done` shape). The pi-ai `StopReason` discriminated union has **no `"incomplete"` member** — pushing one would violate pi-ai's invariants exactly like an out-of-window `text_delta` would. So "this turn ended in a non-success subtype" cannot ride the `StopReason` enum; it travels as a free-form `lifecycle` event the UI consumer reads independently of the `done` message. The thinking indicator still clears on the subsequent `phase:"end"` from the `finally` block; `turn-incomplete` is an additive badge, not a replacement for `end`.
+
+**Don't regress:** keep `turn-incomplete` BEFORE the `is_error` early-return, and do NOT try to express it as a `StopReason` — `done` stays `stopReason:"stop"`.
+
+#### 3. Exported `flattenResultContent` helper
+
+The `tool_result` content-flattening that was inline in the `user`-role stream-line handler (a `tool_result.content` is `string | CcContentBlock[]`; the array form must be reduced to plain text by concatenating the `text` of its `text` blocks) is now an **exported `flattenResultContent` helper**. It is the single place that turns a `CcContentBlock` `tool_result` payload into the `resultText` string fed to `emitToolResult`, so the array-of-blocks case and the plain-string case decode identically everywhere they appear.
 
 ### Auth
 
