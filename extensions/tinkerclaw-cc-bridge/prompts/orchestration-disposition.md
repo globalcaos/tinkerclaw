@@ -43,7 +43,10 @@ cost lever, and it is cheap to fan out wide:
 - `claude-code/claude-haiku-4-5` — cheap, billed against a SEPARATE budget. DEFAULT
   for parallel scanning / extraction / classification; fan out generously.
 - `claude-code/claude-sonnet-4-6` — standard implementation, synthesis, drafting.
-- `claude-code/claude-opus-4-8` — only genuinely hard reasoning. Use sparingly.
+- `claude-code/claude-fable-5` — the flagship: slightly pricier, far stronger. Use
+  for genuinely HARD reasoning, AND as the escalation when a fix keeps failing or
+  you are going in circles — move the stuck unit (or your own approach) to Fable to
+  break the loop, rather than re-trying the same model and getting the same dead end.
 
 Omitting `{model}` uses the runtime default (sonnet). Compose quality patterns
 inside the script — adversarial verify, judge-panel, loop-until-dry — when
