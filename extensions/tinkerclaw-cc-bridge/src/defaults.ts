@@ -43,6 +43,23 @@ export const DEFAULT_DISALLOWED_TOOLS = [
 export const DEFAULT_PERMISSION_MODE = "bypassPermissions" as const;
 
 /**
+ * FORK 2026-06-11 (AMYGDALA v3.1): claude-cli settings file that registers the
+ * amygdala pre-execution PreToolUse hook. The learned-intuition extension writes
+ * this file when hook enforcement is on and deletes it when off — so its mere
+ * PRESENCE is the enable signal. When present, cc-bridge passes it via
+ * `--settings`; the hook then synchronously DENIES destructive-execution AEGIS
+ * rules INSIDE claude-cli, which works even under `bypassPermissions`. This
+ * retracts the old "cc-bridge tools can't be gated pre-execution" assumption.
+ */
+export const AMYGDALA_CC_HOOK_SETTINGS_PATH = path.join(
+  homedir(),
+  ".openclaw",
+  "data",
+  "amygdala",
+  "cc-hook-settings.json",
+);
+
+/**
  * FORK 2026-05-04: extra plugin directories the cc-bridge passes to
  * claude-cli via `--plugin-dir`. Without this, Jarvis cannot see any of the
  * 88 skills in `~/.openclaw/workspace/skills/` (notably `outlook-hack` and

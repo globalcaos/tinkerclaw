@@ -4,7 +4,7 @@
     "onStartup": true
   },
   "name": "Learned Intuition",
-  "description": "AMYGDALA \u2014 Neural safety gate trained on real failures. 10 ONNX networks evaluate every action. Falls back to rules when models unavailable.",
+  "description": "AMYGDALA v3.1 \u2014 safety gate: deterministic AEGIS rules enforced pre-execution (cc-bridge PreToolUse hook + native), a validated k-NN novelty 'ask' channel that habituates with experience, and a clause-cosine incongruity check. The legacy 5-net ONNX ensemble is retired from the decision path (re-enable with legacyEnsemble).",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -12,7 +12,7 @@
       "phase": {
         "type": "number",
         "default": 1,
-        "description": "Deployment phase (1=observe-only, 2+=active blocking)"
+        "description": "Deployment phase (1=observe-only soft-blocks, 2+=active neural blocking). AEGIS hard-blocks enforce regardless."
       },
       "alphaPrudence": {
         "type": "number",
@@ -20,7 +20,8 @@
       },
       "aegisEnabled": {
         "type": "boolean",
-        "default": false
+        "default": true,
+        "description": "v3.1: AEGIS deterministic veto on by default (resolves the old manifest-off vs code-on contradiction). Set false to fully disable the rule floor."
       },
       "observeOnly": {
         "type": "boolean",
@@ -29,6 +30,16 @@
       "modelsDir": {
         "type": "string",
         "description": "Path to ONNX models directory (defaults to ~/src/tinkerclaw/models/amygdala)"
+      },
+      "legacyEnsemble": {
+        "type": "boolean",
+        "default": false,
+        "description": "Run the retired 5-net ONNX prudence/personality ensemble in the decision path. Off by default (trained on mislabelled data; frozen-MiniLM danger classification measured below chance). The embedding pipeline is retained for novelty regardless."
+      },
+      "hookEnforcement": {
+        "type": "boolean",
+        "default": true,
+        "description": "Write the claude-cli PreToolUse hook settings so destructive-execution AEGIS rules deny synchronously on the cc-bridge runner (works under bypassPermissions). False removes the settings file (observe-only spool)."
       }
     }
   }
