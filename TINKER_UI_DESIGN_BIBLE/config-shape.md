@@ -244,6 +244,22 @@ The cc-bridge plugin loads an `ethical-rules` block into the worker's `--append-
 
 **Don't regress:** workspace override path is `memory/knowledge/jarvis-ethical-rules.md`, NOT `SOUL.md` (persona) and NOT `BRIEFING.md` (briefing). Each foundational block has its own override file; conflating them silently overrides the wrong layer.
 
+## AMYGDALA (learned-intuition) config keys (FORK 2026-06-11, v3.1)
+
+Read in `extensions/tinkerclaw-learned-intuition/index.ts` `register()` from `api.pluginConfig` (manifest `openclaw.plugin.json`; runtime overrides in `openclaw.json` under `plugins.entries.tinkerclaw-learned-intuition.config`).
+
+| Key               | Default (v3.1)           | Effect                                                                                                                                                                                                                                                                                                                     |
+| ----------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `aegisEnabled`    | **`true`** (was `false`) | The deterministic AEGIS rule veto. v3.1 flips the default ON — resolving the old manifest-off vs code-on contradiction. `false` fully disables the rule floor.                                                                                                                                                             |
+| `legacyEnsemble`  | `false`                  | Run the retired 5-net ONNX prudence/personality ensemble in the decision path. Off by default (trained on mislabelled data; arch C collapsed, arch E mush; frozen-MiniLM danger classification measured below chance, AUROC 0.286). The embedding pipeline (encoder + projection) is **always** loaded — novelty needs it. |
+| `hookEnforcement` | `true`                   | Write `cc-hook-settings.json` so cc-bridge passes `--settings` and destructive-execution AEGIS rules deny synchronously on the claude-cli runner (see `tool-loop.md`). `false` removes the settings file → observe-only spool, no pre-execution deny.                                                                      |
+| `observeOnly`     | `true`                   | Neural soft-blocks stay advisory while the gate ramps. The novelty channel ships as an observe-only **ask** disposition under this. AEGIS hard-blocks enforce regardless.                                                                                                                                                  |
+| `phase`           | `1`                      | Trust-ramp phase.                                                                                                                                                                                                                                                                                                          |
+
+**Runtime artifacts dir** `~/.openclaw/data/amygdala/`: `policy.json` (serialized AEGIS rules + `hookEnforcement` flag, read by the hook), `cc-hook-settings.json` (claude-cli PreToolUse hook registration; presence = enabled), `amygdala-pretooluse.mjs` (staged dependency-free hook script), `hook-decisions.jsonl` (pre-execution decision spool, ingested into the feed), `training.sqlite` (schema `user_version 1`: ensemble columns NULLABLE + `novelty`/`disposition`/`signal` + `amygdala_calibration` k/v for the novelty threshold).
+
+**Dead-code trap:** `DEFAULT_CONFORMAL_QUANTILE` and the per-arch conformal quantiles only matter when `legacyEnsemble:true`. With the default `false` the 10 ONNX nets are never loaded and those knobs are inert.
+
 ## Dead-code config trap registry
 
 Each trap is a config surface that _looks_ like it should apply at runtime but doesn't. Tagged `dead-code` so the bug-log's `config-dead-code` failure class (see `bug-log.md`) can correlate. The pattern is always: a key/path that is syntactically valid, accepted by the config loader, and not flagged as an error — but never read by the code path that needs it.
