@@ -6,7 +6,7 @@ summary: "The orchestrator: run the whole 'Along for the ride' campaign by compo
 version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
-category: "operations"
+category: "marketing"
 tags:
   [
     "marketing",
