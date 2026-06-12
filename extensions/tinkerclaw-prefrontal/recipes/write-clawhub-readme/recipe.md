@@ -6,7 +6,7 @@ summary: "Author the front README section for a ClawHub skill or plugin — Tink
 version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
-category: "writing"
+category: "marketing"
 tags:
   [
     "writing",

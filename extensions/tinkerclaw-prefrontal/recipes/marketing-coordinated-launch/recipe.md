@@ -6,7 +6,7 @@ summary: "When a feature/release is robust enough, fire ONE synchronized drop ac
 version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
-category: "communication"
+category: "marketing"
 tags:
   [
     "marketing",

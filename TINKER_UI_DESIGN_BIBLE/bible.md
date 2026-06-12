@@ -980,6 +980,26 @@ The unifying shape across U1–U12 is the producer→consumer loop: a _producer_
   - name: the 12-upgrade roadmap source exists (jarvis-icu repo)
     cmd: python3 -c 'import glob,os; assert glob.glob(os.path.expanduser("~/src/jarvis-icu/docs/notes/2026-05-30-papers-coverage-and-oss-roadmap.md")), "roadmap source missing"'
 
+### 5.83a External Knowledge Import — vendor-clone + symlink + recipe orchestration (DECIDED 2026-06-12)
+
+The first real instance of §5.83's U11 (external skill acquisition): integrating `coreyhaines31/marketingskills` (44 marketing skills + 51 API CLIs, MIT, 33k stars). The decision is the **three-layer split** — reusable for any future external knowledge repo:
+
+- **Knowledge → skills, vendored not forked.** The upstream repo lives as a git clone at `~/.openclaw/workspace/vendor/marketingskills`; a _curated subset_ (cro, copywriting, copy-editing, seo-audit, marketing-psychology, launch) is **symlinked** into `~/.openclaw/workspace/skills/` (the jarvis-skills home — loader follows symlinks, pp-\* precedent). Updates = `git pull` in vendor; zero rewrite. The other 38 skills stay reachable by path — recipes reference `vendor/.../skills/<x>/SKILL.md` as reading lists, so knowledge is available WITHOUT polluting the per-session skill trigger list (each loaded skill costs system-prompt tokens; Rule-9 boundary is ~6 conversational-trigger-worthy ones).
+- **Orchestration → BROCA recipes, new `marketing` category.** Recipes hold the WHEN/sequence (fan-out, gates, budgets); skills hold the HOW. Added `marketing` to `CANONICAL_CATEGORIES` (`recipe-author.ts` — gates only the author RPC; the loader was already permissive), recategorized the 7 existing marketing recipes (were mis-filed `operations`/`communication`), authored `marketing-page-audit` (CRO+SEO+copy fan-out → merged prioritized report). Catalog row color: coral.
+- **Context → the `.agents/product-marketing.md` contract** (Haines convention adopted verbatim so vendored skills find it unmodified): one file with positioning/ICP/voice/hard-rules at `~/.openclaw/workspace/.agents/product-marketing.md` (symlinked into jarvis-workspace) that every marketing skill/recipe reads FIRST and only asks what it doesn't cover — the institutional form of resolve-from-context-before-asking. This file is what makes 44 generic frameworks speak in our voice; it carries the PII/no-fabricated-metrics hard rules so framework advice can't override them.
+
+**Don't-regress:** (1) never copy-and-edit a vendored SKILL.md in place — patch via a wrapper skill or upstream PR, else `git pull` becomes a merge; (2) keep the vendor clone OUT of the workspace git index (nested repo); (3) skill-authoring standards adopted from this repo — per-skill `evals/evals.json` + user-phrase trigger descriptions — apply to OUR published ClawHub skills (retrofit tracked in the inbound-marketing plan).
+
+- **Status:** `DEPLOYED` (skills verified live in-session 2026-06-12 without restart; recipes load on next gateway restart; `CANONICAL_CATEGORIES` edit needs next `pnpm build`)
+- **last_verified:** 2026-06-12
+- **verify:**
+  - name: vendored skills resolve through the symlink
+    cmd: python3 -c 'import os; p=os.path.expanduser("~/.openclaw/workspace/skills/cro/SKILL.md"); assert os.path.isfile(p), "vendor symlink broken"'
+  - name: product-marketing context contract exists
+    cmd: python3 -c 'import os; assert os.path.isfile(os.path.expanduser("~/.openclaw/workspace/.agents/product-marketing.md"))'
+  - name: marketing category present in author gate
+    cmd: python3 -c 'import os; s=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-author.ts")).read(); assert chr(34)+"marketing"+chr(34) in s'
+
 ---
 
 ## 6. Backend Fork Patches That Feed Tinker

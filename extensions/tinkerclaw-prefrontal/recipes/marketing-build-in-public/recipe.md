@@ -6,7 +6,7 @@ summary: "Share genuine progress, decisions, and failures (not just releases) to
 version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
-category: "communication"
+category: "marketing"
 tags:
   [
     "marketing",

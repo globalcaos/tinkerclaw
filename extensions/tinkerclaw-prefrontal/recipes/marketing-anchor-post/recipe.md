@@ -6,7 +6,7 @@ summary: "Turn verified third-party credibility into an evergreen authority corn
 version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
-category: "writing"
+category: "marketing"
 tags:
   [
     "marketing",

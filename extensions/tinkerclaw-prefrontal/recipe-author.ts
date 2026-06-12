@@ -91,6 +91,7 @@ const CANONICAL_CATEGORIES = [
   "analysis",
   "operations",
   "security",
+  "marketing",
 ];
 
 /**
