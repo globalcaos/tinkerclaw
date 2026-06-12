@@ -6,7 +6,7 @@ summary: "A reusable protocol for the biggest, riskiest reveals ({{flagship_feat
 version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
-category: "communication"
+category: "marketing"
 tags:
   [
     "marketing",

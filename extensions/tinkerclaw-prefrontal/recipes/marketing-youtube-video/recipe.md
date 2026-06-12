@@ -6,7 +6,7 @@ summary: "Produce a clear, watchable video that explains one paper/feature, make
 version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
-category: "communication"
+category: "marketing"
 tags:
   [
     "marketing",

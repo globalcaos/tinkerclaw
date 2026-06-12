@@ -5,15 +5,16 @@
 
 ## Categories
 
-| Category      | Color  | Recipes                                                                                |
-| ------------- | ------ | -------------------------------------------------------------------------------------- |
-| Coding        | olive  | debug, feature, refactor, code-review, upstream-merge, fork-patch                      |
-| Writing       | purple | write-paper, revise-paper, compile-paper, revise-publish-batch, brainstorm, write-plan |
-| Operations    | amber  | gateway-restart, security-audit, deploy, bookmark                                      |
-| Analysis      | blue   | investigate, dependency-analysis                                                       |
-| Security      | red    | incident-response, credential-rotation                                                 |
-| Communication | green  | daily-report, jarvis-report                                                            |
-| Combinators   | teal   | if-then-else, map, filter, compose                                                     |
+| Category      | Color  | Recipes                                                                                                                                                                                            |
+| ------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Coding        | olive  | debug, feature, refactor, code-review, upstream-merge, fork-patch                                                                                                                                  |
+| Writing       | purple | write-paper, revise-paper, compile-paper, revise-publish-batch, brainstorm, write-plan                                                                                                             |
+| Operations    | amber  | gateway-restart, security-audit, deploy, bookmark                                                                                                                                                  |
+| Analysis      | blue   | investigate, dependency-analysis                                                                                                                                                                   |
+| Security      | red    | incident-response, credential-rotation                                                                                                                                                             |
+| Communication | green  | daily-report, jarvis-report                                                                                                                                                                        |
+| Combinators   | teal   | if-then-else, map, filter, compose                                                                                                                                                                 |
+| Marketing     | coral  | marketing-campaign, marketing-anchor-post, marketing-build-in-public, marketing-coordinated-launch, marketing-flagship-launch, marketing-youtube-video, write-clawhub-readme, marketing-page-audit |
 
 ## Quick Reference
 
@@ -45,6 +46,14 @@
 | map                  | map, for each, per element, fan out, iterate                                     | produce, map                                                               | standard |
 | filter               | filter, keep, select, where, predicate                                           | produce, filter                                                            | standard |
 | compose              | compose, pipeline, chain, then-then, thread through                              | plan, first, second                                                        | standard |
+| marketing-campaign   | run the campaign, marketing campaign, do all the marketing                       | anchor-post, launch, build-in-public, youtube, coordinated-launch          | deep     |
+| marketing-page-audit | audit this page, this page isn't converting, review my landing page              | load-context, cro-lens, seo-lens, copy-lens, merge-prioritize              | standard |
+
+> Marketing recipes orchestrate the **vendored knowledge layer** at
+> `~/.openclaw/workspace/vendor/marketingskills` (coreyhaines31, MIT): recipes
+> hold the workflow; the vendor repo's SKILL.md files hold the frameworks.
+> Shared context contract: `~/.openclaw/workspace/.agents/product-marketing.md`
+> is read FIRST by every marketing recipe/skill — ask only what it doesn't cover.
 
 ## How Recipes Work
 
