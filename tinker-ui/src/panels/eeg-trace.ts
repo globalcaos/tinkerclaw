@@ -70,31 +70,41 @@ export function eegProviderPaint(provider: string): { stroke: string; isRainbow:
   return { stroke: EEG_PROVIDER_COLORS[p] ?? EEG_PROVIDER_COLORS.unknown, isRainbow: false };
 }
 
-// ─── Cost model: thickness = relative cost of (model × effort) ───
-// ESTIMATED relative output cost per model family (v1 lookup, first regex wins).
-// Deliberately approximate: this table is a named export precisely so measured
-// per-(model × effort) costs can REPLACE these estimates later without touching
-// the renderer. Until then any thickness derived from it is an ESTIMATE — never
-// present it as a measured figure (bible §5.8h invariant 3).
-// Anchored to Oscar's stated Anthropic ratios (2026-06-13): SONNET = 1 (the
-// base), OPUS = 5× sonnet, FABLE = 2× opus = 10× sonnet (fable is a bit more
-// TOKEN-efficient on long tasks, so its effective per-task cost is below sticker
-// — the measured halo is what exposes that gap). Other providers are pegged to
-// the same sonnet=1 scale.
+// ─── Cost model: thickness = Oscar's REAL per-use cost (€/Mtok output) ───
+// relCost values ARE effective €/Mtok-output under Oscar's actual billing
+// (2026-06-13), NOT API sticker — because the two providers are billed in
+// fundamentally different ways:
+//
+//   ANTHROPIC (claude-code/*): a FLAT €200/month Max subscription, NOT metered
+//   API. At an assumed 75% weekly-quota utilization the subscription amortizes
+//   to ≈ €2 per sonnet-equivalent Mtok-output (≈ 7× cheaper than Anthropic's own
+//   API). Each Anthropic model burns the shared quota at its weight (haiku 0.3,
+//   sonnet 1, opus 5, fable 10 — Anthropic's own model weighting ≈ price ratio),
+//   so effective €/Mtok = €2 × weight → haiku 0.6, sonnet 2, opus 10, fable 20.
+//
+//   OPENAI / GOOGLE (gpt-*, gemini-*): METERED API, every token billed at full
+//   published output price (≈ €/Mtok): gpt-5.x ≈ 12, gemini Pro ≈ 12, gemini
+//   Flash ≈ 2.5, mini ≈ 3. No subscription discount.
+//
+// Net effect: a frontier API model (gpt-5.5, gemini-pro ≈ €12) costs MORE per use
+// than subscription Opus (€10) and far more than subscription Sonnet (€2) — which
+// is exactly Oscar's point. These are ESTIMATES (the 75%-quota → €2/Mtok anchor
+// is the big assumption); the measured halo will correct them later. Never present
+// as measured (bible §5.8h invariant 3).
 export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
-  { modelMatch: /fable/i, relCost: 10 },
-  { modelMatch: /opus/i, relCost: 5 },
-  { modelMatch: /sonnet/i, relCost: 1 },
-  { modelMatch: /haiku/i, relCost: 0.3 },
-  // gemini rows BEFORE the \bmini\b row purely for clarity; \b already keeps
-  // "gemini" (…e-mini…) from matching the mini bucket.
-  { modelMatch: /gemini.*pro/i, relCost: 5 },
-  { modelMatch: /gemini.*flash/i, relCost: 0.5 },
-  // \bmini\b listed before gpt-5 so "gpt-5-mini" takes the cheap bucket.
-  { modelMatch: /\bmini\b/i, relCost: 0.5 },
-  { modelMatch: /gpt-5/i, relCost: 5 },
+  // Anthropic — subscription-amortized €/Mtok (€2 base × quota-burn weight)
+  { modelMatch: /fable/i, relCost: 20 },
+  { modelMatch: /opus/i, relCost: 10 },
+  { modelMatch: /sonnet/i, relCost: 2 },
+  { modelMatch: /haiku/i, relCost: 0.6 },
+  // Google / OpenAI — metered API €/Mtok (full price). gemini rows BEFORE \bmini\b
+  // for clarity; \b already keeps "gemini" (…e-mini…) out of the mini bucket.
+  { modelMatch: /gemini.*pro/i, relCost: 12 },
+  { modelMatch: /gemini.*flash/i, relCost: 2.5 },
+  { modelMatch: /\bmini\b/i, relCost: 3 },
+  { modelMatch: /gpt-5/i, relCost: 12 },
 ];
-const EEG_DEFAULT_REL_COST = 2;
+const EEG_DEFAULT_REL_COST = 5;
 
 // Effort multiplier per stop. Auto ("") = UNCAPPED — the model picks its own
 // budget, so it costs more than medium on average (§5.8g: Auto is never tier 0).
@@ -118,7 +128,10 @@ export function eegCostWidthPx(model: string, level: string): number {
     }
   }
   const mult = EEG_EFFORT_MULT[level] ?? 1;
-  const w = 1.5 * Math.log2(1 + rel * mult * 2);
+  // log compression so the ~0.6–20 €/Mtok span fits 1.5–7px. K=1 (was 2) keeps
+  // the costly end (opus/gpt/gemini-pro/fable) from all saturating at the 7px
+  // cap, so their cost differences stay visible. Monotonic with cost, not linear.
+  const w = 1.5 * Math.log2(1 + rel * mult);
   return Math.min(7, Math.max(1.5, w));
 }
 
