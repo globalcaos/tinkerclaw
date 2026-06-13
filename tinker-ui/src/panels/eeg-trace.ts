@@ -61,14 +61,26 @@ export const EEG_PROVIDER_COLORS: Record<string, string> = {
   unknown: "#8A8F98", // xai / local / anything unrecognized = neutral gray
 };
 
+// FORK 2026-06-13 (eeg): infer the brand from EITHER a provider string OR a bare
+// MODEL name — the live trace gets the cc-bridge model id ("claude-fable-5", no
+// "claude-code/" prefix), so providerOf() returns the bare name and a plain
+// provider-key lookup missed → gray. Matching model-name patterns keeps the trace
+// branded (Oscar 2026-06-13: "why am I still seeing gray instead of orange").
 export function eegProviderPaint(provider: string): { stroke: string; isRainbow: boolean } {
   const p = (provider || "").toLowerCase();
-  if (p === "google" || p.startsWith("google")) {
+  if (p === "google" || p.startsWith("google") || /gemini|gemma|bison/.test(p)) {
     return { stroke: "url(#eeg-google)", isRainbow: true };
   }
-  // FORK 2026-06-13 (eeg): cc-bridge = claude CLI → keep Anthropic branding
-  // (same precedent as provider-logos.ts).
-  if (p === "claude-code") return { stroke: EEG_PROVIDER_COLORS.anthropic, isRainbow: false };
+  // anthropic — provider key OR a claude model name (cc-bridge = claude CLI)
+  if (p === "claude-code" || p === "anthropic" || /claude|fable|opus|sonnet|haiku/.test(p)) {
+    return { stroke: EEG_PROVIDER_COLORS.anthropic, isRainbow: false };
+  }
+  if (p === "openai" || /gpt|codex|(^|[^a-z])o\d/.test(p)) {
+    return { stroke: EEG_PROVIDER_COLORS.openai, isRainbow: false };
+  }
+  if (/deepseek/.test(p)) return { stroke: EEG_PROVIDER_COLORS.deepseek, isRainbow: false };
+  if (/mistral|mixtral/.test(p)) return { stroke: EEG_PROVIDER_COLORS.mistral, isRainbow: false };
+  if (/llama|meta/.test(p)) return { stroke: EEG_PROVIDER_COLORS.meta, isRainbow: false };
   return { stroke: EEG_PROVIDER_COLORS[p] ?? EEG_PROVIDER_COLORS.unknown, isRainbow: false };
 }
 
