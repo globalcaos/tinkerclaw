@@ -117,6 +117,13 @@ describe("eegProviderPaint", () => {
     expect(paint.isRainbow).toBe(false);
   });
 
+  it("infers the brand from a BARE model name (cc-bridge trace)", () => {
+    expect(eegProviderPaint("claude-fable-5").stroke).toBe(ANTHROPIC_STROKE);
+    expect(eegProviderPaint("claude-opus-4-8").stroke).toBe(ANTHROPIC_STROKE);
+    expect(eegProviderPaint("gemini-3.1-pro").isRainbow).toBe(true);
+    expect(eegProviderPaint("gpt-5.5").stroke).toBe(EEG_PROVIDER_COLORS.openai);
+  });
+
   it("unknown providers fall back to gray, non-rainbow", () => {
     const paint = eegProviderPaint("no-such-provider");
     expect(paint.stroke).toBe(FALLBACK_GRAY);
