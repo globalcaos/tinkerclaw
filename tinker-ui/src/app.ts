@@ -3410,6 +3410,9 @@ function onEvent(evt: unknown) {
           chosenLevel: r.thinkLevel ?? "",
           forced: viewedSessionForced(),
           subagent: String(p.sessionKey || "").includes(":subagent:"),
+          // FORK 2026-06-14: per-branch hover label — the run's task text ("what
+          // this run is doing"); the panel falls back to the model name if absent.
+          label: r.task,
           parentRunId: typeof d.parentRunId === "string" ? d.parentRunId : undefined,
           thinkingChars: r.thinkingChars,
           // tokens drive segment LENGTH; area = width·length ∝ cost (bible §5.8h). output from
