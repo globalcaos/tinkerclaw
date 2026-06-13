@@ -101,10 +101,17 @@ describe("eegProviderPaint", () => {
 });
 
 describe("EegTraceStore basics", () => {
-  it("fresh store is empty and renders nothing", () => {
+  it("fresh store is empty and renders the labeled axis but no trace strokes", () => {
     const store = new EegTraceStore();
     expect(store.isEmpty).toBe(true);
-    expect(store.renderSvg({ width: WIDTH })).toBe("");
+    const svg = store.renderSvg({ width: WIDTH });
+    // Empty paper still shows the instrument: axis labels + a waiting hint, but
+    // NO trace/branch strokes (no-placeholders rule, §5.9).
+    expect(svg).toContain("<svg");
+    expect(svg).toContain("eeg-collabel");
+    expect(svg).toContain("waiting for model");
+    expect(svg).not.toContain("eeg-main");
+    expect(svg).not.toContain("data-eeg-turn");
   });
 
   it("one main sample + turnEnd renders an svg with the provider stroke and a turn marker", () => {
@@ -123,7 +130,10 @@ describe("EegTraceStore basics", () => {
     store.record(sample({ runId: "r1" }));
     store.clear();
     expect(store.isEmpty).toBe(true);
-    expect(store.renderSvg({ width: WIDTH })).toBe("");
+    // back to the empty paper: no trace strokes, no markers
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(svg).not.toContain("eeg-main");
+    expect(svg).not.toContain("data-eeg-turn");
   });
 });
 

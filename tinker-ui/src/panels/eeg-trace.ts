@@ -16,15 +16,17 @@
 // thinkingChars bucket (CHARS, never tokens — §5.8g honest-labels).
 
 // ─── Stops (MUST mirror app.ts THINK_STOPS order exactly) ───
-export const EEG_STOPS: { lvl: string; label: string }[] = [
-  { lvl: "", label: "Auto" },
-  { lvl: "minimal", label: "Minimal" },
-  { lvl: "low", label: "Low" },
-  { lvl: "medium", label: "Medium" },
-  { lvl: "adaptive", label: "Adaptive" },
-  { lvl: "high", label: "High" },
-  { lvl: "xhigh", label: "xHigh" },
-  { lvl: "max", label: "Max" },
+// `short` = the compact tick label printed under the slider AND above the
+// seismograph column (full labels collide at 8 stops in a ~280px panel).
+export const EEG_STOPS: { lvl: string; label: string; short: string }[] = [
+  { lvl: "", label: "Auto", short: "Auto" },
+  { lvl: "minimal", label: "Minimal", short: "Min" },
+  { lvl: "low", label: "Low", short: "Low" },
+  { lvl: "medium", label: "Medium", short: "Med" },
+  { lvl: "adaptive", label: "Adaptive", short: "Adpt" },
+  { lvl: "high", label: "High", short: "High" },
+  { lvl: "xhigh", label: "xHigh", short: "xHi" },
+  { lvl: "max", label: "Max", short: "Max" },
 ];
 
 export interface EegSample {
@@ -119,8 +121,17 @@ export function eegCostWidthPx(model: string, level: string): number {
 // The §5.8f effort slider markers MUST use this same helper — drift between the
 // trace columns and the slider stops destroys the instrument's meaning (bible
 // §5.8h invariant 2).
-const EEG_PAD_LEFT = 18;
-const EEG_PAD_RIGHT = 14;
+export const EEG_PAD_LEFT = 18;
+export const EEG_PAD_RIGHT = 14;
+
+// CSS `left:` expression (width-independent) that places a slider tick label's
+// CENTER on the SAME x as this stop's seismograph column — the alignment the
+// bible §5.8h invariant 2 demands. idx 0..n-1; pads match eegStopX exactly.
+export function eegStopLeftCss(idx: number, n: number): string {
+  if (n <= 1) return `${EEG_PAD_LEFT}px`;
+  const span = EEG_PAD_LEFT + EEG_PAD_RIGHT;
+  return `calc(${EEG_PAD_LEFT}px + (100% - ${span}px) * ${idx} / ${n - 1})`;
+}
 
 export function eegStopX(lvl: string, width: number): number {
   let idx = EEG_STOPS.findIndex((s) => s.lvl === lvl);
@@ -221,13 +232,15 @@ export class EegTraceStore {
   renderSvg(opts: { width: number }): string {
     // chronological, oldest first — row 0 of the chrono index sits at the BOTTOM
     const all = [...this.samples.values()].sort((a, b) => a.startedAt - b.startedAt);
-    // No samples at all → no paper. No placeholder strokes ever — segments only
-    // appear from real events (§5.9 no-placeholders precedent).
-    if (all.length === 0) return "";
 
     const width = Math.max(120, opts.width || 320);
     const n = all.length;
-    const height = TOP_PAD + n * ROW_H + BOTTOM_PAD;
+    // Empty paper still draws the labeled AXIS (so the instrument is visible the
+    // moment the panel opens) — only the TRACE strokes obey the no-placeholders
+    // rule (§5.9): no fake lines, just the grid + a "waiting" hint.
+    const EMPTY_ROWS = 5;
+    const rows = n > 0 ? n : EMPTY_ROWS;
+    const height = TOP_PAD + rows * ROW_H + BOTTOM_PAD;
 
     const rowTop = (c: number): number => TOP_PAD + (n - 1 - c) * ROW_H;
     const rowBot = (c: number): number => rowTop(c) + ROW_H;
@@ -266,7 +279,7 @@ export class EegTraceStore {
       `<stop offset="100%" stop-color="#34A853"/>` +
       `</linearGradient></defs>`;
 
-    // ── column gridlines + top labels (the 8 shared stops) ──
+    // ── column gridlines + top labels (the 8 shared stops, short form) ──
     let grid = "";
     for (const stop of EEG_STOPS) {
       const x = fx(colX(stop.lvl));
@@ -275,7 +288,20 @@ export class EegTraceStore {
         ` stroke="#8A8F98" stroke-opacity="0.18" stroke-width="1"/>`;
       grid +=
         `<text class="eeg-collabel" x="${x}" y="${TOP_PAD - 10}" text-anchor="middle"` +
-        ` font-size="8" fill="#8A8F98">${esc(stop.label)}</text>`;
+        ` font-size="8" fill="#8A8F98">${esc(stop.short)}</text>`;
+    }
+
+    // ── empty paper: axis only + a hint, no trace strokes ──
+    if (n === 0) {
+      const hint =
+        `<text class="eeg-empty-hint" x="${fx(width / 2)}"` +
+        ` y="${fx(TOP_PAD + (EMPTY_ROWS * ROW_H) / 2)}" text-anchor="middle"` +
+        ` font-size="9" fill="#8A8F98">waiting for model activity…</text>`;
+      return (
+        `<svg class="eeg-paper" width="${width}" height="${height}"` +
+        ` viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">` +
+        `${defs}${grid}${hint}</svg>`
+      );
     }
 
     // ── halos (measured reality, drawn BEHIND everything else) ──
