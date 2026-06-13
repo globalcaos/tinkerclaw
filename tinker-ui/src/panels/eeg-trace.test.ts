@@ -30,6 +30,25 @@ const sample = (over: Partial<EegSample> & { runId: string }): EegSample => ({
 
 const pathCount = (svg: string): number => (svg.match(/<path/g) || []).length;
 const countOf = (svg: string, needle: string): number => svg.split(needle).length - 1;
+const svgHeight = (svg: string): number => Number(/height="([\d.]+)"/.exec(svg)?.[1] ?? 0);
+
+describe("segment length ∝ token cost", () => {
+  it("a higher-token turn renders a longer (taller) segment", () => {
+    const big = new EegTraceStore();
+    big.record(sample({ runId: "r1", outputTokens: 8000, inputTokens: 40000 }));
+    const small = new EegTraceStore();
+    small.record(sample({ runId: "r1", outputTokens: 50, inputTokens: 200 }));
+    expect(svgHeight(big.renderSvg({ width: WIDTH }))).toBeGreaterThan(
+      svgHeight(small.renderSvg({ width: WIDTH })),
+    );
+  });
+
+  it("a zero-token (live) turn still draws at the minimum length", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "r1" })); // no tokens yet
+    expect(svgHeight(store.renderSvg({ width: WIDTH }))).toBeGreaterThan(0);
+  });
+});
 
 describe("eegStopX", () => {
   it("maps the 8 EEG_STOPS to strictly ascending x values within the rail at width 300", () => {
