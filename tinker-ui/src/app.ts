@@ -3352,7 +3352,7 @@ function onEvent(evt: unknown) {
           subagent: String(p.sessionKey || "").includes(":subagent:"),
           parentRunId: undefined,
           thinkingChars: r.thinkingChars,
-          // tokens drive segment LENGTH (area ∝ cost, bible §5.8h). output from
+          // tokens drive segment LENGTH (area ∝ tokens, bible §5.8h). output from
           // the effort-final event; input accumulated from round-start events.
           inputTokens: eegInputByRun.get(p.runId),
           outputTokens: r.outputTokens,
@@ -3501,7 +3501,7 @@ function onEvent(evt: unknown) {
         return;
       }
       // FORK 2026-06-13 (eeg): accumulate billed input tokens per runId so the
-      // seismograph segment length tracks token cost (area ∝ cost, bible §5.8h).
+      // seismograph segment length tracks token volume (area ∝ tokens, bible §5.8h).
       if (typeof p.runId === "string" && typeof p.data.inputTokensEstimate === "number") {
         eegInputByRun.set(p.runId, (eegInputByRun.get(p.runId) ?? 0) + p.data.inputTokensEstimate);
       }
@@ -4487,7 +4487,7 @@ async function loadChat() {
               subagent: false,
               parentRunId: undefined,
               ...(typeof ev.thinkingChars === "number" ? { thinkingChars: ev.thinkingChars } : {}),
-              // tokens → segment length (area ∝ cost). Best-effort from anatomy.
+              // tokens → segment length (area ∝ tokens). Best-effort from anatomy.
               ...(() => {
                 const inTok =
                   ev.inputTokens ?? ev.contextSent?.totalTokens ?? ev.tokensIn ?? undefined;
