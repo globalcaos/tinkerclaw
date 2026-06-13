@@ -96,12 +96,25 @@ export function splitSectionedReply(text: string): SectionedReply | null {
 // plain prose and would leak into the rendered bubble. This also strips a bare
 // 🧠/🫀 AMYGDALA header the model may still emit from session-history habit, so
 // the residual gut-read text renders as clean inline prose with no "🧠 AMYGDALA:"
-// label rather than a literal marker line. Heuristic — only standalone marker
-// lines are removed; a marker that is part of a longer sentence is left alone.
+// label rather than a literal marker line. A residual marker leaks in TWO ways:
+// (a) ALONE on its own line, and (b) GLUED into the middle of a sentence (e.g.
+// "Body. 💬 ANSWER restated mid-text." or an inline echo "…in the 💬 ANSWER
+// above…"). The regex matches BOTH: a leading boundary of start | newline |
+// whitespace and NO trailing newline/end lookahead. It stays emoji+label anchored
+// (the emoji MUST precede the label) so ordinary prose like "the answer is 42" is
+// NEVER matched. The replace callback below preserves the surrounding text shape.
 const RESIDUAL_MARKER_RE =
-  /(^|\n)\s*#{0,4}\s*(?:\*\*|__)?\s*(?:💬\s*(?:\*\*|__)?\s*ANSWER|🧠\s*(?:\*\*|__)?\s*AMYGDALA|🫀\s*(?:\*\*|__)?\s*AMYGDALA|🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?)\s*:?\s*(?:\*\*|__)?\s*:?\s*(?=\n|$)/gi;
+  /(^|\n|\s)\s*#{0,4}\s*(?:\*\*|__)?\s*(?:💬\s*(?:\*\*|__)?\s*ANSWER|🧠\s*(?:\*\*|__)?\s*AMYGDALA|🫀\s*(?:\*\*|__)?\s*AMYGDALA|🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?)\s*:?\s*(?:\*\*|__)?\s*:?/gi;
 export function scrubResidualSectionMarkers(text: string): string {
-  return text.replace(RESIDUAL_MARKER_RE, (_match, prefix) => prefix ?? "");
+  // Preserve the captured leading boundary so surrounding words/lines don't fuse:
+  // a newline stays a newline (standalone-line marker), any other whitespace
+  // collapses to a single space (mid-line marker → "Body. restated mid-text."),
+  // and a start-of-string boundary (no prefix) is dropped.
+  return text.replace(RESIDUAL_MARKER_RE, (_match, prefix: string | undefined) => {
+    if (prefix === "\n") return "\n";
+    if (prefix && /\s/.test(prefix)) return " ";
+    return "";
+  });
 }
 
 // Separate a leading run of inter-tool NARRATION from the answer body. With the
