@@ -6638,7 +6638,7 @@ code.fs-link.fs-link-error {
 /* FORK 2026-06-13 (eeg): MODEL-slider ticks stack a model-identity chip (a short
    line in the model's seismograph color + cost-thickness) over a short label. */
 .model-slider-stops.with-chips {
-  height: 22px;
+  height: 26px;
 }
 .eeg-model-chip {
   display: block;
