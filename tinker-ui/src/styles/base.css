@@ -6408,6 +6408,13 @@ code.fs-link.fs-link-error {
 /* Seismograph host: full-width scrolling strip of ruled paper inside the
    EEG .model-group card. One faint horizontal rule every 24px echoes a
    strip-chart recorder while staying on the panel's wood/paper palette. */
+/* FORK 2026-06-13 (eeg): the inner <svg> renders at its NATIVE pixel size (its
+   width/height attributes) so a taller-than-260px paper SCROLLS inside .eeg-paper
+   instead of being viewBox-scaled to fit (which shrank width + cropped/centered —
+   the SVG used to share the .eeg-paper class and inherit its fixed height). */
+.eeg-svg {
+  display: block;
+}
 .eeg-paper {
   /* FORK 2026-06-13 (eeg): span ALL grid columns so the paper uses the FULL
      panel width (Oscar 2026-06-13) — without this it was trapped in the narrow
