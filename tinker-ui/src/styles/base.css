@@ -2191,8 +2191,12 @@ code.fs-link.fs-link-error {
 .model-group:not(.open) > .model-group-label::before {
   transform: rotate(-90deg);
 }
-.model-group:not(.open) > .model-group-body > .model-row:not(.model-live) {
+.model-group:not(.open) > .model-group-body > .model-row:not(.model-live):not(.model-recent) {
   display: none;
+}
+/* bug #1: the last model that computed stays pinned (dimmed, no glow) when collapsed. */
+.model-group:not(.open) > .model-group-body > .model-row.model-recent:not(.model-live) {
+  opacity: 0.6;
 }
 .model-group-label:first-child {
   margin-top: 0;
