@@ -8453,7 +8453,11 @@ function modelForceStops(): { id: string | null; label: string }[] {
   if (!cfg) {
     return stops;
   }
-  const ids = Object.keys(cfg.models || {});
+  // FORK 2026-06-13 (eeg): Oscar wants only ONE opus on the slider (the current
+  // claude-opus-4-8) — drop the older claude-opus-4-7. From Anthropic the slider
+  // keeps Sonnet, Opus and Fable; haiku already falls outside the smart-8 cut.
+  const EEG_SLIDER_EXCLUDE = /opus-4-7/i;
+  const ids = Object.keys(cfg.models || {}).filter((id) => !EEG_SLIDER_EXCLUDE.test(id));
   // smartest FIRST (lower rank = smarter)
   ids.sort((a, b) => {
     const ra = cfg.models?.[a]?.rank ?? 999;

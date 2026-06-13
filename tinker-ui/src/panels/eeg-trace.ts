@@ -76,20 +76,25 @@ export function eegProviderPaint(provider: string): { stroke: string; isRainbow:
 // per-(model × effort) costs can REPLACE these estimates later without touching
 // the renderer. Until then any thickness derived from it is an ESTIMATE — never
 // present it as a measured figure (bible §5.8h invariant 3).
+// Anchored to Oscar's stated Anthropic ratios (2026-06-13): SONNET = 1 (the
+// base), OPUS = 5× sonnet, FABLE = 2× opus = 10× sonnet (fable is a bit more
+// TOKEN-efficient on long tasks, so its effective per-task cost is below sticker
+// — the measured halo is what exposes that gap). Other providers are pegged to
+// the same sonnet=1 scale.
 export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /fable/i, relCost: 10 },
   { modelMatch: /opus/i, relCost: 5 },
-  { modelMatch: /sonnet/i, relCost: 3 },
-  { modelMatch: /haiku/i, relCost: 1 },
+  { modelMatch: /sonnet/i, relCost: 1 },
+  { modelMatch: /haiku/i, relCost: 0.3 },
   // gemini rows BEFORE the \bmini\b row purely for clarity; \b already keeps
   // "gemini" (…e-mini…) from matching the mini bucket.
   { modelMatch: /gemini.*pro/i, relCost: 5 },
-  { modelMatch: /gemini.*flash/i, relCost: 1.5 },
+  { modelMatch: /gemini.*flash/i, relCost: 0.5 },
   // \bmini\b listed before gpt-5 so "gpt-5-mini" takes the cheap bucket.
-  { modelMatch: /\bmini\b/i, relCost: 1.5 },
+  { modelMatch: /\bmini\b/i, relCost: 0.5 },
   { modelMatch: /gpt-5/i, relCost: 5 },
 ];
-const EEG_DEFAULT_REL_COST = 3;
+const EEG_DEFAULT_REL_COST = 2;
 
 // Effort multiplier per stop. Auto ("") = UNCAPPED — the model picks its own
 // budget, so it costs more than medium on average (§5.8g: Auto is never tier 0).
