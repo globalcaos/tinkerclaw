@@ -185,16 +185,18 @@ const BOTTOM_PAD = 14;
 const ARC_HALF = 7; // bezier vertical half-span → ~14px of curve per column hop
 const STRAND_CAP = 5; // bible §5.8h invariant 4: never render unbounded strands
 
-// ─── Segment LENGTH model: trace AREA ∝ token COST (Oscar 2026-06-13) ───
-// area = width × length. width already = €/Mtok-OUTPUT (cost per output token), so
-// to make area ∝ total turn COST we set length ∝ weighted token count where the
-// weighting mirrors the input/output PRICE ratio: weighted = output + 0.2·input
-// (input ≈ 0.2× the output price, the typical 5:1 ratio). Then
-//   area = width·length ∝ price_out·(output + 0.2·input) = output_cost + input_cost.
-// LEN_PER_WTOKEN/​MIN/​MAX are display tuning; the floor keeps tiny turns clickable
-// and the cap keeps a giant turn from scrolling forever. Linear between.
-const EEG_INPUT_COST_RATIO = 0.2; // input price ÷ output price (typical 5:1)
-const EEG_LEN_PER_WTOKEN = 0.01; // px per weighted token
+// ─── Segment LENGTH model: trace AREA ∝ TOKENS used (Oscar 2026-06-13) ───
+// Oscar wants the AREA (ink) of each segment ∝ the tokens it used. area =
+// width × length, so length = (area)/(width) ∝ tokens / width. "tokens" is a
+// weighted blend of input+output — output counts more, mirroring the typical
+// input/output price ratio (input ≈ 0.2× output): weighted = output + 0.2·input.
+// Dividing by width (the cost-per-token identity, eegCostWidthPx) makes the AREA
+// track token volume REGARDLESS of model: a model that churns more tokens shows
+// more ink, whatever its line thickness. EEG_AREA_PER_WTOKEN is px² of ink per
+// weighted token; MIN floor keeps tiny turns clickable + fits the column-hop
+// bezier (≥ 2·ARC_HALF); MAX caps a giant turn from scrolling forever.
+const EEG_INPUT_COST_RATIO = 0.2; // input weight ÷ output weight (typical 5:1)
+const EEG_AREA_PER_WTOKEN = 0.006; // px² of ink per weighted token (area = w·len)
 const EEG_MIN_LEN = 16; // ≥ 2·ARC_HALF so the column-hop bezier always fits
 const EEG_MAX_LEN = 180;
 
@@ -202,7 +204,9 @@ function eegWeightedTokens(s: EegSample): number {
   return (s.outputTokens ?? 0) + EEG_INPUT_COST_RATIO * (s.inputTokens ?? 0);
 }
 function eegSampleLength(s: EegSample): number {
-  const L = EEG_LEN_PER_WTOKEN * eegWeightedTokens(s);
+  const w = Math.max(0.5, eegCostWidthPx(s.model, s.chosenLevel));
+  // area = w · len ∝ weighted tokens  ⇒  len = area/w = (k · tokens) / w
+  const L = (EEG_AREA_PER_WTOKEN * eegWeightedTokens(s)) / w;
   return Math.min(EEG_MAX_LEN, Math.max(EEG_MIN_LEN, L));
 }
 
