@@ -8300,7 +8300,7 @@ function highlightSliderStop(e: Event, rowSelector: string): void {
 // (router's choice). Thickness uses the model's cost at a fixed MEDIUM reference
 // effort so the chips are comparable across models.
 function renderModelChip(id: string | null, idx: number): string {
-  const W = 38;
+  const W = 30;
   const H = 9;
   const y = H / 2;
   if (id === null) {
@@ -8315,10 +8315,14 @@ function renderModelChip(id: string | null, idx: number): string {
   let defs = "";
   let stroke = paint.stroke;
   if (paint.isRainbow) {
-    // horizontal rainbow (the seismograph's google gradient laid sideways)
+    // Horizontal rainbow. MUST use gradientUnits="userSpaceOnUse" with explicit
+    // coords: a horizontal <line> has a ZERO-HEIGHT geometry bbox, so the default
+    // objectBoundingBox gradient degenerates and the rainbow vanishes (the
+    // seismograph's google gradient only works because those lines are vertical).
     const gid = `eeg-mchip-${idx}`;
     defs =
-      `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="0">` +
+      `<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse"` +
+      ` x1="3" y1="0" x2="${W - 3}" y2="0">` +
       `<stop offset="0%" stop-color="#4285F4"/><stop offset="33%" stop-color="#EA4335"/>` +
       `<stop offset="66%" stop-color="#FBBC05"/><stop offset="100%" stop-color="#34A853"/>` +
       `</linearGradient></defs>`;
@@ -8351,16 +8355,49 @@ function renderModelSliderStops(
   return out;
 }
 
-// FORK 2026-06-13 (eeg): compact model label for the force-slider ticks — strip
-// the provider prefix and keep a short family token so names fit the scale.
+// FORK 2026-06-13 (eeg): compact, DISTINCT label for the force-slider ticks —
+// works off the raw model id (NOT modelName, whose "gem-3.1-pro" short form made
+// the old regex mislabel a Gemini as "Pro"). Keeps family + the disambiguating
+// version/variant so two opus or two gemini stops never collide.
 function shortModelLabel(id: string): string {
-  const name = modelName(id) || id;
-  const tail = name.replace(/^.*\//, ""); // drop "claude-code/" etc.
-  const m = tail.match(/fable|opus|sonnet|haiku|gpt-?[\d.]+|gemini|flash|pro|mini|grok|deepseek/i);
-  if (m) {
-    return m[0].replace(/^gpt-?/i, "GPT").replace(/^./, (c) => c.toUpperCase());
+  const lo = id.toLowerCase();
+  if (/fable/.test(lo)) {
+    return "Fable";
   }
-  return tail.slice(0, 5);
+  if (/opus/.test(lo)) {
+    const m = lo.match(/opus-?\d-?(\d)/);
+    return m ? `Opus${m[1]}` : "Opus";
+  }
+  if (/sonnet/.test(lo)) {
+    return "Sonn";
+  }
+  if (/haiku/.test(lo)) {
+    return "Haiku";
+  }
+  if (/gemini|(?:^|\/)gem/.test(lo)) {
+    const v = (lo.match(/(\d+(?:\.\d+)?)/) || [])[1] || "";
+    const kind = /flash/.test(lo) ? "F" : /pro/.test(lo) ? "P" : "";
+    return `Gem${v}${kind}`.slice(0, 7);
+  }
+  if (/codex/.test(lo)) {
+    const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
+    return `${v}cx`;
+  }
+  if (/gpt-?[\d.]+/.test(lo)) {
+    const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
+    const k = /pro/.test(lo) ? "p" : /mini/.test(lo) ? "m" : /nano/.test(lo) ? "n" : "";
+    return `${v}${k}`;
+  }
+  if (/grok/.test(lo)) {
+    return "Grok";
+  }
+  if (/deepseek/.test(lo)) {
+    return "DSeek";
+  }
+  if (/gemma/.test(lo)) {
+    return "Gemma";
+  }
+  return (modelName(id) || id).slice(0, 6);
 }
 
 function thinkStopIndexForLevel(level: unknown): number {
@@ -8426,8 +8463,9 @@ function modelForceStops(): { id: string | null; label: string }[] {
     }
     return modelPerfRank(a) - modelPerfRank(b);
   });
-  // keep the 7 SMARTEST, then flip so the smartest sits on the RIGHT
-  const top = ids.slice(0, 7);
+  // keep the 8 SMARTEST (8 so claude-sonnet-4-6 at rank 7 / 8th-smartest makes
+  // the cut — Oscar 2026-06-13), then flip so the smartest sits on the RIGHT
+  const top = ids.slice(0, 8);
   top.reverse();
   for (const id of top) {
     stops.push({ id, label: modelName(id) });
