@@ -127,12 +127,14 @@ export function eegCostWidthPx(model: string, level: string): number {
       break;
     }
   }
-  const mult = EEG_EFFORT_MULT[level] ?? 1;
-  // log compression so the ~0.6–20 €/Mtok span fits 1.5–7px. K=1 (was 2) keeps
-  // the costly end (opus/gpt/gemini-pro/fable) from all saturating at the 7px
-  // cap, so their cost differences stay visible. Monotonic with cost, not linear.
-  const w = 1.5 * Math.log2(1 + rel * mult);
-  return Math.min(7, Math.max(1.5, w));
+  void level; // effort no longer scales thickness — it is the X column (below)
+  // LINEAR in cost, anchored so SONNET (€2/Mtok) = 1.0px and FABLE (€20) = 10px
+  // (Oscar 2026-06-13). width = relCost / 2. Proportional, NOT log-compressed.
+  // Effort is shown by the X position, NOT thickness, so each model keeps ONE
+  // identity width everywhere it appears (opus 5px, gpt-5.x/gemini-pro 6px,
+  // gemini-flash 1.25px). Clamp gives a thin floor + headroom above fable.
+  const w = rel / 2;
+  return Math.min(11, Math.max(0.5, w));
 }
 
 // ─── Shared column geometry (single source of truth for stop→x) ───
@@ -334,7 +336,7 @@ export class EegTraceStore {
       const paint = eegProviderPaint(s.provider);
       halos +=
         `<line class="eeg-halo" x1="${hx}" y1="${rowBot(c)}" x2="${hx}" y2="${rowTop(c)}"` +
-        ` stroke="${paint.stroke}" stroke-opacity="0.18" stroke-width="${fx(w * 2.6)}"` +
+        ` stroke="${paint.stroke}" stroke-opacity="0.18" stroke-width="${fx(Math.min(w * 1.6, 14))}"` +
         ` stroke-linecap="round"/>`;
     }
 
