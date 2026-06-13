@@ -8369,7 +8369,7 @@ function shortModelLabel(id: string): string {
     return "Opus";
   }
   if (/sonnet/.test(lo)) {
-    return "Sonn";
+    return "Sonnet";
   }
   if (/haiku/.test(lo)) {
     return "Haiku";
@@ -8455,9 +8455,22 @@ function modelForceStops(): { id: string | null; label: string }[] {
   }
   // FORK 2026-06-13 (eeg): Oscar wants only ONE opus on the slider (the current
   // claude-opus-4-8) — drop the older claude-opus-4-7. From Anthropic the slider
-  // keeps Sonnet, Opus and Fable; haiku already falls outside the smart-8 cut.
+  // keeps Sonnet, Opus and Fable.
   const EEG_SLIDER_EXCLUDE = /opus-4-7/i;
-  const ids = Object.keys(cfg.models || {}).filter((id) => !EEG_SLIDER_EXCLUDE.test(id));
+  const rankOf = (id: string): number => cfg.models?.[id]?.rank ?? 999;
+  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (Oscar:
+  // "remove 5.4m, no need if it is not as smart as sonnet"). Sonnet's rank is the
+  // intelligence floor; anything ranked below it (mini/nano/haiku/older) is cut.
+  let sonnetRank = 999;
+  for (const id of Object.keys(cfg.models || {})) {
+    if (/sonnet/i.test(id)) {
+      sonnetRank = rankOf(id);
+      break;
+    }
+  }
+  const ids = Object.keys(cfg.models || {}).filter(
+    (id) => !EEG_SLIDER_EXCLUDE.test(id) && rankOf(id) <= sonnetRank,
+  );
   // smartest FIRST (lower rank = smarter)
   ids.sort((a, b) => {
     const ra = cfg.models?.[a]?.rank ?? 999;
