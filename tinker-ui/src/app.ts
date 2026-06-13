@@ -3363,6 +3363,12 @@ function onEvent(evt: unknown) {
           sessionKey: typeof p.sessionKey === "string" ? p.sessionKey : undefined,
           phase: "thinking",
         } as ActiveRunInfo);
+      // FORK 2026-06-13 (eeg): the effort event now self-describes its model
+      // (cc-bridge), so even an Auto run colours by the ACTUAL model running
+      // underneath instead of falling back to gray (Oscar 2026-06-13). Keep any
+      // existing non-empty model if the event omits it.
+      if (typeof d.model === "string" && d.model) r.model = d.model;
+      if (typeof d.provider === "string" && d.provider) r.provider = d.provider;
       if (typeof d.thinkLevel === "string") r.thinkLevel = d.thinkLevel;
       if (typeof d.configuredBudget === "number") r.configuredBudget = d.configuredBudget;
       if (typeof d.thinkingChars === "number") r.thinkingChars = d.thinkingChars;

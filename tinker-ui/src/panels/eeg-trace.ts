@@ -174,6 +174,18 @@ function thinkingCharsLevel(chars: number): string {
   return "max";
 }
 
+// FORK 2026-06-13 (eeg): the effort COLUMN to draw the line at. In Auto/off (no
+// pinned level) the router decides, so we show the effort the model ACTUALLY used
+// — the measured thinkingChars bucket — instead of parking the line in the "Auto"
+// gutter (Oscar 2026-06-13). A pinned level always wins.
+function eegEffectiveLevel(s: EegSample): string {
+  const lv = s.chosenLevel;
+  if (!lv || lv === "off" || lv === "auto") {
+    return typeof s.thinkingChars === "number" ? thinkingCharsLevel(s.thinkingChars) : "";
+  }
+  return lv;
+}
+
 // ─── Render constants ───
 // PERMANENT retention (Oscar 2026-06-13): keep the WHOLE session so all activity
 // is visible by scrolling — no drop-oldest. The high guard only backstops a
@@ -334,7 +346,7 @@ export class EegTraceStore {
         else break;
       }
       if (!best && mains.length > 0) best = mains[0];
-      return best ? colX(best.chosenLevel) : colX("");
+      return best ? colX(eegEffectiveLevel(best)) : colX("");
     };
 
     // ── defs: google rainbow, defined ONCE ──
@@ -395,7 +407,7 @@ export class EegTraceStore {
     for (let m = 0; m < mains.length; m++) {
       const s = mains[m];
       const c = rowOf.get(s.runId)!;
-      const x = colX(s.chosenLevel);
+      const x = colX(eegEffectiveLevel(s));
       const yT = rowTop(c);
       const yB = rowBot(c);
       const w = eegCostWidthPx(s.model, s.chosenLevel);
@@ -408,7 +420,7 @@ export class EegTraceStore {
         d = `M ${fx(x)} ${yB} L ${fx(x)} ${yT + ARC_HALF}`;
       } else {
         const pc = rowOf.get(prev.runId)!;
-        const px = colX(prev.chosenLevel);
+        const px = colX(eegEffectiveLevel(prev));
         const pTop = rowTop(pc) + ARC_HALF; // where prev's vertical stopped
         if (px === x) {
           d = `M ${fx(x)} ${pTop} L ${fx(x)} ${yT + ARC_HALF}`;
@@ -456,7 +468,7 @@ export class EegTraceStore {
     let branches = "";
     for (const cl of clusters) {
       const lead = cl.items[0];
-      const x = colX(lead.chosenLevel);
+      const x = colX(eegEffectiveLevel(lead));
       const w = eegCostWidthPx(lead.model, lead.chosenLevel);
       const paint = eegProviderPaint(lead.provider);
       const dash = lead.forced ? ` stroke-dasharray="6 4"` : "";
@@ -467,7 +479,7 @@ export class EegTraceStore {
       const parentSample = lead.parentRunId ? this.samples.get(lead.parentRunId) : undefined;
       const parentX =
         parentSample && !parentSample.subagent
-          ? colX(parentSample.chosenLevel)
+          ? colX(eegEffectiveLevel(parentSample))
           : mainColAt(cl.start);
       const hasEnd = Number.isFinite(cl.end);
       // join no lower than the strand's own row top; running → open to the top
