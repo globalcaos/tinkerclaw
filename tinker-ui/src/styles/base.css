@@ -2191,15 +2191,8 @@ code.fs-link.fs-link-error {
 .model-group:not(.open) > .model-group-label::before {
   transform: rotate(-90deg);
 }
-/* FORK 2026-06-13 (turn-state): keep the last computed model visible when the
-   MODELS section is collapsed — hide rows that are neither live (count>0) nor
-   the most-recent finished model. */
-.model-group:not(.open) > .model-group-body > .model-row:not(.model-live):not(.model-recent) {
+.model-group:not(.open) > .model-group-body > .model-row:not(.model-live) {
   display: none;
-}
-/* the recent (but not live) row shows dimmed so it reads as "just finished". */
-.model-group:not(.open) .model-row.model-recent:not(.model-live) {
-  opacity: 0.6;
 }
 .model-group-label:first-child {
   margin-top: 0;
