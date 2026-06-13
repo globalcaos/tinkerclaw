@@ -1180,6 +1180,70 @@ function viewedSessionBusy(): boolean {
   return false;
 }
 
+// FORK 2026-06-13 (turn-state) — unified turn-state. `activeRuns` is the SOLE
+// source of truth for "is the viewed tab mid-turn"; `sending`/`streamRunId` are
+// demoted to pure STREAM CURSORS (sending = the pre-first-event optimistic
+// window; streamRunId = which run's text deltas are currently accumulating).
+// Every "busy?" indicator routes through viewedTurnState() so the chat spinner,
+// the action button, the sessions glow, the models glow, and the prefrontal tree
+// can never disagree. 'pending' is the genuine gap between chat.send and the
+// first lifecycle/delta for THIS tab (sending && !viewedSessionBusy()); once a
+// run exists for the viewed session the run state wins. busy is intentionally
+// derived ONLY from positive signals (a live run, or the optimistic send
+// window) — never a timer (done-signals.md R2: no UI watchdog force-clears
+// activeRuns).
+type ViewedTurnState = {
+  busy: boolean;
+  phase: "idle" | "pending" | "running";
+  primary: ActiveRunInfo | null;
+};
+function viewedTurnState(): ViewedTurnState {
+  let primary: ActiveRunInfo | null = null;
+  for (const [, info] of activeRuns) {
+    if (!runBelongsToViewedSession(info)) {
+      continue;
+    }
+    // Prefer the earliest-started run for the viewed session as primary.
+    if (!primary || info.startedAt < primary.startedAt) {
+      primary = info;
+    }
+  }
+  if (primary) {
+    return { busy: true, phase: "running", primary };
+  }
+  if (sending) {
+    // pre-first-event optimistic window for THIS tab only — a DIFFERENT tab's
+    // run never pins this tab busy (the old multi-tab "sending forever" bug).
+    return { busy: true, phase: "pending", primary: null };
+  }
+  return { busy: false, phase: "idle", primary: null };
+}
+
+// FORK 2026-06-13 (turn-state) — runIds that have received an AUTHORITATIVE
+// terminal signal (chat.final / chat.aborted / lifecycle-end). The delta
+// self-heal must NOT resurrect a run already declared done (a late/duplicate
+// delta after final used to re-create a ghost run that then never closed). A
+// fresh chat.send (a new turn for the viewed session) EXPIRES this set so a
+// later server-reused runId can legitimately start again. Runs marked
+// 'restarting' / still in unconfirmedRuns are never stamped here (preserve
+// §5.7.1 restart continuity).
+const terminatedRuns = new Set<string>();
+
+// FORK 2026-06-13 (turn-state) — single owner of the per-run UI ADORNMENTS that
+// outlive the run cursor: the recipe banner + activeRecipeStep label. Called by
+// BOTH the authoritative chat.final/aborted handler AND the debounced
+// lifecycle-end timer, so the banner clears the moment the viewed session is
+// idle no matter which terminal signal arrives first. Only clears chrome when
+// no run remains for the viewed tab (a background tab's run must not strip the
+// viewed tab's banner, and vice-versa).
+function clearRunAdornments(_runId?: string): void {
+  if (viewedSessionBusy()) {
+    return;
+  }
+  activeRecipeStep = null;
+  document.getElementById("recipe-banner")?.classList.add("hidden");
+}
+
 // FORK 2026-05-17: the ONE place `budgetScope` is mutated (bible panels.md
 // §147 #18 — one canonical scope concept). Both scope switches — Models
 // (#budget-scope-toggle) and Prefrontal (#prefrontal-scope-toggle) — are
@@ -1529,6 +1593,14 @@ function restoreProviderErrors() {
 // FORK 2026-06-13 (eeg): panel sections are now 'models' (parity with the old
 // 'configured' default-collapsed) and 'eeg' (open by default — absent here).
 const collapsedModelSections = new Set<string>(["models"]);
+// FORK 2026-06-13 (turn-state) — the most recently FINISHED run's model, so the
+// MODELS section (default-collapsed) keeps showing the model that just answered
+// instead of snapping back to an empty header. This is a passive RECENT marker
+// (a .model-recent class only) — never the live glow/shimmer/count badge
+// (.model-live stays strictly count>0). Only ONE is kept; each run-end
+// overwrites it. Stamped immediately BEFORE activeRuns.delete at both run-end
+// deletion sites; consumed by renderModelRow/renderAuthKeyRow.
+let lastComputedModel: { model: string; authProfileId?: string; sessionKey?: string } | null = null;
 // FORK 2026-06-13 (eeg): one seismograph store per session plus a per-session
 // end-of-turn counter feeding the turn markers. Keyed by the event's FULL
 // session key so tab switches repaint the right session's paper.
@@ -1846,7 +1918,10 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
 
 // FORK: Check if a session has active LLM runs (for session-live glow)
 function sessionHasActiveRuns(sessionKey: string): { live: boolean; provider?: string } {
-  for (const info of activeRuns.values()) {
+  // FORK 2026-06-13 (turn-state) — honor the session/all scope toggle: iterate
+  // scopedActiveRuns() so under "session" scope a row only glows for runs in
+  // scope of the viewed tab (same filter as the model count + prefrontal tree).
+  for (const [, info] of scopedActiveRuns()) {
     if (info.sessionKey && sessionKeyMatches(info.sessionKey, sessionKey)) {
       return { live: true, provider: info.provider };
     }
@@ -2270,6 +2345,59 @@ function pickUniqueTabIcon(preferred: string | null, summary: string, exceptTabI
 // ─── Gateway ───
 function uuid() {
   return crypto.randomUUID();
+}
+
+// FORK 2026-06-13 (dedup) — the ONE place a user bubble enters messages[] for an
+// outgoing/queued/flushed prompt. Drops a duplicate by stable client id
+// (_clientMsgId), with a short-recency same-text fallback for a SERVER copy
+// that lacks the id (older gateway, or history echo). Without this the same
+// prompt could render up to three times (optimistic push + queued flush +
+// server echo). Keeps ALL dedup in app.ts — queued-sends.ts is untouched.
+function pushUserMsgDeduped(m: Record<string, unknown>): void {
+  const id = m._clientMsgId as string | undefined;
+  const textOf = (mm: Record<string, unknown>): string => {
+    const c = mm.content;
+    if (Array.isArray(c)) {
+      return c
+        .filter((b: any) => b && b.type === "text")
+        .map((b: any) => b.text ?? "")
+        .join("");
+    }
+    return typeof c === "string" ? c : "";
+  };
+  if (id) {
+    for (const ex of messages) {
+      if ((ex as Record<string, unknown>)._clientMsgId === id) {
+        return; // exact same prompt already present
+      }
+    }
+  }
+  // Fallback for a server copy with no client id: same text + same role within
+  // the last few user bubbles and a small wall-clock window.
+  const incomingText = textOf(m);
+  const startedAt =
+    typeof m._promptStartedAt === "number" ? (m._promptStartedAt as number) : Date.now();
+  for (let i = messages.length - 1, seen = 0; i >= 0 && seen < 6; i--) {
+    const ex = messages[i] as Record<string, unknown>;
+    if ((ex.role ?? "").toString().toLowerCase() !== "user") {
+      continue;
+    }
+    seen++;
+    if (textOf(ex) !== incomingText || !incomingText) {
+      continue;
+    }
+    const exAt =
+      typeof ex._promptStartedAt === "number" ? (ex._promptStartedAt as number) : startedAt;
+    if (Math.abs(exAt - startedAt) < 10000) {
+      // same prompt; carry the client id onto the kept bubble so a later echo
+      // is caught by the fast id path.
+      if (id && ex._clientMsgId === undefined) {
+        ex._clientMsgId = id;
+      }
+      return;
+    }
+  }
+  messages.push(m);
 }
 
 function gwConnect() {
@@ -2873,6 +3001,14 @@ function onEvent(evt: unknown) {
         // NOT violate R2 (no UI stale-run watchdog): we only ever ADD a run on positive
         // evidence of life, never force-clear one on a timer. The matching lifecycle:end /
         // chat.final for this same runId still clears it normally.
+        // FORK 2026-06-13 (turn-state) — do NOT resurrect a run that already got
+        // an authoritative terminal signal. A late/duplicate delta after
+        // chat.final used to re-create a ghost run here that then never closed.
+        // terminatedRuns is expired by the next chat.send (fresh turn), so a
+        // legitimately reused runId can still start.
+        if (terminatedRuns.has(p.runId)) {
+          return;
+        }
         const pendingTimeout = pendingRunDeletes.get(p.runId);
         if (pendingTimeout) {
           clearTimeout(pendingTimeout);
@@ -2884,7 +3020,10 @@ function onEvent(evt: unknown) {
           authProfileId: streamProfileId || undefined,
           startedAt: Date.now(),
           lastEventAt: Date.now(),
-          sessionKey: typeof p.sessionKey === "string" ? p.sessionKey : sessionKey || undefined,
+          // Guarantee a NON-EMPTY sessionKey at creation (turn-state invariant):
+          // an entry with an empty key never matches runBelongsToViewedSession
+          // and becomes an unkillable ghost. Fall back to the viewed key.
+          sessionKey: (typeof p.sessionKey === "string" && p.sessionKey) || sessionKey || undefined,
           phase: "responding",
         };
         activeRuns.set(p.runId, runInfo);
@@ -3009,7 +3148,9 @@ function onEvent(evt: unknown) {
           sessionKeyMatches,
         );
         for (const qm of settled.commit) {
-          messages.push(qm);
+          // FORK 2026-06-13 (dedup) — flush through the same dedup gate so a
+          // queued prompt that the server already echoed is not duplicated.
+          pushUserMsgDeduped(qm as Record<string, unknown>);
         }
         pendingQueuedSends = settled.remaining;
       }
@@ -3195,21 +3336,44 @@ function onEvent(evt: unknown) {
       // makes `final` actually close the run instead of leaking it.
       if (p.state === "final" || p.state === "aborted") {
         const finalRunId = p.runId;
+        // done-signals.md R1: chat.final/aborted is authoritative — cancel any
+        // pending debounced delete AND remove the run IMMEDIATELY (MUST stay).
         const pend = pendingRunDeletes.get(finalRunId);
         if (pend) {
           clearTimeout(pend);
           pendingRunDeletes.delete(finalRunId);
         }
         if (activeRuns.has(finalRunId)) {
+          // FORK 2026-06-13 (turn-state) — capture the ending run's model so the
+          // collapsed MODELS section keeps showing what just answered.
+          const ending = activeRuns.get(finalRunId);
+          if (ending && ending.model) {
+            lastComputedModel = {
+              model: ending.model,
+              authProfileId: ending.authProfileId,
+              sessionKey: ending.sessionKey,
+            };
+          }
           activeRuns.delete(finalRunId);
           saveActiveRuns();
         }
+        // Stamp terminal so a late/duplicate delta for this runId can't
+        // resurrect it in the self-heal above (expired by the next chat.send).
+        // Never stamp a run still mid-restart (preserve §5.7.1 continuity).
+        if (!unconfirmedRuns.has(finalRunId)) {
+          terminatedRuns.add(finalRunId);
+        }
+        // Single owner of the recipe-banner teardown (also called by the
+        // lifecycle-end timer) — clears only when the viewed tab is now idle.
+        clearRunAdornments(finalRunId);
       }
-      // sending reflects the VIEWED tab only — never the global map size, so a
-      // different tab's live run can't pin this tab on "sending" forever.
+      // sending is a pure stream cursor now: the pre-first-event window is over,
+      // so clear it whenever the viewed tab has no live run. viewedTurnState()
+      // (which all indicators read) folds run-state + this cursor together.
       sending = viewedSessionBusy();
-      updateChat();
-      updateBtn();
+      // Re-derive EVERY viewed-session indicator through the one helper so none
+      // is missed (was a partial updateChat()+updateBtn()).
+      refreshViewedSessionIndicators();
       if (p.state !== "error") {
         loadBudget();
         loadSessions();
@@ -3360,7 +3524,10 @@ function onEvent(evt: unknown) {
           provider: typeof d.provider === "string" ? d.provider : "",
           startedAt: Date.now(),
           lastEventAt: Date.now(),
-          sessionKey: typeof p.sessionKey === "string" ? p.sessionKey : undefined,
+          // Guarantee a non-empty sessionKey at creation (turn-state invariant)
+          // — fall back to the viewed key so the synthesized run can be matched
+          // by runBelongsToViewedSession and is never an unkillable ghost.
+          sessionKey: (typeof p.sessionKey === "string" && p.sessionKey) || sessionKey || undefined,
           phase: "thinking",
         } as ActiveRunInfo);
       // FORK 2026-06-13 (eeg): the effort event now self-describes its model
@@ -4144,17 +4311,32 @@ function onEvent(evt: unknown) {
           updateBudgetPanel();
         }
         const endRunId = p.runId;
+        // FORK 2026-06-13 (turn-state) — keep the DEBOUNCED delete path (NOT a
+        // watchdog: it's driven by the authoritative lifecycle-end event, just
+        // delayed 3s so a fallback can reuse the runId). done-signals.md R2.
         const timeoutId = setTimeout(() => {
           pendingRunDeletes.delete(endRunId);
+          if (activeRuns.has(endRunId)) {
+            // Capture the ending run's model before deleting so the collapsed
+            // MODELS section keeps showing what just answered.
+            const ending = activeRuns.get(endRunId);
+            if (ending && ending.model) {
+              lastComputedModel = {
+                model: ending.model,
+                authProfileId: ending.authProfileId,
+                sessionKey: ending.sessionKey,
+              };
+            }
+          }
           activeRuns.delete(endRunId);
           saveActiveRuns();
-          // FORK 2026-05-16: sending tracks the viewed tab, not the global map.
-          sending = viewedSessionBusy();
-          if (!sending) {
-            // Hide recipe banner when the viewed session is idle
-            activeRecipeStep = null;
-            document.getElementById("recipe-banner")?.classList.add("hidden");
+          if (!unconfirmedRuns.has(endRunId)) {
+            terminatedRuns.add(endRunId);
           }
+          // sending is a stream cursor — clear when the viewed tab is idle.
+          sending = viewedSessionBusy();
+          // Single owner of the recipe-banner teardown (shared with chat.final).
+          clearRunAdornments(endRunId);
           updateBudgetPanel();
           updateSessionsPanel();
           updatePrefrontalTree();
@@ -4911,6 +5093,11 @@ async function send(text: string) {
   const isQueued = hasActiveRunForSession || streamRunId != null;
   if (!isQueued) {
     sending = true;
+    // FORK 2026-06-13 (turn-state) — a fresh, non-queued turn for the viewed
+    // session: expire the terminal-run guard so a server-reused runId can start
+    // again (and the set never grows unbounded). Queued sends keep it (the
+    // in-flight run's runId must stay terminal-guarded until IT ends).
+    terminatedRuns.clear();
   }
   currentTurnNumber++;
   // FORK 2026-04-18: Show the USER'S TEXT in the bubble, but stash the full
@@ -4934,10 +5121,16 @@ async function send(text: string) {
   // FORK 2026-05-09: Capture wall-clock send time so the user bubble can show
   // an absolute HH:MM:SS timestamp on its left gutter (Feature A). Also used
   // by assistant bubbles to compute elapsed seconds (Feature B).
+  // FORK 2026-06-13 (dedup) — one stable client id for THIS prompt, shared by
+  // the optimistic bubble, the queued-then-flushed bubble, and the chat.send
+  // idempotencyKey. pushUserMsgDeduped() uses it to drop the server's own echo
+  // (and any double optimistic/flush push) so a prompt can never appear twice.
+  const clientMsgId = uuid();
   const outgoingUserMsg: Record<string, unknown> = {
     role: "user",
     content: [{ type: "text", text }],
     _promptStartedAt: Date.now(),
+    _clientMsgId: clientMsgId,
     ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
     ...(briefingPath ? { _briefingPath: briefingPath } : {}),
     // FORK 2026-06-08: tag the queued bubble with the session it was queued under so it renders
@@ -4952,7 +5145,7 @@ async function send(text: string) {
     // never jump above it.
     pendingQueuedSends.push(outgoingUserMsg);
   } else {
-    messages.push(outgoingUserMsg);
+    pushUserMsgDeduped(outgoingUserMsg);
   }
   updateChat();
   if (!isQueued) {
@@ -4975,7 +5168,10 @@ async function send(text: string) {
   await req("chat.send", {
     sessionKey,
     message: messageForGateway,
-    idempotencyKey: uuid(),
+    // FORK 2026-06-13 (dedup) — reuse the bubble's client id as the gateway
+    // idempotencyKey so a retried/duplicated send is de-duplicated server-side
+    // too, and the server's echo carries the same id for client-side dedup.
+    idempotencyKey: clientMsgId,
   })
     .then(() => {
       sendOk = true;
@@ -7625,7 +7821,11 @@ function updateBtn() {
   if (!btn) {
     return;
   }
-  if (sending || streamRunId || activeRuns.size > 0) {
+  // FORK 2026-06-13 (turn-state) — Queue iff the VIEWED tab is busy. Dropped the
+  // global `activeRuns.size > 0` test so a background tab's live run no longer
+  // pins THIS tab on "Queue". viewedTurnState().busy folds the live-run check and
+  // the pre-first-event `sending` cursor together.
+  if (viewedTurnState().busy) {
     btn.className = "queue";
     btn.textContent = "Queue";
     btn.disabled = !connected;
@@ -7951,6 +8151,10 @@ function updateBudgetPanel() {
 
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
   el.innerHTML = html;
+  // FORK 2026-06-13 (turn-state) — this innerHTML rebuild blew away the scope
+  // toggle's on/off chrome; repaint it in sync on every panel rebuild so the
+  // Models/Prefrontal/Amygdala switches always reflect budgetScope.
+  syncScopeToggleChrome();
 
   // FORK 2026-06-13 (eeg): the seismograph fills the FULL panel width (Oscar
   // 2026-06-13). The SVG needs a concrete pixel width, so measure the now-laid-
@@ -8182,6 +8386,26 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
 
 // ─── Model Panel Rows ───
 
+// FORK 2026-06-13 (turn-state) — does this MODELS row match the last finished
+// run (lastComputedModel)? Used to keep that row visible (.model-recent) while
+// the section is collapsed. Session-scoped like the other panels: under
+// "session" scope only the viewed session's last model counts. Matches by model
+// id, and by auth profile when the ending run carried one (else all keys for
+// that model qualify — mirrors the count's model-level fallback).
+function rowIsRecentModel(modelId: string, keyId?: string): boolean {
+  const lcm = lastComputedModel;
+  if (!lcm || !lcm.model || lcm.model !== modelId) {
+    return false;
+  }
+  if (lcm.authProfileId && keyId && lcm.authProfileId !== keyId) {
+    return false;
+  }
+  if (budgetScope === "session" && lcm.sessionKey && !sessionKeyMatches(lcm.sessionKey)) {
+    return false;
+  }
+  return true;
+}
+
 function renderModelRow(
   id: string,
   provider: string,
@@ -8194,6 +8418,9 @@ function renderModelRow(
 ): string {
   const color = PROVIDER_COLORS[provider] || "#6b7280";
   const liveClass = count > 0 ? " model-live" : "";
+  // FORK 2026-06-13 (turn-state) — class ONLY, never the glow/shimmer/count
+  // badge; only when NOT live (live already keeps the row visible).
+  const recentClass = count === 0 && rowIsRecentModel(id, keyId) ? " model-recent" : "";
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
@@ -8215,7 +8442,7 @@ function renderModelRow(
   const nameParts =
     esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
 
-  return `<div class="model-row${liveClass}${errorClass}"${glowStyle}>
+  return `<div class="model-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${barsHtml}
     ${costHtml}
@@ -8235,6 +8462,8 @@ function renderAuthKeyRow(
 ): string {
   const color = PROVIDER_COLORS[provider] || "#6b7280";
   const liveClass = count > 0 ? " model-live" : "";
+  // FORK 2026-06-13 (turn-state) — class ONLY, never glow/shimmer/count badge.
+  const recentClass = count === 0 && rowIsRecentModel(modelId, keyId) ? " model-recent" : "";
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
     count > 0
@@ -8254,7 +8483,7 @@ function renderAuthKeyRow(
   const barsHtml = renderUsageBarsOnly(usage);
   const costHtml = renderCostCol(costLabel);
 
-  return `<div class="model-row auth-key-row${liveClass}${errorClass}"${glowStyle}>
+  return `<div class="model-row auth-key-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${barsHtml}
     ${costHtml}
