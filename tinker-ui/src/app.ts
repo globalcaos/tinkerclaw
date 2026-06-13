@@ -3351,7 +3351,10 @@ function onEvent(evt: unknown) {
     // (thinkLevel + configuredBudget cap) vs what ACTUALLY happened (thinkingChars,
     // hadRealThinking, redacted, and on final output_tokens/num_turns). Gated on
     // sessionKey like the tool/thinking branches.
-    if (p?.stream === "effort" && sessionKeyMatches(p.sessionKey)) {
+    if (
+      p?.stream === "effort" &&
+      (sessionKeyMatches(p.sessionKey) || chatEventIsSubagentOfView(p.sessionKey))
+    ) {
       const d = p.data ?? {};
       const r: ActiveRunInfo =
         activeRuns.get(p.runId) ??
@@ -3383,12 +3386,15 @@ function onEvent(evt: unknown) {
       // FORK 2026-06-13 (eeg): feed the seismograph (bible §5.8h). Effort events
       // arrive incrementally per run; record() upserts by runId so every emit just
       // refreshes the run's sample. The store is keyed by the VIEWED sessionKey to
-      // match the render at updateBudgetPanel() — and every event reaching here has
-      // already passed sessionKeyMatches(p.sessionKey), so it belongs to the viewed
-      // session. NOTE (v2 gap): sessionKeyMatches does NOT admit `:subagent:`
-      // descendants, so subagent effort events are dropped upstream and the q3
-      // split/join branches stay unfed until the consumer admits them. Main-session
-      // traces are fully live. Failure must never break the consumer.
+      // match the render at updateBudgetPanel(). FORK 2026-06-14 (Oscar): the gate
+      // above now ALSO admits `:subagent:` descendants of the viewed session (via
+      // chatEventIsSubagentOfView, same predicate the chat consumer uses), so a
+      // subagent's effort event records into the PARENT's store (evtSk = the viewed
+      // sessionKey) tagged subagent:true — feeding the panel's split/join branch
+      // renderer (eeg-trace.ts `subs = all.filter(s => s.subagent)`). parentRunId is
+      // taken from the event when present so the branch anchors to its real parent
+      // column; absent, the renderer splits from the main line at split time.
+      // Failure must never break the consumer.
       try {
         const evtSk = sessionKey;
         getEegStore(evtSk).record({
@@ -3398,7 +3404,7 @@ function onEvent(evt: unknown) {
           chosenLevel: r.thinkLevel ?? "",
           forced: viewedSessionForced(),
           subagent: String(p.sessionKey || "").includes(":subagent:"),
-          parentRunId: undefined,
+          parentRunId: typeof d.parentRunId === "string" ? d.parentRunId : undefined,
           thinkingChars: r.thinkingChars,
           // tokens drive segment LENGTH; area = width·length ∝ cost (bible §5.8h). output from
           // the effort-final event; input accumulated from round-start events.
