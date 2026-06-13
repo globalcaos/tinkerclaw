@@ -1538,11 +1538,46 @@ const eegTurnCounters = new Map<string, number>();
 // run's rounds (round-start carries inputTokensEstimate; effort-final carries
 // output). Feeds segment length (area ∝ token cost, bible §5.8h).
 const eegInputByRun = new Map<string, number>();
+// FORK 2026-06-13 (eeg): persist the trace to localStorage so a HARD REFRESH (which
+// wipes the in-memory store) restores the session's activity instead of erasing it
+// (Oscar 2026-06-13). Keyed per session; capped so storage stays bounded.
+const EEG_STORAGE_PREFIX = "tinker-eeg:";
+const EEG_PERSIST_CAP = 2000;
+function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
+  try {
+    const raw = localStorage.getItem(EEG_STORAGE_PREFIX + sk);
+    if (!raw) {
+      return;
+    }
+    const snap = JSON.parse(raw) as { samples?: EegSample[]; ends?: EegTurnEnd[] };
+    if (Array.isArray(snap.samples)) {
+      store.backfill(snap.samples, Array.isArray(snap.ends) ? snap.ends : []);
+    }
+  } catch {
+    /* corrupt/oversized payload — ignore, fall back to live + anatomy backfill */
+  }
+}
+function saveEegStore(sk: string): void {
+  try {
+    const snap = getEegStore(sk).toSnapshot();
+    localStorage.setItem(
+      EEG_STORAGE_PREFIX + sk,
+      JSON.stringify({
+        samples: snap.samples.slice(-EEG_PERSIST_CAP),
+        ends: snap.ends.slice(-EEG_PERSIST_CAP),
+      }),
+    );
+  } catch {
+    /* quota exceeded or serialization issue — non-fatal */
+  }
+}
 function getEegStore(sk: string): EegTraceStore {
   let store = eegStores.get(sk);
   if (!store) {
     store = new EegTraceStore();
     eegStores.set(sk, store);
+    // rehydrate from the previous session before any live event lands
+    loadEegStoreFromStorage(sk, store);
   }
   return store;
 }
@@ -4137,6 +4172,8 @@ function onEvent(evt: unknown) {
               const turn = (eegTurnCounters.get(eegEvtSk) ?? 0) + 1;
               eegTurnCounters.set(eegEvtSk, turn);
               getEegStore(eegEvtSk).turnEnd({ turn, runId: endRunId, endedAt: Date.now() });
+              // persist the completed turn so a hard refresh restores it (Oscar 2026-06-13)
+              saveEegStore(eegEvtSk);
               if (sessionKeyMatches(eegEvtSk)) {
                 for (let k = messages.length - 1; k >= 0; k--) {
                   const mm = messages[k] as any;
@@ -7918,6 +7955,13 @@ function updateBudgetPanel() {
   if (!eegResizeBound) {
     eegResizeBound = true;
     window.addEventListener("resize", () => fillEegPaper());
+    // persist EVERY session's trace on unload so a mid-turn hard refresh still
+    // restores (turn-end already persists completed turns) — Oscar 2026-06-13.
+    window.addEventListener("beforeunload", () => {
+      for (const sk of eegStores.keys()) {
+        saveEegStore(sk);
+      }
+    });
   }
 
   // Bind collapse toggles
@@ -7940,25 +7984,27 @@ function updateBudgetPanel() {
     });
   });
 
-  // FORK 2026-06-13 (eeg): secondary(right)-button wheel = vertical SCALE zoom of
-  // the length axis (Oscar 2026-06-13). Plain wheel still scrolls history; only a
-  // wheel WITH the right button held (e.buttons & 2) rescales. contextmenu is
-  // suppressed on the paper so the held right button doesn't pop the OS menu.
+  // FORK 2026-06-13 (eeg): SECONDARY (horizontal/tilt) wheel = vertical SCALE zoom
+  // of the length axis (Oscar 2026-06-13). Oscar's secondary wheel emits a
+  // HORIZONTAL delta (deltaX) — which was sliding the panel sideways; we capture
+  // that (and Ctrl+wheel as a no-tilt-wheel fallback) for zoom instead. The
+  // VERTICAL wheel (deltaY) still scrolls history normally.
   const eegPaperEl = el.querySelector<HTMLElement>("#eeg-paper");
   eegPaperEl?.addEventListener(
     "wheel",
     (e) => {
-      if ((e.buttons & 2) === 0) {
-        return; // plain wheel → normal scroll
+      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      const delta = e.ctrlKey ? e.deltaY : horizontal ? e.deltaX : 0;
+      if (delta === 0) {
+        return; // vertical wheel → normal history scroll
       }
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const factor = delta < 0 ? 1.12 : 1 / 1.12;
       eegZoom = Math.min(20, Math.max(0.1, eegZoom * factor));
       fillEegPaper();
     },
     { passive: false },
   );
-  eegPaperEl?.addEventListener("contextmenu", (e) => e.preventDefault());
 
   // FORK 2026-06-13 (eeg): delegate clicks on the seismograph's turn markers →
   // scroll the chat to that turn's answer bubble and flash it (bible §5.8h q7,
@@ -8503,10 +8549,10 @@ function modelForceStops(): { id: string | null; label: string }[] {
   if (!cfg) {
     return stops;
   }
-  // FORK 2026-06-13 (eeg): Oscar wants only ONE opus on the slider (the current
-  // claude-opus-4-8) — drop the older claude-opus-4-7. From Anthropic the slider
+  // FORK 2026-06-13 (eeg): drop the older claude-opus-4-7 (keep only opus-4-8) and
+  // gpt-5.3-codex (Oscar: "never makes sense to use it"). From Anthropic the slider
   // keeps Sonnet, Opus and Fable.
-  const EEG_SLIDER_EXCLUDE = /opus-4-7/i;
+  const EEG_SLIDER_EXCLUDE = /opus-4-7|gpt-5\.3/i;
   const rankOf = (id: string): number => cfg.models?.[id]?.rank ?? 999;
   // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (Oscar:
   // "remove 5.4m, no need if it is not as smart as sonnet"). Sonnet's rank is the

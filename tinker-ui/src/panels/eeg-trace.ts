@@ -277,6 +277,12 @@ export class EegTraceStore {
     return this.samples.size === 0 && this.turnEnds.length === 0;
   }
 
+  // FORK 2026-06-13 (eeg): serialize for localStorage so the trace survives a hard
+  // refresh (the in-memory store is wiped; app.ts rehydrates via backfill()).
+  toSnapshot(): { samples: EegSample[]; ends: EegTurnEnd[] } {
+    return { samples: [...this.samples.values()], ends: [...this.turnEnds] };
+  }
+
   renderSvg(opts: { width: number; zoom?: number }): string {
     // chronological, oldest first — row 0 of the chrono index sits at the BOTTOM
     const all = [...this.samples.values()].sort((a, b) => a.startedAt - b.startedAt);
