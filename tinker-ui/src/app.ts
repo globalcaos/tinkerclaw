@@ -1834,11 +1834,17 @@ restoreActiveRuns();
 
 function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
+  // FORK 2026-06-14: cc-bridge effort events self-describe the model with the
+  // BARE id (e.g. "claude-opus-4-8") while the catalog/forModel key is provider-
+  // prefixed ("claude-code/claude-opus-4-8"). Compare on the bare tail so the
+  // live brain's run matches its panel row, and key the count under the prefixed
+  // forModel so the counts.get(modelId) fallback (renderAuthKeyRows) lands.
+  const bare = (m?: string) => (m && m.includes("/") ? m.split("/").slice(1).join("/") : m);
   for (const [, info] of scopedActiveRuns()) {
-    if (forModel && info.model !== forModel) {
+    if (forModel && bare(info.model) !== bare(forModel)) {
       continue;
     }
-    const key = info.authProfileId || info.model;
+    const key = info.authProfileId || forModel || info.model;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   return counts;
