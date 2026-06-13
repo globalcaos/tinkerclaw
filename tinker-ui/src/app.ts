@@ -1534,6 +1534,10 @@ const collapsedModelSections = new Set<string>(["models"]);
 // session key so tab switches repaint the right session's paper.
 const eegStores = new Map<string, EegTraceStore>();
 const eegTurnCounters = new Map<string, number>();
+// FORK 2026-06-13 (eeg): billed INPUT tokens accumulated per runId across the
+// run's rounds (round-start carries inputTokensEstimate; effort-final carries
+// output). Feeds segment length (area ∝ token cost, bible §5.8h).
+const eegInputByRun = new Map<string, number>();
 function getEegStore(sk: string): EegTraceStore {
   let store = eegStores.get(sk);
   if (!store) {
@@ -3348,6 +3352,10 @@ function onEvent(evt: unknown) {
           subagent: String(p.sessionKey || "").includes(":subagent:"),
           parentRunId: undefined,
           thinkingChars: r.thinkingChars,
+          // tokens drive segment LENGTH (area ∝ cost, bible §5.8h). output from
+          // the effort-final event; input accumulated from round-start events.
+          inputTokens: eegInputByRun.get(p.runId),
+          outputTokens: r.outputTokens,
           startedAt: r.startedAt,
           endedAt: undefined,
         });
@@ -3491,6 +3499,11 @@ function onEvent(evt: unknown) {
         !p.data.sessionKey.includes(":subagent:")
       ) {
         return;
+      }
+      // FORK 2026-06-13 (eeg): accumulate billed input tokens per runId so the
+      // seismograph segment length tracks token cost (area ∝ cost, bible §5.8h).
+      if (typeof p.runId === "string" && typeof p.data.inputTokensEstimate === "number") {
+        eegInputByRun.set(p.runId, (eegInputByRun.get(p.runId) ?? 0) + p.data.inputTokensEstimate);
       }
       if (timelineCtrl) {
         const roundEvent: unknown = {
@@ -4436,7 +4449,9 @@ async function loadChat() {
       const base = import.meta.env.DEV ? "http://localhost:18789" : "";
       const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
       fetch(
-        `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?limit=50`,
+        // limit=500: restore the WHOLE session on reload (permanent retention,
+        // Oscar 2026-06-13) so all activity is scrollable, not just recent turns.
+        `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?limit=500`,
         Object.keys(hdrs).length ? { headers: hdrs } : undefined,
       )
         .then((r) => (r.ok ? r.json() : null))
@@ -4472,6 +4487,16 @@ async function loadChat() {
               subagent: false,
               parentRunId: undefined,
               ...(typeof ev.thinkingChars === "number" ? { thinkingChars: ev.thinkingChars } : {}),
+              // tokens → segment length (area ∝ cost). Best-effort from anatomy.
+              ...(() => {
+                const inTok =
+                  ev.inputTokens ?? ev.contextSent?.totalTokens ?? ev.tokensIn ?? undefined;
+                const outTok = ev.outputTokens ?? ev.tokensOut ?? undefined;
+                return {
+                  ...(typeof inTok === "number" ? { inputTokens: inTok } : {}),
+                  ...(typeof outTok === "number" ? { outputTokens: outTok } : {}),
+                };
+              })(),
               startedAt: ts,
               endedAt: undefined,
             });
