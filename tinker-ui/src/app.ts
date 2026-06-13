@@ -8301,7 +8301,7 @@ function highlightSliderStop(e: Event, rowSelector: string): void {
 // effort so the chips are comparable across models.
 function renderModelChip(id: string | null, idx: number): string {
   const W = 30;
-  const H = 9;
+  const H = 13; // tall enough for fable's 10px line (Oscar's linear scale)
   const y = H / 2;
   if (id === null) {
     return (

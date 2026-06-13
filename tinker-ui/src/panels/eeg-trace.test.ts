@@ -45,7 +45,7 @@ describe("eegStopX", () => {
 });
 
 describe("eegCostWidthPx", () => {
-  it("is clamped to [1.5, 7] for every model x stop combination", () => {
+  it("is clamped to [0.5, 11] for every model x stop combination", () => {
     expect(Array.isArray(EEG_COST_TABLE)).toBe(true);
     expect(EEG_COST_TABLE.length).toBeGreaterThan(0);
     const models = [
@@ -58,13 +58,19 @@ describe("eegCostWidthPx", () => {
       for (const stop of EEG_STOPS) {
         const w = eegCostWidthPx(model, stop.lvl);
         expect(Number.isFinite(w)).toBe(true);
-        expect(w).toBeGreaterThanOrEqual(1.5);
-        expect(w).toBeLessThanOrEqual(7);
+        expect(w).toBeGreaterThanOrEqual(0.5);
+        expect(w).toBeLessThanOrEqual(11);
       }
     }
   });
 
-  it("is monotonic in cost: fable@max > sonnet@medium > haiku@minimal", () => {
+  it("is LINEAR in cost: sonnet = 1.0px, fable = 10px, opus = 5px", () => {
+    expect(eegCostWidthPx("claude-sonnet-4-5", "medium")).toBeCloseTo(1.0, 1);
+    expect(eegCostWidthPx("claude-fable-5", "medium")).toBeCloseTo(10, 1);
+    expect(eegCostWidthPx("claude-opus-4-8", "medium")).toBeCloseTo(5, 1);
+  });
+
+  it("is monotonic in cost: fable > sonnet > haiku", () => {
     expect(typeof EEG_EFFORT_MULT).toBe("object");
     const fable = eegCostWidthPx("claude-fable-5", "max");
     const sonnet = eegCostWidthPx("claude-sonnet-4-5", "medium");
@@ -76,8 +82,8 @@ describe("eegCostWidthPx", () => {
   it("falls back to a default cost for unknown models (never NaN)", () => {
     const w = eegCostWidthPx("totally-unknown-model-xyz", "medium");
     expect(Number.isNaN(w)).toBe(false);
-    expect(w).toBeGreaterThanOrEqual(1.5);
-    expect(w).toBeLessThanOrEqual(7);
+    expect(w).toBeGreaterThanOrEqual(0.5);
+    expect(w).toBeLessThanOrEqual(11);
   });
 });
 
