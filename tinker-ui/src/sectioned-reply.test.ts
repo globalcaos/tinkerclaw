@@ -174,4 +174,39 @@ describe("scrubResidualSectionMarkers — strips bare 🧠 AMYGDALA / 💬 ANSWE
     expect(out).toContain("intro");
     expect(out).toContain("body text");
   });
+
+  it("strips a 💬 ANSWER marker glued MID-LINE without fusing the surrounding words", () => {
+    const out = scrubResidualSectionMarkers("Body. 💬 ANSWER restated mid-text.");
+    expect(out).not.toMatch(/💬\s*ANSWER/i);
+    expect(out).toContain("Body.");
+    expect(out).toContain("restated mid-text.");
+    // collapsed to a single space — no "Body.restated" fusion.
+    expect(out).not.toMatch(/Body\.restated/);
+  });
+
+  it("strips an inline-echo 💬 ANSWER reference from prose", () => {
+    const out = scrubResidualSectionMarkers("As noted in the 💬 ANSWER above, x.");
+    expect(out).not.toMatch(/💬\s*ANSWER/i);
+    expect(out).toContain("As noted in the");
+    expect(out).toContain("above, x.");
+  });
+
+  it("NEVER strips ordinary prose that merely contains the word answer", () => {
+    expect(scrubResidualSectionMarkers("the answer is 42")).toBe("the answer is 42");
+  });
+});
+
+describe("renderSectionedReply — residual section markers never render mid-answer", () => {
+  it("REGRESSION: a 💬 ANSWER glued mid-answer does not appear in the rendered HTML", () => {
+    const h = render({ answer: "Body. 💬 ANSWER restated mid-text." });
+    expect(h).not.toMatch(/💬\s*ANSWER/i);
+    expect(h).toContain("Body.");
+    expect(h).toContain("restated mid-text.");
+  });
+
+  it("REGRESSION: an inline-echo 💬 ANSWER reference does not appear in the rendered HTML", () => {
+    const h = render({ answer: "As noted in the 💬 ANSWER above, x." });
+    expect(h).not.toMatch(/💬\s*ANSWER/i);
+    expect(h).toContain("above, x.");
+  });
 });
