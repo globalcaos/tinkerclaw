@@ -38,6 +38,15 @@ export interface RecipeIndexEntry {
   title: string;
   summary: string;
   tags: string[];
+  /**
+   * Anti-triggers (frontmatter `antiTriggers:` / `whenNotToUse:`) — the "When NOT
+   * to use" discipline from addyosmani/agent-skills, ported to the matcher. Each
+   * entry is a phrase/word whose EXACT presence in the prompt subtracts from the
+   * base lexical score, so a recipe can suppress itself on look-alike prompts
+   * (e.g. `code-review-5pass` anti-triggering "quick look" to yield to `code-review`).
+   * Matching is exact-only (no fuzzy) so an anti-trigger never fires by accident.
+   */
+  antiTriggers: string[];
   /** Other kit slugs this kit composes (frontmatter `composes:`). */
   composes: string[];
   /** Absolute path to the kit.md, for lazy step parsing on a match. */
@@ -224,6 +233,14 @@ async function scanRecipeDir(dir: string): Promise<RecipeIndexEntry[]> {
     const composes = Array.isArray(parsed.composes)
       ? (parsed.composes as unknown[]).filter((t): t is string => typeof t === "string")
       : [];
+    // `antiTriggers:` is canonical; `whenNotToUse:` is an accepted alias so the
+    // frontmatter reads naturally next to the human "When NOT to use" body section.
+    const antiRaw = Array.isArray(parsed.antiTriggers)
+      ? parsed.antiTriggers
+      : Array.isArray(parsed.whenNotToUse)
+        ? parsed.whenNotToUse
+        : [];
+    const antiTriggers = (antiRaw as unknown[]).filter((t): t is string => typeof t === "string");
     index.push({
       slug: typeof parsed.slug === "string" ? parsed.slug : slug,
       // Frontmatter `owner:` wins; author-owned kits default to 'globalcaos' (the
@@ -233,6 +250,7 @@ async function scanRecipeDir(dir: string): Promise<RecipeIndexEntry[]> {
       title: typeof parsed.title === "string" ? parsed.title : slug,
       summary: typeof parsed.summary === "string" ? parsed.summary : "",
       tags,
+      antiTriggers,
       composes,
       path,
     });
@@ -385,6 +403,18 @@ export function scoreRecipe(
   }
   for (const tok of tokenize(kit.summary)) {
     if (anyTokenMatches(tokenList, tok)) score += 1;
+  }
+  // Anti-triggers subtract from the BASE lexical score (exact-only, no fuzzy) so a
+  // recipe can yield to a better-fit sibling on look-alike prompts. Symmetric with
+  // the positive tag weights (phrase −5, single word −3). Part of the lexical floor,
+  // applied BEFORE the feedback/rating deltas (which only ever add ≥0).
+  for (const anti of kit.antiTriggers) {
+    const al = anti.toLowerCase();
+    if (al.includes(" ")) {
+      if (lowPrompt.includes(al)) score -= 5; // exact phrase anti-trigger
+    } else if (promptTokens.has(al)) {
+      score -= 3; // exact single-word anti-trigger
+    }
   }
   // PRECEDENCE base → feedback → rating:
   // 1) Post-base-score empirical-fitness boost (base is the floor; delta is >= 0).
