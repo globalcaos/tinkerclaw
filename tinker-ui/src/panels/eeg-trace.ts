@@ -37,6 +37,9 @@ export interface EegSample {
   forced: boolean; // true = user pinned model/effort via the sliders → dashed
   subagent: boolean;
   parentRunId?: string;
+  /** Subagent task text ("what this run is doing"), shown in the branch hover
+   *  tooltip alongside the model. Falls back to the model name when absent. */
+  label?: string;
   thinkingChars?: number; // measured thinking CHARACTERS (never tokens) → halo
   inputTokens?: number; // billed prompt tokens (summed across the run's rounds)
   outputTokens?: number; // generated tokens (run total)
@@ -500,6 +503,16 @@ export class EegTraceStore {
       const nTotal = cl.items.length;
       const nDraw = Math.min(STRAND_CAP, nTotal);
       const step = w + 1.5; // lateral stacking step, centered on the column
+      // Hover tooltip (one per cluster, shared by its strands): task · model ·
+      // effort · output tokens. Native SVG <title>, so no JS/listeners needed.
+      const tipParts = [
+        lead.label && lead.label !== lead.model ? lead.label : null,
+        lead.model || null,
+        lead.chosenLevel || "auto",
+        lead.outputTokens ? `${lead.outputTokens} tok` : null,
+        nTotal > 1 ? `×${nTotal}` : null,
+      ].filter(Boolean);
+      const tip = esc(tipParts.join(" · "));
       for (let i = 0; i < nDraw; i++) {
         const sx = x + (i - (nDraw - 1) / 2) * step;
         const yOut = ySplit - ARC_HALF * 2;
@@ -514,7 +527,7 @@ export class EegTraceStore {
         branches +=
           `<path class="eeg-branch" d="${d}" fill="none" stroke="${paint.stroke}"` +
           ` stroke-width="${fx(w)}" stroke-linecap="round"${dash}` +
-          ` data-eeg-run="${esc(lead.runId)}"/>`;
+          ` data-eeg-run="${esc(lead.runId)}"><title>${tip}</title></path>`;
       }
       if (nTotal >= STRAND_CAP) {
         // magnitude badge at the split point (5 strands stand in for all N)
