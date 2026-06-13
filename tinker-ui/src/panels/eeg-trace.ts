@@ -185,18 +185,17 @@ const BOTTOM_PAD = 14;
 const ARC_HALF = 7; // bezier vertical half-span → ~14px of curve per column hop
 const STRAND_CAP = 5; // bible §5.8h invariant 4: never render unbounded strands
 
-// ─── Segment LENGTH model: trace AREA ∝ TOKENS used (Oscar 2026-06-13) ───
-// Oscar wants the AREA (ink) of each segment ∝ the tokens it used. area =
-// width × length, so length = (area)/(width) ∝ tokens / width. "tokens" is a
-// weighted blend of input+output — output counts more, mirroring the typical
-// input/output price ratio (input ≈ 0.2× output): weighted = output + 0.2·input.
-// Dividing by width (the cost-per-token identity, eegCostWidthPx) makes the AREA
-// track token volume REGARDLESS of model: a model that churns more tokens shows
-// more ink, whatever its line thickness. EEG_AREA_PER_WTOKEN is px² of ink per
-// weighted token; MIN floor keeps tiny turns clickable + fits the column-hop
-// bezier (≥ 2·ARC_HALF); MAX caps a giant turn from scrolling forever.
-const EEG_INPUT_COST_RATIO = 0.2; // input weight ÷ output weight (typical 5:1)
-const EEG_AREA_PER_WTOKEN = 0.006; // px² of ink per weighted token (area = w·len)
+// ─── Segment LENGTH model: LENGTH ∝ tokens → AREA ∝ COST (Oscar 2026-06-13) ───
+// Final call after the tokens-vs-cost discussion: LENGTH encodes TOKENS used and
+// the AREA (width × length) encodes total COST. width already = cost-per-token,
+// so length ∝ tokens makes area = width·length ∝ cost. "tokens" is a
+// weighted blend where output counts ~5× input (the typical price ratio):
+// weighted = output + 0.2·input — so the area reads as "how much this turn cost."
+// MIN floor keeps tiny turns clickable + fits the column-hop bezier (≥ 2·ARC_HALF);
+// MAX caps a giant turn. The whole axis rescales with the secondary-button wheel
+// (zoom, applied in renderSvg).
+const EEG_INPUT_COST_RATIO = 0.2; // input price ÷ output price (typical 5:1)
+const EEG_LEN_PER_WTOKEN = 0.01; // px of LENGTH per weighted token (length ∝ tokens)
 const EEG_MIN_LEN = 16; // ≥ 2·ARC_HALF so the column-hop bezier always fits
 const EEG_MAX_LEN = 180;
 
@@ -204,9 +203,8 @@ function eegWeightedTokens(s: EegSample): number {
   return (s.outputTokens ?? 0) + EEG_INPUT_COST_RATIO * (s.inputTokens ?? 0);
 }
 function eegSampleLength(s: EegSample): number {
-  const w = Math.max(0.5, eegCostWidthPx(s.model, s.chosenLevel));
-  // area = w · len ∝ weighted tokens  ⇒  len = area/w = (k · tokens) / w
-  const L = (EEG_AREA_PER_WTOKEN * eegWeightedTokens(s)) / w;
+  // length ∝ tokens; area = width·length ∝ cost (width = cost-per-token).
+  const L = EEG_LEN_PER_WTOKEN * eegWeightedTokens(s);
   return Math.min(EEG_MAX_LEN, Math.max(EEG_MIN_LEN, L));
 }
 
@@ -279,19 +277,23 @@ export class EegTraceStore {
     return this.samples.size === 0 && this.turnEnds.length === 0;
   }
 
-  renderSvg(opts: { width: number }): string {
+  renderSvg(opts: { width: number; zoom?: number }): string {
     // chronological, oldest first — row 0 of the chrono index sits at the BOTTOM
     const all = [...this.samples.values()].sort((a, b) => a.startedAt - b.startedAt);
 
     const width = Math.max(120, opts.width || 320);
+    // vertical SCALE (Oscar 2026-06-13): the secondary-button wheel zooms the
+    // whole length axis. Re-floor each row at 2·ARC_HALF so the column-hop bezier
+    // still fits even when zoomed all the way out.
+    const zoom = Math.min(20, Math.max(0.1, opts.zoom ?? 1));
     const n = all.length;
     // Empty paper still draws the labeled AXIS (so the instrument is visible the
     // moment the panel opens) — only the TRACE strokes obey the no-placeholders
     // rule (§5.9): no fake lines, just the grid + a "waiting" hint.
     const EMPTY_ROWS = 5;
-    // Per-sample LENGTH (area ∝ token cost). Newest at TOP: accumulate the cumulative
-    // top-offset from the newest (index n-1) downward through older samples.
-    const lengths = all.map((s) => eegSampleLength(s));
+    // Per-sample LENGTH (length ∝ tokens, area ∝ cost) × zoom. Newest at TOP:
+    // accumulate the cumulative top-offset from the newest (n-1) down to oldest.
+    const lengths = all.map((s) => Math.max(2 * ARC_HALF, eegSampleLength(s) * zoom));
     const rowTopArr: number[] = new Array(n);
     let accTop = TOP_PAD;
     for (let c = n - 1; c >= 0; c--) {
