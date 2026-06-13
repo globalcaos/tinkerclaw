@@ -89,6 +89,18 @@ No. A nightly cron syncs upstream automatically, detects conflicts, and restores
 
 When upstream pushes a breaking change, we know within hours — not weeks.
 
+### ⚡ Ride the `develop` Branch
+
+`main` is the stable story. **`develop` is where it actually happens** — raw, first-hand upgrades ship there constantly, hours after they're built on a real workbench, while `main` waits for the dust to settle.
+
+For tinker adventurers seeking the first-time thrill (it's easy to miss among the upstream branches — this is the one):
+
+```bash
+git clone -b develop https://github.com/globalcaos/tinkerclaw.git
+```
+
+Fresh paint. Wet floors. The good stuff.
+
 ---
 
 ## What You Get
