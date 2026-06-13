@@ -17,6 +17,8 @@ import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
   EegTraceStore,
   eegStopLeftCss,
+  eegProviderPaint,
+  eegCostWidthPx,
   type EegSample,
   type EegTurnEnd,
 } from "./panels/eeg-trace.js";
@@ -1539,6 +1541,18 @@ function getEegStore(sk: string): EegTraceStore {
     eegStores.set(sk, store);
   }
   return store;
+}
+// FORK 2026-06-13 (eeg): re-render the seismograph SVG at the live pixel width
+// of its host so it fills the whole panel (Oscar 2026-06-13). Called after every
+// panel render and on window resize.
+let eegResizeBound = false;
+function fillEegPaper(): void {
+  const paper = document.getElementById("eeg-paper");
+  if (!paper || !sessionKey) {
+    return;
+  }
+  const w = Math.max(120, Math.floor(paper.clientWidth) || 280);
+  paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w });
 }
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — drafts are now
@@ -7863,6 +7877,17 @@ function updateBudgetPanel() {
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
   el.innerHTML = html;
 
+  // FORK 2026-06-13 (eeg): the seismograph fills the FULL panel width (Oscar
+  // 2026-06-13). The SVG needs a concrete pixel width, so measure the now-laid-
+  // out #eeg-paper and re-render at its clientWidth — keeping the trace columns
+  // pixel-aligned with the effort-slider ticks (both use the same px pads over
+  // the same-width box). Re-fills on window resize via the one-time listener.
+  fillEegPaper();
+  if (!eegResizeBound) {
+    eegResizeBound = true;
+    window.addEventListener("resize", () => fillEegPaper());
+  }
+
   // Bind collapse toggles
   el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
     label.addEventListener("click", () => {
@@ -8268,6 +8293,64 @@ function highlightSliderStop(e: Event, rowSelector: string): void {
   stops.forEach((s, i) => s.classList.toggle("active", i === idx));
 }
 
+// FORK 2026-06-13 (eeg): the model-force slider's tick row — each stop shows a
+// short horizontal line "chip" in that model's EEG IDENTITY (provider color +
+// cost-thickness, google = rainbow), so the slider previews how each model will
+// appear on the seismograph (Oscar 2026-06-13). Auto = a thin gray dashed chip
+// (router's choice). Thickness uses the model's cost at a fixed MEDIUM reference
+// effort so the chips are comparable across models.
+function renderModelChip(id: string | null, idx: number): string {
+  const W = 38;
+  const H = 9;
+  const y = H / 2;
+  if (id === null) {
+    return (
+      `<svg class="eeg-model-chip" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
+      `<line x1="3" y1="${y}" x2="${W - 3}" y2="${y}" stroke="#8A8F98" stroke-width="1.5"` +
+      ` stroke-dasharray="3 3" stroke-linecap="round"/></svg>`
+    );
+  }
+  const paint = eegProviderPaint(providerOf(id));
+  const w = eegCostWidthPx(id, "medium");
+  let defs = "";
+  let stroke = paint.stroke;
+  if (paint.isRainbow) {
+    // horizontal rainbow (the seismograph's google gradient laid sideways)
+    const gid = `eeg-mchip-${idx}`;
+    defs =
+      `<defs><linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="0">` +
+      `<stop offset="0%" stop-color="#4285F4"/><stop offset="33%" stop-color="#EA4335"/>` +
+      `<stop offset="66%" stop-color="#FBBC05"/><stop offset="100%" stop-color="#34A853"/>` +
+      `</linearGradient></defs>`;
+    stroke = `url(#${gid})`;
+  }
+  return (
+    `<svg class="eeg-model-chip" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
+    `${defs}<line x1="3" y1="${y}" x2="${W - 3}" y2="${y}" stroke="${stroke}"` +
+    ` stroke-width="${w.toFixed(1)}" stroke-linecap="round"/></svg>`
+  );
+}
+
+// FORK 2026-06-13 (eeg): tick row for the MODEL slider — chip (EEG identity)
+// stacked over a short label, each centered on its stop's x (eegStopLeftCss).
+function renderModelSliderStops(
+  stops: { id: string | null; label: string }[],
+  activeIdx: number,
+): string {
+  let out = '<div class="model-slider-stops with-chips">';
+  for (let i = 0; i < stops.length; i++) {
+    const cls = i === activeIdx ? "model-slider-stop active" : "model-slider-stop";
+    const label = stops[i].id === null ? "Auto" : shortModelLabel(stops[i].id as string);
+    out +=
+      `<span class="${cls}" style="left:${eegStopLeftCss(i, stops.length)}">` +
+      renderModelChip(stops[i].id, i) +
+      `<span class="model-slider-stop-text">${esc(label)}</span>` +
+      "</span>";
+  }
+  out += "</div>";
+  return out;
+}
+
 // FORK 2026-06-13 (eeg): compact model label for the force-slider ticks — strip
 // the provider prefix and keep a short family token so names fit the scale.
 function shortModelLabel(id: string): string {
@@ -8318,30 +8401,24 @@ function renderThinkingSlider(): string {
 }
 
 // FORK 2026-06-13 (eeg): stops for the model-force slider (bible §5.8h q2) —
-// stop 0 = Auto (router controls the model axis), then the configured models in
-// the same order as the MODELS list (chain first, then rank-sorted), capped at 7
-// so the row stays an 8-stop-style discrete slider. Rebuilt per render/read from
+// stop 0 = Auto (router controls the model axis), then the configured models
+// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (Oscar 2026-06-13), so
+// the model axis reads low→high left→right exactly like the effort slider. Rank
+// (Artificial-Analysis Intelligence Index in openclaw.json; lower = smarter) is
+// the sort key, modelPerfRank breaks ties. Capped at 7 (keeping the 7 smartest)
+// so the row stays a discrete slider. Rebuilt per render/read from
 // modelConfigData; shared by the markup and the delegated listeners.
 function modelForceStops(): { id: string | null; label: string }[] {
   const stops: { id: string | null; label: string }[] = [{ id: null, label: "Auto" }];
   const cfg = modelConfigData as {
-    primary?: string;
-    fallbacks?: string[];
     models?: Record<string, { rank?: number }>;
   } | null;
   if (!cfg) {
     return stops;
   }
-  const chain: string[] = [];
-  if (cfg.primary) {
-    chain.push(cfg.primary);
-  }
-  if (cfg.fallbacks?.length) {
-    chain.push(...cfg.fallbacks);
-  }
-  const chainSet = new Set(chain);
-  const others = Object.keys(cfg.models || {}).filter((id) => !chainSet.has(id));
-  others.sort((a, b) => {
+  const ids = Object.keys(cfg.models || {});
+  // smartest FIRST (lower rank = smarter)
+  ids.sort((a, b) => {
     const ra = cfg.models?.[a]?.rank ?? 999;
     const rb = cfg.models?.[b]?.rank ?? 999;
     if (ra !== rb) {
@@ -8349,7 +8426,10 @@ function modelForceStops(): { id: string | null; label: string }[] {
     }
     return modelPerfRank(a) - modelPerfRank(b);
   });
-  for (const id of [...chain, ...others].slice(0, 7)) {
+  // keep the 7 SMARTEST, then flip so the smartest sits on the RIGHT
+  const top = ids.slice(0, 7);
+  top.reverse();
+  for (const id of top) {
     stops.push({ id, label: modelName(id) });
   }
   return stops;
@@ -8384,10 +8464,7 @@ function renderModelForceSlider(): string {
     '" aria-label="Model override: ' +
     esc(stop.label) +
     '">' +
-    renderSliderStops(
-      stops.map((s) => (s.id === null ? "Auto" : shortModelLabel(s.id))),
-      idx,
-    ) +
+    renderModelSliderStops(stops, idx) +
     "</div>"
   );
 }

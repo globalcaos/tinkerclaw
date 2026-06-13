@@ -6191,9 +6191,10 @@ code.fs-link.fs-link-error {
   align-items: stretch;
   width: 100%;
   gap: 2px;
-  /* small top/bottom padding matching .model-row (4px 6px); slight left indent
-     so the row reads as a child of the model above it. */
-  padding: 3px 6px 3px 18px;
+  /* FORK 2026-06-13 (eeg): no horizontal padding so the slider + its tick row
+     span the FULL panel width and the ticks share the exact box (and px pads)
+     as the full-width seismograph paper → columns line up with ticks. */
+  padding: 3px 0;
   margin: 0 0 2px;
   border-radius: 4px;
   /* muted background consistent with the panel (same surface as .model-row:hover
@@ -6408,6 +6409,10 @@ code.fs-link.fs-link-error {
    EEG .model-group card. One faint horizontal rule every 24px echoes a
    strip-chart recorder while staying on the panel's wood/paper palette. */
 .eeg-paper {
+  /* FORK 2026-06-13 (eeg): span ALL grid columns so the paper uses the FULL
+     panel width (Oscar 2026-06-13) — without this it was trapped in the narrow
+     first track of .model-group-body's grid. */
+  grid-column: 1 / -1;
   width: 100%;
   max-height: 280px;
   overflow-y: auto;
@@ -6491,7 +6496,8 @@ code.fs-link.fs-link-error {
   align-items: stretch;
   width: 100%;
   gap: 2px;
-  padding: 3px 6px 3px 18px;
+  /* FORK 2026-06-13 (eeg): full-width, see .model-think-slider-row. */
+  padding: 3px 0;
   margin: 0 0 2px;
   border-radius: 4px;
   background: var(--surface2);
@@ -6610,6 +6616,9 @@ code.fs-link.fs-link-error {
   position: absolute;
   top: 0;
   transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   font-size: 8px;
   line-height: 11px;
   font-family: "SF Mono", monospace;
@@ -6625,6 +6634,18 @@ code.fs-link.fs-link-error {
   opacity: 1;
   color: var(--text);
   font-weight: 600;
+}
+/* FORK 2026-06-13 (eeg): MODEL-slider ticks stack a model-identity chip (a short
+   line in the model's seismograph color + cost-thickness) over a short label. */
+.model-slider-stops.with-chips {
+  height: 22px;
+}
+.eeg-model-chip {
+  display: block;
+  margin-bottom: 1px;
+}
+.model-slider-stop-text {
+  display: block;
 }
 .eeg-empty-hint {
   font-family: "SF Mono", monospace;
