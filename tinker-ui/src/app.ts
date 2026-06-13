@@ -14,7 +14,12 @@ import { mountContextTreemap } from "./panels/context-treemap.js";
 // FORK 2026-06-13 (eeg): seismograph trace store (bible §5.8h) — pure state +
 // SVG renderer live in their own unit-tested module; app.ts only feeds and
 // mounts it (effort stream → record, lifecycle end → turnEnd, history → backfill).
-import { EegTraceStore, type EegSample, type EegTurnEnd } from "./panels/eeg-trace.js";
+import {
+  EegTraceStore,
+  eegStopLeftCss,
+  type EegSample,
+  type EegTurnEnd,
+} from "./panels/eeg-trace.js";
 import {
   mountPrefrontalTree,
   type PanelPlan,
@@ -8214,16 +8219,61 @@ const GROUP_ORDER = ["pinned", "whatsapp", "cron", "subagent", "other"];
 // step=1 maps directly onto this array; the level STRING is what sessions.update
 // persists (index 0 -> null). Module-level so the markup, the listener and the
 // re-render helper share one source of truth.
-const THINK_STOPS: { lvl: string; label: string }[] = [
-  { lvl: "", label: "Auto" },
-  { lvl: "minimal", label: "Minimal" },
-  { lvl: "low", label: "Low" },
-  { lvl: "medium", label: "Medium" },
-  { lvl: "adaptive", label: "Adaptive" },
-  { lvl: "high", label: "High" },
-  { lvl: "xhigh", label: "xHigh" },
-  { lvl: "max", label: "Max" },
+// `short` mirrors EEG_STOPS[].short — the compact tick label printed under the
+// slider so all 8 stops fit and align with the seismograph columns.
+const THINK_STOPS: { lvl: string; label: string; short: string }[] = [
+  { lvl: "", label: "Auto", short: "Auto" },
+  { lvl: "minimal", label: "Minimal", short: "Min" },
+  { lvl: "low", label: "Low", short: "Low" },
+  { lvl: "medium", label: "Medium", short: "Med" },
+  { lvl: "adaptive", label: "Adaptive", short: "Adpt" },
+  { lvl: "high", label: "High", short: "High" },
+  { lvl: "xhigh", label: "xHigh", short: "xHi" },
+  { lvl: "max", label: "Max", short: "Max" },
 ];
+
+// FORK 2026-06-13 (eeg): shared tick-label layer printed UNDER a force slider so
+// EVERY stop is visible (Oscar's "every option written in the slider") and each
+// label centers on the SAME x as its seismograph column (eegStopLeftCss → bible
+// §5.8h invariant 2 alignment). The active stop is bolded via .active.
+function renderSliderStops(labels: string[], activeIdx: number): string {
+  let out = '<div class="model-slider-stops">';
+  for (let i = 0; i < labels.length; i++) {
+    const cls = i === activeIdx ? "model-slider-stop active" : "model-slider-stop";
+    out +=
+      `<span class="${cls}" style="left:${eegStopLeftCss(i, labels.length)}">` +
+      esc(labels[i]) +
+      "</span>";
+  }
+  out += "</div>";
+  return out;
+}
+
+// FORK 2026-06-13 (eeg): live-drag highlight — moves the .active class onto the
+// tick whose index matches the slider value (replaces the old single readout
+// label that renderSliderStops superseded).
+function highlightSliderStop(e: Event, rowSelector: string): void {
+  const slider = e.target as HTMLInputElement;
+  const row = (e.target as HTMLElement).closest(rowSelector);
+  if (!row) {
+    return;
+  }
+  const idx = Number(slider.value) || 0;
+  const stops = row.querySelectorAll<HTMLElement>(".model-slider-stop");
+  stops.forEach((s, i) => s.classList.toggle("active", i === idx));
+}
+
+// FORK 2026-06-13 (eeg): compact model label for the force-slider ticks — strip
+// the provider prefix and keep a short family token so names fit the scale.
+function shortModelLabel(id: string): string {
+  const name = modelName(id) || id;
+  const tail = name.replace(/^.*\//, ""); // drop "claude-code/" etc.
+  const m = tail.match(/fable|opus|sonnet|haiku|gpt-?[\d.]+|gemini|flash|pro|mini|grok|deepseek/i);
+  if (m) {
+    return m[0].replace(/^gpt-?/i, "GPT").replace(/^./, (c) => c.toUpperCase());
+  }
+  return tail.slice(0, 5);
+}
 
 function thinkStopIndexForLevel(level: unknown): number {
   const lv = typeof level === "string" ? level : "";
@@ -8248,12 +8298,16 @@ function renderThinkingSlider(): string {
   const stop = THINK_STOPS[idx] ?? THINK_STOPS[0];
   return (
     '<div class="model-think-slider-row">' +
+    '<span class="model-slider-caption">EFFORT</span>' +
     '<input type="range" class="model-think-slider" min="0" max="7" step="1" value="' +
     String(idx) +
-    '" aria-label="Thinking level">' +
-    '<span class="model-think-label">' +
+    '" aria-label="Thinking level: ' +
     esc(stop.label) +
-    "</span>" +
+    '">' +
+    renderSliderStops(
+      THINK_STOPS.map((s) => s.short),
+      idx,
+    ) +
     "</div>"
   );
 }
@@ -8317,14 +8371,18 @@ function renderModelForceSlider(): string {
   const stop = stops[idx] ?? stops[0];
   return (
     '<div class="model-force-slider-row">' +
+    '<span class="model-slider-caption">MODEL</span>' +
     '<input type="range" class="model-force-slider" min="0" max="' +
     String(Math.max(0, stops.length - 1)) +
     '" step="1" value="' +
     String(idx) +
-    '" aria-label="Model override">' +
-    '<span class="model-force-label">' +
+    '" aria-label="Model override: ' +
     esc(stop.label) +
-    "</span>" +
+    '">' +
+    renderSliderStops(
+      stops.map((s) => (s.id === null ? "Auto" : shortModelLabel(s.id))),
+      idx,
+    ) +
     "</div>"
   );
 }
@@ -9004,22 +9062,14 @@ function init() {
       if (!stop) {
         return;
       }
-      const row = (e.target as HTMLElement).closest(".model-think-slider-row");
-      const label = row?.querySelector(".model-think-label");
-      if (label) {
-        label.textContent = stop.label;
-      }
+      highlightSliderStop(e, ".model-think-slider-row");
     });
     budgetPanelEl.addEventListener("change", (e) => {
       const stop = readThinkStop(e);
       if (!stop) {
         return;
       }
-      const row = (e.target as HTMLElement).closest(".model-think-slider-row");
-      const label = row?.querySelector(".model-think-label");
-      if (label) {
-        label.textContent = stop.label;
-      }
+      highlightSliderStop(e, ".model-think-slider-row");
       if (sessionKey) {
         req("sessions.update", {
           key: sessionKey,
@@ -9049,22 +9099,14 @@ function init() {
       if (!stop) {
         return;
       }
-      const row = (e.target as HTMLElement).closest(".model-force-slider-row");
-      const label = row?.querySelector(".model-force-label");
-      if (label) {
-        label.textContent = stop.label;
-      }
+      highlightSliderStop(e, ".model-force-slider-row");
     });
     budgetPanelEl.addEventListener("change", (e) => {
       const stop = readModelStop(e);
       if (!stop) {
         return;
       }
-      const row = (e.target as HTMLElement).closest(".model-force-slider-row");
-      const label = row?.querySelector(".model-force-label");
-      if (label) {
-        label.textContent = stop.label;
-      }
+      highlightSliderStop(e, ".model-force-slider-row");
       if (sessionKey) {
         req("sessions.update", {
           key: sessionKey,
