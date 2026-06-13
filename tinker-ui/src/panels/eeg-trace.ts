@@ -377,7 +377,7 @@ export class EegTraceStore {
         ` y="${fx(TOP_PAD + (EMPTY_ROWS * ROW_H) / 2)}" text-anchor="middle"` +
         ` font-size="9" fill="#8A8F98">waiting for model activity…</text>`;
       return (
-        `<svg class="eeg-paper" width="${width}" height="${height}"` +
+        `<svg class="eeg-svg" width="${width}" height="${height}"` +
         ` viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">` +
         `${defs}${grid}${hint}</svg>`
       );
@@ -533,7 +533,7 @@ export class EegTraceStore {
 
     // paint order: grid → halos → branches → main trace → markers (clickable on top)
     return (
-      `<svg class="eeg-paper" width="${width}" height="${height}"` +
+      `<svg class="eeg-svg" width="${width}" height="${height}"` +
       ` viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">` +
       `${defs}${grid}${halos}${branches}${trace}${markers}</svg>`
     );
