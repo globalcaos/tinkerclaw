@@ -6162,6 +6162,8 @@ code.fs-link.fs-link-error {
 
 /* FORK 2026-06-04c — graph titles permanent (no longer hover-only). */
 .pg-name{opacity:1;}
+/* FORK 2026-06-10 — graph title accent suffix (e.g. GitHub "TinkerClaw"), muted gray. */
+.pg-accent{font-size:11px;font-weight:600;color:#A8A5A0;opacity:1;}
 
 /* ---- BROCA program rendering ---- */
 .broca-skill { color: var(--skill-highlight); font-weight: 500; }
@@ -6393,3 +6395,191 @@ code.fs-link.fs-link-error {
 .pf-debug-grid tr:hover th {
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }
+
+/* FORK 2026-06-13 (eeg): EEG seismograph panel
+   Styles for the EEG .model-group card in the Models (#budget-panel) side
+   panel: a scrolling ruled-paper seismograph host (.eeg-paper), clickable
+   SVG turn markers (.eeg-marker / .eeg-xn ×N badge), a chat-bubble flash
+   when a marker is clicked (.eeg-focus, applied to a bubble in #messages),
+   and the FORCE slider (.model-force-slider*) — a verbatim sibling clone of
+   the .model-think-slider* rules above so the two sliders read as twins. */
+
+/* Seismograph host: full-width scrolling strip of ruled paper inside the
+   EEG .model-group card. One faint horizontal rule every 24px echoes a
+   strip-chart recorder while staying on the panel's wood/paper palette. */
+.eeg-paper {
+  width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background-color: var(--surface);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 23px,
+    rgba(232, 224, 212, 0.06) 23px,
+    rgba(232, 224, 212, 0.06) 24px
+  );
+  border: 1px solid var(--border);
+  border-radius: 4px; /* matches sibling .model-row cards */
+  /* scrollbar treatment mirrors .context-timeline (panel convention). */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.eeg-paper::-webkit-scrollbar {
+  width: 6px;
+}
+.eeg-paper::-webkit-scrollbar-track {
+  background: var(--surface2);
+  border-radius: 3px;
+}
+.eeg-paper::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+.eeg-paper::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Turn marker (an SVG <line>): clickable; hover lifts it out of the trace. */
+.eeg-marker {
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    opacity 0.12s,
+    stroke-width 0.12s;
+}
+.eeg-marker:hover {
+  opacity: 1;
+  stroke-width: 2.5;
+}
+
+/* ×N concurrency badge (SVG <text>) beside a turn marker. */
+.eeg-xn {
+  font-size: 9px;
+  font-weight: 700;
+  fill: var(--muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Chat-bubble flash: applied to a message bubble in #messages when its turn
+   marker is clicked on the seismograph; one 2.5s ease-out pulse, then gone. */
+.eeg-focus {
+  animation: eeg-focus-pulse 2.5s ease-out 1;
+}
+@keyframes eeg-focus-pulse {
+  0% {
+    box-shadow:
+      0 0 0 2px #e8702a,
+      0 0 12px 2px rgba(232, 112, 42, 0.45);
+  }
+  100% {
+    box-shadow:
+      0 0 0 2px rgba(232, 112, 42, 0),
+      0 0 12px 2px rgba(232, 112, 42, 0);
+  }
+}
+
+/* FORCE slider — verbatim sibling clone of the .model-think-slider* rules
+   above (row / label / slider / track / thumb) so the two sliders read as
+   siblings. If the think-slider styling changes, mirror it here. */
+.model-force-slider-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  gap: 2px;
+  padding: 3px 6px 3px 18px;
+  margin: 0 0 2px;
+  border-radius: 4px;
+  background: var(--surface2);
+  font-size: 10px;
+  color: var(--muted);
+}
+.model-force-label {
+  /* small uppercase caption + selected-stop readout under the slider. */
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 9px;
+  font-family: "SF Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+.model-force-slider {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+  height: 14px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.model-force-slider:focus {
+  outline: none;
+}
+/* WebKit track */
+.model-force-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+/* WebKit thumb */
+.model-force-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--accent2);
+  box-shadow: 0 0 0 1px var(--bg);
+  transition: background 0.12s;
+}
+.model-force-slider:hover::-webkit-slider-thumb,
+.model-force-slider:focus::-webkit-slider-thumb {
+  background: var(--text);
+}
+/* Firefox track */
+.model-force-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+}
+/* Firefox thumb */
+.model-force-slider::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 1px solid var(--accent2);
+  box-shadow: 0 0 0 1px var(--bg);
+  transition: background 0.12s;
+}
+.model-force-slider:hover::-moz-range-thumb,
+.model-force-slider:focus::-moz-range-thumb {
+  background: var(--text);
+}
+/* stop labels row under the force slider (one tick caption per stop). */
+.model-force-stops {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  font-family: "SF Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  opacity: 0.7;
+  user-select: none;
+}
+/* end FORK 2026-06-13 (eeg) */
