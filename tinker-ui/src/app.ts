@@ -3338,14 +3338,10 @@ function onEvent(evt: unknown) {
         const finalRunId = p.runId;
         // done-signals.md R1: chat.final/aborted is authoritative — cancel any
         // pending debounced delete AND remove the run IMMEDIATELY (MUST stay).
-        const pend = pendingRunDeletes.get(finalRunId);
-        if (pend) {
-          clearTimeout(pend);
-          pendingRunDeletes.delete(finalRunId);
-        }
+        // FORK 2026-06-13 (turn-state) — capture the ending run's model FIRST so
+        // the collapsed MODELS section keeps showing what just answered. (Kept
+        // ahead of the cancel+delete so the R1 precedence below stays adjacent.)
         if (activeRuns.has(finalRunId)) {
-          // FORK 2026-06-13 (turn-state) — capture the ending run's model so the
-          // collapsed MODELS section keeps showing what just answered.
           const ending = activeRuns.get(finalRunId);
           if (ending && ending.model) {
             lastComputedModel = {
@@ -3354,6 +3350,16 @@ function onEvent(evt: unknown) {
               sessionKey: ending.sessionKey,
             };
           }
+        }
+        // done-signals.md R1 (authoritative-supersedes-debounced): cancel any
+        // pending lifecycle:end timer AND remove the run IMMEDIATELY — these two
+        // MUST stay adjacent (the contract's verify asserts the proximity).
+        const pend = pendingRunDeletes.get(finalRunId);
+        if (pend) {
+          clearTimeout(pend);
+          pendingRunDeletes.delete(finalRunId);
+        }
+        if (activeRuns.has(finalRunId)) {
           activeRuns.delete(finalRunId);
           saveActiveRuns();
         }
