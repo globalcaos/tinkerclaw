@@ -8365,8 +8365,8 @@ function shortModelLabel(id: string): string {
     return "Fable";
   }
   if (/opus/.test(lo)) {
-    const m = lo.match(/opus-?\d-?(\d)/);
-    return m ? `Opus${m[1]}` : "Opus";
+    // only one opus on the slider now (4-7 excluded) → no version suffix needed
+    return "Opus";
   }
   if (/sonnet/.test(lo)) {
     return "Sonn";
@@ -8471,6 +8471,14 @@ function modelForceStops(): { id: string | null; label: string }[] {
   // the cut — Oscar 2026-06-13), then flip so the smartest sits on the RIGHT
   const top = ids.slice(0, 8);
   top.reverse();
+  // FORK 2026-06-13: Oscar pins FABLE to the far right (his flagship sits at the
+  // end of the intelligence axis, ahead of the rank-1 opus). The rest keep their
+  // intelligence order.
+  const fi = top.findIndex((id) => /fable/i.test(id));
+  if (fi >= 0) {
+    const [fable] = top.splice(fi, 1);
+    top.push(fable);
+  }
   for (const id of top) {
     stops.push({ id, label: modelName(id) });
   }
