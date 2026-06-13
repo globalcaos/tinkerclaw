@@ -38,6 +38,8 @@ export interface EegSample {
   subagent: boolean;
   parentRunId?: string;
   thinkingChars?: number; // measured thinking CHARACTERS (never tokens) → halo
+  inputTokens?: number; // billed prompt tokens (summed across the run's rounds)
+  outputTokens?: number; // generated tokens (run total)
   startedAt: number; // epoch ms
   endedAt?: number; // epoch ms (absent = still running)
 }
@@ -173,12 +175,36 @@ function thinkingCharsLevel(chars: number): string {
 }
 
 // ─── Render constants ───
-const EEG_MAX_SAMPLES = 400; // retained history cap (drop oldest)
-const ROW_H = 24; // px of paper per sample row
+// PERMANENT retention (Oscar 2026-06-13): keep the WHOLE session so all activity
+// is visible by scrolling — no drop-oldest. The high guard only backstops a
+// pathological runaway; a normal session never reaches it.
+const EEG_MAX_SAMPLES = 100000;
+const ROW_H = 24; // px per EMPTY-paper placeholder row (real rows are token-sized)
 const TOP_PAD = 26; // room for the stop labels above the paper
 const BOTTOM_PAD = 14;
 const ARC_HALF = 7; // bezier vertical half-span → ~14px of curve per column hop
 const STRAND_CAP = 5; // bible §5.8h invariant 4: never render unbounded strands
+
+// ─── Segment LENGTH model: trace AREA ∝ token COST (Oscar 2026-06-13) ───
+// area = width × length. width already = €/Mtok-OUTPUT (cost per output token), so
+// to make area ∝ total turn COST we set length ∝ weighted token count where the
+// weighting mirrors the input/output PRICE ratio: weighted = output + 0.2·input
+// (input ≈ 0.2× the output price, the typical 5:1 ratio). Then
+//   area = width·length ∝ price_out·(output + 0.2·input) = output_cost + input_cost.
+// LEN_PER_WTOKEN/​MIN/​MAX are display tuning; the floor keeps tiny turns clickable
+// and the cap keeps a giant turn from scrolling forever. Linear between.
+const EEG_INPUT_COST_RATIO = 0.2; // input price ÷ output price (typical 5:1)
+const EEG_LEN_PER_WTOKEN = 0.01; // px per weighted token
+const EEG_MIN_LEN = 16; // ≥ 2·ARC_HALF so the column-hop bezier always fits
+const EEG_MAX_LEN = 180;
+
+function eegWeightedTokens(s: EegSample): number {
+  return (s.outputTokens ?? 0) + EEG_INPUT_COST_RATIO * (s.inputTokens ?? 0);
+}
+function eegSampleLength(s: EegSample): number {
+  const L = EEG_LEN_PER_WTOKEN * eegWeightedTokens(s);
+  return Math.min(EEG_MAX_LEN, Math.max(EEG_MIN_LEN, L));
+}
 
 function esc(s: string): string {
   return String(s)
@@ -259,11 +285,20 @@ export class EegTraceStore {
     // moment the panel opens) — only the TRACE strokes obey the no-placeholders
     // rule (§5.9): no fake lines, just the grid + a "waiting" hint.
     const EMPTY_ROWS = 5;
-    const rows = n > 0 ? n : EMPTY_ROWS;
-    const height = TOP_PAD + rows * ROW_H + BOTTOM_PAD;
+    // Per-sample LENGTH (area ∝ token cost). Newest at TOP: accumulate the cumulative
+    // top-offset from the newest (index n-1) downward through older samples.
+    const lengths = all.map((s) => eegSampleLength(s));
+    const rowTopArr: number[] = new Array(n);
+    let accTop = TOP_PAD;
+    for (let c = n - 1; c >= 0; c--) {
+      rowTopArr[c] = accTop;
+      accTop += lengths[c];
+    }
+    const contentLen = accTop - TOP_PAD; // = Σ lengths
+    const height = TOP_PAD + (n > 0 ? contentLen : EMPTY_ROWS * ROW_H) + BOTTOM_PAD;
 
-    const rowTop = (c: number): number => TOP_PAD + (n - 1 - c) * ROW_H;
-    const rowBot = (c: number): number => rowTop(c) + ROW_H;
+    const rowTop = (c: number): number => rowTopArr[c];
+    const rowBot = (c: number): number => rowTopArr[c] + lengths[c];
     const rowOf = new Map<string, number>();
     all.forEach((s, c) => rowOf.set(s.runId, c));
     // time → y: the paper position the timeline had reached at instant t
