@@ -11,6 +11,10 @@ import { renderBrocaProgram, type BrocaRecipe } from "./panels/broca.js";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
+// FORK 2026-06-13 (eeg): seismograph trace store (bible §5.8h) — pure state +
+// SVG renderer live in their own unit-tested module; app.ts only feeds and
+// mounts it (effort stream → record, lifecycle end → turnEnd, history → backfill).
+import { EegTraceStore, type EegSample, type EegTurnEnd } from "./panels/eeg-trace.js";
 import {
   mountPrefrontalTree,
   type PanelPlan,
@@ -1515,7 +1519,22 @@ function restoreProviderErrors() {
     /* ignore */
   }
 }
-const collapsedModelSections = new Set<string>(["configured"]);
+// FORK 2026-06-13 (eeg): panel sections are now 'models' (parity with the old
+// 'configured' default-collapsed) and 'eeg' (open by default — absent here).
+const collapsedModelSections = new Set<string>(["models"]);
+// FORK 2026-06-13 (eeg): one seismograph store per session plus a per-session
+// end-of-turn counter feeding the turn markers. Keyed by the event's FULL
+// session key so tab switches repaint the right session's paper.
+const eegStores = new Map<string, EegTraceStore>();
+const eegTurnCounters = new Map<string, number>();
+function getEegStore(sk: string): EegTraceStore {
+  let store = eegStores.get(sk);
+  if (!store) {
+    store = new EegTraceStore();
+    eegStores.set(sk, store);
+  }
+  return store;
+}
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — drafts are now
 // persisted PER TAB. The old single global key `tinker-draft` meant a hard
@@ -3290,6 +3309,27 @@ function onEvent(evt: unknown) {
       }
       activeRuns.set(p.runId, r);
       r.lastEventAt = Date.now();
+      // FORK 2026-06-13 (eeg): feed the seismograph (bible §5.8h). Effort events
+      // arrive incrementally per run; record() upserts by runId so every emit just
+      // refreshes the run's sample. Keyed by the EVENT's sessionKey (falling back
+      // to the viewed one). Failure must never break the consumer.
+      try {
+        const evtSk = typeof p.sessionKey === "string" && p.sessionKey ? p.sessionKey : sessionKey;
+        getEegStore(evtSk).record({
+          runId: p.runId,
+          model: r.model,
+          provider: r.provider || providerOf(r.model),
+          chosenLevel: r.thinkLevel ?? "",
+          forced: viewedSessionForced(),
+          subagent: String(p.sessionKey || "").includes(":subagent:"),
+          parentRunId: undefined,
+          thinkingChars: r.thinkingChars,
+          startedAt: r.startedAt,
+          endedAt: undefined,
+        });
+      } catch {
+        /* eeg feed must never break the effort consumer */
+      }
       updatePrefrontalTree();
       updateBudgetPanel();
       return;
@@ -4037,6 +4077,43 @@ function onEvent(evt: unknown) {
           updateBtn();
         }, 3000);
         pendingRunDeletes.set(endRunId, timeoutId);
+        // FORK 2026-06-13 (eeg): end-of-turn marker (bible §5.8h q7). Bump the
+        // session's turn counter, stamp the trace store, tag the last real
+        // assistant bubble (the turn-incomplete reverse-loop precedent: skip
+        // _isReasoning/_temporary/_subagentId) with _eegTurn so renderMsg emits
+        // data-eeg-turn, then flush the DOM and repaint the paper. The event's
+        // own sessionKey wins; the viewed session is the fallback.
+        if (p.data.phase === "end") {
+          try {
+            const eegEvtSk =
+              typeof p.data.sessionKey === "string" && p.data.sessionKey
+                ? p.data.sessionKey
+                : sessionKey;
+            if (eegEvtSk && !eegEvtSk.includes(":subagent:")) {
+              const turn = (eegTurnCounters.get(eegEvtSk) ?? 0) + 1;
+              eegTurnCounters.set(eegEvtSk, turn);
+              getEegStore(eegEvtSk).turnEnd({ turn, runId: endRunId, endedAt: Date.now() });
+              if (sessionKeyMatches(eegEvtSk)) {
+                for (let k = messages.length - 1; k >= 0; k--) {
+                  const mm = messages[k] as any;
+                  if (
+                    (mm.role || "").toLowerCase() === "assistant" &&
+                    !mm._isReasoning &&
+                    !mm._temporary &&
+                    !mm._subagentId
+                  ) {
+                    mm._eegTurn = turn;
+                    break;
+                  }
+                }
+                updateChat(true);
+              }
+              updateBudgetPanel();
+            }
+          } catch {
+            /* eeg marker must never break the end handler */
+          }
+        }
         // Poll anatomy API after turn completes — fetch recent events to capture fallback attempts
         const sk = sessionKey;
         const turnNum = currentTurnNumber;
@@ -4324,6 +4401,75 @@ async function loadChat() {
   updateChat();
   scrollChat();
   updateResponseMap();
+
+  // FORK 2026-06-13 (eeg): backfill the seismograph from the context-anatomy API
+  // on first load of a session (bible §5.8h q8), so a reload/restore shows the
+  // session's history instead of an empty paper. BEST-EFFORT mapping — absent
+  // fields simply omit the halo; failure must never break the panel or chat load.
+  try {
+    const eegSk = sessionKey;
+    if (eegSk && getEegStore(eegSk).isEmpty) {
+      const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+      const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
+      fetch(
+        `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?limit=50`,
+        Object.keys(hdrs).length ? { headers: hdrs } : undefined,
+      )
+        .then((r) => (r.ok ? r.json() : null))
+        .then((body) => {
+          if (!body) {
+            return;
+          }
+          const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+          if (!events.length || !getEegStore(eegSk).isEmpty) {
+            return;
+          }
+          const samples: EegSample[] = [];
+          const ends: EegTurnEnd[] = [];
+          let lastTurn: number | undefined;
+          let lastRunId = "";
+          for (let i = 0; i < events.length; i++) {
+            const ev = (events[i] ?? {}) as any;
+            const model = typeof ev.model === "string" ? ev.model : "";
+            const ts =
+              typeof ev.timestampMs === "number"
+                ? ev.timestampMs
+                : typeof ev.timestamp === "number"
+                  ? ev.timestamp
+                  : Date.now();
+            const runId = typeof ev.runId === "string" && ev.runId ? ev.runId : `eeg-backfill-${i}`;
+            samples.push({
+              runId,
+              model,
+              provider:
+                typeof ev.provider === "string" && ev.provider ? ev.provider : providerOf(model),
+              chosenLevel: typeof ev.thinkLevel === "string" ? ev.thinkLevel : "",
+              forced: false,
+              subagent: false,
+              parentRunId: undefined,
+              ...(typeof ev.thinkingChars === "number" ? { thinkingChars: ev.thinkingChars } : {}),
+              startedAt: ts,
+              endedAt: undefined,
+            });
+            const turn = typeof ev.turn === "number" ? ev.turn : undefined;
+            if (lastTurn != null && turn !== lastTurn) {
+              ends.push({ turn: lastTurn, runId: lastRunId, endedAt: ts });
+            }
+            lastTurn = turn;
+            lastRunId = runId;
+          }
+          if (lastTurn != null) {
+            ends.push({ turn: lastTurn, runId: lastRunId, endedAt: Date.now() });
+          }
+          getEegStore(eegSk).backfill(samples, ends);
+          eegTurnCounters.set(eegSk, Math.max(eegTurnCounters.get(eegSk) ?? 0, lastTurn ?? 0));
+          updateBudgetPanel();
+        })
+        .catch(() => {});
+    }
+  } catch {
+    /* eeg backfill must never break chat load */
+  }
 
   // Tab titles are persisted in localStorage — no regeneration on load.
   // Title generation happens in send() on first prompt and every N prompts.
@@ -6017,7 +6163,14 @@ function renderMsg(
           const fractalAnchorAttr = (msg as any)._fractalParentRunId
             ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
             : "";
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          // FORK 2026-06-13 (eeg): twin of the fractal anchor — emit the _eegTurn
+          // stamp as data-eeg-turn so EEG marker clicks can find the bubble
+          // across innerHTML rebuilds (bible §5.8h q7).
+          const eegTurnAttr =
+            (msg as any)._eegTurn != null
+              ? ` data-eeg-turn="${esc(String((msg as any)._eegTurn))}"`
+              : "";
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       }
     } else {
@@ -6181,7 +6334,14 @@ function renderMsg(
           const fractalAnchorAttr = (msg as any)._fractalParentRunId
             ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
             : "";
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          // FORK 2026-06-13 (eeg): twin of the fractal anchor — emit the _eegTurn
+          // stamp as data-eeg-turn so EEG marker clicks can find the bubble
+          // across innerHTML rebuilds (bible §5.8h q7).
+          const eegTurnAttr =
+            (msg as any)._eegTurn != null
+              ? ` data-eeg-turn="${esc(String((msg as any)._eegTurn))}"`
+              : "";
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       } else {
         h += renderSystemMsg(text, idx);
@@ -7627,7 +7787,12 @@ function updateBudgetPanel() {
     }
   }
 
-  // Fallback chain: primary + fallbacks
+  // FORK 2026-06-13 (eeg): ONE unified MODELS list replaces the FALLBACK CHAIN +
+  // CONFIGURED two-section split (bible §5.8h q10). Chain members (primary +
+  // fallbacks, in chain order) sit at the top wearing circled-number badges so
+  // the chain primary stays visible in the list; the remaining configured models
+  // follow, sorted by the existing rank logic. Every row still renders through
+  // renderAuthKeyRows (auth key rows + provider error chips preserved).
   const chain: string[] = [];
   if (primary) {
     chain.push(primary);
@@ -7635,61 +7800,53 @@ function updateBudgetPanel() {
   if (fallbacks?.length) {
     chain.push(...fallbacks);
   }
-
-  if (chain.length) {
-    const open = !collapsedModelSections.has("fallback");
-    const _badges = [
-      "\u2460",
-      "\u2461",
-      "\u2462",
-      "\u2463",
-      "\u2464",
-      "\u2465",
-      "\u2466",
-      "\u2467",
-    ];
-    html += `<div class="model-group${open ? " open" : ""}" data-section="fallback">`;
-    html += '<div class="model-group-label">FALLBACK CHAIN</div>';
+  const _badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467"];
+  const chainSet = new Set(chain);
+  const otherIds = Object.keys(models || {}).filter((id) => !chainSet.has(id));
+  // FORK 2026-05-09: sort by explicit JSON rank first (user-chosen global
+  // performance order in openclaw.json), fall back to bible's tier-matching
+  // when rank is missing on both sides. This honors finer-grained orderings
+  // like gpt-5.5 above gpt-5.4 within the same tier.
+  otherIds.sort((a, b) => {
+    const ra = (models?.[a] as { rank?: number } | undefined)?.rank ?? 999;
+    const rb = (models?.[b] as { rank?: number } | undefined)?.rank ?? 999;
+    if (ra !== rb) {
+      return ra - rb;
+    }
+    return modelPerfRank(a) - modelPerfRank(b);
+  });
+  if (chain.length || otherIds.length) {
+    const open = !collapsedModelSections.has("models");
+    html += `<div class="model-group${open ? " open" : ""}" data-section="models">`;
+    html += '<div class="model-group-label">MODELS</div>';
     html += '<div class="model-group-body">';
     for (let i = 0; i < chain.length; i++) {
-      renderAuthKeyRows(chain[i], "");
-      // FORK 2026-06-11 — tinkerui-slider: render the per-tab 8-stop thinking
-      // slider INLINE, directly under the #1 (primary) model row inside the
-      // FALLBACK CHAIN card's .model-group-body, so it ALWAYS appears. This
-      // replaces the old post-innerHTML querySelector insertion keyed on the
-      // session's .model field (which is empty until a run reports it, so the
-      // slider never showed). renderThinkingSlider() reads the active session's
-      // thinkingLevel directly — no activeModel dependency.
-      if (i === 0) {
-        html += renderThinkingSlider();
-      }
+      renderAuthKeyRows(chain[i], _badges[i] ?? "");
+    }
+    for (const id of otherIds) {
+      renderAuthKeyRows(id, "");
     }
     html += "</div></div>";
   }
 
-  // Other configured models (not in fallback chain), sorted by performance tier
-  const chainSet = new Set(chain);
-  const otherIds = Object.keys(models || {}).filter((id) => !chainSet.has(id));
-  if (otherIds.length) {
-    const open = !collapsedModelSections.has("configured");
-    // FORK 2026-05-09: sort by explicit JSON rank first (user-chosen global
-    // performance order in openclaw.json), fall back to bible's tier-matching
-    // when rank is missing on both sides. This honors finer-grained orderings
-    // like gpt-5.5 above gpt-5.4 within the same tier.
-    otherIds.sort((a, b) => {
-      const ra = (models?.[a] as { rank?: number } | undefined)?.rank ?? 999;
-      const rb = (models?.[b] as { rank?: number } | undefined)?.rank ?? 999;
-      if (ra !== rb) {
-        return ra - rb;
-      }
-      return modelPerfRank(a) - modelPerfRank(b);
-    });
-    html += `<div class="model-group${open ? " open" : ""}" data-section="configured">`;
-    html += '<div class="model-group-label">CONFIGURED</div>';
+  // FORK 2026-06-13 (eeg): EEG card (bible §5.8h) — (a) the per-tab 8-stop
+  // thinking slider (§5.8f, UNCHANGED semantics, still the .model-think-slider
+  // token), (b) the model-force slider (writes ONLY { model } — never bundled
+  // with thinkingLevel, §5.8f invariant 1), (c) the seismograph paper for the
+  // ACTIVE session. The paper re-renders on every updateBudgetPanel() call —
+  // effort events and tab switches (refreshViewedSessionIndicators) repaint the
+  // right session's trace because the store is keyed by the viewed sessionKey.
+  {
+    const open = !collapsedModelSections.has("eeg");
+    html += `<div class="model-group${open ? " open" : ""}" data-section="eeg">`;
+    html += '<div class="model-group-label">EEG</div>';
     html += '<div class="model-group-body">';
-    for (const id of otherIds) {
-      renderAuthKeyRows(id, "");
-    }
+    html += renderThinkingSlider();
+    html += renderModelForceSlider();
+    html +=
+      '<div class="eeg-paper" id="eeg-paper">' +
+      (sessionKey ? getEegStore(sessionKey).renderSvg({ width: 280 }) : "") +
+      "</div>";
     html += "</div></div>";
   }
 
@@ -7714,6 +7871,33 @@ function updateBudgetPanel() {
         collapsedModelSections.add(section);
       }
     });
+  });
+
+  // FORK 2026-06-13 (eeg): delegate clicks on the seismograph's turn markers →
+  // scroll the chat to that turn's answer bubble and flash it (bible §5.8h q7,
+  // the context-timeline §5.9 scroll+flash precedent). The bubble is found via
+  // the data-eeg-turn stamp renderMsg emits; .eeg-focus is the CSS flash class
+  // (owned by the CSS unit).
+  el.querySelector<HTMLElement>("#eeg-paper")?.addEventListener("click", (e) => {
+    const marker = (e.target as HTMLElement).closest<HTMLElement>(".eeg-marker");
+    if (!marker) {
+      return;
+    }
+    const turn = marker.getAttribute("data-eeg-turn");
+    if (!turn) {
+      return;
+    }
+    const escapedTurn =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(turn) : turn;
+    const bubble = document.querySelector<HTMLElement>(
+      `#messages [data-eeg-turn="${escapedTurn}"]`,
+    );
+    if (!bubble) {
+      return;
+    }
+    bubble.scrollIntoView({ behavior: "smooth", block: "center" });
+    bubble.classList.add("eeg-focus");
+    setTimeout(() => bubble.classList.remove("eeg-focus"), 2500);
   });
 }
 
@@ -8072,6 +8256,90 @@ function renderThinkingSlider(): string {
     "</span>" +
     "</div>"
   );
+}
+
+// FORK 2026-06-13 (eeg): stops for the model-force slider (bible §5.8h q2) —
+// stop 0 = Auto (router controls the model axis), then the configured models in
+// the same order as the MODELS list (chain first, then rank-sorted), capped at 7
+// so the row stays an 8-stop-style discrete slider. Rebuilt per render/read from
+// modelConfigData; shared by the markup and the delegated listeners.
+function modelForceStops(): { id: string | null; label: string }[] {
+  const stops: { id: string | null; label: string }[] = [{ id: null, label: "Auto" }];
+  const cfg = modelConfigData as {
+    primary?: string;
+    fallbacks?: string[];
+    models?: Record<string, { rank?: number }>;
+  } | null;
+  if (!cfg) {
+    return stops;
+  }
+  const chain: string[] = [];
+  if (cfg.primary) {
+    chain.push(cfg.primary);
+  }
+  if (cfg.fallbacks?.length) {
+    chain.push(...cfg.fallbacks);
+  }
+  const chainSet = new Set(chain);
+  const others = Object.keys(cfg.models || {}).filter((id) => !chainSet.has(id));
+  others.sort((a, b) => {
+    const ra = cfg.models?.[a]?.rank ?? 999;
+    const rb = cfg.models?.[b]?.rank ?? 999;
+    if (ra !== rb) {
+      return ra - rb;
+    }
+    return modelPerfRank(a) - modelPerfRank(b);
+  });
+  for (const id of [...chain, ...others].slice(0, 7)) {
+    stops.push({ id, label: modelName(id) });
+  }
+  return stops;
+}
+
+// FORK 2026-06-13 (eeg): the model-force slider (bible §5.8h q2). Mirrors the
+// thinking slider's read path — the viewed session's CURRENT model override is
+// the session row's `model` field (the same field the Sessions alt-view shows);
+// writes go through sessions.update with a { model }-ONLY patch, never bundled
+// with thinkingLevel (rejectWebchatSessionMutation — §5.8f invariant 1).
+function renderModelForceSlider(): string {
+  const stops = modelForceStops();
+  const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
+    | { model?: string }
+    | undefined;
+  const cur = typeof active?.model === "string" ? active.model : "";
+  let idx = 0;
+  if (cur) {
+    const found = stops.findIndex((s) => s.id === cur);
+    if (found > 0) {
+      idx = found;
+    }
+  }
+  const stop = stops[idx] ?? stops[0];
+  return (
+    '<div class="model-force-slider-row">' +
+    '<input type="range" class="model-force-slider" min="0" max="' +
+    String(Math.max(0, stops.length - 1)) +
+    '" step="1" value="' +
+    String(idx) +
+    '" aria-label="Model override">' +
+    '<span class="model-force-label">' +
+    esc(stop.label) +
+    "</span>" +
+    "</div>"
+  );
+}
+
+// FORK 2026-06-13 (eeg): true iff the VIEWED session currently has a model
+// and/or thinkingLevel override set — derived from the SAME session fields the
+// two force sliders read (bible §5.8h q9). Forced samples draw dashed on the
+// seismograph: visual proof the force is obeyed.
+function viewedSessionForced(): boolean {
+  const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
+    | { model?: string; thinkingLevel?: string }
+    | undefined;
+  const modelForced = typeof active?.model === "string" && active.model.length > 0;
+  const levelForced = typeof active?.thinkingLevel === "string" && active.thinkingLevel.length > 0;
+  return modelForced || levelForced;
 }
 
 function updateSessionsPanel() {
@@ -8759,6 +9027,51 @@ function init() {
         }).catch(() => {});
       }
     });
+    // FORK 2026-06-13 (eeg): delegated listeners for the model-force slider
+    // (bible §5.8h q2) — same pattern as the thinking slider above. `input`
+    // updates the sibling label live; `change` (drag release) persists. The
+    // patch is ONLY { model } — bundling it with thinkingLevel would trip
+    // rejectWebchatSessionMutation (§5.8f invariant 1). Index 0 -> null (Auto =
+    // router controls the model axis again).
+    const readModelStop = (e: Event) => {
+      const slider = (e.target as HTMLElement).closest(
+        ".model-force-slider",
+      ) as HTMLInputElement | null;
+      if (!slider) {
+        return null;
+      }
+      const stops = modelForceStops();
+      const idx = Math.max(0, Math.min(stops.length - 1, Number(slider.value) || 0));
+      return stops[idx] ?? stops[0];
+    };
+    budgetPanelEl.addEventListener("input", (e) => {
+      const stop = readModelStop(e);
+      if (!stop) {
+        return;
+      }
+      const row = (e.target as HTMLElement).closest(".model-force-slider-row");
+      const label = row?.querySelector(".model-force-label");
+      if (label) {
+        label.textContent = stop.label;
+      }
+    });
+    budgetPanelEl.addEventListener("change", (e) => {
+      const stop = readModelStop(e);
+      if (!stop) {
+        return;
+      }
+      const row = (e.target as HTMLElement).closest(".model-force-slider-row");
+      const label = row?.querySelector(".model-force-label");
+      if (label) {
+        label.textContent = stop.label;
+      }
+      if (sessionKey) {
+        req("sessions.update", {
+          key: sessionKey,
+          patch: { model: stop.id || null },
+        }).catch(() => {});
+      }
+    });
   }
   // Session-select dropdown removed — tabs handle session switching now
   $("budget-refresh")!.addEventListener("click", () => {
@@ -9270,9 +9583,17 @@ function init() {
         website: "Website",
         npm: "npm",
       };
-      const groupMeta = (id: string): { key: string; title: string } => {
+      // Gray suffix shown next to the group title (e.g. GitHub graph → "GitHub TinkerClaw").
+      const GROUP_ACCENTS: Record<string, string> = {
+        github: "TinkerClaw",
+      };
+      const groupMeta = (id: string): { key: string; title: string; accent?: string } => {
         const seg = id.split(".")[1] ?? id;
-        return { key: seg, title: GROUP_TITLES[seg] ?? seg.charAt(0).toUpperCase() + seg.slice(1) };
+        return {
+          key: seg,
+          title: GROUP_TITLES[seg] ?? seg.charAt(0).toUpperCase() + seg.slice(1),
+          accent: GROUP_ACCENTS[seg],
+        };
       };
       // Per-series styling: distinct colors, dashed = "external/organic", a
       // secondary right axis for series whose scale dwarfs the others (github
@@ -9327,7 +9648,7 @@ function init() {
         const meta = groupMeta(metric.id);
         let grp = presenceGroups.get(meta.key);
         if (!grp) {
-          grp = { key: meta.key, title: meta.title, series: [] };
+          grp = { key: meta.key, title: meta.title, series: [], accent: meta.accent };
           presenceGroups.set(meta.key, grp);
         }
         // Strip the group name from the line label ("Moltbook karma" → "karma").
