@@ -8379,14 +8379,12 @@ function shortModelLabel(id: string): string {
     const kind = /flash/.test(lo) ? "F" : /pro/.test(lo) ? "P" : "";
     return `Gem${v}${kind}`.slice(0, 7);
   }
-  if (/codex/.test(lo)) {
-    const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
-    return `${v}cx`;
-  }
   if (/gpt-?[\d.]+/.test(lo)) {
     const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
     const k = /pro/.test(lo) ? "p" : /mini/.test(lo) ? "m" : /nano/.test(lo) ? "n" : "";
-    return `${v}${k}`;
+    // "GPT" prefix (Oscar 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
+    // suffix is dropped — only gpt-5.3-codex carries it and there is no plain 5.3.
+    return `GPT${v}${k}`;
   }
   if (/grok/.test(lo)) {
     return "Grok";
