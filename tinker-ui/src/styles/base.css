@@ -6414,7 +6414,10 @@ code.fs-link.fs-link-error {
      first track of .model-group-body's grid. */
   grid-column: 1 / -1;
   width: 100%;
-  max-height: 280px;
+  /* FORK 2026-06-13 (eeg): FIXED height (~ as tall as the amygdala panel, Oscar
+     2026-06-13) so the paper is a stable box that scrolls internally — not a
+     region that grows/shrinks with content. */
+  height: 260px;
   overflow-y: auto;
   overflow-x: hidden;
   background-color: var(--surface);
