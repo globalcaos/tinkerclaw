@@ -1832,16 +1832,28 @@ function scheduleUnconfirmedPrune() {
 // Restore on load
 restoreActiveRuns();
 
+// FORK 2026-06-14: model ids appear BARE ("claude-opus-4-8") from cc-bridge effort
+// events and provider-PREFIXED ("claude-code/claude-opus-4-8") from the catalog;
+// compare on the bare tail everywhere the two meet.
+const bareModelTail = (m?: string): string | undefined =>
+  m && m.includes("/") ? m.split("/").slice(1).join("/") : m;
+
+// FORK 2026-06-14 (bug #1): the model of the most recent live run, captured WHILE
+// live in updateBudgetPanel, so the collapsed MODELS section keeps showing the
+// last model that computed AFTER it finishes. Module-scoped; only a newer live
+// run overwrites it.
+let lastComputedModel: string | null = null;
+function rowIsRecentModel(modelId: string): boolean {
+  return !!lastComputedModel && bareModelTail(lastComputedModel) === bareModelTail(modelId);
+}
+
 function getAuthKeyCounts(forModel?: string): Map<string, number> {
   const counts = new Map<string, number>();
-  // FORK 2026-06-14: cc-bridge effort events self-describe the model with the
-  // BARE id (e.g. "claude-opus-4-8") while the catalog/forModel key is provider-
-  // prefixed ("claude-code/claude-opus-4-8"). Compare on the bare tail so the
-  // live brain's run matches its panel row, and key the count under the prefixed
-  // forModel so the counts.get(modelId) fallback (renderAuthKeyRows) lands.
-  const bare = (m?: string) => (m && m.includes("/") ? m.split("/").slice(1).join("/") : m);
   for (const [, info] of scopedActiveRuns()) {
-    if (forModel && bare(info.model) !== bare(forModel)) {
+    // Compare on the bare tail (cc-bridge effort events send the bare id while
+    // forModel is the prefixed catalog key); key the count under the prefixed
+    // forModel so the counts.get(modelId) fallback (renderAuthKeyRows) lands.
+    if (forModel && bareModelTail(info.model) !== bareModelTail(forModel)) {
       continue;
     }
     const key = info.authProfileId || forModel || info.model;
@@ -7848,6 +7860,14 @@ function updateBudgetPanel() {
   const { primary, fallbacks, models, authProfiles, authOrder } = modelConfigData;
   let html = '<div class="model-list">';
 
+  // FORK 2026-06-14 (bug #1): remember the model of the current live run so the
+  // collapsed MODELS section keeps showing the last model that computed after it
+  // stops. Captured here (scope-filtered) while a run is live; persists when idle.
+  const liveRun = scopedActiveRuns().find(([, i]) => i.model);
+  if (liveRun) {
+    lastComputedModel = liveRun[1].model;
+  }
+
   // Helper: render auth key rows for a model's provider
   function renderAuthKeyRows(modelId: string, badge: string) {
     const provider = providerOf(modelId);
@@ -8229,8 +8249,10 @@ function renderModelRow(
   const costHtml = renderCostCol(costLabel);
   const nameParts =
     esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
+  // FORK 2026-06-14 (bug #1): keep the last-computed model pinned when idle+collapsed.
+  const recentClass = count === 0 && rowIsRecentModel(id) ? " model-recent" : "";
 
-  return `<div class="model-row${liveClass}${errorClass}"${glowStyle}>
+  return `<div class="model-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${barsHtml}
     ${costHtml}
@@ -8268,8 +8290,10 @@ function renderAuthKeyRow(
   const costLabel = getModelCost(modelId, keyId);
   const barsHtml = renderUsageBarsOnly(usage);
   const costHtml = renderCostCol(costLabel);
+  // FORK 2026-06-14 (bug #1): keep the last-computed model pinned when idle+collapsed.
+  const recentClass = count === 0 && rowIsRecentModel(modelId) ? " model-recent" : "";
 
-  return `<div class="model-row auth-key-row${liveClass}${errorClass}"${glowStyle}>
+  return `<div class="model-row auth-key-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${barsHtml}
     ${costHtml}
