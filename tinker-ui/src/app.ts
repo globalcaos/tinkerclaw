@@ -1550,13 +1550,20 @@ function getEegStore(sk: string): EegTraceStore {
 // of its host so it fills the whole panel (Oscar 2026-06-13). Called after every
 // panel render and on window resize.
 let eegResizeBound = false;
+// FORK 2026-06-13 (eeg): vertical SCALE for the seismograph length axis, driven
+// by the secondary(right)-button wheel. 1 = native token→px scale.
+let eegZoom = 1;
 function fillEegPaper(): void {
   const paper = document.getElementById("eeg-paper");
   if (!paper || !sessionKey) {
     return;
   }
   const w = Math.max(120, Math.floor(paper.clientWidth) || 280);
-  paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w });
+  // preserve the scroll position proportionally across a re-render/zoom
+  const prevH = paper.scrollHeight || 1;
+  const ratio = paper.scrollTop / prevH;
+  paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w, zoom: eegZoom });
+  paper.scrollTop = ratio * (paper.scrollHeight || 1);
 }
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — drafts are now
@@ -3352,7 +3359,7 @@ function onEvent(evt: unknown) {
           subagent: String(p.sessionKey || "").includes(":subagent:"),
           parentRunId: undefined,
           thinkingChars: r.thinkingChars,
-          // tokens drive segment LENGTH (area ∝ tokens, bible §5.8h). output from
+          // tokens drive segment LENGTH; area = width·length ∝ cost (bible §5.8h). output from
           // the effort-final event; input accumulated from round-start events.
           inputTokens: eegInputByRun.get(p.runId),
           outputTokens: r.outputTokens,
@@ -3501,7 +3508,7 @@ function onEvent(evt: unknown) {
         return;
       }
       // FORK 2026-06-13 (eeg): accumulate billed input tokens per runId so the
-      // seismograph segment length tracks token volume (area ∝ tokens, bible §5.8h).
+      // seismograph segment length tracks token count; area ∝ cost (bible §5.8h).
       if (typeof p.runId === "string" && typeof p.data.inputTokensEstimate === "number") {
         eegInputByRun.set(p.runId, (eegInputByRun.get(p.runId) ?? 0) + p.data.inputTokensEstimate);
       }
@@ -4487,7 +4494,7 @@ async function loadChat() {
               subagent: false,
               parentRunId: undefined,
               ...(typeof ev.thinkingChars === "number" ? { thinkingChars: ev.thinkingChars } : {}),
-              // tokens → segment length (area ∝ tokens). Best-effort from anatomy.
+              // tokens → segment length (area ∝ cost). Best-effort from anatomy.
               ...(() => {
                 const inTok =
                   ev.inputTokens ?? ev.contextSent?.totalTokens ?? ev.tokensIn ?? undefined;
@@ -7932,6 +7939,26 @@ function updateBudgetPanel() {
       }
     });
   });
+
+  // FORK 2026-06-13 (eeg): secondary(right)-button wheel = vertical SCALE zoom of
+  // the length axis (Oscar 2026-06-13). Plain wheel still scrolls history; only a
+  // wheel WITH the right button held (e.buttons & 2) rescales. contextmenu is
+  // suppressed on the paper so the held right button doesn't pop the OS menu.
+  const eegPaperEl = el.querySelector<HTMLElement>("#eeg-paper");
+  eegPaperEl?.addEventListener(
+    "wheel",
+    (e) => {
+      if ((e.buttons & 2) === 0) {
+        return; // plain wheel → normal scroll
+      }
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      eegZoom = Math.min(20, Math.max(0.1, eegZoom * factor));
+      fillEegPaper();
+    },
+    { passive: false },
+  );
+  eegPaperEl?.addEventListener("contextmenu", (e) => e.preventDefault());
 
   // FORK 2026-06-13 (eeg): delegate clicks on the seismograph's turn markers →
   // scroll the chat to that turn's answer bubble and flash it (bible §5.8h q7,
