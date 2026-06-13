@@ -3316,10 +3316,15 @@ function onEvent(evt: unknown) {
       r.lastEventAt = Date.now();
       // FORK 2026-06-13 (eeg): feed the seismograph (bible §5.8h). Effort events
       // arrive incrementally per run; record() upserts by runId so every emit just
-      // refreshes the run's sample. Keyed by the EVENT's sessionKey (falling back
-      // to the viewed one). Failure must never break the consumer.
+      // refreshes the run's sample. The store is keyed by the VIEWED sessionKey to
+      // match the render at updateBudgetPanel() — and every event reaching here has
+      // already passed sessionKeyMatches(p.sessionKey), so it belongs to the viewed
+      // session. NOTE (v2 gap): sessionKeyMatches does NOT admit `:subagent:`
+      // descendants, so subagent effort events are dropped upstream and the q3
+      // split/join branches stay unfed until the consumer admits them. Main-session
+      // traces are fully live. Failure must never break the consumer.
       try {
-        const evtSk = typeof p.sessionKey === "string" && p.sessionKey ? p.sessionKey : sessionKey;
+        const evtSk = sessionKey;
         getEegStore(evtSk).record({
           runId: p.runId,
           model: r.model,
