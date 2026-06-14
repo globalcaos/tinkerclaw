@@ -4,8 +4,12 @@
  */
 
 import MarkdownIt from "markdown-it";
+import { openExternalLinksInNewTab } from "../md-links.js";
 
 const md = MarkdownIt({ html: false, linkify: true, breaks: true });
+// External links (incl. linkified bare URLs) open in a new tab — never navigate
+// the SPA away from the live session.
+openExternalLinksInNewTab(md);
 
 // oxlint-disable-next-line typescript-eslint/no-explicit-any
 type ReqFn = (method: string, params?: any) => Promise<any>;
