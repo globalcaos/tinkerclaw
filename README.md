@@ -24,9 +24,9 @@
 ### _Our agent improves its own brain after every conversation. Everyone else's is still reading from a script. Want yours to do the same?_
 
 <p align="center">
-  <a href="https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/"><img src="https://img.shields.io/badge/🌿_Fractal_Thinking-learns_from_patterns-8B6914?style=for-the-badge" alt="Fractal Thinking"></a>
-  <a href="https://thetinkerzone.com/humor-embeddings-laughter-from-inverted-memory-bisociation-in-computational-embedding-space/"><img src="https://img.shields.io/badge/😂_Computational_Humor-Data_principle-C0834D?style=for-the-badge" alt="Computational Humor"></a>
-  <a href="https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/"><img src="https://img.shields.io/badge/🔐_Safer_than_NeMo-at_a_fraction_of_cost-604020?style=for-the-badge" alt="Safer than NeMo"></a>
+  <a href="https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/"><img src="https://img.shields.io/badge/%F0%9F%8C%BF_Fractal_Thinking-learns_from_patterns-8B6914?style=for-the-badge" alt="Fractal Thinking"></a>
+  <a href="https://thetinkerzone.com/humor-embeddings-laughter-from-inverted-memory-bisociation-in-computational-embedding-space/"><img src="https://img.shields.io/badge/%F0%9F%98%82_Computational_Humor-Data_principle-C0834D?style=for-the-badge" alt="Computational Humor"></a>
+  <a href="https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/"><img src="https://img.shields.io/badge/%F0%9F%94%90_Safer_than_NeMo-at_a_fraction_of_cost-604020?style=for-the-badge" alt="Safer than NeMo"></a>
 </p>
 
 No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Fifteen research papers and four months of 24/7 operation made the difference.
