@@ -133,12 +133,13 @@ const SEED_KPIS: SeedSpec[] = [
     cadence_seconds: 86400,
     template: "sparkline",
   },
-  // FORK 2026-06-06 — ClawHub REINSTATED (appeal #2517). Our jarvis-voice is live
-  // again (clawhub.ai verified: 3 downloads). Tracks via engagement-state until a
-  // clawskills/clawhub scraper poller is wired. Add lines as we re-publish skills.
+  // FORK 2026-06-06 — ClawHub REINSTATED (appeal #2517). Tracks via engagement-state.
+  // FORK 2026-06-14 — read tracked_slugs_state (the LIVE exact block the 08:00 cron
+  // refreshes: jarvis-voice 4916, growing daily) NOT our_skills (a stale rounded block
+  // frozen at 4800 for a week → the graph read 4.8k while clawhub.ai showed 4.9k).
   {
     id: "graph.clawhub.jarvis-voice",
-    source: "localstate:engagement-state.json#clawhub.our_skills.jarvis-voice.downloads",
+    source: "localstate:engagement-state.json#clawhub.tracked_slugs_state.jarvis-voice.downloads",
     cadence_seconds: 86400,
     template: "sparkline",
   },

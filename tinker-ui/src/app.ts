@@ -9817,8 +9817,8 @@ function init() {
     "kpi.moltbook.posts": { icon: "📝", label: "Moltbook posts" },
     "graph.moltbook.comments": { icon: "💬", label: "Moltbook comments" },
     "graph.moltbook.followers": { icon: "👥", label: "Moltbook followers" },
-    "graph.github.traffic.views14d": { icon: "👁", label: "Repo views/day" },
-    "graph.github.traffic.clones14d": { icon: "⬇", label: "Repo clones/day" },
+    "graph.github.traffic.views14d": { icon: "👁", label: "Repo views (cumulative)" },
+    "graph.github.traffic.clones14d": { icon: "⬇", label: "Repo clones (cumulative)" },
     "graph.clawhub.installs": { icon: "🧩", label: "ClawHub installs" },
     "kpi.inbound.organic": { icon: "🔗", label: "Organic inbound links" },
     "graph.inbound.ours": { icon: "🔗", label: "Inbound links (ours)" },
@@ -9944,11 +9944,13 @@ function init() {
           label?: string;
         }
       > = {
-        // NOT cumulative: clones14d is GitHub's trailing-14-day rolling total; summing
-        // daily snapshots double-counts each clone ~14× (the bogus "~50k"). Show the
-        // real 14d window value instead (~750).
-        "graph.github.traffic.clones14d": { color: "#8ECAE6", axis: "left" },
-        "graph.github.traffic.views14d": { color: "#F4A261", axis: "right" },
+        // CUMULATIVE: github.traffic.daily returns the most recent DAY's clone/view count
+        // (a per-day delta — see github-traffic.ts), so the running sum is the true
+        // all-time-tracked total: a rising line instead of spiky daily counts. (The old
+        // "don't sum — it's a 14d rolling total" caveat predates the 2026-06-05 switch to
+        // real daily counts and no longer applies.)
+        "graph.github.traffic.clones14d": { color: "#8ECAE6", axis: "left", cumulative: true },
+        "graph.github.traffic.views14d": { color: "#F4A261", axis: "right", cumulative: true },
         // FORK 2026-06-05 — Inbound links: one hue per destination target, the
         // solid line = external (organic / others created), dashed = ours (we
         // created). Same color pairs the two lines of a target visually.
