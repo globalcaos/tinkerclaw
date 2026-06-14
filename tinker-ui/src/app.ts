@@ -4,6 +4,7 @@ import MarkdownIt from "markdown-it";
 // keeps only the KNOWN_STREAMS entry, the stream:"fractal" dispatch, and the
 // dock-anchor lookup over app.ts-owned message state.
 import { upsertFractalDock } from "./fractal-dock.js";
+import { openExternalLinksInNewTab } from "./md-links.js";
 // FORK 2026-06-06 — BROCA recipe visibility: shared render module for the
 // single-recipe (recipe-detail) page. renderBrocaProgram turns a parsed recipe
 // into interleaved code+prose; BrocaRecipe is the read DTO shape.
@@ -62,6 +63,10 @@ import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 // click-to-open treatment via the `.fs-link` post-processor (see md() below).
 // Real URLs still link via explicit markdown syntax `[label](url)`.
 const mdParser = MarkdownIt({ html: false, linkify: false, breaks: true });
+// FORK 2026-06-14: external links in chat open in a new tab (never navigate the
+// SPA away from the live session). Local file paths use `.fs-link` <code>, not
+// anchors, so they keep their click-to-open behavior untouched.
+openExternalLinksInNewTab(mdParser);
 
 // FORK 2026-04-20: Prefrontal debug channel. Turn on by visiting the page with
 // ?pfdebug=1 or by running `__pf.debug=true` in devtools. When on, every
