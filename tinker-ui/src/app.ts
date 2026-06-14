@@ -57,12 +57,15 @@ import {
 // panel row + thinking-row all import the SAME function so colors always match).
 import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 
-// FORK 2026-05-09: disable linkify — markdown-it was auto-converting plain
-// text like "BRIEFING.md" into <a href="http://BRIEFING.md"> which navigates
-// to a search/dictionary page when clicked. Real file paths still get the
-// click-to-open treatment via the `.fs-link` post-processor (see md() below).
-// Real URLs still link via explicit markdown syntax `[label](url)`.
-const mdParser = MarkdownIt({ html: false, linkify: false, breaks: true });
+// FORK 2026-05-09: linkify was auto-converting plain text like "BRIEFING.md"
+// into <a href="http://BRIEFING.md"> which navigates to a search page on click.
+// FORK 2026-06-14 (Oscar): re-enable linkify but with fuzzyLink OFF — only URLs
+// carrying an explicit scheme (http://, https://, mailto:) are linked, so a bare
+// "https://thetinkerzone.com" in chat is clickable while "BRIEFING.md" stays
+// plain text (no scheme → no link), preserving the 2026-05-09 fix. Real file
+// paths still get click-to-open via the `.fs-link` post-processor (see md()).
+const mdParser = MarkdownIt({ html: false, linkify: true, breaks: true });
+mdParser.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
 // FORK 2026-06-14: external links in chat open in a new tab (never navigate the
 // SPA away from the live session). Local file paths use `.fs-link` <code>, not
 // anchors, so they keep their click-to-open behavior untouched.
