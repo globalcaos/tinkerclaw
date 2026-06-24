@@ -6,7 +6,7 @@
  * where <encoded-cwd> is the ABSOLUTE working directory with every
  * non-alphanumeric character replaced by '-'. Verified against the live
  * layout on this host, e.g. `/home/user/.openclaw` ->
- * `-home-globalcaos--openclaw` (the leading '/' and the '.' each become '-').
+ * `-home-user--openclaw` (the leading '/' and the '.' each become '-').
  *
  * Both functions are pure / side-effect-free aside from the explicit
  * `fs.statSync` in `isTranscriptOversized`, so they unit-test trivially.

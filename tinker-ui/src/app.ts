@@ -71,7 +71,7 @@ import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 
 // FORK 2026-05-09: linkify was auto-converting plain text like "BRIEFING.md"
 // into <a href="http://BRIEFING.md"> which navigates to a search page on click.
-// FORK 2026-06-14 (the architect): re-enable linkify but with fuzzyLink OFF — only URLs
+// FORK 2026-06-14 (the user): re-enable linkify but with fuzzyLink OFF — only URLs
 // carrying an explicit scheme (http://, https://, mailto:) are linked, so a bare
 // "https://thetinkerzone.com" in chat is clickable while "BRIEFING.md" stays
 // plain text (no scheme → no link), preserving the 2026-05-09 fix. Real file
@@ -1760,7 +1760,7 @@ const collapsedModelSections = new Set<string>(["models"]);
 // session key so tab switches repaint the right session's paper.
 const eegStores = new Map<string, EegTraceStore>();
 const eegTurnCounters = new Map<string, number>();
-// FORK 2026-06-22 (the architect): true while the in-flight turn's blue boundary was already
+// FORK 2026-06-22 (the user): true while the in-flight turn's blue boundary was already
 // drawn at SEND time — so the lifecycle end-handler skips adding a duplicate line.
 const eegBoundaryAtSend = new Map<string, boolean>();
 // FORK 2026-06-13 (eeg): billed INPUT tokens accumulated per runId across the
@@ -1769,7 +1769,7 @@ const eegBoundaryAtSend = new Map<string, boolean>();
 const eegInputByRun = new Map<string, number>();
 // FORK 2026-06-13 (eeg): persist the trace to localStorage so a HARD REFRESH (which
 // wipes the in-memory store) restores the session's activity instead of erasing it
-// (the architect 2026-06-13). Keyed per session; capped so storage stays bounded.
+// (the user 2026-06-13). Keyed per session; capped so storage stays bounded.
 const EEG_STORAGE_PREFIX = "tinker-eeg:";
 const EEG_PERSIST_CAP = 2000;
 function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
@@ -1780,7 +1780,7 @@ function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
     }
     const snap = JSON.parse(raw) as { samples?: EegSample[]; ends?: EegTurnEnd[] };
     if (Array.isArray(snap.samples)) {
-      // FORK 2026-06-23 (the architect): drop any persisted subagent BRANCH samples on load too, so an
+      // FORK 2026-06-23 (the user): drop any persisted subagent BRANCH samples on load too, so an
       // OLD snapshot (written before branches stopped being persisted) can't restore a stale
       // "banana" arch. Branches are live-only; the main call-line is what persists.
       store.backfill(
@@ -1798,7 +1798,7 @@ function saveEegStore(sk: string): void {
     localStorage.setItem(
       EEG_STORAGE_PREFIX + sk,
       JSON.stringify({
-        // FORK 2026-06-23 (the architect "weird max→high banana that lingers"): do NOT persist
+        // FORK 2026-06-23 (the user "weird max→high banana that lingers"): do NOT persist
         // subagent BRANCH samples. They are LIVE activity (a fan-out in progress), not durable
         // history — persisting them froze an old sub-call into a stale max→high arch ("banana")
         // that was restored on every reload long after the fan-out finished. The main call-line
@@ -1872,7 +1872,7 @@ function saveModelPin(key: string, id: string): void {
   }
 }
 // FORK 2026-06-13 (eeg): re-render the seismograph SVG at the live pixel width
-// of its host so it fills the whole panel (the architect 2026-06-13). Called after every
+// of its host so it fills the whole panel (the user 2026-06-13). Called after every
 // panel render and on window resize.
 let eegResizeBound = false;
 // FORK 2026-06-13 (eeg): vertical SCALE for the seismograph length axis, driven
@@ -2021,7 +2021,7 @@ function bindEegPanelOnce(): void {
       node.classList.remove("eeg-hl");
     }
   };
-  // FORK 2026-06-22 (the architect): a styled hover overlay showing the prompt text (the native
+  // FORK 2026-06-22 (the user): a styled hover overlay showing the prompt text (the native
   // SVG <title> is slow + unstyleable). One lazily-created floating div, positioned next
   // to the cursor, fed from the boundary's data-eeg-prompt-text.
   let eegOverlay: HTMLElement | null = null;
@@ -3925,7 +3925,7 @@ function onEvent(evt: unknown) {
         } as ActiveRunInfo);
       // FORK 2026-06-13 (eeg): the effort event now self-describes its model
       // (cc-bridge), so even an Auto run colours by the ACTUAL model running
-      // underneath instead of falling back to gray (the architect 2026-06-13). Keep any
+      // underneath instead of falling back to gray (the user 2026-06-13). Keep any
       // existing non-empty model if the event omits it.
       if (typeof d.model === "string" && d.model) r.model = d.model;
       if (typeof d.provider === "string" && d.provider) r.provider = d.provider;
@@ -3948,7 +3948,7 @@ function onEvent(evt: unknown) {
       // FORK 2026-06-13 (eeg): feed the seismograph (bible §5.8h). Effort events
       // arrive incrementally per run; record() upserts by runId so every emit just
       // refreshes the run's sample. The store is keyed by the VIEWED sessionKey to
-      // match the render at updateBudgetPanel(). FORK 2026-06-14 (the architect): the gate
+      // match the render at updateBudgetPanel(). FORK 2026-06-14 (the user): the gate
       // above now ALSO admits `:subagent:` descendants of the viewed session (via
       // chatEventIsSubagentOfView, same predicate the chat consumer uses), so a
       // subagent's effort event records into the PARENT's store (evtSk = the viewed
@@ -4802,7 +4802,7 @@ function onEvent(evt: unknown) {
                 ? p.data.sessionKey
                 : sessionKey;
             if (eegEvtSk && !eegEvtSk.includes(":subagent:")) {
-              // FORK 2026-06-22 (the architect): the blue boundary is now normally drawn at SEND
+              // FORK 2026-06-22 (the user): the blue boundary is now normally drawn at SEND
               // time (immediate, while the turn runs). If it was, skip adding a 2nd line
               // here — just reuse the already-bumped turn number to stamp the answer bubble.
               // The fallback (queued sends, which don't draw at send) still records here.
@@ -4837,7 +4837,7 @@ function onEvent(evt: unknown) {
                   promptIndex,
                   promptText,
                 });
-                // persist the completed turn so a hard refresh restores it (the architect 2026-06-13)
+                // persist the completed turn so a hard refresh restores it (the user 2026-06-13)
                 saveEegStore(eegEvtSk);
               }
               if (sessionKeyMatches(eegEvtSk)) {
@@ -5210,7 +5210,7 @@ async function loadChat() {
   // fields simply omit the halo; failure must never break the panel or chat load.
   try {
     const eegSk = sessionKey;
-    // FORK 2026-06-22 (the architect): fetch the anatomy on EVERY session load (not only when the
+    // FORK 2026-06-22 (the user): fetch the anatomy on EVERY session load (not only when the
     // store is empty) so the EEG restores in lockstep with the chat history — the reconcile
     // decision (rebuild vs keep-local) is made AFTER the fetch, below.
     if (eegSk) {
@@ -5218,7 +5218,7 @@ async function loadChat() {
       const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
       fetch(
         // limit=500: restore the WHOLE session on reload (permanent retention,
-        // the architect 2026-06-13) so all activity is scrollable, not just recent turns.
+        // the user 2026-06-13) so all activity is scrollable, not just recent turns.
         `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?limit=500`,
         Object.keys(hdrs).length ? { headers: hdrs } : undefined,
       )
@@ -5231,7 +5231,7 @@ async function loadChat() {
           if (!events.length) {
             return;
           }
-          // FORK 2026-06-22 (the architect): EEG must restore hand-in-hand with chat on every
+          // FORK 2026-06-22 (the user): EEG must restore hand-in-hand with chat on every
           // (re)load — not only when the local store happens to be empty. The old isEmpty
           // gate let a stale/partial localStorage snapshot permanently BLOCK the re-fetch,
           // so the EEG drifted from (or got wiped relative to) the chat. Rebuild whenever
@@ -5245,7 +5245,7 @@ async function loadChat() {
           const samples: EegSample[] = [];
           const ends: EegTurnEnd[] = [];
           let lastTurn: number | undefined;
-          // FORK 2026-06-22 (the architect): carry the prompt text + index onto restored boundaries
+          // FORK 2026-06-22 (the user): carry the prompt text + index onto restored boundaries
           // (anatomy events include `userMessage`) so a reloaded/restored EEG line is just as
           // hoverable + clickable as a live one — history "hand in hand" with the chat.
           const mkEnd = (t: number, rid: string, endedAt: number, um: string): EegTurnEnd => {
@@ -5291,7 +5291,7 @@ async function loadChat() {
               endedAt: undefined,
             });
             const turn = typeof ev.turn === "number" ? ev.turn : undefined;
-            // FORK 2026-06-22 (the architect): anchor each turn's boundary at the turn's START — just
+            // FORK 2026-06-22 (the user): anchor each turn's boundary at the turn's START — just
             // before its first event (ts-1) — so the yellow line sits BELOW (chronologically
             // earlier than) that turn's calls. Newest-at-top ⇒ earlier = lower. The old code
             // anchored at the turn TRANSITION (≈ the turn's END), drawing the line ABOVE its call.
@@ -5800,7 +5800,7 @@ async function send(text: string) {
   }
   scrollChat();
 
-  // FORK 2026-06-22 (the architect): draw the blue prompt-boundary line the INSTANT the prompt
+  // FORK 2026-06-22 (the user): draw the blue prompt-boundary line the INSTANT the prompt
   // is sent — not at turn end — so every turn is visibly delimited while it still runs.
   // The boundary carries this prompt's stable user-message index + text → hover overlay
   // + click-scroll. Only the live (non-queued) send draws here; a QUEUED send's turn is
@@ -6813,7 +6813,7 @@ function renderEnvelope(env: Envelope): string {
   const explanation = env.explanation
     ? `<div class="env-explanation">${md(env.explanation)}</div>`
     : "";
-  // FORK 2026-05-30 (the architect directive): progressive disclosure. The COLLAPSED
+  // FORK 2026-05-30 (the user directive): progressive disclosure. The COLLAPSED
   // view is just the icon + headline — a small, plain-language warning the
   // normal user can glance past ("Gateway restarted"). Everything else
   // (explanation, actions, the technical kv/raw block) lives inside the
@@ -7463,7 +7463,7 @@ function renderThinkingIndicator(): string {
     // FORK 2026-06-04 — bug task-mpzgsvbo (Thinking indicators): the CHAT indicator is now
     // BINARY — it shows ONLY whether the viewed session has a live LLM call, as ONE row.
     // It used to render one row PER active run (main + each subagent), which is what produced
-    // the "multiple indicators at once" the architect reported. The per-run / per-subagent breakdown
+    // the "multiple indicators at once" the user reported. The per-run / per-subagent breakdown
     // now lives ONLY in the RECIPES panel (+ the collapsible subagent chat bubbles). The Stop
     // button has always called the session-level abort() (see the delegated #messages handler),
     // so one Stop is the correct semantics. runBelongsToViewedSession stays the ONE shared
@@ -9040,7 +9040,7 @@ function updateBudgetPanel() {
   });
 
   // FORK 2026-06-13 (eeg): SECONDARY (horizontal/tilt) wheel = vertical SCALE zoom
-  // of the length axis (the architect 2026-06-13). the architect's secondary wheel emits a
+  // of the length axis (the user 2026-06-13). the user's secondary wheel emits a
   // HORIZONTAL delta (deltaX) — which was sliding the panel sideways; we capture
   // that (and Ctrl+wheel as a no-tilt-wheel fallback) for zoom instead. The
   // VERTICAL wheel (deltaY) still scrolls history normally.
@@ -9398,7 +9398,7 @@ const THINK_STOPS: { lvl: string; label: string; short: string }[] = [
 ];
 
 // FORK 2026-06-13 (eeg): shared tick-label layer printed UNDER a force slider so
-// EVERY stop is visible (the architect's "every option written in the slider") and each
+// EVERY stop is visible (the user's "every option written in the slider") and each
 // label centers on the SAME x as its seismograph column (eegStopLeftCss → bible
 // §5.8h invariant 2 alignment). The active stop is bolded via .active.
 function renderSliderStops(labels: string[], activeIdx: number): string {
@@ -9431,12 +9431,12 @@ function highlightSliderStop(e: Event, rowSelector: string): void {
 // FORK 2026-06-13 (eeg): the model-force slider's tick row — each stop shows a
 // short horizontal line "chip" in that model's EEG IDENTITY (provider color +
 // cost-thickness, google = rainbow), so the slider previews how each model will
-// appear on the seismograph (the architect 2026-06-13). Auto = a thin gray dashed chip
+// appear on the seismograph (the user 2026-06-13). Auto = a thin gray dashed chip
 // (router's choice). Thickness uses the model's cost at a fixed MEDIUM reference
 // effort so the chips are comparable across models.
 function renderModelChip(id: string | null, idx: number): string {
   const W = 30;
-  const H = 13; // tall enough for fable's 10px line (the architect's linear scale)
+  const H = 13; // tall enough for fable's 10px line (the user's linear scale)
   const y = H / 2;
   if (id === null) {
     return (
@@ -9517,7 +9517,7 @@ function shortModelLabel(id: string): string {
   if (/gpt-?[\d.]+/.test(lo)) {
     const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
     const k = /pro/.test(lo) ? "p" : /mini/.test(lo) ? "m" : /nano/.test(lo) ? "n" : "";
-    // "GPT" prefix (the architect 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
+    // "GPT" prefix (the user 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
     // suffix is dropped — only gpt-5.3-codex carries it and there is no plain 5.3.
     return `GPT${v}${k}`;
   }
@@ -9578,7 +9578,7 @@ function renderThinkingSlider(): string {
 
 // FORK 2026-06-13 (eeg): stops for the model-force slider (bible §5.8h q2) —
 // stop 0 = Auto (router controls the model axis), then the configured models
-// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (the architect 2026-06-13), so
+// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (the user 2026-06-13), so
 // the model axis reads low→high left→right exactly like the effort slider. Rank
 // (Artificial-Analysis Intelligence Index in openclaw.json; lower = smarter) is
 // the sort key, modelPerfRank breaks ties. Capped at 7 (keeping the 7 smartest)
@@ -9593,11 +9593,11 @@ function modelForceStops(): { id: string | null; label: string }[] {
     return stops;
   }
   // FORK 2026-06-13 (eeg): drop the older claude-opus-4-7 (keep only opus-4-8) and
-  // gpt-5.3-codex (the architect: "never makes sense to use it"). From Anthropic the slider
+  // gpt-5.3-codex (the user: "never makes sense to use it"). From Anthropic the slider
   // keeps Sonnet, Opus and Fable.
   const EEG_SLIDER_EXCLUDE = /opus-4-7|gpt-5\.3/i;
   const rankOf = (id: string): number => cfg.models?.[id]?.rank ?? 999;
-  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (the architect:
+  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (the user:
   // "remove 5.4m, no need if it is not as smart as sonnet"). Sonnet's rank is the
   // intelligence floor; anything ranked below it (mini/nano/haiku/older) is cut.
   let sonnetRank = 999;
@@ -9620,10 +9620,10 @@ function modelForceStops(): { id: string | null; label: string }[] {
     return modelPerfRank(a) - modelPerfRank(b);
   });
   // keep the 8 SMARTEST (8 so claude-sonnet-4-6 at rank 7 / 8th-smartest makes
-  // the cut — the architect 2026-06-13), then flip so the smartest sits on the RIGHT
+  // the cut — the user 2026-06-13), then flip so the smartest sits on the RIGHT
   const top = ids.slice(0, 8);
   top.reverse();
-  // FORK 2026-06-13: the architect pins FABLE to the far right (his flagship sits at the
+  // FORK 2026-06-13: the user pins FABLE to the far right (his flagship sits at the
   // end of the intelligence axis, ahead of the rank-1 opus). The rest keep their
   // intelligence order.
   const fi = top.findIndex((id) => /fable/i.test(id));
@@ -10899,7 +10899,7 @@ function init() {
         (m) => (m.id.startsWith("kpi.") || m.id.startsWith("graph.")) && m.class === "SNAPSHOT",
       );
       // FORK 2026-06-05 — load ALL recorded history (no time window). The 30d
-      // cap was hiding months of already-collected data; the architect wants the full
+      // cap was hiding months of already-collected data; the user wants the full
       // record. No from_ts → every observation since the metric's first point;
       // the chart's fullRange auto-fits the span and zoom/pan covers it all.
       const obsLists = await Promise.all(

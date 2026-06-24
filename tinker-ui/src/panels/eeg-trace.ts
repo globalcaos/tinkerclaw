@@ -14,7 +14,7 @@
 // style), never right-angle jumps. Color = provider brand, width = ESTIMATED
 // relative cost of (model × effort). The line sits at the effort the model
 // ACTUALLY ran at (the executed level) — no "requested vs actual" halo overlay
-// and no "forced" dashing: the EEG shows what happened (the architect 2026-06-18).
+// and no "forced" dashing: the EEG shows what happened (the user 2026-06-18).
 
 // ─── Stops (MUST mirror app.ts THINK_STOPS order exactly) ───
 // `short` = the compact tick label printed under the slider AND above the
@@ -64,7 +64,7 @@ export interface EegTurnEnd {
   promptText?: string; // trimmed prompt text for the marker tooltip
 }
 
-// ─── Provider brand palette (bible §5.8h, the architect's q6 full-palette pick) ───
+// ─── Provider brand palette (bible §5.8h, the user's q6 full-palette pick) ───
 // google is NOT here — it is special-cased as the rainbow gradient below.
 export const EEG_PROVIDER_COLORS: Record<string, string> = {
   anthropic: "#E8702A",
@@ -79,7 +79,7 @@ export const EEG_PROVIDER_COLORS: Record<string, string> = {
 // MODEL name — the live trace gets the cc-bridge model id ("claude-fable-5", no
 // "claude-code/" prefix), so providerOf() returns the bare name and a plain
 // provider-key lookup missed → gray. Matching model-name patterns keeps the trace
-// branded (the architect 2026-06-13: "why am I still seeing gray instead of orange").
+// branded (the user 2026-06-13: "why am I still seeing gray instead of orange").
 export function eegProviderPaint(provider: string): { stroke: string; isRainbow: boolean } {
   const p = (provider || "").toLowerCase();
   if (p === "google" || p.startsWith("google") || /gemini|gemma|bison/.test(p)) {
@@ -98,8 +98,8 @@ export function eegProviderPaint(provider: string): { stroke: string; isRainbow:
   return { stroke: EEG_PROVIDER_COLORS[p] ?? EEG_PROVIDER_COLORS.unknown, isRainbow: false };
 }
 
-// ─── Cost model: thickness = the architect's REAL per-use cost (€/Mtok output) ───
-// relCost values ARE effective €/Mtok-output under the architect's actual billing
+// ─── Cost model: thickness = the user's REAL per-use cost (€/Mtok output) ───
+// relCost values ARE effective €/Mtok-output under the user's actual billing
 // (2026-06-13), NOT API sticker — because the two providers are billed in
 // fundamentally different ways:
 //
@@ -116,7 +116,7 @@ export function eegProviderPaint(provider: string): { stroke: string; isRainbow:
 //
 // Net effect: a frontier API model (gpt-5.5, gemini-pro ≈ €12) costs MORE per use
 // than subscription Opus (€10) and far more than subscription Sonnet (€2) — which
-// is exactly the architect's point. These are ESTIMATES (the 75%-quota → €2/Mtok anchor
+// is exactly the user's point. These are ESTIMATES (the 75%-quota → €2/Mtok anchor
 // is the big assumption); the measured halo will correct them later. Never present
 // as measured (bible §5.8h invariant 3).
 export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
@@ -146,7 +146,7 @@ export const EEG_EFFORT_MULT: Record<string, number> = {
   max: 3,
 };
 
-// FORK 2026-06-20 (the architect): the model's effective €/Mtok-output (EEG_COST_TABLE
+// FORK 2026-06-20 (the user): the model's effective €/Mtok-output (EEG_COST_TABLE
 // value, or the default for an unrecognized model). Shared by BOTH the stroke
 // WIDTH (cost-per-token identity) and the segment LENGTH (euro cost = the §1 grid).
 export function eegRelCost(model: string): number {
@@ -160,7 +160,7 @@ export function eegCostWidthPx(model: string, level: string): number {
   const rel = eegRelCost(model);
   void level; // effort no longer scales thickness — it is the X column (below)
   // LINEAR in cost, anchored so SONNET (€2/Mtok) = 1.0px and FABLE (€20) = 10px
-  // (the architect 2026-06-13). width = relCost / 2. Proportional, NOT log-compressed.
+  // (the user 2026-06-13). width = relCost / 2. Proportional, NOT log-compressed.
   // Effort is shown by the X position, NOT thickness, so each model keeps ONE
   // identity width everywhere it appears (opus 5px, gpt-5.x/gemini-pro 6px,
   // gemini-flash 1.25px). Clamp gives a thin floor + headroom above fable.
@@ -239,7 +239,7 @@ function thinkingCharsLevel(chars: number): string {
 // FORK 2026-06-13 (eeg): the effort COLUMN to draw the line at. In Auto/off (no
 // pinned level) the router decides, so we show the effort the model ACTUALLY used
 // — the measured thinkingChars bucket — instead of parking the line in the "Auto"
-// gutter (the architect 2026-06-13). A pinned level always wins.
+// gutter (the user 2026-06-13). A pinned level always wins.
 function eegEffectiveLevel(s: EegSample): string {
   const lv = s.chosenLevel;
   if (!lv || lv === "off" || lv === "auto") {
@@ -249,7 +249,7 @@ function eegEffectiveLevel(s: EegSample): string {
 }
 
 // ─── Render constants ───
-// PERMANENT retention (the architect 2026-06-13): keep the WHOLE session so all activity
+// PERMANENT retention (the user 2026-06-13): keep the WHOLE session so all activity
 // is visible by scrolling — no drop-oldest. The high guard only backstops a
 // pathological runaway; a normal session never reaches it.
 const EEG_MAX_SAMPLES = 100000;
@@ -258,23 +258,23 @@ const TOP_PAD = 26; // room for the stop labels above the paper
 const BOTTOM_PAD = 14;
 const ARC_HALF = 7; // bezier vertical half-span → ~14px of curve per column hop
 // FORK 2026-06-19: half-gap each side of a prompt rule so the trunk visibly FINISHES
-// then RESTARTS across the boundary, the two ends nearly touching (the architect).
+// then RESTARTS across the boundary, the two ends nearly touching (the user).
 const EEG_TURN_GAP = 5;
 // FORK 2026-06-20: half-gap each side of EVERY LLM call so consecutive calls read as
-// DISTINCT segments, never one continuous spline (the architect: "I don't see a clear
+// DISTINCT segments, never one continuous spline (the user: "I don't see a clear
 // separation between calls"). Smaller than EEG_TURN_GAP so the per-prompt break stays
 // the stronger, dominant separation (call = small gap, prompt = big gap).
 const EEG_CALL_GAP = 2;
-const STRAND_CAP = 10; // bible §5.8h invariant 4: cap rendered strands per group; the dynamic ×N carries the true count (the architect 2026-06-19: 10, was 5)
+const STRAND_CAP = 10; // bible §5.8h invariant 4: cap rendered strands per group; the dynamic ×N carries the true count (the user 2026-06-19: 10, was 5)
 
 // ─── Segment LENGTH model: LENGTH = EURO COST → each €1 = one grid line ───
-// FORK 2026-06-20 (the architect): "make the horizontal lines mean one euro — the thinking
+// FORK 2026-06-20 (the user): "make the horizontal lines mean one euro — the thinking
 // should scale to the grid so we understand how much we spend on every prompt."
 // LENGTH now directly encodes the segment's EURO cost: a prompt's trace HEIGHT,
 // measured against the §1 horizontal grid (EEG_PX_PER_EURO px = €1, drawn in
 // renderSvg), reads as how many euros that prompt cost. width still = the model's
 // cost-PER-token identity (thick = an expensive model), so a thin-but-tall line =
-// a cheap model that ran a LOT and still cost real money — exactly the signal the architect
+// a cheap model that ran a LOT and still cost real money — exactly the signal the user
 // wants. euros = relCost(€/Mtok-output) × weightedMtok, where the weighted token
 // blend counts output ~5× input (the typical price ratio): weighted = output + 0.2·input.
 // MIN floor keeps tiny (sub-€0.2) turns clickable + fits the column-hop bezier
@@ -289,7 +289,7 @@ const EEG_MAX_LEN = 600;
 function eegWeightedTokens(s: EegSample): number {
   return (s.outputTokens ?? 0) + EEG_INPUT_COST_RATIO * (s.inputTokens ?? 0);
 }
-// FORK 2026-06-20 (the architect): estimated euro cost of one sample. relCost is €/Mtok-output
+// FORK 2026-06-20 (the user): estimated euro cost of one sample. relCost is €/Mtok-output
 // (subscription-amortized for Anthropic, metered for API providers — see EEG_COST_TABLE).
 export function eegSampleEuros(s: EegSample): number {
   return (eegRelCost(s.model) * eegWeightedTokens(s)) / 1_000_000;
@@ -419,7 +419,7 @@ export class EegTraceStore {
     );
 
     const width = Math.max(120, opts.width || 320);
-    // vertical SCALE (the architect 2026-06-13): the secondary-button wheel zooms the
+    // vertical SCALE (the user 2026-06-13): the secondary-button wheel zooms the
     // whole length axis. Re-floor each row at 2·ARC_HALF so the column-hop bezier
     // still fits even when zoomed all the way out.
     const zoom = Math.min(20, Math.max(0.03, opts.zoom ?? 1));
@@ -502,7 +502,7 @@ export class EegTraceStore {
         ` font-size="8" fill="#8A8F98">${esc(stop.short)}</text>`;
     }
 
-    // ── horizontal €-grid: one rule per €1 of trace length (the architect 2026-06-20). Each
+    // ── horizontal €-grid: one rule per €1 of trace length (the user 2026-06-20). Each
     // cell = EEG_PX_PER_EURO·zoom px = €1 of spend, anchored at the bottom (oldest =
     // session start) and counting UP, so a prompt's trace HEIGHT reads as its euro cost
     // and the gutter labels read as cumulative session spend. Drawn IN the svg (not the
@@ -565,13 +565,13 @@ export class EegTraceStore {
         const next = m + 1 < group.length ? group[m + 1] : undefined;
         // FORK 2026-06-19: BREAK the trunk at each prompt boundary so the line
         // visibly FINISHES at a turn end and RESTARTS in the next turn, the two ends
-        // nearly touching across the prompt rule (the architect). startsTurn = a boundary
+        // nearly touching across the prompt rule (the user). startsTurn = a boundary
         // sits just before this sample (begins a new turn) → start EEG_TURN_GAP above
         // its bottom; endsTurn = one sits just after (this sample ends a turn) → stop
         // EEG_TURN_GAP below the marker instead of leaving a connector arc. Only the
         // VIEWED trunk breaks (this.turnEnds is the viewed session's).
         // FORK 2026-06-20: EVERY CALL is its own segment — no connector spline between
-        // calls (the architect: "the line is a continuous spline, I don't see a clear separation
+        // calls (the user: "the line is a continuous spline, I don't see a clear separation
         // between calls"). Each main sample draws a fresh VERTICAL run at its effort
         // column, inset by a small CALL gap at each end so consecutive calls visibly
         // finish + restart. A PROMPT boundary (turn change) uses the bigger TURN gap so
@@ -595,7 +595,7 @@ export class EegTraceStore {
         const gapAbove = !next ? 0 : endsTurn ? turnGap : callGap;
         d = `M ${fx(x)} ${fx(yB - gapBelow)} L ${fx(x)} ${fx(yT + gapAbove)}`;
         // tag each trunk segment with the PROMPT (turn) it belongs to, so hovering the
-        // line highlights the whole prompt + clicking it scrolls the chat (the architect 2026-06-19).
+        // line highlights the whole prompt + clicking it scrolls the chat (the user 2026-06-19).
         const mainTurn = s.dim ? -1 : this.turnEnds.filter((t) => t.endedAt <= s.startedAt).length;
         const mainTE = mainTurn >= 0 ? this.turnEnds[mainTurn] : undefined;
         const mainIdxAttr =
@@ -630,7 +630,7 @@ export class EegTraceStore {
     for (const items of byKey.values()) {
       items.sort((a, b) => a.startedAt - b.startedAt);
       // cap rendered strands per group so a big fan-out doesn't overwhelm the
-      // paper — the dynamic ×N below still reports the true total (the architect 2026-06-19).
+      // paper — the dynamic ×N below still reports the true total (the user 2026-06-19).
       for (let i = 0; i < items.length && i < STRAND_CAP; i++) {
         const s = items[i];
         // lateral index = earlier-started siblings still running when s spawns
@@ -642,7 +642,7 @@ export class EegTraceStore {
         const w = eegCostWidthPx(s.model, s.chosenLevel);
         const shade = eegStrandShade(paint, Math.min(lat, 4), 5);
         // FORK 2026-06-19: fan strands to the LEFT (into the unused Auto columns),
-        // not right — clamp so they never cross the left gutter (the architect).
+        // not right — clamp so they never cross the left gutter (the user).
         const col = Math.max(
           EEG_PAD_LEFT,
           colX(eegEffectiveLevel(s)) - lat * EEG_STRAND_DEPTH_STEP,
@@ -658,7 +658,7 @@ export class EegTraceStore {
         const ended = typeof s.endedAt === "number";
         // FORK 2026-06-20: floor the arch HEIGHT for an ended branch. A fast helper
         // whose start+end snap to the same row would otherwise split AND join at the
-        // same trunk point → a CLOSED 1px teardrop (the architect's "weird max↔low loop").
+        // same trunk point → a CLOSED 1px teardrop (the user's "weird max↔low loop").
         // Newest-at-top: the join (newer endedAt) sits ABOVE the split; force it at
         // least arc*3 above so the branch reads as a small out-and-back arch — but
         // never above the paper's top pad (a branch that is the very newest event has
@@ -669,7 +669,7 @@ export class EegTraceStore {
         // FORK 2026-06-19: if the subagent crossed a prompt boundary, merge back into ITS
         // OWN turn's trunk column (the first turnEnd after it started), NOT the later turn's
         // — so a helper from the previous prompt never draws a high→max line across the
-        // prompt rule into the new turn's column (the architect's "previous call's high into max").
+        // prompt rule into the new turn's column (the user's "previous call's high into max").
         let joinClampT = s.endedAt as number;
         if (ended && turnOf(joinClampT) !== turnOf(s.startedAt)) {
           joinClampT = this.turnEnds.find((t) => t.endedAt > s.startedAt)?.endedAt ?? joinClampT;
@@ -677,7 +677,7 @@ export class EegTraceStore {
         const joinX = ended ? mainColAt(joinClampT) : col;
         const dimOp = s.dim ? 0.32 : 1;
         // FORK 2026-06-19: how many strands run in parallel at this spawn — shown on
-        // hover so mousing over the bunch reads the multiplicity at that moment (the architect).
+        // hover so mousing over the bunch reads the multiplicity at that moment (the user).
         const concurrentAtSpawn = subs.filter(
           (x) =>
             !!x.dim === !!s.dim &&
@@ -702,7 +702,7 @@ export class EegTraceStore {
         // FORK 2026-06-20: never let a SHORT branch (a fast helper that finishes
         // before the next trunk call, so splitY≈joinY) pinch into a CLOSED teardrop —
         // force a small straight run at the strand column so it reads as a real
-        // out-and-back arch, not a meaningless 1px loop (the architect: "weird max↔low loop").
+        // out-and-back arch, not a meaningless 1px loop (the user: "weird max↔low loop").
         // Geometry stays honest: same split→strand-col→join columns/color/width.
         const yJoinInRaw = ended ? joinY + arc * 2 : joinY;
         const yJoinIn = ended ? Math.min(yJoinInRaw, yOut - arc) : yJoinInRaw;
@@ -744,7 +744,7 @@ export class EegTraceStore {
 
     // ── PROMPT separators: a CLEAR solid rule per turn = one prompt (clickable →
     // app.ts scrolls the chat to that prompt + highlights it). The "t N" label is
-    // dropped (the architect 2026-06-19: meaningless); the full-width transparent rect is the
+    // dropped (the user 2026-06-19: meaningless); the full-width transparent rect is the
     // generous hit target. Internal LLM-call boundaries get only a SUBTLE tick (below).
     let markers = "";
     for (const t of this.turnEnds) {
@@ -764,7 +764,7 @@ export class EegTraceStore {
 
     // ── SUBTLE internal LLM-call separators: a faint short tick at each viewed
     // main-sample (LLM-call) boundary — the within-a-prompt rhythm, distinct from the
-    // bold prompt rules above (the architect 2026-06-19).
+    // bold prompt rules above (the user 2026-06-19).
     let callTicks = "";
     for (const s of viewedMains) {
       const c = rowOf.get(s.runId);

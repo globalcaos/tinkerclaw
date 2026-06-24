@@ -112,7 +112,7 @@ function assistantTurnHasPendingToolUse(message: unknown): boolean {
 }
 
 /**
- * FORK 2026-05-31 (the architect directive): is the session idle — i.e. did its last
+ * FORK 2026-05-31 (the user directive): is the session idle — i.e. did its last
  * turn already COMPLETE, so there is nothing to resume? Distinguishes the three
  * tail shapes the 2026-05-10 change collapsed into one "not resumable" verdict:
  *   - no meaningful message (empty transcript) → tinker-bridge mid-flight → NOT idle (resume)
@@ -130,7 +130,7 @@ function isIdleCompletedTail(messages: unknown[]): boolean {
 }
 
 function buildResumeMessage(): string {
-  // FORK 2026-05-30 (the architect directive): the resume must be LEGIBLE. The user
+  // FORK 2026-05-30 (the user directive): the resume must be LEGIBLE. The user
   // wants a brief "here's where I'm picking up" note — which plan step, what's
   // already on disk vs. half-written — so they can see whether the restart
   // cost much work and that resume actually worked, THEN seamless continuation.
@@ -212,7 +212,7 @@ async function pushRestartWarningEnvelope(params: { sessionKey: string }): Promi
     id: `gw-restart-${now.getTime()}`,
     fatal: false,
     category: "busy",
-    // FORK 2026-05-30 (the architect directive): the collapsed warning is just
+    // FORK 2026-05-30 (the user directive): the collapsed warning is just
     // "Gateway restarted" — small, plain, easy to glance past. The restart
     // time is technical, so it lives in `details` (the expandable kv block),
     // not the headline. No "retry"/"check the journal" hints: I resume and
@@ -427,7 +427,7 @@ async function recoverStore(params: {
     //     common tinker-bridge case.
     // The chip wording deliberately omits any "please retry" hint; we
     // promise the user we are picking up where we stopped.
-    // FORK 2026-05-31 (the architect directive): do NOT resume an IDLE session whose
+    // FORK 2026-05-31 (the user directive): do NOT resume an IDLE session whose
     // last turn already completed. The 2026-05-10 change disabled the tail
     // check entirely to keep tinker-bridge mid-flight recovery working, but that
     // also resurrected every completed session on each restart — firing a
