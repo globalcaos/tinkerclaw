@@ -12,8 +12,8 @@
 <p align="center">
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-604020?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-8B6914?style=for-the-badge" alt="Hundreds of fork commits"></a>
-  <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-15-C0834D?style=for-the-badge" alt="15 papers"></a>
-  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-22+-8B6914?style=for-the-badge" alt="22+ skills"></a>
+  <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-18-C0834D?style=for-the-badge" alt="18 papers"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-15+-8B6914?style=for-the-badge" alt="15+ skills"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-604020?style=for-the-badge" alt="MIT License"></a>
 </p>
 
@@ -29,9 +29,9 @@
   <a href="https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/"><img src="https://img.shields.io/badge/%F0%9F%94%90_Safer_than_NeMo-at_a_fraction_of_cost-604020?style=for-the-badge" alt="Safer than NeMo"></a>
 </p>
 
-No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Fifteen research papers and four months of 24/7 operation made the difference.
+No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Eighteen research papers and four months of 24/7 operation made the difference.
 
-**TinkerClaw's agent gets smarter every single day.** Fifteen research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
+**TinkerClaw's agent gets smarter every single day.** Eighteen research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
 
 - 🌿 **It thinks about its own thinking.** When something breaks, it doesn't just fix the bug — it asks _why the bug exists_, then fixes the system that produced it. Like a mechanic who doesn't just patch the flat tire but asks "why do I keep getting flats on this road?" ([Fractal Reasoning](https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/))
 
@@ -209,7 +209,7 @@ These are just the ones with personality. **15+ total crons**, each with its own
 
 ### 📊 The Research
 
-All fifteen papers are published at **[thetinkerzone.com](https://thetinkerzone.com/)** and linked in the [intro above](#the-singularity-point-). Each one started as a real problem, became a research paper, became a production system. Read them — they're the best proof that this isn't marketing.
+All eighteen papers are published at **[thetinkerzone.com](https://thetinkerzone.com/)** and linked in the [intro above](#the-singularity-point-). Each one started as a real problem, became a research paper, became a production system. Read them — they're the best proof that this isn't marketing.
 
 ---
 
@@ -274,7 +274,6 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 
 | Skill                                                                            | What it does                                                                        |
 | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center)   | The dashboard above. Every token, every dollar, every context byte — real time.     |
 | [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Multi-provider token tracking, budget alerts, REST API.                             |
 | [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon. |
 
@@ -282,22 +281,18 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 
 No API keys. No admin consent. Your authenticated browser session IS the API.
 
-| Skill                                                            | What it does                                                                        |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack)     | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. |
-| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)         | Reads Teams chats, posts to channels, searches everything. One browser handshake.   |
-| [`factorial-hack`](https://clawhub.ai/globalcaos/factorial-hack) | Reads your HR portal — attendance, leave, payslips. No admin consent required.      |
+| Skill                                                        | What it does                                                                        |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack) | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. |
+| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)     | Reads Teams chats, posts to channels, searches everything. One browser handshake.   |
 
 ### 🤖 Agent & DevOps
 
-| Skill                                                                                              | What it does                                                                                |
-| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [`coding-agent`](https://clawhub.ai/globalcaos/coding-agent)                                       | Hand off a coding task, come back to a diff. Codex, Claude Code, or Pi — your call.         |
-| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting.              |
-| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones.                         |
-| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics.                  |
-| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter)                       | Universal prompt addenda for cross-provider fallback chains. Fixes per-model failure modes. |
-| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router)                           | Auto-selects the optimal model per task. Cost vs capability, no manual routing.             |
+| Skill                                                                                              | What it does                                                                   |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones.            |
+| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics.     |
 
 ### 🛡️ Security & Governance
 
@@ -313,29 +308,11 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 | -------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns based on embedding space bisociation theory. |
 
-### 📖 Knowledge & Onboarding
-
-| Skill                                                                          | What it does                                                                                                            |
-| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| [`agent-sensei-ultimate`](https://clawhub.ai/globalcaos/agent-sensei-ultimate) | The sensei your agent never had. 40 lessons on ethics, memory, budget, self-evolution. Day 1: mediocre. Day 30: expert. |
-
 ### 📋 Data & Migration
 
 | Skill                                                                                  | What it does                                                                  |
 | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | [`chatgpt-exporter-ultimate`](https://clawhub.ai/globalcaos/chatgpt-exporter-ultimate) | Leaving ChatGPT? Take your conversations with you. Full export, clean format. |
-
-### 🛰️ Location & IoT
-
-| Skill                                                                    | What it does                                                                                         |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| [`owntracks-location`](https://clawhub.ai/globalcaos/owntracks-location) | Real-time phone location tracking with named places and distance queries. Always know where you are. |
-
-### 🌐 Web & CMS
-
-| Skill                                                                    | What it does                                                                                            |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| [`wordpress-ultimate`](https://clawhub.ai/globalcaos/wordpress-ultimate) | Three env vars, one script — your agent manages your entire WordPress site. Draft-only safety included. |
 
 ---
 
@@ -484,30 +461,28 @@ Both are excellent standalone tools. We folded their ideas into a single embedde
 
 ## 📚 The J-Series Papers
 
-Every system in TinkerClaw began as a research paper about a real failure we hit — each named for the brain region it imitates. **18 papers** in all. J1–J14 are published on [thetinkerzone.com](https://thetinkerzone.com/); J15–J18 are manuscripts in the pipeline (†).
+Every system in TinkerClaw began as a research paper about a real failure we hit — each named for the brain region it imitates. **18 papers**, all published on [thetinkerzone.com](https://thetinkerzone.com/).
 
-| #   | Paper                                                                                                                                                     | Codename        | What it is                                                                                                                                  |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| J1  | [Total Recall](https://thetinkerzone.com/total-recall-pointer-based-compaction-and-task-conditioned-retrieval-for-persistent-llm-agents/)                 | **ENGRAM**      | Most agents compact memory by summarizing — and quietly lose the one detail that mattered. Lossless, pointer-based compaction instead.      |
-| J2  | [Instant Recall](https://thetinkerzone.com/instant-recall-a-pre-computed-concept-index-for-o1-memory-retrieval-in-persistent-ai-agents/)                  | **HIPPOCAMPUS** | The answer is right there in memory and it still can't find it. An offline concept index makes recall O(1), not a brute-force scan.         |
-| J3  | [Fractal Reasoning](https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/)                   | **DENDRITE**    | Flat memory fetches a fact or a gist, never both. Multi-resolution indexing lets the agent zoom in and out at will.                         |
-| J4  | [Identity Persistence](https://thetinkerzone.com/identity-persistence-keeping-an-llm-agents-personality-stable-across-sessions-model-swaps-and-restarts/) | **CORTEX**      | It remembers every fact yet stops sounding like itself. Pins the persona across sessions, model swaps, and restarts.                        |
-| J5  | [Sleep Consolidation](https://thetinkerzone.com/sleep-consolidation-how-nightly-prompting-makes-a-stateless-agent-get-better-over-time/)                  | **CEREBELLUM**  | 79% fewer incidents in 30 days — no fine-tuning, just a nightly loop that rewrites its own instructions while you sleep.                    |
-| J6  | [Round Table](https://thetinkerzone.com/round-table-exploiting-cognitive-diversity-as-a-computational-resource-in-persistent-ai-agents/)                  | **SYNAPSE**     | Stop crowning one "best" model. Seat Claude, GPT, and Gemini at one table and let cognitive diversity carry the answer.                     |
-| J7  | [Humor Embeddings](https://thetinkerzone.com/humor-embeddings-laughter-from-inverted-memory-bisociation-in-computational-embedding-space/)                | **LIMBIC**      | Memory retrieves what's nearest; humor finds what's at the right distance. Computational comedy from embedding geometry.                    |
-| J8  | [Curiosity Drive](https://thetinkerzone.com/the-wondering-machine-giving-an-llm-the-drive-to-learn-on-its-own/)                                           | **THALAMUS**    | LLMs answer brilliantly but never wonder. A drive that spots its own knowledge gaps and goes to close them.                                 |
-| J9  | [Agent Security](https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/)                                            | **AEGIS**       | The question isn't whether your agent is a risk — it's which risks apply. A layered framework, safer than NeMo at a fraction of the cost.   |
-| J10 | [Corporate Swarm](https://thetinkerzone.com/hivemind-hierarchical-agent-swarms-for-enterprise-knowledge-management/)                                      | **HIVEMIND**    | A hierarchical agent swarm that lets a whole company run agents — deep integration, hard clearance boundaries.                              |
-| J11 | [Learned Intuition](https://thetinkerzone.com/learned-intuition-a-reflex-layer-that-stops-your-agent-before-it-does-the-wrong-thing/)                     | **AMYGDALA**    | It had all the context and still did the wrong thing. A learned reflex layer that pauses danger before it happens.                          |
-| J12 | [Budget Prompting](https://thetinkerzone.com/budget-prompting-cutting-the-cost-of-always-on-memory-agents-2-3x/)                                          | **MYELIN**      | Leave it running overnight and the bill is brutal — every turn re-bills the whole context. 20 techniques that cut it 2–3×.                  |
-| J13 | [Executive Function](https://thetinkerzone.com/prefrontal-giving-your-agent-an-executive-function-with-a-recipe-execution-substrate/)                     | **PREFRONTAL**  | A brilliant worker and a terrible executive. The missing executive layer: a recipe substrate for planning and follow-through.               |
-| J14 | [Memory Hooks](https://thetinkerzone.com/mnemosyne-four-hooks-that-upgrade-your-agents-memory-without-forking-it/)                                        | **MNEMOSYNE**   | Four quiet memory failures — slow lookups, task-blind retrieval, silent contradictions, no decay. Four hooks that fix them without forking. |
-| J15 | Recipe Abstractions †                                                                                                                                     | **RSC**         | Recipes as a programming language — intermediate abstractions so workflows compose instead of endlessly repeat.                             |
-| J16 | Salience Pyramid †                                                                                                                                        | **SALIENCE**    | The death of fixed thresholds: a pyramid of significance and cheap traversal as the basis of next-gen vibe programming.                     |
-| J17 | Recipe Grammar †                                                                                                                                          | **BROCA**       | Gives agent recipes a grammar — a gradual type system and combinator algebra for self-composing workflows.                                  |
-| J18 | Personality Tuning †                                                                                                                                      | **STRIATUM**    | Personality that tunes itself — learned modulation from your feedback, so corrections stick without editing a file.                         |
-
-_† Manuscript in the pipeline — not yet posted to thetinkerzone._
+| #   | Paper                                                                                                                                                                                  | Codename        | What it is                                                                                                                                  |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| J1  | [Total Recall](https://thetinkerzone.com/total-recall-pointer-based-compaction-and-task-conditioned-retrieval-for-persistent-llm-agents/)                                              | **ENGRAM**      | Most agents compact memory by summarizing — and quietly lose the one detail that mattered. Lossless, pointer-based compaction instead.      |
+| J2  | [Instant Recall](https://thetinkerzone.com/instant-recall-a-pre-computed-concept-index-for-o1-memory-retrieval-in-persistent-ai-agents/)                                               | **HIPPOCAMPUS** | The answer is right there in memory and it still can't find it. An offline concept index makes recall O(1), not a brute-force scan.         |
+| J3  | [Fractal Reasoning](https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/)                                                | **DENDRITE**    | Flat memory fetches a fact or a gist, never both. Multi-resolution indexing lets the agent zoom in and out at will.                         |
+| J4  | [Identity Persistence](https://thetinkerzone.com/identity-persistence-keeping-an-llm-agents-personality-stable-across-sessions-model-swaps-and-restarts/)                              | **CORTEX**      | It remembers every fact yet stops sounding like itself. Pins the persona across sessions, model swaps, and restarts.                        |
+| J5  | [Sleep Consolidation](https://thetinkerzone.com/sleep-consolidation-how-nightly-prompting-makes-a-stateless-agent-get-better-over-time/)                                               | **CEREBELLUM**  | 79% fewer incidents in 30 days — no fine-tuning, just a nightly loop that rewrites its own instructions while you sleep.                    |
+| J6  | [Round Table](https://thetinkerzone.com/round-table-exploiting-cognitive-diversity-as-a-computational-resource-in-persistent-ai-agents/)                                               | **SYNAPSE**     | Stop crowning one "best" model. Seat Claude, GPT, and Gemini at one table and let cognitive diversity carry the answer.                     |
+| J7  | [Humor Embeddings](https://thetinkerzone.com/humor-embeddings-laughter-from-inverted-memory-bisociation-in-computational-embedding-space/)                                             | **LIMBIC**      | Memory retrieves what's nearest; humor finds what's at the right distance. Computational comedy from embedding geometry.                    |
+| J8  | [Curiosity Drive](https://thetinkerzone.com/the-wondering-machine-giving-an-llm-the-drive-to-learn-on-its-own/)                                                                        | **THALAMUS**    | LLMs answer brilliantly but never wonder. A drive that spots its own knowledge gaps and goes to close them.                                 |
+| J9  | [Agent Security](https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/)                                                                         | **AEGIS**       | The question isn't whether your agent is a risk — it's which risks apply. A layered framework, safer than NeMo at a fraction of the cost.   |
+| J10 | [Corporate Swarm](https://thetinkerzone.com/hivemind-hierarchical-agent-swarms-for-enterprise-knowledge-management/)                                                                   | **HIVEMIND**    | A hierarchical agent swarm that lets a whole company run agents — deep integration, hard clearance boundaries.                              |
+| J11 | [Learned Intuition](https://thetinkerzone.com/learned-intuition-a-reflex-layer-that-stops-your-agent-before-it-does-the-wrong-thing/)                                                  | **AMYGDALA**    | It had all the context and still did the wrong thing. A learned reflex layer that pauses danger before it happens.                          |
+| J12 | [Budget Prompting](https://thetinkerzone.com/budget-prompting-cutting-the-cost-of-always-on-memory-agents-2-3x/)                                                                       | **MYELIN**      | Leave it running overnight and the bill is brutal — every turn re-bills the whole context. 20 techniques that cut it 2–3×.                  |
+| J13 | [Executive Function](https://thetinkerzone.com/prefrontal-giving-your-agent-an-executive-function-with-a-recipe-execution-substrate/)                                                  | **PREFRONTAL**  | A brilliant worker and a terrible executive. The missing executive layer: a recipe substrate for planning and follow-through.               |
+| J14 | [Memory Hooks](https://thetinkerzone.com/mnemosyne-four-hooks-that-upgrade-your-agents-memory-without-forking-it/)                                                                     | **MNEMOSYNE**   | Four quiet memory failures — slow lookups, task-blind retrieval, silent contradictions, no decay. Four hooks that fix them without forking. |
+| J15 | [Recipe Abstractions](https://thetinkerzone.com/why-your-pre-push-privacy-gate-is-lying-to-you-and-the-recipe-as-the-missing-middle-layer/)                                            | **RSC**         | Recipes as a programming language — intermediate abstractions so workflows compose instead of endlessly repeat.                             |
+| J16 | [Salience Pyramid](https://thetinkerzone.com/salience-the-death-of-fixed-thresholds-the-pyramid-of-significance-and-cheap-traversal-as-the-basis-of-next-generation-vibe-programming/) | **SALIENCE**    | The death of fixed thresholds: a pyramid of significance and cheap traversal as the basis of next-gen vibe programming.                     |
+| J17 | [Recipe Grammar](https://thetinkerzone.com/broca-recipe-grammar-gradual-type-system-combinator-algebra/)                                                                               | **BROCA**       | Gives agent recipes a grammar — a gradual type system and combinator algebra for self-composing workflows.                                  |
+| J18 | [Personality Tuning](https://thetinkerzone.com/striatum-learned-personality-modulation-tuning-an-agents-behaviour-from-feedback-not-static-prompt-text/)                               | **STRIATUM**    | Personality that tunes itself — learned modulation from your feedback, so corrections stick without editing a file.                         |
 
 ---
 

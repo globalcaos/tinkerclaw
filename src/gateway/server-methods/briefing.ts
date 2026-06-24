@@ -3,11 +3,11 @@
  *
  * Resolution order:
  *   1. `${workspaceDir}/BRIEFING.md` — user-owned workspace override
- *   2. Bundled `briefing-default.md` alongside tinkerclaw-cc-bridge/prompts/ — shipped default
+ *   2. Bundled `briefing-default.md` alongside tinkerclaw-tinker-bridge/prompts/ — shipped default
  *   3. Neither found → null fields + error string
  *
  * Wired into the gateway via server-methods.ts (spread into the combined handler map).
- * Consumed by the /new command in tinkerclaw-cc-bridge to inject the briefing prompt.
+ * Consumed by the /new command in tinkerclaw-tinker-bridge to inject the briefing prompt.
  *
  * The `__testNoBundleSearch` param (test-only) disables the bundled-path search so the
  * "neither found" branch is reachable without removing the actual file from disk.
@@ -21,9 +21,9 @@ import type { GatewayRequestHandlers } from "./types.js";
 
 /** Candidate relative paths from this file's dist location to briefing-default.md. */
 const BUNDLED_BRIEFING_RELATIVE_PATHS = [
-  "../../../extensions/tinkerclaw-cc-bridge/prompts/briefing-default.md",
-  "../../extensions/tinkerclaw-cc-bridge/prompts/briefing-default.md",
-  "../extensions/tinkerclaw-cc-bridge/prompts/briefing-default.md",
+  "../../../extensions/tinkerclaw-tinker-bridge/prompts/briefing-default.md",
+  "../../extensions/tinkerclaw-tinker-bridge/prompts/briefing-default.md",
+  "../extensions/tinkerclaw-tinker-bridge/prompts/briefing-default.md",
 ];
 
 async function resolveBundledBriefingPath(): Promise<string | null> {

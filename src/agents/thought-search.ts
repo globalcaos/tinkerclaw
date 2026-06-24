@@ -28,7 +28,7 @@ export interface GeneratedThought {
 
 /**
  * Generator: given a parent thought's content and a branching factor `k`,
- * produce up to `k` candidate next-thoughts. May be async (LLM/cc-bridge) or a
+ * produce up to `k` candidate next-thoughts. May be async (LLM/tinker-bridge) or a
  * pure stub in tests. Returning fewer than `k` is allowed (e.g. dead end).
  */
 export type GenerateFn = (

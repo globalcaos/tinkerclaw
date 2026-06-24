@@ -1,0 +1,65 @@
+{
+  "id": "tinkerclaw-tinker-bridge",
+  "activation": {
+    "onProviders": ["claude-code"]
+  },
+  "enabledByDefault": true,
+  "providers": ["claude-code"],
+  "providerAuthEnvVars": {
+    "claude-code": ["CLAUDE_CODE_CWD", "CLAUDE_CODE_BINARY"]
+  },
+  "providerAuthChoices": [
+    {
+      "provider": "claude-code",
+      "method": "oauth",
+      "choiceId": "claude-code-oauth",
+      "choiceLabel": "Claude Code (OAuth)",
+      "choiceHint": "Uses your existing `claude` login at ~/.claude/.credentials.json",
+      "groupId": "claude-code",
+      "groupLabel": "Claude Code",
+      "groupHint": "Drive the real Claude Code CLI, inherit subscription OAuth"
+    }
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "binary": {
+        "type": "string",
+        "description": "Path to claude binary. Defaults to `claude` on PATH."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Working directory for the claude subprocess. Default: ~/.openclaw/jarvis-workspace"
+      },
+      "disallowedTools": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Tools to disable inside claude (OpenClaw owns the tool loop)."
+      },
+      "warmOnBoot": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Session keys to pre-spawn at gateway start (e.g., agent:main:main)."
+      }
+    }
+  },
+  "uiHints": {
+    "binary": {
+      "label": "Claude binary",
+      "help": "Absolute path to the claude CLI. Falls back to PATH lookup if blank."
+    },
+    "cwd": {
+      "label": "Workspace directory",
+      "help": "cwd for each claude subprocess. Used for CLAUDE.md loading and session transcripts."
+    },
+    "disallowedTools": {
+      "label": "Disallowed tools",
+      "help": "Tools to disable in-claude. OpenClaw runs its own tool loop; default blocks Bash/Read/Write/Edit/Grep/Glob/Agent."
+    }
+  }
+}

@@ -75,7 +75,7 @@ type SessionSlot = {
 
 /**
  * Defensive UsageSnapshot extractor over loadProviderUsageSummary()'s output.
- * The exact summary shape is provider-dependent and the live cc-bridge path has
+ * The exact summary shape is provider-dependent and the live tinker-bridge path has
  * no fresh quota signal anyway (§5.67b) — so this looks for a recognizable
  * 5h-window utilization + reset in a few plausible spots and otherwise returns
  * null, which the governor treats as fail-to-neutral. TODO(Drop 2): pin the
@@ -172,7 +172,7 @@ export default definePluginEntry({
     // ANY failure (module moved, out-of-process host, fetch error) as "no signal"
     // by returning null: the governor then fails-to-NEUTRAL (§5.67b — the throttle
     // branch falls back to the maxFixSpawnsPerHour ceiling, the surplus-spend
-    // branch disarms). The gateway has no fresh quota signal for the cc-bridge
+    // branch disarms). The gateway has no fresh quota signal for the tinker-bridge
     // subscription path anyway, so null is an expected steady state, not an error.
     const readUsage = async (): Promise<UsageSnapshot | null> => {
       try {

@@ -207,6 +207,30 @@ describe("handleAssistantFailover", () => {
       }
       expect(outcome.retryKind).toBe("same_model_idle_timeout");
     });
+
+    it("does NOT same-model retry an idle timeout that produced no content (BRIDGE FIX 3/3)", async () => {
+      // run.ts computes `producedNoContent` (zero assistant text AND zero
+      // thinking) and gates `allowSameModelIdleTimeoutRetry` off when it is
+      // true: re-issuing an identical `--resume` against an unchanged
+      // transcript is futile, so the flow must fall through to a surfaced
+      // failure rather than silently re-resume.
+      const outcome = await handleAssistantFailover(
+        makeParams({
+          initialDecision: { action: "surface_error", reason: null },
+          failoverReason: null,
+          timedOut: true,
+          idleTimedOut: true,
+          // producedNoContent -> caller passes the gate as false
+          allowSameModelIdleTimeoutRetry: false,
+          billingFailure: false,
+        }),
+      );
+
+      expect(outcome.action).not.toBe("retry");
+      if (outcome.action === "retry") {
+        expect(outcome.retryKind).not.toBe("same_model_idle_timeout");
+      }
+    });
   });
 
   describe("fallback_model branch", () => {

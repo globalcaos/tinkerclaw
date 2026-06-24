@@ -118,7 +118,7 @@ export function scrubResidualSectionMarkers(text: string): string {
 }
 
 // Separate a leading run of inter-tool NARRATION from the answer body. With the
-// cc-bridge brain, Claude Code emits between-step narration ("let me check X",
+// tinker-bridge brain, Claude Code emits between-step narration ("let me check X",
 // "let me pull Y") as VISIBLE TEXT that fuses into the SAME block as the final
 // answer, so the narration shows at the top of the answer bubble. This pure,
 // dependency-free, content-local heuristic peels ONLY the leading run of complete
@@ -234,17 +234,32 @@ export function renderSectionedReply(
 ): string {
   let h = "";
   // Pre-marker narration (sec.other) PLUS any leading inter-tool narration peeled
-  // off the answer body itself (cc-bridge emits "let me check X" between steps as
+  // off the answer body itself (tinker-bridge emits "let me check X" between steps as
   // visible text fused into the same block as the final answer) are surfaced in a
   // collapsed Commentary block ABOVE the answer bubble — not folded inline. The
   // retired 🧠 AMYGDALA section is gone; this is a plain reasoning-style surface,
   // never a fabricated amygdala block.
-  const peel = sec.answer ? splitLeadingNarration(sec.answer) : { narration: "", answer: "" };
-  const leadingNarration = [sec.other, peel.narration].filter(Boolean).join("\n\n");
-  // Answer body: the de-narrated answer when an ANSWER marker exists; else, when
-  // there is no answer but a fractal, keep sec.other as the body (unchanged
-  // fractal-only behaviour); else undefined.
-  const answerBody = sec.answer ? peel.answer : sec.other && sec.fractal ? sec.other : undefined;
+  // When sec.answer exists: peel leading narration from the answer body.
+  // When sec.answer absent: sec.other IS the answer body — peel narration from it so
+  // "let me X" sentences go into Commentary rather than inflating the answer div.
+  // Do NOT include sec.other directly in leadingNarration: that was the old double-render
+  // bug (sec.other appeared in Commentary AND in answerBody simultaneously).
+  const peel = sec.answer
+    ? splitLeadingNarration(sec.answer)
+    : sec.other
+      ? splitLeadingNarration(sec.other)
+      : { narration: "", answer: "" };
+  const leadingNarration = sec.answer
+    ? [sec.other, peel.narration].filter(Boolean).join("\n\n")
+    : peel.narration;
+  // Answer body: de-narrated text in both cases. Fallback to sec.other only if
+  // splitLeadingNarration returned empty answer (its all-narration guard prevents this
+  // in practice, but it is a safety net against blanking the answer).
+  const answerBody = sec.answer
+    ? peel.answer
+    : sec.other && sec.fractal
+      ? peel.answer || sec.other
+      : undefined;
   if (leadingNarration) {
     h +=
       `<details class="reasoning-group narration-details">` +

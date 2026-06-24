@@ -44,7 +44,19 @@ import { mountResponseTreemap } from "./panels/response-treemap.js";
 // FORK 2026-06-08 — bug "queued prompts stick forever + show in every tab": pure, unit-tested
 // helpers that scope the queued-send array by session (render only the active tab's entries; settle
 // a session's entries when ITS turn ends, independent of which tab is viewed). See queued-sends.ts.
-import { queuedForSession, settleQueuedSession } from "./queued-sends.js";
+import { queuedForSession, settleQueuedSession, shouldQueue } from "./queued-sends.js";
+import { narrationIndices, type RunMsgKind } from "./reply-grouping.js";
+// FORK 2026-06-24 (recoverable-retry, spec 2026-06-24-recoverable-error-retry-design.md):
+// pure, DOM-free policy for the client-side auto-retry controller. RetryKind is
+// authored by the sibling retry-policy unit (must export `type RetryKind`).
+import {
+  RETRY_LADDER_MS,
+  classifyRecoverable,
+  nextRetryDelayMs,
+  formatWait,
+  labelFor,
+  type RetryKind,
+} from "./retry-policy.js";
 // FORK 2026-06-10 (amygdala retirement): the 3-section reply split/render logic
 // lives in its own unit-tested module. Recognises only 💬 ANSWER / 🌿 FRACTAL;
 // the retired 🧠 AMYGDALA section is no longer split or compacted (live panel owns it).
@@ -59,7 +71,7 @@ import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 
 // FORK 2026-05-09: linkify was auto-converting plain text like "BRIEFING.md"
 // into <a href="http://BRIEFING.md"> which navigates to a search page on click.
-// FORK 2026-06-14 (Oscar): re-enable linkify but with fuzzyLink OFF — only URLs
+// FORK 2026-06-14 (the architect): re-enable linkify but with fuzzyLink OFF — only URLs
 // carrying an explicit scheme (http://, https://, mailto:) are linked, so a bare
 // "https://thetinkerzone.com" in chat is clickable while "BRIEFING.md" stays
 // plain text (no scheme → no link), preserving the 2026-05-09 fix. Real file
@@ -1043,6 +1055,20 @@ function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): 
 /** True if this run belongs to the tab the user is currently viewing — either
  *  its sessionKey matches the viewed key (short or canonical form) or it is a
  *  subagent descendant of the viewed session. */
+// FORK 2026-06-14 (bug #3): runIds that have FINALIZED. A late/stale `delta`
+// frame arriving after chat.final/lifecycle:end must NOT self-heal the run back
+// into activeRuns — it would become a provider-less GRAY "ghost" thinking row
+// that never gets a terminator (the cross-tab "stuck white indicator"). Cleared
+// when a genuine phase:start re-activates the runId (fallback models reuse one);
+// capped so it can't grow unbounded.
+const terminatedRuns = new Set<string>();
+function rememberTerminated(runId: string): void {
+  terminatedRuns.add(runId);
+  if (terminatedRuns.size > 256) {
+    terminatedRuns.delete(terminatedRuns.values().next().value as string);
+  }
+}
+
 function runBelongsToViewedSession(info: ActiveRunInfo): boolean {
   const sk = info.sessionKey ?? "";
   if (!sk) {
@@ -1067,10 +1093,18 @@ function chatEventIsSubagentOfView(evtKey?: unknown): boolean {
   if (typeof evtKey !== "string" || !sessionKey) {
     return false;
   }
-  return (
-    evtKey.includes(":subagent:") &&
-    evtKey.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
-  );
+  if (!evtKey.includes(":subagent:")) {
+    return false;
+  }
+  // FORK 2026-06-15: subagents are minted FLAT under the agent root —
+  // `agent:main:subagent:<uuid>` — regardless of whether the spawning view was
+  // `agent:main:main` or a tab like `agent:main:tinker:<id>` (verified live: the
+  // parentSessionKey does NOT propagate into the child key). So match on the shared
+  // agent root (first two segments), not the full view key. The old full-key prefix
+  // only matched the `:main` view → every subagent lane vanished from a tinker tab,
+  // i.e. the EEG showed "no parallelism" for any fan-out launched from the UI.
+  const agentRoot = sessionKey.split(":").slice(0, 2).join(":");
+  return evtKey.startsWith(agentRoot + ":subagent:");
 }
 
 // FORK 2026-05-30: per-subagent streaming bubbles in the PARENT chat. Each subagent
@@ -1157,6 +1191,35 @@ function handleSubagentChatEvent(p: {
       delete (messages[idx] as Record<string, unknown>)._temporary;
     }
     subagentStreamIdx.delete(runId);
+    // FORK 2026-06-22 (bug "thinking indicator stuck ON after a fractal turn"):
+    // a subagent's terminal chat event is AUTHORITATIVE — its answer is in — so
+    // close its activeRuns entry HERE, exactly as the main-run path does on
+    // chat.final/aborted (see the onEvent chat handler, "chat.final is
+    // AUTHORITATIVE"). Subagent chat events `return` before that path, so until
+    // now a subagent's ONLY activeRuns terminator was the model-gated
+    // lifecycle:end (app.ts gate `p.data?.model`), which is dropped on hard
+    // teardown (SIGTERM / gateway-restart / timeout) — and the UI stale-run
+    // watchdog was deliberately removed. That left the fractal-triage subagent
+    // (a UI-visible `:subagent:` run of the viewed session) pinned in activeRuns
+    // forever, so renderThinkingIndicator kept the dots on even though the answer
+    // and the fractal dock were complete. Giving the subagent the same second,
+    // independent terminator the main run has closes the run on its authoritative
+    // final/aborted/end/error. rememberTerminated guards against a late/stale
+    // delta resurrecting it; a genuine fallback restart re-admits it via
+    // lifecycle:start (which clears the terminated mark).
+    if (activeRuns.has(runId)) {
+      const pend = pendingRunDeletes.get(runId);
+      if (pend) {
+        clearTimeout(pend);
+        pendingRunDeletes.delete(runId);
+      }
+      activeRuns.delete(runId);
+      rememberTerminated(runId);
+      saveActiveRuns();
+      // `sending` tracks the VIEWED tab only (never the global map size).
+      sending = viewedSessionBusy();
+      updateBtn();
+    }
     updateChat();
   }
 }
@@ -1433,6 +1496,161 @@ function clearPersistedErrors(sk: string) {
   }
 }
 
+// ─── Recoverable-error auto-retry controller (FORK 2026-06-24) ───
+// Per-session client-side retry track. A *surfaced* recoverable provider error
+// (quota / rate-limit / overload / transient unavailable) does NOT dead-end on a
+// red bubble: it schedules a backed-off retry (RETRY_LADDER_MS), shows an orange
+// warning with a live countdown + hover "stop retrying" link, and re-issues the
+// last user turn via a fresh chat.send (new idempotencyKey — the original would
+// be deduped). The waits exceed the 900s gateway turn-timeout, so the retry must
+// live CLIENT-side. The existing in-turn server-side overload-retry (pre-surface,
+// `overload-retry` lifecycle bubbles) is unchanged — this engages only once the
+// error is SURFACED as state==="error". State is keyed by sessionKey so switching
+// tabs preserves the countdown.
+type RetryEntry = {
+  attempt: number;
+  lastUserText: string;
+  nextRetryAt: number;
+  kind: RetryKind | null;
+  cancelled: boolean;
+  // internal: true between firing the re-send and the next schedule/clear so the
+  // 1s tick does not re-fire while nextRetryAt is already in the past.
+  firing: boolean;
+};
+const retryState = new Map<string, RetryEntry>();
+
+// Pull the most recent real (non-temp) user-message text from a messages array.
+function lastUserTextFor(msgs: unknown[]): string {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i] as any;
+    if ((m.role ?? "").toLowerCase() !== "user") continue;
+    if (m._temporary) continue;
+    const text = Array.isArray(m.content)
+      ? m.content
+          .filter((b: any) => b.type === "text")
+          .map((b: any) => b.text)
+          .join("\n")
+      : typeof m.content === "string"
+        ? m.content
+        : "";
+    if (text.trim()) return text.trim();
+  }
+  return "";
+}
+
+// Schedule (or advance) the retry for a session after a surfaced recoverable
+// error. Uses the current attempt index to pick the next ladder step (honoring a
+// provider Retry-After when larger). When the ladder is exhausted, pushes a
+// terminal red bubble and clears state.
+function scheduleRetry(
+  sk: string,
+  kind: RetryKind | null,
+  lastUserText: string,
+  retryAfterSec?: number,
+) {
+  let st = retryState.get(sk);
+  if (!st) {
+    st = { attempt: 0, lastUserText, nextRetryAt: 0, kind, cancelled: false, firing: false };
+    retryState.set(sk, st);
+  }
+  if (st.cancelled) return;
+  st.kind = kind;
+  if (lastUserText) st.lastUserText = lastUserText;
+  st.firing = false;
+  const delay = nextRetryDelayMs(st.attempt, retryAfterSec);
+  if (delay == null) {
+    // Exhausted — terminal red bubble (reuse the _isError/.exhausted render), stop.
+    const exhaustedMsg = {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: `🛑 Gave up after ${RETRY_LADDER_MS.length} retries (${labelFor(kind)}).`,
+        },
+      ],
+      _isError: true,
+      _isExhausted: true,
+    };
+    messages.push(exhaustedMsg);
+    persistErrorMsg(sk, exhaustedMsg);
+    retryState.delete(sk);
+    updateChat();
+    return;
+  }
+  st.nextRetryAt = Date.now() + delay;
+  // One NEW orange warning per attempt (the history of attempts stays visible).
+  // Rendered from the structured fields below so the 1s tick can rewrite just the
+  // countdown; `text` is the persisted fallback for a reload with no live state.
+  const warnMsg = {
+    role: "assistant",
+    content: [
+      {
+        type: "text",
+        text: `⚠️ ${labelFor(kind)} — retry ${st.attempt + 1}/${RETRY_LADDER_MS.length}, retrying in ${formatWait(delay)}…`,
+      },
+    ],
+    _isRetryWarning: true,
+    _retrySessionKey: sk,
+    _retryKind: kind,
+    _retryAttempt: st.attempt,
+    _retryDelayMs: delay,
+  };
+  messages.push(warnMsg);
+  persistErrorMsg(sk, warnMsg);
+  startThinkingTick(); // keep the 1s tick alive to drive the countdown / fire
+  updateChat();
+}
+
+// Fire the pending retry for a session: re-issue the captured last-user turn via
+// the SAME chat.send path send() uses, but with a FRESH idempotencyKey (reusing
+// the original would be deduped and silently dropped). Increments the attempt so
+// the next surfaced error advances the ladder.
+async function retryLastTurn(sk: string) {
+  const st = retryState.get(sk);
+  if (!st || st.cancelled || st.firing) return;
+  st.firing = true;
+  // Prefer the live last-user text when this session is the viewed one; else use
+  // the text captured at schedule time (the session may be in a background tab).
+  let text = st.lastUserText;
+  if (sk === sessionKey || sessionKeyMatches(sk)) {
+    const live = lastUserTextFor(messages);
+    if (live) text = live;
+  }
+  if (!text || !text.trim()) {
+    cancelRetry(sk, false);
+    return;
+  }
+  st.attempt++;
+  try {
+    await req("chat.send", {
+      sessionKey: sk,
+      message: text,
+      idempotencyKey: uuid(),
+    });
+  } catch {
+    // RPC failure issuing the retry: keep backing off rather than stalling.
+    scheduleRetry(sk, st.kind, text);
+  }
+}
+
+// Cancel the retry track for a session (hover-stop, manual abort, or a new user
+// message taking over). Optionally surfaces an orange "cancelled" bubble.
+function cancelRetry(sk: string, pushBubble: boolean) {
+  const st = retryState.get(sk);
+  if (st) st.cancelled = true;
+  retryState.delete(sk);
+  if (pushBubble) {
+    const cancelMsg = {
+      role: "assistant",
+      content: [{ type: "text", text: "↩︎ Auto-retry cancelled." }],
+      _isWarning: true,
+    };
+    messages.push(cancelMsg);
+    persistErrorMsg(sk, cancelMsg);
+    updateChat();
+  }
+}
+
 // ─── Active Model Tracking ───
 type ActiveRunPhase = "thinking" | "tool" | "responding" | "reflecting" | "completed" | "failed";
 type ActiveRunInfo = {
@@ -1542,13 +1760,16 @@ const collapsedModelSections = new Set<string>(["models"]);
 // session key so tab switches repaint the right session's paper.
 const eegStores = new Map<string, EegTraceStore>();
 const eegTurnCounters = new Map<string, number>();
+// FORK 2026-06-22 (the architect): true while the in-flight turn's blue boundary was already
+// drawn at SEND time — so the lifecycle end-handler skips adding a duplicate line.
+const eegBoundaryAtSend = new Map<string, boolean>();
 // FORK 2026-06-13 (eeg): billed INPUT tokens accumulated per runId across the
 // run's rounds (round-start carries inputTokensEstimate; effort-final carries
 // output). Feeds segment length (area ∝ token cost, bible §5.8h).
 const eegInputByRun = new Map<string, number>();
 // FORK 2026-06-13 (eeg): persist the trace to localStorage so a HARD REFRESH (which
 // wipes the in-memory store) restores the session's activity instead of erasing it
-// (Oscar 2026-06-13). Keyed per session; capped so storage stays bounded.
+// (the architect 2026-06-13). Keyed per session; capped so storage stays bounded.
 const EEG_STORAGE_PREFIX = "tinker-eeg:";
 const EEG_PERSIST_CAP = 2000;
 function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
@@ -1559,7 +1780,13 @@ function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
     }
     const snap = JSON.parse(raw) as { samples?: EegSample[]; ends?: EegTurnEnd[] };
     if (Array.isArray(snap.samples)) {
-      store.backfill(snap.samples, Array.isArray(snap.ends) ? snap.ends : []);
+      // FORK 2026-06-23 (the architect): drop any persisted subagent BRANCH samples on load too, so an
+      // OLD snapshot (written before branches stopped being persisted) can't restore a stale
+      // "banana" arch. Branches are live-only; the main call-line is what persists.
+      store.backfill(
+        snap.samples.filter((s) => !s.subagent),
+        Array.isArray(snap.ends) ? snap.ends : [],
+      );
     }
   } catch {
     /* corrupt/oversized payload — ignore, fall back to live + anatomy backfill */
@@ -1571,7 +1798,13 @@ function saveEegStore(sk: string): void {
     localStorage.setItem(
       EEG_STORAGE_PREFIX + sk,
       JSON.stringify({
-        samples: snap.samples.slice(-EEG_PERSIST_CAP),
+        // FORK 2026-06-23 (the architect "weird max→high banana that lingers"): do NOT persist
+        // subagent BRANCH samples. They are LIVE activity (a fan-out in progress), not durable
+        // history — persisting them froze an old sub-call into a stale max→high arch ("banana")
+        // that was restored on every reload long after the fan-out finished. The main call-line
+        // (history) still persists and also rebuilds from anatomy; live branches re-render in
+        // real time from the effort feed and simply don't survive a reload.
+        samples: snap.samples.filter((s) => !s.subagent).slice(-EEG_PERSIST_CAP),
         ends: snap.ends.slice(-EEG_PERSIST_CAP),
       }),
     );
@@ -1589,14 +1822,90 @@ function getEegStore(sk: string): EegTraceStore {
   }
   return store;
 }
+// FORK 2026-06-14 (fluid-model-effort Drop 1, bible §5.84-C): the EFFORT slider is
+// a webchat client and CANNOT persist via sessions.patch/update (rejectWebchatSessionMutation
+// + sessions.update is not a real method). So the slider's pick lives CLIENT-SIDE here,
+// keyed per session (mirrors eegStores), re-applied on every chat.send via the
+// webchat-safe `thinking`→`/think` channel. Survives re-render; survives reload via
+// localStorage; reset on /clear. "" / absent = Auto (the skill decides).
+const effortPinBySession = new Map<string, string>();
+const EFFORT_PIN_LS_PREFIX = "tinker-effort-pin:";
+function loadEffortPin(key: string): void {
+  if (!key) return;
+  try {
+    const v = localStorage.getItem(EFFORT_PIN_LS_PREFIX + key);
+    if (v) effortPinBySession.set(key, v);
+  } catch {
+    /* localStorage unavailable — in-memory only */
+  }
+}
+function saveEffortPin(key: string, lvl: string): void {
+  if (!key) return;
+  try {
+    if (lvl) localStorage.setItem(EFFORT_PIN_LS_PREFIX + key, lvl);
+    else localStorage.removeItem(EFFORT_PIN_LS_PREFIX + key);
+  } catch {
+    /* ignore */
+  }
+}
+// FORK 2026-06-14 (bible §5.84 Drop 3): the MODEL-force slider, like the effort slider, persists
+// CLIENT-SIDE (webchat can't patch session metadata) and is re-applied on every chat.send via the
+// `model` param. Absent = Auto (router/allocator picks the model). Mirrors effortPinBySession.
+const modelPinBySession = new Map<string, string>();
+const MODEL_PIN_LS_PREFIX = "tinker-model-pin:";
+function loadModelPin(key: string): void {
+  if (!key) return;
+  try {
+    const v = localStorage.getItem(MODEL_PIN_LS_PREFIX + key);
+    if (v) modelPinBySession.set(key, v);
+  } catch {
+    /* localStorage unavailable — in-memory only */
+  }
+}
+function saveModelPin(key: string, id: string): void {
+  if (!key) return;
+  try {
+    if (id) localStorage.setItem(MODEL_PIN_LS_PREFIX + key, id);
+    else localStorage.removeItem(MODEL_PIN_LS_PREFIX + key);
+  } catch {
+    /* ignore */
+  }
+}
 // FORK 2026-06-13 (eeg): re-render the seismograph SVG at the live pixel width
-// of its host so it fills the whole panel (Oscar 2026-06-13). Called after every
+// of its host so it fills the whole panel (the architect 2026-06-13). Called after every
 // panel render and on window resize.
 let eegResizeBound = false;
 // FORK 2026-06-13 (eeg): vertical SCALE for the seismograph length axis, driven
 // by the secondary(right)-button wheel. 1 = native token→px scale.
 let eegZoom = 1;
+// FORK 2026-06-19 (bible §5.8h): EEG "all" scope — overlay every OTHER session's
+// trace, drawn faint (dim), on the SAME time axis as the viewed (solid) session.
+let eegScope: "session" | "all" = "session";
+// FORK 2026-06-19: close dead subagent branches + clear their "thinking" ghost.
+// A 30× fan-out that finished can leave EEG samples with no endedAt (their end
+// event never reached the FE) and stale activeRuns entries → "thinking forever" +
+// the EEG drawing them as if still alive. No real tokens are burned (journal-
+// verified); this is purely a stale-display sweep. SUBAGENT-scoped + generous (90s
+// silent, or gone from activeRuns) so a legitimately-long MAIN turn is never touched.
+function sweepDeadEegBranches(): void {
+  const now = Date.now();
+  const STALE_MS = 90_000;
+  const isLive = (runId: string): boolean => {
+    const r = activeRuns.get(runId) as any;
+    if (!r) return false; // gone from activeRuns ⇒ its lifecycle already ended
+    const last = r.lastEventAt ?? r.startedAt ?? now; // no timestamp ⇒ assume just-active
+    return now - last <= STALE_MS;
+  };
+  for (const store of eegStores.values()) {
+    const closed = store.closeStaleRunning(isLive, now);
+    for (const runId of closed) {
+      activeRuns.delete(runId);
+      rememberTerminated(runId); // a late effort frame must not resurrect it
+    }
+  }
+}
 function fillEegPaper(): void {
+  sweepDeadEegBranches();
   const paper = document.getElementById("eeg-paper");
   if (!paper || !sessionKey) {
     return;
@@ -1605,8 +1914,208 @@ function fillEegPaper(): void {
   // preserve the scroll position proportionally across a re-render/zoom
   const prevH = paper.scrollHeight || 1;
   const ratio = paper.scrollTop / prevH;
-  paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w, zoom: eegZoom });
+  const overlay =
+    eegScope === "all"
+      ? [...eegStores].flatMap(([sk, store]) =>
+          sk === sessionKey ? [] : store.taggedSamples({ sessionKey: sk, dim: true }),
+        )
+      : undefined;
+  paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w, zoom: eegZoom, overlay });
   paper.scrollTop = ratio * (paper.scrollHeight || 1);
+}
+
+// FORK 2026-06-19 (bible §5.8h): the EEG is now its OWN side panel (#eeg-panel,
+// peer to Models) — renderEegPanel() paints the seismograph into it; bindings are
+// delegated on #eeg-panel-body ONCE. updateBudgetPanel() calls this at its tail so
+// the existing repaint triggers (effort events, tab switch) still drive the EEG.
+let eegPanelBound = false;
+function renderEegPanel(): void {
+  const body = document.getElementById("eeg-panel-body");
+  if (!body) {
+    return;
+  }
+  if (!body.querySelector("#eeg-paper")) {
+    body.innerHTML = '<div class="eeg-paper" id="eeg-paper"></div>';
+  }
+  syncEegScopeChrome();
+  fillEegPaper();
+  bindEegPanelOnce();
+}
+function bindEegPanelOnce(): void {
+  if (eegPanelBound) {
+    return;
+  }
+  const body = document.getElementById("eeg-panel-body");
+  if (!body) {
+    return;
+  }
+  eegPanelBound = true;
+  // secondary/tilt wheel (or Ctrl+wheel) → zoom the length axis; vertical = scroll
+  body.addEventListener(
+    "wheel",
+    (e) => {
+      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      const delta = e.ctrlKey ? e.deltaY : horizontal ? e.deltaX : 0;
+      if (delta === 0) {
+        return;
+      }
+      e.preventDefault();
+      const factor = delta < 0 ? 1.12 : 1 / 1.12;
+      eegZoom = Math.min(20, Math.max(0.03, eegZoom * factor));
+      fillEegPaper();
+    },
+    { passive: false },
+  );
+  // FORK 2026-06-19: ANY prompt element is interactive — the per-prompt hit BAND, the
+  // trunk LINE, and the separator rule all carry data-eeg-prompt-index. The old handler
+  // only matched the thin .eeg-marker rule, so clicking the visible line did nothing.
+  const resolvePromptTarget = (el: HTMLElement): HTMLElement | null => {
+    const idxAttr = el.getAttribute("data-eeg-prompt-index");
+    if (idxAttr !== null) {
+      const idx = Number.parseInt(idxAttr, 10);
+      if (!Number.isNaN(idx)) {
+        const userBubbles = document.querySelectorAll<HTMLElement>("#messages .msg.user");
+        if (userBubbles[idx]) {
+          return userBubbles[idx];
+        }
+      }
+    }
+    // legacy fallback: the turn-stamped answer bubble, then walk back to its prompt
+    const turn = el.getAttribute("data-eeg-turn");
+    if (turn) {
+      const escapedTurn =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(turn) : turn;
+      const answer = document.querySelector<HTMLElement>(
+        `#messages [data-eeg-turn="${escapedTurn}"]`,
+      );
+      if (answer) {
+        let prev: HTMLElement | null = answer;
+        while (prev) {
+          if (prev.classList?.contains("user")) {
+            return prev;
+          }
+          prev = prev.previousElementSibling as HTMLElement | null;
+        }
+        return answer;
+      }
+    }
+    return null;
+  };
+  body.addEventListener("click", (e) => {
+    const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-eeg-prompt-index]");
+    if (!hit) {
+      return;
+    }
+    const target = resolvePromptTarget(hit);
+    if (!target) {
+      return;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.classList.add("eeg-focus");
+    setTimeout(() => target.classList.remove("eeg-focus"), 2500);
+  });
+  // hover a prompt element → highlight the WHOLE prompt's line + band (every element
+  // sharing its data-eeg-prompt-index) so it is obvious what a click will jump to.
+  const clearEegHl = (): void => {
+    for (const node of Array.from(body.querySelectorAll(".eeg-hl"))) {
+      node.classList.remove("eeg-hl");
+    }
+  };
+  // FORK 2026-06-22 (the architect): a styled hover overlay showing the prompt text (the native
+  // SVG <title> is slow + unstyleable). One lazily-created floating div, positioned next
+  // to the cursor, fed from the boundary's data-eeg-prompt-text.
+  let eegOverlay: HTMLElement | null = null;
+  const showEegOverlay = (text: string, x: number, y: number): void => {
+    if (!eegOverlay) {
+      eegOverlay = document.createElement("div");
+      eegOverlay.className = "eeg-prompt-overlay";
+      document.body.appendChild(eegOverlay);
+    }
+    eegOverlay.textContent = text;
+    eegOverlay.style.display = "block";
+    // clamp to the viewport so a long prompt near the right/bottom edge stays readable
+    const pad = 14;
+    const ow = eegOverlay.offsetWidth;
+    const oh = eegOverlay.offsetHeight;
+    let left = x + pad;
+    let top = y + pad;
+    if (left + ow > window.innerWidth - 8) left = x - ow - pad;
+    if (top + oh > window.innerHeight - 8) top = y - oh - pad;
+    eegOverlay.style.left = `${Math.max(8, left)}px`;
+    eegOverlay.style.top = `${Math.max(8, top)}px`;
+  };
+  const hideEegOverlay = (): void => {
+    if (eegOverlay) eegOverlay.style.display = "none";
+  };
+  body.addEventListener("mouseover", (e) => {
+    const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-eeg-prompt-index]");
+    if (!hit) {
+      return;
+    }
+    const idx = hit.getAttribute("data-eeg-prompt-index");
+    if (idx === null) {
+      return;
+    }
+    clearEegHl();
+    const sel =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? `[data-eeg-prompt-index="${CSS.escape(idx)}"]`
+        : `[data-eeg-prompt-index="${idx}"]`;
+    for (const node of Array.from(body.querySelectorAll(sel))) {
+      node.classList.add("eeg-hl");
+    }
+    const txt = hit.getAttribute("data-eeg-prompt-text");
+    if (txt) {
+      showEegOverlay(txt, (e as MouseEvent).clientX, (e as MouseEvent).clientY);
+    }
+  });
+  body.addEventListener("mousemove", (e) => {
+    if (!eegOverlay || eegOverlay.style.display === "none") {
+      return;
+    }
+    const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-eeg-prompt-text]");
+    if (hit) {
+      showEegOverlay(
+        hit.getAttribute("data-eeg-prompt-text") || "",
+        (e as MouseEvent).clientX,
+        (e as MouseEvent).clientY,
+      );
+    } else {
+      hideEegOverlay();
+    }
+  });
+  body.addEventListener("mouseout", (e) => {
+    if ((e.target as HTMLElement).closest<HTMLElement>("[data-eeg-prompt-index]")) {
+      clearEegHl();
+      hideEegOverlay();
+    }
+  });
+  window.addEventListener("resize", () => fillEegPaper());
+  window.addEventListener("beforeunload", () => {
+    for (const sk of eegStores.keys()) {
+      saveEegStore(sk);
+    }
+  });
+}
+function syncEegScopeChrome(): void {
+  const toggle = document.getElementById("eeg-scope-toggle");
+  if (!toggle) {
+    return;
+  }
+  toggle
+    .querySelector(".ct-switch-track")
+    ?.classList.toggle("ct-switch-track--on", eegScope === "all");
+  toggle.querySelectorAll(".ct-switch-label").forEach((b) => {
+    b.classList.toggle("ct-switch-label--active", (b as HTMLElement).dataset.eegScope === eegScope);
+  });
+}
+function setEegScope(next: "session" | "all"): void {
+  if (next !== "session" && next !== "all") {
+    return;
+  }
+  eegScope = next;
+  syncEegScopeChrome();
+  fillEegPaper();
 }
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — drafts are now
@@ -2887,7 +3396,9 @@ function onEvent(evt: unknown) {
       streamRunId = p.runId;
       // Update active run phase based on streaming content
       let runInfo = activeRuns.get(p.runId);
-      if (!runInfo) {
+      // FORK 2026-06-14 (bug #3): never self-heal a runId that already finalized —
+      // a late/stale delta would resurrect it as a provider-less ghost.
+      if (!runInfo && !terminatedRuns.has(p.runId)) {
         // FORK 2026-06-04 — bug task-mpr2cego-unkak (Disappearing chat thinking indicator).
         // A text delta is arriving for the VIEWED main session (guaranteed by the guard at
         // the top of this handler) but there is NO activeRuns entry — the run was emptied
@@ -3017,28 +3528,13 @@ function onEvent(evt: unknown) {
       }
       updateChat();
     } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
-      // FORK 2026-06-04 — bug task-mpwfiot2 (Queuing a prompt): the running turn ended, so any
-      // prompts queued during it now take their correct chronological place at the END of the
-      // transcript (matching the server's history order — the position a hard refresh always
-      // showed correctly). Flush the held bubbles into messages[] as normal user messages. They
-      // were kept OUT of messages[] until now so the turn's own continuation/tool bubbles could
-      // never land after them ("queued prompt in the middle of the last answer").
-      if (pendingQueuedSends.length > 0) {
-        // FORK 2026-06-08: flush ONLY the prompts queued under the session whose turn just ended
-        // (= the viewed session here, since we are past the viewed-session guard). Other tabs'
-        // queued prompts stay put — previously this drained the WHOLE global array into whichever
-        // tab was on screen, dumping one session's queued prompt into another's transcript.
-        const settled = settleQueuedSession(
-          pendingQueuedSends,
-          p.sessionKey,
-          true,
-          sessionKeyMatches,
-        );
-        for (const qm of settled.commit) {
-          messages.push(qm);
-        }
-        pendingQueuedSends = settled.remaining;
-      }
+      // FORK 2026-06-19 (bug C — "a prompt typed mid-turn jumps above the answer"): the queued-prompt
+      // FLUSH is now DEFERRED to AFTER assistant finalization below (search "flush queued prompts
+      // NOW"). It used to run HERE, before the final-answer bubbles were promoted/pushed — but the
+      // `!hadTemps` re-slice path and the tool-only `messages.push(...)` path append a NEW answer
+      // bubble, so a prompt queued during the turn was spliced in AHEAD of the turn's own final
+      // bubbles (exactly the "green bubble jumps above some response bubbles" report). Flushing last
+      // guarantees the queued prompt lands at the true END of the transcript (server history order).
       // Defensive: clear any _queued styling that slipped into messages[] directly.
       for (const m of messages) {
         if (m._queued) {
@@ -3146,36 +3642,47 @@ function onEvent(evt: unknown) {
           }
         }
         if (!hadTemps && p.message) {
-          messages.push(p.message);
+          pushAssistantMsgDeduped(p.message as Record<string, unknown>);
         }
       } else {
         messages = messages.filter((m: unknown) => !m._temporary);
         if (p.message) {
-          messages.push(p.message);
+          pushAssistantMsgDeduped(p.message as Record<string, unknown>);
         }
       }
       if (p.state === "error" && p.errorMessage) {
         const errText = p.errorMessage as string;
-        // FORK: Classify auto-recovering errors as orange warnings
-        const isAutoRecovering =
-          errText.includes("draining for restart") ||
-          errText.includes("overloaded") ||
-          errText.includes("temporarily unavailable") ||
-          errText.includes("HTTP 502") ||
-          errText.includes("HTTP 503") ||
-          errText.includes("HTTP 529");
         // Clean up unhelpful CLI hints from webchat error messages
         const cleanText = errText.replace(/\s*Logs:.*$/s, "").trim();
-        const errMsg = {
-          role: "assistant",
-          content: [{ type: "text", text: cleanText }],
-          ...(isAutoRecovering ? { _isWarning: true } : { _isError: true }),
-        };
-        messages.push(errMsg);
-        persistErrorMsg(sessionKey, errMsg);
+        // FORK 2026-06-24 (recoverable-retry): classify the SURFACED error. A
+        // recoverable provider error (quota / rate-limit / overload / transient
+        // unavailable) routes into the client-side auto-retry controller (orange
+        // warning + backed-off live countdown) INSTEAD of a dead-end bubble — this
+        // subsumes the old `isAutoRecovering` orange-but-static path. Anything else
+        // keeps today's red _isError behavior unchanged.
+        const cls = classifyRecoverable(p.reason as string | undefined, errText);
+        if (cls.recoverable) {
+          scheduleRetry(
+            sessionKey,
+            cls.kind,
+            lastUserTextFor(messages),
+            typeof p.retryAfter === "number" ? (p.retryAfter as number) : undefined,
+          );
+        } else {
+          const errMsg = {
+            role: "assistant",
+            content: [{ type: "text", text: cleanText }],
+            _isError: true,
+          };
+          messages.push(errMsg);
+          persistErrorMsg(sessionKey, errMsg);
+        }
       }
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
+        // FORK 2026-06-24 (recoverable-retry): a successful turn ends any pending
+        // auto-retry for this session. History warning bubbles are left in place.
+        retryState.delete(sessionKey);
         // Clear provider error badges for the provider that just succeeded
         if (streamProvider || streamProfileId) {
           let cleared = false;
@@ -3201,6 +3708,24 @@ function onEvent(evt: unknown) {
             updateBudgetPanel();
           }
         }
+      }
+      // FORK 2026-06-19 (bug C): flush queued prompts NOW — AFTER every final-answer bubble has been
+      // promoted/pushed above. A prompt queued mid-turn takes its correct chronological place at the
+      // END of the transcript (matching the server history order a hard refresh shows) and can never
+      // sort above the turn's own continuation/answer bubbles. Flush ONLY the prompts queued under the
+      // session whose turn just ended (= the viewed session here, past the viewed-session guard);
+      // other tabs' queued prompts stay put.
+      if (pendingQueuedSends.length > 0) {
+        const settled = settleQueuedSession(
+          pendingQueuedSends,
+          p.sessionKey,
+          true,
+          sessionKeyMatches,
+        );
+        for (const qm of settled.commit) {
+          pushUserMsgDeduped(qm as Record<string, unknown>);
+        }
+        pendingQueuedSends = settled.remaining;
       }
       // Always reset streaming state — even on error (fallback will start fresh deltas)
       streamMsgIdx = -1;
@@ -3230,10 +3755,16 @@ function onEvent(evt: unknown) {
           activeRuns.delete(finalRunId);
           saveActiveRuns();
         }
+        // FORK 2026-06-14 (bug #3): mark finalized so a late/stale delta can't
+        // resurrect this run as a provider-less ghost thinking indicator.
+        rememberTerminated(finalRunId);
       }
       // sending reflects the VIEWED tab only — never the global map size, so a
       // different tab's live run can't pin this tab on "sending" forever.
       sending = viewedSessionBusy();
+      // FORK 2026-06-22: collapse any duplicate assistant answer left in messages[]
+      // by an in-flight reconnect/finalize race before this turn renders.
+      dedupeAssistantAnswers();
       updateChat();
       updateBtn();
       if (p.state !== "error") {
@@ -3394,7 +3925,7 @@ function onEvent(evt: unknown) {
         } as ActiveRunInfo);
       // FORK 2026-06-13 (eeg): the effort event now self-describes its model
       // (cc-bridge), so even an Auto run colours by the ACTUAL model running
-      // underneath instead of falling back to gray (Oscar 2026-06-13). Keep any
+      // underneath instead of falling back to gray (the architect 2026-06-13). Keep any
       // existing non-empty model if the event omits it.
       if (typeof d.model === "string" && d.model) r.model = d.model;
       if (typeof d.provider === "string" && d.provider) r.provider = d.provider;
@@ -3407,12 +3938,17 @@ function onEvent(evt: unknown) {
         if (typeof d.output_tokens === "number") r.outputTokens = d.output_tokens;
         if (typeof d.num_turns === "number") r.numTurns = d.num_turns;
       }
-      activeRuns.set(p.runId, r);
+      // FORK 2026-06-19: do NOT resurrect a run that already ended. When ~30
+      // subagents finish near-simultaneously, a late effort frame arriving after
+      // the run's lifecycle:end (which rememberTerminated'd it) used to re-create
+      // the activeRuns entry permanently → "thinking forever". A new turn reusing
+      // the runId clears terminatedRuns on lifecycle:start, so legit restarts pass.
+      if (!terminatedRuns.has(p.runId)) activeRuns.set(p.runId, r);
       r.lastEventAt = Date.now();
       // FORK 2026-06-13 (eeg): feed the seismograph (bible §5.8h). Effort events
       // arrive incrementally per run; record() upserts by runId so every emit just
       // refreshes the run's sample. The store is keyed by the VIEWED sessionKey to
-      // match the render at updateBudgetPanel(). FORK 2026-06-14 (Oscar): the gate
+      // match the render at updateBudgetPanel(). FORK 2026-06-14 (the architect): the gate
       // above now ALSO admits `:subagent:` descendants of the viewed session (via
       // chatEventIsSubagentOfView, same predicate the chat consumer uses), so a
       // subagent's effort event records into the PARENT's store (evtSk = the viewed
@@ -3428,7 +3964,6 @@ function onEvent(evt: unknown) {
           model: r.model,
           provider: r.provider || providerOf(r.model),
           chosenLevel: r.thinkLevel ?? "",
-          forced: viewedSessionForced(),
           subagent: String(p.sessionKey || "").includes(":subagent:"),
           // FORK 2026-06-14: per-branch hover label — the run's task text ("what
           // this run is doing"); the panel falls back to the model name if absent.
@@ -3440,7 +3975,9 @@ function onEvent(evt: unknown) {
           inputTokens: eegInputByRun.get(p.runId),
           outputTokens: r.outputTokens,
           startedAt: r.startedAt,
-          endedAt: undefined,
+          // FORK 2026-06-19: stamp endedAt on the FINAL effort event so the subagent
+          // branch merges back into the trunk at its real finish time (bible §5.8h).
+          endedAt: d.phase === "final" ? Date.now() : undefined,
         });
       } catch {
         /* eeg feed must never break the effort consumer */
@@ -3448,6 +3985,41 @@ function onEvent(evt: unknown) {
       updatePrefrontalTree();
       updateBudgetPanel();
       return;
+    }
+    // FORK 2026-06-19 (bible §5.8h): EEG "all" scope — ALSO record OTHER sessions'
+    // effort events into their OWN store (dimmed) so the seismograph overlays
+    // concurrent activity. EEG-only: never touches activeRuns or other panels.
+    if (
+      p?.stream === "effort" &&
+      eegScope === "all" &&
+      !sessionKeyMatches(p.sessionKey) &&
+      !chatEventIsSubagentOfView(p.sessionKey)
+    ) {
+      const d = p.data ?? {};
+      const evtSk = typeof p.sessionKey === "string" ? p.sessionKey : "";
+      if (evtSk) {
+        try {
+          getEegStore(evtSk).record({
+            runId: p.runId,
+            model: typeof d.model === "string" ? d.model : "",
+            provider:
+              typeof d.provider === "string"
+                ? d.provider
+                : providerOf(typeof d.model === "string" ? d.model : ""),
+            chosenLevel: typeof d.thinkLevel === "string" ? d.thinkLevel : "",
+            subagent: String(p.sessionKey || "").includes(":subagent:"),
+            label: typeof d.task === "string" ? d.task : undefined,
+            parentRunId: typeof d.parentRunId === "string" ? d.parentRunId : undefined,
+            thinkingChars: typeof d.thinkingChars === "number" ? d.thinkingChars : undefined,
+            outputTokens: typeof d.output_tokens === "number" ? d.output_tokens : undefined,
+            startedAt: Date.now(),
+            endedAt: d.phase === "final" ? Date.now() : undefined,
+          });
+          fillEegPaper();
+        } catch {
+          /* eeg overlay must never break the consumer */
+        }
+      }
     }
     // FORK 2026-06-11 (fractal v3, bible §5.67b) — STREAM:"fractal" consumer.
     // The fractal-reflection plugin emits its envelope under the MAIN session's
@@ -4020,6 +4592,9 @@ function onEvent(evt: unknown) {
             : typeof (p.data as { label?: unknown }).label === "string"
               ? ((p.data as { label?: string }).label as string)
               : undefined;
+        // FORK 2026-06-14 (bug #3): a genuine phase:start re-activates this runId
+        // (fallback models can reuse one) — clear any prior "terminated" mark.
+        terminatedRuns.delete(p.runId);
         activeRuns.set(p.runId, {
           model: p.data.model,
           provider: startProvider,
@@ -4183,6 +4758,7 @@ function onEvent(evt: unknown) {
           pendingRunDeletes.delete(endRunId);
           activeRuns.delete(endRunId);
           saveActiveRuns();
+          rememberTerminated(endRunId);
           // FORK 2026-05-16: sending tracks the viewed tab, not the global map.
           sending = viewedSessionBusy();
           if (!sending) {
@@ -4197,6 +4773,22 @@ function onEvent(evt: unknown) {
           updateBtn();
         }, 3000);
         pendingRunDeletes.set(endRunId, timeoutId);
+        // FORK 2026-06-19 (bible §5.8h): stamp the EEG sample's endedAt from the
+        // AUTHORITATIVE lifecycle end so a finished SUBAGENT branch merges back into
+        // the trunk even when its effort:final frame was dropped (the "thinking
+        // forever" bug). Subagents of the viewed session record into the VIEWED
+        // store; everything else into its own session store.
+        try {
+          const endSk =
+            typeof p.data.sessionKey === "string" && p.data.sessionKey
+              ? p.data.sessionKey
+              : sessionKey;
+          const storeSk = chatEventIsSubagentOfView(endSk) ? sessionKey : endSk;
+          getEegStore(storeSk).markEnded(endRunId, Date.now());
+          fillEegPaper();
+        } catch {
+          /* eeg must never break the lifecycle consumer */
+        }
         // FORK 2026-06-13 (eeg): end-of-turn marker (bible §5.8h q7). Bump the
         // session's turn counter, stamp the trace store, tag the last real
         // assistant bubble (the turn-incomplete reverse-loop precedent: skip
@@ -4210,11 +4802,44 @@ function onEvent(evt: unknown) {
                 ? p.data.sessionKey
                 : sessionKey;
             if (eegEvtSk && !eegEvtSk.includes(":subagent:")) {
-              const turn = (eegTurnCounters.get(eegEvtSk) ?? 0) + 1;
-              eegTurnCounters.set(eegEvtSk, turn);
-              getEegStore(eegEvtSk).turnEnd({ turn, runId: endRunId, endedAt: Date.now() });
-              // persist the completed turn so a hard refresh restores it (Oscar 2026-06-13)
-              saveEegStore(eegEvtSk);
+              // FORK 2026-06-22 (the architect): the blue boundary is now normally drawn at SEND
+              // time (immediate, while the turn runs). If it was, skip adding a 2nd line
+              // here — just reuse the already-bumped turn number to stamp the answer bubble.
+              // The fallback (queued sends, which don't draw at send) still records here.
+              const drewAtSend = eegBoundaryAtSend.get(eegEvtSk) === true;
+              eegBoundaryAtSend.delete(eegEvtSk);
+              let turn: number;
+              if (drewAtSend) {
+                turn = eegTurnCounters.get(eegEvtSk) ?? 0; // counter already bumped at send
+              } else {
+                // FORK 2026-06-19: record the PROMPT this turn answered on the
+                // (persisted) turnEnd — its STABLE index among user messages + text —
+                // so a marker click scrolls to the right prompt after a reload and a
+                // hover shows it. Only for the viewed session (we have its messages).
+                let promptIndex: number | undefined;
+                let promptText: string | undefined;
+                if (sessionKeyMatches(eegEvtSk)) {
+                  const userMsgs = messages.filter(
+                    (m: any) => (m.role || "").toLowerCase() === "user" && !m._temporary,
+                  );
+                  if (userMsgs.length > 0) {
+                    promptIndex = userMsgs.length - 1;
+                    const pt = (msgText(userMsgs[userMsgs.length - 1]) || "").trim();
+                    promptText = pt.length > 280 ? `${pt.slice(0, 280)}…` : pt;
+                  }
+                }
+                turn = (eegTurnCounters.get(eegEvtSk) ?? 0) + 1;
+                eegTurnCounters.set(eegEvtSk, turn);
+                getEegStore(eegEvtSk).turnEnd({
+                  turn,
+                  runId: endRunId,
+                  endedAt: Date.now(),
+                  promptIndex,
+                  promptText,
+                });
+                // persist the completed turn so a hard refresh restores it (the architect 2026-06-13)
+                saveEegStore(eegEvtSk);
+              }
               if (sessionKeyMatches(eegEvtSk)) {
                 for (let k = messages.length - 1; k >= 0; k--) {
                   const mm = messages[k] as any;
@@ -4445,6 +5070,59 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   }
 }
 
+// FORK 2026-06-22 (bug: "responses amalgamated in one bubble, no tool calls, no
+// thinking/answer split"): chat.history serves tool calls as OpenClaw-canonical
+// `toolcall` blocks (type:"toolcall", args under `arguments`), but the ENTIRE render
+// pipeline keys on the claude-cli `tool_use` shape (type:"tool_use", args under
+// `input`) — the run grouping's `hasTool` test (so between-tool narration collapses
+// into Reasoning), the global tool-name/result maps, AND renderMsg's block loop. The
+// live stream pushes `tool_use` temp messages so a turn renders correctly WHILE it
+// streams, but the moment loadChat()/a reconnect replaces messages[] with server
+// history, every tool block becomes an unrecognized `toolcall`: tool rows disappear,
+// `hasTool` reads false so nothing collapses, and all the text bubbles amalgamate.
+// Persisted `thinking` blocks have the mirror problem — the reload render only knows
+// the live `_isReasoning` flag, so a thinking-only history message renders nothing.
+// Normalize server history back to the shapes the renderer already understands.
+function normalizeHistoryRenderBlocks(msgs: unknown[]): void {
+  for (const m of msgs) {
+    const rec = m as Record<string, unknown>;
+    const content = rec.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const b of content) {
+      if (b && typeof b === "object" && (b as { type?: unknown }).type === "toolcall") {
+        const blk = b as Record<string, unknown>;
+        blk.type = "tool_use";
+        if (blk.input === undefined && blk.arguments !== undefined) {
+          blk.input = blk.arguments;
+        }
+      }
+    }
+    // A thinking-only history message → mark _isReasoning and surface its text so it
+    // renders as a Thinking bubble via the same path the live reasoning stream uses.
+    if (
+      (rec.role === "assistant" || rec.role === "Assistant") &&
+      !rec._isReasoning &&
+      !content.some(
+        (b) =>
+          (b as { type?: unknown })?.type === "text" &&
+          ((b as { text?: string }).text ?? "").trim(),
+      )
+    ) {
+      const thinkingText = content
+        .filter((b) => (b as { type?: unknown })?.type === "thinking")
+        .map((b) => (b as { thinking?: string }).thinking ?? (b as { text?: string }).text ?? "")
+        .join("\n")
+        .trim();
+      if (thinkingText) {
+        rec._isReasoning = true;
+        rec.content = [{ type: "text", text: thinkingText }];
+      }
+    }
+  }
+}
+
 async function loadChat() {
   if (!sessionKey) {
     return;
@@ -4459,6 +5137,7 @@ async function loadChat() {
     if (targetTab) {
       const ts = tabStates.get(targetTab.id) ?? freshTabState();
       ts.messages = res.messages ?? [];
+      normalizeHistoryRenderBlocks(ts.messages);
       // FORK 2026-05-09: reconstruct injection fields for background-tab history.
       // Also pull _promptStartedAt from server-side timestamp fields (Feature A).
       for (const m of ts.messages) {
@@ -4485,6 +5164,7 @@ async function loadChat() {
   lastDeltaLen = 0;
   lastDeltaAt = 0;
   messages = res.messages ?? [];
+  normalizeHistoryRenderBlocks(messages);
   // FORK 2026-05-09: Reconstruct _fullPrompt / _briefingPath for historical
   // user messages. The gateway persists the full injected prompt as the
   // message body; client-only metadata is lost on refresh. Split at the
@@ -4530,12 +5210,15 @@ async function loadChat() {
   // fields simply omit the halo; failure must never break the panel or chat load.
   try {
     const eegSk = sessionKey;
-    if (eegSk && getEegStore(eegSk).isEmpty) {
+    // FORK 2026-06-22 (the architect): fetch the anatomy on EVERY session load (not only when the
+    // store is empty) so the EEG restores in lockstep with the chat history — the reconcile
+    // decision (rebuild vs keep-local) is made AFTER the fetch, below.
+    if (eegSk) {
       const base = import.meta.env.DEV ? "http://localhost:18789" : "";
       const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
       fetch(
         // limit=500: restore the WHOLE session on reload (permanent retention,
-        // Oscar 2026-06-13) so all activity is scrollable, not just recent turns.
+        // the architect 2026-06-13) so all activity is scrollable, not just recent turns.
         `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?limit=500`,
         Object.keys(hdrs).length ? { headers: hdrs } : undefined,
       )
@@ -4545,13 +5228,36 @@ async function loadChat() {
             return;
           }
           const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
-          if (!events.length || !getEegStore(eegSk).isEmpty) {
+          if (!events.length) {
             return;
           }
+          // FORK 2026-06-22 (the architect): EEG must restore hand-in-hand with chat on every
+          // (re)load — not only when the local store happens to be empty. The old isEmpty
+          // gate let a stale/partial localStorage snapshot permanently BLOCK the re-fetch,
+          // so the EEG drifted from (or got wiped relative to) the chat. Rebuild whenever
+          // the authoritative server-side anatomy carries MORE calls than the local store;
+          // keep local only when it is already as rich or richer (a live in-progress run).
+          const store = getEegStore(eegSk);
+          if (store.toSnapshot().samples.length >= events.length) {
+            return;
+          }
+          store.clear();
           const samples: EegSample[] = [];
           const ends: EegTurnEnd[] = [];
           let lastTurn: number | undefined;
-          let lastRunId = "";
+          // FORK 2026-06-22 (the architect): carry the prompt text + index onto restored boundaries
+          // (anatomy events include `userMessage`) so a reloaded/restored EEG line is just as
+          // hoverable + clickable as a live one — history "hand in hand" with the chat.
+          const mkEnd = (t: number, rid: string, endedAt: number, um: string): EegTurnEnd => {
+            const pt = (um || "").trim();
+            return {
+              turn: t,
+              runId: rid,
+              endedAt,
+              promptIndex: t - 1, // turns are 1-based, one user message each → 0-based index
+              ...(pt ? { promptText: pt.length > 280 ? `${pt.slice(0, 280)}…` : pt } : {}),
+            };
+          };
           for (let i = 0; i < events.length; i++) {
             const ev = (events[i] ?? {}) as any;
             const model = typeof ev.model === "string" ? ev.model : "";
@@ -4568,7 +5274,6 @@ async function loadChat() {
               provider:
                 typeof ev.provider === "string" && ev.provider ? ev.provider : providerOf(model),
               chosenLevel: typeof ev.thinkLevel === "string" ? ev.thinkLevel : "",
-              forced: false,
               subagent: false,
               parentRunId: undefined,
               ...(typeof ev.thinkingChars === "number" ? { thinkingChars: ev.thinkingChars } : {}),
@@ -4586,17 +5291,19 @@ async function loadChat() {
               endedAt: undefined,
             });
             const turn = typeof ev.turn === "number" ? ev.turn : undefined;
-            if (lastTurn != null && turn !== lastTurn) {
-              ends.push({ turn: lastTurn, runId: lastRunId, endedAt: ts });
+            // FORK 2026-06-22 (the architect): anchor each turn's boundary at the turn's START — just
+            // before its first event (ts-1) — so the yellow line sits BELOW (chronologically
+            // earlier than) that turn's calls. Newest-at-top ⇒ earlier = lower. The old code
+            // anchored at the turn TRANSITION (≈ the turn's END), drawing the line ABOVE its call.
+            const um = typeof ev.userMessage === "string" && ev.userMessage ? ev.userMessage : "";
+            if (turn != null && turn !== lastTurn) {
+              ends.push(mkEnd(turn, runId, ts - 1, um)); // ts-1: strictly before this turn's first sample
+              lastTurn = turn;
             }
-            lastTurn = turn;
-            lastRunId = runId;
-          }
-          if (lastTurn != null) {
-            ends.push({ turn: lastTurn, runId: lastRunId, endedAt: Date.now() });
           }
           getEegStore(eegSk).backfill(samples, ends);
           eegTurnCounters.set(eegSk, Math.max(eegTurnCounters.get(eegSk) ?? 0, lastTurn ?? 0));
+          saveEegStore(eegSk); // persist the anatomy-rebuilt history so it survives the next reload
           updateBudgetPanel();
         })
         .catch(() => {});
@@ -4637,6 +5344,7 @@ async function hydrateTab(tab: Tab): Promise<void> {
   }
   const target = tabStates.get(tab.id) ?? ts;
   target.messages = res.messages ?? [];
+  normalizeHistoryRenderBlocks(target.messages);
   for (const m of target.messages) {
     reconstructInjectionFields(m as Record<string, unknown>);
     const rec = m as Record<string, unknown>;
@@ -4812,6 +5520,86 @@ async function generateTabTitle(tab: Tab) {
   }
 }
 
+// FORK 2026-06-14 (bug #4): the prompt echo can land in messages[] more than once
+// during the in-flight window (optimistic bubble + flushed queued copy), showing
+// the prompt 2-3x until a loadChat reconcile. Skip a push whose _clientMsgId is
+// already present so each user prompt appears exactly once.
+function pushUserMsgDeduped(m: Record<string, unknown>): void {
+  const id = m._clientMsgId;
+  if (id && messages.some((x) => x._clientMsgId === id)) {
+    return;
+  }
+  messages.push(m);
+}
+
+// FORK 2026-06-22 (bug: "the answer appears twice, identical, even the fractal"):
+// the ASSISTANT side never got the dedup guard the USER side got in bug #4 above.
+// The backend transcript + chat.history are clean (verified: exactly one copy), but
+// the frontend can land the SAME assistant turn in messages[] twice during the
+// in-flight window — e.g. a WS reconnect mid/post-turn runs loadChat() (replacing
+// messages[] with server history that already includes the answer) and THEN the
+// buffered chat `final` event fires `messages.push(p.message)` with hadTemps=false,
+// appending a second identical copy. Unlike user prompts, turn-end calls
+// loadSessions() (NOT loadChat()), so nothing ever reconciles the dup away and it
+// renders forever. These helpers give assistant answers the same exactly-once
+// guarantee, keyed on visible text since the streamed p.message and the server
+// copy share no client id.
+const ASSISTANT_DEDUP_MIN_LEN = 40;
+
+function assistantMsgText(m: Record<string, unknown>): string {
+  const content = m.content;
+  let raw = "";
+  if (typeof content === "string") {
+    raw = content;
+  } else if (Array.isArray(content)) {
+    raw = content
+      .filter((b: unknown) => (b as { type?: unknown }).type === "text")
+      .map((b: unknown) => (b as { text?: unknown }).text ?? "")
+      .join("");
+  }
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+function pushAssistantMsgDeduped(m: Record<string, unknown>): void {
+  if (m.role === "assistant") {
+    const text = assistantMsgText(m);
+    if (
+      text.length >= ASSISTANT_DEDUP_MIN_LEN &&
+      messages.some((x) => x.role === "assistant" && assistantMsgText(x) === text)
+    ) {
+      return;
+    }
+  }
+  messages.push(m);
+}
+
+// Deterministic net: collapse any assistant answer that appears more than once in
+// messages[] (exact visible-text match, length-guarded so legit short repeats like
+// "Done." survive). Keeps the first occurrence. Runs at finalize so a duplicate
+// introduced by ANY in-flight race — not just the push path — is removed before
+// render, without waiting for a loadChat reconcile that turn-end never triggers.
+function dedupeAssistantAnswers(): void {
+  const seen = new Set<string>();
+  let changed = false;
+  const kept: typeof messages = [];
+  for (const m of messages) {
+    if (m.role === "assistant") {
+      const text = assistantMsgText(m as Record<string, unknown>);
+      if (text.length >= ASSISTANT_DEDUP_MIN_LEN) {
+        if (seen.has(text)) {
+          changed = true;
+          continue;
+        }
+        seen.add(text);
+      }
+    }
+    kept.push(m);
+  }
+  if (changed) {
+    messages = kept;
+  }
+}
+
 async function send(text: string) {
   if (!text.trim()) {
     return;
@@ -4890,6 +5678,15 @@ async function send(text: string) {
     // freshly-rotated key rather than the archived session's state.
     updateBudgetPanel();
 
+    // FORK 2026-06-14 (bible §5.84-C): the cleared session's effort pin does not carry
+    // to the rotated key (fresh key = Auto). Drop the archived entry so it doesn't leak.
+    if (oldSessionKey) {
+      effortPinBySession.delete(oldSessionKey);
+      saveEffortPin(oldSessionKey, "");
+      modelPinBySession.delete(oldSessionKey);
+      saveModelPin(oldSessionKey, "");
+    }
+
     // Server-side cascade. Fire-and-forget; failures are non-fatal — worst
     // case the next chat.send auto-creates a fresh entry on the new key.
     if (oldSessionKey) {
@@ -4938,12 +5735,16 @@ async function send(text: string) {
     return;
   }
 
+  // FORK 2026-06-24 (recoverable-retry): a new user message means the user took
+  // over — cancel any pending auto-retry for this session before we send.
+  retryState.delete(sessionKey);
+
   const isFirstMessage = messages.length === 0;
   // FORK: Mark message as queued only if THIS session has an active run
   const hasActiveRunForSession = Array.from(activeRuns.values()).some(
     (r) => r.sessionKey && sessionKeyMatches(r.sessionKey),
   );
-  const isQueued = hasActiveRunForSession || streamRunId != null;
+  const isQueued = shouldQueue({ hasActiveRunForSession, streamRunId, sending });
   if (!isQueued) {
     sending = true;
   }
@@ -4969,8 +5770,12 @@ async function send(text: string) {
   // FORK 2026-05-09: Capture wall-clock send time so the user bubble can show
   // an absolute HH:MM:SS timestamp on its left gutter (Feature A). Also used
   // by assistant bubbles to compute elapsed seconds (Feature B).
+  // FORK 2026-06-14 (bug #4): one stable client id shared by the bubble AND the
+  // gateway idempotencyKey so the optimistic/queued/flushed copies dedup.
+  const clientMsgId = uuid();
   const outgoingUserMsg: Record<string, unknown> = {
     role: "user",
+    _clientMsgId: clientMsgId,
     content: [{ type: "text", text }],
     _promptStartedAt: Date.now(),
     ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
@@ -4987,13 +5792,51 @@ async function send(text: string) {
     // never jump above it.
     pendingQueuedSends.push(outgoingUserMsg);
   } else {
-    messages.push(outgoingUserMsg);
+    pushUserMsgDeduped(outgoingUserMsg);
   }
   updateChat();
   if (!isQueued) {
     updateBtn();
   }
   scrollChat();
+
+  // FORK 2026-06-22 (the architect): draw the blue prompt-boundary line the INSTANT the prompt
+  // is sent — not at turn end — so every turn is visibly delimited while it still runs.
+  // The boundary carries this prompt's stable user-message index + text → hover overlay
+  // + click-scroll. Only the live (non-queued) send draws here; a QUEUED send's turn is
+  // still delimited by the end-handler path (eegBoundaryAtSend flag dedupes the two).
+  if (!isQueued) {
+    try {
+      if (sessionKey && !sessionKey.includes(":subagent:")) {
+        const userMsgs = messages.filter(
+          (m: any) => (m.role || "").toLowerCase() === "user" && !m._temporary,
+        );
+        let promptIndex: number | undefined;
+        let promptText: string | undefined;
+        if (userMsgs.length > 0) {
+          promptIndex = userMsgs.length - 1;
+          // `text` is send()'s own argument (the prompt being sent) — msgText lives in
+          // another scope and would throw here, silently killing the boundary (the bug).
+          const pt = (text || "").trim();
+          promptText = pt.length > 280 ? `${pt.slice(0, 280)}…` : pt;
+        }
+        const turn = (eegTurnCounters.get(sessionKey) ?? 0) + 1;
+        eegTurnCounters.set(sessionKey, turn);
+        getEegStore(sessionKey).turnEnd({
+          turn,
+          runId: clientMsgId,
+          endedAt: Date.now(),
+          promptIndex,
+          promptText,
+        });
+        eegBoundaryAtSend.set(sessionKey, true); // tell the end-handler not to add a 2nd boundary
+        saveEegStore(sessionKey);
+        fillEegPaper();
+      }
+    } catch {
+      /* eeg boundary must never block a send */
+    }
+  }
 
   // FORK 2026-04-18: Amygdala + Fractal injection.
   // The user sees ONLY `text` in their bubble (with a click-to-expand hint
@@ -5007,10 +5850,19 @@ async function send(text: string) {
   // failed "enter" can never lose what you typed.
   const draftTabId = activeTabId;
   let sendOk = false;
+  // FORK 2026-06-14 (bible §5.84-C): re-apply the session's effort pin every turn via
+  // the webchat-safe `thinking` param. The gateway injects it as a `/think <level>`
+  // command into BodyForCommands (chat.ts:2161) — the displayed Body stays clean — and
+  // it resolves into params.thinkLevel for this turn. Auto (no pin) sends nothing, so
+  // the skill keeps control of the budget.
+  const effortPin = effortPinBySession.get(sessionKey);
+  const modelPin = modelPinBySession.get(sessionKey);
   await req("chat.send", {
     sessionKey,
     message: messageForGateway,
-    idempotencyKey: uuid(),
+    idempotencyKey: clientMsgId,
+    ...(effortPin ? { thinking: effortPin } : {}),
+    ...(modelPin ? { model: modelPin } : {}),
   })
     .then(() => {
       sendOk = true;
@@ -5094,6 +5946,17 @@ async function abort() {
   lastDeltaLen = 0;
   lastDeltaAt = 0;
   streamRunId = null;
+  // FORK 2026-06-24 (recoverable-retry): a manual stop cancels any pending
+  // auto-retry for this session and surfaces an orange warning instead of
+  // silently dropping the stream.
+  retryState.delete(sessionKey);
+  const stoppedMsg = {
+    role: "assistant",
+    content: [{ type: "text", text: "⏹ Stopped." }],
+    _isWarning: true,
+  };
+  messages.push(stoppedMsg);
+  persistErrorMsg(sessionKey, stoppedMsg);
   // FORK 2026-05-16: chat.abort only aborts THIS session server-side, so only
   // drop THIS session's runs locally. The old `activeRuns.clear()` nuked every
   // other tab's live run from the indicator too (multi-tab regression).
@@ -5151,8 +6014,16 @@ function md(text: string): string {
   // by markdown-it) in a clickable span that opens the file in the OS
   // default viewer via the `config.openExternalFile` RPC. Also matches
   // bare paths in plain text for pointer-style instructions.
+  // FORK 2026-06-22: dropped the extension allowlist. ANY in-shape absolute
+  // or ~/ path (no spaces; char class [\w./-]) now linkifies regardless of
+  // extension — html, svg, mjs, css, mp4, csv, extensionless, etc. The old
+  // narrow allowlist (md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf) left
+  // `~/foo.svg` and `/home/.../brain-diagram.html` as dead text. Safety is
+  // still enforced server-side by config.openExternalFile's root allowlist,
+  // so over-matching here cannot open anything outside the allowed roots.
+  // Trailing punctuation guard: don't swallow a path-final '.' or '-'.
   h = h.replace(
-    /<code>(~\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf)|\/(?:home|usr|tmp|var|opt|etc)\/[\w./-]+\.(?:md|txt|ts|js|json|yaml|yml|png|jpg|jpeg|pdf))<\/code>/g,
+    /<code>(~\/[\w./-]*[\w/]|\/(?:home|usr|tmp|var|opt|etc|mnt|media|data|srv)\/[\w./-]*[\w/])<\/code>/g,
     '<code class="fs-link" data-path="$1" title="Click to open in system viewer">$1</code>',
   );
   // FORK 2026-05-10: ALSO wrap bare filenames (no slash, just `BRIEFING.md`)
@@ -5163,7 +6034,7 @@ function md(text: string): string {
   // server-side allowlist behavior (we don't want `report.docx` resolving
   // because it's neither a text file nor an OS-openable doc here).
   h = h.replace(
-    /<code>([A-Za-z][\w.-]*\.(?:md|txt|ts|tsx|js|json|yaml|yml|png|jpg|jpeg|pdf|sh|py|css|html|toml|ini))<\/code>/g,
+    /<code>([A-Za-z][\w.-]*\.(?:md|txt|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|png|jpg|jpeg|gif|webp|svg|pdf|sh|py|css|html|htm|xml|toml|ini|csv|mp4|mp3|wav|go|rs|rb|php|sql|log))<\/code>/g,
     (full, name) => {
       // If this <code> is already the start of an fs-link replacement (the
       // earlier regex would have transformed it), skip. We can't easily look
@@ -5570,17 +6441,18 @@ async function buildInjectedPrompt(userText: string): Promise<string> {
   if (!wantFra) {
     return userText;
   }
-  const extras: string[] = [];
-  extras.push(
-    "\n\n---\n\n**Structure this turn's reply as labelled sections in this exact order: 💬 ANSWER → 🌿 FRACTAL.** Each marker on its own line, blank line between sections. The UI parses markers and renders each section as a separate bubble; the first is expanded, later ones collapsed.",
+  // FORK 2026-06-19 (bug A — marker-free contract): the 💬 ANSWER section marker is RETIRED. The UI
+  // now separates narration / answer STRUCTURALLY (text after the last tool = answer; see
+  // reply-grouping.ts), so it no longer needs the model to emit a literal "💬 ANSWER" label — which
+  // the model dropped intermittently (it was instructed ONLY here, transiently, while "🌿 FRACTAL" is
+  // ALSO mandated by the always-loaded system prompt → asymmetric reliability → Bug A). Keep ONLY the
+  // 🌿 FRACTAL reinforcement and explicitly tell the model NOT to add a 💬 ANSWER (or any other
+  // section) label. Sentinel for historical-message reconstruction: "append a 🌿 FRACTAL reflection
+  // section" (see reconstructInjectionFields).
+  return (
+    userText +
+    "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line (blank line before it): follow the fractal rules in your system prompt (MEMORY / PATTERN / RIPPLE / IMPROVE, ACTION-prefix when you changed something). The UI renders it as a separate collapsed bubble. Do NOT add a 💬 ANSWER label or any other section marker — just your normal answer, then the 🌿 FRACTAL section."
   );
-  extras.push(
-    "\n\n**💬 ANSWER** — your complete substantive reply, markdown freely, natural prose.",
-  );
-  extras.push(
-    "\n\n**🌿 FRACTAL** — follow the fractal rules in your system prompt (MEMORY / PATTERN / RIPPLE / IMPROVE, ACTION-prefix when you changed something). Full rule source: `~/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md`.",
-  );
-  return userText + extras.join("");
 }
 
 // FORK 2026-06-10 (amygdala retirement): the 3-section reply splitter
@@ -5641,7 +6513,11 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
   );
   const isBriefingShape = /^\s*\/(new|reset)\b/i.test(rawText);
   const isBriefing = isBriefingNew || isBriefingLegacy || isBriefingShape;
-  const isAmygdala = rawText.includes("Structure this turn's reply as labelled sections");
+  // FORK 2026-06-19: recognise BOTH the retired 💬 ANSWER/🌿 FRACTAL framing (historical messages)
+  // AND the new fractal-only injection, so the injected suffix is hidden from the bubble after refresh.
+  const isAmygdala =
+    rawText.includes("Structure this turn's reply as labelled sections") ||
+    rawText.includes("append a 🌿 FRACTAL reflection section");
   if (!isBriefing && !isAmygdala) {
     return;
   }
@@ -5659,7 +6535,9 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
   } else {
     // Amygdala fallback: split right before the directive marker. Tolerates
     // collapsed whitespace and inline `---` separators.
-    const amygMatch = rawText.match(/^([\s\S]*?)\s*(?:---\s*)?\*{0,2}\s*Structure this turn/);
+    const amygMatch = rawText.match(
+      /^([\s\S]*?)\s*(?:---\s*)?\*{0,2}\s*(?:Structure this turn|After your reply, append a 🌿 FRACTAL)/,
+    );
     originalText = amygMatch ? amygMatch[1].trim() : rawText.slice(0, 200);
     if (!originalText) {
       originalText = rawText.slice(0, 200);
@@ -5935,7 +6813,7 @@ function renderEnvelope(env: Envelope): string {
   const explanation = env.explanation
     ? `<div class="env-explanation">${md(env.explanation)}</div>`
     : "";
-  // FORK 2026-05-30 (Oscar directive): progressive disclosure. The COLLAPSED
+  // FORK 2026-05-30 (the architect directive): progressive disclosure. The COLLAPSED
   // view is just the icon + headline — a small, plain-language warning the
   // normal user can glance past ("Gateway restarted"). Everything else
   // (explanation, actions, the technical kv/raw block) lives inside the
@@ -6206,6 +7084,21 @@ function renderMsg(
           ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
           : "";
       const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
+      // FORK 2026-06-24 (recoverable-retry): orange centered retry warning with a
+      // live countdown span + hover-revealed "stop retrying" link (CSS sibling
+      // unit). Rendered from the structured fields so the 1s tick can rewrite only
+      // the countdown; falls back to the persisted delay when no live state.
+      if (msg._isRetryWarning) {
+        const rsk = String((msg as any)._retrySessionKey ?? "");
+        const rst = retryState.get(rsk);
+        const remainMs =
+          rst && !rst.cancelled
+            ? Math.max(0, rst.nextRetryAt - Date.now())
+            : Number((msg as any)._retryDelayMs ?? 0);
+        const rAtt = Number((msg as any)._retryAttempt ?? 0);
+        h += `<div class="msg-overload-bubble retrying" data-retry-warning="${esc(rsk)}">⚠️ ${esc(labelFor((msg as any)._retryKind ?? null))} — retry ${rAtt + 1}/${RETRY_LADDER_MS.length}, retrying in <span class="retry-countdown">${esc(formatWait(remainMs))}</span>… <a class="retry-stop-link" data-retry-stop="${esc(rsk)}">stop retrying</a></div>`;
+        return h;
+      }
       // FORK: Overload retry messages — orange centered bubble
       if (msg._isOverloadRetry) {
         h += `<div class="msg-overload-bubble${msg._isExhausted ? " exhausted" : ""}">${md(text)}</div>`;
@@ -6404,6 +7297,19 @@ function renderMsg(
             ? ` <button class="retry-provider-btn" data-retry-provider="${esc(msg._retryProvider)}" data-hint="Retry ${esc(msg._retryProvider)}">↻</button>`
             : "";
         const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
+        // FORK 2026-06-24 (recoverable-retry): twin of the string-content path —
+        // orange retry warning with live countdown span + hover stop link.
+        if (msg._isRetryWarning) {
+          const rsk = String((msg as any)._retrySessionKey ?? "");
+          const rst = retryState.get(rsk);
+          const remainMs =
+            rst && !rst.cancelled
+              ? Math.max(0, rst.nextRetryAt - Date.now())
+              : Number((msg as any)._retryDelayMs ?? 0);
+          const rAtt = Number((msg as any)._retryAttempt ?? 0);
+          h += `<div class="msg-overload-bubble retrying" data-retry-warning="${esc(rsk)}">⚠️ ${esc(labelFor((msg as any)._retryKind ?? null))} — retry ${rAtt + 1}/${RETRY_LADDER_MS.length}, retrying in <span class="retry-countdown">${esc(formatWait(remainMs))}</span>… <a class="retry-stop-link" data-retry-stop="${esc(rsk)}">stop retrying</a></div>`;
+          return h;
+        }
         // FORK: Overload retry + warning messages — orange centered bubble
         if (msg._isOverloadRetry) {
           h += `<div class="msg-overload-bubble${msg._isExhausted ? " exhausted" : ""}">${md(text)}</div>`;
@@ -6557,7 +7463,7 @@ function renderThinkingIndicator(): string {
     // FORK 2026-06-04 — bug task-mpzgsvbo (Thinking indicators): the CHAT indicator is now
     // BINARY — it shows ONLY whether the viewed session has a live LLM call, as ONE row.
     // It used to render one row PER active run (main + each subagent), which is what produced
-    // the "multiple indicators at once" Oscar reported. The per-run / per-subagent breakdown
+    // the "multiple indicators at once" the architect reported. The per-run / per-subagent breakdown
     // now lives ONLY in the RECIPES panel (+ the collapsible subagent chat bubbles). The Stop
     // button has always called the session-level abort() (see the delegated #messages handler),
     // so one Stop is the correct semantics. runBelongsToViewedSession stays the ONE shared
@@ -6650,10 +7556,12 @@ function startThinkingTick() {
     return;
   }
   thinkingTickInterval = setInterval(() => {
-    if (activeRuns.size === 0) {
-      // No active runs left. Stop the tick. (sending is cleared by the
-      // lifecycle:end / chat.final / chat.error handler that emptied
-      // activeRuns; no longer cleared here.)
+    if (activeRuns.size === 0 && retryState.size === 0) {
+      // No active runs AND no pending auto-retry left. Stop the tick. (sending is
+      // cleared by the lifecycle:end / chat.final / chat.error handler that
+      // emptied activeRuns; no longer cleared here.) FORK 2026-06-24: the tick
+      // also drives the recoverable-retry countdown, so it must keep ticking
+      // while a retry is pending even with zero active runs.
       clearInterval(thinkingTickInterval!);
       thinkingTickInterval = null;
       return;
@@ -6673,6 +7581,24 @@ function startThinkingTick() {
         span.textContent = `${elapsed}s`;
       }
     });
+    // FORK 2026-06-24 (recoverable-retry): live countdown. Rewrite each active
+    // retry-warning's "retrying in {remaining}" from its session's nextRetryAt;
+    // when the wait elapses (and the track isn't cancelled / already firing),
+    // FIRE the retry. Iterate state (not DOM) so a backgrounded tab still fires.
+    for (const [sk, st] of retryState) {
+      if (st.cancelled) continue;
+      const remainMs = st.nextRetryAt - Date.now();
+      const skSel =
+        typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(sk) : sk;
+      document
+        .querySelectorAll<HTMLElement>(`[data-retry-warning="${skSel}"] .retry-countdown`)
+        .forEach((span) => {
+          span.textContent = formatWait(Math.max(0, remainMs));
+        });
+      if (remainMs <= 0 && !st.firing) {
+        void retryLastTurn(sk);
+      }
+    }
     updatePrefrontalTree();
   }, 1000);
 }
@@ -7023,17 +7949,28 @@ function updateChat(skipScroll = false) {
         }
         assistantTextIndices.push(j);
       }
-      // All assistant text messages except the last in each run are thinking steps.
-      // This applies during streaming too — frozen bubbles before tool calls are
-      // definitively intermediate and slice(0,-1) already excludes the live bubble.
-      // DO NOT re-add an `isCurrentRun`/`streamMsgIdx`-style guard here: it makes
-      // ALL prior bubbles flash to final-answer style on each delta and snap back on
-      // each tool call (the "blinking chat text" bug). Removed 2026-03-26 in 69693d3f61,
-      // collateral-reverted by the 2026-03-28 restart-badge refactor c893c87370, removed
-      // again 2026-05-29. See bible §5.8.
-      const intermediates = assistantTextIndices.slice(0, -1);
-      for (const idx of intermediates) {
-        thinkingSet.add(idx);
+      // FORK 2026-06-19 (bug A — STRUCTURAL, replaces position-only slice(0,-1)): an assistant text
+      // bubble is genuine between-tool NARRATION (→ collapse into Reasoning) IFF a tool call/result
+      // occurs LATER in the same run; text with no tool after it is part of the ANSWER and stays
+      // visible. This stops a multi-bubble answer (block-break / >5s gap split / the old 💬 ANSWER-
+      // marked structured reply) from having all-but-the-last bubble hidden whenever the model dropped
+      // the marker — the actual Bug A. With NO tools in the run, nothing collapses (genuine
+      // chain-of-thought already lives in the separate thinking channel). Decision is the pure,
+      // unit-tested narrationIndices(); see reply-grouping.ts + bible §5.8h.
+      // DO NOT re-add an `isCurrentRun`/`streamMsgIdx`-style guard here: it makes ALL prior bubbles
+      // flash to final-answer style on each delta and snap back on each tool call (the "blinking chat
+      // text" bug). Removed 2026-03-26 in 69693d3f61, again 2026-05-29. See bible §5.8.
+      const textIdxSet = new Set(assistantTextIndices);
+      const runKinds: RunMsgKind[] = [];
+      for (let j = runStart; j < i; j++) {
+        const c = Array.isArray(messages[j].content) ? messages[j].content : [];
+        runKinds.push({
+          isAssistantText: textIdxSet.has(j),
+          hasTool: c.some((b: unknown) => b.type === "tool_use" || b.type === "tool_result"),
+        });
+      }
+      for (const rel of narrationIndices(runKinds)) {
+        thinkingSet.add(runStart + rel);
       }
       runStart = i + 1;
     }
@@ -7064,35 +8001,35 @@ function updateChat(skipScroll = false) {
         continue;
       }
 
-      // Collect intermediate vs final in this run
+      // Collect intermediate (collapsed) vs answer (visible) bubbles in this run.
+      // FORK 2026-06-19 (bug A): the run can now have MULTIPLE answer bubbles — every assistant text
+      // bubble NOT classified as between-tool narration (thinkingSet) is part of the answer and is
+      // rendered visibly, in order. Previously only a single `finalIdx` survived and earlier answer
+      // bubbles were demoted into the collapsed group, which hid real answer content.
       const runEnd = i; // exclusive
       const intermediateIndices: number[] = [];
-      let finalIdx = -1;
+      const answerIndices: number[] = [];
 
       for (let j = runStart; j < runEnd; j++) {
         const m = messages[j];
         if (thinkingSet.has(j)) {
           intermediateIndices.push(j);
-        } else {
-          const role = (m.role ?? "").toLowerCase();
-          if (role === "assistant") {
-            // Check if it's a tool-only message (no text) — intermediate
-            const c = Array.isArray(m.content) ? m.content : [];
-            const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
-            const plainText = typeof m.content === "string" && (m.content as string).trim();
-            if (!hasText && !plainText) {
-              intermediateIndices.push(j);
-            } else {
-              // If we already had a final candidate, demote it to intermediate
-              if (finalIdx >= 0) {
-                intermediateIndices.push(finalIdx);
-              }
-              finalIdx = j;
-            }
-          } else {
-            // user tool_result messages, system messages — intermediate
+          continue;
+        }
+        const role = (m.role ?? "").toLowerCase();
+        if (role === "assistant") {
+          // A tool-only assistant message (no text) is intermediate; a text bubble is answer.
+          const c = Array.isArray(m.content) ? m.content : [];
+          const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
+          const plainText = typeof m.content === "string" && (m.content as string).trim();
+          if (!hasText && !plainText) {
             intermediateIndices.push(j);
+          } else {
+            answerIndices.push(j);
           }
+        } else {
+          // user tool_result messages, system messages — intermediate
+          intermediateIndices.push(j);
         }
       }
 
@@ -7112,7 +8049,7 @@ function updateChat(skipScroll = false) {
       const isStreaming = hasTemporaries || (i === messages.length && streamMsgIdx >= 0);
 
       // Render the run
-      if (intermediateIndices.length > 0 && finalIdx >= 0 && !isStreaming) {
+      if (intermediateIndices.length > 0 && answerIndices.length > 0 && !isStreaming) {
         // Completed run with intermediates — wrap in collapsible group
         const groupId = `rg-${intermediateIndices[0]}`;
         const expanded = expandedTools.has(groupId);
@@ -7134,8 +8071,11 @@ function updateChat(skipScroll = false) {
           h += `</div>`;
         }
         h += `</div>`;
-        // Render the final answer normally
-        h += renderMsg(messages[finalIdx], finalIdx, false, globalResultMap, globalToolNames);
+        // FORK 2026-06-19 (bug A): render EVERY answer bubble (all visible text after the last tool),
+        // in order — not just a single final bubble.
+        for (const j of answerIndices) {
+          h += renderMsg(messages[j], j, false, globalResultMap, globalToolNames);
+        }
       } else {
         // Streaming run or no intermediates — render flat
         for (let j = runStart; j < runEnd; j++) {
@@ -7349,6 +8289,8 @@ function renderTabs() {
       ? ""
       : `<span class="tab-close" data-tab-close="${tab.id}">&times;</span>`;
 
+    // FORK 2026-06-24 — Clone tab: the doubled leading icon now lives IN tab.title (see cloneTab),
+    // so no separate badge span is rendered. (Retired the `.tab-clone-badge` overlap approach.)
     html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}" data-hint="${escapeHtml(tab.title)}">
       <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
     </div>`;
@@ -7371,15 +8313,24 @@ function renderTabs() {
 function openTabContextMenu(tabId: string, x: number, y: number) {
   closeTabContextMenu();
   const tab = tabs.find((t) => t.id === tabId);
-  if (!tab || tab.id === "tab-main") {
+  if (!tab) {
     return;
   }
   const menu = document.createElement("div");
   menu.className = "exec-context-menu";
   tabContextMenuEl = menu;
+  // FORK 2026-06-20 — Clone tab joins the existing rename/auto-name menu. Rename + Auto-name stay
+  // excluded for Main (its title is force-restored on every loadTabs(), so a rename wouldn't stick),
+  // but Clone IS offered on Main too — forking the primary conversation into a new tab is the most
+  // useful case.
+  const renameItems =
+    tab.id === "tab-main"
+      ? ""
+      : `<button data-tab-action="rename" class="exec-context-item">✏️ Rename…</button>
+    <button data-tab-action="auto" class="exec-context-item">${AUTO_NAME_ICON} Auto-name</button>`;
   menu.innerHTML = `
-    <button data-tab-action="rename" class="exec-context-item">✏️ Rename…</button>
-    <button data-tab-action="auto" class="exec-context-item">${AUTO_NAME_ICON} Auto-name</button>
+    ${renameItems}
+    <button data-tab-action="clone" class="exec-context-item">⧉ Clone tab</button>
   `;
   menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
   menu.style.top = `${Math.min(y, window.innerHeight - 100)}px`;
@@ -7395,7 +8346,9 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
       ev.stopPropagation();
       const action = btn.dataset.tabAction;
       closeTabContextMenu();
-      if (action === "rename") {
+      if (action === "clone") {
+        void cloneTab(tabId);
+      } else if (action === "rename") {
         openTabRename(tabId, x, y);
       } else if (action === "auto") {
         const t = tabs.find((tt) => tt.id === tabId);
@@ -7610,6 +8563,74 @@ function closeTab(tabId: string) {
 
   renderTabs();
   saveTabs();
+}
+
+// FORK 2026-06-20 — Clone tab. Resolve the session the clone should bind to, branching the parent's
+// context where the gateway supports it:
+//   1. `sessions.fork` — a true EAGER transcript fork (the clone opens already showing the parent's
+//      full conversation). Preferred; activates automatically once the gateway ships that RPC.
+//   2. `sessions.create` with `parentSessionKey` — DEPLOYED today. Creates a fresh server session
+//      LINKED to the parent (lineage); the parent-fork hook can branch its transcript on the first
+//      turn. This is the "seeded from the parent's session" fallback.
+//   3. A pure client-side `tinker:*` key — last resort if both RPCs are unreachable; the gateway
+//      lazily auto-creates it on first send (no context inheritance).
+async function resolveClonedSessionKey(parentKey: string, label: string): Promise<string> {
+  try {
+    const r = await req<{ key?: string }>("sessions.fork", { key: parentKey, label });
+    if (r?.key) {
+      return r.key;
+    }
+  } catch {
+    // RPC not present on this gateway build — fall through to the deployed lineage path.
+  }
+  try {
+    const r = await req<{ key?: string }>("sessions.create", {
+      parentSessionKey: parentKey,
+      label,
+    });
+    if (r?.key) {
+      return r.key;
+    }
+  } catch {
+    // sessions.create unavailable / rejected — fall through to a client-only key.
+  }
+  return `tinker:${Date.now().toString(36)}`;
+}
+
+async function cloneTab(parentTabId: string) {
+  const parentIdx = tabs.findIndex((t) => t.id === parentTabId);
+  if (parentIdx < 0) {
+    return;
+  }
+  const parent = tabs[parentIdx];
+  // FORK 2026-06-24 — double the parent's leading icon INTO the clone's name itself (e.g.
+  // "🏠 Main" → "🏠🏠 Main"), so the clone literally shows the same starting icon twice: two real,
+  // equal-size, EDITABLE glyphs that are part of the title string. (This replaces the earlier
+  // approach — a separate small CSS `.tab-clone-badge` — which rendered a tiny non-editable icon
+  // next to the big title icon, i.e. "one little icon, then a big one", not "the same icon twice".)
+  const icon = leadingEmoji(parent.title);
+  const title = icon ? `${icon}${parent.title}` : parent.title;
+
+  const sessionKey = parent.sessionKey
+    ? await resolveClonedSessionKey(parent.sessionKey, parent.title)
+    : `tinker:${Date.now().toString(36)}`;
+
+  const clone: Tab = {
+    id: generateTabId(),
+    sessionKey,
+    title,
+    isAttached: true,
+    // The doubled-icon title is deliberate — lock it so loadSessions() won't overwrite it with the
+    // server fortune phrase of the (brand-new) cloned session.
+    titleLocked: true,
+  };
+  // Drop the clone immediately to the right of its parent.
+  tabs.splice(parentIdx + 1, 0, clone);
+  tabStates.set(clone.id, freshTabState());
+  saveTabs();
+  renderTabs();
+  switchToTab(clone.id);
+  updateSessionsPanel();
 }
 
 function attachSessionToTab(key: string) {
@@ -7864,6 +8885,8 @@ function updateBudgetPanel() {
       '<div style="padding:20px;color:var(--muted);font-size:11px">Loading config...</div>';
     return;
   }
+  loadEffortPin(sessionKey); // FORK 2026-06-14 (bible §5.84-C): restore the pin before paint
+  loadModelPin(sessionKey); // FORK 2026-06-14 (bible §5.84 Drop 3): restore the model pin before paint
 
   const { primary, fallbacks, models, authProfiles, authOrder } = modelConfigData;
   let html = '<div class="model-list">';
@@ -7971,7 +8994,7 @@ function updateBudgetPanel() {
     html += "</div></div>";
   }
 
-  // FORK 2026-06-13 (eeg): EEG card (bible §5.8h) — (a) the per-tab 8-stop
+  // FORK 2026-06-13 (eeg): EEG card (bible §5.8h) — (a) the per-tab 7-stop
   // thinking slider (§5.8f, UNCHANGED semantics, still the .model-think-slider
   // token), (b) the model-force slider (writes ONLY { model } — never bundled
   // with thinkingLevel, §5.8f invariant 1), (c) the seismograph paper for the
@@ -7981,37 +9004,20 @@ function updateBudgetPanel() {
   {
     const open = !collapsedModelSections.has("eeg");
     html += `<div class="model-group${open ? " open" : ""}" data-section="eeg">`;
-    html += '<div class="model-group-label">EEG</div>';
+    html += '<div class="model-group-label">EFFORT</div>';
     html += '<div class="model-group-body">';
     html += renderThinkingSlider();
     html += renderModelForceSlider();
-    html +=
-      '<div class="eeg-paper" id="eeg-paper">' +
-      (sessionKey ? getEegStore(sessionKey).renderSvg({ width: 280 }) : "") +
-      "</div>";
     html += "</div></div>";
   }
 
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
   el.innerHTML = html;
 
-  // FORK 2026-06-13 (eeg): the seismograph fills the FULL panel width (Oscar
-  // 2026-06-13). The SVG needs a concrete pixel width, so measure the now-laid-
-  // out #eeg-paper and re-render at its clientWidth — keeping the trace columns
-  // pixel-aligned with the effort-slider ticks (both use the same px pads over
-  // the same-width box). Re-fills on window resize via the one-time listener.
-  fillEegPaper();
-  if (!eegResizeBound) {
-    eegResizeBound = true;
-    window.addEventListener("resize", () => fillEegPaper());
-    // persist EVERY session's trace on unload so a mid-turn hard refresh still
-    // restores (turn-end already persists completed turns) — Oscar 2026-06-13.
-    window.addEventListener("beforeunload", () => {
-      for (const sk of eegStores.keys()) {
-        saveEegStore(sk);
-      }
-    });
-  }
+  // FORK 2026-06-19 (bible §5.8h): the EEG is its OWN panel now — paint it (binds
+  // once on #eeg-panel-body). It repaints on the same triggers as the budget panel
+  // (effort events, tab switch) via this tail call.
+  renderEegPanel();
 
   // Bind collapse toggles
   el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
@@ -8034,7 +9040,7 @@ function updateBudgetPanel() {
   });
 
   // FORK 2026-06-13 (eeg): SECONDARY (horizontal/tilt) wheel = vertical SCALE zoom
-  // of the length axis (Oscar 2026-06-13). Oscar's secondary wheel emits a
+  // of the length axis (the architect 2026-06-13). the architect's secondary wheel emits a
   // HORIZONTAL delta (deltaX) — which was sliding the panel sideways; we capture
   // that (and Ctrl+wheel as a no-tilt-wheel fallback) for zoom instead. The
   // VERTICAL wheel (deltaY) still scrolls history normally.
@@ -8049,38 +9055,16 @@ function updateBudgetPanel() {
       }
       e.preventDefault();
       const factor = delta < 0 ? 1.12 : 1 / 1.12;
-      eegZoom = Math.min(20, Math.max(0.1, eegZoom * factor));
+      eegZoom = Math.min(20, Math.max(0.03, eegZoom * factor));
       fillEegPaper();
     },
     { passive: false },
   );
 
-  // FORK 2026-06-13 (eeg): delegate clicks on the seismograph's turn markers →
-  // scroll the chat to that turn's answer bubble and flash it (bible §5.8h q7,
-  // the context-timeline §5.9 scroll+flash precedent). The bubble is found via
-  // the data-eeg-turn stamp renderMsg emits; .eeg-focus is the CSS flash class
-  // (owned by the CSS unit).
-  el.querySelector<HTMLElement>("#eeg-paper")?.addEventListener("click", (e) => {
-    const marker = (e.target as HTMLElement).closest<HTMLElement>(".eeg-marker");
-    if (!marker) {
-      return;
-    }
-    const turn = marker.getAttribute("data-eeg-turn");
-    if (!turn) {
-      return;
-    }
-    const escapedTurn =
-      typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(turn) : turn;
-    const bubble = document.querySelector<HTMLElement>(
-      `#messages [data-eeg-turn="${escapedTurn}"]`,
-    );
-    if (!bubble) {
-      return;
-    }
-    bubble.scrollIntoView({ behavior: "smooth", block: "center" });
-    bubble.classList.add("eeg-focus");
-    setTimeout(() => bubble.classList.remove("eeg-focus"), 2500);
-  });
+  // FORK 2026-06-19: the EEG marker-click handler moved to bindEegPanelOnce (the EEG
+  // is its own #eeg-panel now). The old #eeg-paper-inside-#budget-panel binding here
+  // was DEAD — that element no longer exists, so this never fired (it was the reason
+  // the click "did nothing"). Removed to kill the phantom handler.
 }
 
 function shortErrorLabel(reason: string): string {
@@ -8393,28 +9377,28 @@ const GROUP_LABELS: Record<string, string> = {
 
 const GROUP_ORDER = ["pinned", "whatsapp", "cron", "subagent", "other"];
 
-// FORK 2026-06-11 — tinkerui-slider: per-tab model badge + 8-stop thinking slider.
-// The 8 stops IN ORDER (index 0 = Auto = empty string '' / null). Auto means the
+// FORK 2026-06-11 — tinkerui-slider: per-tab model badge + 7-stop thinking slider.
+// (2026-06-14: the 'adaptive' stop was removed — 8 stops -> 7.)
+// The 7 stops IN ORDER (index 0 = Auto = empty string '' / null). Auto means the
 // MAX_THINKING_TOKENS cap is OMITTED so the model decides its own thinking budget
-// — it is NOT off; the model still thinks organically. The slider's min=0 max=7
-// step=1 maps directly onto this array; the level STRING is what sessions.update
-// persists (index 0 -> null). Module-level so the markup, the listener and the
-// re-render helper share one source of truth.
+// — it is NOT off; the model still thinks organically. The slider's min=0
+// max=THINK_STOPS.length-1 step=1 maps directly onto this array; the level STRING
+// is what sessions.update persists (index 0 -> null). Module-level so the markup,
+// the listener and the re-render helper share one source of truth.
 // `short` mirrors EEG_STOPS[].short — the compact tick label printed under the
-// slider so all 8 stops fit and align with the seismograph columns.
+// slider so all stops fit and align with the seismograph columns.
 const THINK_STOPS: { lvl: string; label: string; short: string }[] = [
   { lvl: "", label: "Auto", short: "Auto" },
   { lvl: "minimal", label: "Minimal", short: "Min" },
   { lvl: "low", label: "Low", short: "Low" },
   { lvl: "medium", label: "Medium", short: "Med" },
-  { lvl: "adaptive", label: "Adaptive", short: "Adpt" },
   { lvl: "high", label: "High", short: "High" },
   { lvl: "xhigh", label: "xHigh", short: "xHi" },
   { lvl: "max", label: "Max", short: "Max" },
 ];
 
 // FORK 2026-06-13 (eeg): shared tick-label layer printed UNDER a force slider so
-// EVERY stop is visible (Oscar's "every option written in the slider") and each
+// EVERY stop is visible (the architect's "every option written in the slider") and each
 // label centers on the SAME x as its seismograph column (eegStopLeftCss → bible
 // §5.8h invariant 2 alignment). The active stop is bolded via .active.
 function renderSliderStops(labels: string[], activeIdx: number): string {
@@ -8447,12 +9431,12 @@ function highlightSliderStop(e: Event, rowSelector: string): void {
 // FORK 2026-06-13 (eeg): the model-force slider's tick row — each stop shows a
 // short horizontal line "chip" in that model's EEG IDENTITY (provider color +
 // cost-thickness, google = rainbow), so the slider previews how each model will
-// appear on the seismograph (Oscar 2026-06-13). Auto = a thin gray dashed chip
+// appear on the seismograph (the architect 2026-06-13). Auto = a thin gray dashed chip
 // (router's choice). Thickness uses the model's cost at a fixed MEDIUM reference
 // effort so the chips are comparable across models.
 function renderModelChip(id: string | null, idx: number): string {
   const W = 30;
-  const H = 13; // tall enough for fable's 10px line (Oscar's linear scale)
+  const H = 13; // tall enough for fable's 10px line (the architect's linear scale)
   const y = H / 2;
   if (id === null) {
     return (
@@ -8533,7 +9517,7 @@ function shortModelLabel(id: string): string {
   if (/gpt-?[\d.]+/.test(lo)) {
     const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
     const k = /pro/.test(lo) ? "p" : /mini/.test(lo) ? "m" : /nano/.test(lo) ? "n" : "";
-    // "GPT" prefix (Oscar 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
+    // "GPT" prefix (the architect 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
     // suffix is dropped — only gpt-5.3-codex carries it and there is no plain 5.3.
     return `GPT${v}${k}`;
   }
@@ -8555,7 +9539,7 @@ function thinkStopIndexForLevel(level: unknown): number {
   return i >= 0 ? i : 0;
 }
 
-// FORK 2026-06-11 — tinkerui-slider: build the per-tab 8-stop thinking slider for
+// FORK 2026-06-11 — tinkerui-slider: build the per-tab 7-stop thinking slider for
 // the Models side panel (#budget-panel). Reads the CURRENTLY-VIEWED session via the
 // `sessionKey` module global + `sessions` list, indexes into THINK_STOPS, and
 // returns plain-string-concatenated markup that updateBudgetPanel() inserts
@@ -8568,12 +9552,18 @@ function renderThinkingSlider(): string {
   const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
     | { thinkingLevel?: string }
     | undefined;
-  const idx = thinkStopIndexForLevel(active?.thinkingLevel);
+  // FORK 2026-06-14 (bible §5.84-C): the client-side pin is the source of truth for
+  // the EFFORT slider (webchat can't persist server-side). Fall back to the session's
+  // stored level only when no pin exists for this session.
+  const pinned = sessionKey ? effortPinBySession.get(sessionKey) : undefined;
+  const idx = thinkStopIndexForLevel(pinned ?? active?.thinkingLevel);
   const stop = THINK_STOPS[idx] ?? THINK_STOPS[0];
   return (
     '<div class="model-think-slider-row">' +
     '<span class="model-slider-caption">EFFORT</span>' +
-    '<input type="range" class="model-think-slider" min="0" max="7" step="1" value="' +
+    '<input type="range" class="model-think-slider" min="0" max="' +
+    String(THINK_STOPS.length - 1) +
+    '" step="1" value="' +
     String(idx) +
     '" aria-label="Thinking level: ' +
     esc(stop.label) +
@@ -8588,7 +9578,7 @@ function renderThinkingSlider(): string {
 
 // FORK 2026-06-13 (eeg): stops for the model-force slider (bible §5.8h q2) —
 // stop 0 = Auto (router controls the model axis), then the configured models
-// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (Oscar 2026-06-13), so
+// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (the architect 2026-06-13), so
 // the model axis reads low→high left→right exactly like the effort slider. Rank
 // (Artificial-Analysis Intelligence Index in openclaw.json; lower = smarter) is
 // the sort key, modelPerfRank breaks ties. Capped at 7 (keeping the 7 smartest)
@@ -8603,11 +9593,11 @@ function modelForceStops(): { id: string | null; label: string }[] {
     return stops;
   }
   // FORK 2026-06-13 (eeg): drop the older claude-opus-4-7 (keep only opus-4-8) and
-  // gpt-5.3-codex (Oscar: "never makes sense to use it"). From Anthropic the slider
+  // gpt-5.3-codex (the architect: "never makes sense to use it"). From Anthropic the slider
   // keeps Sonnet, Opus and Fable.
   const EEG_SLIDER_EXCLUDE = /opus-4-7|gpt-5\.3/i;
   const rankOf = (id: string): number => cfg.models?.[id]?.rank ?? 999;
-  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (Oscar:
+  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (the architect:
   // "remove 5.4m, no need if it is not as smart as sonnet"). Sonnet's rank is the
   // intelligence floor; anything ranked below it (mini/nano/haiku/older) is cut.
   let sonnetRank = 999;
@@ -8630,10 +9620,10 @@ function modelForceStops(): { id: string | null; label: string }[] {
     return modelPerfRank(a) - modelPerfRank(b);
   });
   // keep the 8 SMARTEST (8 so claude-sonnet-4-6 at rank 7 / 8th-smartest makes
-  // the cut — Oscar 2026-06-13), then flip so the smartest sits on the RIGHT
+  // the cut — the architect 2026-06-13), then flip so the smartest sits on the RIGHT
   const top = ids.slice(0, 8);
   top.reverse();
-  // FORK 2026-06-13: Oscar pins FABLE to the far right (his flagship sits at the
+  // FORK 2026-06-13: the architect pins FABLE to the far right (his flagship sits at the
   // end of the intelligence axis, ahead of the rank-1 opus). The rest keep their
   // intelligence order.
   const fi = top.findIndex((id) => /fable/i.test(id));
@@ -8657,7 +9647,9 @@ function renderModelForceSlider(): string {
   const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
     | { model?: string }
     | undefined;
-  const cur = typeof active?.model === "string" ? active.model : "";
+  // FORK 2026-06-14 (bible §5.84 Drop 3): the client-side model pin wins (webchat can't persist).
+  const pinnedModel = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
+  const cur = pinnedModel ?? (typeof active?.model === "string" ? active.model : "");
   let idx = 0;
   if (cur) {
     const found = stops.findIndex((s) => s.id === cur);
@@ -8679,19 +9671,6 @@ function renderModelForceSlider(): string {
     renderModelSliderStops(stops, idx) +
     "</div>"
   );
-}
-
-// FORK 2026-06-13 (eeg): true iff the VIEWED session currently has a model
-// and/or thinkingLevel override set — derived from the SAME session fields the
-// two force sliders read (bible §5.8h q9). Forced samples draw dashed on the
-// seismograph: visual proof the force is obeyed.
-function viewedSessionForced(): boolean {
-  const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
-    | { model?: string; thinkingLevel?: string }
-    | undefined;
-  const modelForced = typeof active?.model === "string" && active.model.length > 0;
-  const levelForced = typeof active?.thinkingLevel === "string" && active.thinkingLevel.length > 0;
-  return modelForced || levelForced;
 }
 
 function updateSessionsPanel() {
@@ -9135,7 +10114,7 @@ function init() {
     <div class="alt-view" id="alt-view"></div>
     <div class="chat-area">
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
-      <!-- FORK 2026-06-11 — tinkerui-slider: the per-tab 8-stop thinking slider was
+      <!-- FORK 2026-06-11 — tinkerui-slider: the per-tab thinking slider was
            RELOCATED from this chat-area strip into the Models side panel
            (#budget-panel), rendered directly under the active tab's model row by
            renderThinkingSlider()/updateBudgetPanel(). No chat-area control here. -->
@@ -9159,6 +10138,16 @@ function init() {
           <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
         </div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
+      </div>
+      <div class="rpanel" id="eeg-panel">
+        <div class="rpanel-header">📈 EEG
+          <span class="ct-switch" id="eeg-scope-toggle">
+            <span class="ct-switch-label ct-switch-label--active" data-eeg-scope="session">Session</span>
+            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
+            <span class="ct-switch-label" data-eeg-scope="all">All</span>
+          </span>
+        </div>
+        <div id="eeg-panel-body" class="rpanel-body"></div>
       </div>
       <div class="rpanel" id="prefrontal-panel">
         <div class="rpanel-header"><button id="recipes-book-btn" class="rpanel-header-btn" title="Open the recipe book">🌳 RECIPES</button> <span id="prefrontal-count" class="sessions-count"></span>
@@ -9364,11 +10353,13 @@ function init() {
         return;
       }
       highlightSliderStop(e, ".model-think-slider-row");
+      // FORK 2026-06-14 (bible §5.84-C): persist CLIENT-SIDE per session (sessions.update
+      // does not exist + webchat can't patch metadata). The pin reaches the model on the
+      // next chat.send (Task 6). "" (Auto) clears the pin → the skill decides again.
       if (sessionKey) {
-        req("sessions.update", {
-          key: sessionKey,
-          patch: { thinkingLevel: stop.lvl || null },
-        }).catch(() => {});
+        if (stop.lvl) effortPinBySession.set(sessionKey, stop.lvl);
+        else effortPinBySession.delete(sessionKey);
+        saveEffortPin(sessionKey, stop.lvl);
       }
     });
     // FORK 2026-06-13 (eeg): delegated listeners for the model-force slider
@@ -9401,11 +10392,13 @@ function init() {
         return;
       }
       highlightSliderStop(e, ".model-force-slider-row");
+      // FORK 2026-06-14 (bible §5.84 Drop 3): persist CLIENT-SIDE (sessions.update is not a real
+      // method + webchat can't patch metadata). Re-applied on the next chat.send via the `model`
+      // param. Auto (no id) clears the pin → router/allocator picks the model again.
       if (sessionKey) {
-        req("sessions.update", {
-          key: sessionKey,
-          patch: { model: stop.id || null },
-        }).catch(() => {});
+        if (stop.id) modelPinBySession.set(sessionKey, stop.id);
+        else modelPinBySession.delete(sessionKey);
+        saveModelPin(sessionKey, stop.id || "");
       }
     });
   }
@@ -9447,6 +10440,24 @@ function init() {
       setBudgetScope(next);
     });
   }
+
+  // FORK 2026-06-19 (bible §5.8h): the EEG panel's OWN session/all toggle — its own
+  // eegScope state (separate from budgetScope), uses data-eeg-scope so the loop
+  // above ignores it. "all" overlays other sessions' concurrent traces, faint.
+  $("eeg-scope-toggle")?.addEventListener("click", (e) => {
+    const el = e.target as HTMLElement;
+    const label = el.closest("[data-eeg-scope]") as HTMLElement | null;
+    const track = el.closest("[data-scope-track]") as HTMLElement | null;
+    if (!label && !track) {
+      return;
+    }
+    const next: "session" | "all" = label
+      ? (label.dataset.eegScope as "session" | "all")
+      : eegScope === "session"
+        ? "all"
+        : "session";
+    setEegScope(next);
+  });
 
   // ─── Fractal injection toggle (FORK 2026-04-18; amygdala removed 2026-06-07) ───
   const fraBtn = $("tb-fractal")!;
@@ -9888,7 +10899,7 @@ function init() {
         (m) => (m.id.startsWith("kpi.") || m.id.startsWith("graph.")) && m.class === "SNAPSHOT",
       );
       // FORK 2026-06-05 — load ALL recorded history (no time window). The 30d
-      // cap was hiding months of already-collected data; Oscar wants the full
+      // cap was hiding months of already-collected data; the architect wants the full
       // record. No from_ts → every observation since the metric's first point;
       // the chart's fullRange auto-fits the span and zoom/pan covers it all.
       const obsLists = await Promise.all(
@@ -9914,10 +10925,12 @@ function init() {
       const GROUP_TITLES: Record<string, string> = {
         github: "GitHub",
         moltbook: "Moltbook",
-        clawhub: "ClawHub",
+        clawhub: "ClawHub views",
+        clawhubinstalls: "ClawHub installs",
         inbound: "Inbound links",
         website: "Website",
         npm: "npm",
+        youtube: "YouTube",
       };
       // Gray suffix shown next to the group title (e.g. GitHub graph → "GitHub TinkerClaw").
       const GROUP_ACCENTS: Record<string, string> = {
@@ -9951,6 +10964,20 @@ function init() {
         // real daily counts and no longer applies.)
         "graph.github.traffic.clones14d": { color: "#8ECAE6", axis: "left", cumulative: true },
         "graph.github.traffic.views14d": { color: "#F4A261", axis: "right", cumulative: true },
+        // FORK 2026-06-14 — Website visits (GA4 daily sessions) shown CUMULATIVE, one
+        // line per site. thetinkerzone = blue; sprintpaper = its colibri-logo green
+        // (#b6f02c). sprintpaper lights up once the GA4 SA is granted Viewer on its
+        // property (see graph.website.visits.sprintpaper seed in pollers/index.ts).
+        "graph.website.visits.daily": {
+          color: "#8ECAE6",
+          cumulative: true,
+          label: "thetinkerzone",
+        },
+        "graph.website.visits.sprintpaper": {
+          color: "#b6f02c",
+          cumulative: true,
+          label: "sprintpaper",
+        },
         // FORK 2026-06-05 — Inbound links: one hue per destination target, the
         // solid line = external (organic / others created), dashed = ours (we
         // created). Same color pairs the two lines of a target visually.
@@ -9975,10 +11002,90 @@ function init() {
           dash: true,
           label: "sprintpaper · ours",
         },
+        // FORK 2026-06-14 — YouTube thetinkerzone (public Data API stats). Absolute
+        // totals (growing line, NOT cumulative). YouTube red; total views dwarf subs so
+        // they get the secondary right axis; subscribers + videos share the left.
+        "graph.youtube.subscribers": { color: "#FF0000", axis: "left", label: "subscribers" },
+        "graph.youtube.views": { color: "#F4A261", axis: "right", label: "total views" },
+        "graph.youtube.videos": { color: "#c084fc", axis: "left", label: "videos" },
         // FORK 2026-06-06 — ClawHub REINSTATED (appeal #2517). Our globalcaos/jarvis-voice
         // is live again — verified on clawhub.ai: 3 downloads, 0 stars (the "4.5k" was a
         // bad clawskills.sh mirror). Ours-only; add lines as we re-publish more skills.
-        "graph.clawhub.jarvis-voice": { color: "#fbbf24", label: "jarvis-voice (ours)" },
+        // FORK 2026-06-14 — ClawHub views + installs: one color per skill, the SAME
+        // color in both cards so each skill reads as the same line across the pair.
+        "graph.clawhub.agent-sensei-ultimate": { color: "#fbbf24", label: "agent-sensei" },
+        "graph.clawhub.agent-superpowers": { color: "#34d399", label: "agent-superpowers" },
+        "graph.clawhub.chatgpt-exporter-ultimate": { color: "#FF0000", label: "chatgpt-exporter" },
+        "graph.clawhub.computational-humor": { color: "#8ECAE6", label: "computational-humor" },
+        "graph.clawhub.fork-and-skill-scanner-ultimate": {
+          color: "#c084fc",
+          label: "fork-scanner",
+        },
+        "graph.clawhub.jarvis-voice": { color: "#F4A261", label: "jarvis-voice" },
+        "graph.clawhub.memory-bench-pioneer": { color: "#f472b6", label: "memory-bench-pioneer" },
+        "graph.clawhub.model-prompt-adapter": { color: "#60a5fa", label: "model-prompt-adapter" },
+        "graph.clawhub.outlook-hack": { color: "#a3e635", label: "outlook-hack" },
+        "graph.clawhub.owntracks-location": { color: "#fb7185", label: "owntracks-location" },
+        "graph.clawhub.shell-security-ultimate": { color: "#22d3ee", label: "shell-security" },
+        "graph.clawhub.smart-model-router": { color: "#facc15", label: "model-router" },
+        "graph.clawhub.subagent-overseer": { color: "#4ade80", label: "subagent-overseer" },
+        "graph.clawhub.teams-hack": { color: "#e879f9", label: "teams-hack" },
+        "graph.clawhub.tinker-command-center": { color: "#fdba74", label: "tinker-command-center" },
+        "graph.clawhub.token-efficiency-guide": {
+          color: "#93c5fd",
+          label: "token-efficiency-guide",
+        },
+        "graph.clawhub.token-panel-ultimate": { color: "#fca5a5", label: "token-panel" },
+        "graph.clawhub.whatsapp-ultimate": { color: "#5eead4", label: "whatsapp" },
+        "graph.clawhub.wordpress-ultimate": { color: "#d8b4fe", label: "wordpress" },
+        "graph.clawhub.youtube-ultimate": { color: "#fde047", label: "youtube" },
+        "graph.clawhubinstalls.agent-sensei-ultimate": { color: "#fbbf24", label: "agent-sensei" },
+        "graph.clawhubinstalls.agent-superpowers": { color: "#34d399", label: "agent-superpowers" },
+        "graph.clawhubinstalls.chatgpt-exporter-ultimate": {
+          color: "#FF0000",
+          label: "chatgpt-exporter",
+        },
+        "graph.clawhubinstalls.computational-humor": {
+          color: "#8ECAE6",
+          label: "computational-humor",
+        },
+        "graph.clawhubinstalls.fork-and-skill-scanner-ultimate": {
+          color: "#c084fc",
+          label: "fork-scanner",
+        },
+        "graph.clawhubinstalls.jarvis-voice": { color: "#F4A261", label: "jarvis-voice" },
+        "graph.clawhubinstalls.memory-bench-pioneer": {
+          color: "#f472b6",
+          label: "memory-bench-pioneer",
+        },
+        "graph.clawhubinstalls.model-prompt-adapter": {
+          color: "#60a5fa",
+          label: "model-prompt-adapter",
+        },
+        "graph.clawhubinstalls.outlook-hack": { color: "#a3e635", label: "outlook-hack" },
+        "graph.clawhubinstalls.owntracks-location": {
+          color: "#fb7185",
+          label: "owntracks-location",
+        },
+        "graph.clawhubinstalls.shell-security-ultimate": {
+          color: "#22d3ee",
+          label: "shell-security",
+        },
+        "graph.clawhubinstalls.smart-model-router": { color: "#facc15", label: "model-router" },
+        "graph.clawhubinstalls.subagent-overseer": { color: "#4ade80", label: "subagent-overseer" },
+        "graph.clawhubinstalls.teams-hack": { color: "#e879f9", label: "teams-hack" },
+        "graph.clawhubinstalls.tinker-command-center": {
+          color: "#fdba74",
+          label: "tinker-command-center",
+        },
+        "graph.clawhubinstalls.token-efficiency-guide": {
+          color: "#93c5fd",
+          label: "token-efficiency-guide",
+        },
+        "graph.clawhubinstalls.token-panel-ultimate": { color: "#fca5a5", label: "token-panel" },
+        "graph.clawhubinstalls.whatsapp-ultimate": { color: "#5eead4", label: "whatsapp" },
+        "graph.clawhubinstalls.wordpress-ultimate": { color: "#d8b4fe", label: "wordpress" },
+        "graph.clawhubinstalls.youtube-ultimate": { color: "#fde047", label: "youtube" },
       };
       const presenceGroups = new Map<string, GGroup>();
       for (const { metric, observations } of obsLists) {
@@ -15923,9 +17030,11 @@ function init() {
   $("tab-bar-scroll")!.addEventListener("contextmenu", (e) => {
     const tabEl = (e.target as HTMLElement).closest("[data-tab-id]") as HTMLElement | null;
     const tabId = tabEl?.dataset.tabId;
-    if (!tabId || tabId === "tab-main") {
-      return; // let the native menu show off the tab bar / on Main (Main has no rename)
+    if (!tabId) {
+      return; // off the tab bar → let the native menu show
     }
+    // FORK 2026-06-20 — Main now opens the menu too (Clone tab is offered there; rename/auto-name
+    // stay hidden for Main inside openTabContextMenu).
     e.preventDefault();
     openTabContextMenu(tabId, e.clientX, e.clientY);
   });
@@ -15979,8 +17088,17 @@ function init() {
 
   // Delegated stop-button handler on messages container — survives innerHTML wipes
   $("messages")!.addEventListener("click", (e) => {
-    const stop = (e.target as HTMLElement).closest(".thinking-stop");
-    const run = (e.target as HTMLElement).closest(".thinking-run");
+    const target = e.target as HTMLElement;
+    // FORK 2026-06-24 (recoverable-retry): hover "stop retrying" link cancels the
+    // auto-retry track for its session and surfaces an orange "cancelled" bubble.
+    const stopRetry = target.closest("[data-retry-stop]") as HTMLElement | null;
+    if (stopRetry) {
+      const sk = stopRetry.getAttribute("data-retry-stop");
+      if (sk) cancelRetry(sk, true);
+      return;
+    }
+    const stop = target.closest(".thinking-stop");
+    const run = target.closest(".thinking-run");
     if (stop && run) {
       abort();
     }

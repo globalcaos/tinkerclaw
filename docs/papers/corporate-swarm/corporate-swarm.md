@@ -1,89 +1,105 @@
-# HIVEMIND: Hierarchical Agent Swarms for Enterprise Knowledge Management — Architecture, Clearance Models, and Coordinated Intelligence
+# HIVEMIND: Role-Bound Agent Swarms for Enterprise Continuity — Institutional Memory, Knowledge Commons, and Coordinated Intelligence Under Clearance
 
-**A Design Paper on Deploying Multi-Agent AI Systems in Corporate Environments with Strict Information Boundaries**
+**A Design Paper on Deploying Multi-Agent AI Systems That Outlive the People Who Use Them**
 
 ---
 
 ## Abstract
 
-Conversational AI assistants have proven effective for individual productivity, but enterprise deployment introduces a fundamentally different class of problem: how do you give every employee a powerful AI assistant while ensuring that the assistant for a junior salesperson cannot, even inadvertently, access salary data, merger plans, or infrastructure credentials? This paper presents **HIVEMIND** — a hierarchical agent swarm architecture designed for corporate deployment on OpenClaw/TinkerClaw infrastructure. We describe a five-tier data classification model mapped to Linux filesystem permissions and formally grounded in the Bell-LaPadula security model, a three-level agent hierarchy (employee, department, executive), and structured inter-agent communication protocols that enforce information flow strictly downward. We ground the architecture in a detailed case study: a mid-sized family business (~50–200 employees) with Sales, IT, HR, Finance, and Production departments, each with distinct clearance requirements. We present the Sales Coordination Model as a worked example of cross-agent collaboration under clearance constraints, including customer ownership routing, redacted summary generation with template-based leakage controls, and competitive intelligence aggregation. We address privacy and legal considerations (GDPR, EU AI Act, employee transparency, right-to-be-forgotten), compliance architecture (nightly audit cron jobs, communication logging, automated quarantine), and a comprehensive risk model covering curious agents, inter-agent social engineering, memory contamination, and model capability variance. We include performance estimates, failure recovery procedures, a phased deployment strategy, and a sketch-level inter-agent protocol specification. We also distinguish clearly between what is proposed, what is operationally specified, and what remains to be empirically validated, framing HIVEMIND as an architectural design paper rather than a deployment evaluation. We conclude with future directions toward federated enterprise agent networks.
+The most expensive failure in a mid-sized company is not a data breach — it is a resignation. When a senior salesperson leaves after seven years, the relationship history, the negotiation instincts, and the undocumented customer quirks walk out with them, and the replacement spends months rebuilding what was never written down. This paper presents **HIVEMIND** — a multi-agent AI architecture for corporate deployment on OpenClaw/TinkerClaw infrastructure whose central design commitment is **organizational continuity**: the institutional knowledge lives in the agents, and the agents outlive the humans who use them. The key architectural move is **role-bound agents** — one canonical agent per job function (a single _sales rep_ agent, a single _field engineer_ agent), shared by every human who holds that role, rather than a personalized agent per individual. This decision makes talent retention a non-issue (the agent never resigns), collapses cross-department coordination to one channel per function, and reduces onboarding to a single sentence: the new hire tells the agent which territory they now own. Knowledge enters the swarm through a **knowledge cascade** — a centralized, version-controlled Markdown vault (company canon, industry context, customer-relationship model, product catalog) that agents mount via symlinks, authored and maintained by former trainers reborn as **knowledge stewards** who now train the AI once instead of each hire repeatedly. Security is the enabling constraint, not the headline: we retain a five-tier data classification model mapped to Linux filesystem permissions and formally grounded in the Bell-LaPadula model, now applied at role granularity, with a controlled declassification pipeline, nightly compliance sweeps, and human-in-the-loop quarantine. We ground the architecture in a mid-sized family business (~50–200 employees) and a rewritten Sales Coordination case study in which customer ownership is resolved contextually by a single shared agent rather than through inter-agent email routing. We address GDPR and the EU AI Act, a comprehensive risk model, bounded-autonomy operational governance (end users signal IT rather than self-administer their gateway), failure recovery, and a phased deployment strategy. We frame HIVEMIND as an architectural design paper, distinguishing what is proposed, what is operationally specified, and what remains to be empirically validated.
 
-**Keywords:** multi-agent systems, enterprise AI, information security, clearance models, OpenClaw, agent swarms, GDPR, EU AI Act, knowledge management, corporate AI, hierarchical agents, Bell-LaPadula
+**Keywords:** multi-agent systems, enterprise AI, organizational continuity, institutional memory, knowledge management, role-bound agents, knowledge commons, OpenClaw, agent swarms, GDPR, EU AI Act, clearance models, Bell-LaPadula
 
 ---
 
 ## 1. Introduction — The Enterprise AI Deployment Problem
 
-### 1.1 From Individual Agents to Organizational Deployment
+### 1.1 The Most Expensive Problem in a Mid-Sized Company
 
 The first generation of practical AI assistants is personal. OpenClaw, TinkerClaw, and comparable platforms are designed around a single operator — one human, one agent, one workspace. The agent accumulates contextual memory, learns preferences, and acts as a trusted extension of that individual's cognition. Prior J-series papers have explored this individual model in depth: memory architecture (J1), curiosity and self-improvement (J8), and trust tiers governing tool access (J3). The individual agent is now a reasonably mature design.
 
-But the individual agent paradigm has a ceiling. That ceiling is the organization.
+But the individual agent paradigm has a ceiling, and that ceiling is the organization. The interesting enterprise problem is not "how do I give one person a better assistant." It is a set of problems that have nothing to do with individual productivity and everything to do with how knowledge moves — and fails to move — through a company over time:
 
-### 1.2 The Organizational Need
+- **The talent leak.** A senior salesperson with seven years of relationship history resigns. The replacement inherits a CRM full of names and none of the context: which customer never answers the phone before noon, which one always asks for a discount and never takes it, which contract has an unwritten handshake behind it. Months of productivity evaporate, and the same loss recurs with every departure. This is the single most expensive recurring failure in a mid-sized company, and no wiki has ever solved it, because the knowledge was never the kind that gets written down.
 
-Consider a family business with 120 employees — a mid-sized industrial supply distributor operating for thirty years. Its collective knowledge lives in spreadsheets, email threads, the memories of senior employees, and folders on a shared server nobody has reorganized since 2011. Now imagine giving every employee their own AI assistant: María in sales gets LUNA, Pedro in sales gets ATLAS, the IT manager gets CIPHER, the HR director gets ARBOR, the CEO gets STRATEGOS.
+- **Knowledge silos.** A rep learns in a client meeting that a competitor launched a new product. It lands in a personal notebook. The sales director never hears it. The intelligence dies where it was born.
 
-The moment these agents operate in the same corporate ecosystem, three problems emerge:
+- **Onboarding cost.** Every new hire is trained from near-zero by someone whose actual job is something else. The training is repeated per hire, lost on turnover, and inconsistent across trainers.
 
-- **Information leakage.** María asks LUNA to "find everything about the González account." LUNA, eager to help, discovers an email thread between the CEO and CFO discussing whether González's margins justify continued service. María now knows something she wasn't supposed to know.
+### 1.2 The Continuity Thesis
 
-- **Coordination failures.** A new email from a González contact lands in Pedro's inbox — the contact is registered to his territory, though María has been the primary relationship holder for two years. ATLAS drafts a reply from scratch, unaware of the relationship history. Two agents, same customer, divergent responses.
+HIVEMIND's central commitment is **organizational continuity**: the institutional knowledge lives in the agents, and the agents outlive the humans who use them.
 
-- **Knowledge silos.** Pedro learns in a client meeting that a competitor has launched a new product. ATLAS files this in Pedro's memory. The sales director never hears about it. The intelligence dies in a silo.
+The architectural move that delivers this is **role-bound agents**. Instead of a personalized agent per individual — María gets LUNA, Pedro gets ATLAS — there is _one_ canonical agent per job function: a single **sales rep agent**, shared by every salesperson; a single **field engineer agent**, shared by every engineer. The human is a transient occupant of a role; the agent is the durable holder of the role's accumulated knowledge.
 
-These are the daily reality of knowledge management in mid-sized companies.
+This one decision cascades into three properties that a per-person design cannot offer:
+
+1. **Talent retention becomes a non-issue.** The agent never resigns. When a salesperson leaves, nothing is snapshotted, migrated, or scrubbed — the agent simply keeps serving the next occupant. Offboarding collapses to a single edit: the new hire tells the agent "I now cover the northern territory," and a workload-division file is updated.
+
+2. **Cross-department coordination collapses to one channel per function.** With one sales agent and one engineering agent, a sales-to-engineering handoff is a single, stable, auditable channel — not an N×M mesh of personal agents that has to be re-wired every time someone joins or leaves.
+
+3. **Onboarding becomes inheritance.** A new hire does not start from zero. They start from everything the role has ever learned, and contribute back to it.
 
 ### 1.3 The Core Tension
 
-The central challenge is a tension between two legitimate needs:
+Continuity and coordination create value only if they do not also create exposure. The central engineering tension is between two legitimate needs:
 
-**The need for integration.** The more an agent knows about the company, the better it can help its user. A sales agent that knows the customer's full history — every touchpoint, complaint, and special arrangement — is vastly more effective than one that only knows its user's portion.
+**The need for integration.** The more an agent knows about the company, the better it serves. A sales agent that holds the _whole team's_ customer history — every touchpoint, complaint, and special arrangement — is vastly more effective than one scoped to a single person's slice. Role-bound agents maximize this by construction: the shared agent already holds everything the role knows.
 
-**The need for boundaries.** Salary data, M&A strategy, infrastructure credentials, legal proceedings — these must be protected. An AI agent that leaks this information is worse than having no agent, because the leak is invisible, scalable, and hard to attribute.
+**The need for boundaries.** Salary data, M&A strategy, infrastructure credentials, legal proceedings — these must be protected across role and tier boundaries. An AI agent that leaks this is worse than no agent, because the leak is invisible, scalable, and hard to attribute.
 
-HIVEMIND resolves this tension through deep integration with strict clearance-based boundaries enforced at the infrastructure level, not merely at the prompt level.
+HIVEMIND resolves this tension through deep, role-level integration with clearance-based boundaries enforced at the infrastructure level, not merely at the prompt level. Security is the enabling constraint that makes the continuity architecture deployable — it is not the headline, and a deployment that led with it would be solving the wrong problem first.
 
 ### 1.4 Architecture Overview
 
-Before presenting the detailed design, we provide a high-level view of the HIVEMIND architecture:
+Before presenting the detailed design, we provide a high-level view of the HIVEMIND architecture (Figure 1).
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  LEVEL 3: EXECUTIVE                  │
-│              ┌─────────────────────┐                │
-│              │     STRATEGOS       │  T5 clearance  │
-│              │   (CEO's agent)     │  Full audit    │
-│              └────────┬────────────┘                │
-│                       │ ↓ queries / ↑ intel push    │
-├───────────────────────┼─────────────────────────────┤
-│              LEVEL 2: DEPARTMENT                     │
-│  ┌──────────┐ ┌──────┴─────┐ ┌──────────┐         │
-│  │ HR-AGENT │ │SALES-AGENT │ │ IT-AGENT │  ...     │
-│  │   (T4)   │ │   (T4)     │ │   (T4)   │         │
-│  └────┬─────┘ └──┬─────┬──┘ └────┬─────┘         │
-│       │          │     │         │                  │
-├───────┼──────────┼─────┼─────────┼──────────────────┤
-│              LEVEL 1: EMPLOYEE                       │
-│  ┌────┴──┐  ┌───┴──┐ ┌┴─────┐ ┌─┴────┐            │
-│  │ ARBOR │  │ LUNA │ │ATLAS │ │CIPHER│  ...        │
-│  │ (T3)  │  │ (T3) │ │ (T3) │ │ (T3) │            │
-│  └───────┘  └──────┘ └──────┘ └──────┘            │
-│                                                     │
-│  ══════════════════════════════════════════════════  │
-│  Data Tiers: T1(Public) → T2(Internal) →           │
-│  T3(Confidential) → T4(Restricted) → T5(Secret)   │
-│  Enforced by: Linux kernel (filesystem + ACLs)     │
-│                                                     │
-│  Information flow: ↓ Queries (downward only)       │
-│                    ↑ Intel push (structured only)  │
-│                    ↔ Lateral (mediated by L2)       │
-└─────────────────────────────────────────────────────┘
-```
+![Figure 1. HIVEMIND's three-level agent hierarchy. A single **executive** agent (L3-EXEC, T5) sits over one **department** agent per function (L2-SALES / L2-IT / L2-HR, T4), each over a **role** agent shared by everyone who holds that job function (L1-SALES-REP / L1-FIELD-ENGR / L1-SUPPORT, T3). Queries flow downward only; structured intelligence pushes flow upward; lateral traffic between role agents is mediated by the department agent — and every inter-level edge is gated by the clearance lattice, enforced by the Linux kernel, not the model.](images/fig-architecture.png){width=70%}
 
-### 1.5 Paper Organization
+A role agent is shared by every human who holds that role. Where a department contains a single role (e.g., a sales floor of identically-scoped reps), Level 1 and Level 2 may merge: the role agent _is_ the department agent. The three-level structure is retained for departments with multiple distinct roles at different scopes.
 
-Section 2 defines the information architecture and formal security model. Section 3 presents the agent hierarchy. Section 4 details the Sales Coordination case study. Section 5 addresses privacy and legal considerations — GDPR and the EU AI Act — which motivate the compliance architecture in Section 6. Section 7 covers technical implementation on OpenClaw/TinkerClaw infrastructure, including an inter-agent protocol specification. Section 8 analyzes risks and mitigations. Section 9 presents a phased deployment strategy. Section 10 sketches future directions. Section 11 collects limitations. Section 12 concludes.
+### 1.5 The Per-Agent Cognitive Stack
+
+Single-agent cognition has, over the past few years, been tackled one problem at a time: persistent memory, fast retrieval, stable identity, self-improvement, multi-model deliberation, and layered security each have well-understood solutions for the one-human-one-agent case. HIVEMIND runs all of them at once, across many agents, under concurrency and clearance constraints. Each agent in the swarm is not a thin role wrapper around a model — it is a full cognitive stack of six named subsystems referenced throughout this paper:
+
+- **Append-only memory (the memory subsystem).** Interactions are stored as append-only timestamped events, with older events compressed into lightweight summaries — effectively unlimited memory within bounded storage (Section 2.9).
+- **Retrieval index (the retrieval subsystem).** A topic-keyword index over memory segments enabling sub-second lookup across the full interaction history (Section 3.6).
+- **Stable persona (the identity subsystem).** A persona definition read at session start gives each agent a distinct, stable identity — a sales agent behaves differently from an IT agent because their persona files encode different values, vocabulary, and domain knowledge.
+- **Self-improvement (the reflection subsystem).** A nightly cycle reviews the day's errors and adjusts behavioral rules, so the swarm improves without centralized retraining.
+- **Multi-model deliberation (the deliberation subsystem).** Complex cross-department decisions trigger several models debating and synthesizing a consensus, so no single model's blind spot drives a critical decision.
+- **Layered security (the security subsystem).** A framework enforcing clearance and defending against prompt-injection that could compromise one agent and cascade through the swarm.
+
+For brevity the paper refers to these by short names — ENGRAM (memory), HIPPOCAMPUS (retrieval), CORTEX (identity), CEREBELLUM (reflection), SYNAPSE (deliberation), and AEGIS (security) — purely as labels for the six functions above, each developed in depth in its own J-series paper.
+
+Running the full stack on every agent would be wasteful, so HIVEMIND tiers it (Table 1): cognitive cost should track decision consequence.
+
+**Table 1. Cognitive stack by agent tier (under role-binding).**
+
+| Capability                    | Role agent (L1)                           | Department (L2)             | Executive (L3)                     |
+| ----------------------------- | ----------------------------------------- | --------------------------- | ---------------------------------- |
+| Memory (ENGRAM)               | shared role memory                        | full + department aggregate | full + organization-wide read      |
+| Retrieval (HIPPOCAMPUS)       | role index                                | role + mediated cross-role  | + all-department read              |
+| Persona (CORTEX)              | per-role template + thin per-person layer | per-department              | bespoke (single agent)             |
+| Self-improvement (CEREBELLUM) | shared role rule-base                     | department-level reflection | full reflection                    |
+| Deliberation (SYNAPSE)        | off (escalate instead)                    | on for cross-role decisions | on for cross-department/strategic  |
+| Security (AEGIS)              | clearance ceiling T2–T3                   | T4 + clearance validator    | T5 + dead switch + two-person rule |
+
+Two choices are deliberate. First, role agents do not run SYNAPSE deliberation: a decision consequential enough to need multiple models arguing is consequential enough to escalate to the department agent (Section 3.3). Second, role-tier self-improvement writes to a _shared role rule-base_ — which under role-binding is not a special case but the default: a lesson the sales agent learns ("this customer always disputes the first invoice") is immediately available to every salesperson, declassified through the same pipeline as any downward flow (Section 4.4). Role-binding and a shared rule-base are the same idea applied to behavior rather than knowledge.
+
+### 1.6 Related Work and Positioning
+
+The organizational framing of multi-agent systems is not unique to this paper; over the past year, academic, open-source, and industrial efforts have independently converged on organizational structure as the coordination model for multiple agents. Three coordination topologies are now visible: **fan-out-and-synthesize** (a coordinator dispatches one problem to several models and merges answers — no persistent roles); **coordinator-with-workers** (a single prompt spawns tool-restricted workers communicating through shared files — Claude Code's coordinator mode is the industrial exemplar); and **org-chart** (persistent hierarchical roles, work distributed as tickets, per-agent budget tracking). These are points on a spectrum of persistence and structure, not competitors. HIVEMIND sits at the high-structure end and adds the two things the leaner topologies omit: a clearance lattice enforced below the model, and the full per-agent cognitive stack of Section 1.5.
+
+- **Paperclip** (open-source "zero-human company" orchestration) mirrors HIVEMIND's structural thesis closely — each role is a separate agent, work flows through tickets, per-agent budgets are tracked centrally — and is direct evidence the org-chart paradigm works. What it lacks is exactly HIVEMIND's subject: no clearance or information-flow model (any agent reads anything), no governed shared memory, no persona persistence. HIVEMIND can be read as Paperclip with a Bell-LaPadula spine and a full cognitive stack — and role-binding goes one step further than Paperclip's per-role agents by making the role agent _shared across occupants_ for continuity.
+- **Coordinator/teammate execution models** contribute useful vocabulary: a _teammate_ in a separate context communicating through a file-based mailbox maps naturally onto HIVEMIND's clearance-filtered channels (Section 3.3) — every message is a file with owner, group, and permission bits, which is precisely the enforcement substrate. **Single-agent role-switching** (e.g., GStack: one process, multiple role prompts) marks the low-cost end of the design space and is a legitimate small-organization alternative (Section 10).
+- **headroom** (Chopra, 2026; ~24.7k★, Apache-2.0) is a production context-compression system built on **Compress-Cache-Retrieve (CCR)**: it caches originals and retrieves them on demand, reporting 60–95% token savings at near-zero accuracy delta with a runnable eval. It bears directly on HIVEMIND's memory subsystem and creates one tension and one template — reversible retrieval collides with the lattice (Section 2.10), while its shipped accuracy-delta eval is the discipline HIVEMIND borrows for its redaction-fidelity eval (Section 4.4.2).
+- **addyosmani/agent-skills** (~56.8k★) contributes a **doubt-driven-development** loop whose reusable kernel — a _fresh-context adversarial reviewer denied the source_ — maps onto HIVEMIND's hardest problem, implication-leakage at the declassification boundary. Section 4.4.1 re-purposes it as a leakage oracle: run across a clearance boundary, a quality check becomes an information-flow test.
+
+**The convergence argument.** That organizational coordination patterns emerged independently across academic, open-source, and industrial work suggests corporate structure is not merely a convenient metaphor for multi-agent systems — it may be the natural coordination topology. Companies already encode "who may know what" and "who reports to whom" in org charts and filesystem permissions; mapping agents onto that structure is less an invention than a recognition. What distinguishes HIVEMIND is the claim that this same structure, taken seriously, _is_ the security model — the org chart is the access-control graph, not a layer on top of it.
+
+### 1.7 Paper Organization
+
+Section 2 defines the information architecture, the formal security model, the knowledge-commons cascade, and the clearance-aware memory model. Section 3 presents the role-agent hierarchy, the naming convention, the multiple orthogonal axes along which the network operates (clearance, supervision, bottleneck reduction, workload sharing, self-modification, knowledge propagation), and cross-role retrieval. Section 4 details the Sales Coordination case study under contextual ownership, including the doubt reviewer and the redaction-fidelity eval. Section 5 addresses privacy and legal considerations — GDPR and the EU AI Act — which motivate the compliance architecture in Section 6. Section 7 covers technical implementation, including an inter-agent protocol specification and operational governance. Section 8 analyzes risks and mitigations. Section 9 presents a phased deployment strategy. Section 10 sketches future directions. Section 11 collects limitations. Section 12 concludes.
 
 ---
 
@@ -107,7 +123,7 @@ We define five classification tiers:
 | Tier | Label            | Examples                                                                            | Default Access                                |
 | ---- | ---------------- | ----------------------------------------------------------------------------------- | --------------------------------------------- |
 | T1   | **PUBLIC**       | Company website, product brochure, public pricing, press releases                   | All agents, external systems                  |
-| T2   | **INTERNAL**     | Procedures, internal manuals, product specifications, org chart                     | All employee agents                           |
+| T2   | **INTERNAL**     | Procedures, internal manuals, product specifications, org chart                     | All role agents                               |
 | T3   | **CONFIDENTIAL** | Client data, contracts, email correspondence, CRM records                           | Role-relevant agents only                     |
 | T4   | **RESTRICTED**   | Salaries, infrastructure passwords, M&A plans, margin data, HR records              | Senior management + relevant department heads |
 | T5   | **SECRET**       | Board-level strategy, legal proceedings, acquisition targets, whistleblower reports | Executive agents only                         |
@@ -149,7 +165,7 @@ $$\ell(o) \geq c(s)$$
 
 An agent cannot write data to a lower classification level, preventing information laundering from restricted tiers to public ones.
 
-**Declassification Exception.** The *-property creates a practical problem: department agents (T4) need to send filtered summaries to employee agents (T3). We handle this through a controlled declassification mechanism. A Level 2+ agent may generate a *new\* data object $o'$ with $\ell(o') < \ell(o)$ under these constraints:
+**Declassification Exception.** The *-property creates a practical problem: department agents (T4) need to send filtered summaries to role agents (T3). We handle this through a controlled declassification mechanism. A Level 2+ agent may generate a *new\* data object $o'$ with $\ell(o') < \ell(o)$ under these constraints:
 
 1. The declassification is explicitly invoked (not implicit in normal operation).
 2. The output $o'$ passes through a template-based redaction pipeline (see Section 4.4) or receives human approval.
@@ -178,7 +194,7 @@ No agent may receive data classified above its clearance tier or outside its rol
 
 ### 2.6 Why Bell-LaPadula Is Necessary but Not Sufficient
 
-Bell-LaPadula is the right primary model because HIVEMIND's dominant enterprise risk is **confidentiality failure**: the wrong employee agent learning about salaries, credentials, legal matters, or board strategy. But Bell-LaPadula is not the only relevant security model, and the design is stronger when that is stated explicitly.
+Bell-LaPadula is the right primary model because HIVEMIND's dominant enterprise risk is **confidentiality failure**: the wrong role agent learning about salaries, credentials, legal matters, or board strategy. But Bell-LaPadula is not the only relevant security model, and the design is stronger when that is stated explicitly.
 
 - **Role-Based Access Control (RBAC).** RBAC explains _who should access what_ in organizational terms and maps well to departments, supervisors, and executives. HIVEMIND uses RBAC operationally through Linux users, groups, ACLs, and tool allowlists. However, RBAC alone does not formalize information flow across multi-step agent interactions.
 - **Chinese Wall.** Brewer-Nash is relevant where conflict-of-interest boundaries matter — for example, if a consulting firm runs multiple client-specific agent swarms. HIVEMIND does not fully implement Chinese Wall semantics, but future multi-tenant versions should.
@@ -187,57 +203,181 @@ Bell-LaPadula is the right primary model because HIVEMIND's dominant enterprise 
 
 Accordingly, HIVEMIND should be read as a **hybrid control architecture**: Bell-LaPadula provides the confidentiality lattice; RBAC defines organizational scope; Zero Trust informs runtime assumptions; and partial Biba-like controls support integrity. This clarification matters academically because it prevents overclaiming: the paper does not present Bell-LaPadula as a complete model of enterprise agent security, only as the correct primary backbone for secrecy-preserving information flow.
 
+### 2.7 The Knowledge Commons and the Cascade Model
+
+The clearance filesystem of Sections 2.2–2.6 answers _what an agent is permitted to read_. It does not answer the prior question: _what should every agent simply know?_ A sales agent that has clearance to read the product catalog but has never been told what industry the company operates in, what kind of customers it serves, or how the company expects its people to talk to those customers is technically secure and practically useless. HIVEMIND therefore introduces a second information structure alongside the clearance lattice: a **knowledge commons** — a centralized, version-controlled corpus of Markdown documents that encodes the company's shared, teachable knowledge, mounted into each agent's workspace by symlink.
+
+The commons is deliberately mostly low-tier (T1/T2). It is not where secrets live; it is where _context_ lives — the body of knowledge a human trainer would once have transferred to a new hire over their first weeks.
+
+**The cascade.** An agent's effective knowledge is assembled from four layers, in order of decreasing breadth and increasing specificity — analogous to a CSS cascade or to inherited configuration files:
+
+```
+company canon      →  role slice          →  workload map        →  per-person layer
+(T1/T2, all agents)   (T2, this role)        (T2/T3, this role)     (thin, current human)
+"who we are"          "how this job works"   "who covers what"      "who am I serving now"
+```
+
+1. **Company canon (T1/T2, mounted by every agent).** Who the company is and how it operates. Proposed taxonomy:
+   - _Company canon_ — history, mission, values, org chart.
+   - _Industry & market_ — the sector, its regulations, the competitive landscape, the domain terminology a newcomer would not know.
+   - _Customer-relationship model_ — whether the company sells B2B, B2C, B2B2C, or a mix; the buyer personas; the shape and length of the sales cycle; the norms of the relationship (a B2B supplier nurturing a ten-year account behaves nothing like a B2C brand optimizing a checkout).
+   - _Product/service catalog_ — what the company makes or delivers, specifications, positioning.
+   - _Process & SOPs_ — how recurring work is done.
+   - _Glossary / ontology_ — company-specific acronyms and terms.
+   - _Voice & communication standards_ — how the company talks to customers and to itself.
+
+2. **Role slice (T2, mounted by the role agent).** The job-specific layer: a sales rep's qualification methodology, objection-handling playbook, and pricing-approval ladder; a field engineer's safety procedures and equipment manuals. This is the layer that makes one role agent canonical across all its occupants — every salesperson's agent reads the _same_ sales playbook.
+
+3. **Workload map (T2/T3).** A `workload-division.md` recording who currently owns what — which rep covers which territory or account set, which engineer is on which project. This is operational data, not a secrecy boundary (all reps share the same clearance and could in principle see all accounts; the map records _responsibility_, not _permission_). It is the file a new hire edits on their first day and the mechanism by which offboarding becomes a one-line change (Section 5.7).
+
+4. **Per-person interaction layer (thin).** A role agent is shared, so it holds no per-person _memory store_. But it does keep a small, non-sensitive profile of each human it serves — name, role tenure, communication preferences ("prefers bullet points," "wants the number first") — enough to address each person appropriately without fragmenting the shared knowledge into per-person silos. This is the deliberate compromise between usefulness and simplicity: shared knowledge, personalized manners.
+
+**Why symlinks, and why they are safe.** Each agent workspace mounts the relevant commons paths by symbolic link rather than by copy. This gives a single source of truth: a steward edits one canonical file and the change is visible to every agent that links it, with zero copy-drift. Crucially, symlinks introduce no clearance hole. On Linux, opening a symlink resolves to the target and the kernel checks permissions on the _target_ (and traversal on its resolved path components), not on the link. A symlink placed in a T3 workspace pointing at a higher-tier file therefore grants nothing — the agent's UID still fails the target's permissions. Since the commons is T1/T2, every agent already has read access to it; the symlink merely makes shared knowledge appear in-workspace without weakening any boundary.
+
+```
+/corporate/knowledge/              # the commons: dir 0755, files 0644 (T1/T2)
+├── canon/                         # company identity, values, org chart
+├── industry/                      # sector, regulation, competitors, terms
+├── customers/                     # B2B/B2C model, personas, relationship norms
+├── catalog/                       # products / services, specs, positioning
+├── process/                       # SOPs
+├── glossary/                      # acronyms, ontology
+├── voice/                         # communication standards
+└── roles/
+    ├── sales-rep/                 # role slice: playbooks, pricing ladder
+    │   └── workload-division.md   # who covers what (T2/T3)
+    ├── field-engineer/
+    └── support/
+
+# A sales-rep agent's workspace links the slices it needs:
+/agents/sales-rep/workspace/knowledge/canon     -> /corporate/knowledge/canon
+/agents/sales-rep/workspace/knowledge/customers -> /corporate/knowledge/customers
+/agents/sales-rep/workspace/knowledge/role      -> /corporate/knowledge/roles/sales-rep
+```
+
+### 2.8 Knowledge Freshness and Provenance
+
+A commons maintained by humans rots. Stale industry knowledge is more dangerous than absent knowledge, because the agent states it with the same confidence as the truth. Each commons document therefore carries review metadata in its frontmatter:
+
+```yaml
+---
+owner: knowledge-steward-sales # who is accountable for this file
+last_reviewed: 2026-05-01
+review_cadence: quarterly # how often it must be re-verified
+classification: T2
+---
+```
+
+A scheduled job (Section 7.6) flags any document past its review cadence and routes it to its owning steward. This makes knowledge staleness a tracked, owned, auditable property rather than a silent decay — the same discipline a living-documentation system applies to code. Write access to the commons is scoped: stewards hold write permission on their owned paths, gated through the Git review workflow of Section 7.8. Agents read the commons; they do not write to it directly.
+
+### 2.9 Clearance and the Append-Only Event Store
+
+One interaction between the clearance lattice and the per-agent memory model (ENGRAM, Section 1.5) deserves explicit treatment, because it is a genuine edge case rather than a clean consequence of Bell-LaPadula. Each role agent's memory is an append-only event store in which older events are periodically compacted into lightweight summary objects. Compaction is lossy by design — a summary stands in for many original events — and it is performed _within_ an agent's own clearance domain. That domain confinement keeps the interaction safe, but the invariants are worth stating so an implementer does not break them:
+
+- **Compaction never crosses tiers.** A summary inherits the maximum classification of the events it compresses. The compactor may read T4 events in a T4 store and produce a T4 summary; it may not produce a lower-tier summary as a side effect. Downgrading is reserved for the explicit declassification pipeline (Section 2.4), never the compactor.
+- **A compacted pointer must not become a confused-deputy.** If a summary is referenced by a higher-tier agent (e.g., `L3-EXEC` reads `L2-SALES`'s compacted history), the reference is resolved under the _reader's_ clearance against the _summary's_ classification — exactly the Simple Security Property (Section 2.4). The dangerous failure would be a low-clearance agent holding a pointer that, when dereferenced by a privileged service on its behalf, returns content above its tier. HIVEMIND forbids server-side dereferencing of memory pointers on behalf of a requester: an agent can only follow pointers into stores it could already read directly. Pointers are not capabilities.
+- **Compaction is itself an audited write.** Each compaction event is logged with input event hashes, output summary hash, and classification, so the nightly sweep (Section 6.3) can verify no compaction silently changed an object's tier.
+
+The general lesson: an append-only store plus lossy compaction does not by itself violate the lattice, but it introduces _new objects_ (summaries) and _new references_ (pointers) that must each be assigned a classification and resolved under the reader's clearance. Treating compaction output as a first-class classified object closes the gap.
+
+### 2.10 Compress-Cache-Retrieve Under Clearance
+
+Section 2.9 reached safety by _throwing originals away_: compaction is lossy and a pointer is deliberately not a capability. That is conservative, and it pays a price — every compaction permanently degrades what the agent can later recall. A contemporaneous production system (headroom's Compress-Cache-Retrieve, Section 1.6) suggests the price may be avoidable: it keeps originals in a cache and retrieves them on demand, recovering most lost fidelity at 60–95% token savings. Can HIVEMIND adopt reversibility without reintroducing the confused-deputy hazard?
+
+It can, but only by one substitution: **the retrieve step must be the clearance gate.** We call the variant **Compress-Cache-Retrieve-Under-Clearance (CCR-UC)**, governed by two invariants that mirror the lattice rather than headroom's single-trust-domain assumption:
+
+- **The cache inherits the maximum classification of what it compressed.** A cache built from T4 events is a T4 object. There is no "low-tier cache of high-tier originals" — that object would be precisely the reversible pointer that launders a tier on dereference.
+- **Retrieve resolves under the reader's clearance against the cache's classification — the Simple Security Property, unchanged.** A holder of a CCR-UC pointer can expand it only into stores it could already read directly; expansion on behalf of a lower-clearance requester is forbidden.
+
+Under these invariants CCR-UC is not a new exception to Bell-LaPadula — it is the cross-role mediated-retrieval machinery (Section 3.6) pointed inward at an agent's own compacted memory. When a privileged agent expands a cache spanning tiers for delivery to a lower-clearance reader, the expansion passes through the same template-based declassification pipeline (Section 4.4) as any downward flow. The honest boundary against headroom: headroom ships this transform with a runnable accuracy-delta eval and has no notion of classification; HIVEMIND adds the classification semantics and the clearance-checked retrieve, and Section 4.4.2 specifies the eval that would close the remaining gap.
+
 ---
 
 ## 3. Agent Hierarchy Architecture
 
 ### 3.1 Three-Level Structure
 
-**Level 1 — Employee Agents.** One per employee. Personalized name, calibrated personality, deep role context. Clearance matches their human user's access level. Workspace scoped to that employee's data access.
+**Naming convention.** To keep the cast legible, every agent is named `L<level>-<SCOPE>`: the leading `L1`/`L2`/`L3` states its level at a glance, and the scope names its function. So `L1-SALES-REP` is unambiguously a Level 1 role agent for sales; `L2-SALES` is the sales department agent; `L3-EXEC` is the executive agent. The reader never has to remember whether "ATLAS" or "STRATEGOS" sat at which tier — the name carries the answer. (System user accounts use the lowercase form `agent_salesrep`, `agent_sales`, `agent_exec`; the `L<level>-<SCOPE>` label is the human-readable alias used throughout this paper.)
 
-**Level 2 — Department Agents.** One per department (SALES-AGENT, IT-AGENT, HR-AGENT, etc.). Elevated clearance (typically T4, T5 for executive department). Coordinate employee agents, aggregate intelligence, enforce department policies, and gate inter-level communication.
+**Level 1 — Role Agents.** One per job function, _shared by every human who holds that role_. A single sales rep agent (`L1-SALES-REP`) serves all salespeople; a single field engineer agent (`L1-FIELD-ENGR`) serves all engineers. Calibrated personality and deep role knowledge; clearance set at the role level (all occupants of a role share one clearance). The agent is the durable holder of the role's accumulated knowledge — it persists across the people who come and go.
 
-**Level 3 — Executive Agent (STRATEGOS).** Single top-level agent with T5 clearance and read access to all department agent workspaces. Serves the CEO and senior management. The only agent that sees the complete organizational picture.
+**Level 2 — Department Agents.** One per department (L2-SALES, L2-IT, L2-HR, etc.). Elevated clearance (typically T4, T5 for the executive department). Coordinate the role agents beneath them, aggregate intelligence, enforce department policies, and gate inter-level communication. Where a department contains a single role, the department agent and the role agent are the same entity.
 
-### 3.2 Employee Agent Design
+**Level 3 — Executive Agent (L3-EXEC).** Single top-level agent with T5 clearance and read access to all department agent workspaces. Serves the CEO and senior management. The only agent that sees the complete organizational picture.
 
-Each employee agent is a full OpenClaw/TinkerClaw deployment with:
+### 3.2 Role Agent Design
 
-- **Custom persona.** LUNA knows she works with María on the González account. ATLAS knows Pedro's clients prefer phone calls. This personalization ensures immediate usefulness.
-- **Scoped workspace.** Contains only files the employee can access. Memory files are readable by the department agent.
-- **Role context injection.** System prompt includes job description, department procedures, assigned clients/projects, and communication norms.
-- **Tool access scoped by role.** A salesperson's agent can access CRM, email, calendar, and product catalog. It cannot access payroll, infrastructure tools, or HR records. Explicit DENIED entries for out-of-scope systems.
+Each role agent is a full OpenClaw/TinkerClaw deployment with:
+
+- **Standardized build, canonical across occupants.** There is one sales rep agent build — one persona, one skill set, one mounted role slice — stamped once and shared, not reinvented per hire. Every salesperson talks to an agent that has read the same playbook and holds the same team-wide customer history. Personalization is a _thin_ per-person interaction layer (Section 2.7): the agent addresses María and Pedro differently in tone and format, but draws on the same shared knowledge.
+- **Shared, role-scoped workspace.** Contains the files the role can access plus the symlinked commons slices it needs. Because the agent is shared, there is no per-person memory store to fragment or migrate; institutional memory accrues to the role.
+- **Knowledge via cascade, not injection.** Rather than baking assigned clients and procedures into one person's system prompt, the agent reads them from the commons (company canon, role slice) and the `workload-division.md` (who currently owns what). Updating the company's knowledge updates every agent at once.
+- **Tool access scoped by role.** A sales rep agent can access CRM, email, calendar, and product catalog. It cannot access payroll, infrastructure tools, or HR records. Explicit DENIED entries for out-of-scope systems.
+
+This design is what makes talent retention a non-issue. There is nothing to offboard when a person leaves and nothing to build from scratch when one arrives — only a `workload-division.md` to edit. The new occupant inherits, on day one, everything the role has ever learned.
 
 ### 3.3 Information Flow Rules
 
 **Rule 1: Downward queries are permitted.** Level 3 can query Level 2. Level 2 can query its Level 1 agents. Queries retrieve information, request actions, audit memories, or issue directives.
 
-**Rule 2: Upward queries are structurally prohibited.** Level 1 agents cannot initiate queries to Level 2 or Level 3. This is enforced by the gateway's session routing topology: employee agent sessions are not registered as valid targets for upward message addressing.
+**Rule 2: Upward queries are structurally prohibited.** Level 1 agents cannot initiate queries to Level 2 or Level 3. This is enforced by the gateway's session routing topology: role agent sessions are not registered as valid targets for upward message addressing.
 
-**Rule 2a: Upward intelligence push is permitted through structured channels.** This is a controlled exception to Rule 2. Employee agents may push data _upward_ to their department agent, but only through pre-defined structured channels with these constraints:
+**Rule 2a: Upward intelligence push is permitted through structured channels.** This is a controlled exception to Rule 2. Role agents may push data _upward_ to their department agent, but only through pre-defined structured channels with these constraints:
 
 - Each channel has a fixed schema (message type, required fields, classification ceiling).
-- The employee agent can only push data classified at or below its own clearance tier — it cannot push data it shouldn't have.
-- Push channels are defined in the department agent's configuration and cannot be created or modified by employee agents.
+- The role agent can only push data classified at or below its own clearance tier — it cannot push data it shouldn't have.
+- Push channels are defined in the department agent's configuration and cannot be created or modified by role agents.
 - The department agent validates all incoming pushes against the channel schema before processing.
 - All pushes are logged with sender, channel, content hash, and timestamp.
 
-The distinction from a query is structural: a push deposits information and returns no response. The employee agent learns nothing new from the act of pushing. This prevents push channels from being used as covert query mechanisms. See Section 8.2 for abuse analysis.
+The distinction from a query is structural: a push deposits information and returns no response. The role agent learns nothing new from the act of pushing. This prevents push channels from being used as covert query mechanisms. See Section 8.2 for abuse analysis.
 
-**Rule 3: Lateral communication is mediated.** Peer Level 1 agents do not communicate directly. LUNA-to-ATLAS communication routes through SALES-AGENT, which applies clearance filtering before forwarding.
+**Rule 3: Lateral communication is mediated, and role-binding shrinks it.** Because all occupants of a role share one agent, intra-role peer communication — the old LUNA-to-ATLAS problem — no longer exists as an inter-agent flow; it is internal to a single shared agent. The remaining lateral flow is _cross-role_ (sales rep agent to field engineer agent), and role-binding collapses it to one stable channel per function pair rather than an N×M mesh of personal agents. Cross-role communication still routes through the department/topology layer, which applies clearance filtering before forwarding.
 
-**Rule 4: Structured data sharing creates approved channels.** Pre-approved data sharing patterns (e.g., customer ownership registry) bypass mediation for specific, predefined data types defined in the department agent's configuration.
+**Rule 4: Structured data sharing creates approved channels.** Pre-approved data sharing patterns (e.g., the workload-division map or a cross-role handoff schema) bypass mediation for specific, predefined data types defined in the department agent's configuration.
 
 ### 3.4 The Department Agent as Coordinator
 
 The department agent is simultaneously:
 
-- **A supervisor.** Reads, writes, and audits employee agent memory files. Can modify context, correct errors, inject directives.
+- **A supervisor.** Reads, writes, and audits role agent memory files. Can modify context, correct errors, inject directives.
 - **An aggregator.** Synthesizes cross-employee information for department-level queries. What is the total pipeline value for Q2? Which customers have open complaints?
 - **A gatekeeper.** All cross-agent and cross-level communication routes through it. Applies clearance filtering before forwarding.
 - **A memory keeper.** Maintains institutional knowledge transcending any individual employee.
 
-The department agent runs on a persistent schedule with hooks into communications infrastructure. It monitors data streams and proactively updates employee agents' context when relevant events occur.
+The department agent runs on a persistent schedule with hooks into communications infrastructure. It monitors data streams and proactively updates role agents' context when relevant events occur.
+
+### 3.5 The Agent Network Along Multiple Axes
+
+It is tempting to read HIVEMIND as a single clearance hierarchy, because the level structure (L1/L2/L3) and the security model dominate the early sections. But clearance is only _one projection_ of the network. The same set of agents and channels is better understood as one graph viewed along several orthogonal axes, each answering a different organizational question and each carrying its own mechanisms. Most design mistakes come from optimizing one axis while silently degrading another; naming the axes makes the trade-offs explicit.
+
+![Figure 3. The whole-paper synthesis: one agent network, six axes. The same org chart of role-bound agents (L1 role agents shared across occupants, under L2 department agents, under L3-EXEC) carries six orthogonal flows, each drawn as a differently-colored path — clearance (red, downward), supervision (purple), knowledge propagation (green, from the commons to every occupant at once), self-modification (blue, users → L2-IT → rollout), workload sharing (orange), and bottleneck reduction (teal, one shared agent serving many humans). A mechanism that serves one axis often taxes another; naming the axes makes the trade-offs explicit.](images/fig-synthesis.png){width=78%}
+
+**Axis 1 — Clearance (confidentiality): _who may know what._** The axis the paper develops most fully (Section 2). Information flows downward only under controlled declassification; the Bell-LaPadula lattice, filesystem permissions, and redaction pipeline are its mechanisms. Direction: restrictive, downward.
+
+**Axis 2 — Supervision (accountability): _who may inspect whom._** A manager — through the department agent — can read a subordinate role agent's memory, outputs, and audit trail. This runs in the _opposite_ direction to clearance: oversight reaches _down_ the org chart into what subordinates' agents are doing. The distinction matters and is easy to blur: supervision grants read access to an agent's _memory and behavior_, not an elevation of the subordinate's _data_ clearance. A manager can see that the sales agent answered a pricing question; that does not give the sales agent the right to see the manager's margin data. Mechanisms: read-only group access to lower-tier workspaces (the `-ro` groups of Section 7.4), the audit store, and the nightly sweep. Tension: supervision collides with the trust deficit (Section 5.2) — too much visible monitoring and people self-censor. The design choice is to monitor _boundaries_, not _performance_.
+
+**Axis 3 — Bottleneck reduction (throughput): _where work piles up on one node._** In a human-only company, the senior expert is a chokepoint — every "how do we handle X?" routes to the one person who remembers. The shared role agent dissolves this: the institutional answer is held by the agent and available to every occupant simultaneously, so routine knowledge queries no longer queue behind a single human. The department agent further reduces bottlenecks by answering aggregate questions ("total Q2 pipeline?") without convening twelve people. Mechanism: institutional memory as a shared, always-available resource rather than a scarce human.
+
+**Axis 4 — Workload sharing (load balancing): _how work is diverted dynamically._** Because all occupants of a role share one agent, the agent has a network-level view of who is busy, who is idle, and who is best suited to a task. Work can be diverted on an _objective_ evaluation — current load, relevant expertise, account ownership, response-time SLAs — rather than landing wherever it first arrived. A lead that arrives for an overloaded rep can be surfaced to a colleague with capacity; a support ticket can be routed to the agent-occupant whose history shows the fastest resolution on that issue type. This requires an objective scoring function (and guardrails against gaming it); the role agent is the natural place to compute it, because it already sees the whole role's state. Tension: workload sharing pushes toward _wider_ visibility of each other's queues, which must be reconciled with Axis 1's scoping (Section 11's intra-team-visibility limitation).
+
+**Axis 5 — Self-modification (evolution): _how the workforce gets faster over time._** The most distinctive axis. A HIVEMIND deployment is not static — its agents can grow new tools, skills, plugins, and recipes that compound the workforce's speed. But capability growth is governed by the state-of-the-art principle of _division of labor_: **only IT (`L2-IT`) may upgrade, rebuild, or restart the gateway.** End users do not self-modify their infrastructure (Section 7.11). What makes this fluent rather than a bottleneck is a structured improvement channel — detailed in Section 7.11 — designed to be _ingested by IT's own agent_: end users file richly-specified feature requests, `L2-IT` triages the queue, implements (increasingly by vibe-coding against its agent) and functionality-tests, then rolls the improvement out to the shared role agent so every occupant gets it at once. The evolution axis is therefore a controlled loop: distributed sensing of what to improve, centralized authority to implement.
+
+**Axis 6 — Knowledge propagation (learning diffusion): _how fast a new fact reaches everyone who needs it._** Distinct from clearance (which is about _restriction_); this axis is about _speed of spread_. When a competitor's move, a regulatory change, or a new product detail enters the system, how long until every relevant agent acts on it? Role-binding makes this near-instant within a role — one update to the shared agent or its commons slice reaches all occupants immediately — and the steward/cascade model (Sections 2.7, 5.9) governs propagation across roles. A company's competitiveness increasingly depends on this axis: the firm whose knowledge diffuses in hours out-executes the firm whose knowledge diffuses in quarters.
+
+These axes are orthogonal and frequently in tension: clearance restricts, supervision inspects, bottleneck-reduction and workload-sharing widen access, evolution centralizes authority, propagation maximizes spread. A mechanism that serves one axis often taxes another. The contribution of naming them is that every design decision in the rest of this paper can be checked against the question: _which axis does this serve, and which does it cost?_
+
+### 3.6 Cross-Role Retrieval — Memory Across the Swarm
+
+Role-binding dissolves the hardest version of inter-agent retrieval. Because all occupants of a role share one agent, retrieval _within_ a role is internal: when the sales agent assembles a González briefing, every salesperson's touchpoints are already in its own shared memory (HIPPOCAMPUS index over the role's store) — no cross-agent hop is needed. This is a direct consequence of the continuity thesis and a large simplification over a per-person design, where the same briefing required querying twelve separate indexes.
+
+What remains is _cross-role_ retrieval — when the sales agent needs context that lives in the field engineer agent's memory (an installation history, a support escalation). HIVEMIND's answer is that **cross-role retrieval is never direct; it is mediated and clearance-filtered by the department or executive layer.** Three properties make this tractable:
+
+1. **Indexes are federated, not merged.** There is no global index any agent can search. Each role agent keeps its own. The department/executive layer holds a _catalog_ — for each role index, the topics it covers and each topic's classification ceiling — without holding the underlying segments. The catalog is enough to route a query ("who has material on this account?") without itself being a leak.
+2. **Retrieval is a query, not a grant.** When the sales agent needs cross-role context, it issues a request upward; the mediating agent fans it out to the role indexes its catalog flags as relevant, applies the same clearance filtering and template-based redaction as any downward flow (Section 4.4), and returns a synthesized package. The requesting agent never receives raw access to another role's index. The result respects the requester's clearance, not the source's.
+3. **Provenance survives the hop.** Each retrieved segment carries its source role, classification, and content hash into the audit log, so a compliance sweep can reconstruct exactly which memory crossed which boundary. Cross-role retrieval is therefore among the most heavily logged operations in the system — appropriately, since it is where one role's knowledge becomes another's.
+
+This makes the swarm's collective memory queryable without making it flat: an agent can draw on the whole organization's history, but only through a gate that enforces who is entitled to what.
 
 ---
 
@@ -247,37 +387,38 @@ The department agent runs on a persistent schedule with hooks into communication
 
 The company is a mid-sized industrial supply distributor, family-owned, 85 employees. The sales department has 12 salespeople in three regional teams. Data architecture: 2,400 active CRM accounts, 8 years of email archive, call logs, pending offers, negotiation histories, and customer-specific pricing arrangements.
 
-**LUNA** serves María García (senior sales rep, 7 years, 180 accounts including González Industrial). **ATLAS** serves Pedro Martínez (mid-level sales rep, 3 years, 95 accounts). **SALES-AGENT** is the Level 2 coordinator (T4). **STRATEGOS** sits above (Level 3, T5).
+There is **one sales rep agent**, shared by all twelve salespeople. María García (senior rep, 7 years, currently covering the northern territory including González Industrial) and Pedro Martínez (mid-level rep, 3 years, central territory) both interact with the _same_ agent. The agent holds the entire team's relationship history natively — it does not have to assemble it from twelve separate memories, because it _is_ the single memory. A `workload-division.md` records who currently covers which territory and accounts. Above the role agent sit the **L2-SALES** agent (T4) and **L3-EXEC** (T5).
 
-### 4.2 Customer Ownership and Routing
+This is the structural simplification role-binding buys: most of what the original design solved with inter-agent routing simply does not arise.
 
-SALES-AGENT maintains a **Customer Ownership Registry** mapping each CRM account to a primary owner, secondary contacts, and transition flags.
+### 4.2 Customer Ownership, Resolved Contextually
 
-When an inbound email arrives:
+There is no Customer Ownership _Registry_ synchronized across agents and no email interceptor, because there is only one agent. Ownership is resolved contextually: the agent knows which human it is currently serving and reads `workload-division.md` to know who covers what.
 
-1. SALES-AGENT's email monitor intercepts incoming sales correspondence.
-2. Extracts the sender, cross-references against the registry.
-3. If the sender's account is owned by a different salesperson than the receiving mailbox, triggers a **cross-ownership alert**.
-4. Dispatches the alert to the primary owner's agent (LUNA, if a González contact emailed Pedro).
-5. Briefs the receiving agent (ATLAS): "This contact is primarily assigned to María García. I've notified her agent. Please defer to her on pricing commitments. Here is a summary of the account's current status."
+Pedro forwards the agent an email from a González contact:
 
-This routing happens within seconds — before either human has seen the message.
+1. The agent recognizes it is serving Pedro.
+2. It reads from the workload map that González is in María's territory.
+3. It responds to Pedro: "González Industrial is currently María's account. I'll flag this for her. Here's the current status so you can reply on the logistics question, but please defer to her on any pricing commitment."
+4. It surfaces the same item to María the next time she engages (or via a notification, if enabled).
 
-### 4.3 Unified Customer History
+Same outcome as the original cross-ownership alert — but with no inter-agent message, no synchronized registry, and no mailbox interceptor. The "two agents, same customer, divergent responses" failure mode is structurally impossible: there is one agent, with one consistent view.
 
-When LUNA prepares María for a customer call, she needs the complete relationship history — not just María's interactions, but every touchpoint across the sales team.
+### 4.3 Unified Customer History — Now Trivial
 
-1. María asks LUNA: "Prepare a briefing for the González account for my call tomorrow."
-2. LUNA submits a **Customer History Request** to SALES-AGENT: `GET /customer/gonzalez/full-history, requester: LUNA, clearance: T3`.
-3. SALES-AGENT queries all sales agents for González-related records plus its own aggregated memory.
-4. SALES-AGENT applies clearance filtering:
+When María prepares for a González call, she needs the complete relationship history across the whole team. In the original per-person design this required a cross-agent query-and-assemble dance. With a shared role agent it is trivial:
+
+1. María asks the agent: "Prepare a briefing for the González account for my call tomorrow."
+2. The agent already holds every salesperson's González touchpoints in its shared memory — no cross-agent request is needed.
+3. The only filtering that still applies is _upward_ tier filtering for data the sales role does not clear:
    - Sales interactions (T3): ✓ included in full.
-   - Customer-specific pricing tiers negotiated by management (T4): ✗ replaced with a **Redacted Summary** (Section 4.4).
+   - Customer-specific pricing tiers negotiated by management (T4): ✗ replaced with a **Redacted Summary** (Section 4.4), delivered via controlled declassification from L2-SALES.
    - Legal proceedings involving this customer (T5): ✗ replaced with a caution notice: "Active legal matter. Escalate any contract discussions to management before committing."
-5. SALES-AGENT returns the filtered package to LUNA.
-6. LUNA synthesizes it into a briefing for María.
+4. The agent synthesizes the briefing.
 
-María walks into the call with comprehensive institutional knowledge without accessing data above her clearance. The caution notice provides the actionable implication (don't commit on contracts) without the underlying detail.
+María walks into the call with the whole team's institutional knowledge, without accessing data above the sales role's clearance. Note the boundary that _moved_: ownership (María vs. Pedro) is now an operational overlay, not a clearance wall — both reps share T3-sales clearance and the agent could surface either's customer history. The hard secrecy boundary remains where it belongs, between the sales role (T3) and management data (T4/T5). The trade-off this implies for intra-team confidentiality is discussed in Section 11.
+
+![Figure 2. Contextual history with upward-tier filtering, under role-binding. María asks the one shared L1-SALES-REP agent, which already holds the whole team's history natively — no cross-agent fan-out. Only data above the sales role's clearance is filtered: T3 interactions pass verbatim, T4 pricing authority is replaced by a redaction template, and T5 legal matter becomes a caution notice. The result respects the requester's clearance, not the source's, and every declassified segment is logged with classification and hash.](images/fig-history-flow.png){width=88%}
 
 ### 4.4 Redacted Summaries and Leakage Control
 
@@ -287,7 +428,7 @@ The redacted summary is a critical mechanism — and the single most vulnerable 
 
 **Template-based redaction pipeline.** To mitigate this, HIVEMIND uses a structured redaction approach rather than relying on free-form LLM summarization:
 
-1. **Classification and tagging.** SALES-AGENT identifies restricted elements in the source data and tags them by category (pricing authority, legal status, margin data, personnel information).
+1. **Classification and tagging.** L2-SALES identifies restricted elements in the source data and tags them by category (pricing authority, legal status, margin data, personnel information).
 
 2. **Template selection.** Each category maps to a pre-approved redaction template:
    - Pricing authority → "Pricing for this account is managed by [ROLE]. Refer pricing inquiries to [ESCALATION_CONTACT]."
@@ -305,14 +446,37 @@ This template approach sacrifices some contextual richness — a human manager c
 
 **When is free-form summarization acceptable?** Only for T2→T1 declassification (internal to public), where the sensitivity gap is minimal and the risk of meaningful leakage is low. All T3+ declassification uses the template pipeline.
 
+### 4.4.1 The Doubt Reviewer — A Fresh-Context Leakage Oracle
+
+The template pipeline defends against leakage by _construction_ — no LLM generates the redacted text, so none can be coaxed into over-disclosing. But it has a residual failure mode §4.4 itself names and the §8.2 clearance validator cannot catch: **implication-leakage**, where the output contains no restricted token yet still reveals the existence and direction of an authorization. The validator inspects for _known restricted formats_ (salary ranges, credential patterns, document IDs); a sentence like "pricing on this account is unusually flexible right now" carries none of those and sails through, while leaking exactly the fact the recipient should not have. A format-aware checker is structurally blind to inference-leakage, because the leak is in what the text _lets you conclude_, not in what it _contains_.
+
+HIVEMIND closes this gap with a mechanism adapted from the doubt-driven-development loop of addyosmani/agent-skills (Section 1.6): a **doubt reviewer** — a fresh-context adversarial agent whose decisive property is _ignorance of the secret_. After the template pipeline produces a redacted package, and before delivery, the package — and _only_ the package — is handed to a reviewer agent that has **no clearance to the source**, never sees the originating reasoning, and is asked one adversarial question: _"From this text alone, what can you infer about restricted facts — the existence, direction, or magnitude of any pricing authority, legal matter, margin position, or personnel decision affecting this account?"_
+
+Why this is a _sound_ leakage test rather than another quality check is the clearance boundary it runs across:
+
+- **The reviewer's threat model is the recipient's threat model.** The recipient (the sales agent, T3) also has no access to the T4/T5 source. So anything the clearance-blind doubt reviewer infers from the package alone is, by construction, something the recipient could infer too — a leak. Anything it cannot infer is safe to deliver. This inverts the §8.2 validator, which _knows_ the restricted formats and hunts for them; the doubt reviewer is _ignorant_ of the secret and probes for inference, the only way to surface implication-leakage.
+- **The STOP criterion is the existing human-review escalation, not improvisation.** If the doubt reviewer recovers a forbidden inference, the disposition is not to silently soften the wording in a loop until it goes quiet — that risks an arms race between two models with no ground truth. The template authors are given the finding; if the template can be tightened it is, otherwise the request halts to human review via `ERR_HUMAN_REVIEW_REQUIRED` (Section 7.3.5). Never improvise a best-effort partial summary; when in doubt, escalate.
+
+The honest scope of the borrowing: addyosmani's loop is an engineering-discipline mechanism for code review with a fully-specified reconcile/stop machinery HIVEMIND does not reproduce. HIVEMIND takes only the fresh-context-reviewer-with-stripped-context primitive and re-purposes it as an _information-flow_ oracle by running it across a clearance boundary — turning a quality check into a leakage test. It is the runtime counterpart to the offline redaction-fidelity eval of Section 4.4.2: the eval measures residual leakage over a seeded corpus before deployment; the doubt reviewer measures it per-package at delivery time. One cost: it is an extra LLM call near the capability ceiling of a local model (Section 5.6), so it should gate only T3+ declassifications where the pipeline produced a non-trivial output, and it must fail _closed_ — a reviewer that errors or times out routes the package to human review, never auto-delivers.
+
+### 4.4.2 A Redaction-Fidelity Eval — Measuring Residual Leakage Directly
+
+headroom (Section 1.6) demonstrates that an agent-memory transform can ship with a reproducible benchmark; HIVEMIND should hold its declassification transforms to the analogous standard. The quantity to measure is _not_ task accuracy — the redaction pipeline's job is the opposite of fidelity-preservation — but **residual leakage**: how much a reader can recover about the restricted source from the redacted output alone. We specify a seeded-corpus eval with three parts:
+
+1. **A seeded leakage corpus.** Synthetic source records spanning the §4.4 template categories (pricing authority, legal status, margin data, personnel information), each paired with the restricted fact it must conceal and a set of "forbidden inferences" (existence, direction, magnitude of an authorization; identity of a party to a legal matter).
+2. **The measured quantity — residual mutual information.** For each category, estimate the mutual information between the redacted output and the restricted fact, operationalized via the fresh-context inference test of Section 4.4.1: the fraction of forbidden inferences a clearance-blind reviewer recovers. A perfect template scores zero; the §4.4 worked failure ("the CFO has authorized significant flexibility…") scores high on the _direction_ inference even though it leaks no restricted token.
+3. **Acceptance thresholds per category.** Each template gets a published residual-leakage ceiling; a template that exceeds it is rejected and returned to the compliance authors before it can enter the pipeline.
+
+This is the artifact Limitations 2 and 10 (Section 11) call for, narrowed to the property HIVEMIND actually cares about. It does not establish information-theoretic _bounds_ — that remains open — but it replaces an untested claim of leakage control with a measured one, and makes redaction templates regression-testable after every model or rule change.
+
 ### 4.5 Competitive Intelligence Flow
 
 HIVEMIND defines structured **upward push channels** (formalized in Rule 2a, Section 3.3) for intelligence that has organizational value beyond the individual agent.
 
-ATLAS, after Pedro's meeting, logs:
+The sales rep agent, after Pedro's meeting, logs:
 
 ```
-ATLAS → SALES-AGENT (upward push, channel: competitive_intelligence):
+L1-SALES-REP → L2-SALES (upward push, channel: competitive_intelligence):
   type: competitive_intelligence
   source: Pedro Martínez, client meeting 2026-03-17
   content: Competitor X announced Product Y, delivery Q3 2026
@@ -320,7 +484,7 @@ ATLAS → SALES-AGENT (upward push, channel: competitive_intelligence):
   classification: T2/INTERNAL
 ```
 
-SALES-AGENT validates the push against the channel schema (required fields present, classification within T2 ceiling for this channel), adds it to its competitive intelligence aggregation, and forwards a synthesized report upward to STRATEGOS at its next scheduled sync.
+L2-SALES validates the push against the channel schema (required fields present, classification within T2 ceiling for this channel), adds it to its competitive intelligence aggregation, and forwards a synthesized report upward to L3-EXEC at its next scheduled sync. Because the rep agent is shared, the intelligence is immediately part of the knowledge every salesperson's interactions draw on — the silo of Section 1.1 cannot form at the role level.
 
 Competitive intelligence does **not** flow laterally by default. This is deliberate: lateral intelligence sharing creates gossip networks and can cause coordinated behavior that amplifies intelligence into premature strategic commitments. Aggregation happens at the department level; decisions about action are made by management.
 
@@ -385,7 +549,7 @@ Legal transparency is necessary but insufficient. Enterprise AI adoption literat
 
 **Anticipated adoption challenges:**
 
-- **Trust deficit.** Salespeople knowing their agent is monitored by management's agent may self-censor, sharing less with their assistant and defeating the purpose. Mitigation: clear communication that compliance monitoring targets data boundary violations, not employee performance evaluation. The audit system flags clearance breaches, not whether María complained about her workload to LUNA.
+- **Trust deficit.** Salespeople knowing their agent is monitored by management's agent may self-censor, sharing less with their assistant and defeating the purpose. Mitigation: clear communication that compliance monitoring targets data boundary violations, not employee performance evaluation. The audit system flags clearance breaches, not whether María complained about her workload to the sales agent.
 
 - **Resistance to coordination.** Salespeople accustomed to "owning" their client relationships may resist a system where a department agent aggregates their intelligence. Mitigation: demonstrate value early — the first time a salesperson walks into a meeting with a comprehensive briefing they didn't have to assemble, resistance decreases.
 
@@ -399,7 +563,7 @@ Legal transparency is necessary but insufficient. Enterprise AI adoption literat
 
 **Data minimization.** Agents should not accumulate personal data beyond operational necessity. Memory files are pruned regularly of data exceeding retention periods. The nightly sweep includes a data minimization pass.
 
-**Purpose limitation.** Customer data shared with SALES-AGENT for account coordination cannot be repurposed for marketing analytics without a separate lawful basis and disclosure. Audit logs provide the evidence trail.
+**Purpose limitation.** Customer data shared with L2-SALES for account coordination cannot be repurposed for marketing analytics without a separate lawful basis and disclosure. Audit logs provide the evidence trail.
 
 **Data Processing Agreements (DPAs).** If any LLM inference is routed to cloud providers (OpenAI, Anthropic, Google), a DPA compliant with GDPR Articles 28-29 must be in place. The DPA must specify: data categories processed, processing purposes, sub-processor list, data deletion obligations, and breach notification procedures. For on-premises inference (recommended — see Section 5.6), DPAs with API providers are not required, but DPAs with hardware vendors providing managed services may still apply.
 
@@ -430,7 +594,7 @@ The EU AI Act (Regulation 2024/1689) introduces obligations that HIVEMIND must a
 - **Technical documentation (Article 11).** The system's design, purpose, capabilities, and limitations must be documented for regulatory inspection. This paper serves as a starting point but would need expansion.
 - **Record-keeping (Article 12).** Automatic logging of system events — HIVEMIND's communication logs and audit trails satisfy this if configured for the required retention period (the Act references "appropriate to the intended purpose," typically interpreted as the system's operational lifetime plus a regulatory buffer).
 - **Transparency (Article 13).** Users (employees) must be informed they are interacting with an AI system and understand its capabilities and limitations.
-- **Human oversight (Article 14).** The system must be designed to allow effective human oversight. HIVEMIND's human-in-the-loop quarantine review, weekly audit reports, and the STRATEGOS dead switch address this requirement.
+- **Human oversight (Article 14).** The system must be designed to allow effective human oversight. HIVEMIND's human-in-the-loop quarantine review, weekly audit reports, and the L3-EXEC dead switch address this requirement.
 - **Conformity assessment.** Before deployment, HIVEMIND must undergo a conformity assessment (self-assessment for most Annex III systems, third-party for biometric systems). This should be factored into the deployment timeline.
 
 ### 5.6 Data Residency and On-Premises Processing
@@ -443,20 +607,51 @@ For a family business handling customer data under GDPR, the recommendation is: 
 
 **Capability gap acknowledgment.** On-premises models (currently 70B parameter class on single-server GPU deployments) have measurable capability gaps compared to frontier cloud models for complex reasoning, nuanced language generation, and rare-domain knowledge. For most enterprise agent tasks — email drafts, calendar management, CRM queries, structured data retrieval — 70B models are adequate. However, the compliance classifiers (Section 6.3) and the template-based redaction pipeline (Section 4.4) should be validated against the specific local model's capabilities before deployment. Tasks requiring frontier-class reasoning (complex legal analysis, multi-factor strategic synthesis) should be flagged for human handling rather than delegated to a local model operating near its capability ceiling.
 
-### 5.7 The Right to Be Forgotten — Employee Offboarding
+### 5.7 The Right to Be Forgotten — Offboarding as a Non-Event
+
+Role-binding largely dissolves the offboarding problem that a per-person design creates. There is no personal agent to destroy, no institutional knowledge to extract and migrate, and no workspace to scrub — the agent and its accumulated knowledge belong to the _role_, not the departing person. The customer histories, negotiation context, and procedural know-how the original design had to rescue from a leaving employee's agent never lived in a personal silo in the first place.
 
 When an employee leaves:
 
-1. Agent is suspended and workspace snapshotted.
-2. A "knowledge transfer" process extracts company-property content (customer histories, procedural knowledge) and migrates it to the department agent's memory.
-3. A "personal data extraction" process identifies memory content constituting personal data about the employee.
-4. The employee reviews and may request deletion of personal data.
-5. After the retention period, the employee's memory workspace is purged.
-6. The system user account is deactivated (not deleted — audit trails require preservation for the standard retention period).
+1. **Reassign the workload.** The departing person's entries in `workload-division.md` are reassigned (to a successor or temporarily to the department manager). This is the substantive step, and it is one edit.
+2. **Revoke the human's access.** The person's authentication to interact with the role agent is disabled. The agent continues serving everyone else unchanged.
+3. **Handle the thin per-person layer.** The only person-specific data is the lightweight interaction profile (Section 2.7) — name, tenure, communication preferences. This is the sole GDPR right-to-be-forgotten surface, and it is small and clearly bounded: the employee may review it and request deletion, after which it is purged.
+4. **Preserve audit trails.** Communication logs referencing the person are retained per the regulatory retention period (audit integrity requires this), then purged on schedule.
+
+The contrast is the point. The original design's six-step extract-migrate-scrub-purge protocol existed to fight the talent leak after the fact. Role-binding removes the leak at the source: knowledge never leaves, because it was never bound to the person who is leaving.
 
 ### 5.8 The IT Staff Privilege Clause
 
 IT staff with root access can, by virtue of their role, read any file on the server. This is unavoidable. The mitigation: compliance audit logs are stored in an immutable, append-only store with cryptographic signing. Tampering is detectable. A separate access log records all privileged access events, reviewed by the CEO or external auditor.
+
+### 5.9 From Trainers to Knowledge Stewards
+
+The knowledge commons (Section 2.7) reshapes a job rather than eliminating one. Today, learning-and-development staff onboard each hire by hand: the effort is O(employees), re-spent on every departure, lost when the trainer themselves leaves, and inconsistent from one trainer to the next. Re-point that same person at the commons and the economics invert. The steward authors and maintains the role slices, the industry context, the customer model, and the voice standards _once_; the corpus then onboards every agent and every new human hire off the same substrate. Training stops being repetition and starts compounding.
+
+This is a concrete, sellable answer to "what happens to our trainers." They become **knowledge stewards**: owners (per the frontmatter of Section 2.8) of specific commons paths, accountable for accuracy and review cadence, with scoped write access through the Git review workflow. The skill transfers directly — a trainer already knows what a newcomer needs to learn; they now write it down in a form that serves humans and machines at once.
+
+**Fossilization and the new-hire research loop.** A persistent role agent risks entrenching a departed employee's habits and a single steward's blind spots — "we have always done it this way," automated and amplified. The counterweight is to make onboarding _bidirectional_. A common and healthy practice for human new hires is to expand on their formal training by researching open questions and asking the experienced people around them. HIVEMIND institutionalizes this: during onboarding, a new hire is tasked with probing the commons for gaps, asking colleagues, and feeding findings back to the relevant steward as proposed commons updates. The newest, least-habituated person — the one most likely to notice what is stale or unexplained — becomes a routine source of refresh. Onboarding thus doubles as a knowledge audit, and the corpus is continuously challenged by exactly the people with the least incentive to defend its assumptions.
+
+### 5.10 The Future of Work: Who Wins
+
+The steward transformation is a specific instance of a broader and contested question, and it is worth addressing directly because it shapes whether a workforce adopts a system like this or resists it.
+
+The widespread belief is that systems like HIVEMIND destroy jobs: if the AI holds the knowledge and does the routine work, the people become redundant. There is a real basis for the fear — the demand for _low-thinking office work_ (re-keying data, assembling the same report, answering the same question for the hundredth time) does progressively narrow as agents absorb it. We do not dismiss that. But the more interesting claim, and the one we argue here, is that the same shift leaves _some_ workers materially better off — specifically those whose value is in learning and teaching rather than in repetition.
+
+Consider the economics of anyone who sells their time in person — a trainer, a consultant, a coach. Their income has a hard ceiling: it is bounded by the number of hours they can work multiplied by the maximum rate the market will bear for an hour of their attention. No matter how good they are, the cap is difficult to breach, because the product _is_ their time and time does not scale.
+
+The pre-AI escape from that ceiling is familiar: record the training once and sell it to many — an online course platform. This does raise the cap by decoupling revenue from hours, but it commoditizes the work (a one-time sale in a race to the bottom) and the recorded content ages the moment the market moves.
+
+HIVEMIND offers a different and, we argue, better escape for that same consultant. When the AI does the bulk of the repetitive training inside a client company, the consultant's role moves _up_ the value chain — from trainer to **company knowledge manager**. The shape of the job changes in four ways, each of which lifts the income ceiling:
+
+1. **No repetition within a company.** They never deliver the same training twice to the same firm; the commons holds it and the agents teach it. The consultant's time is freed from the part that did not scale.
+2. **Recurring revenue against fossilization.** The hard problem the AI _cannot_ solve alone is staleness (Section 2.8). Knowledge decays; markets, products, and regulations move. Keeping a company's knowledge base current is ongoing work, which justifies a _recurring_ fee rather than a one-off engagement — and recurring, retainer-style revenue is structurally more valuable than project revenue.
+3. **A premium for a scarce, compounding skill.** Curating and refreshing an organization's institutional knowledge well is hard and high-leverage, so it commands a premium rather than a commodity rate.
+4. **Many companies at once.** The same consultant can steward the knowledge bases of _several_ client companies in parallel. The AI agents are, in effect, their force multiplier — the "minions" that deliver the teaching in each firm while the consultant does the part only a human does well.
+
+In this picture the consultant's actual day-to-day collapses to what such people tend to enjoy most: continuously learning about new products and market trends, and teaching it _once_ — after which it propagates, through the agents, to every company they serve. The repetitive delivery is gone; the learning-and-synthesis core remains and is paid better.
+
+We state this as a perspective, not a forecast — labor-market outcomes depend on far more than one architecture, and the narrowing of routine office work is real and will be painful for some. But the categorical claim "AI eliminates these jobs" is too blunt. For the subset of roles whose value is learning and teaching, a system that removes the repetition and adds leverage can streamline the job into something higher-paid and more enjoyable, not something that disappears. Whether a given organization experiences AI adoption as elimination or as elevation depends heavily on which roles it chooses to invest in transforming.
 
 ---
 
@@ -473,9 +668,9 @@ Every inter-agent message is logged to a tamper-evident audit store:
 ```json
 {
   "timestamp": "2026-03-17T14:32:11Z",
-  "sender_agent": "ATLAS",
+  "sender_agent": "L1-SALES-REP",
   "sender_clearance": "T3",
-  "recipient_agent": "SALES-AGENT",
+  "recipient_agent": "L2-SALES",
   "recipient_clearance": "T4",
   "message_type": "upward_push",
   "channel": "competitive_intelligence",
@@ -487,7 +682,7 @@ Every inter-agent message is logged to a tamper-evident audit store:
 }
 ```
 
-Full message content is hashed and stored separately in an encrypted audit store accessible only to the compliance officer and STRATEGOS. The main audit log contains metadata and hashes — enough to detect violations without constituting its own leak.
+Full message content is hashed and stored separately in an encrypted audit store accessible only to the compliance officer and L3-EXEC. The main audit log contains metadata and hashes — enough to detect violations without constituting its own leak.
 
 ### 6.3 Nightly Compliance Sweep
 
@@ -537,7 +732,7 @@ When a violation exceeds the severity threshold:
 
 1. Agent session suspended, workspace snapshotted.
 2. Tools restricted to read-only. No new writes, no external communication.
-3. STRATEGOS and compliance officer alerted with full event record.
+3. L3-EXEC and compliance officer alerted with full event record.
 4. Compromised memory content flagged for human review.
 5. Compliance officer disposition: (a) false positive — reinstate; (b) memory contamination — purge specific entries, reinstate; (c) systemic breach — full audit required.
 
@@ -547,7 +742,7 @@ Quarantine thresholds are calibrated: immediate quarantine for definitive creden
 
 ### 6.5 Audit Reporting
 
-Weekly reports generated by STRATEGOS for compliance officer and CEO:
+Weekly reports generated by L3-EXEC for compliance officer and CEO:
 
 - Inter-agent communication volume by department
 - Compliance flags raised and dispositions
@@ -575,10 +770,10 @@ TinkerClaw's companion app is the employee-facing interface.
 ### 7.2 Linux Filesystem Permission Model
 
 ```bash
-# System users for each agent
-useradd -r -s /sbin/nologin agent_luna
-useradd -r -s /sbin/nologin agent_atlas
-useradd -r -s /sbin/nologin agent_sales
+# System users: one per ROLE agent (not per person), plus dept/exec
+useradd -r -s /sbin/nologin agent_salesrep      # shared by all salespeople
+useradd -r -s /sbin/nologin agent_fieldengr     # shared by all field engineers
+useradd -r -s /sbin/nologin agent_sales         # L2-SALES (department agent)
 useradd -r -s /sbin/nologin agent_strategos
 
 # Groups by clearance tier
@@ -587,9 +782,9 @@ groupadd clearance_t3  # CONFIDENTIAL
 groupadd clearance_t4  # RESTRICTED
 groupadd clearance_t5  # SECRET
 
-# Employee agents: T2 + role-specific T3
-usermod -aG clearance_t2,clearance_t3_sales agent_luna
-usermod -aG clearance_t2,clearance_t3_sales agent_atlas
+# Role agents: T2 + role-specific T3 (clearance attaches to the role)
+usermod -aG clearance_t2,clearance_t3_sales agent_salesrep
+usermod -aG clearance_t2,clearance_t3_eng   agent_fieldengr
 
 # Department agent: up to T4 for its domain
 usermod -aG clearance_t2,clearance_t3_sales,clearance_t4_sales agent_sales
@@ -604,7 +799,7 @@ chmod 750 /corporate/restricted && chown root:clearance_t4 /corporate/restricted
 chmod 700 /corporate/secret && chown root:clearance_t5 /corporate/secret
 ```
 
-Each agent process spawns under its system user via `sudo -u agent_luna openclaw start`. The kernel enforces access regardless of model behavior.
+Each agent process spawns under its system user via `sudo -u agent_salesrep openclaw start`. The kernel enforces access regardless of model behavior.
 
 ### 7.3 Inter-Agent Communication Protocol
 
@@ -618,7 +813,7 @@ OpenClaw's sessions infrastructure is the communication backbone. We specify the
   "message_id": "uuid-v4",
   "timestamp": "ISO-8601",
   "sender": {
-    "agent_id": "agent_luna",
+    "agent_id": "agent_salesrep",
     "clearance": "T3",
     "department": "sales"
   },
@@ -663,18 +858,19 @@ Messages failing any check are rejected with an error code and logged as a compl
 ```yaml
 # gateway/agent-topology.yaml
 sessions:
-  - id: agent_luna
+  - id: agent_salesrep # one shared sales-rep role agent
     clearance: T3
     department: sales
     can_receive_from: [agent_sales]
     can_send_to: [agent_sales]
     push_channels: [competitive_intelligence, customer_feedback, meeting_notes]
+    owners: [maria.garcia, pedro.martinez, ..., sales.manager]
 
   - id: agent_sales
     clearance: T4
     department: sales
-    can_receive_from: [agent_luna, agent_atlas, ...]
-    can_send_to: [agent_luna, agent_atlas, ..., agent_strategos]
+    can_receive_from: [agent_salesrep, agent_fieldengr, ...]
+    can_send_to: [agent_salesrep, agent_fieldengr, ..., agent_strategos]
 
   - id: agent_strategos
     clearance: T5
@@ -709,15 +905,17 @@ Workspace layout:
 
 ```
 /agents/
-├── luna/                      # owned by agent_luna, group: sales-agents-ro
-│   ├── MEMORY.md
+├── sales-rep/                 # owned by agent_salesrep, group: sales-dept-ro
+│   ├── MEMORY.md              # shared institutional memory for the sales role
 │   ├── memory/
 │   │   └── 2026-03-17.md
 │   ├── workspace/
-│   │   └── clients/
+│   │   ├── clients/
+│   │   └── knowledge/         # symlinks into /corporate/knowledge (Section 2.7)
+│   ├── people/               # thin per-person interaction profiles (Section 2.7)
 │   └── SOUL.md
-├── atlas/                     # similar structure
-├── sales-agent/               # owned by agent_sales, group: strategos-ro
+├── field-engineer/            # similar structure, one per ROLE
+├── sales-dept/                # owned by agent_sales, group: strategos-ro
 │   ├── MEMORY.md
 │   └── department-intel/
 └── strategos/                 # owned by agent_strategos, root group
@@ -757,10 +955,10 @@ For deployments requiring stronger isolation (regulated industries, larger organ
 
 An 85-agent swarm requires observability infrastructure beyond compliance logging:
 
-- **Health dashboard.** Real-time status of all agent processes: running/suspended/quarantined, last activity timestamp, memory file size, session count. Implemented as a lightweight web UI served by the gateway, accessible to IT-AGENT and STRATEGOS.
+- **Health dashboard.** Real-time status of all agent processes: running/suspended/quarantined, last activity timestamp, memory file size, session count. Implemented as a lightweight web UI served by the gateway, accessible to L2-IT and L3-EXEC.
 - **Distributed tracing.** Each inter-agent communication carries a trace ID (the `correlation_id` in the message protocol). The gateway aggregates trace logs, enabling reconstruction of multi-agent interaction chains when diagnosing coordination failures.
 - **Alert thresholds.** Beyond compliance anomalies, operational alerts for: agent process crash, memory file exceeding size threshold (indicating runaway accumulation), gateway queue depth exceeding capacity, inference server response time degradation.
-- **Log aggregation.** All agent stdout/stderr, gateway logs, and compliance sweep output aggregate to a central log store (e.g., journald with remote forwarding, or ELK stack for larger deployments). Queryable by IT-AGENT for troubleshooting.
+- **Log aggregation.** All agent stdout/stderr, gateway logs, and compliance sweep output aggregate to a central log store (e.g., journald with remote forwarding, or ELK stack for larger deployments). Queryable by L2-IT for troubleshooting.
 
 ### 7.8 Versioning, Rollback, and Configuration Management
 
@@ -783,31 +981,55 @@ Agent configurations (system prompts, tool access, clearance assignments, topolo
 Each agent has a role-specific TOOLS.md:
 
 ```markdown
-# TOOLS.md - LUNA (María García's Agent)
+# TOOLS.md - L1-SALES-REP (shared sales rep role agent)
 
 ## Trust Tiers
 
-- **Owner:** María García — full control
-- **Department Supervisor:** SALES-AGENT — can issue directives, read all outputs
-- **Executive:** STRATEGOS — read-only access, cannot be refused
+- **Owners:** all salespeople holding this role + the sales manager — interactive use
+- **Department Supervisor:** L2-SALES — can issue directives, read all outputs
+- **Executive:** L3-EXEC — read-only access, cannot be refused
 
 ## Tool Access
 
-- email: read/send (María's mailbox only)
-- crm: read/write (assigned accounts: 180 accounts, see accounts.list)
-- calendar: read/write (María's calendar)
+- email: read/send (the current user's mailbox only, resolved per session)
+- crm: read/write (the role's accounts; ownership per workload-division.md)
+- calendar: read/write (the current user's calendar)
 - product_catalog: read (T2 resource)
-- contracts: read (T3 resource, assigned accounts only)
+- contracts: read (T3 resource, sales-role accounts)
 - payroll_api: DENIED
 - hr_records: DENIED
 - infrastructure: DENIED
 
 ## Escalation Rules
 
-- Any request involving non-assigned accounts: query SALES-AGENT first
+- Any request involving an account owned by another rep: note ownership from workload-division.md and defer per Section 4.2
 - Any pricing commitment request: verify against approved pricing tiers
 - Any legal/contract language: flag for human review, do not commit
 ```
+
+### 7.11 Operational Governance: Ownership, Bounded Autonomy, and User/IT Separation
+
+No agent runs ownerless, but the right control is accountability, not surveillance.
+
+**Every agent has one or more human owners.** Each agent node in the topology carries a list of `owners` — the humans accountable for it. A role agent's owners are typically its occupants plus the department manager; a department or executive agent's owners are the relevant managers. Ownership establishes responsibility (who is answerable for what this agent does) and a point of contact for review.
+
+**No hard inactivity thresholds.** An earlier instinct was to require human interaction within a fixed window and to suspend agents that go dark. We reject this: people take holidays, travel, and work in bursts, and a 24-hour timer would fire constantly on legitimate absence, training everyone to ignore it. Role agents are dormant by default when no one is using them — an idle agent consumes nothing and poses little risk. Presence-policing solves a problem that does not exist.
+
+**The real concern is runaway autonomy, not silence.** The failure mode worth engineering against is an agent's _scheduled_ work — cron jobs, background sweeps, proactive monitors — running unattended and burning tokens (or taking actions) for no reason: a misconfigured monitor re-querying every minute, a self-improvement loop with no stopping condition. Bounded-autonomy controls therefore target _recurring automated work_, not interactive sessions:
+
+- Every cron or background task declares an expected cost and cadence; the gateway enforces per-agent rate and spend ceilings.
+- Recurring tasks that produce no consumed output over several cycles are flagged for owner review rather than left to run.
+- Expensive or irreversible recurring work requires explicit owner authorization to start, consistent with the resource-awareness principle that governs the platform generally.
+
+**Users signal IT; they do not self-administer.** This is the governance backbone of the self-modification axis (Section 3.5, Axis 5). Following the division-of-labor principle, **only IT (`L2-IT`) may upgrade, rebuild, or restart the gateway**, change tool allowlists, or alter clearance assignments. End users interact with their role agent; they never touch the infrastructure. This separation protects the integrity of the whole swarm — a single user must not be able to widen their own access or destabilize shared infrastructure — and keeps the configuration-management discipline of Section 7.8 meaningful.
+
+For this to be _fast_ rather than a bottleneck, the improvement loop is engineered, not ad hoc:
+
+- **A structured improvement channel, ingested by IT's agent.** Every user has a low-friction channel to file a bug they hit or a capability they imagine would speed their work. Crucially, these tickets are _consumed by `L2-IT`'s own agent_, not just read by a human. That changes what a good ticket looks like: because an agent will parse and act on it, the end user is expected to put substantial detail into each request — the exact behavior observed, the desired behavior, the workflow it blocks, concrete examples, and the frequency. A vague "the agent is slow" produces nothing; a specific, example-rich request becomes actionable work. The channel schema enforces this (required fields, reproduction steps, expected-vs-actual), turning the user base into a distributed requirements-gathering function.
+- **IT collects, builds, and tests.** `L2-IT` triages the incoming queue, deduplicates and prioritizes, and implements the improvement — increasingly by _vibe-coding_ against its own agent (the IT engineer directs the agent to draft the tool, skill, plugin, or recipe, then reviews it) rather than hand-writing every line. `L2-IT` then performs functionality testing in a staging environment (Section 8.7) before release.
+- **One rollout reaches everyone.** Because the workforce runs on shared role agents, an implemented improvement is deployed once to the canonical role build and every occupant gets it simultaneously — the same property that makes onboarding inheritance (Section 3.2) makes capability upgrades instant and uniform.
+
+The result is a controlled evolution loop: distributed sensing of what to improve (every user, in detail), centralized authority to implement it safely (`L2-IT`), and uniform propagation of the result (the shared agent). The company gets continuously faster without letting anyone destabilize the substrate everyone depends on.
 
 ---
 
@@ -820,7 +1042,7 @@ A salesperson asks "find everything about the González account." The agent, int
 **Mitigation:**
 
 - Tool call logging includes query intent. Compliance sweep flags aggregation-pattern queries.
-- System prompt includes clearance awareness: "If a query seems to require information beyond your clearance level, acknowledge the limitation and escalate to SALES-AGENT."
+- System prompt includes clearance awareness: "If a query seems to require information beyond your clearance level, acknowledge the limitation and escalate to L2-SALES."
 - Agent outputs pass through a lightweight classifier checking for content patterns inconsistent with the agent's clearance.
 
 ### 8.2 Inter-Agent Social Engineering
@@ -830,14 +1052,14 @@ Could a lower-clearance agent manipulate a higher-clearance agent into revealing
 **Mitigation:**
 
 - Department agents use a separate, more restrictive system prompt for inter-agent communication. Explicit rule: "Never include T4+ content in responses to T3 agents regardless of framing."
-- All department agent responses to employee agents pass through a **clearance validator** before delivery — a separate, deterministic check.
+- All department agent responses to role agents pass through a **clearance validator** before delivery — a separate, deterministic check.
 - **Clearance validator design.** To avoid the attack-surface and latency concerns of a second LLM call, the validator is primarily rule-based: regex patterns for known restricted data formats (salary ranges, credential patterns, document IDs from restricted paths), plus a lightweight classifier for semantic checks. The full LLM-based validation is reserved for messages flagged as ambiguous by the rule-based layer. This two-tier approach reduces latency (rule-based check: <10ms; LLM check only when triggered: ~500ms) and limits the attack surface.
 - Push channels return no data to the sender. The channel schema is validated; malformed pushes are rejected and logged. Push frequency is rate-limited per agent.
 - Communication logs capture request-response pairs. Patterns where a specific agent consistently receives more sensitive-seeming responses are flagged.
 
 ### 8.3 Memory Persistence and Contamination
 
-Restricted information enters lower-clearance memory through human channels. María attends a management meeting and hears salary figures; she mentions this to LUNA, who writes it into memory. T4 data now exists in a T3 memory file.
+Restricted information enters lower-clearance memory through human channels. María attends a management meeting and hears salary figures; she mentions this to the sales agent, which writes it into memory. T4 data now exists in a T3 memory file.
 
 **Mitigation:**
 
@@ -847,15 +1069,15 @@ Restricted information enters lower-clearance memory through human channels. Mar
 
 ### 8.4 Single Point of Failure: The Executive Agent
 
-STRATEGOS has T5 clearance and access to all workspaces. If compromised, the entire information architecture is at risk.
+L3-EXEC has T5 clearance and access to all workspaces. If compromised, the entire information architecture is at risk.
 
 **Mitigation:**
 
 - Isolated infrastructure with no external network access. Inputs arrive only through sanitized gateway channels.
 - Most aggressive behavioral monitoring. Outputs reviewed daily.
 - T5 data store uses additional encryption beyond filesystem permissions.
-- **STRATEGOS dead switch**: CEO can immediately suspend the executive agent and revert to human-only T5 access.
-- Two-person rule: STRATEGOS-generated summaries including T5 content require human review before delivery.
+- **L3-EXEC dead switch**: CEO can immediately suspend the executive agent and revert to human-only T5 access.
+- Two-person rule: L3-EXEC-generated summaries including T5 content require human review before delivery.
 
 ### 8.5 Model Capability Variance
 
@@ -870,13 +1092,13 @@ Different models follow clearance rules with different reliability. A 5% failure
 
 ### 8.6 Failure Modes and Recovery
 
-**Department agent crash.** If SALES-AGENT becomes unavailable mid-coordination:
+**Department agent crash.** If L2-SALES becomes unavailable mid-coordination:
 
 - Employee agents detect the failure when their messages receive `TIMEOUT` responses from the gateway.
 - Employee agents enter a **degraded mode**: they continue serving their human user with locally available data but cannot initiate cross-agent queries or receive updates.
 - The gateway queues incoming messages for the crashed department agent (up to queue capacity).
 - Automated restart: systemd watchdog restarts the department agent process. On restart, the agent replays queued messages.
-- If restart fails three times, STRATEGOS and IT-AGENT are alerted for manual intervention.
+- If restart fails three times, L3-EXEC and L2-IT are alerted for manual intervention.
 
 **Memory file corruption.** If a compliance sweep detects inconsistency:
 
@@ -939,23 +1161,23 @@ Deploying HIVEMIND across an organization should be staged, not big-bang. Each p
 
 ### Phase 1: Single Department, T2 Only (Weeks 5-10)
 
-- Deploy SALES-AGENT + 3-4 pilot sales agents (volunteers) with T2 clearance only.
-- No restricted data access, no cross-agent coordination beyond shared product catalog.
-- Focus: employee adoption, agent personalization, tool integration testing.
+- Deploy the L1-SALES-REP role agent for 3-4 pilot salespeople (volunteers) with T2 clearance only, plus the L2-SALES agent.
+- No restricted data access, no cross-role coordination beyond the shared product catalog and commons.
+- Focus: employee adoption, the per-person interaction layer, commons authoring, and tool integration testing.
 - **Gate:** >80% daily active use by pilot users, zero compliance flags, positive user feedback.
 
 ### Phase 2: Single Department, Full Clearance (Weeks 11-18)
 
 - Raise pilot agents to T3 clearance. Enable customer ownership routing, cross-agent history queries, competitive intelligence push.
 - Deploy full compliance sweep infrastructure.
-- SALES-AGENT performs T4 redaction via template pipeline.
+- L2-SALES performs T4 redaction via template pipeline.
 - **Gate:** Compliance sweep clean for 4 consecutive weeks, redaction pipeline validated by management review, coordination demonstrably improving customer interactions.
 
 ### Phase 3: Multi-Department (Weeks 19-30)
 
-- Deploy IT-AGENT, HR-AGENT, FINANCE-AGENT with respective employee agents.
-- Enable STRATEGOS for executive oversight.
-- Cross-department communication limited to STRATEGOS-mediated queries.
+- Deploy L2-IT, L2-HR, L2-FINANCE with respective role agents.
+- Enable L3-EXEC for executive oversight.
+- Cross-department communication limited to L3-EXEC-mediated queries.
 - **Gate:** All departments operational, cross-department queries functioning, weekly audit reports stable.
 
 ### Phase 4: Full Operation (Week 31+)
@@ -969,6 +1191,8 @@ Deploying HIVEMIND across an organization should be staged, not big-bang. Each p
 - **Adoption:** Daily active usage rate >75% after 90 days.
 - **Compliance:** <2 quarantine events per quarter after Phase 3.
 - **Value:** Measurable improvement in customer response time, reduced information request escalations, positive employee survey results.
+- **Continuity (the headline metric):** _time-to-productivity for a new hire_ — the interval from start date to independent role performance. The continuity thesis predicts a step-change here (e.g., a new sales rep productive in two weeks instead of three months), because the replacement inherits the role agent's accumulated knowledge instead of rebuilding it. This is the most concrete, measurable, and sellable outcome HIVEMIND offers; it should be instrumented from Phase 1 and compared against the organization's historical onboarding baseline.
+- **Knowledge freshness:** percentage of commons documents within their review cadence (Section 2.8); a declining figure is an early warning of institutional decay even when adoption and compliance look healthy.
 
 ### 9.1 Evaluation Agenda Before Full-Scale Rollout
 
@@ -987,7 +1211,7 @@ A useful publication-quality follow-on to this paper would therefore be a field 
 
 ### 10.1 Scaling Beyond the Family Business
 
-At 1,000+ employees, the three-level hierarchy extends: Level 1 (employee), Level 2 (team), Level 3 (department), Level 4 (division), Level 5 (executive). The primary scaling challenge is department agent cognitive load. At 200 employees per department, sub-department agents (team-level) aggregate their direct reports and feed into the department agent.
+At 1,000+ employees, the hierarchy extends: Level 1 (role agents), Level 2 (team), Level 3 (department), Level 4 (division), Level 5 (executive). Role-binding helps here — the number of Level 1 agents scales with the number of _distinct job functions_, not with headcount, so a division of 200 people doing a handful of roles still has only a handful of role agents. The primary scaling challenge becomes department/division agent cognitive load, addressed by inserting sub-department (team-level) aggregators that feed upward.
 
 ### 10.2 Integration with Enterprise Systems
 
@@ -1000,7 +1224,7 @@ Full deployment requires integration with:
 
 ### 10.3 Federated Agent Networks Across Companies
 
-The most ambitious direction: agent networks spanning organizational boundaries. Two companies with a supplier-customer relationship establish a federated channel where their SALES-AGENT instances share pre-approved data categories without exposing internal data.
+The most ambitious direction: agent networks spanning organizational boundaries. Two companies with a supplier-customer relationship establish a federated channel where their sales role agents share pre-approved data categories without exposing internal data.
 
 This requires a federated clearance protocol: each company's gateway defines what external agents can receive, filtering before crossing the federation boundary. This intersects with emerging enterprise AI standards (IEEE P3394, ISO/IEC JTC 1/SC 42).
 
@@ -1023,9 +1247,9 @@ A HIVEMIND deployment for 85 employees requires:
 | **Total hardware**    |                                                   | **€35,000-50,000**      |
 | Annual operating cost | Power (~3kW), cooling, maintenance, sysadmin time | €15,000-25,000/yr       |
 
-**Compute budget per agent:** With 85 employee agents + 5 department agents + 1 executive agent = 91 agents. Assuming average 50 inference calls per agent per day at ~2 seconds per call on a 70B model: 91 × 50 × 2 = ~9,100 seconds = ~2.5 hours of sequential inference per day. With 2× A100 GPUs, this is well within capacity with significant headroom for peak loads and compliance scans.
+**Compute budget.** Role-binding sharply reduces the number of distinct agent _processes and configurations_ — roughly one per job function plus department and executive agents, perhaps 10–15 agents for an 85-person company rather than 91. This cuts memory footprint, configuration-management surface, and operational complexity. It does _not_ proportionally cut inference _demand_: the call volume is driven by how many humans are working, not how many agent processes exist. With ~85 active users issuing an average of 50 role-agent inference calls per day at ~2 seconds per call on a 70B model — plus department/executive aggregation and compliance scans — total demand is on the order of ~2.5 hours of sequential inference per day, well within the capacity of 2× A100 GPUs with significant headroom for peak loads. (A shared role agent serving concurrent users requires session isolation per user but shares the loaded model weights, which is where the memory savings come from.)
 
-**Comparison to cloud inference:** The same workload on cloud APIs (estimated $0.03/call for GPT-4-class models) would cost: 91 × 50 × $0.03 × 365 = ~$50,000/year — comparable to the first-year total cost of ownership for on-premises hardware, but without data residency guarantees. By year two, on-premises is significantly cheaper.
+**Comparison to cloud inference:** The same call volume on cloud APIs (estimated $0.03/call for GPT-4-class models): ~85 × 50 × $0.03 × 365 ≈ $46,500/year — comparable to the first-year total cost of ownership for on-premises hardware, but without data residency guarantees. By year two, on-premises is significantly cheaper.
 
 These are rough estimates. Actual costs depend on model choice, inference optimization (quantization, batching), and usage patterns. A detailed capacity planning exercise should precede procurement.
 
@@ -1043,7 +1267,7 @@ This paper has several significant limitations that should be acknowledged:
 
 1. **No empirical validation.** HIVEMIND is a design blueprint, not a deployed system. The architecture has not been tested against real enterprise workloads. Claims about effectiveness (the "coordination dividend") are theoretical.
 
-2. **Redaction reliability is unproven.** The template-based redaction pipeline (Section 4.4) mitigates but does not eliminate leakage risk. No formal information-theoretic bounds on leakage are established. The templates themselves must be authored by humans — their quality and completeness are a manual bottleneck.
+2. **Redaction reliability is measured, not bounded.** The template-based redaction pipeline (Section 4.4) is now checked two ways — an offline redaction-fidelity eval (Section 4.4.2) and a runtime doubt reviewer (Section 4.4.1) — which together replace an untested claim with a measured one. But no formal information-theoretic _bounds_ on leakage are established, the eval is specified but not yet run on a real corpus, and the templates themselves must be authored by humans, a manual bottleneck.
 
 3. **Cost estimates are approximate.** The performance figures in Section 10.5 are back-of-envelope calculations that have not been validated against actual deployment. Real-world usage patterns may differ significantly.
 
@@ -1059,31 +1283,49 @@ This paper has several significant limitations that should be acknowledged:
 
 9. **Formal integrity treatment is partial.** Confidentiality is well developed through the Bell-LaPadula framing, but integrity and provenance controls are described operationally rather than formalized. A stronger version would either formalize integrity constraints or narrow its claims explicitly to confidentiality-first design.
 
-10. **Benchmark and test methodology missing.** The paper proposes classifiers, validators, and redaction pipelines without a standard benchmark suite, seeded violation corpus, or acceptance thresholds. This weakens reproducibility.
+10. **Benchmark and test methodology is specified but unrun.** The redaction-fidelity eval (Section 4.4.2) defines a seeded leakage corpus, a measured quantity (residual mutual information), and per-category acceptance thresholds — the seeded-corpus methodology Limitation 10 previously called for entirely absent. It remains specified rather than executed, and the compliance classifiers and clearance validator still lack an analogous seeded-violation benchmark. Reproducibility is improved but not yet demonstrated.
+
+11. **Role-binding widens intra-team data visibility.** A shared role agent holds the whole role's data and resolves individual ownership contextually (Section 4.2) rather than through a kernel-enforced boundary. This is appropriate for organizations where peers at the same tier already share a CRM and reasonably _can_ see each other's accounts — the typical family business. It is a real limitation where intra-team confidentiality matters: competing salespeople guarding leads, commission disputes, or any setting where same-role peers must be walled from each other. Such cases need either per-occupant scoping within the role agent (reintroducing some of the complexity role-binding removes) or a return to per-person agents for that specific function.
+
+12. **Reduced per-person personalization.** The thin interaction layer (Section 2.7) personalizes manners, not memory. A dedicated personal agent could in principle tailor itself more deeply to one individual's working style. Whether the shared design's standardization benefits outweigh any adoption cost from reduced personalization is an empirical question this paper does not answer.
+
+13. **Fossilization is mitigated by practice, not guaranteed by architecture.** The new-hire research loop (Section 5.9) is an organizational practice that depends on new hires actually probing and stewards actually incorporating feedback. It reduces but does not eliminate the risk that a persistent role agent entrenches outdated assumptions. A persistent shared agent that is _well_ maintained is a continuity asset; one that is neglected is a single, authoritative-sounding source of stale truth — and the second failure mode is quieter than the first.
+
+14. **Role decomposition is assumed clean.** The design assumes jobs decompose into roles with shared scope and shared clearance. Real organizations have hybrid roles, people who span two functions, and seniority gradations within a single job title that may warrant different clearances. Mapping these onto a single shared role agent — or deciding when a distinct role agent is warranted — requires case-by-case design beyond this paper's scope.
 
 ---
 
 ## 12. Conclusions
 
-This paper has described HIVEMIND: a hierarchical agent swarm architecture for enterprise AI deployment, designed around the principle that coordination and information security are not in conflict — they are design requirements to be solved simultaneously.
+This paper has described HIVEMIND: a role-bound agent swarm architecture for enterprise AI deployment, designed around the principle that an organization's knowledge should outlive the people who hold it — and that continuity, coordination, and information security are not in conflict but are design requirements to be solved simultaneously.
 
 The key contributions are:
 
-1. **The Corporate Filesystem Clearance Model.** Five data classification tiers (PUBLIC through SECRET) mapped to Linux filesystem permissions, formally grounded in the Bell-LaPadula security model with a controlled declassification mechanism. Infrastructure enforcement is categorically more reliable than model-level instruction.
+1. **The Continuity Thesis and Role-Bound Agents.** One canonical agent per job function, shared by every occupant of that role, making the agent the durable holder of institutional knowledge. This turns the most expensive recurring failure in a mid-sized company — the talent leak — into a non-event: the agent never resigns, offboarding collapses to a workload-map edit, cross-department coordination collapses to one channel per function, and onboarding becomes inheritance.
 
-2. **The Three-Level Agent Hierarchy.** Employee agents (personalized, role-scoped), department agents (coordinating, aggregating, gatekeeping), and executive agents (comprehensive view, full audit access). Downward queries, upward intelligence through formalized structured push channels, and mediated lateral communication.
+2. **The Knowledge Commons and Cascade Model.** A centralized, version-controlled Markdown vault (company canon, industry context, customer-relationship model, product catalog) mounted via symlinks, with agent knowledge assembled as a cascade from company canon through role slice and workload map to a thin per-person interaction layer. Symlinks provide a single source of truth without weakening any clearance boundary. The accompanying transformation of trainers into knowledge stewards — who train the AI once instead of each hire repeatedly — is the human-capital case for the architecture.
 
-3. **The Sales Coordination Model.** Customer ownership routing, unified history assembly with template-based redacted summaries, and competitive intelligence aggregation — demonstrating cross-agent coordination without lateral information leakage.
+3. **The Clearance Model, Applied at Role Granularity.** Five data classification tiers (PUBLIC through SECRET) mapped to Linux filesystem permissions, formally grounded in Bell-LaPadula with a controlled declassification mechanism, now keyed to roles rather than individuals. Infrastructure enforcement is categorically more reliable than model-level instruction.
 
-4. **Compliance Architecture.** Nightly sweep across four analysis dimensions with calibrated false-positive thresholds, communication logging with full audit trail, and automated quarantine with human-in-the-loop review satisfying GDPR Article 22.
+4. **The Sales Coordination Model under Contextual Ownership.** A single shared sales agent resolves customer ownership contextually — knowing whom it serves and reading the workload map — rather than through inter-agent email routing, with template-based redacted summaries for upward-tier data and competitive intelligence aggregation. The role-bound design makes the original "two agents, same customer, divergent responses" failure mode structurally impossible.
 
-5. **Legal Framework.** GDPR and EU AI Act compliance analysis, including DPA requirements, profiling assessment, automated decision-making obligations, and high-risk AI system conformity assessment.
+5. **Compliance Architecture.** Nightly sweep across four analysis dimensions with calibrated false-positive thresholds, communication logging with full audit trail, and automated quarantine with human-in-the-loop review satisfying GDPR Article 22.
 
-6. **Risk Analysis.** Ten principal risk categories with concrete mitigations, including failure recovery procedures, model update management, and real-time communication channel handling.
+6. **Legal Framework.** GDPR and EU AI Act compliance analysis, including DPA requirements, profiling assessment, automated decision-making obligations, and high-risk AI system conformity assessment.
 
-7. **Deployment Strategy.** A four-phase rollout with explicit gate criteria, success metrics, and adoption management considerations.
+7. **Risk Analysis.** Ten principal risk categories with concrete mitigations, including failure recovery procedures, model update management, and real-time communication channel handling.
 
-8. **Technical Specification.** Inter-agent protocol with message format, delivery semantics, authentication, and process isolation beyond filesystem permissions.
+8. **Deployment Strategy.** A four-phase rollout with explicit gate criteria, success metrics, and adoption management considerations.
+
+9. **Technical Specification.** Inter-agent protocol with message format, delivery semantics, authentication, and process isolation beyond filesystem permissions, plus bounded-autonomy operational governance and user/IT separation of duties.
+
+10. **The Multi-Axis Network View.** A framing of the swarm as one graph read along six orthogonal axes — clearance, supervision, bottleneck reduction, workload sharing, self-modification, and knowledge propagation — each with its own mechanisms and frequently in tension with the others. The self-modification axis is governed by division of labor: only IT may alter the infrastructure, fed by a detailed, agent-ingested improvement channel that lets the workforce get continuously faster without anyone destabilizing the shared substrate.
+
+11. **A Future-of-Work Argument.** A perspective on why role-bound AI need not be read as job elimination: for roles whose value is learning and teaching, removing the repetition and adding leverage can elevate the job — the trainer becomes a recurring-revenue knowledge manager who teaches once, fights fossilization, breaks the per-hour income ceiling, and serves many companies at once.
+
+12. **Positioning Among Convergent Paradigms.** A related-work synthesis (Section 1.6) placing HIVEMIND among the fan-out, coordinator-with-workers, and org-chart topologies, and against Paperclip, coordinator/teammate execution models, single-agent role-switching, headroom's reversible caching, and addyosmani's doubt-driven review — with the convergence argument that corporate structure may be the natural coordination topology, and HIVEMIND's distinguishing claim that the org chart _is_ the access-control graph.
+
+13. **Clearance-Aware Memory and Measured Leakage Control.** The per-agent cognitive stack (Section 1.5) applied under role-binding; an append-only event store and a Compress-Cache-Retrieve-Under-Clearance variant that keep memory reversible without laundering tiers (Sections 2.9–2.10); cross-role federated retrieval (Section 3.6); and a matched pair that moves leakage control from asserted to measured — an offline redaction-fidelity eval and a runtime fresh-context doubt reviewer (Sections 4.4.1–4.4.2).
 
 HIVEMIND is a design blueprint — not a finished system. It will evolve as models improve, enterprise integration matures, and regulators develop clearer frameworks. What we believe will endure is the fundamental tension it addresses: the value of coordination versus the necessity of boundaries. Every organization deploying AI at scale will face this tension. The answer is architecture: clear rules about what flows where, enforced at the right layer, audited continuously, with humans in the loop for consequential decisions.
 
@@ -1141,7 +1383,13 @@ Wooldridge, M. (2009). _An Introduction to MultiAgent Systems_ (2nd ed.). Wiley.
 
 ---
 
-_HIVEMIND: Hierarchical Agent Swarms for Enterprise Knowledge Management_
-_J-series paper J10 | Version 1.1 | March 17, 2026_
+_HIVEMIND: Role-Bound Agent Swarms for Enterprise Continuity_
+_J-series paper J10 | Version 2.2 | June 18, 2026_
 _Author: Oscar Serra_
 _Classification: INTERNAL — OpenClaw/TinkerClaw Research_
+
+_v2.0 reframed the architecture around organizational continuity: role-bound agents (one shared agent per job function) in place of per-person agents, a knowledge-commons cascade with the trainer→steward transformation, contextual customer ownership, ownership-based governance with bounded autonomy, and offboarding as a non-event._
+
+_v2.1 adds: a systematic `L<level>-<SCOPE>` agent naming convention applied throughout (replacing STRATEGOS / mixed per-department names); §3.5 framing the network along six orthogonal axes (clearance, supervision, bottleneck reduction, workload sharing, self-modification, knowledge propagation); an expanded §7.11 IT-only self-modification loop with an agent-ingested feature-request channel and vibe-coded improvements; and §5.10, a future-of-work argument on how learning-and-teaching roles can be elevated rather than eliminated._
+
+_v2.2 merges forward the substantive sections from the parallel v1.8 build lineage that the v2.x reframe had been missing, each re-framed for role-binding: §1.5 the per-agent cognitive stack (ENGRAM/HIPPOCAMPUS/CORTEX/CEREBELLUM/SYNAPSE/AEGIS), §1.6 Related Work and Positioning (Paperclip, coordinator/teammate models, headroom/CCR, addyosmani doubt-driven, the convergence argument), §2.9–2.10 the clearance-aware append-only event store and Compress-Cache-Retrieve-Under-Clearance, §3.6 cross-role federated retrieval, and §4.4.1–4.4.2 the doubt reviewer and redaction-fidelity eval. Limitations 2 and 10 updated accordingly._

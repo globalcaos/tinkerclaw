@@ -62,7 +62,7 @@ A non-negotiable checklist:
 - `pnpm build` exits 0 with `NODE_OPTIONS=--max-old-space-size=8192`.
 - Gateway boots cleanly (`openclaw-restart --full`, `curl /healthz` returns `{"ok":true,"status":"live"}`).
 - `apply-fork-wiring.mjs` runs idempotent (re-running prints "already wired" for everything).
-- A smoke probe through cc-bridge replies (e.g. SMOKE-OK).
+- A smoke probe through tinker-bridge replies (e.g. SMOKE-OK).
 - For changes to plugin manifests: each plugin still appears in the gateway plugin list at boot.
 - For changes to docs/scripts only: skip the build gate, but verify the doc renders or the script `node --check`s clean.
 

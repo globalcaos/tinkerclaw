@@ -13,27 +13,27 @@ verify:
 
 # Ownership map — public tinkerclaw fork
 
-The public fork is touched by **three distinct agents**: Architect (Claude Code running in `~/src/jarvis-icu`), Jarvis (cc-bridge running on the same OpenClaw gateway), and human maintainer. Plus upstream OpenClaw, which we merge from periodically. This file declares which folders each can safely change without coordinating.
+The public fork is touched by **three distinct agents**: Architect (Claude Code running in `~/src/jarvis-icu`), Jarvis (tinker-bridge running on the same OpenClaw gateway), and human maintainer. Plus upstream OpenClaw, which we merge from periodically. This file declares which folders each can safely change without coordinating.
 
 The rules are advisory at first — they're enforceable later by a CODEOWNERS overlay or a pre-commit lint. The goal here is the principle: **two agents touching the same file at the same time is the primary merge-friction cause we have today; per-folder ownership is the cheapest mitigation**.
 
 ## Ownership zones
 
-| Zone                                     | Primary owner      | Secondary editors                 | Notes                                                                                                               |
-| ---------------------------------------- | ------------------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `src/fork/`                              | Architect          | —                                 | All fork-only logic. Upstream never writes here. Safe for parallel work as long as files are distinct.              |
-| `src/fork/shared/` (when introduced)     | Architect          | —                                 | Cross-cutting fork utilities (pipeline, masking helpers, ID minting). Anything used by >1 fork module lives here.   |
-| `src/gateway/server-methods/<our>.ts`    | Architect          | —                                 | Fork-added RPC handlers (debug, cron, wa, gateway probes, plugin probes). One file per concern, never combined.     |
-| `src/gateway/server-methods.ts`          | Upstream           | Architect (minimal-touch only)    | The central registry. Each new fork probe adds 2 lines (import + spread). Avoid larger edits.                       |
-| `src/gateway/method-scopes.ts`           | Upstream           | Architect (minimal-touch only)    | Fork probes append to the READ_SCOPE list. Single-line additions only.                                              |
-| `extensions/tinkerclaw-*/`               | Per-plugin         | —                                 | Each plugin folder is its own ownership unit. `tinkerclaw-cc-bridge` ≠ `tinkerclaw-whatsapp` ≠ `tinkerclaw-people`. |
-| `extensions/tinkerclaw-control-panel/`   | Jarvis             | —                                 | Active Phase-C MVP authored by Jarvis. Architect doesn't touch the plugin internals without coordinating.           |
-| `tinker-ui/src/`                         | **Shared hotspot** | Both Architect and Jarvis         | Today's biggest collision risk (65/75 FORK anchors in `app.ts`). Both agents may edit; pull before push.            |
-| `tinker-ui/src/panels/`                  | Architect          | —                                 | Per-panel files (prefrontal-tree.ts) are split-out enough to be safe.                                               |
-| `TINKER_UI_DESIGN_BIBLE/`                | Architect          | Jarvis (read-only)                | Architect maintains; Jarvis consumes. Jarvis flags staleness in today's `memory/YYYY-MM-DD.md`, never edits.        |
-| `scripts/`                               | Architect          | —                                 | Fork-side scripts (test-invariants, gen-tinker-ui-registry, pii-pre-push). Architect-only.                          |
-| `git-hooks/`                             | Architect          | —                                 | Pre-commit + pre-push hooks. Architect-only.                                                                        |
-| `~/.openclaw/workspace/` (separate repo) | Jarvis (runtime)   | Architect (briefings + knowledge) | Jarvis's runtime mutates this continuously (memory/, BRIEFING.md, SOUL.md). Architect adds knowledge notes only.    |
+| Zone                                     | Primary owner      | Secondary editors                 | Notes                                                                                                                   |
+| ---------------------------------------- | ------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `src/fork/`                              | Architect          | —                                 | All fork-only logic. Upstream never writes here. Safe for parallel work as long as files are distinct.                  |
+| `src/fork/shared/` (when introduced)     | Architect          | —                                 | Cross-cutting fork utilities (pipeline, masking helpers, ID minting). Anything used by >1 fork module lives here.       |
+| `src/gateway/server-methods/<our>.ts`    | Architect          | —                                 | Fork-added RPC handlers (debug, cron, wa, gateway probes, plugin probes). One file per concern, never combined.         |
+| `src/gateway/server-methods.ts`          | Upstream           | Architect (minimal-touch only)    | The central registry. Each new fork probe adds 2 lines (import + spread). Avoid larger edits.                           |
+| `src/gateway/method-scopes.ts`           | Upstream           | Architect (minimal-touch only)    | Fork probes append to the READ_SCOPE list. Single-line additions only.                                                  |
+| `extensions/tinkerclaw-*/`               | Per-plugin         | —                                 | Each plugin folder is its own ownership unit. `tinkerclaw-tinker-bridge` ≠ `tinkerclaw-whatsapp` ≠ `tinkerclaw-people`. |
+| `extensions/tinkerclaw-control-panel/`   | Jarvis             | —                                 | Active Phase-C MVP authored by Jarvis. Architect doesn't touch the plugin internals without coordinating.               |
+| `tinker-ui/src/`                         | **Shared hotspot** | Both Architect and Jarvis         | Today's biggest collision risk (65/75 FORK anchors in `app.ts`). Both agents may edit; pull before push.                |
+| `tinker-ui/src/panels/`                  | Architect          | —                                 | Per-panel files (prefrontal-tree.ts) are split-out enough to be safe.                                                   |
+| `TINKER_UI_DESIGN_BIBLE/`                | Architect          | Jarvis (read-only)                | Architect maintains; Jarvis consumes. Jarvis flags staleness in today's `memory/YYYY-MM-DD.md`, never edits.            |
+| `scripts/`                               | Architect          | —                                 | Fork-side scripts (test-invariants, gen-tinker-ui-registry, pii-pre-push). Architect-only.                              |
+| `git-hooks/`                             | Architect          | —                                 | Pre-commit + pre-push hooks. Architect-only.                                                                            |
+| `~/.openclaw/workspace/` (separate repo) | Jarvis (runtime)   | Architect (briefings + knowledge) | Jarvis's runtime mutates this continuously (memory/, BRIEFING.md, SOUL.md). Architect adds knowledge notes only.        |
 
 ## Concurrency rules
 

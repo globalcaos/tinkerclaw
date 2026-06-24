@@ -67,11 +67,7 @@ import { BRIDGED_SKILLS_DIRNAME } from "./cc-skills-bridge.js";
 import { ChatEmitter } from "./chat-emitter.js";
 import { DEFAULT_CORF_CONFIG } from "./corf-trigger.js";
 import { createDenialTracker } from "./denial-tracking.js";
-import {
-  validateModelAssignment,
-  DEFAULT_EFFORT_ROUTING_CONFIG,
-  buildEffortGuidance,
-} from "./effort-router.js";
+import { buildEffortGuidance } from "./effort-router.js";
 import { createExplorationGate, DEFAULT_EXPLORATION_GATE_CONFIG } from "./exploration-gate.js";
 import { createFaarTracker, classifyTask } from "./faar-tracker.js";
 import { resolveFeatureFlags, isEnabled } from "./feature-flags.js";
@@ -138,13 +134,6 @@ export default function register(api: OpenClawPluginApi) {
     ...pluginConfig.antiGoldplating,
   };
   antiGoldplatingConfig.enabled = isEnabled(featureFlags, "antiGoldplating");
-
-  // ─── WS3: Effort Routing ───
-  const effortRoutingConfig = {
-    ...DEFAULT_EFFORT_ROUTING_CONFIG,
-    enabled: isEnabled(featureFlags, "effortRouting"),
-    ...pluginConfig.effortRouting,
-  };
 
   // ─── WS4: CORF Trigger ───
   const _corfConfig = {
@@ -278,19 +267,6 @@ export default function register(api: OpenClawPluginApi) {
       subagentRuns.set(event.runId, run);
       lastEventTimestamps.set(event.runId, Date.now());
 
-      // WS3: Validate model assignment against task complexity
-      if (isEnabled(featureFlags, "effortRouting") && event.label) {
-        const routing = validateModelAssignment(
-          // oxlint-disable-next-line typescript-eslint/no-explicit-any
-          (event as any).model ?? "",
-          event.label,
-          effortRoutingConfig,
-        );
-        if (!routing.approved) {
-          log.warn?.(`[prefrontal] Effort routing: ${routing.reason}`);
-        }
-      }
-
       // If the spawning session is main, mark it as prefrontal session
       if (!getPrefrontalSessionKey() && ctx.requesterSessionKey?.includes("main")) {
         setPrefrontalSessionKey(ctx.requesterSessionKey);
@@ -343,7 +319,7 @@ export default function register(api: OpenClawPluginApi) {
       sessionKey,
       provider: event.provider,
       model: event.model,
-      runId: event.runId,
+      runId: event.runId ?? "",
       trigger: ctx.trigger,
     });
     // Tell the monitor about the active main session so it always shows a root node

@@ -19,7 +19,7 @@ When a conflict occurs during upstream merge, it passes through these resolvers 
 
 ## 2026-04-17 — Claude Code bridge (Enchanted Mountain)
 
-New fork-only plugin `extensions/tinkerclaw-cc-bridge/` registers a provider
+New fork-only plugin `extensions/tinkerclaw-tinker-bridge/` registers a provider
 `claude-code` that drives the real `claude` CLI as a persistent subprocess
 per session. Inherits the Claude Code OAuth at `~/.claude/.credentials.json`
 — flat-rate entitlement, no API key.
@@ -41,8 +41,8 @@ Plugin contents (all fork-only, so no merge collisions expected):
 
 Config additions in `~/.openclaw/openclaw.json`:
 
-- `plugins.allow` += `"tinkerclaw-cc-bridge"`
-- `plugins.entries.tinkerclaw-cc-bridge.enabled = true`
+- `plugins.allow` += `"tinkerclaw-tinker-bridge"`
+- `plugins.entries.tinkerclaw-tinker-bridge.enabled = true`
 - `auth.profiles.claude-code:oauth`
 - `auth.order.claude-code = ["claude-code:oauth"]`
 - `models.providers.claude-code` (baseUrl `local://claude-cli`, 3 models)
@@ -62,7 +62,7 @@ Risks / known-gaps:
   been banned in the wild but is policy-forbidden. Accepted risk.
 
 No core files modified. No new fork patch functions needed in the wiring
-script. Plugin lives entirely under `extensions/tinkerclaw-cc-bridge/`.
+script. Plugin lives entirely under `extensions/tinkerclaw-tinker-bridge/`.
 
 ## 2026-04-15 — Silent-failure trio
 

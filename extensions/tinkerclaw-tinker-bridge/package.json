@@ -1,0 +1,20 @@
+{
+  "name": "@globalcaos/tinker-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tinker Bridge — drive the real Claude Code CLI as a persistent per-session subprocess from OpenClaw/TinkerClaw, inheriting your existing `claude` OAuth login so your Claude Code subscription works as a first-class streaming model provider (thinking + tools). Uses your own Claude OAuth; review Anthropic's terms before distributing.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "release": {
+      "publishToClawHub": true,
+      "publishToNpm": false
+    }
+  }
+}

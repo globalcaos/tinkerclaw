@@ -25,10 +25,11 @@ import { addMetric, recordObservation } from "../store/observations.js";
 import { ga4Sessions } from "./ga4.js";
 import { githubTrafficDaily } from "./github-traffic.js";
 import { githubForks, githubOpenIssues, githubStargazers } from "./github.js";
-import { localStateValue } from "./localstate.js";
+import { localStateValue, MissingLocalStateKeyError } from "./localstate.js";
 import { moltbookKarma, moltbookPosts, moltbookComments, moltbookFollowers } from "./moltbook.js";
 import { npmDownloadsMonthly, npmDownloadsWeekly } from "./npm.js";
 import { demoWebsiteVisits } from "./website.js";
+import { youtubeChannelStats } from "./youtube.js";
 
 export type PollerFn = (args: string) => Promise<number>;
 
@@ -54,9 +55,15 @@ export const POLLER_REGISTRY: Map<string, PollerFn> = new Map([
   // Generic: read a numeric value out of an online-presence state JSON the
   // crons already maintain (fork traffic, clawhub installs, inbound links).
   ["localstate", localStateValue],
+  // FORK 2026-06-14 — YouTube channel public stats (Data API key, no expiry).
+  ["youtube.channelStats", youtubeChannelStats],
 ]);
 
-type Logger = { info: (msg: string) => void; warn?: (msg: string) => void };
+type Logger = {
+  info: (msg: string) => void;
+  warn?: (msg: string) => void;
+  debug?: (msg: string) => void;
+};
 
 type SeedSpec = {
   id: string;
@@ -81,7 +88,7 @@ const SEED_KPIS: SeedSpec[] = [
     cadence_seconds: 21600,
     template: "single-stat",
   },
-  // FORK 2026-06-04 — forks + open-issues KPIs removed at Oscar's request.
+  // FORK 2026-06-04 — forks + open-issues KPIs removed at the architect's request.
   // FORK 2026-05-13 — placeholder website-visits graph. `demo.website.visits`
   // produces deterministic-noise values until the user names their analytics
   // provider; swap the source string to e.g. "plausible.visitors:tinkerzone.com"
@@ -90,6 +97,16 @@ const SEED_KPIS: SeedSpec[] = [
     // FORK 2026-06-05 — real GA4 sessions for thetinkerzone.com (property 529436250).
     id: "graph.website.visits.daily",
     source: "ga4.sessions:529436250",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  // FORK 2026-06-14 — sprintpaper.com visits (rendered in colibri-logo green #b6f02c,
+  // cumulative — see SERIES_STYLE in tinker-ui/src/app.ts). LIVE: the GA4 service account
+  // was granted Viewer on the SprintPaper.com property (541325538, account 5961104,
+  // measurement G-M0HB6LJB33) on 2026-06-14.
+  {
+    id: "graph.website.visits.sprintpaper",
+    source: "ga4.sessions:541325538",
     cadence_seconds: 86400,
     template: "sparkline",
   },
@@ -137,9 +154,108 @@ const SEED_KPIS: SeedSpec[] = [
   // FORK 2026-06-14 — read tracked_slugs_state (the LIVE exact block the 08:00 cron
   // refreshes: jarvis-voice 4916, growing daily) NOT our_skills (a stale rounded block
   // frozen at 4800 for a week → the graph read 4.8k while clawhub.ai showed 4.9k).
+  // FORK 2026-06-14 — ClawHub VIEWS (downloads, a fetch/vanity counter) — one series per skill.
   {
     id: "graph.clawhub.jarvis-voice",
     source: "localstate:engagement-state.json#clawhub.tracked_slugs_state.jarvis-voice.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.whatsapp-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.whatsapp-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.youtube-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.youtube-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.chatgpt-exporter-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.chatgpt-exporter-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.token-panel-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.token-panel-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.shell-security-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.shell-security-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.outlook-hack",
+    source: "localstate:engagement-state.json#clawhub.tracked_slugs_state.outlook-hack.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  // FORK 2026-06-14 — ClawHub INSTALLS (the honest adoption count) — one series per skill.
+  {
+    id: "graph.clawhubinstalls.jarvis-voice",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.jarvis-voice.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.whatsapp-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.whatsapp-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.youtube-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.youtube-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.chatgpt-exporter-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.chatgpt-exporter-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.token-panel-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.token-panel-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.shell-security-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.shell-security-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.outlook-hack",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.outlook-hack.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.teams-hack",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.teams-hack.installsAllTime",
     cadence_seconds: 86400,
     template: "sparkline",
   },
@@ -181,6 +297,27 @@ const SEED_KPIS: SeedSpec[] = [
   {
     id: "graph.inbound.sprintpaper.ours",
     source: "localstate:inbound-campaign-state.json#inbound_targets.sprintpaper.ours",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  // FORK 2026-06-14 — YouTube: thetinkerzone channel (UCh_am-9EG0_a-DBronOMC4w)
+  // public stats via Data API key. Absolute monotonic totals (growing line, NOT
+  // cumulative). Subs + total views + video count, one chart at the end.
+  {
+    id: "graph.youtube.subscribers",
+    source: "youtube.channelStats:subscribers:UCh_am-9EG0_a-DBronOMC4w",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.youtube.views",
+    source: "youtube.channelStats:views:UCh_am-9EG0_a-DBronOMC4w",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.youtube.videos",
+    source: "youtube.channelStats:videos:UCh_am-9EG0_a-DBronOMC4w",
     cadence_seconds: 86400,
     template: "sparkline",
   },
@@ -273,6 +410,13 @@ async function pollOne(
     log.info(`[control-panel] polled ${metric.id} → ${value}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof MissingLocalStateKeyError) {
+      // Optional metric not present in the localstate file this cycle — quiet
+      // skip (debug, never per-cycle error/warn spam). Series with data are
+      // unaffected; a real failure (bad file, non-numeric value) still warns.
+      log.debug?.(`[control-panel] skip ${metric.id} (no data yet): ${msg}`);
+      return;
+    }
     (log.warn ?? log.info).call(log, `[control-panel] poll failed for ${metric.id}: ${msg}`);
   }
 }
