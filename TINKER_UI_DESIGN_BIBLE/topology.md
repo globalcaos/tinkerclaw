@@ -9,15 +9,15 @@ see_also: flows.md (how they talk), config-shape.md (what configures them), prob
 verify:
   - name: gateway listening on 18789
     cmd: ss -ltn 2>/dev/null | grep -q ':18789' || netstat -ltn 2>/dev/null | grep -q ':18789'
-  - name: cc-bridge plugin discoverable + manifest valid
+  - name: tinker-bridge plugin discoverable + manifest valid
     cmd: |
-      manifest=~/src/tinkerclaw/dist-runtime/extensions/tinkerclaw-cc-bridge/openclaw.plugin.json
-      stub=~/src/tinkerclaw/dist-runtime/extensions/tinkerclaw-cc-bridge/index.js
+      manifest=~/src/tinkerclaw/dist-runtime/extensions/tinkerclaw-tinker-bridge/openclaw.plugin.json
+      stub=~/src/tinkerclaw/dist-runtime/extensions/tinkerclaw-tinker-bridge/index.js
       [ -f "$manifest" ] || { echo "missing $manifest"; exit 1; }
       [ -f "$stub" ] || { echo "missing $stub"; exit 1; }
-      grep -q '"id":\s*"tinkerclaw-cc-bridge"' "$manifest" || { echo "manifest id mismatch"; exit 1; }
-      python3 -c "import json,sys; m=json.load(open('$manifest')); a=m.get('activation',{}); ps=a.get('onProviders',[]); sys.exit(0 if 'claude-code' in ps else 1)" || { echo "manifest missing activation.onProviders containing 'claude-code' — cc-bridge is lazy-loaded; this gates activation"; exit 1; }
-      echo "tinkerclaw-cc-bridge manifest + stub discoverable, lazy-activation wired to claude-code"
+      grep -q '"id":\s*"tinkerclaw-tinker-bridge"' "$manifest" || { echo "manifest id mismatch"; exit 1; }
+      python3 -c "import json,sys; m=json.load(open('$manifest')); a=m.get('activation',{}); ps=a.get('onProviders',[]); sys.exit(0 if 'claude-code' in ps else 1)" || { echo "manifest missing activation.onProviders containing 'claude-code' — tinker-bridge is lazy-loaded; this gates activation"; exit 1; }
+      echo "tinkerclaw-tinker-bridge manifest + stub discoverable, lazy-activation wired to claude-code"
   - name: workspace symlinks present (skills NOT symlinked per design)
     cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
   - name: every fork-owned plugin dir uses the tinkerclaw- prefix
@@ -49,7 +49,7 @@ verify:
 | ClawMetry OTEL         | 4001  | traces + metrics endpoint                         | `~/src/clawmetry/` (separate process)       |
 | Mission Control        | 4000  | dashboard (Docker)                                | `~/src/mission-control/` (separate process) |
 
-**The gateway process is the central anchor.** Everything fork-side runs in-process under it: plugins, channel adapters, cron scheduler, the cc-bridge worker pool. Subprocesses are claude-cli per cc-bridge worker (re-parented to systemd via `--pipe`), whatsmeow-node binary for WhatsApp transport, and ephemeral exec tool processes.
+**The gateway process is the central anchor.** Everything fork-side runs in-process under it: plugins, channel adapters, cron scheduler, the tinker-bridge worker pool. Subprocesses are claude-cli per tinker-bridge worker (re-parented to systemd via `--pipe`), whatsmeow-node binary for WhatsApp transport, and ephemeral exec tool processes.
 
 ## Plugin inventory
 
@@ -57,7 +57,7 @@ All fork plugins use the `tinkerclaw-` prefix in their plugin id, directory name
 
 | Plugin id                         | Purpose                                                                                                                                                                                                                                    | Hooks used                                                                       | Status                                        |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- | --------------------------------------------- |
-| `tinkerclaw-cc-bridge`            | drives claude-cli as a persistent subprocess provider for `claude-code`. `combinedSystemPrompt` includes the ethical-rules block (FORK 2026-05-21) between persona and narration.                                                          | `registerProvider`, `registerPluginProviderConfigOverlay` (FORK 2026-05-10)      | DEPLOYED                                      |
+| `tinkerclaw-tinker-bridge`        | drives claude-cli as a persistent subprocess provider for `claude-code`. `combinedSystemPrompt` includes the ethical-rules block (FORK 2026-05-21) between persona and narration.                                                          | `registerProvider`, `registerPluginProviderConfigOverlay` (FORK 2026-05-10)      | DEPLOYED                                      |
 | `tinkerclaw-whatsapp`             | whatsmeow-backed WA channel (replaces upstream baileys)                                                                                                                                                                                    | channel registration, monitor hook chain                                         | DEPLOYED                                      |
 | `tinkerclaw-people`               | people-profile resolver (`people.{resolve,read,list,update_consulted_at}`)                                                                                                                                                                 | RPC handlers                                                                     | DEPLOYED                                      |
 | `tinkerclaw-control-panel`        | task store + Today card / Exec HUD panel (v3.5 — 2026-05-22; `task_axis.parent_id` two-level hierarchy, `axes.add/update` accept `parent_id`, Todoist scrub one-shot migration). See `tinker-ui.md` §5.68, `config-shape.md` schema notes. | RPC handlers (`control-panel.*`), HUD render via Tinker UI                       | DEPLOYED (v3.5)                               |
@@ -65,7 +65,7 @@ All fork plugins use the `tinkerclaw-` prefix in their plugin id, directory name
 | `tinkerclaw-memory-enhancements`  | MNEMOSYNE — hippocampus index + compaction capture (J14)                                                                                                                                                                                   | `retrieval_pre`, `before_message_write`, `before_compaction`, `after_compaction` | partial (v0.1 scaffold)                       |
 | `tinkerclaw-computational-humor`  | LIMBIC (J7)                                                                                                                                                                                                                                | hooks                                                                            | DEPLOYED                                      |
 | `tinkerclaw-identity-persistence` | CORTEX (J4)                                                                                                                                                                                                                                | persona-state hooks                                                              | DEPLOYED                                      |
-| `tinkerclaw-learned-intuition`    | AMYGDALA (J11) v3.1 — AEGIS rules enforced pre-execution (cc-bridge PreToolUse hook + native `{block}`) + k-NN novelty ASK channel + clause-cosine incongruity; legacy 5-net ensemble retired (legacyEnsemble=false)                       | hooks + cc-bridge `--settings` PreToolUse hook                                   | DEPLOYED (v3.1, AEGIS on, novelty observe)    |
+| `tinkerclaw-learned-intuition`    | AMYGDALA (J11) v3.1 — AEGIS rules enforced pre-execution (tinker-bridge PreToolUse hook + native `{block}`) + k-NN novelty ASK channel + clause-cosine incongruity; legacy 5-net ensemble retired (legacyEnsemble=false)                   | hooks + tinker-bridge `--settings` PreToolUse hook                               | DEPLOYED (v3.1, AEGIS on, novelty observe)    |
 | `tinkerclaw-round-table`          | SYNAPSE (J6)                                                                                                                                                                                                                               | hooks                                                                            | FAILING to load (missing `@sinclair/typebox`) |
 | `tinkerclaw-total-recall`         | ENGRAM (J1)                                                                                                                                                                                                                                | hooks                                                                            | FAILING to load (missing `@sinclair/typebox`) |
 
@@ -142,12 +142,12 @@ The PII boundary between these two repos is critical. See `pii-boundary.md`.
 
 ## Sister processes (out-of-gateway)
 
-| Process                | Purpose                                                        | Location                                                              |
-| ---------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `whatsmeow-node`       | WhatsApp transport subprocess (spawned by tinkerclaw-whatsapp) | `node_modules/@whatsmeow-node/linux-x64/bin/`                         |
-| `claude-cli`           | one subprocess per cc-bridge worker                            | `~/.claude/` install, spawned by cc-bridge with `--pipe` re-parenting |
-| `ollama`               | local embedding model (mxbai-embed-large) for `memorySearch`   | `127.0.0.1:11434` (systemd)                                           |
-| `chrome-relay` profile | persistent Chrome at `CDP=127.0.0.1:18792`                     | user-managed, attached-only                                           |
+| Process                | Purpose                                                        | Location                                                                  |
+| ---------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `whatsmeow-node`       | WhatsApp transport subprocess (spawned by tinkerclaw-whatsapp) | `node_modules/@whatsmeow-node/linux-x64/bin/`                             |
+| `claude-cli`           | one subprocess per tinker-bridge worker                        | `~/.claude/` install, spawned by tinker-bridge with `--pipe` re-parenting |
+| `ollama`               | local embedding model (mxbai-embed-large) for `memorySearch`   | `127.0.0.1:11434` (systemd)                                               |
+| `chrome-relay` profile | persistent Chrome at `CDP=127.0.0.1:18792`                     | user-managed, attached-only                                               |
 
 ## External services (HTTPS)
 
@@ -175,7 +175,7 @@ Services called outbound by the gateway or its plugins over HTTPS.
     skills/                              # real (not symlinked) — private
     memory/                              # private
   agents/main/sessions/                  # session store + transcripts
-  cc-bridge/session-map.json             # cc-bridge ↔ claude-cli mapping
+  tinker-bridge/session-map.json             # tinker-bridge ↔ claude-cli mapping
   cron/jobs.json + runs/                 # cron registry + receipts
   data/                                  # databases (whatsapp-history.db, etc.) + tinker-ui snapshot probe
 

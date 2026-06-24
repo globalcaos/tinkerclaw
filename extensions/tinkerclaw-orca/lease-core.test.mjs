@@ -24,7 +24,7 @@ function freshRoot() {
 const REPO = "/home/x/src/tinkerclaw";
 const base = (over = {}) => ({
   repo: REPO,
-  path: "extensions/cc-bridge/src/worker.ts",
+  path: "extensions/tinker-bridge/src/worker.ts",
   owner: "sessA",
   pid: process.pid,
   sessionId: "sessA",

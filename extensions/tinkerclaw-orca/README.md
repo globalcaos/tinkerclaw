@@ -86,7 +86,7 @@ never make editing _impossible_.
   the session is done editing, and a subagent may share the parent's
   `session_id`; releasing on `SubagentStop` would free the parent's _live_
   leases mid-flight. A subagent's own leases are reclaimed by TTL instead.
-- **Gateway / cc-bridge edits don't pass through this hook.** Jarvis edits files
+- **Gateway / tinker-bridge edits don't pass through this hook.** Jarvis edits files
   with its own tools, not Claude Code's Edit/Write, so to participate it must call
   the `orca.lease.*` RPCs directly (a future integration point). The hook today
   protects Claude Code sessions, which is the primary clobber source.

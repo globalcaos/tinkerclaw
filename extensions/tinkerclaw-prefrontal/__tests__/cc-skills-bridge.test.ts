@@ -90,11 +90,11 @@ describe("bridge output passes the real validators", () => {
     expect(v.ok).toBe(true);
   });
 
-  it("round-trips through buildBridgedKitMd + the runner parser, tagged cc-bridge", () => {
+  it("round-trips through buildBridgedKitMd + the runner parser, tagged tinker-bridge", () => {
     const spec = skillMdToRecipeSpec(GOOD_SKILL);
     const md = buildBridgedKitMd(spec);
     expect(md).toContain('schema: "kit/1.0"');
-    expect(md).toContain('authoredBy: "cc-bridge"');
+    expect(md).toContain('authoredBy: "tinker-bridge"');
     expect(md).not.toContain('authoredBy: "jarvis-on-the-fly"');
     const parsed = parseKitStepsAndParallelism(md);
     expect(parsed.steps.map((s) => s.title)).toEqual([
@@ -104,8 +104,8 @@ describe("bridge output passes the real validators", () => {
     ]);
   });
 
-  it("exports the cc-bridge authorship constant + scan dir name", () => {
-    expect(BRIDGED_AUTHORED_BY).toBe("cc-bridge");
+  it("exports the tinker-bridge authorship constant + scan dir name", () => {
+    expect(BRIDGED_AUTHORED_BY).toBe("tinker-bridge");
     expect(BRIDGED_SKILLS_DIRNAME).toBe("bridged-skills");
   });
 });

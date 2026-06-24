@@ -118,12 +118,29 @@ One final read-through for:
 - Abstract and conclusion still match after edits
 - Word count delta (report: before → after)
 
+### 7. Reset the improvement notes (close the staleness loop)
+
+**Tools:** read, write, exec
+**Done when:** `improvement_notes.md` carries zero un-incorporated pending entries
+
+The staleness chain treats a non-blank `improvement_notes.md` as proof the paper is stale, so if you incorporate the notes but leave them in place, the next Step-0 triage re-classifies the paper "actionable" and revises it **forever**. Once the notes are folded into the new version, reset them in the SAME pass:
+
+1. **Archive** the incorporated content → `improvement_notes.incorporated-<YYYY-MM-DD>.md`.
+2. **Replace** `improvement_notes.md` with a header only — `Incorporated into <new-version> on <YYYY-MM-DD>. Prior notes archived in improvement_notes.incorporated-<YYYY-MM-DD>.md.` — and no pending `###` entries.
+3. **Keep deferrals explicit:** anything you deliberately did NOT incorporate stays as a pending entry — clear only what actually landed.
+4. **Gate on success, and it's reversible:** only reset once the revised version is confirmed good — written, and (if a PDF is part of the deliverable) built with every figure present. A failed or half-done revision KEEPS its notes so the next pass retries it. The reset is a file move + stub rewrite, never a delete.
+
+The test: re-running Step-0 triage on the paper now classifies it **cleared**, not actionable. (Skipping this step is what makes a paper look like it needs infinite rewrites.)
+
+> **Pipeline note:** inside the `revise-publish-jseries` workflow the _compile_ step performs this archive after a clean build (it scopes the revise agent to Steps 1–6), so don't double-archive there. This Step 7 is for standalone recipe runs that aren't followed by the compile stage.
+
 ## Constraints
 
 - Never delete sections without replacing their content elsewhere
 - Preserve the author's voice — improve, don't rewrite from scratch
 - Report all changes made (summary at end)
 - Version the output (v3.1, not overwrite v3.0)
+- **Always reset `improvement_notes.md` after incorporating (Step 7)** — leaving incorporated notes in place makes the staleness chain demand endless re-revisions of an already-current paper
 - **Self-contained, version-independent:** the paper reads as a standalone first edition. No changelog, no "improvements in this version", no reference to prior versions. Versioning lives only in the filename/header, never in the prose.
 - **Independent of sibling papers:** never label work a "J-series" or cite siblings by J-number/codename. When borrowing an idea from another paper, inline a 1–2 sentence summary of it (as for any external citation) — never assume the reader has read it. Fold any series-only "companion papers" framing into self-contained prose.
 

@@ -624,19 +624,23 @@ export async function runPreparedReply(
     })
   ) {
     const explicitThink = directives.hasThinkDirective && directives.thinkLevel !== undefined;
-    if (explicitThink) {
-      typing.cleanup();
-      return {
-        text: `Thinking level "${resolvedThinkLevel}" is not supported for ${provider}/${model}. Use one of: ${formatThinkingLevels(provider, model, ", ", thinkingCatalog)}.`,
-      };
-    }
+    // Unsupported thinking levels (explicit or not) fall through to the clamp below
+    // (resolveSupportedThinkingLevel -> fallbackThinkLevel) instead of hard-erroring.
+    const requestedThinkLevel = resolvedThinkLevel;
     const fallbackThinkLevel = resolveSupportedThinkingLevel({
       provider,
       model,
       level: resolvedThinkLevel,
       catalog: thinkingCatalog,
     });
-    if (fallbackThinkLevel !== resolvedThinkLevel) {
+    if (fallbackThinkLevel !== requestedThinkLevel) {
+      if (explicitThink) {
+        // Mirror directive-handling.impl.ts info note; logVerbose is the only
+        // surfacing channel this run-path has (no system-event/ack/preamble here).
+        logVerbose(
+          `${requestedThinkLevel} not supported for ${provider}/${model}; using ${fallbackThinkLevel}.`,
+        );
+      }
       const previousThinkLevel = resolvedThinkLevel;
       resolvedThinkLevel = fallbackThinkLevel;
       if (

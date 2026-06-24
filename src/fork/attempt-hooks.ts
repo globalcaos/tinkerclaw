@@ -77,7 +77,7 @@ function isInlineMode(subsystem: string): boolean {
  * it as the authoritative override.
  *
  *   1. Workspace `<effectiveWorkspace>/SOUL.md` (user override)
- *   2. Bundled `extensions/tinkerclaw-cc-bridge/personas/jarvis-default.md`
+ *   2. Bundled `extensions/tinkerclaw-tinker-bridge/personas/jarvis-default.md`
  *   3. undefined (cortex disabled or both files missing)
  */
 export function getPersonaBlock(effectiveWorkspace: string): string | undefined {
@@ -125,7 +125,7 @@ function resolveBundledPersonaCandidates(): string[] {
   }
   const bundleRoot = process.env.OPENCLAW_BUNDLED_PLUGINS_DIR;
   if (bundleRoot) {
-    candidates.push(join(bundleRoot, "tinkerclaw-cc-bridge", "personas", "jarvis-default.md"));
+    candidates.push(join(bundleRoot, "tinkerclaw-tinker-bridge", "personas", "jarvis-default.md"));
   }
   candidates.push(
     join(
@@ -133,7 +133,7 @@ function resolveBundledPersonaCandidates(): string[] {
       "src",
       "tinkerclaw",
       "extensions",
-      "tinkerclaw-cc-bridge",
+      "tinkerclaw-tinker-bridge",
       "personas",
       "jarvis-default.md",
     ),
@@ -832,11 +832,11 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
     (m) => (m as { role?: string }).role === "user",
   ).length;
 
-  // FORK 2026-04-25: drain the cc-bridge tool-event buffer into the session
-  // transcript as `customType: "cc-bridge-tool"` entries. cc-bridge cannot
+  // FORK 2026-04-25: drain the tinker-bridge tool-event buffer into the session
+  // transcript as `customType: "tinker-bridge-tool"` entries. tinker-bridge cannot
   // put tool_use blocks in the assistant message (pi-agent-core would
   // re-execute them and trip the prefrontal exec gate — see comment in
-  // `extensions/tinkerclaw-cc-bridge/src/stream.ts:buildContent`), so the
+  // `extensions/tinkerclaw-tinker-bridge/src/stream.ts:buildContent`), so the
   // buffer is the only path that lets a Tinker history reload show what
   // tools claude-cli ran. Dynamic import keeps the runner free of a
   // hard dependency on the extension's runtime.
@@ -847,7 +847,7 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
   // real SessionManager-like target here so we don't depend on the cast.
   try {
     const { consumeToolEventsForRun } =
-      (await import("../../extensions/tinkerclaw-cc-bridge/src/tool-buffer.js")) as typeof import("../../extensions/tinkerclaw-cc-bridge/src/tool-buffer.js");
+      (await import("../../extensions/tinkerclaw-tinker-bridge/src/tool-buffer.js")) as typeof import("../../extensions/tinkerclaw-tinker-bridge/src/tool-buffer.js");
     const events = consumeToolEventsForRun(params.runId);
     if (events.length > 0) {
       const sm = sessionManager as unknown as {
@@ -861,19 +861,19 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
           // for tool calls: persisted on disk, rendered by Tinker on history
           // reload, but NOT replayed into the LLM message array (which would
           // force pi-agent-core to re-validate them and double-bill).
-          target.appendCustomEntry("cc-bridge-tool", { runId: params.runId, ...ev });
+          target.appendCustomEntry("tinker-bridge-tool", { runId: params.runId, ...ev });
         }
         log.info(
-          `[cc-bridge-tool] persisted ${events.length} tool events for runId=${params.runId}`,
+          `[tinker-bridge-tool] persisted ${events.length} tool events for runId=${params.runId}`,
         );
       } else {
         log.info(
-          `[cc-bridge-tool] drain skipped — no appendCustomEntry on sessionManager (events=${events.length})`,
+          `[tinker-bridge-tool] drain skipped — no appendCustomEntry on sessionManager (events=${events.length})`,
         );
       }
     }
   } catch (err) {
-    log.info(`[cc-bridge-tool] drain failed: ${String(err)}`);
+    log.info(`[tinker-bridge-tool] drain failed: ${String(err)}`);
   }
 
   // FRACTAL REFLECTION v4 — moved to the `tinkerclaw-fractal-reflection`

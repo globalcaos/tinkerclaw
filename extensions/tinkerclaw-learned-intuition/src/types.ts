@@ -234,7 +234,7 @@ export interface AmygdalaConfig {
   legacyEnsemble?: boolean;
 
   /**
-   * v3.1: write the pre-execution PreToolUse hook settings so cc-bridge /
+   * v3.1: write the pre-execution PreToolUse hook settings so tinker-bridge /
    * claude-cli denies destructive-execution AEGIS rules synchronously. Default
    * true. When false the settings file is removed (observe-only spool only).
    */

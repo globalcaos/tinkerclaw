@@ -1022,6 +1022,77 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       });
     }
   },
+  // FORK 2026-06-24 — sessions.fork: true EAGER transcript fork for the Tinker "Clone tab" action.
+  // The dashboard clones a tab by calling this RPC first; we copy the parent session's live
+  // transcript into a brand-new session (via SessionManager.forkFrom — the same primitive that
+  // powers compaction branch/restore), so the clone opens already showing the parent's full
+  // conversation. The client falls back to lineage-only sessions.create ONLY if this RPC is absent.
+  "sessions.fork": async ({ params, respond, context }) => {
+    const p = params as { key?: unknown; label?: unknown };
+    const key = requireSessionKey(p.key, respond);
+    if (!key) {
+      return;
+    }
+    const loaded = loadSessionEntry(key);
+    const { cfg, entry, canonicalKey } = loaded;
+    if (!entry?.sessionId || !entry.sessionFile) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `session not found: ${key}`),
+      );
+      return;
+    }
+    if (!fs.existsSync(entry.sessionFile)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "session transcript is missing"),
+      );
+      return;
+    }
+    const target = resolveGatewaySessionStoreTarget({ cfg, key: canonicalKey });
+    const sourceSession = SessionManager.open(entry.sessionFile, path.dirname(entry.sessionFile));
+    const forkedSession = SessionManager.forkFrom(
+      entry.sessionFile,
+      sourceSession.getCwd(),
+      path.dirname(entry.sessionFile),
+    );
+    const forkedSessionFile = forkedSession.getSessionFile();
+    if (!forkedSessionFile) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "failed to create fork transcript"),
+      );
+      return;
+    }
+    const nextKey = buildDashboardSessionKey(target.agentId);
+    const label =
+      normalizeOptionalString(p.label) ?? (entry.label?.trim() ? entry.label.trim() : undefined);
+    const nextEntry = cloneCheckpointSessionEntry({
+      currentEntry: entry,
+      nextSessionId: forkedSession.getSessionId(),
+      nextSessionFile: forkedSessionFile,
+      label,
+      parentSessionKey: canonicalKey,
+    });
+    await updateSessionStore(target.storePath, (store) => {
+      store[nextKey] = nextEntry;
+    });
+    respond(
+      true,
+      {
+        ok: true,
+        sourceKey: canonicalKey,
+        key: nextKey,
+        sessionId: nextEntry.sessionId,
+        entry: nextEntry,
+      },
+      undefined,
+    );
+    emitSessionsChanged(context, { sessionKey: nextKey, reason: "fork" });
+  },
   "sessions.compaction.branch": async ({ params, respond, context }) => {
     if (
       !assertValidParams(

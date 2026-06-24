@@ -49,6 +49,17 @@ describe("splitSectionedReply — amygdala retired (only 💬 ANSWER / 🌿 FRAC
     expect(splitSectionedReply("just a plain reply, no markers")).toBeNull();
     expect(splitSectionedReply("")).toBeNull();
   });
+
+  it("MARKER-FREE (bug A): 🌿 FRACTAL with NO 💬 ANSWER keeps the answer prose in `other`", () => {
+    // After retiring the 💬 ANSWER marker the model emits its answer then a 🌿 FRACTAL section.
+    // The answer must stay accessible (renderSectionedReply promotes `other` when a fractal exists),
+    // never lost or buried — this is the marker-free contract the structural run-grouping relies on.
+    const sec = splitSectionedReply("Here is the real answer.\n\n🌿 FRACTAL: my reflection")!;
+    expect(sec).not.toBeNull();
+    expect(sec.other).toBe("Here is the real answer.");
+    expect(sec.fractal).toBe("my reflection");
+    expect(sec.answer).toBeUndefined();
+  });
 });
 
 describe("renderSectionedReply — no fabricated amygdala block, fractal preserved", () => {
@@ -85,6 +96,13 @@ describe("renderSectionedReply — no fabricated amygdala block, fractal preserv
     expect(h).not.toContain("msg-amygdala");
   });
 
+  it("MARKER-FREE (bug A): answer + fractal with NO 💬 ANSWER renders the answer VISIBLE", () => {
+    const sec = splitSectionedReply("Here is the real answer.\n\n🌿 FRACTAL: refl")!;
+    const h = render(sec);
+    expect(h).toContain("Here is the real answer."); // answer surfaced, not hidden
+    expect(h).toContain("fractal-details"); // fractal still its own collapsed bubble
+  });
+
   it("preserves the FRACTAL collapsed bubble for an ANSWER + FRACTAL reply", () => {
     const h = render({ answer: "ans", fractal: "MEMORY: something worth keeping" });
     expect(h).toContain('class="fractal-details"');
@@ -101,7 +119,7 @@ describe("renderSectionedReply — no fabricated amygdala block, fractal preserv
   });
 });
 
-describe("splitLeadingNarration — peels leading cc-bridge inter-tool narration only", () => {
+describe("splitLeadingNarration — peels leading tinker-bridge inter-tool narration only", () => {
   it("is a pure no-op when the first sentence is not narration", () => {
     expect(splitLeadingNarration("The value is 5.")).toEqual({
       narration: "",

@@ -3,6 +3,7 @@ import {
   queuedBelongsToSession,
   queuedForSession,
   settleQueuedSession,
+  shouldQueue,
   type QueuedEntry,
 } from "./queued-sends";
 
@@ -43,6 +44,36 @@ describe("queued-sends tab scoping (symptom #2: queued shows in every tab)", () 
   it("an untagged entry belongs to no tab (never renders)", () => {
     const untagged: QueuedEntry = { role: "user", content: [{ type: "text", text: "?" }] };
     expect(queuedBelongsToSession(untagged, "tinker:A", matches)).toBe(false);
+  });
+});
+
+describe("shouldQueue gate (bug C: a send during a turn must be queued, not pushed)", () => {
+  it("does NOT queue when the session is fully idle", () => {
+    expect(shouldQueue({ hasActiveRunForSession: false, streamRunId: null, sending: false })).toBe(
+      false,
+    );
+  });
+
+  it("queues while a run is active for the session", () => {
+    expect(shouldQueue({ hasActiveRunForSession: true, streamRunId: null, sending: false })).toBe(
+      true,
+    );
+  });
+
+  it("queues while a stream is in flight", () => {
+    expect(
+      shouldQueue({ hasActiveRunForSession: false, streamRunId: "run-1", sending: false }),
+    ).toBe(true);
+  });
+
+  it("BUG REPRO (turn-start gap): queues when `sending` is set but the first run/stream has not registered yet", () => {
+    // The instant a turn starts, send() sets `sending = true` BEFORE the first phase:start/delta
+    // registers a run or a streamRunId. A second prompt typed in that window must still be queued,
+    // or it gets pushed into messages[] and the turn's own bubbles land after it. The old gate
+    // (hasActiveRunForSession || streamRunId != null) missed this window.
+    expect(shouldQueue({ hasActiveRunForSession: false, streamRunId: null, sending: true })).toBe(
+      true,
+    );
   });
 });
 

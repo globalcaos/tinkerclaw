@@ -29,7 +29,7 @@ Each diagram below is the canonical sequence-of-calls for one pipeline. If the d
 
 ---
 
-## F1. Tinker UI inbound: `chat.send` → cc-bridge → reply
+## F1. Tinker UI inbound: `chat.send` → tinker-bridge → reply
 
 **Trigger:** user types a message in Tinker UI webchat.
 **Entry:** `src/gateway/server-methods/chat.ts:chatHandlers["chat.send"]`
@@ -41,7 +41,7 @@ sequenceDiagram
   participant GW as Gateway (chat.ts)
   participant AR as auto-reply (dispatchInboundMessage)
   participant DSP as ReplyDispatcher
-  participant CC as cc-bridge (worker)
+  participant CC as tinker-bridge (worker)
   participant CLI as claude-cli (subprocess)
   participant SCH as server-chat.ts (lifecycle)
 
@@ -88,7 +88,7 @@ sequenceDiagram
   participant MON as auto-reply/monitor (LID rescue)
   participant TRG as trigger-gate
   participant AR as auto-reply pipeline
-  participant CC as cc-bridge
+  participant CC as tinker-bridge
   participant DDM as DELIVERY-DICHOTOMY
   participant OUT as WA outbound (deliverWebReply)
 
@@ -167,7 +167,7 @@ sequenceDiagram
 
 **Trigger:** gateway process exits (SIGUSR1 graceful, SIGTERM, or crash) and boots back up.
 **Entry:** `src/gateway/server-startup-post-attach.ts` → `src/agents/main-session-restart-recovery.ts`
-**Exit:** TUI sees orange `__ERR_ENV__` chip; agent run resumes on the existing session (cc-bridge resumes claude-cli via session-map openclawSessionId fallback).
+**Exit:** TUI sees orange `__ERR_ENV__` chip; agent run resumes on the existing session (tinker-bridge resumes claude-cli via session-map openclawSessionId fallback).
 
 ```mermaid
 sequenceDiagram
@@ -178,7 +178,7 @@ sequenceDiagram
   participant ENV as pushRestartWarningEnvelope
   participant CINJ as chat.inject
   participant AGT as agent dispatch ([System] continue)
-  participant CC as cc-bridge worker-pool
+  participant CC as tinker-bridge worker-pool
   participant CLI as claude-cli (--resume)
 
   BOOT->>MRK: mark every status:running as interrupted (regardless of stale locks)
@@ -189,7 +189,7 @@ sequenceDiagram
   CINJ-->>TUI: state="final" with envelope payload
   REC->>AGT: agent dispatch [System] continue from existing transcript
   AGT->>CC: turn
-  CC->>CC: deriveSessionKey (may produce new cc-sp-<hex> due to systemPrompt drift)
+  CC->>CC: deriveSessionKey (may produce new tinker-sp-<hex> due to systemPrompt drift)
   CC->>CC: getLatestResumeSessionIdByOpenclawSessionId(oc) — finds prior cli
   CC->>CLI: spawn --resume <cli sessionId>
   CLI-->>CC: resumed with full prior context
@@ -200,7 +200,7 @@ sequenceDiagram
 
 - Every status:`running` session at boot is marked interrupted, regardless of lock state.
 - Tail-check is informational; resume is always attempted (FORK 2026-05-10).
-- cc-bridge worker-pool prefers `getLatestResumeSessionIdByOpenclawSessionId` over hash-derived sessionKey (FORK 2026-05-10 fix for sessionKey hash drift after [System] continue).
+- tinker-bridge worker-pool prefers `getLatestResumeSessionIdByOpenclawSessionId` over hash-derived sessionKey (FORK 2026-05-10 fix for sessionKey hash drift after [System] continue).
 - The envelope chip fires BEFORE the agent dispatch so the user sees the restart first, the resume second.
 - **Client-side hold (FORK 2026-05-11):** before the WS closes, the gateway broadcasts `shutdown { restartExpectedMs }`. `tinker-ui/src/app.ts` marks every entry in `activeRuns` with `state: "restarting"`; the `ws addEventListener("close")` handler then preserves `activeRuns` instead of clearing them, and `renderThinkingIndicator()` paints a `RESTARTING` badge alongside the live dots. The resumed agent run's natural lifecycle `start` event replaces the entry on the new gateway, removing the badge. Safety-net: `scheduleUnconfirmedPrune` keeps restarting runs for 30 s (vs 5 s for normal unconfirmed runs) before evicting them — so even if the resume dispatch is delayed, the indicator clears cleanly rather than persisting forever.
 
@@ -252,11 +252,11 @@ sequenceDiagram
 
 ---
 
-## F6. cc-bridge tool call (claude-cli internal)
+## F6. tinker-bridge tool call (claude-cli internal)
 
 This flow is short by design and has its own document. See `tool-loop.md`.
 
-**One-liner:** tool_use blocks are visible in the UI (via cc-bridge stream events) but NOT placed in `assistant.message.content`, to prevent pi-agent-core's agent-loop from re-executing them via the OpenClaw exec tool. FORK 2026-04-22.
+**One-liner:** tool_use blocks are visible in the UI (via tinker-bridge stream events) but NOT placed in `assistant.message.content`, to prevent pi-agent-core's agent-loop from re-executing them via the OpenClaw exec tool. FORK 2026-04-22.
 
 ---
 
@@ -306,7 +306,7 @@ sequenceDiagram
   participant FS as plans/*.md
   participant SEND as chat.send (loopback)
   participant CINJ as chat.inject
-  participant CC as cc-bridge worker-pool
+  participant CC as tinker-bridge worker-pool
   participant CLI as claude-cli (--resume)
   participant TUI as Tinker UI
 
@@ -336,7 +336,7 @@ sequenceDiagram
 - The `__SYS_PLAN_RESUME__` sentinel is injected via `chat.inject` BEFORE `chat.send` so the chip appears before the agent resumes.
 - The dispatch uses `deliver: false, dispatchAgent: true` — INTERNAL_MESSAGE_CHANNEL routes to the agent, the webchat subscription sees only the chip (no duplicate user bubble). See flows.md F1 invariants.
 - The `systemKind: "plan-resume"` annotation is carried in the loopback call metadata for diagnostic filtering.
-- cc-bridge resume uses `getLatestResumeSessionIdByOpenclawSessionId` (FORK 2026-05-10) so sessionKey hash drift after the `[System] continue` message is tolerated.
+- tinker-bridge resume uses `getLatestResumeSessionIdByOpenclawSessionId` (FORK 2026-05-10) so sessionKey hash drift after the `[System] continue` message is tolerated.
 
 **See also:** lifecycles.md L-PLAN, L-STEP; tinker-ui.md §**SYS_PLAN_RESUME** chip family.
 

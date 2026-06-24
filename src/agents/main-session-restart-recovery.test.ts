@@ -212,7 +212,7 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
   });
 
-  // Genuine cc-bridge mid-flight interruption: the user prompt is persisted at
+  // Genuine tinker-bridge mid-flight interruption: the user prompt is persisted at
   // turn start, so the tail is a `user` message — must still resume.
   it("resumes a genuinely interrupted session whose tail is the user prompt", async () => {
     const sessionsDir = await makeSessionsDir();
@@ -236,10 +236,10 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
   });
 
-  // cc-bridge interrupted before anything reached the OpenClaw transcript:
+  // tinker-bridge interrupted before anything reached the OpenClaw transcript:
   // empty transcript is the mid-flight signal the 2026-05-10 change protects —
   // must still resume (the idle fix only skips a COMPLETED assistant tail).
-  it("resumes a session whose transcript is empty (cc-bridge mid-flight)", async () => {
+  it("resumes a session whose transcript is empty (tinker-bridge mid-flight)", async () => {
     const sessionsDir = await makeSessionsDir();
     await writeStore(sessionsDir, {
       "agent:main:main": {

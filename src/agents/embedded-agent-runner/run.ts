@@ -1716,6 +1716,27 @@ export async function runEmbeddedPiAgent(
           }
 
           const assistantForFailover = currentAttemptAssistant ?? sessionLastAssistant;
+          // BRIDGE FIX 3/3: a same-model idle-timeout retry re-issues an
+          // identical `--resume` against an UNCHANGED transcript. When the
+          // just-aborted attempt streamed ZERO assistant text AND ZERO
+          // thinking (an init-only stall), that retry is futile and only
+          // doubles the stall — suppress it so the flow falls through to
+          // resolveRunFailoverDecision -> surface_error. Timeouts that DID
+          // produce partial content (text or thinking blocks) may still
+          // benefit from a same-model retry and are left untouched.
+          // Provider-agnostic: derive from the attempt state the runner
+          // already tracks for failover (assistantTexts + the assistant
+          // content array's thinking/redacted_thinking blocks).
+          const producedAnyAssistantText = (attempt.assistantTexts?.length ?? 0) > 0;
+          const producedAnyThinking = Array.isArray(
+            (assistantForFailover as { content?: unknown })?.content,
+          )
+            ? (assistantForFailover as { content: Array<unknown> }).content.some((block) => {
+                const type = (block as { type?: unknown } | null)?.type;
+                return type === "thinking" || type === "redacted_thinking";
+              })
+            : false;
+          const producedNoContent = !producedAnyAssistantText && !producedAnyThinking;
           const fallbackThinking = pickFallbackThinkingLevel({
             message: assistantForFailover?.errorMessage,
             attempted: attemptedThinking,
@@ -1818,6 +1839,7 @@ export async function runEmbeddedPiAgent(
               !timedOutDuringCompaction &&
               !fallbackConfigured &&
               canRestartForLiveSwitch &&
+              !producedNoContent &&
               sameModelIdleTimeoutRetries < MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES,
             assistantProfileFailureReason,
             lastProfileId,

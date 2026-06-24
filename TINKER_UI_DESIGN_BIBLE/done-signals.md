@@ -5,7 +5,7 @@ audience: AI (Claude, etc). Human readability is incidental.
 last_verified: 2026-05-17
 last_verified_commit: HEAD
 single_owner: yes — the cross-signal *precedence contract* and the master doneness map live here. Per-signal facts are owned elsewhere (lifecycles.md = session/worker/recovery state machines; tool-loop.md = heartbeat/idle-watchdog/lifecycle:end emission/no-UI-watchdog; flows.md = the chat.final guarantee + F-PLAN-RESUME; subagents-and-recipes.md = plan/kit/recipe; panels.md = prefrontal render levels + the §147 helpers; failures.md = failure-mode maps). This file does NOT re-derive them — it sequences them.
-see_also: lifecycles.md (L1 session, L2 cc-bridge worker, L4 restart-recovery), tool-loop.md (heartbeat, idle watchdog, lifecycle:end emission, the deleted UI watchdog), flows.md (chat.send always ends in a final/error/aborted broadcast; F-PLAN-RESUME), panels.md (§115 prefrontal render levels, §147 single-source-of-truth helpers), subagents-and-recipes.md (plan RPCs, kits, recipes, restart-continue), failures.md (M1 idle SIGTERM, M2 stuck spinner, incomplete_turn)
+see_also: lifecycles.md (L1 session, L2 tinker-bridge worker, L4 restart-recovery), tool-loop.md (heartbeat, idle watchdog, lifecycle:end emission, the deleted UI watchdog), flows.md (chat.send always ends in a final/error/aborted broadcast; F-PLAN-RESUME), panels.md (§115 prefrontal render levels, §147 single-source-of-truth helpers), subagents-and-recipes.md (plan RPCs, kits, recipes, restart-continue), failures.md (M1 idle SIGTERM, M2 stuck spinner, incomplete_turn)
 verify:
   - name: chat.final/aborted is authoritative-and-immediate AND cancels the debounced lifecycle:end delete (the core precedence contract this doc owns)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert re.search(r"pendingRunDeletes\.get\([^)]*\)[\s\S]{0,240}clearTimeout[\s\S]{0,200}activeRuns\.delete", t), "the chat.final/aborted handler no longer cancels the pending lifecycle:end timer before deleting the run — the authoritative-supersedes-debounced precedence (done-signals.md) is broken; a late lifecycle:end timer can now delete a run the user already re-used, or final no longer closes the run immediately"; assert re.search(r"pendingRunDeletes\.set\(", t) and re.search(r"setTimeout\([\s\S]{0,320}activeRuns\.delete", t), "the lifecycle:end debounced (delayed) delete path is gone — lifecycle:end must remain the advisory/debounced half of the contract, NOT an immediate delete; re-read done-signals.md before changing turn-completion"'
@@ -13,6 +13,8 @@ verify:
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/panels/prefrontal-tree.ts")).read(); assert "Priority 2" in t and "synthetic" in t.lower(), "prefrontal-tree.ts no longer documents the explicit-plan → synthetic-2-step → idle priority ladder; done-signals.md §3 and panels.md §115 describe a precedence that the code must still implement"'
   - name: the terminal lifecycle phase:"error" event carries the SAME identity fields as phase:"end" so the Tier-3 debounced delete fires for errored runs too (FORK 2026-06-04, the error-clears-the-run precedence this doc owns)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-subscribe.handlers.lifecycle.ts")).read(); m=re.search(r"phase:\s*\"error\",\s*\n", t); assert m, "could not find the terminal phase:\"error\" emit object in handleAgentEnd"; blk=t[m.start():m.start()+600]; assert "model:" in blk and "sessionKey:" in blk, "the terminal phase:\"error\" gateway event no longer carries model+sessionKey — the Tinker UI gates its lifecycle handler on p.data?.model, so an identity-less error event is DROPPED and the errored run is NEVER scheduled for the Tier-3 debounced delete (its thinking indicator sticks + stacks). done-signals.md §2: phase:error MUST mirror phase:end identity. Re-read before touching the lifecycle terminal emit."'
+  - name: subagent chat terminals also close the run — handleSubagentChatEvent deletes from activeRuns (FORK 2026-06-22, stuck spinner after a fractal turn)
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); m=re.search(r"function handleSubagentChatEvent[\s\S]*?\nfunction ", t); assert m, "handleSubagentChatEvent not found"; blk=m.group(0); assert "activeRuns.delete" in blk and "rememberTerminated" in blk, "handleSubagentChatEvent no longer closes the subagent run on its terminal chat event — a subagent (e.g. a fractal-triage lane) whose tier-3 lifecycle:end is dropped on hard teardown will stick its thinking indicator forever. done-signals.md section 2 R1: a chat terminal is tier-1 for SUBAGENT runs too, not just the main run. Re-read before changing the subagent chat handler."'
 ---
 
 # Done-signals — the "is the turn/task finished?" methodology
@@ -106,6 +108,23 @@ Authority tiers — when two signals disagree, the **lower tier number wins**.
     Before this, errored/failed-over runs had no Tier-3 delete at all and
     their indicators stuck — a cross-signal identity gap, not a precedence
     change. (Enforced by this file's new verify block.)
+  - **Subagent terminals are tier-1 too (FORK 2026-06-22, "stuck spinner
+    after a fractal turn").** A `:subagent:` run of the viewed session — e.g.
+    a fractal-triage lane (`agent:<id>:subagent:<uuid>`; `deliver:false`
+    gates delivery, NOT visibility) — is added to `activeRuns` by its
+    `phase:start` (#4) and rendered in the indicator like any other run. But
+    its chat events take the `handleSubagentChatEvent` path, which `return`s
+    BEFORE the tier-1 `activeRuns.delete` in the main-run chat handler. So
+    until this fix a subagent's ONLY terminator was the tier-3 debounced
+    `lifecycle:end` (#3) — which is dropped on hard teardown (SIGTERM /
+    gateway-restart / timeout) — and with R2 (no UI watchdog) nothing
+    backstopped it, so the subagent stayed pinned in `activeRuns` and the
+    dots stayed lit even though the answer + fractal dock were complete. Fix:
+    `handleSubagentChatEvent` now applies the SAME tier-1 authority on
+    `final/aborted/end/error` (cancel the pending lifecycle:end timer →
+    `activeRuns.delete` → `rememberTerminated` → recompute `sending`), so a
+    subagent has the same two independent terminators (tier-1 chat + tier-3
+    lifecycle) the main run has. (Enforced by this file's new verify block.)
 - **R2 — there is no UI-side stale-run watchdog.** The 2026-05-14 deletion
   is permanent (`STALE_RUN_WATCHDOG_MS` must never reappear — owned/enforced
   by tool-loop.md). A stuck indicator is ALWAYS cured by hardening
@@ -156,14 +175,15 @@ Owned by **subagents-and-recipes.md**. The doneness-relevant synthesis:
 Full propagation + `diagnose_with` probes are owned by **failures.md**.
 Use this as the index from _symptom_ to _the disagreeing signal_:
 
-| Symptom                                                          | Disagreement                                                              | First probe                                                                              |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Spinner stuck on `sending…`, reply already shown                 | #1 never broadcast (lifecycle path dropped) — the M2 backstop didn't fire | `debug.dumpUiSnapshot` + `debug.session.state` (failures.md M2)                          |
-| Indicator clears but prefrontal still "thinking" (or vice-versa) | #4/#3 vs the §147 set diverged, or a 4th "busy" derivation was added      | grep app.ts for a busy computation NOT routing through a §147 helper (panels.md §147 R1) |
-| "Thinking no matter which session I select"                      | prefrontal didn't re-render on session switch                             | panels.md §147 rule 6 / verify #5                                                        |
-| Turn never ends; SIGTERM at the idle cap                         | heartbeat #5 not resetting pi idle timer                                  | failures.md M1; `[idle-timeout-diag]` journal                                            |
-| Reply truncated to the streamed lead-in                          | `text_end` emitted BEFORE tail-recover (#2 vs streamed scratch)           | stream.ts ordering; tool-loop.md                                                         |
-| 53 leaked `claude` procs / Jarvis slow                           | not a doneness bug — worker pool unbounded                                | lifecycles.md L2 (bounded pool, FORK 2026-05-16)                                         |
+| Symptom                                                          | Disagreement                                                                                                                                                                       | First probe                                                                              |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Spinner stuck on `sending…`, reply already shown                 | #1 never broadcast (lifecycle path dropped) — the M2 backstop didn't fire                                                                                                          | `debug.dumpUiSnapshot` + `debug.session.state` (failures.md M2)                          |
+| Indicator stuck ON after a fractal turn (answer + dock complete) | a `:subagent:` run's tier-1 chat-final didn't close `activeRuns` (handleSubagentChatEvent lacked the delete); only tier-3 lifecycle:end could, and it was dropped on hard teardown | grep app.ts `handleSubagentChatEvent` for `activeRuns.delete`; §2 R1 subagent corollary  |
+| Indicator clears but prefrontal still "thinking" (or vice-versa) | #4/#3 vs the §147 set diverged, or a 4th "busy" derivation was added                                                                                                               | grep app.ts for a busy computation NOT routing through a §147 helper (panels.md §147 R1) |
+| "Thinking no matter which session I select"                      | prefrontal didn't re-render on session switch                                                                                                                                      | panels.md §147 rule 6 / verify #5                                                        |
+| Turn never ends; SIGTERM at the idle cap                         | heartbeat #5 not resetting pi idle timer                                                                                                                                           | failures.md M1; `[idle-timeout-diag]` journal                                            |
+| Reply truncated to the streamed lead-in                          | `text_end` emitted BEFORE tail-recover (#2 vs streamed scratch)                                                                                                                    | stream.ts ordering; tool-loop.md                                                         |
+| 53 leaked `claude` procs / Jarvis slow                           | not a doneness bug — worker pool unbounded                                                                                                                                         | lifecycles.md L2 (bounded pool, FORK 2026-05-16)                                         |
 
 ## 6. Standard methodology — use this to find bugs before they surface
 

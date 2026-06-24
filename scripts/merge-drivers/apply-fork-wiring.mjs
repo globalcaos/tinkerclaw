@@ -143,9 +143,14 @@ $1})`,
   if (!src.includes("onTurnComplete")) {
     const r = insertBeforeAnchor(
       src,
-      /return \{\s*\n\s*aborted,\s*\n\s*timedOut,\s*\n\s*timedOutDuringCompaction,/,
+      // Anchor updated 2026-06-19: the return object gained replayMetadata/itemLifecycle
+      // before `aborted,`, which silently broke the old `return {\n aborted,` anchor and
+      // left onTurnComplete unwired (anatomy DB + EEG trace dead since 2026-05-25). Anchor
+      // on the stable leading fields instead. runId is REQUIRED by PostTurnParams.
+      /return \{\s*\n\s*replayMetadata,\s*\n\s*itemLifecycle:/,
       `      // FORK: fire-and-forget post-turn processing (context anatomy, ENGRAM, SyncScore, observations)
       _forkAttemptHooks.onTurnComplete({
+        runId: params.runId,
         sessionManager: activeSession as unknown as import("@mariozechner/pi-coding-agent").SessionManager,
         sessionKey: params.sessionKey,
         messagesSnapshot,

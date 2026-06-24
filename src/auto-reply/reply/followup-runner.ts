@@ -16,6 +16,7 @@ import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { stripHeartbeatToken } from "../heartbeat.js";
@@ -159,12 +160,13 @@ export function createFollowupRunner(params: {
     });
     try {
       const runId = crypto.randomUUID();
-      const shouldSurfaceToControlUi = isInternalMessageChannel(
-        resolveOriginMessageProvider({
-          originatingChannel: queued.originatingChannel,
-          provider: run.messageProvider,
-        }),
-      );
+      const shouldSurfaceToControlUi =
+        isInternalMessageChannel(
+          resolveOriginMessageProvider({
+            originatingChannel: queued.originatingChannel,
+            provider: run.messageProvider,
+          }),
+        ) || isSubagentSessionKey(run.sessionKey);
       if (run.sessionKey) {
         registerAgentRunContext(runId, {
           sessionKey: run.sessionKey,

@@ -33,7 +33,7 @@ describe("Fractal Reflection scaffold (v3)", () => {
   });
 
   it("has the v3 doctrine pair bundled (triage + fix prompts)", () => {
-    // The v1 fractal-prompt.md is deliberately KEPT until the dead cc-bridge
+    // The v1 fractal-prompt.md is deliberately KEPT until the dead tinker-bridge
     // loader is removed (first core-touching drop) — bible §5.67b prompt-
     // doctrine bullet. The v3 pair is what the plugin actually loads.
     expect(existsSync(join(EXT_DIR, "fractal-prompt.md"))).toBe(true);

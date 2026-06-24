@@ -11,8 +11,8 @@ verify:
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.state","--params",json.dumps({"sessionKey":"agent:main:main"})],capture_output=True,text=True,timeout=25); j=json.loads(r.stdout.split("Gateway call:")[-1].split("\n",1)[1] if "Gateway call:" in r.stdout else r.stdout); status = (j.get("entry") or {}).get("status"); assert status in {"idle","running","done","failed","aborted","timeout","interrupted",None}, f"unrecognised status {status!r}"'
   - name: L4 — restart-recovery code path still emits the known log message
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/main-session-restart-recovery.ts")).read(); assert "marked interrupted main session failed" in t and "main-session-restart-recovery" in t, "restart-recovery log emission missing or renamed — refactor without a verify update is the regression class to catch"'
-  - name: L2 — cc-bridge worker pool stays bounded (idle reap + LRU cap)
-    cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker-pool.ts")).read(); assert "idleTtlMs" in t and "maxWorkers" in t and "private sweep(" in t and "isBusy()" in t, "cc-bridge SessionWorkerPool eviction removed — unbounded persistent-claude-proc leak regression class (people-profiles per-profile sessionKey, 53 procs/7+ days, 2026-05-16)"'
+  - name: L2 — tinker-bridge worker pool stays bounded (idle reap + LRU cap)
+    cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/worker-pool.ts")).read(); assert "idleTtlMs" in t and "maxWorkers" in t and "private sweep(" in t and "isBusy()" in t, "tinker-bridge SessionWorkerPool eviction removed — unbounded persistent-claude-proc leak regression class (people-profiles per-profile sessionKey, 53 procs/7+ days, 2026-05-16)"'
   - name: L-STRATEGY — strategy-switch state machine still carries its threshold/recency/review transitions (U4)
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/strategy-switch.ts")).read(); ft=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/failure-tracking.ts")).read(); assert "consecutiveErrors < cfg.threshold" in t and "recency guard" in t and "needsHumanReview" in t, "strategy-switch decision transitions renamed — L-STRATEGY diagram is now stale"; assert "export function recordFailure(" in ft and "export function recordSuccess(" in ft and "export function applySwitch(" in ft, "failure-tracking transition fns (recordFailure/recordSuccess/applySwitch) renamed — L-STRATEGY accumulate/reset/apply edges stale"'
   - name: L-STRATEGY — fork.strategy.switch.list RPC is live and returns ok (U4 review surface)
@@ -59,9 +59,9 @@ stateDiagram-v2
 
 ---
 
-## L2. cc-bridge claude-cli worker
+## L2. tinker-bridge claude-cli worker
 
-**Entity:** `ClaudeCodeWorker` instance held by `SessionWorkerPool`, one per cc-bridge sessionKey.
+**Entity:** `ClaudeCodeWorker` instance held by `SessionWorkerPool`, one per tinker-bridge sessionKey.
 
 ```mermaid
 stateDiagram-v2
@@ -98,7 +98,7 @@ stateDiagram-v2
 - A turn's `signal: AbortSignal` parameter, when aborted, calls `worker.kill("SIGTERM")` — this is how the LLM idle watchdog terminates a stuck worker.
 - **The pool is BOUNDED (FORK 2026-05-16, `worker-pool.ts`).** `SessionWorkerPool` sweeps on every `getOrCreate`: a non-busy worker idle past `idleTtlMs` (default 15 min) is SIGTERMed, and the pool is hard-capped at `maxWorkers` (default 32, LRU eviction of the least-recently-used non-busy worker). A worker mid-turn (`isBusy()`) and the sessionKey being requested are never evicted; evicted workers keep their `sessionId` in session-map.json so a later turn `--resume`s the same thread. Without this, a caller minting a unique sessionKey per work item (people-profiles cron — one key per profile) leaks one persistent ep_poll-blocked `claude` proc per item indefinitely (observed: 53 procs, oldest 7+ days, 2026-05-16). Enforced by the L2 `verify:` invariant above.
 
-**Probe:** `cc-bridge.workerInfo({sessionKey})` (proposed) — alive?, current cli sessionId, last turn duration.
+**Probe:** `tinker-bridge.workerInfo({sessionKey})` (proposed) — alive?, current cli sessionId, last turn duration.
 
 ---
 
@@ -176,7 +176,7 @@ stateDiagram-v2
 stateDiagram-v2
   [*] --> accepted
   accepted --> dispatched: dispatchInboundMessage fire-and-forget
-  dispatched --> streaming: cc-bridge spawns / pi-agent-core streamFn
+  dispatched --> streaming: tinker-bridge spawns / pi-agent-core streamFn
   streaming --> streaming: state="delta" broadcasts
   streaming --> finalizing_ok: lifecyclePhase=done
   streaming --> finalizing_error: lifecyclePhase=error OR surface_error

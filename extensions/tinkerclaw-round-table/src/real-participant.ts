@@ -5,7 +5,7 @@
  * cross-provider model ref (Anthropic + OpenAI + Google) for genuine cognitive
  * diversity. The model call is injected as `callModel` so this module is
  * unit-testable and so the live wiring (index.ts) can route through
- * fork.subagents.spawn + agent.wait + chat.history — sharing the cc-bridge
+ * fork.subagents.spawn + agent.wait + chat.history — sharing the tinker-bridge
  * billing harness and the 8-worker fan-out budget. No new transport.
  */
 

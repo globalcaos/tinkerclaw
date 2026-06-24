@@ -23,6 +23,29 @@
 
 export type QueuedEntry = Record<string, unknown>;
 
+/**
+ * FORK 2026-06-19 (bug C — "a prompt typed mid-turn jumps above the answer"): decide whether a
+ * freshly-typed user send must be QUEUED (held OUT of messages[] and rendered as a trailing bubble)
+ * rather than pushed into the transcript immediately.
+ *
+ * A send is queued whenever the viewed session has a turn IN FLIGHT, detected by ANY of:
+ *   - `hasActiveRunForSession` — a live run object exists for this session;
+ *   - `streamRunId` — a stream is currently delta-ing;
+ *   - `sending` — the optimistic "a turn is starting" flag, set by send() the INSTANT the user hits
+ *     enter, BEFORE the first phase:start/delta registers a run or a streamRunId. Including it closes
+ *     the turn-START gap where a fast second prompt — typed in that pre-registration window — would
+ *     otherwise be pushed straight into messages[] and then have the turn's own bubbles land after it.
+ *
+ * Pure so the gate can be unit-tested (the send() handler in app.ts is an un-testable browser entry).
+ */
+export function shouldQueue(state: {
+  hasActiveRunForSession: boolean;
+  streamRunId: string | null | undefined;
+  sending: boolean;
+}): boolean {
+  return state.hasActiveRunForSession || state.streamRunId != null || state.sending;
+}
+
 /** Matches two session keys, tolerant of short ("tinker:A") vs canonical ("agent:main:tinker:A")
  *  forms — pass app.ts `sessionKeyMatches` here. */
 export type SessionKeyMatcher = (a: string | undefined, b: string | undefined) => boolean;

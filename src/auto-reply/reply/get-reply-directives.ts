@@ -1,5 +1,6 @@
 import { listAgentEntries } from "../../agents/agent-scope.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import { chooseAutoEffort } from "../../agents/effort-allocator.js";
 import { resolveFastModeState } from "../../agents/fast-mode.js";
 import { type ModelAliasIndex, resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox/runtime-status.js";
@@ -303,7 +304,16 @@ export async function resolveReplyDirectives(params: {
   if (hasInlineDirective) {
     const stripped = stripStructuralPrefixes(parsedDirectives.cleaned);
     const noMentions = isGroup ? stripMentions(stripped, ctx, cfg, agentId) : stripped;
-    if (noMentions.trim().length > 0) {
+    // FORK 2026-06-18 (bible §5.84): only treat trailing message text as a reason to DROP
+    // inline directives when the directive was NOT at the leading edge. The model/effort
+    // sliders inject "/model <id> /think <lvl> <prompt>" at the very START of the command
+    // body (and a user may legitimately type "/think high <prompt>"); those must be
+    // honored, otherwise persistInlineDirectives never records the per-turn model/effort
+    // and the run silently falls back to the default brain + default thinking budget. The
+    // #3705 timestamp-injection guard only needs to strip directive-looking tokens that
+    // appear AFTER real prose (mid-text), so gate the clear on the directive not leading.
+    const directiveIsLeading = stripStructuralPrefixes(commandText).trimStart().startsWith("/");
+    if (!directiveIsLeading && noMentions.trim().length > 0) {
       const directiveOnlyCheck = parseInlineDirectives(noMentions, {
         modelAliases: configuredAliases,
       });
@@ -413,7 +423,18 @@ export async function resolveReplyDirectives(params: {
   });
   const defaultActivation = defaultGroupActivation(requireMention);
   const resolvedThinkLevel =
-    directives.thinkLevel ?? (targetSessionEntry?.thinkingLevel as ThinkLevel | undefined);
+    directives.thinkLevel ??
+    (targetSessionEntry?.thinkingLevel as ThinkLevel | undefined) ??
+    // FORK 2026-06-18 (bible §5.84 Drop 3): true-Auto effort allocator for chat.send /
+    // webchat turns. chooseAutoEffort was only wired into the CLI `agent` path
+    // (agent-command.ts:609), so interactive Tinker turns — which resolve effort HERE —
+    // never reached it and parked at the default budget. Fire it for PRIMARY interactive
+    // keys (agent:<id>:main and agent:<id>:tinker:<tabId>) ONLY when the user hasn't
+    // pinned (directives.thinkLevel) or persisted (sessionEntry.thinkingLevel) a level.
+    // The (main|tinker) allowlist excludes subagent/cron/heartbeat keys.
+    (/^agent:[^:]+:(?:main|tinker)(?::|$)/.test(sessionKey)
+      ? chooseAutoEffort({ prompt: commandText, sessionKey })
+      : undefined);
   const resolvedFastMode =
     directives.fastMode ??
     resolveFastModeState({

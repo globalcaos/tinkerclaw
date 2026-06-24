@@ -3,13 +3,13 @@
  * FORK 2026-06-11: openclaw-orchestrate -- CLI wrapper around the
  * prefrontal.recipe.orchestrate RPC, the sibling of openclaw-spawn-subagent.
  *
- * Purpose: give Jarvis-inside-cc-bridge a way to run a MULTI-agent dynamic
+ * Purpose: give Jarvis-inside-tinker-bridge a way to run a MULTI-agent dynamic
  * workflow (decompose -> fan out N units in parallel/pipeline -> verify) from a
  * shell, where EVERY spawned unit routes through fork.subagents.spawn ->
- * spawnSubagentDirect -> a `claude-code/*` child = a fresh cc-sp-* ClaudeCodeWorker
+ * spawnSubagentDirect -> a `claude-code/*` child = a fresh tinker-sp-* ClaudeCodeWorker
  * spawned through the IDENTICAL subscription-billed harness (systemd-run --pipe +
  * closed env allowlist + harness-strip). So the whole fan-out stays on the Max
- * subscription -- never the metered API -- and every leaf is its own cc-sp-*
+ * subscription -- never the metered API -- and every leaf is its own tinker-sp-*
  * node on the Prefrontal effort tree. This is the controlled replication of
  * Claude Code's ultracode dynamic-workflows (native workflows fork un-harnessed
  * `claude` processes that trip Anthropic's overage classifier -> metered).

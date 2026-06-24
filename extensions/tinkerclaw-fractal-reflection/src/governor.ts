@@ -39,10 +39,10 @@ export interface GovernorDeps {
   /** Injected clock (epoch ms). All timing flows through this — fake it in tests. */
   now: () => number;
   /**
-   * Reads the live usage signal (cc-bridge `usage.status`). Return null (or throw)
+   * Reads the live usage signal (tinker-bridge `usage.status`). Return null (or throw)
    * when the signal is unavailable (403/absent) — the governor fails to NEUTRAL,
    * never to closed (§5.67b: the gateway has no fresh quota signal for the
-   * cc-bridge subscription path).
+   * tinker-bridge subscription path).
    */
   readUsage: () => Promise<UsageSnapshot | null>;
 }

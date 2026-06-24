@@ -180,12 +180,12 @@ describe("U11 recipe.install — CC SKILL.md bridging", () => {
     expect(res.bridged).toBe(true);
     expect(res.slug).toBe("deploy-check");
     // Written under <sandbox>/<bridged-skills>/<slug>/recipe.md (canonical;
-    // dual-read still loads a legacy kit.md), tagged cc-bridge.
+    // dual-read still loads a legacy kit.md), tagged tinker-bridge.
     const written = await fs.readFile(
       path.join(sandbox, BRIDGED_SKILLS_DIRNAME, "deploy-check", "recipe.md"),
       "utf8",
     );
-    expect(written).toContain('authoredBy: "cc-bridge"');
+    expect(written).toContain('authoredBy: "tinker-bridge"');
     expect(written).toContain('schema: "kit/1.0"');
     expect(written).toContain("Read the release manifest");
   });
