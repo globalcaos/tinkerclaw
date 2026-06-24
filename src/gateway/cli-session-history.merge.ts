@@ -34,7 +34,20 @@ function extractComparableText(message: unknown): string | undefined {
   if (!joined) {
     return undefined;
   }
-  const visible = role === "user" ? stripInboundMetadata(joined) : joined;
+  let visible = role === "user" ? stripInboundMetadata(joined) : joined;
+  // FORK 2026-06-20: cc-bridge appends "<!-- TINKERCLAW … -->" narration-contract
+  // blocks to every user message before forwarding to claude-cli. The JSONL therefore
+  // stores a longer version of each user message than the OpenClaw local session file,
+  // causing the role+text dedup to always fail (different strings → no match → both
+  // copies land in the merged result and the UI shows the prompt twice).
+  // Truncate at the first HTML-comment boundary so both sides normalize to the same
+  // user-visible text regardless of which injected suffix each store carries.
+  if (role === "user") {
+    const htmlInjectionStart = visible.indexOf("\n<!--");
+    if (htmlInjectionStart !== -1) {
+      visible = visible.slice(0, htmlInjectionStart);
+    }
+  }
   const normalized = visible.replace(/\s+/g, " ").trim();
   return normalized || undefined;
 }
@@ -78,7 +91,7 @@ function resolveImportedExternalId(message: unknown): string | undefined {
 // match is taken as a re-import regardless of timestamp distance.
 // Hit on the duplicate-prompt bug: cli-session jsonl + local
 // sessionFile both held the same user prompts, but timestamps
-// differed by hours across cc-bridge respawns, so the 5-min window
+// differed by hours across tinker-bridge respawns, so the 5-min window
 // failed for every long historical message and chat.history
 // returned the entire conversation twice.
 const LONG_TEXT_DEDUP_MIN_LEN = 50;

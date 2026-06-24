@@ -23,7 +23,7 @@ export type GSeries = {
   cumulative?: boolean;
   axis?: "left" | "right";
 };
-export type GGroup = { key: string; title: string; series: GSeries[] };
+export type GGroup = { key: string; title: string; series: GSeries[]; accent?: string };
 
 const PALETTE = [
   "#8ECAE6",
@@ -39,13 +39,20 @@ const PALETTE = [
 ];
 const colorAt = (i: number) => PALETTE[i % PALETTE.length];
 
+// Vite base ("/tinker/") so public assets resolve under the app mount, not the origin root.
+const ASSET_BASE = import.meta.env.BASE_URL ?? "/";
+
 const ICONS: Record<string, string> = {
   github: "🐙",
   moltbook: "🦞",
   clawhub: "🧩",
   inbound: "🔗",
-  website: "🌐",
+  // tinkerclaw UI favicon (the app's own brand mark) for the Website graph.
+  website: `<img src="${ASSET_BASE}favicon.png" width="14" height="14" style="vertical-align:-2px;border-radius:3px"/>`,
   npm: "📦",
+  // Real YouTube logomark (red rounded rect + white play triangle), sized to the icon slot.
+  youtube:
+    '<svg width="15" height="15" viewBox="0 0 24 24" style="vertical-align:-2px"><path fill="#FF0000" d="M23.5 6.2a3 3 0 0 0-2.11-2.12C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.39.58A3 3 0 0 0 .5 6.2 31.4 31.4 0 0 0 0 12a31.4 31.4 0 0 0 .5 5.8 3 3 0 0 0 2.11 2.12C4.5 20.5 12 20.5 12 20.5s7.5 0 9.39-.58a3 3 0 0 0 2.11-2.12A31.4 31.4 0 0 0 24 12a31.4 31.4 0 0 0-.5-5.8z"/><path fill="#fff" d="M9.6 15.5V8.5l6.3 3.5z"/></svg>',
 };
 const icon = (key: string) => ICONS[key] ?? "📊";
 
@@ -345,7 +352,7 @@ function chartHtml(g: GGroup): string {
   return `
     <div class="pg-chart${collapsed}" data-group="${esc(g.key)}">
       <div class="pg-head" draggable="true" title="Drag to reorder · click to collapse">
-        <span class="pg-grip">⠿</span><span class="pg-icon">${icon(g.key)}</span><span class="pg-name">${esc(g.title)}</span>
+        <span class="pg-grip">⠿</span><span class="pg-icon">${icon(g.key)}</span><span class="pg-name">${esc(g.title)}</span>${g.accent ? `<span class="pg-accent">${esc(g.accent)}</span>` : ""}
       </div>
       <div class="pg-body">${renderSvg(g)}<div class="pg-tip" style="display:none"></div></div>
     </div>`;

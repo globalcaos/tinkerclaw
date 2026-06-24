@@ -78,7 +78,7 @@ function flushSteerBuffer(sessionId: string) {
   steerBuffers.delete(sessionId);
   const combined = buf.texts.join("\n\n");
   // FORK P4 (in-flight steer): try to fold the message INTO the live provider
-  // turn first — cc-bridge writes it to the running claude-cli stdin, which
+  // turn first — tinker-bridge writes it to the running claude-cli stdin, which
   // picks it up between tool rounds (like Claude Code), so it changes the
   // current answer instead of waiting for the whole turn + a separate next turn.
   // Only fall back to the pi-agent-core steeringQueue (next-round delivery) when

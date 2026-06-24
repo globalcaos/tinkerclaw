@@ -250,8 +250,8 @@ describe("loadRecipeIndex — extraDirs (bridged-skills) scan", () => {
     ownDir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-own-"));
     extraDir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-bridged-"));
     const curated = `---\nslug: "shared"\ntitle: "Curated Shared"\nsummary: "the curated one"\ntags: ["shared"]\n---\n### 1. Curated\nbody\n`;
-    const bridged = `---\nslug: "imported"\ntitle: "Imported"\nsummary: "from a cc skill"\ntags: ["imported"]\nauthoredBy: "cc-bridge"\n---\n### 1. Imported step\nbody\n`;
-    const bridgedShadow = `---\nslug: "shared"\ntitle: "Bridged Shadow"\nsummary: "should NOT win"\ntags: ["shared"]\nauthoredBy: "cc-bridge"\n---\n### 1. Shadow\nbody\n`;
+    const bridged = `---\nslug: "imported"\ntitle: "Imported"\nsummary: "from a cc skill"\ntags: ["imported"]\nauthoredBy: "tinker-bridge"\n---\n### 1. Imported step\nbody\n`;
+    const bridgedShadow = `---\nslug: "shared"\ntitle: "Bridged Shadow"\nsummary: "should NOT win"\ntags: ["shared"]\nauthoredBy: "tinker-bridge"\n---\n### 1. Shadow\nbody\n`;
     await fs.mkdir(path.join(ownDir, "shared"), { recursive: true });
     await fs.writeFile(path.join(ownDir, "shared", "kit.md"), curated);
     await fs.mkdir(path.join(extraDir, "imported"), { recursive: true });

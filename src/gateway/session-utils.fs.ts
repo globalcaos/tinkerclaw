@@ -219,16 +219,16 @@ export function readSessionMessages(
         });
       }
 
-      // FORK 2026-04-25: cc-bridge tool entries — surface tool_use/tool_result
+      // FORK 2026-04-25: tinker-bridge tool entries — surface tool_use/tool_result
       // blocks in chat history so Tinker can replay them on session reload.
-      // The bundled cc-bridge stream pushes these into a per-run buffer
-      // (`extensions/tinkerclaw-cc-bridge/src/tool-buffer.ts`) and the fork
+      // The bundled tinker-bridge stream pushes these into a per-run buffer
+      // (`extensions/tinkerclaw-tinker-bridge/src/tool-buffer.ts`) and the fork
       // `onTurnComplete` hook drains the buffer with `appendCustomEntry`. The
       // entry shape matches the live `agent.stream:"tool"` event payload that
       // Tinker already renders (`tinker-ui/src/app.ts:1512`), so we just emit
       // a synthetic message of the right role here and Tinker pairs them with
       // its existing tool-bubble logic.
-      if (parsed?.type === "custom" && parsed?.customType === "cc-bridge-tool") {
+      if (parsed?.type === "custom" && parsed?.customType === "tinker-bridge-tool") {
         const data = (parsed as { data?: Record<string, unknown> }).data ?? {};
         const ts = typeof parsed.timestamp === "string" ? Date.parse(parsed.timestamp) : Number.NaN;
         const timestamp = Number.isFinite(ts) ? ts : Date.now();
@@ -248,7 +248,7 @@ export function readSessionMessages(
             ],
             timestamp,
             __openclaw: {
-              kind: "cc-bridge-tool",
+              kind: "tinker-bridge-tool",
               phase: "start",
               id: typeof parsed.id === "string" ? parsed.id : undefined,
               seq: messageSeq,
@@ -274,7 +274,7 @@ export function readSessionMessages(
             ],
             timestamp,
             __openclaw: {
-              kind: "cc-bridge-tool",
+              kind: "tinker-bridge-tool",
               phase: "result",
               id: typeof parsed.id === "string" ? parsed.id : undefined,
               seq: messageSeq,
@@ -286,11 +286,11 @@ export function readSessionMessages(
       // ignore bad lines
     }
   }
-  return reorderCcBridgeToolBlocks(messages);
+  return reorderTinkerBridgeToolBlocks(messages);
 }
 
 /**
- * FORK 2026-04-25: cc-bridge tool entries are appended in `onTurnComplete`,
+ * FORK 2026-04-25: tinker-bridge tool entries are appended in `onTurnComplete`,
  * which fires AFTER the assistant text was already persisted, so they trail
  * the assistant message in jsonl order. The natural reading order in chat
  * is `[user → tool_use → tool_result → … → assistant text]`, not
@@ -300,26 +300,33 @@ export function readSessionMessages(
  * find the assistant text message the tools belong to and splice them
  * back in front of it.
  *
- * Heuristic: a cc-bridge-tool block always belongs to the most recent
+ * Heuristic: a tinker-bridge-tool block always belongs to the most recent
  * assistant *text* message that came before it in jsonl order, ignoring
  * any system/compaction entries in between. Walk the array; whenever we
- * encounter a cc-bridge-tool message, splice it into the position
+ * encounter a tinker-bridge-tool message, splice it into the position
  * immediately before that assistant message.
  */
-function reorderCcBridgeToolBlocks(messages: unknown[]): unknown[] {
+function reorderTinkerBridgeToolBlocks(messages: unknown[]): unknown[] {
   type Maybe = {
     role?: string;
     content?: Array<{ type?: string }>;
     __openclaw?: { kind?: string };
   };
-  const isCcBridgeTool = (m: unknown): boolean =>
-    (m as Maybe | null)?.__openclaw?.kind === "cc-bridge-tool";
+  // FORK 2026-06-20 (cc-bridge → tinker-bridge rename): recognise the legacy "cc-bridge-tool" kind
+  // in pre-rename history so old tool bubbles still reorder/render after the rename.
+  const isTinkerBridgeTool = (m: unknown): boolean => {
+    const kind = (m as Maybe | null)?.__openclaw?.kind;
+    return kind === "tinker-bridge-tool" || kind === "cc-bridge-tool";
+  };
   const isAssistantText = (m: unknown): boolean => {
     const msg = m as Maybe | null;
     if (!msg || msg.role !== "assistant") {
       return false;
     }
-    if (msg.__openclaw?.kind === "cc-bridge-tool") {
+    if (
+      msg.__openclaw?.kind === "tinker-bridge-tool" ||
+      msg.__openclaw?.kind === "cc-bridge-tool"
+    ) {
       return false;
     }
     if (!Array.isArray(msg.content)) {
@@ -330,7 +337,7 @@ function reorderCcBridgeToolBlocks(messages: unknown[]): unknown[] {
 
   const out: unknown[] = [];
   for (const m of messages) {
-    if (!isCcBridgeTool(m)) {
+    if (!isTinkerBridgeTool(m)) {
       out.push(m);
       continue;
     }

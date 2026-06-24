@@ -5,7 +5,7 @@ const ANTHROPIC_LOGO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24"><pol
 
 export const PROVIDER_LOGO_SVG: Record<string, string> = {
   anthropic: ANTHROPIC_LOGO_SVG,
-  // FORK: cc-bridge = claude CLI; keep Anthropic branding in timeline/treemap.
+  // FORK: tinker-bridge = claude CLI; keep Anthropic branding in timeline/treemap.
   "claude-code": ANTHROPIC_LOGO_SVG,
   google: `<svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke-width="2"><animate attributeName="stroke" values="#4285f4;#ea4335;#fbbc04;#34a853;#4285f4" dur="4s" repeatCount="indefinite"/></circle><circle cx="7" cy="7" r="3" fill="url(#gg)"/><defs><radialGradient id="gg"><stop offset="0%" stop-color="#4285f4"/><stop offset="100%" stop-color="#34a853"/></radialGradient></defs></svg>`,
   openai: `<svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="#fff"/><text x="7" y="10" text-anchor="middle" font-size="7" font-weight="900" fill="#000">AI</text></svg>`,

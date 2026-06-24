@@ -1,3 +1,4 @@
+import { resolveFailoverReasonFromError } from "../agents/failover-error.js";
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-reply/heartbeat.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { getRuntimeConfig } from "../config/io.js";
@@ -797,6 +798,16 @@ export function createAgentEventHandler({
       }
       return;
     }
+    // FORK 2026-06-24 (recoverable-error retry, spec Component 1): surface the
+    // failover decision's recoverability class as the machine-readable `reason`
+    // so the Tinker auto-retry controller no longer has to text-match
+    // `errorMessage`. `resolveFailoverReasonFromError` unwraps a FailoverError
+    // (returns its `.reason`) or classifies the raw error signal — exactly the
+    // value the embedded-runner logs as `decision=surface_error reason=...`.
+    // `retryAfter` (provider Retry-After) is not attached to the error object at
+    // this layer, so it is intentionally OMITTED; the frontend backoff ladder
+    // owns the timing. `errorMessage` (human text) is unchanged.
+    const failoverReason = resolveFailoverReasonFromError(error) ?? undefined;
     const payload = {
       runId: clientRunId,
       sessionKey,
@@ -804,6 +815,7 @@ export function createAgentEventHandler({
       state: "error" as const,
       errorMessage: error ? formatForLog(error) : undefined,
       ...(errorKind && { errorKind }),
+      ...(failoverReason && { reason: failoverReason }),
     };
     // Suppress webchat broadcast for heartbeat error events too
     if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {

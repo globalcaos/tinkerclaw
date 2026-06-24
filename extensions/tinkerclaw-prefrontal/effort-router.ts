@@ -1,38 +1,22 @@
 // extensions/prefrontal/effort-router.ts
-// FORK: Code-enforced effort routing + DYNAMIC reasoning-complexity adaptation.
+// FORK: DYNAMIC reasoning-complexity adaptation.
 //
-// Two layers:
-//   1. validateModelAssignment — the legacy guard. Downgrades wasteful model
-//      assignments (e.g. Opus for a one-word lookup). Unchanged contract.
-//   2. recommendEffort / buildEffortGuidance (FORK 2026-05-29) — scores the
-//      user prompt and auto-adapts Jarvis's reasoning posture along FOUR tiers
-//      (trivial → standard → deep → ultra). The recommendation is injected into
-//      the turn as prependSystemContext so Jarvis scales thinking budget, model
-//      tier, orchestration mode (solo / parallel subagents / full workflow) and
-//      token generosity to the task — "up to ultracode, generous with tokens".
+//   recommendEffort / buildEffortGuidance (FORK 2026-05-29) — scores the
+//   user prompt and auto-adapts Jarvis's reasoning posture along FOUR tiers
+//   (trivial → standard → deep → ultra). The recommendation is injected into
+//   the turn as prependSystemContext so Jarvis scales thinking budget, model
+//   tier, orchestration mode (solo / parallel subagents / full workflow) and
+//   token generosity to the task — "up to ultracode, generous with tokens".
 //
-// This is the "smart Jarvis" lever: the model used to ignore the router entirely
-// (the result was only logged). Now the classification drives the turn.
+// This is the "smart Jarvis" lever: the classification drives the turn.
+//
+// Retired 2026-06-14 (FOUNDATION #2, bible §5.84-B): the legacy
+// validateModelAssignment guard + hardcoded DEFAULT_EFFORT_ROUTING_CONFIG tier
+// list were log-only dead code that hardcoded a stale, drifting model roster —
+// deleted along with isModelInTier and the EffortRoutingConfig/RoutingDecision
+// types that only existed to serve them.
 
 export type EffortLevel = "minimal" | "standard" | "maximum";
-
-export interface EffortRoutingConfig {
-  enabled: boolean;
-  minimal: string[];
-  standard: string[];
-  maximum: string[];
-}
-
-// FORK: Route through claude-code bridge (see DEFAULT_PREFRONTAL_CONFIG in
-// prefrontal-types.ts for the reasoning). Anthropic direct-API paths are
-// suspended on this fork — leaving them as defaults makes every effort-routed
-// dispatch 400 on first try.
-export const DEFAULT_EFFORT_ROUTING_CONFIG: EffortRoutingConfig = {
-  enabled: true,
-  minimal: ["claude-code/claude-haiku-4-5", "ollama/qwen3:14b"],
-  standard: ["claude-code/claude-sonnet-4-6", "google/gemini-2.5-pro"],
-  maximum: ["claude-code/claude-opus-4-7"],
-};
 
 const MINIMAL_KEYWORDS = [
   "format",
@@ -73,52 +57,6 @@ export function classifyEffort(taskDescription: string): EffortLevel {
   }
 
   return "standard";
-}
-
-export function isModelInTier(
-  model: string,
-  tier: string[],
-  _config: EffortRoutingConfig,
-): boolean {
-  return tier.some((m) => model.includes(m) || m.includes(model));
-}
-
-export interface RoutingDecision {
-  approved: boolean;
-  suggestedModel?: string;
-  reason?: string;
-}
-
-export function validateModelAssignment(
-  assignedModel: string,
-  taskDescription: string,
-  config: EffortRoutingConfig,
-): RoutingDecision {
-  if (!config.enabled) {
-    return { approved: true };
-  }
-
-  const effort = classifyEffort(taskDescription);
-
-  // Opus assigned to minimal task → downgrade
-  if (effort === "minimal" && isModelInTier(assignedModel, config.maximum, config)) {
-    return {
-      approved: false,
-      suggestedModel: config.minimal[0],
-      reason: `Task classified as minimal effort ("${taskDescription.slice(0, 60)}") — Opus is wasteful, use ${config.minimal[0]}`,
-    };
-  }
-
-  // Opus assigned to standard task → downgrade
-  if (effort === "standard" && isModelInTier(assignedModel, config.maximum, config)) {
-    return {
-      approved: false,
-      suggestedModel: config.standard[0],
-      reason: `Task classified as standard effort — use ${config.standard[0]} instead of Opus`,
-    };
-  }
-
-  return { approved: true };
 }
 
 // ─── Dynamic complexity adaptation (FORK 2026-05-29) ────────────────────────

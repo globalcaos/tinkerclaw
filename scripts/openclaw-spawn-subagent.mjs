@@ -4,7 +4,7 @@
  *
  * Purpose: give any process that has gateway credentials a way to spawn an
  * OpenClaw subagent session from a shell. The main consumer is Jarvis inside
- * the tinkerclaw-cc-bridge harness -- the `claude` CLI has Bash but no native
+ * the tinkerclaw-tinker-bridge harness -- the `claude` CLI has Bash but no native
  * `sessions_spawn` tool, so without this helper Prefrontal's subagent tree
  * stays empty forever. Also useful for tests, cron jobs, and ad-hoc triage.
  *

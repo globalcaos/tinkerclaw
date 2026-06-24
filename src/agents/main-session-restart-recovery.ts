@@ -112,10 +112,10 @@ function assistantTurnHasPendingToolUse(message: unknown): boolean {
 }
 
 /**
- * FORK 2026-05-31 (Oscar directive): is the session idle — i.e. did its last
+ * FORK 2026-05-31 (the architect directive): is the session idle — i.e. did its last
  * turn already COMPLETE, so there is nothing to resume? Distinguishes the three
  * tail shapes the 2026-05-10 change collapsed into one "not resumable" verdict:
- *   - no meaningful message (empty transcript) → cc-bridge mid-flight → NOT idle (resume)
+ *   - no meaningful message (empty transcript) → tinker-bridge mid-flight → NOT idle (resume)
  *   - last message is `assistant` with a trailing tool_use → interrupted → NOT idle (resume)
  *   - last message is `assistant`, text only → turn finished → IDLE (skip resume)
  *   - last message is user/tool/toolResult → genuine interruption → NOT idle (resume)
@@ -130,7 +130,7 @@ function isIdleCompletedTail(messages: unknown[]): boolean {
 }
 
 function buildResumeMessage(): string {
-  // FORK 2026-05-30 (Oscar directive): the resume must be LEGIBLE. The user
+  // FORK 2026-05-30 (the architect directive): the resume must be LEGIBLE. The user
   // wants a brief "here's where I'm picking up" note — which plan step, what's
   // already on disk vs. half-written — so they can see whether the restart
   // cost much work and that resume actually worked, THEN seamless continuation.
@@ -197,7 +197,7 @@ async function settleIdleSession(params: { storePath: string; sessionKey: string
  *
  * Wording is deliberately uniform: we never tell the user to retry. Per
  * the user's 2026-05-10 directive, every recovered session attempts resume
- * (cc-bridge resumes via its own session-map → claude-cli --resume; native
+ * (tinker-bridge resumes via its own session-map → claude-cli --resume; native
  * sessions resume via the `[System] continue from transcript` dispatch).
  * The chip just acknowledges the restart so the user knows why a thinking
  * dot disappeared and that work is being resumed.
@@ -212,7 +212,7 @@ async function pushRestartWarningEnvelope(params: { sessionKey: string }): Promi
     id: `gw-restart-${now.getTime()}`,
     fatal: false,
     category: "busy",
-    // FORK 2026-05-30 (Oscar directive): the collapsed warning is just
+    // FORK 2026-05-30 (the architect directive): the collapsed warning is just
     // "Gateway restarted" — small, plain, easy to glance past. The restart
     // time is technical, so it lives in `details` (the expandable kv block),
     // not the headline. No "retry"/"check the journal" hints: I resume and
@@ -411,11 +411,11 @@ async function recoverStore(params: {
 
     // FORK 2026-05-10 (user directive): we no longer block resume on the tail
     // check. The original `resumeBlockReason` heuristic was designed for
-    // native sessions where the agent owns the transcript; for cc-bridge
-    // sessions the agent transcript is empty mid-flight (cc-bridge runs in
+    // native sessions where the agent owns the transcript; for tinker-bridge
+    // sessions the agent transcript is empty mid-flight (tinker-bridge runs in
     // a subprocess), so the heuristic always returned "transcript tail is
     // not resumable" and dropped recovery on the floor. Now:
-    //   - cc-bridge sessions: the [System] continue dispatch hits cc-bridge
+    //   - tinker-bridge sessions: the [System] continue dispatch hits tinker-bridge
     //     which spawns claude-cli with `--resume <sessionId>` from its
     //     session-map. claude-cli loads the prior conversation including
     //     the user's prompt, sees the [System] continue, and finishes.
@@ -424,16 +424,16 @@ async function recoverStore(params: {
     //     resumed via [System] continue. Edge case: completed turns get a
     //     follow-up "continue" that the model may interpret as "anything
     //     else?". Acceptable trade-off versus dropping recovery for the
-    //     common cc-bridge case.
+    //     common tinker-bridge case.
     // The chip wording deliberately omits any "please retry" hint; we
     // promise the user we are picking up where we stopped.
-    // FORK 2026-05-31 (Oscar directive): do NOT resume an IDLE session whose
+    // FORK 2026-05-31 (the architect directive): do NOT resume an IDLE session whose
     // last turn already completed. The 2026-05-10 change disabled the tail
-    // check entirely to keep cc-bridge mid-flight recovery working, but that
+    // check entirely to keep tinker-bridge mid-flight recovery working, but that
     // also resurrected every completed session on each restart — firing a
     // phantom [System] continue at a turn with nothing to resume (the "talked
     // with no prompt" loop). isIdleCompletedTail still resumes the empty
-    // transcript (cc-bridge mid-flight) and the dangling-tool_use cases.
+    // transcript (tinker-bridge mid-flight) and the dangling-tool_use cases.
     if (isIdleCompletedTail(messages)) {
       log.info(`skipping resume; last turn already completed (idle): ${sessionKey}`);
       await settleIdleSession({ storePath: params.storePath, sessionKey });

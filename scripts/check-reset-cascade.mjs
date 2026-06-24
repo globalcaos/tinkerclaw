@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
  * Cascade probe: send a chat turn, fire sessions.reset on that sessionKey,
- * send another turn, then inspect the cc-bridge session-map. We expect:
- *   - turn 1 creates cc-sp-X with sessionId A
+ * send another turn, then inspect the tinker-bridge session-map. We expect:
+ *   - turn 1 creates tinker-sp-X with sessionId A
  *   - sessions.reset rotates the OpenClaw sessionId
- *   - turn 2 creates cc-sp-Y (different from cc-sp-X) with sessionId B
+ *   - turn 2 creates tinker-sp-Y (different from tinker-sp-X) with sessionId B
  *   - no `--resume` flag on turn 2's spawn
  */
 import { randomUUID } from "node:crypto";

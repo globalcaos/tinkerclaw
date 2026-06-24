@@ -17,7 +17,7 @@ import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-ty
  *   fork.curiosity.resolveGap — 2b: stamp a gap resolved (append-only audit) +
  *                             broadcast phase="curiosity-gap-resolved".
  *
- * Stays frontier-clean: when the fork swaps cc-bridge for a regular LLM provider,
+ * Stays frontier-clean: when the fork swaps tinker-bridge for a regular LLM provider,
  * these RPCs just sit unused until a frontend wires them.
  */
 import { emitAgentEvent } from "../infra/agent-events.js";

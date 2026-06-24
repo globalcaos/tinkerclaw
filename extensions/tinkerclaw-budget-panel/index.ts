@@ -17,6 +17,7 @@ import {
   resolveCredentialFilePath,
   writeCredentialFile,
 } from "../../src/agents/auth-profiles/credential-file.js";
+import { setUsageSnapshot } from "../../src/infra/usage-snapshot-store.js";
 
 /** Anthropic OAuth profile IDs to poll for usage. */
 const USAGE_PROFILES: Record<string, string> = {
@@ -32,6 +33,13 @@ const CACHE_TTL_MS = 30 * 60_000;
 // Shorter TTL for failed fetches — allows quick recovery after boot-time token races.
 const CACHE_TTL_FAILED_MS = 2 * 60_000;
 
+/** Per-profile "already warned" guard for resolveToken failures.
+ *  Anthropic OAuth refresh can fail every poll cycle (e.g. a stale refresh token on a
+ *  tracking-only profile). Logging the error each cycle floods the gateway log with
+ *  harmless noise (this path is usage-tracking only; the brain does not use it).
+ *  Log the failure ONCE, then stay quiet until the next SUCCESS resets the guard. */
+const resolveTokenWarned: Set<string> = new Set();
+
 /** Resolve a fresh token for a profile using the gateway's own auth system (with auto-refresh). */
 async function resolveToken(
   profileId: string,
@@ -40,9 +48,19 @@ async function resolveToken(
   try {
     const store = ensureAuthProfileStore();
     const result = await resolveApiKeyForProfile({ store, profileId });
-    return result?.apiKey ?? null;
+    const apiKey = result?.apiKey ?? null;
+    if (apiKey) {
+      // Recovered — clear the guard so a future failure logs once again.
+      resolveTokenWarned.delete(profileId);
+    }
+    return apiKey;
   } catch (e) {
-    log(`[budget-panel] resolveToken ${profileId}: ${e}`);
+    if (!resolveTokenWarned.has(profileId)) {
+      resolveTokenWarned.add(profileId);
+      log(
+        `[budget-panel] resolveToken ${profileId}: ${e} (further failures for this profile suppressed until it recovers)`,
+      );
+    }
     return null;
   }
 }
@@ -186,6 +204,64 @@ async function fetchAllClaudeUsage(
     result[p] = await fetchProfileUsage(p, log);
   }
   return result;
+}
+
+/** FORK 2026-06-18 (bible §5.84a): publish live Anthropic usage into the in-process snapshot bridge
+ *  for the burn-down effort allocator (`deriveQuotaPressure` reads it synchronously). v1 simplification:
+ *  MAX utilization across profiles + the SOONEST reset (the imminent deadline we must not waste);
+ *  per-account aggregation with distinct caps/resets is a documented v2 refinement. */
+function publishUsageSnapshot(liveProfiles: Record<string, Record<string, any> | null>): void {
+  const iso = (s: unknown): number | undefined => {
+    if (typeof s !== "string") return undefined;
+    const ms = new Date(s).getTime();
+    return Number.isFinite(ms) ? ms : undefined;
+  };
+  let maxSeven = 0;
+  let maxFive = 0;
+  let soonestSeven: number | undefined;
+  let soonestFive: number | undefined;
+  let any = false;
+  // FORK 2026-06-19 (§5.84b): keep the per-account rows alongside the collapsed
+  // MAX/SOONEST so the burn-down allocator can pick the BINDING (max-headroom) account.
+  const accounts: Array<{
+    label: string;
+    sevenDayUtilization: number;
+    fiveHourUtilization: number;
+    sevenDayResetAt?: number;
+    fiveHourResetAt?: number;
+  }> = [];
+  for (const [label, data] of Object.entries(liveProfiles)) {
+    if (!data) continue;
+    any = true;
+    const s7 = Number(data.seven_day?.utilization ?? 0);
+    const f5 = Number(data.five_hour?.utilization ?? 0);
+    maxSeven = Math.max(maxSeven, s7);
+    maxFive = Math.max(maxFive, f5);
+    const sr = iso(data.seven_day?.resets_at);
+    if (sr !== undefined && (soonestSeven === undefined || sr < soonestSeven)) soonestSeven = sr;
+    const fr = iso(data.five_hour?.resets_at);
+    if (fr !== undefined && (soonestFive === undefined || fr < soonestFive)) soonestFive = fr;
+    accounts.push({
+      label,
+      sevenDayUtilization: s7,
+      fiveHourUtilization: f5,
+      sevenDayResetAt: sr,
+      fiveHourResetAt: fr,
+    });
+  }
+  if (!any) return; // keep the last good snapshot rather than zeroing on a transient failure
+  setUsageSnapshot({
+    lastSuccessfulFetch: Date.now(),
+    providers: {
+      anthropic: {
+        sevenDayUtilization: maxSeven,
+        fiveHourUtilization: maxFive,
+        sevenDayResetAt: soonestSeven,
+        fiveHourResetAt: soonestFive,
+        accounts,
+      },
+    },
+  });
 }
 
 /** ─── OpenAI Costs via Admin API ─── */
@@ -406,6 +482,21 @@ export default function register(api: OpenClawPluginApi) {
     (api.config as any)?.agents?.defaults?.workspace || `${homeDir}/.openclaw/workspace`;
   const tracker = new BudgetTracker(workspaceDir);
 
+  // FORK 2026-06-18 (bible §5.84a): keep the burn-down allocator's quota signal fresh even with no
+  // Tinker UI open — poll Anthropic usage on an interval and publish it to the in-process
+  // usage-snapshot bridge (deriveQuotaPressure reads it synchronously). Best-effort; the 30-min
+  // per-profile cache keeps real API hits well under the OAuth-usage rate limit.
+  const refreshUsageSnapshot = () => {
+    fetchAllClaudeUsage()
+      .then(publishUsageSnapshot)
+      .catch(() => {
+        /* best-effort — allocator falls back to task-weighted when the snapshot is stale/absent */
+      });
+  };
+  refreshUsageSnapshot(); // prime on boot
+  const usageSnapshotTimer = setInterval(refreshUsageSnapshot, 10 * 60_000);
+  if (typeof usageSnapshotTimer.unref === "function") usageSnapshotTimer.unref();
+
   // Paths to usage JSON files (hardcoded for reliability)
   const usageFiles = {
     claude: `${homeDir}/.openclaw/workspace/memory/claude-usage.json`,
@@ -489,6 +580,7 @@ export default function register(api: OpenClawPluginApi) {
       fetchAllClaudeUsage(log),
       fetchGeminiUsage(log),
     ]);
+    publishUsageSnapshot(liveProfiles); // FORK §5.84a: feed the burn-down effort allocator
 
     function buildClaudeProfile(live: Record<string, any> | null) {
       if (!live) {

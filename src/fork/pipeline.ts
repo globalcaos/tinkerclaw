@@ -3,7 +3,7 @@
  *
  * The fork has at least five hand-coded wrapper patterns today:
  *   - `streamWithIdleTimeout` wraps the LLM stream with a watchdog.
- *   - cc-bridge's heartbeat wraps the stream with periodic keep-alive.
+ *   - tinker-bridge's heartbeat wraps the stream with periodic keep-alive.
  *   - `applyConfiguredProviderOverrides` wraps providerConfig with overlay merge.
  *   - The pre-push PII guard wraps `git push` with a leak grep.
  *   - The bible:invariants runner wraps `runShell` with retry-on-transient.

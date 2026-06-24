@@ -18,7 +18,7 @@
  *   - `details` — a free-form record so sites can stuff in whatever extra
  *     context they have (cooldown remaining, attempt number, fallback chain...).
  *
- * Emitted by: worker streams (cc-bridge, ollama, anthropic), agent-runner
+ * Emitted by: worker streams (tinker-bridge, ollama, anthropic), agent-runner
  * banners, get-reply-run-queue busy banners.
  * Rendered by: tinker-ui/src/app.ts.
  */
@@ -272,11 +272,11 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 🧹 broom — compaction sweep failed
     icon: "🧹",
   },
-  // FORK (2026-04-21): cc-bridge subprocess exit codes. Before this, any claude
+  // FORK (2026-04-21): tinker-bridge subprocess exit codes. Before this, any claude
   // subprocess exit got classified as generic "Provider error" which made it
   // impossible to tell a benign gateway-restart kill (SIGTERM) from a real
   // Anthropic rejection. Now we name each exit path.
-  cc_bridge_sigterm: {
+  tinker_bridge_sigterm: {
     category: "provider_error",
     fatal: false,
     headline: "Gateway restarted",
@@ -286,7 +286,7 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 🔌 plug — interrupted externally
     icon: "🔌",
   },
-  cc_bridge_sigkill: {
+  tinker_bridge_sigkill: {
     category: "provider_error",
     fatal: false,
     headline: "Turn interrupted to free memory",
@@ -296,7 +296,7 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 💀 skull — hard kill
     icon: "💀",
   },
-  cc_bridge_silent: {
+  tinker_bridge_silent: {
     category: "timeout",
     fatal: false,
     headline: "Turn stalled — restarting it",
@@ -306,7 +306,7 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 🔇 muted — no output
     icon: "🔇",
   },
-  cc_bridge_nonzero_exit: {
+  tinker_bridge_nonzero_exit: {
     category: "provider_error",
     fatal: true,
     headline: "The assistant process crashed",
@@ -334,7 +334,7 @@ function lookup(code: string): ErrorLookupEntry {
 /** Opportunistically classify a raw error message into one of the known codes. */
 export function classifyRawErrorMessage(raw: string): string {
   const s = raw.toLowerCase();
-  // FORK (2026-04-21): cc-bridge subprocess-exit patterns. Check these BEFORE
+  // FORK (2026-04-21): tinker-bridge subprocess-exit patterns. Check these BEFORE
   // the generic provider patterns — a SIGTERM-killed claude CLI says nothing
   // about Anthropic, but its raw string contains words like "exit" that
   // shouldn't be miscategorised as provider_generic.
@@ -344,15 +344,15 @@ export function classifyRawErrorMessage(raw: string): string {
   //   "claude subprocess exited (code=null signal=SIGTERM) stderr=…"
   if (/claude subprocess exited/.test(s)) {
     if (/code=143\b|signal=sigterm/.test(s)) {
-      return "cc_bridge_sigterm";
+      return "tinker_bridge_sigterm";
     }
     if (/code=137\b|signal=sigkill/.test(s)) {
-      return "cc_bridge_sigkill";
+      return "tinker_bridge_sigkill";
     }
-    return "cc_bridge_nonzero_exit";
+    return "tinker_bridge_nonzero_exit";
   }
   if (/claude silent for \d+s|watchdog.*claude/.test(s)) {
-    return "cc_bridge_silent";
+    return "tinker_bridge_silent";
   }
   if (/401|authentication_error|invalid authentication credentials/.test(s)) {
     return "auth_401_invalid_credentials";

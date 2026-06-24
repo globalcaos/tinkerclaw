@@ -19,6 +19,8 @@ verify:
     cmd: test -d ~/.openclaw/engram/links
   - name: U6 ENGRAM skill-library dir exists
     cmd: test -d ~/.openclaw/engram/skill-library
+  - name: memory-core ensureVectorTable reconciles the vec0 dim against the on-disk shape, not an early-undefined in-memory field (FORK 2026-06-23)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/memory-core/src/memory/manager-sync-ops.ts")).read(); assert "sqlite_master" in t, "ensureVectorTable no longer reads the actual on-disk FLOAT[N] dim from sqlite_master — gating the DROP only on the in-memory this.vector.dims (undefined right after a restart) lets a stale 3072-dim table survive and reject every 1024-dim mxbai-embed-large insert. The correction MUST compare against the on-disk dim."'
 ---
 
 # Memory layout — workspace directory map
@@ -46,7 +48,7 @@ All paths below are under `~/.openclaw/workspace/memory/` unless otherwise noted
 
 - **Writer:** mostly hand (Jarvis adds knowledge files at user request).
 - **Reader:** memorySearch retrieval, ad-hoc reads.
-- **Notable files:** `INDEX.md`, `evolution-log.md`, `ripple-tracker.md`, `tinkerclaw-cc-bridge.md`, `tinkerclaw-people-plugin.md`, `tinkerclaw-whatsapp-plugin.md`, `wa-owner-prefix-invariant.md`, `whatsapp-strategy.md`, `cost-aware-model-routing.md`, `hermes-agent-analysis.md`, `operational-lessons.md`, `serra-projects-state.md`.
+- **Notable files:** `INDEX.md`, `evolution-log.md`, `ripple-tracker.md`, `tinkerclaw-tinker-bridge.md`, `tinkerclaw-people-plugin.md`, `tinkerclaw-whatsapp-plugin.md`, `wa-owner-prefix-invariant.md`, `whatsapp-strategy.md`, `cost-aware-model-routing.md`, `hermes-agent-analysis.md`, `operational-lessons.md`, `serra-projects-state.md`.
 
 ### `butler-log/`
 
@@ -198,6 +200,14 @@ Convention shared by these stores: **atomic write = write-temp-then-rename** (`f
 Writers are mostly crons + the auto-reply pipeline. Readers are mostly Jarvis context-injection at session start and memorySearch retrieval.
 
 The single highest-leverage Reader is `agents.defaults.memorySearch` (Ollama embeddings + FTS hybrid). It indexes EVERYTHING under workspace/memory/ + sessions. Any new directory added under workspace/memory/ will be picked up automatically.
+
+### memorySearch vec0 table — embedder-dim reconcile (FORK 2026-06-23)
+
+memorySearch's vector index is a sqlite-vec `vec0` virtual table owned by `extensions/memory-core` (`src/memory/manager-sync-ops.ts`, `ensureVectorTable`). Its column type bakes in the embedder dimension as `FLOAT[N]` — `mxbai-embed-large` (the live ollama embedder) is **1024** dims; a prior Gemini embedder was **3072**. Switching embedders requires DROPping + recreating the table at the new dim.
+
+**Reconcile-by-on-disk-dim (commit `a33cc63200`):** `ensureVectorTable` reads the **actual on-disk** `FLOAT[N]` dim out of `sqlite_master` and drops + recreates the table only on a **genuine** mismatch against the live embedder's dim. It no longer gates that correction on the in-memory `this.vector.dims` being truthy — which after a gateway restart is `undefined`, so the old guard short-circuited and a stale 3072-dim table survived, making every 1024-dim insert throw `Expected 3072 dimensions but received 1024` (79× before a reboot). See bug-log.md FIXED 2026-06-23 (memory-core vec0 dim).
+
+**Don't regress:** the dim-correction must compare against the **on-disk** shape (`sqlite_master`), never against an in-memory field that is unset early in boot — or a wrong-dim table survives every restart and blocks all inserts.
 
 ## Don't regress
 

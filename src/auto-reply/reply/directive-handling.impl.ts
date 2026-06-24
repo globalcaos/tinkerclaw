@@ -299,6 +299,11 @@ export async function handleDirectiveOnly(
     return queueAck;
   }
 
+  // When an explicit /think level exceeds the resolved provider/model ceiling,
+  // clamp it in place to the highest supported level (mirrors the no-directive
+  // remap below) instead of rejecting the directive outright. The requested
+  // level is preserved so the ack note can announce the clamp.
+  let requestedThinkLevel: ThinkLevel | undefined;
   if (
     directives.hasThinkDirective &&
     directives.thinkLevel &&
@@ -309,9 +314,13 @@ export async function handleDirectiveOnly(
       catalog: thinkingCatalog,
     })
   ) {
-    return {
-      text: `Thinking level "${directives.thinkLevel}" is not supported for ${resolvedProvider}/${resolvedModel}. Use one of: ${formatThinkingLevels(resolvedProvider, resolvedModel, ", ", thinkingCatalog)}.`,
-    };
+    requestedThinkLevel = directives.thinkLevel;
+    directives.thinkLevel = resolveSupportedThinkingLevel({
+      provider: resolvedProvider,
+      model: resolvedModel,
+      level: directives.thinkLevel,
+      catalog: thinkingCatalog,
+    });
   }
 
   const resolvedDirectiveThinkLevel = directives.thinkLevel;
@@ -494,9 +503,9 @@ export async function handleDirectiveOnly(
         ? "Thinking disabled."
         : `Thinking level set to ${displayedThinkLevel}.`,
     );
-    if (directives.thinkLevel === "max" && displayedThinkLevel !== "max") {
+    if (requestedThinkLevel && requestedThinkLevel !== displayedThinkLevel) {
       parts.push(
-        `max not supported for ${resolvedProvider}/${resolvedModel}; using ${displayedThinkLevel}.`,
+        `${requestedThinkLevel} not supported for ${resolvedProvider}/${resolvedModel}; using ${displayedThinkLevel}.`,
       );
     }
   }
