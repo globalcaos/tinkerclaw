@@ -88,7 +88,7 @@ const SEED_KPIS: SeedSpec[] = [
     cadence_seconds: 21600,
     template: "single-stat",
   },
-  // FORK 2026-06-04 — forks + open-issues KPIs removed at the architect's request.
+  // FORK 2026-06-04 — forks + open-issues KPIs removed at the user's request.
   // FORK 2026-05-13 — placeholder website-visits graph. `demo.website.visits`
   // produces deterministic-noise values until the user names their analytics
   // provider; swap the source string to e.g. "plausible.visitors:tinkerzone.com"

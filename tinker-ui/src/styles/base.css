@@ -2063,7 +2063,7 @@ code.fs-link.fs-link-error {
   /* FORK 2026-06-19: clip horizontal overflow — the full-width model/effort slider
      rows (width:100%, zero horizontal padding to align with the old seismograph)
      overflowed the padded body by a hair and raised a stray left-right scrollbar
-     under the model slider once the EEG moved to its own panel (the architect). */
+     under the model slider once the EEG moved to its own panel (the user). */
   overflow-x: hidden;
   flex: 1;
 }
@@ -6147,7 +6147,7 @@ code.fs-link.fs-link-error {
 /* FORK 2026-06-07: AGENT bubble. A Claude-Code agent / Overseer keep-going prompt that is
    DRIVING Jarvis renders right-anchored like a user message (it inherits align-self:flex-end
    from .msg.user) but in ELECTRIC BLUE instead of the moss-green user colour, so it reads as
-   an external pilot steering Jarvis rather than the architect speaking. */
+   an external pilot steering Jarvis rather than the user speaking. */
 .msg.user.msg-agent {
   border: 1px solid #0a84ff;
   background: color-mix(in srgb, #0a84ff 14%, transparent);
@@ -6453,17 +6453,17 @@ code.fs-link.fs-link-error {
 }
 .eeg-paper {
   /* FORK 2026-06-13 (eeg): span ALL grid columns so the paper uses the FULL
-     panel width (the architect 2026-06-13) — without this it was trapped in the narrow
+     panel width (the user 2026-06-13) — without this it was trapped in the narrow
      first track of .model-group-body's grid. */
   grid-column: 1 / -1;
   width: 100%;
-  /* FORK 2026-06-13 (eeg): FIXED height (~ as tall as the amygdala panel, the architect
+  /* FORK 2026-06-13 (eeg): FIXED height (~ as tall as the amygdala panel, the user
      2026-06-13) so the paper is a stable box that scrolls internally — not a
      region that grows/shrinks with content. */
   height: 260px;
   overflow-y: auto;
   overflow-x: hidden;
-  /* FORK 2026-06-20 (the architect): the old fixed 24px repeating-linear-gradient grid was
+  /* FORK 2026-06-20 (the user): the old fixed 24px repeating-linear-gradient grid was
      decorative and meaningless. The ruled paper is now drawn IN the svg at a €1 pitch
      (.eeg-eurogrid) so each line means one euro and scales with the trace + zoom. */
   background-color: var(--surface);
@@ -6516,7 +6516,7 @@ code.fs-link.fs-link-error {
 .eeg-main.eeg-hl {
   filter: brightness(1.7);
 }
-/* FORK 2026-06-22 (the architect): hovering a turn-boundary brightens its yellow rule so it is
+/* FORK 2026-06-22 (the user): hovering a turn-boundary brightens its yellow rule so it is
    obvious which separator a click will jump from. */
 .eeg-marker.eeg-hl {
   stroke: #ffe680;
@@ -6524,7 +6524,7 @@ code.fs-link.fs-link-error {
   stroke-width: 3;
 }
 
-/* FORK 2026-06-22 (the architect): the prompt-text hover overlay (replaces the native, slow,
+/* FORK 2026-06-22 (the user): the prompt-text hover overlay (replaces the native, slow,
    unstyleable SVG <title>). A floating bubble pinned to the cursor over the EEG. */
 .eeg-prompt-overlay {
   position: fixed;
@@ -6546,7 +6546,7 @@ code.fs-link.fs-link-error {
   pointer-events: none;
 }
 
-/* FORK 2026-06-20 (the architect): €1 ruler lines + their gutter labels — pure background,
+/* FORK 2026-06-20 (the user): €1 ruler lines + their gutter labels — pure background,
    never intercept the prompt-zone / marker clicks painted above them. */
 .eeg-eurogrid,
 .eeg-eurolabel {
@@ -6685,7 +6685,7 @@ code.fs-link.fs-link-error {
 }
 
 /* FORK 2026-06-13 (eeg): shared tick-label layer printed UNDER both sliders so
-   EVERY stop shows (the architect's "every option written in the slider"); each label
+   EVERY stop shows (the user's "every option written in the slider"); each label
    is absolutely positioned so its CENTER lands on the SAME x as the matching
    seismograph column (eegStopLeftCss → bible §5.8h invariant 2 alignment). */
 .model-think-slider-row,

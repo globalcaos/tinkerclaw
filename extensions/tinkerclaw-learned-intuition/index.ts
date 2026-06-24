@@ -120,7 +120,7 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       // AEGIS tool-gate (that stays observe-only via cfg.observeOnly).
       // FORK 2026-06-04: bumped personality 0.15 → 0.5 for the narration-canary
       // experiment — narration_discipline nudge is the visible tell that the
-      // whole personality pipeline is live (the architect's instrument). Prudence stays
+      // whole personality pipeline is live (the user's instrument). Prudence stays
       // 0.15 (observe-only safety gate).
       alpha_prudence: 0.15,
       alpha_personality: 0.5,

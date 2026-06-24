@@ -559,7 +559,7 @@ fix, pick from this list — extend it only if no tag fits.
 
 ### FIXED [ui-state-clear]: Unsent composer draft lost on hard refresh (2026-06-06)
 
-- **Symptom:** text typed into a tab's chat composer but not yet sent was lost on a hard refresh / crash. the architect lost a 20-minute prompt this way.
+- **Symptom:** text typed into a tab's chat composer but not yet sent was lost on a hard refresh / crash. the user lost a 20-minute prompt this way.
 - **Root cause:** drafts lived only in the in-memory `tabStates` Map (`TabState.draft`), which a hard refresh wipes, plus a SINGLE global `localStorage` key `DRAFT_STORAGE_KEY="tinker-draft"`. On reload only that one global slot was restored — so per-tab drafts were lost and all tabs shared one draft.
 - **Fix:** persist drafts PER TAB in `localStorage` keyed by tab id (`tinker-draft:<tabId>`), replacing the single global key; the composer input listener write-throughs to the active tab's per-tab key + `TabState.draft` on every keystroke; the connect/init flow rehydrates each restored tab's draft and loads the active tab's into the composer; a successful send clears both.
 - **Status / files:** `tinker-ui/src/app.ts` (`saveDraftFor`/`loadDraftFor`/`clearDraftFor`, `DRAFT_STORAGE_KEY_PREFIX`). HMR-live; **uncommitted** (recovery patch jarvis-icu `9fe305a`; lands on develop at next commit). Task `task-mpzzs5nc`.
