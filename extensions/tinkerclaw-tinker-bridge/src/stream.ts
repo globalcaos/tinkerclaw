@@ -278,7 +278,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           data: {
             phase: final ? "final" : "live",
             // FORK 2026-06-13 (eeg): self-describe the ACTUAL model running so the
-            // seismograph colours by the real model even in Auto (the architect 2026-06-13).
+            // seismograph colours by the real model even in Auto (the user 2026-06-13).
             model: model.id,
             thinkLevel: thinkLevel ?? "off",
             configuredBudget: configuredBudget ?? 0,
