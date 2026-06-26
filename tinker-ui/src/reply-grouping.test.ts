@@ -25,6 +25,15 @@ describe("narrationIndices (bug A: answer = text after the last tool, not 'the l
     expect(narrationIndices([TXT, TOOL, TXT, TOOL, TXT])).toEqual([0, 2]);
   });
 
+  it("collapses pre-last-tool segments across multiple tool rounds (Mechanism A shape)", () => {
+    // [TXT, TOOL, TOOL, TXT, TOOL, TXT] — final text after the last tool is the answer.
+    // This is the interleaved shape Mechanism A reconstructs from a coalesced cc-bridge
+    // turn: two tools fire back-to-back, then a mid-turn narration bubble (idx 3), then a
+    // final tool, then the answer (idx 5). lastToolIdx=4 → narration = the assistant-text
+    // bubbles before it (0 and 3); idx 5 stays visible as the answer.
+    expect(narrationIndices([TXT, TOOL, TOOL, TXT, TOOL, TXT])).toEqual([0, 3]);
+  });
+
   it("collapses NOTHING when the run has no tools (whole reply is the answer)", () => {
     // a plain reply, possibly gap-split into two bubbles — both are the answer
     expect(narrationIndices([TXT, TXT])).toEqual([]);

@@ -861,6 +861,14 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
           // for tool calls: persisted on disk, rendered by Tinker on history
           // reload, but NOT replayed into the LLM message array (which would
           // force pi-agent-core to re-validate them and double-bill).
+          //
+          // FORK (Mechanism A): the spread carries a START event's optional
+          // `textOffset` (assistant-text char count before the tool fired)
+          // straight into the persisted payload, so the read path can slice
+          // the coalesced assistant text back into interleaved per-segment
+          // messages. Backward-compatible: old buffered events lack the field,
+          // so the entry simply omits `textOffset` and the read path falls
+          // back to the legacy splice-before-text reorder.
           target.appendCustomEntry("tinker-bridge-tool", { runId: params.runId, ...ev });
         }
         log.info(

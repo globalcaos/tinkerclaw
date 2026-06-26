@@ -4,6 +4,7 @@ import {
   renderSectionedReply,
   scrubResidualSectionMarkers,
   splitLeadingNarration,
+  splitReasoningFromAnswer,
 } from "./sectioned-reply";
 
 // Identity stubs — the structural assertions below (which bubbles/classes are
@@ -226,5 +227,66 @@ describe("renderSectionedReply — residual section markers never render mid-ans
     const h = render({ answer: "As noted in the 💬 ANSWER above, x." });
     expect(h).not.toMatch(/💬\s*ANSWER/i);
     expect(h).toContain("above, x.");
+  });
+});
+
+describe("splitReasoningFromAnswer", () => {
+  const NARR = "Let me check the merge layer to confirm the dedup case here please.";
+  const NARR2 = "Now let me read the gate region to pick the correct fix carefully.";
+  const ANS = "The backend is clean; the duplication is injected on the serve path.";
+
+  it("peels interleaved narration anywhere, not just the leading run", () => {
+    const text = `${NARR} ${ANS} ${NARR2}`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.reasoning).toContain("Let me check");
+    expect(r.reasoning).toContain("Now let me read");
+    expect(r.answer).toContain("backend is clean");
+    expect(r.answer).not.toContain("Let me check");
+  });
+
+  it("folds everything before a confident conclusion anchor into reasoning (numbered list)", () => {
+    const text = `${NARR} ${NARR2} Found the cause.\n\n1. Root: serve path.\n2. Fix: dedup at the boundary.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer.startsWith("1.")).toBe(true);
+    expect(r.reasoning).toContain("Found the cause");
+  });
+
+  it("folds before a recap phrase anchor", () => {
+    const text = `${NARR} Some finding here that is long enough to matter.\n\nBottom line: pin the model to claude-opus.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer.toLowerCase().startsWith("bottom line")).toBe(true);
+  });
+
+  it("NEVER blanks the answer when there is no anchor and everything looks like notes", () => {
+    const text = `${NARR} ${NARR2}`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer.length).toBeGreaterThan(0);
+  });
+
+  it("is a pure no-op when there is no narration and no anchor", () => {
+    const text = "Here is a single plain answer sentence with no narration and no anchor.";
+    const r = splitReasoningFromAnswer(text);
+    expect(r.reasoning).toBe("");
+    expect(r.answer).toBe(text);
+  });
+
+  it("does not hide content without a confident anchor (only narration removed)", () => {
+    const text = `${NARR} ${ANS} A second substantive finding that is not narration at all.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer).toContain("backend is clean");
+    expect(r.answer).toContain("second substantive finding");
+  });
+
+  it("is idempotent on the answer", () => {
+    const text = `${NARR} ${ANS}`;
+    const once = splitReasoningFromAnswer(text).answer;
+    expect(splitReasoningFromAnswer(once).answer).toBe(once);
+  });
+
+  it("handles a working-note stream that ends in a JSON dump without throwing or blanking", () => {
+    const text = `${NARR} ${NARR2} {"raw":"claude subprocess exited (SIGTERM)"}`;
+    const r = splitReasoningFromAnswer(text);
+    expect(typeof r.answer).toBe("string");
+    expect(r.answer.length).toBeGreaterThan(0);
   });
 });

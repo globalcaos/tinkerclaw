@@ -235,6 +235,17 @@ export function readSessionMessages(
         const toolCallId = typeof data.toolCallId === "string" ? data.toolCallId : undefined;
         if (data.phase === "start" && toolCallId && typeof data.name === "string") {
           messageSeq += 1;
+          // FORK (Mechanism A): carry the persisted `textOffset` (the count of
+          // assistant-text chars accumulated in the turn's coalesced text
+          // BEFORE this tool fired) onto the synthetic tool_use message so the
+          // reorder pass can slice the coalesced assistant text back into
+          // interleaved per-segment messages. Old entries lack the field →
+          // `undefined`, which the reorder pass treats as "no offset" and
+          // falls back to the legacy splice-before-text behavior.
+          const textOffset =
+            typeof data.textOffset === "number" && Number.isFinite(data.textOffset)
+              ? data.textOffset
+              : undefined;
           messages.push({
             role: "assistant",
             content: [
@@ -252,6 +263,7 @@ export function readSessionMessages(
               phase: "start",
               id: typeof parsed.id === "string" ? parsed.id : undefined,
               seq: messageSeq,
+              ...(textOffset !== undefined ? { textOffset } : {}),
             },
           });
         } else if (data.phase === "result" && toolCallId) {
@@ -306,45 +318,46 @@ export function readSessionMessages(
  * encounter a tinker-bridge-tool message, splice it into the position
  * immediately before that assistant message.
  */
-function reorderTinkerBridgeToolBlocks(messages: unknown[]): unknown[] {
-  type Maybe = {
-    role?: string;
-    content?: Array<{ type?: string }>;
-    __openclaw?: { kind?: string };
-  };
-  // FORK 2026-06-20 (cc-bridge → tinker-bridge rename): recognise the legacy "cc-bridge-tool" kind
-  // in pre-rename history so old tool bubbles still reorder/render after the rename.
-  const isTinkerBridgeTool = (m: unknown): boolean => {
-    const kind = (m as Maybe | null)?.__openclaw?.kind;
-    return kind === "tinker-bridge-tool" || kind === "cc-bridge-tool";
-  };
-  const isAssistantText = (m: unknown): boolean => {
-    const msg = m as Maybe | null;
-    if (!msg || msg.role !== "assistant") {
-      return false;
-    }
-    if (
-      msg.__openclaw?.kind === "tinker-bridge-tool" ||
-      msg.__openclaw?.kind === "cc-bridge-tool"
-    ) {
-      return false;
-    }
-    if (!Array.isArray(msg.content)) {
-      return true;
-    }
-    return msg.content.some((c) => c?.type === "text" || c?.type === "thinking");
-  };
+type ReorderMaybe = {
+  role?: string;
+  content?: Array<{ type?: string; text?: string }>;
+  timestamp?: number;
+  __openclaw?: { kind?: string; phase?: string; textOffset?: number; seq?: number };
+};
 
+// FORK 2026-06-20 (cc-bridge → tinker-bridge rename): recognise the legacy "cc-bridge-tool" kind
+// in pre-rename history so old tool bubbles still reorder/render after the rename.
+function isTinkerBridgeTool(m: unknown): boolean {
+  const kind = (m as ReorderMaybe | null)?.__openclaw?.kind;
+  return kind === "tinker-bridge-tool" || kind === "cc-bridge-tool";
+}
+
+function isAssistantText(m: unknown): boolean {
+  const msg = m as ReorderMaybe | null;
+  if (!msg || msg.role !== "assistant") {
+    return false;
+  }
+  if (msg.__openclaw?.kind === "tinker-bridge-tool" || msg.__openclaw?.kind === "cc-bridge-tool") {
+    return false;
+  }
+  if (!Array.isArray(msg.content)) {
+    return true;
+  }
+  return msg.content.some((c) => c?.type === "text" || c?.type === "thinking");
+}
+
+function reorderTinkerBridgeToolBlocks(messages: unknown[]): unknown[] {
+  // Pass 1 (LEGACY, byte-identical to the original behavior): tinker-bridge tool
+  // entries trail the assistant text in jsonl order; splice each one in front of
+  // the most-recent assistant *text* message so the natural reading order is
+  // `[user → tool_use → tool_result → … → assistant text]`. Orphaned tools (no
+  // preceding assistant text) append at the end as a safe fallback.
   const out: unknown[] = [];
   for (const m of messages) {
     if (!isTinkerBridgeTool(m)) {
       out.push(m);
       continue;
     }
-    // Find the index of the most recent assistant *text* message in `out`.
-    // Splice the tool entry into that position so it appears just before
-    // the assistant text. If no assistant text exists yet (e.g. orphaned
-    // tool from an aborted turn), append at the end as a safe fallback.
     let target = -1;
     for (let i = out.length - 1; i >= 0; i--) {
       if (isAssistantText(out[i])) {
@@ -358,7 +371,147 @@ function reorderTinkerBridgeToolBlocks(messages: unknown[]): unknown[] {
       out.push(m);
     }
   }
+
+  // Pass 2 (FORK — Mechanism A): DISABLED 2026-06-25. The offset-slice segmentation is
+  // correct in isolation (unit-tested) and `textOffset` is persisted fine, BUT a downstream
+  // chat.history coalescing step RE-MERGES the adjacent assistant segments back into the
+  // single blob AND drops the interleaved tool messages — verified live: a new tool-using
+  // turn returned 0 tool messages + the recombined 93-char blob (regression vs the legacy
+  // path, which keeps the tool bubbles). Until that coalescing is fixed (it lives in the
+  // contended chat-display-projection.ts), fall back to the byte-identical legacy Pass-1
+  // output so new turns keep their tool bubbles; Mechanism B (render-side splitReasoningFromAnswer)
+  // already splits the coalesced answer for both new and old turns. `segmentTinkerBridgeTurnsByTextOffset`
+  // is retained (with its tests) for when the projection re-merge is fixed.
   return out;
+}
+
+/**
+ * FORK (Mechanism A): re-segment the legacy-ordered output. After Pass 1 a
+ * tinker-bridge turn appears as a contiguous run of tool messages immediately
+ * followed by its single coalesced assistant-text message:
+ *   `[…, tool_use1, tool_result1, tool_use2, tool_result2, assistantText, …]`
+ * If every tool_use in that run carries a `textOffset`, slice `assistantText`
+ * at the ascending offsets and re-emit interleaved:
+ *   `[…, assistant(seg0), tool_use1, tool_result1, assistant(seg1), tool_use2,
+ *      tool_result2, assistant(segFinal), …]`
+ * where `segFinal = text[lastOffset:]` (the rest of the text — never a fixed
+ * end index, because the final answer is appended to accumulatedText AFTER the
+ * offsets were recorded on the tail-recover path). Whitespace-only / zero-length
+ * segments are skipped (two tools at the same offset → no segment between them).
+ *
+ * Any run with a missing offset on even one tool_use is left byte-identical to
+ * Pass 1, so old/offset-less turns and every non-tinker-bridge session are
+ * unaffected.
+ */
+function segmentTinkerBridgeTurnsByTextOffset(messages: unknown[]): unknown[] {
+  const isToolUse = (m: unknown): boolean =>
+    isTinkerBridgeTool(m) && (m as ReorderMaybe).__openclaw?.phase === "start";
+
+  const result: unknown[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    // A turn's tool run is a contiguous block of tinker-bridge-tool messages.
+    if (!isTinkerBridgeTool(m)) {
+      result.push(m);
+      continue;
+    }
+    // Collect the full contiguous run of tool messages starting at i.
+    let j = i;
+    while (j < messages.length && isTinkerBridgeTool(messages[j])) {
+      j += 1;
+    }
+    const run = messages.slice(i, j);
+    const next = messages[j];
+
+    const toolUses = run.filter(isToolUse) as ReorderMaybe[];
+    const everyToolUseHasOffset =
+      toolUses.length > 0 && toolUses.every((t) => typeof t.__openclaw?.textOffset === "number");
+
+    // Eligible only when the block is immediately followed by the turn's single
+    // coalesced assistant-text message AND every tool_use carries an offset.
+    if (everyToolUseHasOffset && isAssistantText(next)) {
+      const assistant = next as ReorderMaybe;
+      const fullText = (assistant.content ?? [])
+        .filter((c) => c?.type === "text")
+        .map((c) => c.text ?? "")
+        .join("");
+
+      // Pair each tool_use with the offset it fired at, in jsonl order; sort the
+      // tool_use blocks ascending by offset (the legacy run is already in fire
+      // order, but sort defensively to honor the "ascending offsets" contract).
+      // Each tool_use's matching tool_result(s) follow it in the run; keep the
+      // run's relative order for emission while slicing by sorted offsets.
+      const offsets = toolUses
+        .map((t) => t.__openclaw?.textOffset as number)
+        .slice()
+        .sort((a, b) => a - b);
+
+      // segments[0..offsets.length-1] are the inter-offset slices; the FINAL
+      // segment (index offsets.length) is the rest of the text after the last
+      // offset — everything the tail-recover path appended after offsets were
+      // recorded. Clamp each offset into range and never let it run backwards.
+      const segments: string[] = [];
+      let prev = 0;
+      for (const off of offsets) {
+        const clamped = Math.max(prev, Math.min(off, fullText.length));
+        segments.push(fullText.slice(prev, clamped));
+        prev = clamped;
+      }
+      segments.push(fullText.slice(prev));
+
+      const makeAssistantSegment = (text: string): unknown => ({
+        role: "assistant",
+        content: [{ type: "text", text }],
+        ...(typeof assistant.timestamp === "number" ? { timestamp: assistant.timestamp } : {}),
+        __openclaw: {
+          ...(assistant.__openclaw ?? {}),
+          kind: "tinker-bridge-segment",
+        },
+      });
+
+      const pushSegment = (text: string): void => {
+        // GUARD: never emit empty / whitespace-only assistant messages (two
+        // tools at the same offset → empty inter-segment → skipped).
+        if (text.trim().length === 0) {
+          return;
+        }
+        result.push(makeAssistantSegment(text));
+      };
+
+      // Split the run into tool-units: each tool_use plus the (zero or more)
+      // tool_result messages that follow it up to the next tool_use. Emit
+      // seg0, then unit0's messages, seg1, unit1's messages, …, segFinal.
+      const units: unknown[][] = [];
+      for (const r of run) {
+        if (isToolUse(r) || units.length === 0) {
+          units.push([r]);
+        } else {
+          units[units.length - 1].push(r);
+        }
+      }
+
+      pushSegment(segments[0] ?? "");
+      for (let u = 0; u < units.length; u++) {
+        for (const r of units[u]) {
+          result.push(r);
+        }
+        // The segment that follows this tool-unit. units.length === offsets.length
+        // === segments.length - 1, so segments[u + 1] always exists.
+        pushSegment(segments[u + 1] ?? "");
+      }
+
+      // Skip past the run AND the consumed assistant-text message.
+      i = j; // points at `next`; loop's i++ will move past it
+      continue;
+    }
+
+    // Not eligible — leave the run byte-identical to Pass 1.
+    for (const r of run) {
+      result.push(r);
+    }
+    i = j - 1; // continue after the run (loop i++ moves to j)
+  }
+  return result;
 }
 
 export {

@@ -316,6 +316,61 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
 }
 
 // ---------------------------------------------------------------------------
+// Copy (session fork)
+// ---------------------------------------------------------------------------
+
+/**
+ * Copy every anatomy event row from one session key to another. Used by the
+ * `sessions.fork` RPC so a CLONED tab's EEG/anatomy trace forks DURABLY
+ * alongside its transcript (the EEG is keyed by session_key, server-side, so a
+ * fresh clone key otherwise has zero rows → an empty seismograph).
+ *
+ * - `session_key` is rewritten to `toKey` (the routing key the EEG reads by).
+ * - `run_id` is suffixed with the clone key so a late `updateAnatomyResponse`
+ *   on the SOURCE run (which matches on run_id WITHOUT a session_key filter)
+ *   can never cross-write a copied row. A NULL run_id stays NULL.
+ * - `id` is omitted (AUTOINCREMENT assigns fresh ids).
+ * - timestamps + the zlib-compressed BLOB columns are copied verbatim (no
+ *   decompress round-trip), so the clone shows the parent's exact timeline.
+ *
+ * Best-effort: the caller wraps this so an anatomy-copy failure never aborts
+ * the transcript fork. Returns the number of rows copied.
+ */
+export function copyAnatomyEventsToNewKey(fromKey: string, toKey: string): number {
+  if (!fromKey || !toKey || fromKey === toKey) {
+    return 0;
+  }
+  const database = openAnatomyDb();
+  const runIdSuffix = `#fork:${toKey}`;
+  const result = database
+    .prepare(
+      `
+      INSERT INTO anatomy_events (
+        session_key, run_id, turn, round_number, timestamp_ms,
+        model, provider, auth_profile_id, duration_ms, stop_reason,
+        compaction_cycle, context_sent, context_window, tools_triggered,
+        topics, topic_transition, memories_injected,
+        response_tokens, response_thinking_tokens, response_text_tokens,
+        response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
+        response_content, user_message, assistant_response
+      )
+      SELECT
+        ?, (run_id || ?), turn, round_number, timestamp_ms,
+        model, provider, auth_profile_id, duration_ms, stop_reason,
+        compaction_cycle, context_sent, context_window, tools_triggered,
+        topics, topic_transition, memories_injected,
+        response_tokens, response_thinking_tokens, response_text_tokens,
+        response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
+        response_content, user_message, assistant_response
+      FROM anatomy_events
+      WHERE session_key = ?
+    `,
+    )
+    .run(toKey, runIdSuffix, fromKey);
+  return typeof result.changes === "number" ? result.changes : 0;
+}
+
+// ---------------------------------------------------------------------------
 // Update
 // ---------------------------------------------------------------------------
 

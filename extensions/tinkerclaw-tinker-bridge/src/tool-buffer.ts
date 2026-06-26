@@ -23,6 +23,10 @@ import type { ToolBufferedEvent } from "./tool-buffer.types.js";
 
 const buffers = new Map<string, ToolBufferedEvent[]>();
 
+// FORK (Mechanism A): `event` is stored verbatim, so a START event's optional
+// `textOffset` (the assistant-text char count before the tool fired) is
+// threaded straight through to the drain in `onTurnComplete` with no extra
+// handling here — the field rides along inside the discriminated union.
 export function recordToolEvent(runId: string | undefined, event: ToolBufferedEvent): void {
   if (!runId) {
     return;

@@ -86,7 +86,21 @@ export interface CcStreamStdoutStreamEvent {
   /** Inner raw Anthropic API event (content_block_delta etc.). */
   event?: {
     type: string;
-    delta?: { type?: string; text?: string; thinking?: string; [key: string]: unknown };
+    /**
+     * `signature` carries the thinking-block signature: Anthropic streams it as a
+     * `signature_delta` (delta.type === "signature_delta", delta.signature = the
+     * opaque token) at the close of an extended-thinking block. The bridge
+     * accumulates it alongside the thinking text and forwards it into the
+     * persisted `thinking` block's `signature` slot (see CcContentBlock below)
+     * for multi-turn continuity.
+     */
+    delta?: {
+      type?: string;
+      text?: string;
+      thinking?: string;
+      signature?: string;
+      [key: string]: unknown;
+    };
     [key: string]: unknown;
   };
 }
