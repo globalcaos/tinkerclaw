@@ -1655,6 +1655,72 @@ function broadcastChatError(params: {
   params.context.agentRunSeq.delete(params.runId);
 }
 
+// FORK 2026-06-24 (repeating-answers bug): final serve-boundary answer dedup.
+// chat.history serves `rawMessages` = the local session store MERGED with the cc-bridge
+// CLI-session JSONL import (augmentChatHistoryWithCliSessionImports). For a heavily-compacted
+// tinker session the JSONL retains a whole conversation's worth of re-answers (re-emitted
+// across cc-bridge respawns + compactions) while the local store kept only the post-compaction
+// tail — so the merge's timestamp/slot heuristics (cli-session-history.merge.ts) have too few
+// local anchors and the same answers flood the served history (observed raw=1040 vs local=68;
+// the front-end then renders each answer 2x+ — the "I see my answer twice" report).
+// This is a content-based last line of defence on the PROJECTED display messages, independent
+// of timestamps: drop an ASSISTANT message whose normalized visible text exactly duplicates an
+// earlier-kept assistant message, OR is a strict prefix of any other assistant message (the
+// cc-bridge leading-narration echo of a fuller coalesced answer). Min-length guard mirrors
+// merge.ts LONG_TEXT_DEDUP_MIN_LEN so legit short repeats ("ok", "done") survive; user messages
+// are untouched (distinct prompts must not collapse).
+const SERVED_ANSWER_DEDUP_MIN_LEN = 50;
+
+function visibleAssistantTextForDedup(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const m = message as { role?: unknown; content?: unknown };
+  if (m.role !== "assistant") return undefined;
+  const c = m.content;
+  let text = "";
+  if (typeof c === "string") {
+    text = c;
+  } else if (Array.isArray(c)) {
+    for (const b of c) {
+      if (b && typeof b === "object") {
+        const blk = b as { type?: unknown; text?: unknown };
+        if ((blk.type === "text" || blk.type === "output_text") && typeof blk.text === "string") {
+          text += blk.text;
+        }
+      }
+    }
+  } else {
+    return undefined;
+  }
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length >= SERVED_ANSWER_DEDUP_MIN_LEN ? normalized : undefined;
+}
+
+export function dedupeServedAssistantAnswers(messages: unknown[]): unknown[] {
+  const texts = messages.map(visibleAssistantTextForDedup);
+  const drop = new Array<boolean>(messages.length).fill(false);
+  for (let i = 0; i < messages.length; i++) {
+    const ti = texts[i];
+    if (ti === undefined) continue;
+    for (let j = 0; j < messages.length; j++) {
+      if (i === j) continue;
+      const tj = texts[j];
+      if (tj === undefined) continue;
+      // ti is a strict prefix of a longer assistant answer → ti is the echo, drop it
+      if (ti.length < tj.length && tj.startsWith(ti)) {
+        drop[i] = true;
+        break;
+      }
+      // exact duplicate → keep the earliest occurrence, drop the later copies
+      if (ti === tj && i > j) {
+        drop[i] = true;
+        break;
+      }
+    }
+  }
+  if (!drop.some(Boolean)) return messages;
+  return messages.filter((_, i) => !drop[i]);
+}
+
 export const chatHandlers: GatewayRequestHandlers = {
   "chat.history": async ({ params, respond, context }) => {
     if (!validateChatHistoryParams(params)) {
@@ -1732,10 +1798,12 @@ export const chatHandlers: GatewayRequestHandlers = {
     const max = Math.min(hardMax, requested);
     const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars(cfg, maxChars);
     const normalized = augmentChatHistoryWithCanvasBlocks(
-      projectRecentChatDisplayMessages(rawMessages, {
-        maxChars: effectiveMaxChars,
-        maxMessages: max,
-      }),
+      dedupeServedAssistantAnswers(
+        projectRecentChatDisplayMessages(rawMessages, {
+          maxChars: effectiveMaxChars,
+          maxMessages: max,
+        }),
+      ),
     );
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);

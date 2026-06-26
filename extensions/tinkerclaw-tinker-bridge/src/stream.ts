@@ -278,7 +278,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           data: {
             phase: final ? "final" : "live",
             // FORK 2026-06-13 (eeg): self-describe the ACTUAL model running so the
-            // seismograph colours by the real model even in Auto (the user 2026-06-13).
+            // seismograph colours by the real model even in Auto (the architect 2026-06-13).
             model: model.id,
             thinkLevel: thinkLevel ?? "off",
             configuredBudget: configuredBudget ?? 0,
@@ -372,6 +372,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           args: argsRecord,
           purpose: narration || undefined,
           startedAt: Date.now(),
+          // FORK (Mechanism A): record WHERE in the turn's coalesced text this
+          // tool fired — the count of assistant-text chars accumulated BEFORE
+          // the tool start. The read path slices the single coalesced text at
+          // these ascending offsets to reconstruct interleaved per-segment
+          // assistant messages. NB: text appended on the tail-recover path
+          // (`result.result` reconciliation below) lands AFTER every offset was
+          // recorded, so the read path treats the final segment as "rest of
+          // text", never a fixed end index.
+          textOffset: accumulatedText.length,
         });
       };
 
@@ -477,6 +486,19 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       let textEnded = false;
       let accumulatedText = "";
       let accumulatedThinking = "";
+      // FORK 2026-06-25 (metadata completeness — forward the thinking signature):
+      // Claude's stream closes each extended-thinking block with a `signature_delta`
+      // (and the cumulative `assistant` message's thinking block carries the same
+      // `signature`). It's the opaque token the Anthropic API uses to verify
+      // extended-thinking integrity for multi-turn continuity. The bridge already
+      // accumulates the thinking TEXT but dropped this signature on the floor. We
+      // capture the last non-empty signature seen and stamp it onto the persisted
+      // `ThinkingContent.thinkingSignature` in buildContent(), so the replayed /
+      // multi-turn message carries the metadata Anthropic provides instead of
+      // losing it at the bridge boundary. (Live pi-ai stream events have no
+      // signature slot, so this only enriches the FINAL/persisted message — which
+      // is the part that matters for continuity.)
+      let accumulatedThinkingSignature = "";
       // FORK (2026-04-22): tool_use blocks from claude-cli are NOT materialized
       // into the final AssistantMessage.content. claude-cli executes tools
       // internally and the UI learns about them through its own session-log
@@ -492,7 +514,16 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const buildContent = (): (TextContent | ThinkingContent)[] => {
         const parts: (TextContent | ThinkingContent)[] = [];
         if (accumulatedThinking) {
-          parts.push({ type: "thinking", thinking: accumulatedThinking });
+          // FORK 2026-06-25: stamp the accumulated thinking signature onto the
+          // persisted block so it survives into the final AssistantMessage (and
+          // thus the OpenClaw transcript) for multi-turn continuity. Only set the
+          // field when we actually captured one — an empty/absent signature stays
+          // absent (the slot is optional upstream).
+          const thinkingPart: ThinkingContent = { type: "thinking", thinking: accumulatedThinking };
+          if (accumulatedThinkingSignature) {
+            thinkingPart.thinkingSignature = accumulatedThinkingSignature;
+          }
+          parts.push(thinkingPart);
         }
         if (accumulatedText) {
           parts.push({ type: "text", text: accumulatedText });
@@ -871,6 +902,17 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               pushThinkingDelta(ev.delta.thinking);
               const prev = blockThinkingSeen.get(blockIndex) ?? "";
               blockThinkingSeen.set(blockIndex, prev + ev.delta.thinking);
+            } else if (
+              ev.delta.type === "signature_delta" &&
+              typeof ev.delta.signature === "string" &&
+              ev.delta.signature
+            ) {
+              // FORK 2026-06-25: Anthropic closes an extended-thinking block with a
+              // `signature_delta` carrying the opaque integrity token. Capture the
+              // last non-empty one so buildContent() can stamp it onto the persisted
+              // thinking block (multi-turn continuity). Purely metadata — no stream
+              // event is pushed for it (pi-ai has no signature slot on thinking_delta).
+              accumulatedThinkingSignature = ev.delta.signature;
             }
           }
           return;
@@ -955,6 +997,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                 const delta = cumulative.slice(prev.length);
                 pushThinkingDelta(delta);
                 blockThinkingSeen.set(bi, cumulative);
+              }
+              // FORK 2026-06-25: the complete cumulative thinking block carries the
+              // final `signature` (CcContentBlock.thinking already declares the slot).
+              // Capture it whenever present — this is the most reliable source (the
+              // streamed signature_delta may be missed if the block arrived only via
+              // the cumulative assistant re-emit). buildContent() stamps it onto the
+              // persisted ThinkingContent for multi-turn continuity.
+              if (typeof typed.signature === "string" && typed.signature) {
+                accumulatedThinkingSignature = typed.signature;
               }
             } else if ((typed.type as string) === "redacted_thinking") {
               // FORK 2026-06-11: extended-thinking blocks that the API redacts

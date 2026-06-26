@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { copyAnatomyEventsToNewKey } from "../../agents/context-anatomy-db.js";
 import {
   abortEmbeddedPiRun,
   isEmbeddedPiRunActive,
@@ -89,6 +90,7 @@ import {
 import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 import { chatHandlers } from "./chat.js";
+import { suggestTitleViaBridge } from "./suggest-title.js";
 import type {
   GatewayClient,
   GatewayRequestContext,
@@ -640,6 +642,22 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     });
     respond(true, result, undefined);
   },
+  // FORK 2026-06-25: one-shot cc-bridge Sonnet title suggester. Read params
+  // manually (no params-schema validator), like forensic.summarize.
+  // SUBSCRIPTION-billed via the claude-code provider — not the metered API.
+  "sessions.suggestTitle": async ({ params, respond, context }) => {
+    const prompt =
+      params && typeof (params as { prompt?: unknown }).prompt === "string"
+        ? ((params as { prompt: string }).prompt as string)
+        : "";
+    if (!prompt) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "prompt required"));
+      return;
+    }
+    const cfg = context.getRuntimeConfig();
+    const title = await suggestTitleViaBridge({ prompt, cfg });
+    respond(true, { title }, undefined);
+  },
   "sessions.subscribe": ({ client, context, respond }) => {
     const connId = client?.connId?.trim();
     if (connId) {
@@ -1080,6 +1098,16 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     await updateSessionStore(target.storePath, (store) => {
       store[nextKey] = nextEntry;
     });
+    // Fork the EEG/anatomy trace alongside the transcript: copy the parent's
+    // anatomy_events rows under the clone's new key so the clone's seismograph
+    // restores durably on load (the client reconciles the EEG from the server,
+    // keyed by session_key). Best-effort — an anatomy-DB hiccup must never fail
+    // the transcript fork itself.
+    try {
+      copyAnatomyEventsToNewKey(canonicalKey, nextKey);
+    } catch {
+      // anatomy DB unavailable/locked — the transcript fork still succeeds
+    }
     respond(
       true,
       {

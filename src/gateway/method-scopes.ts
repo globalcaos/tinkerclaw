@@ -126,6 +126,7 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "sessions.usage",
     "sessions.usage.timeseries",
     "sessions.usage.logs",
+    "sessions.suggestTitle", // FORK 2026-06-25
     "cron.list",
     "cron.status",
     "cron.runs",

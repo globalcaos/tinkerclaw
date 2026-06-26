@@ -16,6 +16,17 @@ export interface ToolBufferedToolStart {
   purpose?: string;
   /** ms since epoch when the start was observed. */
   startedAt: number;
+  /**
+   * FORK (Mechanism A): the count of assistant-text chars accumulated in the
+   * turn's coalesced text BEFORE this tool fired — i.e. the byte boundary at
+   * which the tool interrupts the running narration. Persisted onto the
+   * `tinker-bridge-tool` entry so the read path can slice the single coalesced
+   * assistant-text block back into interleaved per-segment messages. Optional
+   * for backward compatibility: entries persisted before this change simply
+   * lack it, and the read path falls back to the legacy splice-before-text
+   * reorder.
+   */
+  textOffset?: number;
 }
 
 export interface ToolBufferedToolResult {
