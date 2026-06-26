@@ -31,7 +31,7 @@ const pathCount = (svg: string): number => (svg.match(/<path/g) || []).length;
 const countOf = (svg: string, needle: string): number => svg.split(needle).length - 1;
 const svgHeight = (svg: string): number => Number(/height="([\d.]+)"/.exec(svg)?.[1] ?? 0);
 
-describe("segment length = euro cost (the user 2026-06-20: §1 grid)", () => {
+describe("segment length = euro cost (the architect 2026-06-20: §1 grid)", () => {
   it("a costlier turn renders a longer (taller) segment", () => {
     // length = €; use a pricey model + many tokens to clear the ~€0.2 click floor.
     const big = new EegTraceStore();
@@ -262,7 +262,7 @@ describe("google gradient", () => {
   });
 });
 
-describe("EEG concurrency = depth-shaded stack (bible §5.8h / §5.84, the user 2026-06-14)", () => {
+describe("EEG concurrency = depth-shaded stack (bible §5.8h / §5.84, the architect 2026-06-14)", () => {
   const concurrent = (n: number, over: Partial<EegSample> = {}): string => {
     const store = new EegTraceStore();
     store.record(sample({ runId: "main", subagent: false }));
@@ -309,7 +309,7 @@ describe("EEG concurrency = depth-shaded stack (bible §5.8h / §5.84, the user 
   });
 });
 
-describe("close-stale + prompt anchors + prompt-break (the user 2026-06-19)", () => {
+describe("close-stale + prompt anchors + prompt-break (the architect 2026-06-19)", () => {
   it("closeStaleRunning closes ONLY dead-running subagent samples, returns their ids, idempotent", () => {
     const store = new EegTraceStore();
     store.record(sample({ runId: "main", subagent: false, endedAt: undefined }));

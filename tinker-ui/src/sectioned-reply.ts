@@ -218,6 +218,67 @@ export function splitLeadingNarration(text: string): { narration: string; answer
   return { narration, answer };
 }
 
+// FORK 2026-06-24: split INTERLEAVED reasoning/working-notes from the final answer inside ONE
+// coalesced assistant blob (cc-bridge fuses a whole turn into one text block; splitLeadingNarration
+// only peeled a LEADING run). Two passes, both conservative — never blanks the answer, and never
+// hides substantive content unless a CONFIDENT conclusion anchor is present.
+const CONCLUSION_ANCHOR_RES: RegExp[] = [
+  /(?:^|\n)#{1,4}\s+\S/, // markdown heading
+  /(?:^|\n)\s*\d+[.)]\s+\S/, // numbered list item
+  /(?:^|\n)---+\s*(?:\n|$)/, // horizontal rule
+  /(?:^|\n)\s*\*\*[A-Z][^*\n]{1,40}:\*\*/, // **Bold label:** line
+  /(?:^|\n)\s*(?:bottom line|in short|to sum up|in summary|recommendation|tl;dr)\b/i, // recap phrase
+];
+
+function findConclusionAnchor(text: string): number {
+  // The conclusion BEGINS at its anchor, so among anchors in the back half we want the
+  // EARLIEST one (e.g. a numbered list folds at item "1.", not the last item). Requiring
+  // the anchor to sit past the midpoint keeps an early heading/list from swallowing the
+  // whole turn while still capturing a genuine concluding section.
+  const half = Math.floor(text.length / 2);
+  let best = -1;
+  for (const re of CONCLUSION_ANCHOR_RES) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    let m: RegExpExecArray | null;
+    while ((m = g.exec(text))) {
+      const pos = m[0][0] === "\n" ? m.index + 1 : m.index;
+      if (pos >= half && (best === -1 || pos < best)) best = pos;
+      if (m.index === g.lastIndex) g.lastIndex++;
+    }
+  }
+  return best;
+}
+
+export function splitReasoningFromAnswer(text: string): { reasoning: string; answer: string } {
+  if (!text || !text.trim()) {
+    return { reasoning: "", answer: text };
+  }
+  const anchor = findConclusionAnchor(text);
+  if (anchor > 0) {
+    const head = text.slice(0, anchor).trim();
+    const tail = text.slice(anchor).trim();
+    if (tail) {
+      return { reasoning: head, answer: scrubResidualSectionMarkers(tail) };
+    }
+  }
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const narration: string[] = [];
+  const answer: string[] = [];
+  for (const s of sentences) {
+    (isNarrationSentence(s) ? narration : answer).push(s);
+  }
+  if (answer.length === 0) {
+    return { reasoning: "", answer: text };
+  }
+  if (narration.length === 0) {
+    return { reasoning: "", answer: text };
+  }
+  return {
+    reasoning: narration.join(" ").trim(),
+    answer: scrubResidualSectionMarkers(answer.join(" ").trim()),
+  };
+}
+
 // Render a split reply into HTML. `md` (markdown→HTML) and `esc` (HTML-escape)
 // are injected so this module stays free of the DOM/markdown-it dependencies in
 // app.ts and remains unit-testable.
