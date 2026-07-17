@@ -12,7 +12,7 @@
  * validators.
  *
  * Trust posture (see improvement_notes U11 risk a): bridged recipes are marked
- * `authoredBy: "cc-bridge"` so they are distinguishable / low-trust vs the
+ * `authoredBy: "tinker-bridge"` so they are distinguishable / low-trust vs the
  * curated `globalcaos/*` set. We retag the buildRecipeMd output rather than fork
  * buildRecipeMd.
  *
@@ -34,7 +34,7 @@ import { parse as parseYaml } from "yaml";
 import { buildRecipeMd, type RecipeSpec, type RecipeStepSpec } from "./recipe-author.js";
 
 /** Authorship tag stamped on every bridged recipe (low-trust / distinguishable). */
-export const BRIDGED_AUTHORED_BY = "cc-bridge";
+export const BRIDGED_AUTHORED_BY = "tinker-bridge";
 
 /**
  * Sub-directory (under the kit install sandbox) where bridged SKILL.md imports
@@ -222,7 +222,7 @@ export function skillMdToRecipeSpec(skillMdText: string): RecipeSpec {
 /**
  * Build the kit/1.0 markdown for a bridged spec, reusing `buildRecipeMd` and then
  * retagging `authoredBy` from recipe-author's default ("jarvis-on-the-fly") to
- * `cc-bridge` so the provenance is honest. We retag the single frontmatter line
+ * `tinker-bridge` so the provenance is honest. We retag the single frontmatter line
  * rather than fork buildRecipeMd.
  */
 export function buildBridgedKitMd(spec: RecipeSpec): string {

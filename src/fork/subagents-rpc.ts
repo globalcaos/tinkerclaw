@@ -9,18 +9,18 @@
  * drive through pi-agent-core's runAgentLoop and the tool is in the
  * inventory.
  *
- * The `tinkerclaw-cc-bridge` provider bypasses pi-agent-core's tool
+ * The `tinkerclaw-tinker-bridge` provider bypasses pi-agent-core's tool
  * loop entirely -- the real `claude` CLI has its own built-in tools
- * (Bash / Read / Write / Edit / Grep / Glob). Jarvis inside cc-bridge
+ * (Bash / Read / Write / Edit / Grep / Glob). Jarvis inside tinker-bridge
  * cannot reach `sessions_spawn`, so the Prefrontal panel never
  * populates (no `subagent_spawned` hook ever fires).
  *
  * This RPC is a frontier-clean bridge: it wraps the existing
  * `spawnSubagentDirect` helper (same code path the native tool
  * ultimately uses) and exposes it as a WS RPC so ANY caller can spawn
- * a subagent -- a CLI on cc-bridge's $PATH, a future MCP bridge, the
+ * a subagent -- a CLI on tinker-bridge's $PATH, a future MCP bridge, the
  * Tinker UI, a plugin, or a test harness. When the fork later swaps
- * the cc-bridge provider out for a regular LLM, nothing here has to
+ * the tinker-bridge provider out for a regular LLM, nothing here has to
  * change: the regular provider's tool loop keeps working as before,
  * and this RPC just sits idle until someone calls it.
  *
@@ -155,7 +155,7 @@ export const forkSubagentsHandlers: GatewayRequestHandlers = {
 
     const ctx: SpawnSubagentContext = {
       // Parent session defaults to main if not provided. This is the key lever
-      // for "keep it provider-agnostic": the RPC caller can be a cc-bridge CLI
+      // for "keep it provider-agnostic": the RPC caller can be a tinker-bridge CLI
       // (which knows its own sessionKey), the Tinker UI (which knows the
       // current tab), a plugin, etc. -- they all supply the requester.
       agentSessionKey: readStr(p, "parentSessionKey") ?? readStr(p, "sessionKey"),

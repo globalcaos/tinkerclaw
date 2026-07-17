@@ -34,9 +34,9 @@ correct. The doing is broken in two independent places.
 
 2. **The real thinking budget.** `MAX_THINKING_TOKENS` is a strict function of
    `params.thinkLevel` (max→28000, high→16000, off/unknown→omit).
-   - `extensions/tinkerclaw-cc-bridge/src/thinking-budget.ts:25-63` (level→budget map)
-   - `extensions/tinkerclaw-cc-bridge/src/worker.ts:681-687` (env set from thinkLevel)
-   - `extensions/tinkerclaw-cc-bridge/src/stream.ts:178-203` (reads `__openclawThinkLevel`)
+   - `extensions/tinkerclaw-tinker-bridge/src/thinking-budget.ts:25-63` (level→budget map)
+   - `extensions/tinkerclaw-tinker-bridge/src/worker.ts:681-687` (env set from thinkLevel)
+   - `extensions/tinkerclaw-tinker-bridge/src/stream.ts:178-203` (reads `__openclawThinkLevel`)
    - `src/agents/embedded-agent-runner/run/attempt.ts:1916-1925` (pipes `__openclawThinkLevel: params.thinkLevel`)
 
 **Where `params.thinkLevel` actually comes from** (NOT the router):
@@ -64,7 +64,7 @@ re-derived from prompt classification.
 ## Problem 2 — THE VISUALIZING: the EEG is FAITHFUL (not a bug)
 
 The EEG's x-axis is the 8-stop thinking-budget ladder (Auto, Minimal, Low,
-Medium, Adaptive, High, xHigh, Max). Each run's `chosenLevel` is the cc-bridge
+Medium, Adaptive, High, xHigh, Max). Each run's `chosenLevel` is the tinker-bridge
 `thinkLevel` carried on the gateway's `stream:"effort"` event — NOT the
 effort-router's prose classification.
 

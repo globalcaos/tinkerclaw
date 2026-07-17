@@ -38,9 +38,9 @@ const AMYGDALA_DECISIONS_PATH = join(DATA_DIR, "amygdala-decisions.jsonl");
 // ingests them so REAL enforced denials (the strongest feedback signal) appear
 // in the feed instead of being invisible.
 const HOOK_DECISIONS_PATH = join(AMYGDALA_DATA_DIR, "hook-decisions.jsonl");
-// FORK 2026-06-07: register() runs ~5×/gateway boot; attach the cc-bridge prudence
+// FORK 2026-06-07: register() runs ~5×/gateway boot; attach the tinker-bridge prudence
 // listener ONCE per process or every tool call gets evaluated (and recorded) N times.
-let ccBridgePrudenceListenerAttached = false;
+let tinkerBridgePrudenceListenerAttached = false;
 
 // -- Helpers --
 
@@ -120,7 +120,7 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       // AEGIS tool-gate (that stays observe-only via cfg.observeOnly).
       // FORK 2026-06-04: bumped personality 0.15 → 0.5 for the narration-canary
       // experiment — narration_discipline nudge is the visible tell that the
-      // whole personality pipeline is live (Oscar's instrument). Prudence stays
+      // whole personality pipeline is live (the owner's instrument). Prudence stays
       // 0.15 (observe-only safety gate).
       alpha_prudence: 0.15,
       alpha_personality: 0.5,
@@ -240,7 +240,7 @@ export default definePluginEntry({
 
     // v3.1: compile the AEGIS rule snapshot + (when enforcement is on) the
     // claude-cli settings file that wires the pre-execution PreToolUse hook into
-    // every cc-bridge spawn. Done at register() so the artifacts exist before the
+    // every tinker-bridge spawn. Done at register() so the artifacts exist before the
     // next worker spawns. Best-effort: a write failure must not break the gate.
     try {
       const snap = writePolicySnapshot(AMYGDALA_DATA_DIR, { hookEnforcement });
@@ -513,7 +513,7 @@ export default definePluginEntry({
     // clause don't cohere ("build a chess game so I can water my plants"), surface
     // an ASK signal in the Amygdala feed. Observe-only — it never blocks or alters
     // the turn; it just shows the gut-feeling that something doesn't add up. Fires
-    // for cc-bridge too (llm_input runs in attempt.ts, which wraps the provider).
+    // for tinker-bridge too (llm_input runs in attempt.ts, which wraps the provider).
     api.on("llm_input", async (event: { prompt?: string; runId?: string; sessionId?: string }) => {
       await ensureInit();
       if (!hookReady || !event.prompt) return;
@@ -564,17 +564,17 @@ export default definePluginEntry({
       }
     });
 
-    // FORK 2026-06-07 (Phase 1a): cc-bridge tools bypass the native before_tool_call
+    // FORK 2026-06-07 (Phase 1a): tinker-bridge tools bypass the native before_tool_call
     // gate (Claude Code owns its tool loop), so the prudence nets never saw them. Here
-    // we subscribe to cc-bridge tool-start events (marked `ccBridge`) and run the SAME
+    // we subscribe to tinker-bridge tool-start events (marked `tinkerBridge`) and run the SAME
     // hook.evaluate the native gate uses — so the REAL ONNX prudence verdict appears in
     // the feed for the way Jarvis actually runs. Observe-only: the tool already executed
     // by the time we see the event, so we report (enforced:false), never abort.
-    if (!ccBridgePrudenceListenerAttached) {
-      ccBridgePrudenceListenerAttached = true;
+    if (!tinkerBridgePrudenceListenerAttached) {
+      tinkerBridgePrudenceListenerAttached = true;
       onAgentEvent((evt) => {
         const d = evt.data as Record<string, unknown> | undefined;
-        if (!d || evt.stream !== "tool" || d.phase !== "start" || d.ccBridge !== true) {
+        if (!d || evt.stream !== "tool" || d.phase !== "start" || d.tinkerBridge !== true) {
           return;
         }
         void (async () => {
@@ -624,7 +624,7 @@ export default definePluginEntry({
               target: String(target).slice(0, 200),
               decision: result.decision,
               blocked: result.blocked,
-              enforced: false, // cc-bridge observe path: the tool already ran (real enforcement is the PreToolUse hook)
+              enforced: false, // tinker-bridge observe path: the tool already ran (real enforcement is the PreToolUse hook)
               reason: result.response?.reason,
               mode: legacyEnsemble ? (result.ruleBasedFallback ? "rules" : "onnx") : "novelty",
               prudence:
@@ -655,7 +655,7 @@ export default definePluginEntry({
             });
           } catch (err) {
             log.warn(
-              `[learned-intuition] cc-bridge prudence eval failed: ${(err as Error).message}`,
+              `[learned-intuition] tinker-bridge prudence eval failed: ${(err as Error).message}`,
             );
           }
         })();
@@ -682,8 +682,8 @@ export default definePluginEntry({
       } catch {
         /* ignore */
       }
-      // FORK 2026-06-07: merge the durable cc-bridge decision log (JSONL) with the
-      // in-memory native ring, newest-first. cc-bridge tools bypass the native gate,
+      // FORK 2026-06-07: merge the durable tinker-bridge decision log (JSONL) with the
+      // in-memory native ring, newest-first. tinker-bridge tools bypass the native gate,
       // so this file is the only durable source for Claude-Code runs; merging it here
       // makes the feed survive a UI refresh and a gateway restart.
       type FeedDecision = Record<string, unknown> & { ts?: number | string };
@@ -713,7 +713,7 @@ export default definePluginEntry({
         /* ignore */
       }
       // v3.1: ingest the pre-execution hook spool (REAL enforced denials from the
-      // cc-bridge / claude-cli path). Map its rows into the feed's decision shape.
+      // tinker-bridge / claude-cli path). Map its rows into the feed's decision shape.
       let hookRows: FeedDecision[] = [];
       try {
         if (existsSync(HOOK_DECISIONS_PATH)) {

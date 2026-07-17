@@ -5,7 +5,7 @@ audience: AI
 last_verified: 2026-06-04
 last_verified_commit: 24237e0cd22
 single_owner: yes — subagent + kit orchestration + plan persistence + skill-library behavior + marketplace semantics facts live here
-see_also: topology.md (Prefrontal plugin), flows.md (F6 cc-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream), memory-layout.md (WHERE recipe-archive / skill-library / failure-state stores live on disk), probes.md (fork.skill.* / fork.prefrontal.* RPC surface), config-shape.md (RECIPE_AUTOAPPLY_ENABLED, dead-code trap registry)
+see_also: topology.md (Prefrontal plugin), flows.md (F6 tinker-bridge tool loop, F-PLAN-RESUME, F-KIT-INSTALL), tool-loop.md (why fork orchestration is different from upstream), memory-layout.md (WHERE recipe-archive / skill-library / failure-state stores live on disk), probes.md (fork.skill.* / fork.prefrontal.* RPC surface), config-shape.md (RECIPE_AUTOAPPLY_ENABLED, dead-code trap registry)
 verify:
   - name: recipe-matcher exists and auto-seeds a plan at turn start (FORK 2026-05-16 — the smart-router matching half)
     cmd: python3 -c 'import os; m=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-matcher.ts")).read(); assert "export async function seedPlanFromPrompt" in m and "NO-MATCH" in m and "recipe-gap" in m, "recipe-matcher.ts missing seedPlanFromPrompt or the no-match recipe-gap WARN — the smart-router matching half regressed"; idx=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts")).read(); assert "seedPlanFromPrompt" in idx and "before_prompt_build" in idx, "index.ts no longer wires seedPlanFromPrompt into a before_prompt_build hook — turn-start auto-seed is dead, restart-continue has nothing to resume for normal turns"'
@@ -177,19 +177,21 @@ verify:
     cmd: grep -Fq 'blocked-awaiting-input' ~/src/tinkerclaw/src/gateway/protocol/schema/prefrontal-plan.ts && grep -Fq 'async setStatus' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/plan-store.ts && grep -Fq 'interactiveMode' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts && grep -Fq 'export function deriveAskTimeoutMs' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-runner.ts
   - name: BROCA P1.1 ask is OPT-IN (askIfMissing) with clear-fail the default; the resolver persists the answer (asked-once-then-reused, secret-confirm)
     cmd: grep -Fq 'askIfMissing' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && grep -Fq 'export function makeAskResolver' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-ask-resolver.ts
+  - name: bible-currency-gate exists and is mandated by the always-read doctrine
+    cmd: python3 -c 'import os; r=os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/bible-currency-gate/recipe.md"); d=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/prompts/orchestration-disposition.md")).read(); assert os.path.exists(r), "bible-currency-gate recipe missing"; assert "bible-currency-gate" in d, "orchestration-disposition.md does not mandate the gate"'
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
 
 ## Why the fork has its own subagent path
 
-cc-bridge sessions use claude-cli internally; claude-cli has its own subagent mechanism (`Task` tool, agents-md hierarchy). But the fork needs a SECOND path: spawn an OpenClaw subagent that uses a non-cc-bridge provider (e.g., openai, google), or an OpenClaw subagent that runs orchestration logic separate from claude-cli's tool tree.
+tinker-bridge sessions use claude-cli internally; claude-cli has its own subagent mechanism (`Task` tool, agents-md hierarchy). But the fork needs a SECOND path: spawn an OpenClaw subagent that uses a non-tinker-bridge provider (e.g., openai, google), or an OpenClaw subagent that runs orchestration logic separate from claude-cli's tool tree.
 
 The fork RPC for this is `fork.subagents.spawn` (`src/fork/subagents-rpc.ts`, FORK 2026-04-20). It wraps `spawnSubagentDirect` from the agent runtime.
 
 ## The spawn helper
 
-`~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs` is the CLI wrapper Jarvis uses from cc-bridge:
+`~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs` is the CLI wrapper Jarvis uses from tinker-bridge:
 
 ```
 node ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs \
@@ -413,6 +415,10 @@ Discipline: every `{{param}}` in prose MUST be declared (`checkParamRefs`); name
 
 **Public-vs-private repo split (architect rule, 2026-06-11) — the WHOLE POINT of the skeleton+variables divide.** The generic skeleton `.md` BELONGS IN the public `tinkerclaw` fork — it's shareable AND crash-recoverable via the public git, and it's matchable (the matcher scans the fork's source tree). The private VALUES belong ONLY in the gitignored `recipe-vars.json`. So **never commit a recipe carrying private data** (client names, IBANs, host paths, internal strategy) to the fork — parameterize it into a skeleton first. Worked example: `crear-oferta-serravision` carried an IBAN + a real client name, so it was scrubbed into the generic `create-sales-offer` (public skeleton) + private vars, then deleted. **If private data DID reach the public fork:** `git rm` it from HEAD **and scrub it from history** (filter-repo/BFG) **before any push** — the pre-push PII grep scans the working tree, not history, so a historical commit (e.g. a parallel session's `add crear-oferta` commit) still leaks on push. **Recovery divide:** skeletons recover from the public fork git; `recipe-vars.json` is committed to the PRIVATE jarvis-brain repo (whitelisted in `~/.openclaw/.gitignore`, recoverable on crash) and holds NON-CREDENTIAL config only. HARD RULE: now that recipe-vars.json is tracked, a real credential (token/key/password/IBAN) must NEVER be added to it — keep those in a separate untracked store, or the never-track-secrets guarantee is lost. **Why no overlay needed:** because skeletons go to the public source tree (matched + recovered there) and only VALUES are private, there are no private recipe _files_ — so the `~/.openclaw/recipes` overlay (which the matcher does NOT scan) isn't needed for our recipes.
 
+## Bible-currency gate (2026-06-19)
+
+Any BROCA task (recipe run/compose/author) that changes tinkerclaw design / structure / behavior / config MUST end by updating the bible per the single-owner discipline (fix → `bug-log.md`; structural → owning optic + `verify:`; decision → `bible.md` §sub-letter) and confirming `pnpm bible:invariants` green. Enforced by the `bible-currency-gate` recipe, mandated in `orchestration-disposition.md` + the `model-effort-gating` skill. Read-only/marketing/research runs are exempt (no-op). Orchestrator-level, once per task. Origin: a §5.8 grouping change that left the owning optic stale (see `bug-log.md` FIXED A).
+
 ## The OSS-harness upgrades — how recipes/skills/plans LEARN (FORK 06f8647fdc, 2026-06-02)
 
 Twelve OSS-harness upgrades landed together on `develop` (`06f8647fdc` on top of `70ad58e45d`); the five that change how **recipes/kits/plans/skills behave** are owned here (U1, U5, U6, U11, U12). The Cerebellum-side STORES they read/write — `recipe-archive/`, `skill-library/`, `failure-state.json` — are owned by `memory-layout.md`; the gateway RPC SURFACE (`fork.skill.*`, `fork.prefrontal.*`) is owned by `probes.md`. This optic owns the BEHAVIOR.
@@ -493,7 +499,7 @@ VERIFIED 2026-06-04 / 24237e0cd22 end-to-end: `fork.skill.put` deposited 2 skill
 
 Three ways the catalog grows beyond hand-authoring + on-the-fly authoring:
 
-- **CC-skills bridge** (`cc-skills-bridge.ts`): imports a Claude-Code `SKILL.md` (frontmatter `name`/`description` + a documented procedure) as a recipe/1.0. `skillMdToRecipeSpec` infers an ordered step list from the body's `### N.` / `### Step N -` headings and transpiles to a `RecipeSpec`, then runs it through the EXISTING `recipe-author.ts` guards (`validateRecipeSpec` + `buildRecipeMd`) — the phantom-step + slug-traversal guards apply for free (no validator fork). Bridged recipes are stamped `authoredBy: "cc-bridge"` (low-trust / filterable) and land under `<sandbox>/bridged-skills/<slug>/`, which the matcher scans (`loadRecipeIndex` extraDirs) so they're matchable next turn. Untrusted-content safety: `assertNoSymlink` vets every path segment with `lstat` before any read (`resolveSandboxPath` blocks `../` but NOT symlinks). Triggered via `prefrontal.recipe.install { skillMd }`.
+- **CC-skills bridge** (`cc-skills-bridge.ts`): imports a Claude-Code `SKILL.md` (frontmatter `name`/`description` + a documented procedure) as a recipe/1.0. `skillMdToRecipeSpec` infers an ordered step list from the body's `### N.` / `### Step N -` headings and transpiles to a `RecipeSpec`, then runs it through the EXISTING `recipe-author.ts` guards (`validateRecipeSpec` + `buildRecipeMd`) — the phantom-step + slug-traversal guards apply for free (no validator fork). Bridged recipes are stamped `authoredBy: "tinker-bridge"` (low-trust / filterable) and land under `<sandbox>/bridged-skills/<slug>/`, which the matcher scans (`loadRecipeIndex` extraDirs) so they're matchable next turn. Untrusted-content safety: `assertNoSymlink` vets every path segment with `lstat` before any read (`resolveSandboxPath` blocks `../` but NOT symlinks). Triggered via `prefrontal.recipe.install { skillMd }`.
 - **Local search fallback** (`recipe.search`): when Journey is unreachable the search degrades to the LOCAL catalog (own-kits + bridged imports) scored with the SAME fitness+rating signals as the turn-start seed (`source: "local"`, `fallbackReason` set) — same Risk-7 graceful-degradation posture as the marketplace, never hard-fails a search.
 - **Transitive dependency resolver** (`recipe.install`): after a kit is written, `installDeps` parses its frontmatter `composes: [...]` AND leading `uses: <ref>` step directives and installs each, recursively, cycle-guarded by a `seen` set. Each dep resolves with its OWN declared constraint (a trailing `@<constraint>`) or `latest` — **the root install's `p.ref` constraint is NEVER inherited by a transitive dep**. The risk-gate + sandbox write apply uniformly to root and deps.
 
@@ -679,7 +685,7 @@ estimates.
 
 The kit-parallelism above governs the fork's OWN subagent dispatch. **ORCA** is the
 complementary tool for _writing code across many files at once_: a Claude-Code
-Workflow (not a kit) that any session — Claude Code or this runtime via cc-bridge —
+Workflow (not a kit) that any session — Claude Code or this runtime via tinker-bridge —
 should reach for **by default whenever a coding task touches 2+ independently-editable
 files**, instead of editing them serially.
 

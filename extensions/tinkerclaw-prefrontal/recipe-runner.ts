@@ -86,7 +86,7 @@ export interface RecipeRunOptions {
    * When true, an existing in_progress plan for this sessionKey with the SAME
    * kitRef is resumed: dispatch starts at plan.currentStep, already-`done` rows
    * are skipped, and prior steps' artifacts are injected into later steps' tasks.
-   * Default policy (Oscar, 2026-05-30): NO silent re-attach — auto-resume fires
+   * Default policy (the owner, 2026-05-30): NO silent re-attach — auto-resume fires
    * only when resume:true is passed. A bare run always force-restarts at step 0.
    */
   resume?: boolean;
@@ -387,6 +387,10 @@ interface StepDispatch {
   /** SS5b: a `max-tool-calls:` per-spawn tool-call bound (literal or {{template}}; a
    * non-numeric / unresolved value is simply omitted — no fabricated default). */
   maxToolCalls?: number;
+  /** §5.84-A: a `model:` per-step model override (raw id or {{template}}). */
+  model?: string;
+  /** §5.84-A: a `thinking:` per-step effort level (raw level or {{template}}). */
+  thinkingLevel?: string;
 }
 
 /** The CONSECUTIVE leading directive lines of a step body — only lines that are
@@ -403,7 +407,7 @@ function leadingDirectives(body: string): string[] {
       continue; // skip leading blank lines
     }
     if (
-      !/^(?:uses|loop|when|return|done|map|filter|keep|onError|allow-tools|max-tokens|max-tool-calls):|^invoke\s+skill:/i.test(
+      !/^(?:uses|loop|when|return|done|map|filter|keep|onError|allow-tools|max-tokens|max-tool-calls|model|thinking):|^invoke\s+skill:/i.test(
         line,
       )
     )
@@ -509,7 +513,7 @@ export function parseOnErrorDirective(body: string): OnErrorPolicy | undefined {
     if (!m) continue;
     const spec = m[1].trim();
     const retry = /^retry\s+(\S+)$/i.exec(spec);
-    if (retry) return { mode: "retry", n: retry[1] };
+    if (retry) return { mode: "retry", retryCount: retry[1] };
     const fallback = /^fallback\s+kit:\s*(\S+)$/i.exec(spec);
     if (fallback) return { mode: "fallback", kitRef: fallback[1] };
     if (/^continue-partial$/i.test(spec)) return { mode: "continue-partial" };
@@ -552,6 +556,23 @@ export function parseMaxTokensDirective(body: string): string | undefined {
 export function parseMaxToolCallsDirective(body: string): string | undefined {
   for (const line of leadingDirectives(body)) {
     const m = /^max-tool-calls:\s*(.+\S)\s*$/i.exec(line);
+    if (m) return m[1].trim();
+  }
+  return undefined;
+}
+
+/** §5.84-A: a leading `model: <id|{{template}}>` directive (raw string). */
+export function parseModelDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^model:\s*(.+\S)\s*$/i.exec(line);
+    if (m) return m[1].trim();
+  }
+  return undefined;
+}
+/** §5.84-A: a leading `thinking: <level|{{template}}>` directive (raw string). */
+export function parseThinkingDirective(body: string): string | undefined {
+  for (const line of leadingDirectives(body)) {
+    const m = /^thinking:\s*(.+\S)\s*$/i.exec(line);
     if (m) return m[1].trim();
   }
   return undefined;
@@ -1184,6 +1205,10 @@ export interface SpawnOpts {
   maxTokens?: number;
   /** `--max-tool-calls` per-spawn tool-call bound. */
   maxToolCalls?: number;
+  /** `--model` per-spawn model override (§5.84-A). */
+  model?: string;
+  /** `--thinking` per-spawn effort level (§5.84-A). */
+  thinkingLevel?: string;
 }
 
 /**
@@ -1209,6 +1234,8 @@ function spawnStep(task: string, label: string, spawnOpts?: SpawnOpts): Promise<
     if (spawnOpts?.maxToolCalls != null && Number.isFinite(spawnOpts.maxToolCalls)) {
       budgetArgs.push("--max-tool-calls", String(spawnOpts.maxToolCalls));
     }
+    if (spawnOpts?.model) budgetArgs.push("--model", spawnOpts.model);
+    if (spawnOpts?.thinkingLevel) budgetArgs.push("--thinking", spawnOpts.thinkingLevel);
     const child = spawn(
       process.execPath,
       [helperPath, "--task", task, "--label", label, ...budgetArgs, "--json"],
@@ -1739,6 +1766,8 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
       const parsedMaxToolCalls =
         rawMaxToolCalls != null ? Number.parseInt(rawMaxToolCalls, 10) : NaN;
       const maxToolCalls = Number.isFinite(parsedMaxToolCalls) ? parsedMaxToolCalls : undefined;
+      const rawModel = parseModelDirective(cleanBody);
+      const rawThinking = parseThinkingDirective(cleanBody);
       return {
         stepIndex: idx,
         title: step.title,
@@ -1757,6 +1786,8 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
         allowTools,
         maxTokens,
         maxToolCalls,
+        model: rawModel,
+        thinkingLevel: rawThinking,
       };
     }),
   );
@@ -1837,7 +1868,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
   };
 
   // ── Durable checkpointing (FORK 2026-05-30, Upgrade 5) ───────────────────────
-  // Decide resume vs. fresh BEFORE seeding. Default policy (Oscar 2026-05-30):
+  // Decide resume vs. fresh BEFORE seeding. Default policy (the owner 2026-05-30):
   // never silently re-attach — auto-resume requires resume:true AND a matching
   // in_progress plan with the SAME kitRef (a stale plan from an unrelated session
   // must not be hijacked). A partially-written plan that fails to parse is
@@ -2334,6 +2365,8 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
           allowTools: dispatch.allowTools,
           maxTokens: dispatch.maxTokens,
           maxToolCalls: dispatch.maxToolCalls,
+          model: dispatch.model,
+          thinkingLevel: dispatch.thinkingLevel,
         };
         const spawnResult = await (opts._spawnStep ?? spawnStep)(
           taskForSpawn,
@@ -2415,7 +2448,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
                 if (p.output !== undefined) outputsByStep0.set(p.stepIndex + 1, p.output);
               }
             }
-            const resolvedN = resolveStepRefs(policy.n, outputsByStep0).trim();
+            const resolvedN = resolveStepRefs(String(policy.retryCount), outputsByStep0).trim();
             const authorN = Number.parseInt(resolvedN, 10);
             const derived = deriveRecoveryRetryBudget({
               fitnessSuccessRate: opts.fitnessSuccessRate,

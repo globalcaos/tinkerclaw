@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveCcBridgeCliSessionIdForOpenclawSession } from "./cc-bridge-session-map.js";
 import {
   augmentChatHistoryWithCliSessionImports,
   mergeImportedChatHistoryMessages,
@@ -10,6 +9,7 @@ import {
   readClaudeCliSessionMessages,
   resolveClaudeCliSessionFilePath,
 } from "./cli-session-history.js";
+import { resolveTinkerBridgeCliSessionIdForOpenclawSession } from "./tinker-bridge-session-map.js";
 
 const ORIGINAL_HOME = process.env.HOME;
 
@@ -300,33 +300,33 @@ describe("cli session history", () => {
   });
 
   // FORK 2026-05-21: regression for the chat.history sessionFile-pointer
-  // freeze. cc-bridge writes the live claude-cli sessionId per worker key to
-  // `~/.openclaw/cc-bridge/session-map.json`; sessions.json's
-  // cliSessionBindings stays empty because cc-bridge does not feed back into
+  // freeze. tinker-bridge writes the live claude-cli sessionId per worker key to
+  // `~/.openclaw/tinker-bridge/session-map.json`; sessions.json's
+  // cliSessionBindings stays empty because tinker-bridge does not feed back into
   // session-store. Without the session-map fallback, every hard-refresh of
-  // every cc-bridge-served tab shows whatever stale sessionFile sessions.json
+  // every tinker-bridge-served tab shows whatever stale sessionFile sessions.json
   // last pointed at.
-  it("falls back to cc-bridge session-map by openclawSessionId when bindings + legacy fields are absent", async () => {
+  it("falls back to tinker-bridge session-map by openclawSessionId when bindings + legacy fields are absent", async () => {
     await withClaudeProjectsDir(async ({ homeDir, sessionId }) => {
-      const openclawSessionId = "openclaw-cc-bridge-session";
-      const mapDir = path.join(homeDir, ".openclaw", "cc-bridge");
+      const openclawSessionId = "openclaw-tinker-bridge-session";
+      const mapDir = path.join(homeDir, ".openclaw", "tinker-bridge");
       await fs.mkdir(mapDir, { recursive: true });
       const mapPath = path.join(mapDir, "session-map.json");
       await fs.writeFile(
         mapPath,
         JSON.stringify(
           {
-            "cc-sp-stale": {
+            "tinker-sp-stale": {
               sessionId: "stale-cli-session",
               updatedAt: 1000,
               openclawSessionId,
             },
-            "cc-sp-fresh": {
+            "tinker-sp-fresh": {
               sessionId,
               updatedAt: 2000,
               openclawSessionId,
             },
-            "cc-sp-other": {
+            "tinker-sp-other": {
               sessionId: "unrelated-cli-session",
               updatedAt: 9999,
               openclawSessionId: "other-openclaw-session",
@@ -357,13 +357,13 @@ describe("cli session history", () => {
 
   it("imports for the claude-code provider even when local messages already exist", async () => {
     await withClaudeProjectsDir(async ({ homeDir, sessionId }) => {
-      const openclawSessionId = "openclaw-cc-bridge-with-local";
-      const mapDir = path.join(homeDir, ".openclaw", "cc-bridge");
+      const openclawSessionId = "openclaw-tinker-bridge-with-local";
+      const mapDir = path.join(homeDir, ".openclaw", "tinker-bridge");
       await fs.mkdir(mapDir, { recursive: true });
       await fs.writeFile(
         path.join(mapDir, "session-map.json"),
         JSON.stringify({
-          "cc-sp-fresh": {
+          "tinker-sp-fresh": {
             sessionId,
             updatedAt: 5000,
             openclawSessionId,
@@ -402,13 +402,13 @@ describe("cli session history", () => {
   });
 });
 
-describe("resolveCcBridgeCliSessionIdForOpenclawSession", () => {
+describe("resolveTinkerBridgeCliSessionIdForOpenclawSession", () => {
   it("returns undefined when openclawSessionId is empty", () => {
     expect(
-      resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: undefined }),
+      resolveTinkerBridgeCliSessionIdForOpenclawSession({ openclawSessionId: undefined }),
     ).toBeUndefined();
     expect(
-      resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: "" }),
+      resolveTinkerBridgeCliSessionIdForOpenclawSession({ openclawSessionId: "" }),
     ).toBeUndefined();
   });
 
@@ -416,7 +416,7 @@ describe("resolveCcBridgeCliSessionIdForOpenclawSession", () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cc-map-missing-"));
     try {
       expect(
-        resolveCcBridgeCliSessionIdForOpenclawSession({
+        resolveTinkerBridgeCliSessionIdForOpenclawSession({
           openclawSessionId: "anything",
           homeDir: tmp,
         }),
@@ -429,19 +429,22 @@ describe("resolveCcBridgeCliSessionIdForOpenclawSession", () => {
   it("picks the most-recently-updated matching entry", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cc-map-pick-"));
     try {
-      const mapDir = path.join(tmp, ".openclaw", "cc-bridge");
+      const mapDir = path.join(tmp, ".openclaw", "tinker-bridge");
       await fs.mkdir(mapDir, { recursive: true });
       await fs.writeFile(
         path.join(mapDir, "session-map.json"),
         JSON.stringify({
-          "cc-sp-a": { sessionId: "older", updatedAt: 100, openclawSessionId: "want" },
-          "cc-sp-b": { sessionId: "newer", updatedAt: 999, openclawSessionId: "want" },
-          "cc-sp-c": { sessionId: "irrelevant", updatedAt: 9999, openclawSessionId: "other" },
+          "tinker-sp-a": { sessionId: "older", updatedAt: 100, openclawSessionId: "want" },
+          "tinker-sp-b": { sessionId: "newer", updatedAt: 999, openclawSessionId: "want" },
+          "tinker-sp-c": { sessionId: "irrelevant", updatedAt: 9999, openclawSessionId: "other" },
         }),
         "utf-8",
       );
       expect(
-        resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: "want", homeDir: tmp }),
+        resolveTinkerBridgeCliSessionIdForOpenclawSession({
+          openclawSessionId: "want",
+          homeDir: tmp,
+        }),
       ).toBe("newer");
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });
@@ -451,11 +454,14 @@ describe("resolveCcBridgeCliSessionIdForOpenclawSession", () => {
   it("survives a corrupt map file by returning undefined", async () => {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cc-map-corrupt-"));
     try {
-      const mapDir = path.join(tmp, ".openclaw", "cc-bridge");
+      const mapDir = path.join(tmp, ".openclaw", "tinker-bridge");
       await fs.mkdir(mapDir, { recursive: true });
       await fs.writeFile(path.join(mapDir, "session-map.json"), "{not valid json", "utf-8");
       expect(
-        resolveCcBridgeCliSessionIdForOpenclawSession({ openclawSessionId: "want", homeDir: tmp }),
+        resolveTinkerBridgeCliSessionIdForOpenclawSession({
+          openclawSessionId: "want",
+          homeDir: tmp,
+        }),
       ).toBeUndefined();
     } finally {
       await fs.rm(tmp, { recursive: true, force: true });

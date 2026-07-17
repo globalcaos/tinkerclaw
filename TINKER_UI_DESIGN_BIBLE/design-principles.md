@@ -48,7 +48,7 @@ The rules are short on purpose. The point is that you can load this file once at
 
 **Why.** The fork has at least five hand-coded wrapper patterns (idle timeout, heartbeat, retry, overlay merge, PII guard). Each is its own closure with its own bugs. The shared shape — `wrapper(next)(input) → output` — is generic; composing wrappers should be data, not closure soup.
 
-**How to apply.** New wrappers go through `src/fork/pipeline.ts`'s `compose(...)` helper. Use the canned wrappers (`withRetry`, `withTimeout`, `withTrace`) before writing custom ones. Domain-specific wrappers that DO need custom logic (cc-bridge heartbeat — protocol-aware) stay where they are, but new ones should default to the shared substrate.
+**How to apply.** New wrappers go through `src/fork/pipeline.ts`'s `compose(...)` helper. Use the canned wrappers (`withRetry`, `withTimeout`, `withTrace`) before writing custom ones. Domain-specific wrappers that DO need custom logic (tinker-bridge heartbeat — protocol-aware) stay where they are, but new ones should default to the shared substrate.
 
 ### 5. Validate at boundaries, trust inside
 

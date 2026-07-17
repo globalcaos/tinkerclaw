@@ -6,6 +6,10 @@ import {
 
 export { normalizeFastMode };
 
+// NOTE (bible §5.84 Drop 3): 'adaptive' is a REAL provider level — Anthropic's adaptive-thinking
+// API mode (anthropic-transport-stream.ts → thinking:{type:"adaptive"}) and a per-model default
+// (model-thinking-default.ts). It is kept as a backend level but is NOT offered in the UI effort
+// slider (collapsed to Auto = the dynamic allocator). Do not remove it without removing that capability.
 export type ThinkLevel =
   | "off"
   | "minimal"
@@ -53,7 +57,13 @@ export function normalizeThinkLevel(raw?: string | null): ThinkLevel | undefined
     return undefined;
   }
   const collapsed = key.replace(/[\s_-]+/g, "");
-  if (collapsed === "adaptive" || collapsed === "auto") {
+  if (collapsed === "auto") {
+    // Auto = no pin; let the allocator decide.
+    return undefined;
+  }
+  if (collapsed === "adaptive") {
+    // 'adaptive' is a real backend level (Anthropic adaptive-thinking API mode); preserved.
+    // It is simply not offered in the UI effort slider (which collapses to Auto). bible §5.84.
     return "adaptive";
   }
   if (collapsed === "max") {

@@ -5,7 +5,7 @@ audience: AI
 last_verified: 2026-06-02
 last_verified_commit: 06f8647fdc
 single_owner: yes — config-flow facts live here
-see_also: topology.md (what runs), auth-routing.md (which model is picked), tool-loop.md (why cc-bridge has its own timeout)
+see_also: topology.md (what runs), auth-routing.md (which model is picked), tool-loop.md (why tinker-bridge has its own timeout)
 verify:
   - name: claude-code provider overlay resolves timeoutSeconds=600
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.session.config","--params",json.dumps({"provider":"claude-code"})],capture_output=True,text=True); assert "\"resolvedRequestTimeoutMs\": 600000" in r.stdout, r.stdout[-500:]'
@@ -59,10 +59,10 @@ For provider/model config specifically:
 - **Drives:** LLM idle watchdog timeout (`streamWithIdleTimeout` wraps the streamFn)
 - **Default chain:** plugin overlay → explicit cfg → undefined (which then falls through to `clampImplicitTimeoutMs(agentTimeoutMs)`, capped at `DEFAULT_LLM_IDLE_TIMEOUT_MS=120_000`)
 - **Current values:**
-  - `claude-code`: 600 (from cc-bridge plugin overlay, FORK 2026-05-10, NOT openclaw.json)
+  - `claude-code`: 600 (from tinker-bridge plugin overlay, FORK 2026-05-10, NOT openclaw.json)
   - `ollama`: undefined → default 120s
 - **⚠️ Anti-pattern:** per-model `requestTimeoutMs` on the catalog model object is silently ignored. Only the provider-level `timeoutSeconds` propagates. See bible §11.6d.
-- **⚠️ Anti-pattern (fixed 2026-05-10):** the cc-bridge plugin's `discovery.run` returning `{ provider: { timeoutSeconds: 600 } }` did NOT merge into cfg.models.providers. The fix is the plugin overlay (J15 §4 + bible §11.6e). Do NOT rely on the discovery path for runtime config; use the overlay.
+- **⚠️ Anti-pattern (fixed 2026-05-10):** the tinker-bridge plugin's `discovery.run` returning `{ provider: { timeoutSeconds: 600 } }` did NOT merge into cfg.models.providers. The fix is the plugin overlay (J15 §4 + bible §11.6e). Do NOT rely on the discovery path for runtime config; use the overlay.
 
 ### `agents.defaults.models[<provider/model>].rank`
 
@@ -126,7 +126,7 @@ For provider/model config specifically:
 
 ### `env.vars.<key>`
 
-- **Read at:** child-process spawn env (cc-bridge, exec tool, etc.)
+- **Read at:** child-process spawn env (tinker-bridge, exec tool, etc.)
 - **Critical:** `DISPLAY=:0` enables GUI ops from spawned processes (browser, etc.)
 
 ### `tools.exec.*`
@@ -232,15 +232,15 @@ The control-panel plugin owns the Today card / Exec panel surface (see `tinker-u
 - **Migration owner:** `stripTodoistMetadata` in `db.ts` (idempotent one-shot — scans every task's `metadata_json`, strips keys matching `^todoist_*`, rewrites). Re-running is a no-op.
 - **Trigger:** runs on every gateway boot via the migration step in `getDb()`. Drawer renders no longer recognise any `todoist_*` chips. Pair with the delete of `extensions/tinkerclaw-control-panel/scripts/import-from-todoist.mjs`.
 
-## cc-bridge ethical-rules prompt loader (FORK 2026-05-21)
+## tinker-bridge ethical-rules prompt loader (FORK 2026-05-21)
 
-The cc-bridge plugin loads an `ethical-rules` block into the worker's `--append-system-prompt` between the persona block and the narration/tool-choice/plan-tools blocks. See `tool-loop.md` for the slot in `combinedSystemPrompt`.
+The tinker-bridge plugin loads an `ethical-rules` block into the worker's `--append-system-prompt` between the persona block and the narration/tool-choice/plan-tools blocks. See `tool-loop.md` for the slot in `combinedSystemPrompt`.
 
 **Resolution order** (per `loadPromptFile` defaults; first existing path wins):
 
 1. `env.TINKERCLAW_ETHICAL_RULES_PROMPT` — explicit path override.
 2. `~/.openclaw/workspace/memory/knowledge/jarvis-ethical-rules.md` — user-personalised override (outside the public repo).
-3. `extensions/tinkerclaw-cc-bridge/prompts/ethical-rules-default.md` — bundled default (in the public repo). Ships ten Asimov-style priority-ordered rules + a generic preamble. The bundled file carries `default-version: 1.0` in its frontmatter so the drift-detection log line (see bible §5.76f) can flag override staleness.
+3. `extensions/tinkerclaw-tinker-bridge/prompts/ethical-rules-default.md` — bundled default (in the public repo). Ships ten Asimov-style priority-ordered rules + a generic preamble. The bundled file carries `default-version: 1.0` in its frontmatter so the drift-detection log line (see bible §5.76f) can flag override staleness.
 
 **Don't regress:** workspace override path is `memory/knowledge/jarvis-ethical-rules.md`, NOT `SOUL.md` (persona) and NOT `BRIEFING.md` (briefing). Each foundational block has its own override file; conflating them silently overrides the wrong layer.
 
@@ -252,7 +252,7 @@ Read in `extensions/tinkerclaw-learned-intuition/index.ts` `register()` from `ap
 | ----------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `aegisEnabled`    | **`true`** (was `false`) | The deterministic AEGIS rule veto. v3.1 flips the default ON — resolving the old manifest-off vs code-on contradiction. `false` fully disables the rule floor.                                                                                                                                                             |
 | `legacyEnsemble`  | `false`                  | Run the retired 5-net ONNX prudence/personality ensemble in the decision path. Off by default (trained on mislabelled data; arch C collapsed, arch E mush; frozen-MiniLM danger classification measured below chance, AUROC 0.286). The embedding pipeline (encoder + projection) is **always** loaded — novelty needs it. |
-| `hookEnforcement` | `true`                   | Write `cc-hook-settings.json` so cc-bridge passes `--settings` and destructive-execution AEGIS rules deny synchronously on the claude-cli runner (see `tool-loop.md`). `false` removes the settings file → observe-only spool, no pre-execution deny.                                                                      |
+| `hookEnforcement` | `true`                   | Write `cc-hook-settings.json` so tinker-bridge passes `--settings` and destructive-execution AEGIS rules deny synchronously on the claude-cli runner (see `tool-loop.md`). `false` removes the settings file → observe-only spool, no pre-execution deny.                                                                  |
 | `observeOnly`     | `true`                   | Neural soft-blocks stay advisory while the gate ramps. The novelty channel ships as an observe-only **ask** disposition under this. AEGIS hard-blocks enforce regardless.                                                                                                                                                  |
 | `phase`           | `1`                      | Trust-ramp phase.                                                                                                                                                                                                                                                                                                          |
 

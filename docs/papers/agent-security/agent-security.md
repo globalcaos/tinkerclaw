@@ -8,9 +8,9 @@
 
 Autonomous AI agents — software systems that perceive context, invoke tools, execute code, and take actions on behalf of users — have moved from research curiosity to mass deployment with remarkable speed. OpenClaw, one of the leading open-source agent runtimes, grew from a hobbyist project to millions of active installations within eighteen months. With that growth came an attack surface the security community was not prepared for. In twelve months, we observed a zero-click WebSocket hijack vulnerability (CVE-2026-25253) affecting 40,000+ exposed instances, supply chain attacks via malicious agent skills discovered by Cisco Talos, and a high-profile incident in which an AI safety director's own agent deleted six months of email without explicit authorization.
 
-This paper presents **AEGIS** — a systematic framework for analyzing and layering security controls across autonomous AI agent deployments. We propose a taxonomy of eight distinct security strategy classes, classified as deterministic or probabilistic, and introduce the **safety-capability-autonomy trilemma** as a design tool for reasoning about agent security trade-offs. We analyze three deployment personas — the Hobbyist Tinkerer, the Freelance Consultant, and the Corporate Employee — with formal risk matrices and regulatory mappings. We examine NVIDIA's NemoClaw/OpenShell architecture as a case study in principled defense-in-depth design, and conclude with a layered defense architecture modeled on the Swiss cheese model, including a worked attack simulation demonstrating layer interactions. The paper is intentionally positioned as a **conceptual and practitioner-oriented security framework paper** rather than an empirical benchmark study: its central contribution is a structured way to reason about controls, trust boundaries, and deployment trade-offs in agent systems before the incident database matures.
+This paper presents **AEGIS** — a systematic framework for analyzing and layering security controls across autonomous AI agent deployments. We propose a taxonomy of eight distinct security strategy classes, classified as deterministic or probabilistic, and introduce the **safety-capability-autonomy trilemma** as a design tool for reasoning about agent security trade-offs. We analyze three deployment personas — the Hobbyist Tinkerer, the Freelance Consultant, and the Corporate Employee — with formal risk matrices and regulatory mappings. We examine NVIDIA's NemoClaw/OpenShell architecture as a case study in principled defense-in-depth design (updated to its June 2026 state), survey the broader open-source agent-security ecosystem — Cisco's DefenseClaw, SecureClaw, and the cross-runtime guardrail and microVM-isolation projects — and present a layered defense architecture modeled on the Swiss cheese model with a worked attack simulation. Two additions in this revision serve practitioners directly: a **mapping of AEGIS onto the ISO/IEC 27001:2022 and ISO/IEC 42001:2023 control vocabulary**, so an already-certified organization can locate each agent-security layer against its existing control objectives; and an **evidence-led treatment of the fear that frontier-API providers will train a model of your business**, separating the memorization research (which concerns public pre-training text) from the contractual reality (commercial tiers do not train on customer inputs by default). The paper is intentionally positioned as a **conceptual and practitioner-oriented security framework paper** rather than an empirical benchmark study: its central contribution is a structured way to reason about controls, trust boundaries, and deployment trade-offs in agent systems before the incident database matures.
 
-**Keywords:** AI agent security, autonomous agents, defense in depth, prompt injection, tool security, agent isolation, OpenClaw, NemoClaw, privacy routing, risk matrix, CVE-2026-25253, safety-capability-autonomy trilemma
+**Keywords:** AI agent security, autonomous agents, defense in depth, prompt injection, tool security, agent isolation, OpenClaw, NemoClaw, OpenShell, DefenseClaw, privacy routing, risk matrix, CVE-2026-25253, safety-capability-autonomy trilemma, ISO/IEC 27001, ISO/IEC 42001, training-data memorization, zero data retention
 
 ---
 
@@ -58,7 +58,7 @@ Before examining specific threats and controls, we introduce a framing that will
 - **High Safety + High Autonomy, Low Capability:** Drastically restricted action space. The agent runs unsupervised because it can only do pre-screened safe things.
 - **High Capability + High Autonomy, Low Safety:** The current default of most OpenClaw deployments. The agent can do a great deal, unsupervised, including harmful things.
 
-Every agent deployment implicitly sits somewhere in this trilemma space. Making that choice explicit — rather than pretending the trade-off doesn't exist — enables honest risk assessment and appropriate mitigation focus. We will map each deployment persona to a recommended trilemma position in §7.3.
+Every agent deployment implicitly sits somewhere in this trilemma space. Making that choice explicit — rather than pretending the trade-off doesn't exist — enables honest risk assessment and appropriate mitigation focus. We will map each deployment persona to a recommended trilemma position in §10.3.
 
 ### 1.2 An Unprecedented Deployment Velocity
 
@@ -74,7 +74,7 @@ The security incident record from 2025–2026 illustrates the breadth of the att
 
 **CVE-2026-25253 (Zero-Click WebSocket Hijack).** This critical-severity vulnerability affected OpenClaw instances exposing the WebSocket control port with default configuration. An attacker with network access could inject tool calls into an active agent session via a crafted WebSocket handshake that bypassed origin validation — no authentication required. Because OpenClaw defaulted to binding on `0.0.0.0`, any network-reachable instance was vulnerable. The patch required a single-line config change, but Shadowserver scans three weeks post-disclosure still found 31,000 unpatched instances.
 
-**Cisco Talos: Malicious Skills Supply Chain Attack.** In October 2025, Cisco Talos documented a campaign distributing seventeen malicious OpenClaw skills via the community registry. Skills mimicking legitimate utilities silently exfiltrated `~/.env`, `~/.ssh/`, and `~/.config/` to attacker infrastructure using obfuscated JavaScript with delayed execution. Skills run within the agent process with the agent user's full filesystem permissions — no sandbox prevented this access. Approximately 8,000 installs were confirmed.
+**Cisco Talos: Malicious Skills Supply Chain Attack.** In October 2025, Cisco Talos documented a campaign distributing seventeen malicious OpenClaw skills via the community registry. Skills mimicking legitimate utilities silently exfiltrated `~/.env`, `~/.ssh/`, and `~/.config/` to attacker infrastructure using obfuscated JavaScript with delayed execution. Skills run within the agent process with the agent user's full filesystem permissions — no sandbox prevented this access. Approximately 8,000 installs were confirmed. This early disclosure was a precursor to a far larger coordinated campaign (documented as "ClawHavoc") and to the open-source tooling response it provoked — Cisco's DefenseClaw chief among them — analyzed in §6.1.
 
 **The Inbox Zero Incident.** An AI safety researcher described an incident in which their agent, operating with email access for "inbox management," interpreted "clear out the old stuff" as authorization to permanently delete ~6,500 emails spanning six months. No confirmation requested. Emails unrecoverable. The incident became a widely-cited example of the gap between probabilistic behavioral guardrails and deterministic action constraints.
 
@@ -121,7 +121,7 @@ We further assume that many real deployments are socio-technical systems rather 
 
 ### 1.7 The Structure of This Paper
 
-Section 2 presents the eight-class security strategy taxonomy and explains how the taxonomy was constructed. Section 3 profiles three deployment personas. Section 4 constructs risk matrices with justified scoring methodology. Section 5 analyzes NVIDIA's NemoClaw as a case study. Section 6 presents the AEGIS defense-in-depth architecture with a worked attack simulation. Section 7 provides per-persona recommendations and concluding analysis. Section 8 discusses limitations and future validation directions.
+Section 2 presents the eight-class security strategy taxonomy and explains how the taxonomy was constructed. Section 3 profiles three deployment personas. Section 4 constructs risk matrices with justified scoring methodology. Section 5 analyzes NVIDIA's NemoClaw/OpenShell as a case study, updated to its June 2026 state. Section 6 surveys the broader open-source agent-security landscape, including Cisco's DefenseClaw and the cross-runtime guardrail and isolation projects. Section 7 presents the AEGIS defense-in-depth architecture with a worked attack simulation. Section 8 maps AEGIS onto the ISO/IEC 27001 and 42001 control vocabulary for already-certified organizations. Section 9 examines the evidence behind the fear that frontier-API providers train a model of your business. Section 10 provides per-persona recommendations and concluding analysis. Sections 11–13 discuss limitations, future validation directions, and related work.
 
 ---
 
@@ -534,35 +534,46 @@ Scores are calibrated against: CVE-2026-25253 exploitation frequency (P=4 based 
 
 ---
 
-## 5. NemoClaw and OpenShell: A Case Study in Principled Architecture
+## 5. NVIDIA NemoClaw and OpenShell: A Case Study, Updated to June 2026
 
-### 5.1 NVIDIA's Approach
+### 5.1 NVIDIA's Approach — Current State (June 2026)
 
-NVIDIA's NemoClaw, announced at GTC 2026, represents the most systematically security-conscious commercial agent framework to date — a ground-up redesign around isolation and policy enforcement as first-class primitives. We examine it as a case study in how the principles identified in §2 can be architecturally integrated.
+NVIDIA's NemoClaw, announced at GTC 2026 (16 March 2026), represents the most systematically security-conscious agent stack to reach open source to date — a reference architecture built around isolation and policy enforcement as first-class primitives. We examine it as a case study in how the principles identified in §2 can be architecturally integrated. This section reflects the repository state as of June 2026, a substantial update from the v1.0-era launch materials on which earlier drafts relied.
 
-**Important caveats:** NemoClaw has not yet seen wide production deployment, so its security claims remain largely unvalidated at scale. NVIDIA has a commercial interest in positioning NemoClaw as the "secure" alternative to open-source runtimes. The OpenShell architecture adds complexity that itself becomes attack surface — more code means more potential bugs. Our analysis is based on publicly available GTC 2026 materials and technical documentation.
+NemoClaw (`github.com/NVIDIA/NemoClaw`, Apache 2.0) is an open-source reference stack for running OpenClaw and compatible agents inside **NVIDIA OpenShell** sandboxes. It is positioned within the broader NVIDIA agent ecosystem — and should not be conflated with the separately-maintained NeMo-Agent-Toolkit, an agent-orchestration library that is a distinct product. The `nemoclaw` CLI orchestrates the OpenShell gateway, sandbox containers, local-inference provisioning, and network policy in a single onboarding sequence. OpenShell itself is maintained as a separate, Rust-dominant repository (`github.com/NVIDIA/OpenShell`) on its own versioned release track — v0.0.67 as of 22 June 2026.
+
+**Important caveats — stronger than at launch.** NemoClaw is explicitly **alpha software**. NemoClaw publishes no formal tagged releases (version tracking runs through GitHub Discussions, most recently a v0.0.60 stability round dated 5 June 2026); OpenShell's own documentation describes the runtime as a "proof-of-life" project in **"single-player mode,"** explicitly not architected for multi-tenant or hostile-boundary enterprise deployment. NVIDIA has a commercial interest in positioning the stack as the "secure" alternative to bare runtimes; the OpenShell layer adds complexity that is itself attack surface (see CVE-2026-24222, §5.7); and security claims remain largely unvalidated at production scale. Our analysis is based on the public repositories, NVIDIA developer documentation, and the April 2026 PSIRT bulletin.
 
 ### 5.2 OpenShell: Out-of-Process Policy Enforcement
 
 The conventional approach to agent guardrails implements checks _within_ the agent process. OpenClaw's in-process code checks command permissions before execution — effective absent attacks, but fundamentally weak: the constrained process also enforces the constraint. A manipulated agent may influence or bypass in-process checks.
 
-OpenShell places the policy engine in a **separate, privileged process**. The agent calls a restricted system call interface; the OpenShell kernel intercepts, evaluates against policy, and permits or denies. The agent cannot access or modify its own policy. This is architecturally analogous to the Linux kernel's relationship with user-space processes.
+OpenShell places the policy engine in a **separate, privileged process**. The agent calls a restricted system-call interface; the OpenShell gateway intercepts, evaluates against policy, and permits or denies. The agent cannot access or modify its own policy. This is architecturally analogous to the Linux kernel's relationship with user-space processes, and — unlike the "browser-tab" framing discussed below — it is substantiated by concrete kernel primitives. OpenShell enforces four policy domains:
 
-### 5.3 The Browser Tab Model
+1. **Filesystem policy** — read/write path restrictions, locked at sandbox creation.
+2. **Network egress policy** — deny-by-default outbound connections enforced via **Landlock, seccomp, and network namespaces**; hot-reloadable at runtime.
+3. **Process policy** — blocks privilege escalation and dangerous syscalls; locked at sandbox creation.
+4. **Inference-routing policy** — intercepts all model API calls and forwards them through a controlled backend; hot-reloadable.
 
-OpenShell's isolation draws an explicit analogy to web browsers. Each agent session runs in an isolated context — separate memory space, separate origin context — analogous to Chrome's process-per-tab architecture. Cross-session communication occurs only through audited channels mediated by the OpenShell kernel.
+A deny-all network baseline ships as the reference configuration, extended by operators through an approval flow. The release cadence shows active investment in this layer: credential rotation and AppArmor profile configuration (v0.0.57), JWT secret management (v0.0.56), high-availability multi-replica gateways (v0.0.62), and TLS certificate hot-reload (v0.0.65, 17 June 2026). This is a genuine deterministic control in the AEGIS sense — the constraint lives outside the constrained component.
 
-Practical implications: a prompt-injected session cannot access parallel sessions' state; malicious skills in one session cannot observe others; session tokens cannot be replayed across contexts.
+### 5.3 The "Browser-Tab Model" — Metaphor, Not Mechanism
 
-### 5.4 Privacy Router Architecture
+NVIDIA's materials describe session isolation using the phrase "browser-tab model." It is important to read this as an **architectural metaphor**, not a technical browser mechanism: there is no browser tab, extension API, or CDP-level component involved. The underlying implementation isolates each agent within a Linux container (Docker, Podman, MicroVM, or Kubernetes) subject to the four policy domains above; the sandbox can write only to `/sandbox` and `/tmp`, with system paths mounted read-only.
 
-NemoClaw implements three-tier data classification:
+The practical implications hold regardless of the metaphor: a prompt-injected session cannot reach parallel sessions' state; malicious skills in one session cannot observe others; session tokens cannot be replayed across contexts. The isolation boundary is the container, mediated by the gateway.
 
-- **Tier 1 (Local-Only):** PII, credentials, financial data → local models (Llama 3 via NVIDIA NIMs). No data leaves the network.
-- **Tier 2 (Trusted Third-Party):** Non-sensitive but capability-demanding → pre-approved API providers in a signed routing policy.
-- **Tier 3 (Public-OK):** Generic tasks → any available model.
+### 5.4 Privacy Router — Three Tiers, but Cost-Tolerance Routing
 
-The routing decision is made by the OpenShell policy engine (out-of-process). The agent cannot override it.
+NemoClaw's inference layer is a three-tier architecture, but the routing **mechanism** differs from the sensitivity-classification story told in launch coverage. The three tiers are **infrastructure tiers**, not data-sensitivity tiers:
+
+- **Tier 1 — Cloud-hosted:** third-party API endpoints (NVIDIA `build.nvidia.com`, OpenAI, Anthropic, Gemini, and compatible proxies), including frontier models such as Claude Sonnet and Nemotron Ultra.
+- **Tier 2 — Self-hosted / enterprise:** self-hosted NIM containers, NVIDIA AI Enterprise gateways, and local vLLM/SGLang/TRT-LLM or Ollama deployments (≈4B–120B), on operator-managed infrastructure.
+- **Tier 3 — NemoClaw-managed local inference (experimental):** provisioned local inference on DGX Spark/Station or generic Linux hosts via a managed vLLM path, gated behind `NEMOCLAW_EXPERIMENTAL=1`.
+
+The automated tier-selection is **cost-tolerance based**: operators set a numeric tolerance (0.0 = maximum accuracy, 1.0 = minimum cost; default 0.20) and the router picks within that quality-cost envelope. The widely repeated description of the router as _classifying query sensitivity to keep PII on local models_ reflects marketing materials and third-party write-ups — **it is not the mechanism in the product's own inference-configuration documentation as of June 2026.** This matters for §2.6: privacy routing remains a valid control _class_, but a deployment that needs PII-sensitivity routing must implement the classifier itself; NemoClaw does not provide it out of the box.
+
+The genuine security guarantee NemoClaw _does_ provide here is **inference-path isolation**: the sandboxed agent communicates only with a local proxy endpoint (`inference.local`) and never contacts a provider directly. OpenShell intercepts at that endpoint and forwards based on operator configuration, with credentials held on the host and never exposed to the sandbox. A compromised agent therefore cannot exfiltrate credentials to an arbitrary endpoint or bypass the routing policy by dialing a provider directly. The routing decision is made out-of-process; the agent cannot override it.
 
 ### 5.5 Comparative Analysis
 
@@ -575,7 +586,7 @@ To avoid overstating the case study, we compare the two architectures along dime
 | Privacy routing              | Manual (if any)                 | Automatic, policy-driven            |
 | Skill supply chain           | Community registry (unverified) | Signed manifests, hash verification |
 | Self-modification prevention | User-configured                 | Mandatory, OpenShell-enforced       |
-| Audit trail                  | Optional plugin                 | Mandatory, tamper-evident           |
+| Audit trail                  | Optional plugin                 | Mandatory log (format unspecified)  |
 
 **What TinkerClaw does well:** Flexible tool permissions, SOUL.md behavioral baseline, easily-fixed WebSocket configuration, skill installation control with discipline.
 
@@ -604,11 +615,85 @@ The most valuable lesson from NemoClaw is not any single product feature; it is 
 
 These lessons are applicable even in deployments that will never adopt NVIDIA's stack. A lightweight OpenClaw deployment can still emulate the principle through separate policy proxies, immutable manifests, host-level firewalls, and append-only audit logging.
 
+### 5.7 Confirmed, Hedged, and Unresolved — A June 2026 Scorecard
+
+Two further claims have since clarified. **Signed skill manifests are now shipped, not aspirational:** NVIDIA publishes a signed skill catalog (`github.com/NVIDIA/skills`) in which each skill carries an OMS detached signature (`skill.oms.sig`) verified against a root certificate (`nv-agent-root-cert.pem`), and the daily sync pipeline drops any skill missing its signature. This is a genuine artifact-integrity control — but only for NVIDIA-published skills; it does nothing for third-party or user-authored skills distributed outside the catalog. The **audit-trail** claim, by contrast, should be _downgraded_ in confidence: OpenShell logs allow/deny decisions and the log is described as tamper-evident and compliance-grade (one practitioner report claims it satisfied a SOC 2 auditor), but no public specification of storage format, retention, or the tamper-evidence mechanism exists as of June 2026. Treat it as functionally claimed, implementation-unverified.
+
+The principal unresolved risk is **prompt injection**, and it is structural. The April 2026 NVIDIA PSIRT bulletin disclosed **CVE-2026-24222** (CVSS 8.6, CWE-497): prompt-injected content in the sandbox-initialization path could cause the agent to read and exfiltrate host environment variables (all versions before v0.0.18 affected). The root cause is not a NemoClaw bug per se but a property OpenClaw inherits — the control plane and data plane share one channel, so the pipeline that carries operator instructions also processes untrusted external content (email, web pages, fetched documents). No runtime sandbox resolves a semantic-layer vulnerability of this kind. Two further residual risks are documented: **identity sprawl** (a compromised agent inherits every credential it holds, regardless of sandbox depth — cf. §3.4), and the **absence of a multi-tenant trust boundary** (NemoClaw is not architected to isolate mutually-untrusted users sharing a gateway).
+
+| Control claim                           | Shipped state (June 2026)                                          | Maturity                    |
+| --------------------------------------- | ------------------------------------------------------------------ | --------------------------- |
+| Out-of-process policy enforcement       | Confirmed: Landlock + seccomp + network namespaces                 | Alpha (OpenShell v0.0.67)   |
+| Session isolation ("browser-tab model") | Confirmed: container-level; no browser mechanism                   | Alpha                       |
+| Inference privacy routing               | Three-tier infra routing; cost-tolerance, _not_ PII-classification | Alpha / Tier-3 experimental |
+| Signed skill manifests                  | Confirmed: `skill.oms.sig` + root cert, enforced in sync pipeline  | Shipped                     |
+| Tamper-evident audit trail              | Functionally claimed; no public format/retention spec              | Unverified                  |
+| Multi-tenant boundary                   | Explicitly out of scope ("single-player mode")                     | Not shipped                 |
+| Prompt-injection prevention             | Structural gap; CVE-2026-24222 demonstrates exploitation           | Unresolved                  |
+
+The net assessment is unchanged in direction but sharper in detail: NemoClaw is a materially stronger posture than bare OpenClaw for **single-operator** deployments, primarily through genuine out-of-process kernel-layer enforcement and inference-path isolation (deterministic Class 2.1–2.4 controls). It is **not** a complete enterprise security framework — it is alpha, single-operator-scoped, and leaves prompt injection, credential sprawl, and multi-tenancy open. Architects should treat it as a sound runtime-containment layer and apply separate probabilistic and governance controls for the semantic- and identity-layer risks it does not address.
+
 ---
 
-## 6. AEGIS: A Defense-in-Depth Architecture
+## 6. The Broader Open-Source Agent-Security Landscape
 
-### 6.1 The Swiss Cheese Model
+AEGIS did not emerge in a vacuum. By mid-2026 a fast-specializing open-source ecosystem has formed around the same threat surface this paper targets — prompt injection and goal hijacking, skill supply-chain contamination, over-privileged execution, and missing runtime policy enforcement. This section surveys the principal projects, maps each onto the eight-class taxonomy (§2) and the AEGIS layers (§7), and asks whether the field is converging on a handful of mechanisms or genuinely innovating. The NemoClaw/OpenShell stack analyzed in §5 is one node in this landscape; here we situate it among its peers.
+
+### 6.1 The Supply-Chain Escalation and Cisco's DefenseClaw
+
+The Cisco Talos disclosure noted in §1.3 was an early signal. The threat soon escalated into a coordinated campaign — documented under the name **ClawHavoc** — in which on the order of a thousand malicious skills (independent counts range ≈900–1,184 across a handful of publisher accounts) were published to the community registry, using staged downloads, reverse shells, and credential-harvesting payloads (including the Atomic macOS Stealer) to exfiltrate browser credentials, keychains, SSH keys, and crypto-wallet data. The only gate at the time of the campaign was a registry account at least one week old — no static analysis, no signing, no review.
+
+Cisco's operational response is **DefenseClaw** (`github.com/cisco-ai-defense/defenseclaw`, Apache 2.0; announced 23 March 2026, generally available 27 March 2026; v0.7.2 as of June 2026). It is three cooperating components: a **Python operator CLI**; a **Go gateway sidecar** that proxies the LLM path (LiteLLM-compatible), runs an OPA/Rego policy engine, and writes an append-only SQLite audit store with optional Splunk HEC / OTLP forwarding; and an **OpenClaw TypeScript plugin** that intercepts tool calls via OpenClaw's hook system and routes each through the gateway for a pre-execution policy verdict. Its **admission control** runs five scanners — Skill Scanner, MCP Scanner, A2A (agent-to-agent) Scanner, CodeGuard static analysis (secrets, dangerous exec, unsafe deserialization, weak crypto, injection patterns, risky file access), and the proprietary ClawShield — before any component loads. Its **runtime guardrails** inspect prompts, completions, and tool-call results against YAML rule packs, with an optional LLM judge for semantic policies that deterministic rules cannot express. Block/allow changes propagate in under two seconds without an agent restart — closing the "clean-on-Tuesday, exfiltrating-on-Thursday" window that static pre-deployment scanning misses.
+
+In taxonomy terms, DefenseClaw is primarily a **Class 2.7 (audit and supply-chain)** and **Class 2.3 (programmatic guardrail)** control, with a probabilistic runtime-monitoring component. Crucially, it is a **bolt-on governance layer**: a plugin-plus-sidecar that wraps what OpenClaw admits and calls, but does not alter the execution environment or impose kernel-level constraints. This is the architectural inverse of NemoClaw/OpenShell (§5), which constrains the agent from _below_, at the OS layer. The two are complementary, not competing — DefenseClaw closes the supply-chain intake vector and supplies observability; OpenShell bounds the blast radius of anything that evades admission control. The AEGIS Swiss-cheese model (§7) accommodates both: DefenseClaw at the admission and audit slices, OpenShell at the isolation slices, neither sufficient alone. For the Tinkerer (Persona A) the five-minute DefenseClaw deployment is a meaningful supply-chain gain on its own; the Corporate persona (C) under SOX/GLBA audit needs both — DefenseClaw's policy-as-code audit trail for the governance-logging obligation, OpenShell's isolation for a defensible least-privilege standard.
+
+### 6.2 The OpenClaw-Specific Tier: A Third Project, SecureClaw
+
+A third OpenClaw-specific project, **SecureClaw** (Adversa AI; `github.com/adversa-ai/secureclaw`), makes one design choice worth singling out: it splits enforcement between a **plugin component that lives outside the agent's context window** and a skill component carrying ~15 behavioral rules. The out-of-band placement matters, because guardrails embedded _solely_ as a skill are themselves vulnerable to the prompt injection they exist to stop — an attacker who can inject can also instruct the model to ignore a skill-resident rule. SecureClaw runs ≈55 automated checks mapped to the OWASP Agentic Security Initiative Top 10, MITRE ATLAS, and CoSAI, with its skill held to ≈1,150 tokens to avoid context saturation, and is explicit that it makes injection "significantly harder," not solved — the honest framing AEGIS's probabilistic tier (§2.5) demands. Taken together the three OpenClaw-specific projects already instantiate the AEGIS geometry: NemoClaw the deterministic containment primitive, SecureClaw out-of-band audit and skill-layer rules, DefenseClaw dynamic admission control — distributed across three codebases with no integration contract between them.
+
+### 6.3 Cross-Runtime Guardrail Frameworks
+
+Several model- and runtime-agnostic frameworks apply to OpenClaw even though they were not built for it.
+
+**Meta LlamaFirewall** (May 2025; arXiv:2505.03574) is the most architecturally differentiated. Three components run in sequence: PromptGuard 2 (a fine-tuned classifier for direct and indirect injection), **Agent Alignment Checks** (a chain-of-thought auditor that inspects the _reasoning trace_ for evidence that an injected instruction has been silently accepted into the plan), and CodeShield (online static analysis of generated code). The reasoning-trace auditor addresses a blind spot in every message-level guardrail surveyed here: a subtle indirect injection can produce a compliant-looking response while corrupting the agent's internal plan.
+
+**Invariant Guardrails** (Invariant Labs) is a transparent proxy between the agent and its MCP servers or LLM provider that evaluates a Python-inspired rule language able to express **cross-tool dataflow constraints** — e.g. "raise if a `get_inbox` call is followed by a `send_email` to an external address." This if-this-then-that-across-tool-calls formalism is something single-prompt classifiers structurally cannot do, and it is the closest open-source analogue to a runtime _behavioral-invariant_ control.
+
+**NVIDIA NeMo Guardrails** provides content-safety, PII, jailbreak, and topic rails around the inference API (multilingual/multimodal, with enterprise AIDR integration) — strong at the I/O boundary but without cross-turn dataflow awareness. **Lakera Guard** (acquired by Check Point, Sept 2025) offers ≈98% direct/indirect injection detection at sub-50 ms, model-agnostic — but is now a commercial component, not OSS, and exposes no policy language or tool-call visibility. **Rebuff** combines heuristics, an LLM detector, a vector store of known attacks, and **canary tokens**; the project is research-grade as of mid-2026, but the canary-token primitive (a sentinel value that must never appear in output) is a lightweight deterministic detector any deployment can layer on.
+
+### 6.4 Execution Isolation and Supply-Chain Scanning
+
+The sandboxing layer has consolidated around hardware-virtualization and OS-isolation primitives. **E2B** (Apache 2.0) provides managed Firecracker microVM sandboxes for AI-generated code — ephemeral, per-agent, ~150 ms startup, credentials injected as env vars never written to disk. **Microsandbox** (Zerocore AI, Apache 2.0) uses full microVM isolation with, distinctively, **native MCP-server integration** — the sandbox is invocable directly as an agent tool, no orchestration shim — making it the most practical drop-in for OpenClaw-style deployments. **gVisor** interposes a user-space kernel; architecturally sound but a weaker guarantee than full virtualization for executing untrusted code. **Microsoft MXC** (Build 2026, 2 June 2026) is an OS-kernel-enforced composable sandbox spectrum with explicit agent-identity semantics — significant, but Windows/WSL-only and post-dating this paper's earlier revisions.
+
+On the scanning side: **NVIDIA Garak** (v0.15.0, May 2026) is the closest thing to a penetration-testing tool for LLM agents — 50+ probes including a new multi-turn GOAT probe and an Agent-breaker probe that tests tool-equipped agents, not just isolated model responses; it feeds other controls rather than enforcing policy. **Protect AI Guardian / Prisma AIRS** (Palo Alto Networks) scans serialized **model artifacts** for deserialization exploits and tampering — the model-loading equivalent of image signing, a layer distinct from skill supply-chain. **Microsoft's Agent Governance Toolkit** (MIT) is the most structurally complete OSS governance framework surveyed — a stateless policy engine (OPA Rego / Cedar), Ed25519 DID agent identity with trust scoring, and Ed25519 supply-chain signing — framework-agnostic and explicitly modeled on OS privilege rings and service-mesh identity, a close conceptual cousin of AEGIS. The **OWASP "Universal Skill Format"** proposal (draft v0.5, v1.0 targeted Q3 2026) would mandate Ed25519 signing, explicit permission allowlists, and content hashes per skill publication — certificate-transparency for skill registries, and the normative codification of the provenance controls AEGIS presupposes.
+
+### 6.5 Comparative Snapshot
+
+| Project                         | AEGIS layer / class                   | Core mechanism                                              | Type         | Novel vs. more-of-the-same           |
+| ------------------------------- | ------------------------------------- | ----------------------------------------------------------- | ------------ | ------------------------------------ |
+| **NemoClaw** (NVIDIA)           | Isolation + runtime policy (2.1–2.4)  | OpenShell container hardening, egress policy, CLI lifecycle | Det.         | Baseline the others build on         |
+| **DefenseClaw** (Cisco)         | Admission + audit (2.7, 2.3)          | 5-scanner engine + LLM-path proxy; <2 s dynamic revocation  | Det. + Prob. | Complementary governance layer       |
+| **SecureClaw** (Adversa)        | Out-of-band audit (2.5, 2.7)          | Plugin outside context window + skill rules; 55 checks      | Det. + Prob. | Novel: injection-resistant placement |
+| **LlamaFirewall** (Meta)        | Plan integrity (2.5)                  | PromptGuard 2 + reasoning-trace auditor + CodeShield        | Prob. + Det. | **Novel: reasoning-trace auditing**  |
+| **Invariant Guardrails**        | Behavioral invariants (2.3, 2.5)      | Proxy + cross-tool dataflow policy language                 | Det.         | **Novel: cross-tool dataflow rules** |
+| **NeMo Guardrails** (NVIDIA)    | I/O filtering (2.5)                   | Configurable rails around inference API                     | Prob. + Det. | More-of-the-same vs. Lakera          |
+| **Lakera Guard** (Check Point)  | I/O filtering (2.5)                   | Real-time classifier, 98%+, <50 ms                          | Prob.        | More-of-the-same; now commercial     |
+| **NVIDIA Garak**                | Red-teaming (pre-deploy)              | 50+ probes incl. agentic Agent-breaker                      | Det. (scan)  | Novel in category: agentic scanner   |
+| **Protect AI / Prisma AIRS**    | Model-artifact supply chain (2.7)     | Static scan of serialized model files                       | Det.         | Distinct layer; non-redundant        |
+| **E2B / Microsandbox**          | Execution isolation (2.2)             | Firecracker microVM; Microsandbox adds MCP-native           | Det.         | Microsandbox MCP integration novel   |
+| **MS Agent Governance Toolkit** | Full-stack governance (2.3, 2.7, 2.8) | OPA/Cedar engine, Ed25519 DID identity, signing             | Det.         | Novel: most complete OSS governance  |
+
+### 6.6 Verdict — Convergence, with Two Open Frontiers
+
+The ecosystem is **converging** on four foundational mechanism classes: (1) sandbox isolation at the hardware-virtualization or OS level; (2) out-of-process policy enforcement between the agent and its tools/inference; (3) supply-chain signing and admission control; and (4) runtime I/O classification. NemoClaw, DefenseClaw, and SecureClaw between them cover all four for OpenClaw — which is precisely the AEGIS defense-in-depth prescription, just split across three projects.
+
+Two higher-order frontiers remain only sparsely occupied. The first is **cross-turn, dataflow-aware behavioral invariants** — policies that span multiple sequential tool calls rather than judging each message in isolation (Invariant Guardrails; the OPA/Cedar rules in Microsoft's toolkit). The second is **reasoning-trace auditing** — inspecting the chain-of-thought for a silently-accepted injection before it reaches a tool call (Meta LlamaFirewall's Agent Alignment Checks is, as of this writing, the only OSS implementation). Both target failure modes that proxy-level guardrails cannot see, and — tellingly — **neither is yet integrated into the OpenClaw-specific tooling tier.** The practical implication for an AEGIS deployment is that defense-in-depth today requires _intentional composition_ across at least three of these projects, and that the two genuinely novel mechanisms are worth adopting from the cross-runtime tier rather than waiting for an OpenClaw-native equivalent.
+
+---
+
+## 7. AEGIS: A Defense-in-Depth Architecture
+
+### 7.1 The Swiss Cheese Model
 
 The Swiss cheese model (Reason, 1990) visualizes each security control as a slice of cheese with holes. Individually, each slice has weaknesses. Layered together, the holes rarely align. AEGIS proposes seven deterministic slices, with the probabilistic layer as a general-purpose filter rather than a counted control:
 
@@ -646,7 +731,7 @@ The Swiss cheese model (Reason, 1990) visualizes each security control as a slic
      DETECTED/BLOCKED
 ```
 
-### 6.2 Layer Interactions
+### 7.2 Layer Interactions
 
 Each layer compensates for adjacent weaknesses:
 
@@ -657,7 +742,7 @@ Each layer compensates for adjacent weaknesses:
 - **Privacy routing** depends on classification accuracy → **Audit logging** provides visibility into routing decisions for post-hoc review.
 - **Audit logging** is detection-only → **Self-modification prevention** ensures the audit mechanism can't be disabled before detection.
 
-### 6.3 Worked Attack Simulation
+### 7.3 Worked Attack Simulation
 
 To demonstrate AEGIS layer interactions concretely, we trace 10 representative attack scenarios through a Standard Configuration deployment:
 
@@ -680,7 +765,7 @@ To demonstrate AEGIS layer interactions concretely, we trace 10 representative a
 
 This simulation demonstrates two key properties: (a) no single layer is sufficient — each attack that passes one layer is caught by a subsequent one; (b) the architecture degrades gracefully — even when prevention fails, detection enables response.
 
-### 6.4 Reference Configurations
+### 7.4 Reference Configurations
 
 Before listing configurations, one principle deserves emphasis: **removing access is often more effective than hardening access**. When an asset does not need to be in the agent's reachable set, scope reduction should take priority over layered protection. This is especially important for Persona C, where several risks are better solved by access withdrawal than by compensating controls.
 
@@ -701,19 +786,92 @@ All of Standard, plus: 11. Out-of-process policy enforcement 12. Per-session iso
 
 ---
 
-## 7. Conclusions and Recommendations
+## 8. Mapping AEGIS to ISO/IEC Security Standards
 
-### 7.1 The Fundamental Insight
+A recurring practitioner question is where agent and LLM security "fits" for an organization that already holds a cybersecurity certification. This section maps AEGIS onto the ISO/IEC control vocabulary so that an ISO/IEC 27001-certified organization can see exactly which agent-security layers extend an existing control objective and which introduce a genuinely new one.
+
+### 8.1 Bridging the AEGIS Taxonomy to the ISO/IEC Vocabulary
+
+AEGIS stratifies its eight strategy classes along a deterministic–probabilistic axis. Deterministic controls (Classes 2.1–2.4) enforce invariants with binary, auditable outcomes regardless of model behavior; probabilistic controls (Classes 2.5–2.8) reduce likelihood or impact but cannot guarantee outcomes against all inputs. This maps naturally onto ISO/IEC 27002:2022's control _attributes_: deterministic controls correspond to _preventive_ and _detective_ attributes, probabilistic controls to _corrective_, _directive_, and _compensating_ ones. ISO/IEC 27001:2022 does not require controls to be purely technical — Clause 6.1.3 explicitly contemplates treating risk through a combination of organizational policy, technical enforcement, and continuous monitoring. AEGIS operationalizes exactly that layered treatment.
+
+### 8.2 The Eight Strategy Classes Mapped to Annex A and ISO 42001
+
+The table maps each AEGIS class to the most directly applicable ISO/IEC 27001:2022 Annex A controls (elaborated in ISO/IEC 27002:2022) and the corresponding ISO/IEC 42001:2023 (AI management system) control. The final column states whether the class is "new evidence for an existing objective" or a "genuinely new objective."
+
+| AEGIS Class                          | Primary ISO 27001:2022 Annex A controls                                                                                | ISO 42001:2023 control                                                            | Evidence nature                                                                                                                    |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **2.1 Filesystem ACLs**              | A.5.15 (access control); A.5.18 (access rights); A.8.2 (privileged access); A.8.3 (information access restriction)     | A.6.1.2 (least-privilege design)                                                  | Existing objective; new evidence (agent as an access-control principal)                                                            |
+| **2.2 Process Isolation**            | A.8.22 (segregation of networks); A.8.27 (secure architecture); A.8.31 (separation of environments)                    | A.6.2.5 (deployment isolation/rollback)                                           | Existing objective; new evidence (agent runtime as isolated execution context)                                                     |
+| **2.3 Programmatic Guardrails**      | A.8.26 (application security requirements); A.8.28 (secure coding); A.8.29 (security testing)                          | A.6.1.3, A.6.2.4 (responsible design; verification & validation)                  | Partially new: guardrails over non-deterministic outputs are a new audit artefact                                                  |
+| **2.4 Network Controls**             | A.8.20 (network security); A.8.21 (network services); A.8.22; A.8.23 (web filtering)                                   | A.6.2.6 (operation & monitoring)                                                  | Existing objective; new evidence (per-agent egress as a segment boundary)                                                          |
+| **2.5 Prompt-Level Rules**           | A.8.26 (input validation); A.5.7 (threat intelligence); A.5.37 (documented operating procedures)                       | A.6.1.2; A.9.1 (responsible/acceptable use)                                       | **Genuinely new objective**: no ISO 27001 control governs natural-language policy or prompt injection                              |
+| **2.6 Privacy Routing**              | A.5.34 (PII protection); A.8.11 (data masking); A.8.12 (DLP); ISO/IEC 27018 (PII in public cloud)                      | A.7.2, A.7.4 (data privacy & quality)                                             | Existing objective; new evidence (runtime PII classifier as a DLP enforcement point for model APIs)                                |
+| **2.7 Audit & Supply Chain**         | A.5.19, A.5.21, A.5.23 (supplier/ICT-supply-chain/cloud); A.8.15 (logging); A.8.16 (monitoring); ISO/IEC 27017 (cloud) | A.7.5 (data provenance); A.6.2.8 (event logs); A.10.3 (AI supplier due diligence) | Existing objective; **new evidence** (model provenance and training-data lineage as supply-chain artefacts under A.5.21)           |
+| **2.8 Self-Modification Prevention** | A.8.9 (configuration management); A.8.19 (software installation control); A.8.32 (change management)                   | A.6.2.3, A.6.2.7 (design record; technical documentation)                         | **Genuinely new objective**: no ISO 27001 control anticipates a component that tries to modify its own operating policy at runtime |
+
+### 8.3 What ISO/IEC 42001:2023 Adds That ISO/IEC 27001:2022 Does Not
+
+ISO/IEC 27001:2022 is a general-purpose ISMS standard designed for systems with deterministic, human-authored logic. An autonomous agent has four structural properties outside its control catalogue. **(1) The risk perimeter exceeds the CIA triad.** ISO 42001 introduces _fairness_, _transparency/explainability_, _safety_, and _societal impact_ as independently auditable categories (Annex A.5.4–A.5.5); bias drift in an agent making decisions about individuals is a compliance failure no asset- or event-based ISO 27005 threat scenario surfaces. **(2) The AI lifecycle needs dedicated governance.** ISO 27001 covers the SDLC (A.8.25–A.8.31), but model lifecycle — data acquisition, training, fine-tuning, evaluation, deployment, _drift monitoring_, re-evaluation, retirement — is not a subset of it; ISO 42001 A.6.2.6 requires drift detection and periodic re-evaluation, an obligation ISO 27001 (which presumes a deployed system behaves as specified) lacks. **(3) Transparency is formally required.** ISO 42001 mandates model cards, user disclosures, and decision logging (Annex A.8); ISO 27001 logs (A.8.15) but never requires _explaining a system's decisions_ to affected parties. **(4) AI-supplier due diligence exceeds SLAs.** ISO 42001 A.10.3 requires assessing a supplier's training-data provenance, bias-mitigation, and retraining cadence — so an organization using a foundation-model API must treat that model's training corpus as a supply-chain risk artefact, a requirement absent from ISO 27001.
+
+The relationship is therefore complementary, not substitutive: ISO/IEC 27001 establishes the organizational security baseline; ISO/IEC 42001 establishes the AI-specific governance layer; neither alone is sufficient for a mature agentic deployment. ISO/IEC 23894:2023 supplies the tactical AI risk-management procedures (as ISO/IEC 27005 does for 27001), and the NIST AI RMF (2023, with a 2024 Generative-AI profile) offers a voluntary cross-reference whose Govern/Map/Measure/Manage functions map onto the plan-do-check-act structure shared by all three ISO standards.
+
+### 8.4 Practical Guidance: New Evidence vs. New Objectives
+
+An organization holding ISO/IEC 27001:2022 already has a Statement of Applicability (SoA) and an evidence programme. The practical question is which AEGIS controls need only _new evidence_ and which need _new control objectives_. **New evidence for existing objectives:** most deterministic AEGIS controls (2.1–2.4, partly 2.7) satisfy existing Annex A objectives — what changes is the _form_ of evidence (the principal is an agent identity; the network segment is the per-agent egress policy; the log artefact includes tool-call receipts and model-turn records; the supply-chain artefact extends to model provenance). Amend the SoA commentary, brief the certification body at the next surveillance audit, and add the agentic runtime to the scope statement — no new controls formally required. **Genuinely new objectives:** Class 2.5 (prompt-level rules) and Class 2.8 (self-modification prevention) have no precedent in ISO 27001 — prompt injection is categorically different from the input-validation flaws A.8.26 addresses, and runtime self-modification has no SDLC or configuration-management analogue. Register these as additional controls in the SoA, justified by an ISO 42001 AI system impact assessment (AIIA), with corresponding policy, technical evidence (prompt-governance procedures, integrity checks), and testing artefacts (adversarial red-team results, self-modification-barrier test logs).
+
+For organizations not yet 42001-certified, the AIIA process is the most efficient mechanism to scope which AEGIS layers need new objectives; running ISO/IEC 23894's event-based risk identification against the agent's tool inventory and autonomy profile, then mapping results to both the 27001 SoA and the 42001 Annex A, avoids duplicating risk-assessment effort. The safety-capability-autonomy trilemma (§1.1) has a direct normative counterpart here: **ISO 27001 manages the safety floor; ISO 42001 manages the autonomy-induced risks a static floor cannot contain; ISO/IEC 23894 supplies the ongoing measurement to tell whether capability gains in successive model versions have outpaced the controls in place.**
+
+---
+
+## 9. Frontier APIs and the Fear of Training a Model of Your Business
+
+A persistent concern among organizations evaluating frontier APIs is that a provider such as Anthropic or OpenAI will ingest proprietary queries and documents, distil a model of the organization's business, and eventually leak it to competitors or use it to compete directly — whereas a local model or Copilot supposedly keeps data "within." This section weighs the empirical and contractual evidence, separates the genuine risk from the misconception, and ties the residual risk to the framework's controls.
+
+### 9.1 The Memorization Literature: What It Actually Shows
+
+The evidence for training-data leakage from LLMs is real but systematically misread in enterprise risk discussions. The key studies concern memorization of _public training-corpus text_, not re-use of API customer inputs.
+
+Carlini et al. (2021) established the foundational result: with enough queries and the right prompt strategy, an adversary can extract verbatim passages that appeared in a model's _pre-training corpus_. Nasr, Carlini et al. (2023, arXiv:2311.17035) scaled this to production: prompting ChatGPT to repeat a word indefinitely (the "divergence attack") broke its alignment-constrained mode and emitted pre-training text — previously public web and news content — at roughly 150× the normal rate, showing alignment suppresses but does not eliminate memorization. Cooper et al. (2025, arXiv:2505.12546) extended this to books: of 14 open-weight models across 200 titles, Llama 3.1 70B had memorized some so thoroughly — including _Harry Potter and the Sorcerer's Stone_ — that a few prompt tokens deterministically reproduced near-verbatim text. Analysis of the _New York Times v. OpenAI_ complaint (filed Dec 2023) found verbatim reproduction scales super-linearly above ~100B parameters and correlates with training-corpus duplication — but also that the plaintiff's attorneys needed tens of thousands of adversarial attempts to elicit the excerpts, and that both OpenAI and Anthropic deploy output filters to suppress verbatim reproduction even where the model has memorized the text.
+
+**The critical distinction.** In every case, what is extracted is material the model met during _pre-training on large public datasets_ — web text, digitized books, news archives. The threat model is (a) an adversary probing a deployed model to recover previously-public data it happens to have memorized, or (b) a rightsholder demonstrating training on their works. Neither describes a provider _training on a specific organization's API inputs_ and then leaking them to a competitor. The two risks are categorically different: one is a property of the pre-training corpus; the other would require a provider to deliberately or negligently repurpose live customer traffic — which, as the next section shows, the commercial contracts prohibit. The much-cited "it can complete Harry Potter" demonstration is evidence of the _former_, and tells you nothing about the latter.
+
+### 9.2 What the Contracts Actually Say
+
+**Anthropic.** The commercial terms for the Claude API, Team/Enterprise plans, and Claude via Amazon Bedrock or Google Vertex contain an explicit prohibition: Anthropic does not train models on customer content from these services. API inputs/outputs are retained for a short abuse-screening window (reduced to seven days in late 2025) and never used for training; organizations with qualifying use-cases may, subject to Anthropic approval, execute a Zero Data Retention (ZDR) addendum that discards prompts and outputs immediately after each request. Anthropic's commercial offering holds ISO/IEC 27001:2022, ISO/IEC 42001:2023, and SOC 2 Type II, with a DPA incorporated for GDPR/UK-GDPR and Standard Contractual Clauses for transfers. **The crucial caveat:** Anthropic's _consumer_ terms (updated August 2025) now permit training on Claude.ai consumer conversations unless the user opts out — this does **not** apply to commercial, API, or enterprise tiers. An employee using a personal Claude.ai account for work is thus governed by the consumer policy, not the enterprise prohibition.
+
+**OpenAI.** The API platform has not used inputs/outputs to train models by default since 1 March 2023; ChatGPT Enterprise, Teams, and the API are excluded from training by default. Default abuse logs are retained ~30 days; ZDR is available for eligible enterprise endpoints. The consumer/enterprise split mirrors Anthropic's.
+
+**Microsoft 365 Copilot.** Microsoft states that prompts, responses, and Microsoft Graph data are not used to train the foundation models behind M365 Copilot; requests route through Azure OpenAI (not the public service), customer content is not cached or shared with OpenAI, and EU tenants are covered by the EU Data Boundary. **A material subprocessor gap, however:** when Anthropic models are used within M365 Copilot experiences, they fall _outside_ the EU Data Boundary and in-country processing commitments — EU-regulated organizations relying on residency assurances must scrutinize this before enabling Anthropic-powered Copilot features.
+
+The pattern across all three is consistent: **enterprise/API tiers offer contractual no-training-by-default positions, DPAs, and optional zero-retention; consumer free tiers do not.** The "they will train a model of our business" fear is most accurately a **mis-tiering** risk — employees bypassing enterprise licensing for consumer products that carry weaker protections.
+
+### 9.3 Residual Risks the Contracts Cannot Eliminate
+
+Four residual risks remain regardless of tier. **Provider breach** — providers hold recent traffic during the retention window; an incident there exposes it. Inference-server vulnerabilities (vLLM, TensorRT-LLM, and others have had critical flaws) are not hypothetical. The privacy-routing layer (§2.6) — keeping the highest-sensitivity classes on local/on-prem inference — directly mitigates this. **Mid-flight interception** — TLS-inspected enterprise networks and boundary devices; certificate pinning and the gateway controls of §2.3 apply. **Mis-tiered usage** — a consumer account used for work; the governance controls of §2.7 and per-user agent profiles of §3.4 apply. **Subprocessor exposure** — both providers use infrastructure subprocessors; GDPR Art. 28(4) requires back-to-back obligations, so subprocessor lists should be reviewed periodically, especially for EEA transfers. In the event an exposure does occur, the incident-response checklist (§2.7.2) and the GDPR 72-hour notification obligation (§3.2.1) govern the response — this paper's earlier sections already answer "what happens in a leak."
+
+### 9.4 The Local-Model Alternative: A Different Threat Surface, Not a Smaller One
+
+Self-hosted inference eliminates training-data exfiltration for live traffic — there is no provider to train on prompts that never leave the premises, a genuine gain for highly regulated or genuinely-secret workloads. But it introduces an under-estimated risk surface. OWASP LLM03:2025 (Supply Chain) identifies **model-weight compromise** as a primary self-hosting threat: backdoored weights have been distributed through public repositories, and research shows as few as ~250 poisoned documents can implant a robust backdoor with no capability degradation that evaluation would catch. A compromised local model does not exfiltrate to a provider — but it may exfiltrate to an adversary, inject fabricated outputs downstream, or serve as a persistent foothold. This is precisely the residual gap in the worked simulation (§7.3, scenario 10): local inference is not equivalent to _secure_ inference. Local deployment must add weight-provenance verification (cryptographic signatures from the originating lab), integrity monitoring, and controlled fine-tuning pipelines as compensating controls.
+
+### 9.5 Summary Assessment
+
+The fear that frontier providers will train a proprietary model of an enterprise's business and weaponize or leak it is **not supported by current contractual or technical evidence for commercial tiers.** The strongest empirical argument for provider-side leakage — the memorization literature — concerns reproduction of _public pre-training text_, not re-use of enterprise API inputs; and the commercial no-training-by-default positions of Anthropic, OpenAI, and Microsoft are unambiguous, backed by DPAs, independent audits, and optional zero-retention. The genuine residual risks — provider breach in the retention window, mid-flight interception, employee mis-tiering, and subprocessor gaps (notably EU data residency) — are real, bounded, and addressable through the AEGIS stack (§2.6, §2.3, §2.7, §3.4). The local-model alternative _shifts_ the threat surface from training-data exfiltration to supply-chain and weight-integrity risk; it does not eliminate it.
+
+---
+
+## 10. Conclusions and Recommendations
+
+### 10.1 The Fundamental Insight
 
 **Probabilistic controls alone are insufficient for any deployment where failure consequences are materially significant.** Every behavioral rule, every system prompt, every SOUL.md guideline is a probabilistic control — effective absent adversarial pressure, unreliable under it. This does not make probabilistic controls useless; it makes them misclassified when operators treat them as if they were equivalent to sandboxing, policy separation, or filesystem denial.
 
 The incidents in §1.3 all involved deployments where consequences were significant but architecture was probabilistic. CVE-2026-25253 was a technical vulnerability, but 40,000 exposed instances represent a governance failure. The malicious skills attack succeeded because installation required no deterministic verification. The email deletion was the predictable result of granting irreversible capability to a system with only probabilistic constraints.
 
-### 7.2 Per-Persona Security Profiles
+### 10.2 Per-Persona Security Profiles
 
 **Persona A — Minimum Viable (15 min):** Bind to 127.0.0.1; AppArmor denying ~/.ssh and crypto seed files. Addresses the two highest-risk scenarios.
 
-**Persona A — Recommended:** Standard Configuration (§6.4). Docker container, workspace restriction, egress firewall, skill verification. Total: 2–3 hours.
+**Persona A — Recommended:** Standard Configuration (§7.4). Docker container, workspace restriction, egress firewall, skill verification. Total: 2–3 hours.
 
 **Persona B — Minimum Viable (3–4 hours):** All Persona A minimum plus: privacy routing for client directories to local model; per-session confirmation gate for email sends and file writes outside workspace; GDPR data inventory.
 
@@ -721,9 +879,9 @@ The incidents in §1.3 all involved deployments where consequences were signific
 
 **Persona C — No "Minimum Viable" exists.** The described configuration cannot be made acceptably secure through hardening alone. Minimum action: **restrict agent access scope** — remove corporate network shares, production credentials, privileged email — before any technical control. With properly scoped agent, apply Standard Configuration plus Enterprise egress firewall and audit logging.
 
-**Persona C — Enterprise-Grade:** Full Enterprise Configuration (§6.4) via formal change management. Document in IT asset register, include in penetration test scope, govern through standard access control review.
+**Persona C — Enterprise-Grade:** Full Enterprise Configuration (§7.4) via formal change management. Document in IT asset register, include in penetration test scope, govern through standard access control review.
 
-### 7.3 The Trilemma as a Design Tool
+### 10.3 The Trilemma as a Design Tool
 
 Every agent deployment implicitly chooses a position in the safety-capability-autonomy trilemma (§1.1). Our per-persona recommendations:
 
@@ -737,11 +895,11 @@ The agent era will not produce secure deployments by default. It will produce th
 
 ---
 
-## 8. Limitations
+## 11. Limitations
 
 This analysis has several important limitations:
 
-1. **No empirical validation.** AEGIS has not been tested against real attack campaigns. The worked simulation (§6.3) is a thought experiment based on known attack patterns, not an empirical measurement. Future work should include red-team exercises against AEGIS-configured deployments.
+1. **No empirical validation.** AEGIS has not been tested against real attack campaigns. The worked simulation (§7.3) is a thought experiment based on known attack patterns, not an empirical measurement. Future work should include red-team exercises against AEGIS-configured deployments.
 
 2. **Qualitative risk scores.** Despite our calibration methodology (§4), probability and severity ratings remain expert judgment. They have not been validated against a statistically significant incident database. Different experts would likely assign somewhat different scores.
 
@@ -757,7 +915,7 @@ This analysis has several important limitations:
 
 8. **Case-study dependence.** The NemoClaw discussion is illustrative, not determinative. The architecture is used to surface principles, not to crown a winner among runtimes.
 
-## 9. Future Work
+## 12. Future Work
 
 Several research directions would strengthen or falsify this framework:
 
@@ -765,12 +923,12 @@ Several research directions would strengthen or falsify this framework:
 2. **Longitudinal incident corpus.** Build a shared database of agent incidents and near misses so risk scoring can be calibrated with stronger empirical footing.
 3. **Control interaction measurement.** Quantify which layers reduce marginal risk most effectively for given personas, rather than assuming equal value across contexts.
 4. **Approval UX experiments.** Measure approval fatigue, cancellation rates, and false approvals under different permission-gate designs.
-5. **Model integrity verification.** Extend AEGIS to better cover the residual gap identified in §6.3: compromise of the local model or classifier itself.
+5. **Model integrity verification.** Extend AEGIS to better cover the residual gap identified in §7.3: compromise of the local model or classifier itself.
 6. **Cross-runtime validation.** Test whether the taxonomy transfers cleanly to LangChain-style, browser-native, mobile, and enterprise orchestrator deployments.
 
 ---
 
-## 10. Related Work
+## 13. Related Work
 
 **OWASP Top 10 for LLM Applications (2025)** provides a vulnerability-focused taxonomy for LLM-powered applications, covering prompt injection, insecure output handling, and training data poisoning. AEGIS differs in focusing specifically on _agentic_ systems (tool use, action execution, multi-step autonomy) rather than LLM applications generally, and in providing a layered defense architecture rather than a vulnerability list.
 
@@ -826,6 +984,32 @@ Yao, S., et al. (2023). "ReAct: Synergizing Reasoning and Acting in Language Mod
 
 Ziegler, D., et al. (2019). "Fine-Tuning Language Models from Human Preferences." _arXiv preprint arXiv:1909.08593_.
 
+Nasr, M., Carlini, N., et al. (2023). "Scalable Extraction of Training Data from (Production) Language Models." _arXiv:2311.17035_.
+
+Cooper, A. F., Lemley, M., et al. (2025). "Extracting Memorized Pre-Training Data from Open-Weight Language Models." _arXiv:2505.12546_.
+
+Anthropic. (2026). "Commercial Terms of Service" and "Trust Center." https://www.anthropic.com/legal/commercial-terms ; https://trust.anthropic.com/ (accessed June 2026).
+
+OpenAI. (2026). "Enterprise Privacy and API Data Usage Policies." https://openai.com/enterprise-privacy/ (accessed June 2026).
+
+Microsoft. (2026). "Data, Privacy, and Security for Microsoft 365 Copilot." _Microsoft Learn_ (accessed June 2026).
+
+OWASP Gen AI Security Project. (2025). "LLM03:2025 — Supply Chain." _OWASP Top 10 for LLM Applications_. https://genai.owasp.org/llmrisk/llm032025-supply-chain/
+
+Cisco. (2026). "Announcing DefenseClaw: Open-Source Security Governance for Agentic AI." _Cisco Blogs / Cisco AI Defense_, March 2026. https://github.com/cisco-ai-defense/defenseclaw
+
+NVIDIA. (2026). "NemoClaw and OpenShell." _GitHub_. https://github.com/NVIDIA/NemoClaw ; https://github.com/NVIDIA/OpenShell (accessed June 2026).
+
+Meta AI. (2025). "LlamaFirewall: A Guardrail Framework for AI Agents." _arXiv:2505.03574_.
+
+Invariant Labs. (2026). "Invariant Guardrails." _GitHub_. https://github.com/invariantlabs-ai/invariant
+
+ISO/IEC. (2022). _ISO/IEC 27001:2022 — Information security management systems — Requirements_; _ISO/IEC 27002:2022 — Information security controls_. International Organization for Standardization.
+
+ISO/IEC. (2023). _ISO/IEC 42001:2023 — Artificial intelligence — Management system_; _ISO/IEC 23894:2023 — Artificial intelligence — Guidance on risk management_.
+
+NIST. (2023). _AI Risk Management Framework (AI RMF 1.0)_; Generative AI Profile (2024). National Institute of Standards and Technology.
+
 ---
 
 ## Appendix A: AEGIS Quick-Reference Checklist
@@ -856,7 +1040,7 @@ Ziegler, D., et al. (2019). "Fine-Tuning Language Models from Human Preferences.
 
 - [ ] **BEFORE ANY HARDENING:** Remove agent access to corporate network shares, production credentials, privileged email
 - [ ] IT security review and documentation
-- [ ] Enterprise Configuration (§6.4) via formal change management
+- [ ] Enterprise Configuration (§7.4) via formal change management
 - [ ] Include in penetration test scope
 - [ ] Evaluate NemoClaw out-of-process enforcement adoption
 - [ ] Prompt injection awareness training for agent users
@@ -864,5 +1048,6 @@ Ziegler, D., et al. (2019). "Fine-Tuning Language Models from Human Preferences.
 ---
 
 _Paper J9 — AEGIS: A Multi-Layered Security Framework for Autonomous AI Agents_
-_Author: Oscar Serra | Date: 2026-03-17 | Version: 1.1_
+_Author: Oscar Serra | Date: 2026-06-23 | Version: 2.0_
 _Workspace: J-Series AI Research Papers | Series: J9_agent_security_
+_v2.0 changes: refreshed the NemoClaw/OpenShell case study to its June 2026 repository state; added §6 (broader open-source landscape, incl. Cisco DefenseClaw); added §8 (ISO/IEC 27001 & 42001 mapping); added §9 (frontier-API training-data evidence and contracts)._

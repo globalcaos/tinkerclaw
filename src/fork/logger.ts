@@ -53,7 +53,7 @@ const LEVEL_ORDER: Record<LogLevel, number> = {
 };
 
 export type LoggerOptions = {
-  /** Service tag attached to every record. Examples: `cc-bridge`, `gateway-probes`, `auto-reply`. */
+  /** Service tag attached to every record. Examples: `tinker-bridge`, `gateway-probes`, `auto-reply`. */
   service: string;
   /** Minimum level to emit. Default: `info`. */
   minLevel?: LogLevel;

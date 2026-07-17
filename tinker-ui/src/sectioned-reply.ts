@@ -118,7 +118,7 @@ export function scrubResidualSectionMarkers(text: string): string {
 }
 
 // Separate a leading run of inter-tool NARRATION from the answer body. With the
-// cc-bridge brain, Claude Code emits between-step narration ("let me check X",
+// tinker-bridge brain, Claude Code emits between-step narration ("let me check X",
 // "let me pull Y") as VISIBLE TEXT that fuses into the SAME block as the final
 // answer, so the narration shows at the top of the answer bubble. This pure,
 // dependency-free, content-local heuristic peels ONLY the leading run of complete
@@ -218,6 +218,67 @@ export function splitLeadingNarration(text: string): { narration: string; answer
   return { narration, answer };
 }
 
+// FORK 2026-06-24: split INTERLEAVED reasoning/working-notes from the final answer inside ONE
+// coalesced assistant blob (cc-bridge fuses a whole turn into one text block; splitLeadingNarration
+// only peeled a LEADING run). Two passes, both conservative — never blanks the answer, and never
+// hides substantive content unless a CONFIDENT conclusion anchor is present.
+const CONCLUSION_ANCHOR_RES: RegExp[] = [
+  /(?:^|\n)#{1,4}\s+\S/, // markdown heading
+  /(?:^|\n)\s*\d+[.)]\s+\S/, // numbered list item
+  /(?:^|\n)---+\s*(?:\n|$)/, // horizontal rule
+  /(?:^|\n)\s*\*\*[A-Z][^*\n]{1,40}:\*\*/, // **Bold label:** line
+  /(?:^|\n)\s*(?:bottom line|in short|to sum up|in summary|recommendation|tl;dr)\b/i, // recap phrase
+];
+
+function findConclusionAnchor(text: string): number {
+  // The conclusion BEGINS at its anchor, so among anchors in the back half we want the
+  // EARLIEST one (e.g. a numbered list folds at item "1.", not the last item). Requiring
+  // the anchor to sit past the midpoint keeps an early heading/list from swallowing the
+  // whole turn while still capturing a genuine concluding section.
+  const half = Math.floor(text.length / 2);
+  let best = -1;
+  for (const re of CONCLUSION_ANCHOR_RES) {
+    const g = new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g");
+    let m: RegExpExecArray | null;
+    while ((m = g.exec(text))) {
+      const pos = m[0][0] === "\n" ? m.index + 1 : m.index;
+      if (pos >= half && (best === -1 || pos < best)) best = pos;
+      if (m.index === g.lastIndex) g.lastIndex++;
+    }
+  }
+  return best;
+}
+
+export function splitReasoningFromAnswer(text: string): { reasoning: string; answer: string } {
+  if (!text || !text.trim()) {
+    return { reasoning: "", answer: text };
+  }
+  const anchor = findConclusionAnchor(text);
+  if (anchor > 0) {
+    const head = text.slice(0, anchor).trim();
+    const tail = text.slice(anchor).trim();
+    if (tail) {
+      return { reasoning: head, answer: scrubResidualSectionMarkers(tail) };
+    }
+  }
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const narration: string[] = [];
+  const answer: string[] = [];
+  for (const s of sentences) {
+    (isNarrationSentence(s) ? narration : answer).push(s);
+  }
+  if (answer.length === 0) {
+    return { reasoning: "", answer: text };
+  }
+  if (narration.length === 0) {
+    return { reasoning: "", answer: text };
+  }
+  return {
+    reasoning: narration.join(" ").trim(),
+    answer: scrubResidualSectionMarkers(answer.join(" ").trim()),
+  };
+}
+
 // Render a split reply into HTML. `md` (markdown→HTML) and `esc` (HTML-escape)
 // are injected so this module stays free of the DOM/markdown-it dependencies in
 // app.ts and remains unit-testable.
@@ -234,17 +295,32 @@ export function renderSectionedReply(
 ): string {
   let h = "";
   // Pre-marker narration (sec.other) PLUS any leading inter-tool narration peeled
-  // off the answer body itself (cc-bridge emits "let me check X" between steps as
+  // off the answer body itself (tinker-bridge emits "let me check X" between steps as
   // visible text fused into the same block as the final answer) are surfaced in a
   // collapsed Commentary block ABOVE the answer bubble — not folded inline. The
   // retired 🧠 AMYGDALA section is gone; this is a plain reasoning-style surface,
   // never a fabricated amygdala block.
-  const peel = sec.answer ? splitLeadingNarration(sec.answer) : { narration: "", answer: "" };
-  const leadingNarration = [sec.other, peel.narration].filter(Boolean).join("\n\n");
-  // Answer body: the de-narrated answer when an ANSWER marker exists; else, when
-  // there is no answer but a fractal, keep sec.other as the body (unchanged
-  // fractal-only behaviour); else undefined.
-  const answerBody = sec.answer ? peel.answer : sec.other && sec.fractal ? sec.other : undefined;
+  // When sec.answer exists: peel leading narration from the answer body.
+  // When sec.answer absent: sec.other IS the answer body — peel narration from it so
+  // "let me X" sentences go into Commentary rather than inflating the answer div.
+  // Do NOT include sec.other directly in leadingNarration: that was the old double-render
+  // bug (sec.other appeared in Commentary AND in answerBody simultaneously).
+  const peel = sec.answer
+    ? splitLeadingNarration(sec.answer)
+    : sec.other
+      ? splitLeadingNarration(sec.other)
+      : { narration: "", answer: "" };
+  const leadingNarration = sec.answer
+    ? [sec.other, peel.narration].filter(Boolean).join("\n\n")
+    : peel.narration;
+  // Answer body: de-narrated text in both cases. Fallback to sec.other only if
+  // splitLeadingNarration returned empty answer (its all-narration guard prevents this
+  // in practice, but it is a safety net against blanking the answer).
+  const answerBody = sec.answer
+    ? peel.answer
+    : sec.other && sec.fractal
+      ? peel.answer || sec.other
+      : undefined;
   if (leadingNarration) {
     h +=
       `<details class="reasoning-group narration-details">` +

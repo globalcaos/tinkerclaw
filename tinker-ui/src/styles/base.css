@@ -752,6 +752,29 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.3);
   color: #f87171;
 }
+/* FORK: hover-revealed stop link on retry/overload bubbles + active-countdown pulse */
+.msg-overload-bubble .retry-stop-link {
+  display: none;
+  margin-left: 8px;
+  font-size: 0.9em;
+  text-decoration: underline;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.msg-overload-bubble:hover .retry-stop-link {
+  display: inline;
+}
+.msg-overload-bubble .retry-stop-link:hover {
+  color: #fbbf24;
+  opacity: 1;
+}
+.msg-overload-bubble.retrying {
+  animation: retryPulse 2s ease-in-out infinite;
+}
+@keyframes retryPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
 
 /* FORK 2026-04-18: user bubble with collapsible full-prompt toggle. */
 .msg.msg-user-with-prompt {
@@ -2037,6 +2060,11 @@ code.fs-link.fs-link-error {
 }
 .budget-panel-wrapper .rpanel-body {
   overflow-y: auto;
+  /* FORK 2026-06-19: clip horizontal overflow — the full-width model/effort slider
+     rows (width:100%, zero horizontal padding to align with the old seismograph)
+     overflowed the padded body by a hair and raised a stray left-right scrollbar
+     under the model slider once the EEG moved to its own panel (the owner). */
+  overflow-x: hidden;
   flex: 1;
 }
 .budget-section {
@@ -2202,8 +2230,11 @@ code.fs-link.fs-link-error {
   margin-top: 0;
 }
 .model-group-body {
+  /* FORK 2026-07-10: 5 columns — name | tokens | bars | cost | count. The
+     token-count column (added 07-09) was a 5th item in a 4-col subgrid,
+     which shoved the usage bars one column right. */
   display: grid;
-  grid-template-columns: minmax(0, auto) 1fr auto auto;
+  grid-template-columns: minmax(0, auto) auto 1fr auto auto;
   gap: 2px 0;
 }
 .model-row {
@@ -3303,6 +3334,10 @@ code.fs-link.fs-link-error {
   opacity: 0.7;
 }
 
+/* FORK 2026-06-24 — Clone tab: the doubled leading icon now lives in the tab's title string itself
+   (see cloneTab in app.ts), so the old `.tab-clone-badge` / `.tab.tab-clone` overlap rules were
+   retired — the icon is duplicated as real editable title text, not a separate CSS badge. */
+
 /* FORK: Queued message styling */
 .msg.msg-queued {
   opacity: 0.45;
@@ -3390,6 +3425,20 @@ code.fs-link.fs-link-error {
   border-radius: 8px;
   font-size: 11px;
   color: #9a8e7a;
+}
+.recipe-subdiv-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--cat-color);
+  opacity: 0.75;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin: 8px 0 4px 2px;
+  padding-left: 8px;
+  border-left: 2px solid var(--cat-color);
+}
+.recipe-subdiv-label:first-child {
+  margin-top: 0;
 }
 .recipe-card {
   background: #2a2318;
@@ -5937,6 +5986,22 @@ code.fs-link.fs-link-error {
   text-decoration: underline;
   opacity: 0.85;
 }
+/* FORK 2026-06-24 (bible §5.8k) — ⓘ "learn more" chip linking a UI surface to its
+   thetinkerzone.com paper/explainer. Muted by default, warms on hover; sized down so
+   it reads as an annotation, not a control. */
+.rpanel-doc-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 11px;
+  opacity: 0.55;
+  margin-left: 2px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.rpanel-doc-link:hover {
+  color: #d4a574;
+  opacity: 1;
+}
 
 /* ── FORK 2026-05-30: collapsible recipe DECISION TRAIL (mirrors chat
    compaction): a compact one-line summary that expands the trail on click. ── */
@@ -6115,7 +6180,7 @@ code.fs-link.fs-link-error {
 /* FORK 2026-06-07: AGENT bubble. A Claude-Code agent / Overseer keep-going prompt that is
    DRIVING Jarvis renders right-anchored like a user message (it inherits align-self:flex-end
    from .msg.user) but in ELECTRIC BLUE instead of the moss-green user colour, so it reads as
-   an external pilot steering Jarvis rather than Oscar speaking. */
+   an external pilot steering Jarvis rather than the owner speaking. */
 .msg.user.msg-agent {
   border: 1px solid #0a84ff;
   background: color-mix(in srgb, #0a84ff 14%, transparent);
@@ -6225,12 +6290,17 @@ code.fs-link.fs-link-error {
   -webkit-appearance: none;
   -moz-appearance: none;
   appearance: none;
-  /* span the full width of the (now vertical) slider row. */
+  /* span the (now vertical) slider row, inset by the tick pads below. */
   flex: 1 1 auto;
-  width: 100%;
+  width: auto;
   max-width: none;
   height: 14px;
-  margin: 0;
+  /* FORK 2026-06-25: inset the track so the thumb's travel matches the tick-label
+     x-range (eegStopLeftCss pads: 18px left / 14px right) minus the 11px thumb's
+     half-width (5.5px). The thumb now locks DIRECTLY over each stop label instead
+     of overshooting the ends by the native thumb inset (the owner 2026-06-25). Mirror
+     any change in .model-force-slider. */
+  margin: 0 8.5px 0 12.5px;
   background: transparent;
   cursor: pointer;
 }
@@ -6421,24 +6491,20 @@ code.fs-link.fs-link-error {
 }
 .eeg-paper {
   /* FORK 2026-06-13 (eeg): span ALL grid columns so the paper uses the FULL
-     panel width (Oscar 2026-06-13) — without this it was trapped in the narrow
+     panel width (the owner 2026-06-13) — without this it was trapped in the narrow
      first track of .model-group-body's grid. */
   grid-column: 1 / -1;
   width: 100%;
-  /* FORK 2026-06-13 (eeg): FIXED height (~ as tall as the amygdala panel, Oscar
+  /* FORK 2026-06-13 (eeg): FIXED height (~ as tall as the amygdala panel, the owner
      2026-06-13) so the paper is a stable box that scrolls internally — not a
      region that grows/shrinks with content. */
   height: 260px;
   overflow-y: auto;
   overflow-x: hidden;
+  /* FORK 2026-06-20 (the owner): the old fixed 24px repeating-linear-gradient grid was
+     decorative and meaningless. The ruled paper is now drawn IN the svg at a €1 pitch
+     (.eeg-eurogrid) so each line means one euro and scales with the trace + zoom. */
   background-color: var(--surface);
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent 23px,
-    rgba(232, 224, 212, 0.06) 23px,
-    rgba(232, 224, 212, 0.06) 24px
-  );
   border: 1px solid var(--border);
   border-radius: 4px; /* matches sibling .model-row cards */
   /* scrollbar treatment mirrors .context-timeline (panel convention). */
@@ -6468,9 +6534,61 @@ code.fs-link.fs-link-error {
     opacity 0.12s,
     stroke-width 0.12s;
 }
-.eeg-marker:hover {
+/* FORK 2026-06-25 (the owner): hover does ONLY a colour change — the boundary rule turns
+   BRIGHT yellow. Scoped to the <line> element ONLY: the full-width hit-target <rect>
+   shares class="eeg-marker", so an unscoped stroke outlined it = a yellow rectangle. */
+line.eeg-marker:hover {
+  stroke: #ffe600;
   opacity: 1;
-  stroke-width: 2.5;
+}
+
+/* FORK 2026-06-19: each PROMPT is a full-width clickable/hoverable band; hovering it
+   (or the trunk line) highlights the whole prompt's line + fills the band faintly so
+   it is obvious what a click will jump to. */
+.eeg-promptzone {
+  cursor: pointer;
+}
+.eeg-main {
+  cursor: pointer;
+}
+/* FORK 2026-06-25 (the owner): the prompt-band fill and trunk-brighten accents are REMOVED
+   — on hover they rendered as two parallel accent lines bracketing the boundary. Hover
+   now changes ONLY the boundary rule's colour (below). */
+/* FORK 2026-06-25 (the owner): hovering a turn-boundary does ONLY a colour change — the
+   boundary rule turns BRIGHT yellow. No accent bands, no width/opacity/glow. */
+line.eeg-marker.eeg-hl {
+  stroke: #ffe600;
+  opacity: 1;
+}
+
+/* FORK 2026-06-22 (the owner): the prompt-text hover overlay (replaces the native, slow,
+   unstyleable SVG <title>). A floating bubble pinned to the cursor over the EEG. */
+.eeg-prompt-overlay {
+  position: fixed;
+  z-index: 9999;
+  display: none;
+  max-width: 360px;
+  max-height: 240px;
+  overflow: hidden;
+  padding: 8px 10px;
+  border: 1px solid #ffd23f;
+  border-radius: 6px;
+  background: rgba(18, 22, 28, 0.97);
+  color: var(--text, #e8e0d4);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+
+/* FORK 2026-06-20 (the owner): €1 ruler lines + their gutter labels — pure background,
+   never intercept the prompt-zone / marker clicks painted above them. */
+.eeg-eurogrid,
+.eeg-eurolabel {
+  pointer-events: none;
+  user-select: none;
 }
 
 /* ×N concurrency badge (SVG <text>) beside a turn marker. */
@@ -6537,10 +6655,12 @@ code.fs-link.fs-link-error {
   -moz-appearance: none;
   appearance: none;
   flex: 1 1 auto;
-  width: 100%;
+  width: auto;
   max-width: none;
   height: 14px;
-  margin: 0;
+  /* FORK 2026-06-25: mirror .model-think-slider — inset the track so the thumb
+     locks over each tick label (pads 18px/14px minus the 11px thumb half-width). */
+  margin: 0 8.5px 0 12.5px;
   background: transparent;
   cursor: pointer;
 }
@@ -6604,7 +6724,7 @@ code.fs-link.fs-link-error {
 }
 
 /* FORK 2026-06-13 (eeg): shared tick-label layer printed UNDER both sliders so
-   EVERY stop shows (Oscar's "every option written in the slider"); each label
+   EVERY stop shows (the owner's "every option written in the slider"); each label
    is absolutely positioned so its CENTER lands on the SAME x as the matching
    seismograph column (eegStopLeftCss → bible §5.8h invariant 2 alignment). */
 .model-think-slider-row,

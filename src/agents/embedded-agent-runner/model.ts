@@ -346,7 +346,7 @@ function resolveConfiguredProviderConfig(
   // openclaw.json config. Explicit values still win on a per-key basis
   // (the user's openclaw.json is authoritative), but keys the user hasn't
   // set fall through to whatever the provider plugin registered. The
-  // canonical case today is cc-bridge registering `timeoutSeconds: 600`
+  // canonical case today is tinker-bridge registering `timeoutSeconds: 600`
   // for `claude-code` so the LLM idle watchdog wraps with the wider
   // window without forcing every host to mirror the value in its config.
   const overlay = getPluginProviderConfigOverlay(provider);

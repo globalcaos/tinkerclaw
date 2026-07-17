@@ -505,11 +505,10 @@ export async function applySessionsPatchToStore(params: {
         catalog: thinkingCatalog,
       })
     ) {
-      if ("thinkingLevel" in patch) {
-        return invalid(
-          `thinkingLevel "${thinkingLevel}" is not supported for ${effectiveProvider}/${effectiveModel} (use ${formatThinkingLevels(effectiveProvider, effectiveModel, "|", thinkingCatalog)})`,
-        );
-      }
+      // An unsupported persisted thinkingLevel (e.g. a slider-pinned `max` carried
+      // onto a gpt-5.5 tab) is CLAMPED to the nearest supported level rather than
+      // rejected, so the patch always succeeds. (Previously a `thinkingLevel in patch`
+      // reject failed the whole patch — see clamp-on-persist behavioral change.)
       next.thinkingLevel = resolveSupportedThinkingLevel({
         provider: effectiveProvider,
         model: effectiveModel,

@@ -1867,7 +1867,7 @@ export async function runEmbeddedAttempt(
         modelRequestTimeoutMs: (params.model as { requestTimeoutMs?: number }).requestTimeoutMs,
       });
       // FORK 2026-05-10 DIAGNOSTIC (temp): log the resolved idle timeout so we
-      // can confirm whether the cc-bridge catalog's `timeoutSeconds: 600`
+      // can confirm whether the tinker-bridge catalog's `timeoutSeconds: 600`
       // actually reaches `params.model.requestTimeoutMs`. The bible §11 entry
       // (2026-05-05) says it does, but the journal at 16:55 + 16:59 shows the
       // watchdog firing at 138s/279s on heavy turns — possible regression.
@@ -1899,12 +1899,12 @@ export async function runEmbeddedAttempt(
 
       // FORK 2026-04-24 (originally added in 2ad1400a0d, lost in an upstream
       // merge, restored 2026-05-09): pipe runId + sessionKey + sessionId through
-      // streamFn options so cc-bridge (and any other provider that wants live
+      // streamFn options so tinker-bridge (and any other provider that wants live
       // tool-event attribution) can map the stream to the right run. pi-ai's
       // SimpleStreamOptions doesn't carry these fields, so we smuggle them in
       // as `__openclaw*` underscore-prefixed names — fork-owned, no collision
       // with real pi-ai fields. Providers that don't care simply ignore them.
-      // Symptom of the previous wipe: cc-bridge's `runId` was always undefined
+      // Symptom of the previous wipe: tinker-bridge's `runId` was always undefined
       // (stream.ts:170/204 early-returned on every emitToolStart/Result call),
       // so claude-cli tool calls were invisible in the Tinker UI even though
       // the tool-event consumer at app.ts:1501 was wired correctly.
@@ -3435,6 +3435,33 @@ export async function runEmbeddedAttempt(
         promptError: promptError ? formatErrorMessage(promptError) : undefined,
       });
       trajectoryEndRecorded = true;
+
+      // FORK: fire-and-forget post-turn processing (context anatomy, ENGRAM, SyncScore,
+      // observations). Re-wired 2026-06-19: an upstream merge stripped this call AND
+      // apply-fork-wiring.mjs's anchor had gone stale (the return object gained
+      // replayMetadata/itemLifecycle/setTerminalLifecycleMeta BEFORE `aborted,`, so the
+      // old `return {\n aborted,` regex no longer matched), so the self-healing merge
+      // driver silently no-op'd it → anatomy DB dead since 2026-05-25 → EEG trace empty.
+      // runId is REQUIRED by PostTurnParams; the historical injection omitted it.
+      _forkAttemptHooks
+        .onTurnComplete({
+          runId: params.runId,
+          sessionManager: activeSession as unknown as SessionManager,
+          sessionKey: params.sessionKey,
+          messagesSnapshot,
+          assistantTexts,
+          systemPromptReport,
+          provider: params.provider,
+          modelId: params.modelId,
+          contextWindowTokens:
+            params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
+          getCompactionCount,
+          getUsageTotals,
+          log,
+        })
+        .catch((err) => {
+          log.warn(`fork onTurnComplete failed: ${String(err)}`);
+        });
 
       return {
         replayMetadata,

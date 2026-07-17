@@ -24,11 +24,17 @@ import { getDb } from "../store/db.js";
 import { addMetric, recordObservation } from "../store/observations.js";
 import { ga4Sessions } from "./ga4.js";
 import { githubTrafficDaily } from "./github-traffic.js";
-import { githubForks, githubOpenIssues, githubStargazers } from "./github.js";
-import { localStateValue } from "./localstate.js";
+import {
+  fetchStargazerTimeline,
+  githubForks,
+  githubOpenIssues,
+  githubStargazers,
+} from "./github.js";
+import { localStateValue, MissingLocalStateKeyError } from "./localstate.js";
 import { moltbookKarma, moltbookPosts, moltbookComments, moltbookFollowers } from "./moltbook.js";
 import { npmDownloadsMonthly, npmDownloadsWeekly } from "./npm.js";
 import { demoWebsiteVisits } from "./website.js";
+import { youtubeChannelStats } from "./youtube.js";
 
 export type PollerFn = (args: string) => Promise<number>;
 
@@ -54,9 +60,15 @@ export const POLLER_REGISTRY: Map<string, PollerFn> = new Map([
   // Generic: read a numeric value out of an online-presence state JSON the
   // crons already maintain (fork traffic, clawhub installs, inbound links).
   ["localstate", localStateValue],
+  // FORK 2026-06-14 — YouTube channel public stats (Data API key, no expiry).
+  ["youtube.channelStats", youtubeChannelStats],
 ]);
 
-type Logger = { info: (msg: string) => void; warn?: (msg: string) => void };
+type Logger = {
+  info: (msg: string) => void;
+  warn?: (msg: string) => void;
+  debug?: (msg: string) => void;
+};
 
 type SeedSpec = {
   id: string;
@@ -76,12 +88,19 @@ type SeedSpec = {
 // finer (1h) so the demo graph fills out in minutes rather than days.
 const SEED_KPIS: SeedSpec[] = [
   {
-    id: "kpi.github.stars.tinkerclaw",
+    // FORK 2026-06-26 — promoted from a single-stat KPI to a real graph (its own
+    // "GitHub stars" card in the Pulse Graphs section). The curve is seeded from
+    // the exact GitHub stargazer timeline by backfillStargazerTimeline(): an
+    // origin dot at value 0 on the repo's created_at, plus one cumulative point
+    // per star gained. The 6h poller keeps appending the live tip forward.
+    // Group "stars" (id segment[1]) keeps it off the github-traffic card so the
+    // 0–N star scale isn't crushed by cumulative views/clones.
+    id: "graph.stars.tinkerclaw",
     source: "github.stargazers:globalcaos/tinkerclaw",
     cadence_seconds: 21600,
-    template: "single-stat",
+    template: "sparkline",
   },
-  // FORK 2026-06-04 — forks + open-issues KPIs removed at Oscar's request.
+  // FORK 2026-06-04 — forks + open-issues KPIs removed at the owner's request.
   // FORK 2026-05-13 — placeholder website-visits graph. `demo.website.visits`
   // produces deterministic-noise values until the user names their analytics
   // provider; swap the source string to e.g. "plausible.visitors:tinkerzone.com"
@@ -90,6 +109,16 @@ const SEED_KPIS: SeedSpec[] = [
     // FORK 2026-06-05 — real GA4 sessions for thetinkerzone.com (property 529436250).
     id: "graph.website.visits.daily",
     source: "ga4.sessions:529436250",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  // FORK 2026-06-14 — sprintpaper.com visits (rendered in colibri-logo green #b6f02c,
+  // cumulative — see SERIES_STYLE in tinker-ui/src/app.ts). LIVE: the GA4 service account
+  // was granted Viewer on the SprintPaper.com property (541325538, account 5961104,
+  // measurement G-M0HB6LJB33) on 2026-06-14.
+  {
+    id: "graph.website.visits.sprintpaper",
+    source: "ga4.sessions:541325538",
     cadence_seconds: 86400,
     template: "sparkline",
   },
@@ -137,9 +166,108 @@ const SEED_KPIS: SeedSpec[] = [
   // FORK 2026-06-14 — read tracked_slugs_state (the LIVE exact block the 08:00 cron
   // refreshes: jarvis-voice 4916, growing daily) NOT our_skills (a stale rounded block
   // frozen at 4800 for a week → the graph read 4.8k while clawhub.ai showed 4.9k).
+  // FORK 2026-06-14 — ClawHub VIEWS (downloads, a fetch/vanity counter) — one series per skill.
   {
     id: "graph.clawhub.jarvis-voice",
     source: "localstate:engagement-state.json#clawhub.tracked_slugs_state.jarvis-voice.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.whatsapp-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.whatsapp-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.youtube-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.youtube-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.chatgpt-exporter-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.chatgpt-exporter-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.token-panel-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.token-panel-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.shell-security-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.shell-security-ultimate.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhub.outlook-hack",
+    source: "localstate:engagement-state.json#clawhub.tracked_slugs_state.outlook-hack.downloads",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  // FORK 2026-06-14 — ClawHub INSTALLS (the honest adoption count) — one series per skill.
+  {
+    id: "graph.clawhubinstalls.jarvis-voice",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.jarvis-voice.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.whatsapp-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.whatsapp-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.youtube-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.youtube-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.chatgpt-exporter-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.chatgpt-exporter-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.token-panel-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.token-panel-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.shell-security-ultimate",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.shell-security-ultimate.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.outlook-hack",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.outlook-hack.installsAllTime",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.clawhubinstalls.teams-hack",
+    source:
+      "localstate:engagement-state.json#clawhub.tracked_slugs_state.teams-hack.installsAllTime",
     cadence_seconds: 86400,
     template: "sparkline",
   },
@@ -184,10 +312,44 @@ const SEED_KPIS: SeedSpec[] = [
     cadence_seconds: 86400,
     template: "sparkline",
   },
+  // FORK 2026-06-14 — YouTube: thetinkerzone channel (UCh_am-9EG0_a-DBronOMC4w)
+  // public stats via Data API key. Absolute monotonic totals (growing line, NOT
+  // cumulative). Subs + total views + video count, one chart at the end.
+  {
+    id: "graph.youtube.subscribers",
+    source: "youtube.channelStats:subscribers:UCh_am-9EG0_a-DBronOMC4w",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.youtube.views",
+    source: "youtube.channelStats:views:UCh_am-9EG0_a-DBronOMC4w",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
+  {
+    id: "graph.youtube.videos",
+    source: "youtube.channelStats:videos:UCh_am-9EG0_a-DBronOMC4w",
+    cadence_seconds: 86400,
+    template: "sparkline",
+  },
 ];
 
 function seedKpisIfMissing(cfg: ControlPanelResolvedConfig, log: Logger): void {
   const db = getDb(cfg);
+  // FORK 2026-06-26 — one-time migration: the stars metric moved from the
+  // single-stat KPI id `kpi.github.stars.tinkerclaw` to the graph id
+  // `graph.stars.tinkerclaw`. Drop the old definition (and its sparse poll
+  // history) so the stale KPI row stops rendering; the new graph rebuilds the
+  // true curve from GitHub via backfillStargazerTimeline().
+  const oldStars = db
+    .prepare(`SELECT 1 FROM metric_definition WHERE id = ?`)
+    .get("kpi.github.stars.tinkerclaw");
+  if (oldStars) {
+    db.prepare(`DELETE FROM observation WHERE metric_id = ?`).run("kpi.github.stars.tinkerclaw");
+    db.prepare(`DELETE FROM metric_definition WHERE id = ?`).run("kpi.github.stars.tinkerclaw");
+    log.info(`[control-panel] migrated kpi.github.stars.tinkerclaw → graph.stars.tinkerclaw`);
+  }
   for (const spec of SEED_KPIS) {
     const existing = db
       .prepare(`SELECT template FROM metric_definition WHERE id = ?`)
@@ -273,6 +435,13 @@ async function pollOne(
     log.info(`[control-panel] polled ${metric.id} → ${value}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (err instanceof MissingLocalStateKeyError) {
+      // Optional metric not present in the localstate file this cycle — quiet
+      // skip (debug, never per-cycle error/warn spam). Series with data are
+      // unaffected; a real failure (bad file, non-numeric value) still warns.
+      log.debug?.(`[control-panel] skip ${metric.id} (no data yet): ${msg}`);
+      return;
+    }
     (log.warn ?? log.info).call(log, `[control-panel] poll failed for ${metric.id}: ${msg}`);
   }
 }
@@ -301,6 +470,42 @@ export async function pollMetricNow(
   recordObservation(cfg, { metric_id: metricId, value, ts });
   log.info(`[control-panel] on-demand poll ${metricId} → ${value}`);
   return { value, ts };
+}
+
+/**
+ * FORK 2026-06-26 — seed the exact "GitHub stars" curve for the Pulse graph.
+ * Reconstructs the true series from GitHub: an origin dot (value 0) at the
+ * repo's created_at, then a cumulative point (1, 2, … N) at each stargazer's
+ * starred_at. Recorded at the EXACT event timestamps; ON CONFLICT(metric_id,
+ * ts) makes it idempotent, so re-running on each boot refreshes the curve and
+ * captures any new stars' precise timestamps without duplicating points. The
+ * live 6h poller still appends the `now` tip between boots. Best-effort: a
+ * GitHub hiccup logs and is retried on the next boot.
+ */
+async function backfillStargazerTimeline(
+  cfg: ControlPanelResolvedConfig,
+  log: Logger,
+): Promise<void> {
+  const metricId = "graph.stars.tinkerclaw";
+  const db = getDb(cfg);
+  const def = db.prepare(`SELECT source FROM metric_definition WHERE id = ?`).get(metricId) as
+    | { source: string }
+    | undefined;
+  if (!def) return; // seed hasn't run yet / metric removed
+  const { args } = splitSource(def.source);
+  try {
+    const { createdAtMs, starredAtMs } = await fetchStargazerTimeline(args);
+    recordObservation(cfg, { metric_id: metricId, value: 0, ts: createdAtMs });
+    starredAtMs.forEach((ts, i) => {
+      recordObservation(cfg, { metric_id: metricId, value: i + 1, ts });
+    });
+    log.info(
+      `[control-panel] backfilled ${metricId}: 0@created + ${starredAtMs.length} star points`,
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    (log.warn ?? log.info).call(log, `[control-panel] stargazer backfill failed: ${msg}`);
+  }
 }
 
 async function tick(
@@ -336,6 +541,9 @@ export function startPollerSubsystem(
     const msg = err instanceof Error ? err.message : String(err);
     (log.warn ?? log.info).call(log, `[control-panel] initial poll pass failed: ${msg}`);
   });
+  // FORK 2026-06-26 — rebuild the exact star-gain curve (origin dot + per-star
+  // points) on each boot; idempotent, non-blocking.
+  void backfillStargazerTimeline(cfg, log);
   const handle = setInterval(() => {
     void tick(cfg, log, { forceMissingOnly: false }).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);

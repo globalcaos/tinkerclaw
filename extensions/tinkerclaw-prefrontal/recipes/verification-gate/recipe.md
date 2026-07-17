@@ -7,6 +7,7 @@ version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
 category: "coding"
+subdivision: "review"
 tags: ["verify", "done", "complete", "finished", "ready to merge", "ship", "are you sure it works"]
 testedHarnesses: ["OpenClaw", "Claude Code"]
 authoredBy: "jarvis-on-the-fly"

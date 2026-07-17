@@ -37,6 +37,11 @@ export const ChatSendParamsSchema = Type.Object(
     sessionKey: ChatSendSessionKeyString,
     message: Type.String(),
     thinking: Type.Optional(Type.String()),
+    // Per-turn model force (bible §5.84 Drop 3). The webchat client (which cannot
+    // patch session metadata) re-sends its model pin on every chat.send; the
+    // gateway applies it by injecting a `/model <id>` directive. Absent = Auto
+    // (router/allocator picks). Mirrors the per-turn `thinking` param above.
+    model: Type.Optional(Type.String()),
     deliver: Type.Optional(Type.Boolean()),
     // When false, chat.send acks with a runId synchronously and returns
     // WITHOUT dispatching to the agent — no transcript writes, no
@@ -106,6 +111,18 @@ export const ChatEventSchema = Type.Object(
         Type.Literal("unknown"),
       ]),
     ),
+    // FORK 2026-06-24 (recoverable-error retry, spec Component 1): machine-readable
+    // signal for the Tinker client-side auto-retry controller. `reason` is the
+    // recoverability class derived at the failover layer (rate_limit / quota /
+    // overloaded / unavailable); `retryAfter` is the provider-supplied backoff in
+    // SECONDS (Retry-After header / 429 body) when derivable. Both optional and
+    // additive — the human `errorMessage` text remains the frontend fallback.
+    // NOTE: additionalProperties:false here means error-event producers (the emit
+    // sites in src/gateway/server-chat.ts emitChatFinal + src/gateway/server-methods/chat.ts
+    // broadcastChatError) MUST populate these for them to reach the UI; this schema
+    // change is the enabler, the producer wiring lands in a separate edit-unit.
+    reason: Type.Optional(Type.String()),
+    retryAfter: Type.Optional(Type.Number({ minimum: 0 })),
     usage: Type.Optional(Type.Unknown()),
     stopReason: Type.Optional(Type.String()),
   },

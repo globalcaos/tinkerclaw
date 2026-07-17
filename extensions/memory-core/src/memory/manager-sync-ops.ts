@@ -269,7 +269,15 @@ export abstract class MemoryManagerSyncOps {
     if (this.vector.dims === dimensions) {
       return;
     }
-    if (this.vector.dims && this.vector.dims !== dimensions) {
+    // Drop a stale on-disk vector table whose declared dimension differs from the
+    // live embedder's. Keying solely off this.vector.dims missed the case where
+    // dims is undefined (fresh manager / post-restart) yet a table built for a
+    // PREVIOUS embedder still exists on disk (e.g. a 3072-dim Gemini column after
+    // switching to the 1024-dim ollama/mxbai-embed-large embedder) — leaving it
+    // makes every insert throw "Expected 3072 dimensions but received 1024". We
+    // read the actual column dim so a correctly-sized table is never dropped.
+    const existingDims = this.vector.dims ?? this.readVectorTableDimensions();
+    if (existingDims !== undefined && existingDims !== dimensions) {
       this.dropVectorTable();
     }
     this.db.exec(
@@ -279,6 +287,24 @@ export abstract class MemoryManagerSyncOps {
         `)`,
     );
     this.vector.dims = dimensions;
+  }
+
+  /**
+   * Reads the declared embedding dimension of the on-disk vector table (parsed
+   * from its `FLOAT[N]` column in sqlite_master), or undefined if the table does
+   * not exist / cannot be parsed. Used to detect a dimension mismatch even when
+   * the in-memory this.vector.dims is unset (e.g. immediately after a restart).
+   */
+  private readVectorTableDimensions(): number | undefined {
+    try {
+      const row = this.db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name = ?`)
+        .get(VECTOR_TABLE) as { sql?: string } | undefined;
+      const match = row?.sql?.match(/FLOAT\[(\d+)\]/i);
+      return match ? Number(match[1]) : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private dropVectorTable(): void {
