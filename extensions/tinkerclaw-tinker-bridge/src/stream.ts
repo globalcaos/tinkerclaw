@@ -246,7 +246,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // FORK 2026-06-11: per-run think level smuggled through pi-ai options
       // (mirrors the other __openclaw* fields). The cast is untyped, so this
       // name must match the writer EXACTLY or it silently flatlines.
-      const thinkLevel = pipedOptions.__openclawThinkLevel;
+      const optionThinkLevel = pipedOptions.__openclawThinkLevel;
       const sessionKey = deriveSessionKey(opts.sessionKey, context.systemPrompt, openclawSessionId);
       // FORK 2026-06-11: per-call EFFORT truth-tuple stream. Computed
       // server-side so it reports the same facts at EVERY UI level (incl
@@ -256,10 +256,6 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // off/unset → reported as 0). `hadRealThinking` distinguishes a genuine
       // reasoning stream from the lone "[redacted reasoning]" placeholder
       // (≤18 chars) pushed by the redacted_thinking arm.
-      const configuredBudget = thinkLevelToMaxThinkingTokens(
-        thinkLevel,
-        maxOutputTokensFor(model.id),
-      );
       let lastEffortEmitAt = 0;
       let sawRedactedThinking = false;
       const emitEffort = (final: boolean, extra?: Record<string, unknown>) => {
@@ -271,6 +267,21 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         lastEffortEmitAt = now;
+        // FORK 2026-06-26 (eeg effort-truth, the owner): the EEG debugs the automatic
+        // effort allocator (AUEFALAL) — it MUST graph the level actually REQUESTED,
+        // not a guess re-derived from how much the model reasoned. The per-call
+        // option is the first-choice source (an explicit /think pin — incl. "off" —
+        // threads here and must win), but it is ABSENT on warm-worker reuse /
+        // deferred respawn while the executing worker is still budgeting at the
+        // allocator-chosen level (worker.ts:385 → MAX_THINKING_TOKENS). Fall back to
+        // the worker's own pinned level so the event never self-reports a bare "off"
+        // when a concrete level was applied. Without this the bridge emitted "" and
+        // eeg-trace re-derived the column from thinkingChars (the bogus weave).
+        const effectiveThinkLevel = optionThinkLevel ?? worker.thinkLevel;
+        const configuredBudget = thinkLevelToMaxThinkingTokens(
+          effectiveThinkLevel,
+          maxOutputTokensFor(model.id),
+        );
         emitAgentEvent({
           runId,
           sessionKey: openclawSessionKey,
@@ -278,9 +289,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           data: {
             phase: final ? "final" : "live",
             // FORK 2026-06-13 (eeg): self-describe the ACTUAL model running so the
-            // seismograph colours by the real model even in Auto (the architect 2026-06-13).
+            // seismograph colours by the real model even in Auto (the owner 2026-06-13).
             model: model.id,
-            thinkLevel: thinkLevel ?? "off",
+            thinkLevel: effectiveThinkLevel ?? "off",
             configuredBudget: configuredBudget ?? 0,
             thinkingChars: accumulatedThinking.length,
             hadRealThinking:
@@ -426,7 +437,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // FORK 2026-06-11: thread the per-run think level into the worker so
         // the spawned Claude Code worker can apply the requested reasoning
         // budget for this run (WorkerSpawnParams now accepts thinkLevel).
-        thinkLevel,
+        thinkLevel: optionThinkLevel,
         // FORK 2026-05-10: thread the openclaw agent sessionId through so
         // session-map can index by it for the across-restart resume path.
         openclawSessionId,

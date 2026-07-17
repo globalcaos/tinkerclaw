@@ -1053,7 +1053,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     }
     const loaded = loadSessionEntry(key);
     const { cfg, entry, canonicalKey } = loaded;
-    if (!entry?.sessionId || !entry.sessionFile) {
+    if (!entry?.sessionId) {
       respond(
         false,
         undefined,
@@ -1061,7 +1061,20 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    if (!fs.existsSync(entry.sessionFile)) {
+    const target = resolveGatewaySessionStoreTarget({ cfg, key: canonicalKey });
+    // FORK 2026-07-16 — resolve the source transcript by sessionId the SAME way chat.history does,
+    // instead of trusting entry.sessionFile. `tinker:*` sessions routinely carry a null/stale
+    // sessionFile in the store while a real <sessionId>.jsonl exists on disk: chat.history finds it
+    // (so the tab shows full history), but the old fork read entry.sessionFile directly, saw
+    // null/stale, and bailed "session transcript is missing" — the client then fell back to an
+    // EMPTY clone. Cloning a live, populated tinker tab must NOT come up blank.
+    // See reference_tinker_clone_tab_and_session_fork_paths.
+    const sourceFile = resolveSessionFilePath(
+      entry.sessionId,
+      entry.sessionFile ? { sessionFile: entry.sessionFile } : undefined,
+      resolveSessionFilePathOptions({ agentId: target.agentId, storePath: target.storePath }),
+    );
+    if (!sourceFile || !fs.existsSync(sourceFile)) {
       respond(
         false,
         undefined,
@@ -1069,12 +1082,11 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const target = resolveGatewaySessionStoreTarget({ cfg, key: canonicalKey });
-    const sourceSession = SessionManager.open(entry.sessionFile, path.dirname(entry.sessionFile));
+    const sourceSession = SessionManager.open(sourceFile, path.dirname(sourceFile));
     const forkedSession = SessionManager.forkFrom(
-      entry.sessionFile,
+      sourceFile,
       sourceSession.getCwd(),
-      path.dirname(entry.sessionFile),
+      path.dirname(sourceFile),
     );
     const forkedSessionFile = forkedSession.getSessionFile();
     if (!forkedSessionFile) {

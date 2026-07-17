@@ -7,6 +7,7 @@ version: "1.1.0"
 owner: "globalcaos"
 license: "MIT"
 category: "marketing"
+subdivision: "research"
 tags:
   [
     "page audit",

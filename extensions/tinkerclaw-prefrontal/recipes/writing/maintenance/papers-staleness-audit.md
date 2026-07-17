@@ -34,7 +34,7 @@ Output is a triage table: one row per paper, a verdict (`new` / `stale` / `not-r
 - Before any publish or refresh sweep — so you act on a current diff, not a stale assumption about which posts exist.
 - After revising a paper, to confirm whether its live post is now behind.
 
-Not for: doing the publish/refresh itself. This is the **detector**; the actuators are `publish-paper-summary` (new papers) and `compile-paper` + a targeted post UPDATE (stale posts).
+Not for: doing the publish/refresh itself. This is the **detector**; the actuators are `publish-paper-summary` (new papers) and `compile-paper` + a targeted post UPDATE (stale posts). A new or retired paper ALSO needs its marker on the interactive brain diagram (post 428) added/removed — that actuator is `brain-diagram-entry` (it generates the lit-region image + wires the data + republishes).
 
 ## Execution model
 
@@ -79,6 +79,9 @@ Surface it plainly. Recommend, don't act — publishing/refreshing is a separate
 - A stale post is REFRESHED by updating the existing post id — never publish a second post for the same paper.
 - Version compare is by `vX.Y` header, not filename date (an undated file can be newest).
 - Distinguish `improvement_notes.md` (pending) from `improvement_notes.incorporated-*.md` (already folded in) — only the former blocks a clean publish.
+- **Notes-pending is a real `## Pending` SECTION, not file size.** A notes file is stale-marking only if it contains a `^##.*Pending` heading with un-incorporated work. A header-only stub ("Incorporated into vX.Y …", ~150 B) or a file whose pending sections were already folded into the latest `paper.md` is CLEAR — flagging it on `size>30` alone is a false positive (mis-flagged J3/J5/J10/J12/J13). The sibling visual `~/.openclaw/workspace/pulse-graphs/staleness-scan.py` uses this same `^##.*pending` rule; keep the two in sync.
+- **Archive notes the moment they're incorporated.** When a revision folds the pending sections into `paper.md`, immediately `cp improvement_notes.md improvement_notes.incorporated-<date>.md` and replace it with a header-only stub (no `## Pending` heading). Skipping this leaves a false stale signal on the whole cascade (J9 v2.9 left its notes un-archived and read STALE until cleaned).
+- **The hero/featured image must be a Napkin CONCEPT diagram, not a first-page PDF screenshot (2026-06-24).** Every paper post needs (a) a featured image (the thumbnail) AND (b) an in-content hero `<figure>` at the very top — and both must be a `napkin-diagrams`-generated conceptual image that represents the paper's WHOLE contribution. The tell of a wrong one is a **481×680 portrait `*-cover.png`** (A4 aspect ≈ 0.71) — that is a screenshot of the PDF's first page, which the owner has ruled out as the presenting image. Detect it: `GET /wp-json/wp/v2/media/<featured_media>?_fields=media_details` → if `width/height < 0.85` (portrait) on a `-cover.png`, FIX. Fix = generate the concept image (`napkin-diagrams` skill, ~1 credit/word, 500/wk free — budget it), `scp` to the host, `wp media import <png> --post_id=<id> --featured_image` over SSH (the REST `/media` endpoint is WAF-blocked), then prepend the concept `<figure>` at the top of the content. Landscape/square architecture diagrams are already correct — leave them. As of 2026-06-24 the broken set was posts 198(fixed), 200, 221, 230, 233, 264, 274, 279.
 
 ## Safety Notes
 
@@ -91,3 +94,13 @@ Surface it plainly. Recommend, don't act — publishing/refreshing is a separate
 - **Silent staleness:** a paper revised after its post shipped (e.g. amygdala v2.8 → v3.0) leaves a public page citing claims/numbers that no longer match the PDF. Nobody notices until a reader does. Step 2's version-pin extraction catches it.
 - **Duplicate posts:** the naive fix for a stale post is "publish it again" → two posts for one paper. The `stale` action is explicitly UPDATE-existing, not create.
 - **Publishing a sketch:** a seed `v0.x` sketch folder (e.g. a striatum stub) looks like a new paper to a folder-only scan. The `not-ready` verdict holds it back until it has a real version + PDF.
+- **Crying wolf on notes:** the first scanner flagged every paper with a non-empty notes file (13/18) as stale, drowning the real signal. The cure is the `^##.*Pending`-section test plus archive-on-incorporation discipline (see Constraints) — a detector that flags everything is no detector.
+
+## Automation
+
+This audit is no longer prompt-only. Two layers run it unattended:
+
+- **Daily visual (pure logic):** `~/.openclaw/workspace/pulse-graphs/staleness-refresh.sh` (system cron `10 7 * * *`) refreshes the thetinkerzone post cache, regenerates the clickable staleness chain (`staleness-chain.html`, served at `http://127.0.0.1:18901/`), derived live from disk + wp-json + README. No LLM, no judgment — it shows _where_ to look.
+- **Weekly LLM audit (judgment):** the `online-staleness-audit` OpenClaw cron runs this recipe + `audit-online-ripples`, auto-applies the reversible housekeeping (archive incorporated notes, regen the visual), and posts a RED/AMBER/GREEN verdict + the genuine backlog (un-incorporated notes, unposted papers, drifted counts) to the main tab. It proposes — it does not auto-publish to public surfaces.
+
+The Fractal reflection (`tinkerclaw-fractal-reflection/fractal-prompt.md` §3 RIPPLE) owns keeping this recipe and the scanner current and in-sync.

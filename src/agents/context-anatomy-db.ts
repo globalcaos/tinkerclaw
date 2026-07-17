@@ -31,6 +31,16 @@ const DB_PATH = (() => {
   return path.join(homeDir, ".openclaw", "data", "anatomy-timeline.db");
 })();
 
+// FORK 2026-07-16: test seam. These tests write REAL rows (insertAnatomyEvent has no
+// mock), so pointing them at the production DB pollutes it and makes ordering
+// assertions flaky (bug-log [eeg-subagent-single-session-gap]). A test sets an
+// isolated tmp path via setAnatomyDbPathForTests() → deterministic, no pollution.
+// Production never sets the override, so DB_PATH is used verbatim.
+let dbPathOverride: string | null = null;
+function resolveDbPath(): string {
+  return dbPathOverride ?? DB_PATH;
+}
+
 // ---------------------------------------------------------------------------
 // Compression helpers — zlib for JSON columns
 // ---------------------------------------------------------------------------
@@ -82,12 +92,13 @@ export function openAnatomyDb(): Database.Database {
     return db;
   }
 
-  const dir = path.dirname(DB_PATH);
+  const activePath = resolveDbPath();
+  const dir = path.dirname(activePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  db = new Database(DB_PATH);
+  db = new Database(activePath);
 
   // WAL mode allows concurrent reads during writes — essential for live timeline + query overlap
   db.pragma("journal_mode = WAL");
@@ -247,6 +258,16 @@ export function closeAnatomyDb(): void {
     db = null;
     insertStmt = null;
   }
+}
+
+/**
+ * TEST-ONLY: redirect the DB to an isolated path (closes the current handle and
+ * drops the cached insert statement so the next open() uses the new path). Pass
+ * null to restore the production path. Never called by production code.
+ */
+export function setAnatomyDbPathForTests(p: string | null): void {
+  closeAnatomyDb();
+  dbPathOverride = p;
 }
 
 // ---------------------------------------------------------------------------
@@ -585,6 +606,59 @@ export function querySessionEvents(
 }
 
 /**
+ * FORK 2026-07-16 (EEG fan-out visibility): derive the agent ROOT of a session key
+ * so its subagents can be found. Subagents are minted FLAT under the agent root —
+ * `agent:main:subagent:<uuid>` (bible §5.8L) — REGARDLESS of the spawning tab
+ * (`agent:main:main`, `agent:main:tinker:<id>`, `agent:main:dashboard:<uuid>` all
+ * share the root). So the root is the first two key segments (`agent:main`), the
+ * SAME derivation app.ts chatEventIsSubagentOfView() uses. A key that is itself a
+ * subagent, or not an `agent:` session, returns null: no family to expand.
+ *
+ * NB: the flat key loses WHICH tab spawned each subagent, so a tree query is
+ * root-wide. The caller (EEG backfill) time-bounds the result to the viewed
+ * session's window so unrelated/stale fan-outs don't bleed onto its paper.
+ */
+function agentRootForTree(sessionKey: string): string | null {
+  if (!sessionKey || sessionKey.includes(":subagent:")) return null;
+  if (!sessionKey.startsWith("agent:")) return null;
+  const root = sessionKey.split(":").slice(0, 2).join(":");
+  return root.includes(":") ? root : null;
+}
+
+/**
+ * FORK 2026-07-16 (EEG single-session gap fix, see memory
+ * reference_eeg_subagents_invisible_single_session): return the viewed session's
+ * events PLUS every subagent event under its agent root, oldest first. This is what
+ * lets the EEG paint fan-out branches reload-proof — subagent anatomy rows exist in
+ * the DB keyed `agent:main:subagent:<uuid>` but the single-session query never found
+ * them. No schema migration: the parent linkage is already ENCODED in the flat key.
+ *
+ * For a non-`:main` session (clone/fork/subagent) there is no family to expand, so it
+ * falls back to a plain single-session query.
+ */
+export function querySessionTree(
+  sessionKey: string,
+  limit = 500,
+): Array<ContextAnatomyEvent & Record<string, unknown>> {
+  const root = agentRootForTree(sessionKey);
+  if (!root) {
+    return querySessionEvents(sessionKey, limit);
+  }
+  const database = openAnatomyDb();
+  const subLike = `${root}:subagent:%`;
+  const rows = database
+    .prepare(
+      `SELECT * FROM (
+        SELECT * FROM anatomy_events
+        WHERE session_key = ? OR session_key LIKE ?
+        ORDER BY timestamp_ms DESC LIMIT ?
+      ) ORDER BY timestamp_ms ASC`,
+    )
+    .all(sessionKey, subLike, limit) as AnatomyRow[];
+  return rows.map(parseRow);
+}
+
+/**
  * Return `limit` anatomy events older than `beforeMs`, newest first in that window,
  * then re-sorted ASC for display. Used for infinite-scroll pagination.
  */
@@ -613,5 +687,6 @@ export function queryEventsBefore(
 (globalThis as any).__anatomyDb = {
   queryRecentEvents,
   querySessionEvents,
+  querySessionTree,
   queryEventsBefore,
 };

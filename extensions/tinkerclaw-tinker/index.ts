@@ -109,6 +109,27 @@ function getAnatomyDb() {
             .all(key, limit)
             .map(parseRow);
         },
+        // FORK 2026-07-16 (EEG fan-out visibility): viewed session + its subagent
+        // family (flat `<root>:subagent:%` keys). Mirrors context-anatomy-db.ts.
+        querySessionTree(key: string, limit: number) {
+          const root =
+            key && !key.includes(":subagent:") && key.startsWith("agent:")
+              ? key.split(":").slice(0, 2).join(":")
+              : null;
+          if (!root || !root.includes(":")) {
+            return this.querySessionEvents(key, limit);
+          }
+          return db
+            .prepare(
+              `SELECT * FROM (
+                SELECT * FROM anatomy_events
+                WHERE session_key = ? OR session_key LIKE ?
+                ORDER BY timestamp_ms DESC LIMIT ?
+              ) ORDER BY timestamp_ms ASC`,
+            )
+            .all(key, `${root}:subagent:%`, limit)
+            .map(parseRow);
+        },
         queryEventsBefore(beforeMs: number, limit: number) {
           return db
             .prepare(
@@ -310,9 +331,16 @@ const plugin = {
               res.end(JSON.stringify(events[0] ?? { error: "No events" }));
               return true;
             }
-            const events = anatomyDb.querySessionEvents(sessionKey, limit);
+            // FORK 2026-07-16 (EEG fan-out visibility): ?tree=1 pulls the viewed
+            // session + every subagent under its agent root, so the seismograph can
+            // paint fan-out branches reload-proof (single-session gap fix).
+            const wantTree = url.searchParams.get("tree") === "1";
+            const events =
+              wantTree && anatomyDb.querySessionTree
+                ? anatomyDb.querySessionTree(sessionKey, limit)
+                : anatomyDb.querySessionEvents(sessionKey, limit);
             api.logger.info(
-              `context-anatomy session="${sessionKey}" limit=${limit} → ${events.length} events`,
+              `context-anatomy session="${sessionKey}" tree=${wantTree} limit=${limit} → ${events.length} events`,
             );
             res.writeHead(200, jsonHeaders);
             res.end(JSON.stringify({ sessionKey, count: events.length, events }));

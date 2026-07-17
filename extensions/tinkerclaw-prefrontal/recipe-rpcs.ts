@@ -140,10 +140,14 @@ export function stampRecipeAttribution(
 interface RecipeFrontmatter {
   schema?: string;
   slug?: string;
+  /** recipe/1.0 playbooks identify themselves with `id` instead of `slug`. */
+  id?: string;
   title?: string;
   summary?: string;
   tags?: unknown[];
   category?: string;
+  /** Optional sub-category label; groups recipes within a category in the tab. */
+  subdivision?: string;
   [key: string]: unknown;
 }
 
@@ -187,40 +191,59 @@ export interface KitParsed {
   summary: string;
   tags: string[];
   category: string;
+  /** True when frontmatter carried an EXPLICIT `category` (vs. inferred/default). */
+  categoryExplicit: boolean;
+  /** Optional sub-category label from frontmatter (folder-derived one added by the walker). */
+  subdivision?: string;
+  /** False when the file had no `---` YAML frontmatter block — i.e. it is a doc, not a recipe. */
+  hasFrontmatter: boolean;
 }
 
 /**
  * Parse a kit.md file and return the normalized frontmatter fields.
  * Falls back gracefully: missing fields get sensible defaults derived from path.
+ *
+ * `slugHint` lets the caller pass a filename-derived slug for recipes that live as
+ * a bare `<name>.md` inside a category folder — there, `basename(dirname)` would
+ * wrongly collapse every file to the folder name. Slug priority:
+ *   frontmatter.slug > frontmatter.id > slugHint > basename(dirname).
  */
-export async function parseKitMd(filePath: string): Promise<KitParsed> {
-  const slugFromPath = path.basename(path.dirname(filePath));
+export async function parseKitMd(filePath: string, slugHint?: string): Promise<KitParsed> {
+  const slugFromPath = slugHint || path.basename(path.dirname(filePath));
   let slug = slugFromPath;
   let title = slugFromPath;
   let summary = "";
   let tags: string[] = [];
   let category = "operations";
+  let categoryExplicit = false;
+  let subdivision: string | undefined;
+  let hasFrontmatter = false;
 
   try {
     const text = await fs.readFile(filePath, "utf-8");
     const fm = /^---\n([\s\S]+?)\n---/.exec(text);
     if (fm) {
+      hasFrontmatter = true;
       const parsed = parseYaml(fm[1]) as RecipeFrontmatter | null;
       if (parsed && typeof parsed === "object") {
         if (typeof parsed.slug === "string" && parsed.slug) slug = parsed.slug;
+        else if (typeof parsed.id === "string" && parsed.id) slug = parsed.id;
         if (typeof parsed.title === "string" && parsed.title) title = parsed.title;
         else title = slug;
         if (typeof parsed.summary === "string") summary = parsed.summary;
         if (Array.isArray(parsed.tags))
           tags = (parsed.tags as unknown[]).filter((t) => typeof t === "string") as string[];
+        categoryExplicit = typeof parsed.category === "string" && !!parsed.category;
         category = inferCategory(parsed);
+        if (typeof parsed.subdivision === "string" && parsed.subdivision)
+          subdivision = parsed.subdivision;
       }
     }
   } catch {
     // frontmatter parse failure — return slug/empty defaults
   }
 
-  return { slug, title, summary, tags, category };
+  return { slug, title, summary, tags, category, categoryExplicit, subdivision, hasFrontmatter };
 }
 
 // ─── Frontmatter scalar read/write (U12 version/owner) ───────────────────────
@@ -265,56 +288,109 @@ interface OwnKitEntry {
   summary: string;
   tags: string[];
   category: string;
+  subdivision?: string;
   path: string;
   source: "ours";
 }
 
+/** Strip a recipe filename to its slug hint: `if-then-else.recipe.md` → `if-then-else`. */
+function recipeFileSlug(fileName: string): string {
+  return fileName.replace(/\.recipe\.md$/i, "").replace(/\.md$/i, "");
+}
+
 /**
- * Walk `ownRecipesDir/<slug>/{recipe.md,kit.md}` and return parsed entries.
- * Layout: `<slug>/recipe.md` (new canonical) or `<slug>/kit.md` (legacy) — one
- * level deep, slug is the immediate child dir. DUAL-READ: recipe.md is probed
- * first per slug-dir, kit.md is the legacy fallback.
+ * Recursively walk `ownRecipesDir` and return every recipe as a tab-visible entry.
+ *
+ * Two coexisting layouts are both surfaced (the fix for the "invisible in the
+ * recipes tab" class of bugs, 2026-07-08):
+ *   1. **Self-contained kit dir** — `<slug>/{recipe.md,kit.md}`. slug = frontmatter
+ *      or the dir name; category = frontmatter/inferred.
+ *   2. **Category folder** — a directory whose NAME is the category (e.g. `coding/`,
+ *      `writing/`), holding bare `<name>.md` playbooks and/or nested SUBDIVISION
+ *      folders (`writing/papers/*.md`). Every `.md` at any depth becomes visible;
+ *      slug = frontmatter id/slug or the filename; category = the TOP folder name;
+ *      subdivision = the nested folder path beneath it (frontmatter `subdivision`
+ *      overrides). This is the owner's "subfolders as subdivisions of the same
+ *      category" contract.
+ * A bare `<name>.md` sitting at the recipes root is also surfaced (category from
+ * frontmatter). DUAL-READ within a kit dir: recipe.md first, kit.md legacy.
  */
-async function listOwnKits(ownRecipesDir: string): Promise<OwnKitEntry[]> {
+export async function listOwnKits(ownRecipesDir: string): Promise<OwnKitEntry[]> {
   const out: OwnKitEntry[] = [];
-  let slugDirs: string[];
-  try {
-    slugDirs = await fs.readdir(ownRecipesDir);
-  } catch {
-    return out;
-  }
-  await Promise.all(
-    slugDirs.map(async (dirName) => {
-      let kitMdPath = "";
-      for (const fname of ["recipe.md", "kit.md"]) {
-        const candidate = path.join(ownRecipesDir, dirName, fname);
-        try {
-          await fs.access(candidate);
-          kitMdPath = candidate;
-          break;
-        } catch {
-          // try next filename
+
+  const push = (parsed: KitParsed, filePath: string, category: string, subdivision?: string) => {
+    out.push({
+      owner: "globalcaos",
+      slug: parsed.slug,
+      title: parsed.title,
+      summary: parsed.summary,
+      tags: parsed.tags,
+      category,
+      subdivision: parsed.subdivision ?? subdivision,
+      path: filePath,
+      source: "ours",
+    });
+  };
+
+  // Walk one directory. `category` is null at the recipes root and becomes the
+  // top-level folder name once we descend into one; `subParts` accumulates nested
+  // folder names below the category folder (the subdivision path).
+  const walk = async (dir: string, category: string | null, subParts: string[]): Promise<void> => {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    await Promise.all(
+      entries.map(async (ent) => {
+        const full = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          // A self-contained kit dir (has recipe.md / kit.md) is a single recipe.
+          let kitMd = "";
+          for (const fname of ["recipe.md", "kit.md"]) {
+            try {
+              await fs.access(path.join(full, fname));
+              kitMd = path.join(full, fname);
+              break;
+            } catch {
+              // try next
+            }
+          }
+          if (kitMd) {
+            const parsed = await parseKitMd(kitMd);
+            // Inside a category folder the FOLDER wins; at root the frontmatter does.
+            const cat = category ?? parsed.category;
+            const sub = category ? subParts.join("/") || undefined : undefined;
+            push(parsed, kitMd, cat, sub);
+            return;
+          }
+          // Otherwise it is a category folder (at root) or a subdivision folder.
+          const nextCategory = category ?? ent.name;
+          const nextSub = category ? [...subParts, ent.name] : [];
+          await walk(full, nextCategory, nextSub);
+          return;
         }
-      }
-      if (!kitMdPath) {
-        return; // not a recipe directory
-      }
-      const parsed = await parseKitMd(kitMdPath);
-      out.push({
-        owner: "globalcaos",
-        slug: parsed.slug || dirName,
-        title: parsed.title,
-        summary: parsed.summary,
-        tags: parsed.tags,
-        category: parsed.category,
-        path: kitMdPath,
-        source: "ours",
-      });
-    }),
-  );
-  // Sort for deterministic ordering
-  out.sort((a, b) => a.slug.localeCompare(b.slug));
-  return out;
+        // A bare recipe file.
+        if (!ent.name.endsWith(".md") || ent.name === "CATALOG.md") return;
+        const parsed = await parseKitMd(full, recipeFileSlug(ent.name));
+        // Docs (AUTHORING.md, README.md, …) have no YAML frontmatter — not recipes.
+        if (!parsed.hasFrontmatter) return;
+        // Category folder wins over inferred category; frontmatter still wins at root
+        // and when it explicitly declares a category.
+        const cat = parsed.categoryExplicit ? parsed.category : (category ?? parsed.category);
+        const sub = category ? subParts.join("/") || undefined : undefined;
+        push(parsed, full, cat, sub);
+      }),
+    );
+  };
+
+  await walk(ownRecipesDir, null, []);
+  // De-dupe by slug (first-writer-wins) and sort for deterministic ordering.
+  const seen = new Set<string>();
+  const deduped = out.filter((e) => (seen.has(e.slug) ? false : (seen.add(e.slug), true)));
+  deduped.sort((a, b) => a.slug.localeCompare(b.slug));
+  return deduped;
 }
 
 // ─── Shared kit-write (guarded) + recipe-rewrite spawn ──────────────────────
@@ -876,6 +952,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         summary: e.summary,
         tags: e.tags,
         category: e.category,
+        subdivision: e.subdivision,
         source: "ours" as const,
         path: e.path,
       }));
