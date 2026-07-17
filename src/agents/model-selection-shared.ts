@@ -790,6 +790,8 @@ export function buildConfiguredModelCatalog(params: { cfg: OpenClawConfig }): Mo
           : undefined;
       const reasoning = typeof model?.reasoning === "boolean" ? model.reasoning : undefined;
       const input = Array.isArray(model?.input) ? model.input : undefined;
+      const rankEntry = params.cfg.agents?.defaults?.models?.[providerId + "/" + id];
+      const rank = typeof rankEntry?.rank === "number" ? rankEntry.rank : undefined;
       catalog.push({
         provider: providerId,
         id,
@@ -797,6 +799,7 @@ export function buildConfiguredModelCatalog(params: { cfg: OpenClawConfig }): Mo
         contextWindow,
         reasoning,
         input,
+        ...(rank !== undefined ? { rank } : {}),
       });
     }
   }

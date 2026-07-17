@@ -7,6 +7,7 @@ version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
 category: "coding"
+subdivision: "review"
 tags:
   ["simplify", "review code", "clean up", "code review parallel", "review changes", "polish code"]
 testedHarnesses: ["OpenClaw", "Claude Code"]

@@ -49,16 +49,16 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 
 ## Failure modes
 
-### M1. cc-bridge SIGTERM (LLM idle watchdog)
+### M1. tinker-bridge SIGTERM (LLM idle watchdog)
 
 - **diagnose_with:** `debug.session.config({provider:"claude-code"})` → assert `resolvedRequestTimeoutMs=600000`. `gateway.stuckSessions({thresholdMs:120000})` → if a session is past the old 120s threshold but `resolvedRequestTimeoutMs=600000`, the watchdog is correctly relaxed; otherwise the overlay broke. Journal grep `[idle-timeout-diag]` confirms per-turn resolution.
-- **Origin:** `streamWithIdleTimeout` in `src/agents/embedded-agent-runner/run/llm-idle-timeout.ts`. Idle timer racing `streamIterator.next()`. cc-bridge intentionally does NOT emit `stream` events during tool work (see `tool-loop.md`), so heavy turns can starve the timer.
-- **Propagation:** idle timeout rejects → `idleTimeoutTrigger(error)` → `abortRun(true, error)` aborts `runAbortController` → cc-bridge worker receives signal → `worker.kill("SIGTERM")` → claude-cli exits → `assistant-failover.ts` classifies as `surface_error reason=timeout`.
+- **Origin:** `streamWithIdleTimeout` in `src/agents/embedded-agent-runner/run/llm-idle-timeout.ts`. Idle timer racing `streamIterator.next()`. tinker-bridge intentionally does NOT emit `stream` events during tool work (see `tool-loop.md`), so heavy turns can starve the timer.
+- **Propagation:** idle timeout rejects → `idleTimeoutTrigger(error)` → `abortRun(true, error)` aborts `runAbortController` → tinker-bridge worker receives signal → `worker.kill("SIGTERM")` → claude-cli exits → `assistant-failover.ts` classifies as `surface_error reason=timeout`.
 - **Envelope:** category `timeout` (icon ⏱️) or `lane_busy` if classified that way. Text: `"🤖 ⚠️ Something went wrong while processing your request."`
 - **Surface:**
   - WhatsApp: envelope delivered as chunked text via `deliverWebReply`. User sees the chip.
   - Tinker UI: pre-2026-05-10 → spinner stuck on `sending...` (lifecycle event dropped). Post-fix → backstop `broadcastChatFinal` fires; chip renders, spinner clears.
-- **Resolution:** ensure `timeoutSeconds` is correctly resolved (see config-shape.md M1 ↔ that file). Architectural fix LIVE 2026-05-11: cc-bridge now emits an empty-delta heartbeat every 25s during a turn so the watchdog resets without re-executing tools. The 600s overlay is now belt-and-suspenders rather than load-bearing. See `tool-loop.md`.
+- **Resolution:** ensure `timeoutSeconds` is correctly resolved (see config-shape.md M1 ↔ that file). Architectural fix LIVE 2026-05-11: tinker-bridge now emits an empty-delta heartbeat every 25s during a turn so the watchdog resets without re-executing tools. The 600s overlay is now belt-and-suspenders rather than load-bearing. See `tool-loop.md`.
 - **Detection probe:** journal grep `[llm-idle-timeout]` lines, plus the `[idle-timeout-diag]` log shows the resolved timeout. Heavy turns hitting 138s/279s without `[idle-timeout-diag] idleTimeoutMs=600000` means the overlay path broke.
 - **Bug history:** 2026-05-05 catalog `timeoutSeconds:600` was dead code; 2026-05-10 fixed via plugin overlay (bible §11.6d, §11.6e).
 
@@ -90,13 +90,13 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
   - `fork.prefrontal.state.*`
 - **Bug history:** regression A from 2026-05-10 (`config.openExternalFile` wiped 2026-04-29, surfaced 2026-05-09).
 
-### M4. cc-bridge channel context bleed (suspected but not real)
+### M4. tinker-bridge channel context bleed (suspected but not real)
 
-- **diagnose_with:** `Read(~/.openclaw/cc-bridge/session-map.json)` and assert each WA channel + TUI channel produces a distinct `openclawSessionId`. If two channels share an openclawSessionId, the channel-isolation invariant has actually been violated (would be a real M4, not the suspected one). The 2026-05-09 evidence: WA=`a87a4e61`, TUI=`bf76b61f` — separate.
+- **diagnose_with:** `Read(~/.openclaw/tinker-bridge/session-map.json)` and assert each WA channel + TUI channel produces a distinct `openclawSessionId`. If two channels share an openclawSessionId, the channel-isolation invariant has actually been violated (would be a real M4, not the suspected one). The 2026-05-09 evidence: WA=`a87a4e61`, TUI=`bf76b61f` — separate.
 - **Origin:** suspected when `/new` was typed in TUI and a WhatsApp reply showed unexpected content.
-- **Investigation result:** NOT bleed at cc-bridge layer. The two channels have distinct `openclawSessionId` (e.g. WA=`a87a4e61`, TUI=`bf76b61f`); session-map's `getLatestResumeSessionIdByOpenclawSessionId` only resolves WITHIN one openclaw session.
-- **Actual cause of the symptom:** M1 (cc-bridge SIGTERM) on the WA turn + concurrent /new turn timing; the "something went wrong" envelope on WA was timing-correlated with the /new in TUI, leading to misattribution.
-- **Resolution:** none required at cc-bridge layer. Document that channel isolation is invariant: openclawSessionId is canonical, lookup priority is openclawSessionId-first.
+- **Investigation result:** NOT bleed at tinker-bridge layer. The two channels have distinct `openclawSessionId` (e.g. WA=`a87a4e61`, TUI=`bf76b61f`); session-map's `getLatestResumeSessionIdByOpenclawSessionId` only resolves WITHIN one openclaw session.
+- **Actual cause of the symptom:** M1 (tinker-bridge SIGTERM) on the WA turn + concurrent /new turn timing; the "something went wrong" envelope on WA was timing-correlated with the /new in TUI, leading to misattribution.
+- **Resolution:** none required at tinker-bridge layer. Document that channel isolation is invariant: openclawSessionId is canonical, lookup priority is openclawSessionId-first.
 - **Don't regress:** in `worker-pool.getOrCreate`, openclawSessionId lookup MUST come BEFORE sessionKey lookup. Reversing brings back stale-entry-wins behavior.
 
 ### M5. Plugin native-deps missing at boot
@@ -180,9 +180,9 @@ Generation: from `src/fork/error-envelope.ts`. Update this table when categories
 
 - **diagnose_with:** `journalctl --user -u openclaw-gateway.service --since today --no-pager | grep -E "Cannot find module .*root-alias.cjs"`. Each match names the missing subpath. Cross-check via `openclaw gateway call plugin.boot.status --params '{"status":"error"}'` — a plugin with `failurePhase:"load"` and an `ERR_MODULE_NOT_FOUND` is M13.
 - **Origin:** a new `src/plugin-sdk/<name>.ts` is added in the fork (for a plugin to import as `openclaw/plugin-sdk/<name>`), but its entry is missing from BOTH `scripts/lib/plugin-sdk-entrypoints.json` (the tsdown subpath manifest) AND the `./plugin-sdk/<name>` entry in `package.json#exports`. Result: tsdown never builds `dist/plugin-sdk/<name>.js`. In production `NODE_ENV=production` (systemd), `root-alias.cjs` prefers `dist/` over source, so the resolver synthesises a path to a file that doesn't exist and Node throws `ERR_MODULE_NOT_FOUND` on every plugin reload.
-- **Propagation:** the importing plugin fails to load. If that plugin is cc-bridge, BOTH the Tinker UI and WhatsApp DM go silent because the LLM worker route is no longer registered. The orphan worker pool from a pre-crash gateway can keep pre-restart workers alive but unreachable.
+- **Propagation:** the importing plugin fails to load. If that plugin is tinker-bridge, BOTH the Tinker UI and WhatsApp DM go silent because the LLM worker route is no longer registered. The orphan worker pool from a pre-crash gateway can keep pre-restart workers alive but unreachable.
 - **Surface:** Jarvis stops responding on every channel simultaneously after a gateway restart. Looks like a worker-pool crash; is actually a plugin-load crash with no audible signal in the chat UI itself (no error chip — the path never gets that far).
-- **Resolution (2026-05-21, commit `e065bc94f5`):** add the entry to `scripts/lib/plugin-sdk-entrypoints.json`, regenerate `package.json#exports` via `pnpm plugin-sdk:sync-exports`, rebuild, restart. The 2026-05-21 instance: `src/plugin-sdk/provider-config-overlay.ts` had existed since 2026-05-10 (`566bf478a6`) but its manifest entry was missing; cc-bridge had been importing it from source the entire time, and a cold module cache on a gateway restart finally surfaced the gap.
+- **Resolution (2026-05-21, commit `e065bc94f5`):** add the entry to `scripts/lib/plugin-sdk-entrypoints.json`, regenerate `package.json#exports` via `pnpm plugin-sdk:sync-exports`, rebuild, restart. The 2026-05-21 instance: `src/plugin-sdk/provider-config-overlay.ts` had existed since 2026-05-10 (`566bf478a6`) but its manifest entry was missing; tinker-bridge had been importing it from source the entire time, and a cold module cache on a gateway restart finally surfaced the gap.
 - **Prevention (commit `0b5c17f614`):** pre-push **Gate 4** (`pnpm lint:plugins:plugin-sdk-subpaths-exported` + `pnpm plugin-sdk:check-exports`) catches BOTH the src→manifest drift and the manifest→`package.json#exports` drift. Bypass for intentional WIP: `SDK_EXPORTS_GUARD=off git push`.
 - **Don't regress:** never add a new `src/plugin-sdk/*.ts` file without also adding its entry to the manifest AND regenerating `package.json#exports` in the same commit. Gate 4 will block the push otherwise.
 - **Bug history:** see `bug-log.md` 2026-05-21 entry.

@@ -1,8 +1,8 @@
 /**
  * Test target: src/agents/plugin-provider-config-overlay.ts
  * Bible anchor: config-shape.md (plugin overlay merge path, FORK 2026-05-10) +
- *               tool-loop.md (why cc-bridge needs the overlay) +
- *               failures.md M1 (cc-bridge SIGTERM, root cause was that this
+ *               tool-loop.md (why tinker-bridge needs the overlay) +
+ *               failures.md M1 (tinker-bridge SIGTERM, root cause was that this
  *               overlay path didn't exist)
  * Bug history: bug-log.md predecessor — the 2026-05-05 catalog timeoutSeconds:600
  *              setting was dead code at runtime. Fixed 2026-05-10 by adding this
@@ -27,7 +27,7 @@ describe("plugin-provider-config-overlay", () => {
     expect(getPluginProviderConfigOverlay("never-registered")).toBeUndefined();
   });
 
-  it("stores the canonical cc-bridge case: timeoutSeconds for claude-code", () => {
+  it("stores the canonical tinker-bridge case: timeoutSeconds for claude-code", () => {
     registerPluginProviderConfigOverlay("claude-code", { timeoutSeconds: 600 });
     expect(getPluginProviderConfigOverlay("claude-code")).toEqual({ timeoutSeconds: 600 });
   });

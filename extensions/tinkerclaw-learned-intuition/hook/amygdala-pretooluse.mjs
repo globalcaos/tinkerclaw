@@ -3,7 +3,7 @@
  * AMYGDALA v3.1 — PreToolUse hook (the pre-execution enforcement seam).
  *
  * Runs INSIDE claude-cli's hook sandbox (NOT the gateway process), so it must be
- * DEPENDENCY-FREE: only node builtins, no imports from the extension. cc-bridge
+ * DEPENDENCY-FREE: only node builtins, no imports from the extension. tinker-bridge
  * passes `--settings <cc-hook-settings.json>` to every spawn; that settings file
  * registers this script as a PreToolUse hook. claude-cli honours a `deny`
  * permission decision here EVEN under `--permission-mode bypassPermissions`, so

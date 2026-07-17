@@ -1,38 +1,22 @@
 // extensions/prefrontal/effort-router.ts
-// FORK: Code-enforced effort routing + DYNAMIC reasoning-complexity adaptation.
+// FORK: DYNAMIC reasoning-complexity adaptation.
 //
-// Two layers:
-//   1. validateModelAssignment — the legacy guard. Downgrades wasteful model
-//      assignments (e.g. Opus for a one-word lookup). Unchanged contract.
-//   2. recommendEffort / buildEffortGuidance (FORK 2026-05-29) — scores the
-//      user prompt and auto-adapts Jarvis's reasoning posture along FOUR tiers
-//      (trivial → standard → deep → ultra). The recommendation is injected into
-//      the turn as prependSystemContext so Jarvis scales thinking budget, model
-//      tier, orchestration mode (solo / parallel subagents / full workflow) and
-//      token generosity to the task — "up to ultracode, generous with tokens".
+//   recommendEffort / buildEffortGuidance (FORK 2026-05-29) — scores the
+//   user prompt and auto-adapts Jarvis's reasoning posture along FOUR tiers
+//   (trivial → standard → deep → ultra). The recommendation is injected into
+//   the turn as prependSystemContext so Jarvis scales thinking budget, model
+//   tier, orchestration mode (solo / parallel subagents / full workflow) and
+//   token generosity to the task — "up to ultracode, generous with tokens".
 //
-// This is the "smart Jarvis" lever: the model used to ignore the router entirely
-// (the result was only logged). Now the classification drives the turn.
+// This is the "smart Jarvis" lever: the classification drives the turn.
+//
+// Retired 2026-06-14 (FOUNDATION #2, bible §5.84-B): the legacy
+// validateModelAssignment guard + hardcoded DEFAULT_EFFORT_ROUTING_CONFIG tier
+// list were log-only dead code that hardcoded a stale, drifting model roster —
+// deleted along with isModelInTier and the EffortRoutingConfig/RoutingDecision
+// types that only existed to serve them.
 
 export type EffortLevel = "minimal" | "standard" | "maximum";
-
-export interface EffortRoutingConfig {
-  enabled: boolean;
-  minimal: string[];
-  standard: string[];
-  maximum: string[];
-}
-
-// FORK: Route through claude-code bridge (see DEFAULT_PREFRONTAL_CONFIG in
-// prefrontal-types.ts for the reasoning). Anthropic direct-API paths are
-// suspended on this fork — leaving them as defaults makes every effort-routed
-// dispatch 400 on first try.
-export const DEFAULT_EFFORT_ROUTING_CONFIG: EffortRoutingConfig = {
-  enabled: true,
-  minimal: ["claude-code/claude-haiku-4-5", "ollama/qwen3:14b"],
-  standard: ["claude-code/claude-sonnet-4-6", "google/gemini-2.5-pro"],
-  maximum: ["claude-code/claude-opus-4-7"],
-};
 
 const MINIMAL_KEYWORDS = [
   "format",
@@ -75,57 +59,36 @@ export function classifyEffort(taskDescription: string): EffortLevel {
   return "standard";
 }
 
-export function isModelInTier(
-  model: string,
-  tier: string[],
-  _config: EffortRoutingConfig,
-): boolean {
-  return tier.some((m) => model.includes(m) || m.includes(model));
-}
-
-export interface RoutingDecision {
-  approved: boolean;
-  suggestedModel?: string;
-  reason?: string;
-}
-
-export function validateModelAssignment(
-  assignedModel: string,
-  taskDescription: string,
-  config: EffortRoutingConfig,
-): RoutingDecision {
-  if (!config.enabled) {
-    return { approved: true };
-  }
-
-  const effort = classifyEffort(taskDescription);
-
-  // Opus assigned to minimal task → downgrade
-  if (effort === "minimal" && isModelInTier(assignedModel, config.maximum, config)) {
-    return {
-      approved: false,
-      suggestedModel: config.minimal[0],
-      reason: `Task classified as minimal effort ("${taskDescription.slice(0, 60)}") — Opus is wasteful, use ${config.minimal[0]}`,
-    };
-  }
-
-  // Opus assigned to standard task → downgrade
-  if (effort === "standard" && isModelInTier(assignedModel, config.maximum, config)) {
-    return {
-      approved: false,
-      suggestedModel: config.standard[0],
-      reason: `Task classified as standard effort — use ${config.standard[0]} instead of Opus`,
-    };
-  }
-
-  return { approved: true };
-}
-
 // ─── Dynamic complexity adaptation (FORK 2026-05-29) ────────────────────────
 
 export type ComplexityLevel = "trivial" | "standard" | "deep" | "ultra";
 
 export type OrchestrationMode = "solo" | "parallel" | "workflow";
+
+// FORK 2026-06-22: quota-headroom bias. When the weekly token quota is mostly
+// unspent (e.g. Monday morning, ~100% left) the owner wants the auto-allocator to
+// "go aggressive in choosing both model and effort on the fly" — so a high
+// headroom bumps every non-trivial turn up one gear, and a tight quota pulls it
+// down one. Pure acks/greetings (trivial) are never escalated: spending opus on
+// "thanks" is waste, not aggression. The bias is an input, not a guess — it is
+// fed from real headroom via PREFRONTAL_EFFORT_BIAS (default neutral).
+export type EffortBias = "conservative" | "neutral" | "aggressive";
+
+const TIER_ORDER: ComplexityLevel[] = ["trivial", "standard", "deep", "ultra"];
+
+function applyEffortBias(level: ComplexityLevel, bias: EffortBias): ComplexityLevel {
+  if (bias === "neutral" || level === "trivial") return level;
+  const i = TIER_ORDER.indexOf(level);
+  if (bias === "aggressive") return TIER_ORDER[Math.min(TIER_ORDER.length - 1, i + 1)];
+  // conservative: pull down a gear but never below standard for real work.
+  return TIER_ORDER[Math.max(1, i - 1)];
+}
+
+/** Read the active headroom bias from env. Default neutral (behavior unchanged). */
+export function resolveEffortBias(): EffortBias {
+  const raw = (process.env.PREFRONTAL_EFFORT_BIAS ?? "").trim().toLowerCase();
+  return raw === "aggressive" || raw === "conservative" ? raw : "neutral";
+}
 
 export interface ComplexitySignals {
   words: number;
@@ -136,6 +99,12 @@ export interface ComplexitySignals {
   ultraHits: string[];
   trivialHit: boolean;
   questionsAsked: number;
+  /**
+   * FORK 2026-06-25 ("Branch" layer, frontopolar / BA10 cognitive-branching):
+   * how many DISTINCT independent asks the one prompt bundles. ≥2 ⇒ the turn
+   * should split into one subagent per ask instead of running them serially.
+   */
+  independentAsks: number;
 }
 
 export interface EffortRecommendation {
@@ -226,7 +195,96 @@ function countClauses(s: string): number {
   return seps + bullets + lines;
 }
 
-export function classifyComplexity(prompt: string): EffortRecommendation {
+// Imperative action verbs that head a request. Used to tell apart a real
+// second ask ("…and write the tests") from a noun conjunction ("code and
+// workflows") or an infinitive ("to spin subagents"), which must NOT count.
+const ACTION_VERBS = new Set([
+  "add",
+  "update",
+  "fix",
+  "create",
+  "write",
+  "build",
+  "rebuild",
+  "refactor",
+  "remove",
+  "delete",
+  "drop",
+  "rename",
+  "implement",
+  "make",
+  "change",
+  "modify",
+  "move",
+  "generate",
+  "draft",
+  "send",
+  "name",
+  "tell",
+  "inform",
+  "explain",
+  "describe",
+  "review",
+  "test",
+  "document",
+  "investigate",
+  "research",
+  "audit",
+  "analyze",
+  "analyse",
+  "compare",
+  "plan",
+  "design",
+  "optimize",
+  "optimise",
+  "summarize",
+  "summarise",
+  "list",
+  "find",
+  "search",
+  "check",
+  "verify",
+  "publish",
+  "post",
+  "deploy",
+  "wire",
+  "hook",
+  "install",
+  "setup",
+  "configure",
+  "translate",
+  "render",
+  "show",
+  "give",
+  "propose",
+  "suggest",
+  "let",
+]);
+
+/**
+ * Count the DISTINCT independent asks bundled into one prompt — the signal the
+ * "Branch" layer keys on to fan out one subagent per ask. A segment counts only
+ * when an imperative action verb LEADS it (first 3 tokens), so noun
+ * conjunctions and infinitives don't inflate the count. Conservative by design:
+ * undercounting just means inline handling; overcounting would spam subagents.
+ */
+function countIndependentAsks(prompt: string): number {
+  const segments = prompt
+    .split(/(?:[.!?\n]+|^\s*[-*\d]+[.)]\s+|;|\bthen\b|\balso\b| and )/gi)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  let asks = 0;
+  for (const seg of segments) {
+    const head = (seg.toLowerCase().match(/[a-z']+/g) ?? []).slice(0, 3);
+    if (head.some((w) => ACTION_VERBS.has(w))) asks += 1;
+  }
+  return asks;
+}
+
+export function classifyComplexity(
+  prompt: string,
+  bias: EffortBias = "neutral",
+): EffortRecommendation {
   const lower = prompt.toLowerCase();
   const words = (prompt.trim().match(/\S+/g) ?? []).length;
   const clauses = countClauses(prompt);
@@ -246,6 +304,7 @@ export function classifyComplexity(prompt: string): EffortRecommendation {
     ultraHits.length === 0 &&
     TRIVIAL_KEYWORDS.some((kw) => (kw.includes(" ") ? lower.includes(kw) : promptWords.has(kw)));
   const questionsAsked = (prompt.match(/\?/g) ?? []).length;
+  const independentAsks = countIndependentAsks(prompt);
 
   const signals: ComplexitySignals = {
     words,
@@ -256,6 +315,7 @@ export function classifyComplexity(prompt: string): EffortRecommendation {
     ultraHits,
     trivialHit,
     questionsAsked,
+    independentAsks,
   };
 
   // Score. Each signal contributes; tuned so a one-liner stays trivial/standard
@@ -281,6 +341,10 @@ export function classifyComplexity(prompt: string): EffortRecommendation {
   else level = "standard";
   // Floor: 3+ distinct hard verbs is deep work even if other signals are light.
   if (level === "standard" && deepHits.length >= 3) level = "deep";
+
+  // Quota-headroom bias: shift the whole turn up/down a gear when the weekly
+  // token budget is flush/tight. Applied last so it composes on the final tier.
+  level = applyEffortBias(level, bias);
 
   const byLevel: Record<
     ComplexityLevel,
@@ -321,12 +385,21 @@ export function classifyComplexity(prompt: string): EffortRecommendation {
  * this turn. Returns null for trivial turns (no guidance needed — keep them
  * cheap and fast). Used by the before_prompt_build hook.
  */
-export function buildEffortGuidance(prompt: string): string | null {
-  const rec = classifyComplexity(prompt);
+export function buildEffortGuidance(
+  prompt: string,
+  bias: EffortBias = resolveEffortBias(),
+): string | null {
+  const rec = classifyComplexity(prompt, bias);
   if (rec.level === "trivial") return null;
+  const biasNote =
+    bias === "aggressive"
+      ? ` (quota-headroom bias: AGGRESSIVE — weekly budget is flush, so this turn is bumped up a gear; lean into the stronger model / more thinking on the fly)`
+      : bias === "conservative"
+        ? ` (quota-headroom bias: CONSERVATIVE — weekly budget is tight, pulled down a gear)`
+        : "";
   const lines = [
-    `<effort_adaptation level="${rec.level}" score="${rec.score}">`,
-    `This turn was auto-classified **${rec.level}**. Adapt your reasoning accordingly:`,
+    `<effort_adaptation level="${rec.level}" score="${rec.score}" bias="${bias}">`,
+    `This turn was auto-classified **${rec.level}**${biasNote}. Adapt your reasoning accordingly:`,
     `- Reasoning: ${rec.thinkingHint}.`,
     `- Orchestration: ${rec.orchestration === "solo" ? "handle inline" : rec.orchestration === "parallel" ? "fan out independent work to parallel subagents" : "orchestrate a multi-phase workflow with verification"}.`,
     `- Tokens: ${rec.tokenGuidance}.`,
@@ -335,5 +408,20 @@ export function buildEffortGuidance(prompt: string): string | null {
       : `- Match depth to the task; don't over- or under-invest.`,
     `</effort_adaptation>`,
   ];
+  // "Branch" layer (frontopolar / BA10 cognitive-branching): when one prompt
+  // bundles ≥2 independent asks, override the solo default and fan out one
+  // subagent per ask instead of doing them serially in this turn.
+  const asks = rec.signals.independentAsks;
+  if (asks >= 2) {
+    lines.push(
+      `<branch_decompose asks="${asks}">`,
+      `This single prompt bundles **${asks} independent asks**. Do NOT handle them serially in one turn.`,
+      `- Split into one subagent per ask and run them concurrently. Independent multi-file EDITS → ORCA (parallel-implement workflow); research / multi-domain / mixed work → an \`openclaw-orchestrate\` dynamic workflow (parallel/pipeline).`,
+      `- Pick each unit's model by its OWN weight (haiku breadth → sonnet middle → opus hard); a light ask shouldn't ride the heaviest model just because a sibling ask is hard.`,
+      `- Synthesize the unit results into ONE coherent answer; verify on the merged result before claiming done.`,
+      `- If the asks share state or must run in order, say so and handle inline instead — don't force a fan-out that doesn't parallelize.`,
+      `</branch_decompose>`,
+    );
+  }
   return lines.join("\n");
 }

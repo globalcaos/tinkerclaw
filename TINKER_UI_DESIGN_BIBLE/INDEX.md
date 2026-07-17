@@ -26,7 +26,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "what is this config key, who reads it, who can override?" → `config-shape.md`
    - "when X breaks, where does the symptom appear?" → `failures.md`
    - "what probes exist for inspecting Y?" → `probes.md`
-   - "why is cc-bridge's tool loop different?" → `tool-loop.md`
+   - "why is tinker-bridge's tool loop different?" → `tool-loop.md`
    - "which model gets picked, in what order?" → `auth-routing.md`
    - "which crons run, when, last status?" → `crons.md`
    - "is this string safe to publish?" → `pii-boundary.md`
@@ -63,7 +63,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 | `config-shape.md`          | Settings flow from openclaw.json to runtime; override chains; dead-code traps                                                                                                                      | mixed                            | ~400   |
 | `failures.md`              | Failure-mode propagation maps                                                                                                                                                                      | hand                             | ~300   |
 | `probes.md`                | Inspection primitives registry (live + proposed)                                                                                                                                                   | auto from gateway methods + hand | ~150   |
-| `tool-loop.md`             | Why cc-bridge tool calls don't round-trip through OpenClaw exec                                                                                                                                    | hand                             | ~150   |
+| `tool-loop.md`             | Why tinker-bridge tool calls don't round-trip through OpenClaw exec                                                                                                                                | hand                             | ~150   |
 | `auth-routing.md`          | Cost-aware model routing, failover, billing tiers                                                                                                                                                  | mixed                            | ~150   |
 | `crons.md`                 | Cron registry + auto-merge policy                                                                                                                                                                  | auto from jobs.json + hand       | ~150   |
 | `pii-boundary.md`          | Public-OK vs private-only, leak-grep regex, sanitization workflow                                                                                                                                  | hand                             | ~100   |

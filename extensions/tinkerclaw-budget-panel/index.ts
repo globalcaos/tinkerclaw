@@ -8,6 +8,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { getRateLimitSnapshot } from "../../src/agents/anthropic-ratelimit-store.js";
 import {
   resolveApiKeyForProfile,
   ensureAuthProfileStore,
@@ -17,6 +18,7 @@ import {
   resolveCredentialFilePath,
   writeCredentialFile,
 } from "../../src/agents/auth-profiles/credential-file.js";
+import { setUsageSnapshot } from "../../src/infra/usage-snapshot-store.js";
 
 /** Anthropic OAuth profile IDs to poll for usage. */
 const USAGE_PROFILES: Record<string, string> = {
@@ -32,6 +34,13 @@ const CACHE_TTL_MS = 30 * 60_000;
 // Shorter TTL for failed fetches — allows quick recovery after boot-time token races.
 const CACHE_TTL_FAILED_MS = 2 * 60_000;
 
+/** Per-profile "already warned" guard for resolveToken failures.
+ *  Anthropic OAuth refresh can fail every poll cycle (e.g. a stale refresh token on a
+ *  tracking-only profile). Logging the error each cycle floods the gateway log with
+ *  harmless noise (this path is usage-tracking only; the brain does not use it).
+ *  Log the failure ONCE, then stay quiet until the next SUCCESS resets the guard. */
+const resolveTokenWarned: Set<string> = new Set();
+
 /** Resolve a fresh token for a profile using the gateway's own auth system (with auto-refresh). */
 async function resolveToken(
   profileId: string,
@@ -40,9 +49,19 @@ async function resolveToken(
   try {
     const store = ensureAuthProfileStore();
     const result = await resolveApiKeyForProfile({ store, profileId });
-    return result?.apiKey ?? null;
+    const apiKey = result?.apiKey ?? null;
+    if (apiKey) {
+      // Recovered — clear the guard so a future failure logs once again.
+      resolveTokenWarned.delete(profileId);
+    }
+    return apiKey;
   } catch (e) {
-    log(`[budget-panel] resolveToken ${profileId}: ${e}`);
+    if (!resolveTokenWarned.has(profileId)) {
+      resolveTokenWarned.add(profileId);
+      log(
+        `[budget-panel] resolveToken ${profileId}: ${e} (further failures for this profile suppressed until it recovers)`,
+      );
+    }
     return null;
   }
 }
@@ -177,6 +196,69 @@ async function fetchProfileUsage(
   return cached?.data ?? null;
 }
 
+/** FORK 2026-07-09: read the Claude Code CLI's OWN credential file as a
+ *  token source. This is the token fable actually runs on, and the CLI keeps
+ *  it fresh itself — we only READ it (never refresh/rotate; the CLI owns the
+ *  rotation, and rotating here would invalidate the CLI's refresh token).
+ *  Added because the gateway-side `anthropic:cli-gm` refresh token died
+ *  2026-07-08 and every poll fell to the zero-stub while the CLI token sat
+ *  on disk, valid, the whole time. */
+function readCliCredentialToken(): string | null {
+  try {
+    const raw = readFileSync(`${process.env.HOME}/.claude/.credentials.json`, "utf-8");
+    const parsed = JSON.parse(raw);
+    const cred = parsed.claudeAiOauth ?? parsed;
+    const token = typeof cred.accessToken === "string" ? cred.accessToken : null;
+    const expiresAt = typeof cred.expiresAt === "number" ? cred.expiresAt : 0;
+    if (!token || (expiresAt && expiresAt <= Date.now())) {
+      return null;
+    }
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+/** Fetch usage via the CLI credential file (cached like the profile fetches). */
+async function fetchCliFileUsage(
+  log: (...args: any[]) => void = console.log,
+): Promise<Record<string, any> | null> {
+  const label = "cli-file";
+  const cached = usageCache[label];
+  const ttl = cached?.data ? CACHE_TTL_MS : CACHE_TTL_FAILED_MS;
+  if (cached && Date.now() - cached.ts < ttl) {
+    return cached.data;
+  }
+  const token = readCliCredentialToken();
+  if (!token) {
+    usageCache[label] = { data: null, ts: Date.now() };
+    return null;
+  }
+  try {
+    const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "oauth-2025-04-20",
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) {
+      log(`[budget-panel] cli-file: HTTP ${res.status} on usage API`);
+      usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
+      return cached?.data ?? null;
+    }
+    const data = (await res.json()) as Record<string, any>;
+    usageCache[label] = { data, ts: Date.now() };
+    return data;
+  } catch (e) {
+    log(`[budget-panel] cli-file: ${e}`);
+    usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
+    return cached?.data ?? null;
+  }
+}
+
 /** Fetch live usage from all profiles sequentially. */
 async function fetchAllClaudeUsage(
   log: (...args: any[]) => void = console.log,
@@ -185,7 +267,74 @@ async function fetchAllClaudeUsage(
   for (const p of Object.keys(USAGE_PROFILES)) {
     result[p] = await fetchProfileUsage(p, log);
   }
+  // FORK 2026-07-09: when every configured profile fails (dead refresh tokens),
+  // fall back to the Claude Code CLI's own credential file — the token that is
+  // demonstrably alive because the brain runs on it.
+  if (!Object.values(result).some(Boolean)) {
+    const cliData = await fetchCliFileUsage(log);
+    if (cliData) {
+      result["cli-file"] = cliData;
+    }
+  }
   return result;
+}
+
+/** FORK 2026-06-18 (bible §5.84a): publish live Anthropic usage into the in-process snapshot bridge
+ *  for the burn-down effort allocator (`deriveQuotaPressure` reads it synchronously). v1 simplification:
+ *  MAX utilization across profiles + the SOONEST reset (the imminent deadline we must not waste);
+ *  per-account aggregation with distinct caps/resets is a documented v2 refinement. */
+function publishUsageSnapshot(liveProfiles: Record<string, Record<string, any> | null>): void {
+  const iso = (s: unknown): number | undefined => {
+    if (typeof s !== "string") return undefined;
+    const ms = new Date(s).getTime();
+    return Number.isFinite(ms) ? ms : undefined;
+  };
+  let maxSeven = 0;
+  let maxFive = 0;
+  let soonestSeven: number | undefined;
+  let soonestFive: number | undefined;
+  let any = false;
+  // FORK 2026-06-19 (§5.84b): keep the per-account rows alongside the collapsed
+  // MAX/SOONEST so the burn-down allocator can pick the BINDING (max-headroom) account.
+  const accounts: Array<{
+    label: string;
+    sevenDayUtilization: number;
+    fiveHourUtilization: number;
+    sevenDayResetAt?: number;
+    fiveHourResetAt?: number;
+  }> = [];
+  for (const [label, data] of Object.entries(liveProfiles)) {
+    if (!data) continue;
+    any = true;
+    const s7 = Number(data.seven_day?.utilization ?? 0);
+    const f5 = Number(data.five_hour?.utilization ?? 0);
+    maxSeven = Math.max(maxSeven, s7);
+    maxFive = Math.max(maxFive, f5);
+    const sr = iso(data.seven_day?.resets_at);
+    if (sr !== undefined && (soonestSeven === undefined || sr < soonestSeven)) soonestSeven = sr;
+    const fr = iso(data.five_hour?.resets_at);
+    if (fr !== undefined && (soonestFive === undefined || fr < soonestFive)) soonestFive = fr;
+    accounts.push({
+      label,
+      sevenDayUtilization: s7,
+      fiveHourUtilization: f5,
+      sevenDayResetAt: sr,
+      fiveHourResetAt: fr,
+    });
+  }
+  if (!any) return; // keep the last good snapshot rather than zeroing on a transient failure
+  setUsageSnapshot({
+    lastSuccessfulFetch: Date.now(),
+    providers: {
+      anthropic: {
+        sevenDayUtilization: maxSeven,
+        fiveHourUtilization: maxFive,
+        sevenDayResetAt: soonestSeven,
+        fiveHourResetAt: soonestFive,
+        accounts,
+      },
+    },
+  });
 }
 
 /** ─── OpenAI Costs via Admin API ─── */
@@ -406,6 +555,21 @@ export default function register(api: OpenClawPluginApi) {
     (api.config as any)?.agents?.defaults?.workspace || `${homeDir}/.openclaw/workspace`;
   const tracker = new BudgetTracker(workspaceDir);
 
+  // FORK 2026-06-18 (bible §5.84a): keep the burn-down allocator's quota signal fresh even with no
+  // Tinker UI open — poll Anthropic usage on an interval and publish it to the in-process
+  // usage-snapshot bridge (deriveQuotaPressure reads it synchronously). Best-effort; the 30-min
+  // per-profile cache keeps real API hits well under the OAuth-usage rate limit.
+  const refreshUsageSnapshot = () => {
+    fetchAllClaudeUsage()
+      .then(publishUsageSnapshot)
+      .catch(() => {
+        /* best-effort — allocator falls back to task-weighted when the snapshot is stale/absent */
+      });
+  };
+  refreshUsageSnapshot(); // prime on boot
+  const usageSnapshotTimer = setInterval(refreshUsageSnapshot, 10 * 60_000);
+  if (typeof usageSnapshotTimer.unref === "function") usageSnapshotTimer.unref();
+
   // Paths to usage JSON files (hardcoded for reliability)
   const usageFiles = {
     claude: `${homeDir}/.openclaw/workspace/memory/claude-usage.json`,
@@ -478,6 +642,7 @@ export default function register(api: OpenClawPluginApi) {
       for (const label of Object.keys(USAGE_PROFILES)) {
         delete usageCache[label];
       }
+      delete usageCache["cli-file"];
     }
     const claudeFileData = readUsageFile(usageFiles.claude) as any;
     const geminiData = readUsageFile(usageFiles.gemini) as any;
@@ -489,6 +654,7 @@ export default function register(api: OpenClawPluginApi) {
       fetchAllClaudeUsage(log),
       fetchGeminiUsage(log),
     ]);
+    publishUsageSnapshot(liveProfiles); // FORK §5.84a: feed the burn-down effort allocator
 
     function buildClaudeProfile(live: Record<string, any> | null) {
       if (!live) {
@@ -533,9 +699,29 @@ export default function register(api: OpenClawPluginApi) {
     const fileIsStale =
       claudeFileData?.fetchedAt &&
       Date.now() - new Date(claudeFileData.fetchedAt).getTime() > STALE_FILE_MS;
-    const claudeResult =
-      buildClaudeProfile(firstLive) ??
-      (claudeFileData && !fileIsStale
+    // FORK 2026-07-09: when the OAuth-usage poll yields nothing (e.g. the
+    // tracking profile's refresh token is dead) fall back to the live rate-limit
+    // snapshot harvested from the brain's OWN Anthropic response headers — a
+    // token-free source that reflects real fable/claude-code traffic. Ranked
+    // above the on-disk file because it is fresher (updated every request).
+    const snap = getRateLimitSnapshot();
+    const snapResult =
+      snap && (snap.h5 > 0 || snap.d7 > 0)
+        ? {
+            mode: "subscription",
+            plan: "max",
+            fetchedAt: new Date(snap.ts).toISOString(),
+            limits: {
+              five_hour: { utilization: snap.h5, resets_at: null },
+              seven_day: { utilization: snap.d7, resets_at: null },
+              ...(snap.d7Sonnet != null
+                ? { seven_day_sonnet: { utilization: snap.d7Sonnet, resets_at: null } }
+                : {}),
+            },
+          }
+        : null;
+    const fileResult =
+      claudeFileData && !fileIsStale
         ? {
             mode: claudeFileData.mode || "subscription",
             plan: claudeFileData.plan || "max",
@@ -546,11 +732,14 @@ export default function register(api: OpenClawPluginApi) {
               seven_day: { utilization: 0, resets_at: null },
             },
           }
-        : {
-            mode: "subscription",
-            plan: "max",
-            limits: { five_hour: { utilization: 0 }, seven_day: { utilization: 0 } },
-          });
+        : null;
+    const claudeResult = buildClaudeProfile(firstLive) ??
+      snapResult ??
+      fileResult ?? {
+        mode: "subscription",
+        plan: "max",
+        limits: { five_hour: { utilization: 0 }, seven_day: { utilization: 0 } },
+      };
 
     const result: Record<string, unknown> = {
       claude: claudeResult,

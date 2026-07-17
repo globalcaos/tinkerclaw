@@ -325,7 +325,7 @@ export default definePluginEntry({
             role: string;
           }): Promise<string> => {
             // One real LLM call via the SAME fan-out fabric subagents use (shares
-            // the cc-bridge billing harness + 8-worker fan-out budget). Spawn is
+            // the tinker-bridge billing harness + 8-worker fan-out budget). Spawn is
             // FIRE-AND-FORGET (no synchronous result); we read the child transcript
             // back ourselves via agent.wait + chat.history (the engine's own path).
             // callGatewayFromCli signature is (method, opts, params?, extra?) —

@@ -1,5 +1,56 @@
 import { describe, expect, test } from "vitest";
-import { sanitizeChatHistoryMessages } from "./chat-display-projection.js";
+import {
+  projectChatDisplayMessages,
+  sanitizeChatHistoryMessages,
+} from "./chat-display-projection.js";
+
+// Regression: duplicated assistant bubbles after a gateway restart mid-turn.
+// The restart persists a streamed partial as an abort echo (openclawAbort.aborted),
+// then the resumed reply is persisted separately. suppressSupersededAbortEchoes
+// drops the echo when the resumed reply begins with it — but it compared with a
+// bare .trim(), so a respawn that re-streamed the reply with different newlines/
+// indentation defeated startsWith() and BOTH bubbles leaked. The compare now
+// collapses whitespace (and is bidirectional). See double-response-rootcause.
+describe("chat-display-projection abort-echo supersede", () => {
+  const assistantTexts = (messages: unknown[]): string[] =>
+    (messages as Array<{ role?: string; content?: Array<{ type: string; text?: string }> }>)
+      .filter((m) => m.role === "assistant")
+      .map((m) => (m.content ?? []).find((b) => b.type === "text")?.text ?? "");
+
+  test("echo is suppressed when the resumed reply differs only by whitespace", () => {
+    const echo = "On it.\nLet me check\n\nthe file.";
+    const resumed = "On it. Let me check the file. Here is the answer.";
+    const out = projectChatDisplayMessages(
+      [
+        { role: "user", content: [{ type: "text", text: "do the thing" }] },
+        {
+          role: "assistant",
+          openclawAbort: { aborted: true },
+          content: [{ type: "text", text: echo }],
+        },
+        { role: "assistant", content: [{ type: "text", text: resumed }] },
+      ],
+      { stripEnvelope: false },
+    );
+    expect(assistantTexts(out)).toEqual([resumed]);
+  });
+
+  test("a genuinely aborted echo with no resumed reply is kept", () => {
+    const echo = "Partial thought before the interruption.";
+    const out = projectChatDisplayMessages(
+      [
+        { role: "user", content: [{ type: "text", text: "do the thing" }] },
+        {
+          role: "assistant",
+          openclawAbort: { aborted: true },
+          content: [{ type: "text", text: echo }],
+        },
+      ],
+      { stripEnvelope: false },
+    );
+    expect(assistantTexts(out)).toEqual([echo]);
+  });
+});
 
 // Regression: long structured assistant answers (💬 ANSWER → 🧠 AMYGDALA →
 // 🌿 FRACTAL) were silently cut at the tail. Root cause was the 8_000-char

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { TALK_TEST_PROVIDER_ID } from "../../test-utils/talk-test-provider.js";
 import {
   formatValidationErrors,
+  validateChatSendParams,
   validateModelsListParams,
   validateNodeEventResult,
   validateNodePresenceAlivePayload,
@@ -230,5 +231,21 @@ describe("validateNodeEventResult", () => {
         reason: "persisted",
       }),
     ).toBe(true);
+  });
+});
+
+describe("validateChatSendParams", () => {
+  const base = { sessionKey: "agent:main:main", message: "hi", idempotencyKey: "idem-1" };
+
+  it("accepts a baseline chat.send payload", () => {
+    expect(validateChatSendParams(base)).toBe(true);
+  });
+
+  it("accepts an optional per-turn model override", () => {
+    expect(validateChatSendParams({ ...base, model: "claude-code/claude-opus-4-8" })).toBe(true);
+  });
+
+  it("still rejects unknown properties", () => {
+    expect(validateChatSendParams({ ...base, bogusField: 1 })).toBe(false);
   });
 });

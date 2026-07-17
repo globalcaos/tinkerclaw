@@ -5,7 +5,7 @@
  * model. v3.1 makes the rule set a single serializable source of truth
  * (`AEGIS_RULES`) consumed by BOTH:
  *   - the in-gateway gate (`evaluateRuleBased`, native `before_tool_call`), and
- *   - the pre-execution PreToolUse hook on the cc-bridge / claude-cli path
+ *   - the pre-execution PreToolUse hook on the tinker-bridge / claude-cli path
  *     (compiled into `policy.json` by `policy-snapshot.ts`, evaluated by
  *     `hook/amygdala-pretooluse.mjs`).
  * Having one array means the two enforcement seams can never drift.

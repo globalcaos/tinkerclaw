@@ -4,6 +4,7 @@ import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/embedded-agent-runner/transcript-rewrite.js";
+import { resolveFailoverReasonFromError } from "../../agents/failover-error.js";
 import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox/context.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
@@ -107,6 +108,7 @@ import { formatForLog } from "../ws-log.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { setGatewayDedupeEntry } from "./agent-wait-dedupe.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
+import { buildChatSendCommandBody } from "./chat-command-body.js";
 import { appendInjectedAssistantMessageToTranscript } from "./chat-transcript-inject.js";
 import {
   buildWebchatAssistantMessageFromReplyPayloads,
@@ -1626,18 +1628,97 @@ function broadcastChatError(params: {
   runId: string;
   sessionKey: string;
   errorMessage?: string;
+  error?: unknown;
 }) {
   const seq = nextChatSeq({ agentRunSeq: params.context.agentRunSeq }, params.runId);
+  // FORK 2026-06-24 (recoverable-error retry, spec Component 1): mirror the
+  // emitChatFinal error path — surface the failover recoverability class as the
+  // machine-readable `reason` derived from the raw error (FailoverError.reason
+  // or a classified error signal), so the Tinker auto-retry controller does not
+  // have to text-match `errorMessage`. `retryAfter` (provider Retry-After) is
+  // not attached to the error object at this layer and is intentionally OMITTED.
+  // `errorMessage` (human text) is unchanged.
+  const failoverReason =
+    params.error !== undefined
+      ? (resolveFailoverReasonFromError(params.error) ?? undefined)
+      : undefined;
   const payload = {
     runId: params.runId,
     sessionKey: params.sessionKey,
     seq,
     state: "error" as const,
     errorMessage: params.errorMessage,
+    ...(failoverReason && { reason: failoverReason }),
   };
   params.context.broadcast("chat", payload);
   params.context.nodeSendToSession(params.sessionKey, "chat", payload);
   params.context.agentRunSeq.delete(params.runId);
+}
+
+// FORK 2026-06-24 (repeating-answers bug): final serve-boundary answer dedup.
+// chat.history serves `rawMessages` = the local session store MERGED with the cc-bridge
+// CLI-session JSONL import (augmentChatHistoryWithCliSessionImports). For a heavily-compacted
+// tinker session the JSONL retains a whole conversation's worth of re-answers (re-emitted
+// across cc-bridge respawns + compactions) while the local store kept only the post-compaction
+// tail — so the merge's timestamp/slot heuristics (cli-session-history.merge.ts) have too few
+// local anchors and the same answers flood the served history (observed raw=1040 vs local=68;
+// the front-end then renders each answer 2x+ — the "I see my answer twice" report).
+// This is a content-based last line of defence on the PROJECTED display messages, independent
+// of timestamps: drop an ASSISTANT message whose normalized visible text exactly duplicates an
+// earlier-kept assistant message, OR is a strict prefix of any other assistant message (the
+// cc-bridge leading-narration echo of a fuller coalesced answer). Min-length guard mirrors
+// merge.ts LONG_TEXT_DEDUP_MIN_LEN so legit short repeats ("ok", "done") survive; user messages
+// are untouched (distinct prompts must not collapse).
+const SERVED_ANSWER_DEDUP_MIN_LEN = 50;
+
+function visibleAssistantTextForDedup(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+  const m = message as { role?: unknown; content?: unknown };
+  if (m.role !== "assistant") return undefined;
+  const c = m.content;
+  let text = "";
+  if (typeof c === "string") {
+    text = c;
+  } else if (Array.isArray(c)) {
+    for (const b of c) {
+      if (b && typeof b === "object") {
+        const blk = b as { type?: unknown; text?: unknown };
+        if ((blk.type === "text" || blk.type === "output_text") && typeof blk.text === "string") {
+          text += blk.text;
+        }
+      }
+    }
+  } else {
+    return undefined;
+  }
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length >= SERVED_ANSWER_DEDUP_MIN_LEN ? normalized : undefined;
+}
+
+export function dedupeServedAssistantAnswers(messages: unknown[]): unknown[] {
+  const texts = messages.map(visibleAssistantTextForDedup);
+  const drop = new Array<boolean>(messages.length).fill(false);
+  for (let i = 0; i < messages.length; i++) {
+    const ti = texts[i];
+    if (ti === undefined) continue;
+    for (let j = 0; j < messages.length; j++) {
+      if (i === j) continue;
+      const tj = texts[j];
+      if (tj === undefined) continue;
+      // ti is a strict prefix of a longer assistant answer → ti is the echo, drop it
+      if (ti.length < tj.length && tj.startsWith(ti)) {
+        drop[i] = true;
+        break;
+      }
+      // exact duplicate → keep the earliest occurrence, drop the later copies
+      if (ti === tj && i > j) {
+        drop[i] = true;
+        break;
+      }
+    }
+  }
+  if (!drop.some(Boolean)) return messages;
+  return messages.filter((_, i) => !drop[i]);
 }
 
 export const chatHandlers: GatewayRequestHandlers = {
@@ -1674,7 +1755,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     // sources merged here so next reproduction tells us which layer
     // duplicated. Tag "[duprep-history]" for grep. localMessages = what
     // the OpenClaw sessionFile holds. rawMessages = after the cli-session
-    // imports merge (binding + cc-bridge-map chained per the orphan fix
+    // imports merge (binding + tinker-bridge-map chained per the orphan fix
     // a1b7819258). If rawMessages.user-count > localMessages.user-count
     // by more than the legitimate gap, the merge dedup is missing a case.
     const countUser = (msgs: unknown[]): number =>
@@ -1717,10 +1798,12 @@ export const chatHandlers: GatewayRequestHandlers = {
     const max = Math.min(hardMax, requested);
     const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars(cfg, maxChars);
     const normalized = augmentChatHistoryWithCanvasBlocks(
-      projectRecentChatDisplayMessages(rawMessages, {
-        maxChars: effectiveMaxChars,
-        maxMessages: max,
-      }),
+      dedupeServedAssistantAnswers(
+        projectRecentChatDisplayMessages(rawMessages, {
+          maxChars: effectiveMaxChars,
+          maxMessages: max,
+        }),
+      ),
     );
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
@@ -1865,6 +1948,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionKey: string;
       message: string;
       thinking?: string;
+      model?: string;
       deliver?: boolean;
       dispatchAgent?: boolean;
       originatingChannel?: string;
@@ -2126,11 +2210,11 @@ export const chatHandlers: GatewayRequestHandlers = {
           ? resolveChatSendTranscriptMediaFields(await persistedImagesPromise)
           : {};
 
-      const trimmedMessage = parsedMessage.trim();
-      const injectThinking = Boolean(
-        p.thinking && trimmedMessage && !trimmedMessage.startsWith("/"),
-      );
-      const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
+      const commandBody = buildChatSendCommandBody({
+        message: parsedMessage,
+        thinking: p.thinking,
+        model: p.model,
+      });
       const messageForAgent = systemProvenanceReceipt
         ? [systemProvenanceReceipt, parsedMessage].filter(Boolean).join("\n\n")
         : parsedMessage;
@@ -2579,7 +2663,7 @@ export const chatHandlers: GatewayRequestHandlers = {
             // surfacing without the lifecycle hook firing, surface_error
             // timeout where the run "completed" without throwing), the TUI
             // spinner stays on `sending...` forever — this is exactly the
-            // 16:59:34 stuck-spinner symptom we hit when the cc-bridge LLM
+            // 16:59:34 stuck-spinner symptom we hit when the tinker-bridge LLM
             // idle watchdog SIGTERMed.
             // The backstop emits state="final" with whatever the dispatcher
             // actually delivered (deliveredReplies). The spinner clears
@@ -2654,6 +2738,7 @@ export const chatHandlers: GatewayRequestHandlers = {
             runId: clientRunId,
             sessionKey,
             errorMessage: String(err),
+            error: err,
           });
         })
         .finally(() => {

@@ -16,7 +16,7 @@
  *
  * Emit path taken: the REAL core surface — `emitAgentEvent` from
  * `src/infra/agent-events.ts` — the exact surface tinkerclaw-learned-intuition uses
- * for its `stream:"lifecycle"` amygdala-decision broadcasts and tinkerclaw-cc-bridge
+ * for its `stream:"lifecycle"` amygdala-decision broadcasts and tinkerclaw-tinker-bridge
  * uses from `src/stream.ts`. There is no plugin-sdk emit wrapper; bundled fork
  * extensions import core infra directly (established pattern), so NO no-op fallback
  * was needed. `emitFractalEvent` is the SINGLE chokepoint — nothing else in this

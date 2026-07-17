@@ -13,6 +13,8 @@ verify:
     cmd: python3 -c 'import json,os; cfg=json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); p=cfg["agents"]["defaults"]["model"]["primary"]; assert p.startswith("claude-code/"), f"primary {p} is metered, not the flat-rate subscription"'
   - name: primary model is the best-ranked subscription model (rank table is cron-updated daily — derive it per design-principles.md, never freeze a model name)
     cmd: python3 -c 'import json,os; cfg=json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); d=cfg["agents"]["defaults"]; p=d["model"]["primary"]; subs={k:v["rank"] for k,v in d["models"].items() if k.startswith("claude-code/") and isinstance(v,dict) and "rank" in v}; best=min(subs,key=subs.get); assert p==best, f"primary {p} != best-ranked subscription model {best} @ rank {subs[best]}"'
+  - name: all four thinking-level resolution sites clamp via resolveSupportedThinkingLevel (none rejects an over-ceiling level)
+    cmd: python3 -c 'import os; r=os.path.expanduser("~/src/tinkerclaw/src"); sites=["auto-reply/reply/get-reply-run.ts","auto-reply/reply/directive-handling.impl.ts","gateway/sessions-patch.ts","agents/agent-command.ts"]; [exec("t=open(os.path.join(r,s)).read(); assert \"resolveSupportedThinkingLevel\" in t, s+\": resolveSupportedThinkingLevel call missing — over-ceiling thinking level may hard-reject again\"") for s in sites]; sp=open(os.path.join(r,"gateway/sessions-patch.ts")).read(); assert "next.thinkingLevel = resolveSupportedThinkingLevel" in sp, "sessions-patch.ts no longer clamps the persisted thinkingLevel"'
 ---
 
 # Auth + model routing
@@ -22,6 +24,8 @@ verify:
 Source of truth: `agents.defaults.models[<provider/model>].rank` in `openclaw.json`. Updated by the `model-rank-refresh` cron at 06:30 daily, fetching the Artificial Analysis Intelligence Index leaderboard.
 
 **The primary is DERIVED, not frozen (design-principles.md #19).** `agents.defaults.model.primary` is the **best-ranked _subscription_ (cli-gm / `claude-code/*`) model** — never a metered model, however highly the leaderboard ranks it. The rank numbers churn daily; the routing rule does not. The frontmatter `verify:` enforces the derived rule (primary is a `claude-code/*` model AND equals the lowest-rank `claude-code/*` entry), so it survives a new model landing at the top instead of re-breaking on every cron run. The table below is a dated snapshot, illustrative only.
+
+**Live-config rank decision (2026-06-23, in `~/.openclaw/openclaw.json`, uncommitted config — NOT a tinkerclaw code change):** `agents.defaults.models` ranks were set so `claude-code/claude-opus-4-8` = **rank 1** (matching `agents.defaults.model.primary`) and the **unavailable** `claude-code/claude-fable-5` was demoted to **rank 25**. This makes the derived-primary `verify:` (line below — primary == best-ranked `claude-code/*` entry) pass: with fable-5 no longer the lowest-rank subscription model, the best-ranked subscription model is opus-4-8, which IS the primary. The `verify:` reads `~/.openclaw/openclaw.json` **live** (not a snapshot), so this config change alone flips the gate green — no fork code or bible regeneration is needed. Fable 5 is export-controlled / UNAVAILABLE, so it must never be allowed to win the best-rank derivation.
 
 Current snapshot (2026-06-10):
 
@@ -55,7 +59,7 @@ Current snapshot (2026-06-10):
 
 ### claude-code (Anthropic subscription via claude-cli)
 
-- **Driver:** `tinkerclaw-cc-bridge` plugin → claude-cli subprocess.
+- **Driver:** `tinkerclaw-tinker-bridge` plugin → claude-cli subprocess.
 - **Auth profile:** `anthropic:cli-gm` (OAuth, `~/.claude/.credentials-gm.json`).
 - **Order:** `[cli-gm]` only. The metered `anthropic:api` profile is DISABLED in `auth.order.anthropic`.
 - **Tier:** subscription (max_20x at $200/month per `env.ANTHROPIC_SUBSCRIPTION_TIER`).
@@ -82,6 +86,25 @@ Current snapshot (2026-06-10):
 - **Auth profile:** `ollama:default` (`apiKey: "ollama-local"`).
 - **Base URL:** `http://127.0.0.1:11434`.
 - **Tier:** free / local. Currently used only for `mxbai-embed-large` (memorySearch embeddings), not for chat.
+
+## Thinking-level clamp — unsupported levels clamp, never reject (cross-model, FORK 2026-06-24)
+
+Each model exposes a thinking profile (the ordered set of levels it admits, ranked by `THINKING_LEVEL_RANKS` in `thinking.shared.ts`). The effort slider's top stop is **Max**, but not every model admits `max` — e.g. `openai/gpt-5.5` tops out at `xhigh`. When the requested level exceeds a model's ceiling, the resolver **clamps DOWN to that model's highest supported level and proceeds** — it never hard-errors the turn.
+
+The canonical resolver is `resolveSupportedThinkingLevel({ provider, model, level, catalog })` (`src/auto-reply/thinking.ts`): if the level is in the profile it passes through, otherwise it returns the highest profile level whose rank `<=` the requested rank (falling back to the highest non-`off` level, then `off`). This is the single source of truth for "what level does this model actually get."
+
+There are FOUR resolution sites where a requested level meets a model that may not support it; ALL FOUR clamp via `resolveSupportedThinkingLevel` (none rejects):
+
+| Path                            | Site                                 | Surfaces the clamp via                                                                              |
+| ------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| chat.send / Tinker              | `get-reply-run.ts` (~:630)           | `logVerbose` info note (no ack channel on this path)                                                |
+| `/think` directive              | `directive-handling.impl.ts` (~:318) | ack note, guarded on `requested !== applied`                                                        |
+| persisted `thinkingLevel` patch | `sessions-patch.ts` (~:512)          | silent clamp — the patch always succeeds (previously a `"thinkingLevel" in patch → invalid` REJECT) |
+| CLI `agent`                     | `agent-command.ts` (~:862)           | stderr note                                                                                         |
+
+**Why the slider could trigger a reject:** the slider's Max injects an **EXPLICIT** `/think max` directive (`chat-command-body.ts`), so the resolver classified it as explicit and (pre-fix) took a reject branch instead of the clamp that already existed for the non-explicit case. The fix unified all four sites to clamp regardless of explicit-vs-derived. The slider's Max is a **ceiling request**, not a contract the model must honor exactly. Models that DO support `max` (`claude-code/*`) are unaffected. This is the cross-model analogue of the 2026-06-19 `claude-code` thinking-profile gate (which rejected a level the model DID support because its profile was missing — opposite cause, same "reject instead of admit/clamp" symptom). See bug-log.md `### FIXED [think-clamp+detection-pattern]` (2026-06-24).
+
+The "all four sites clamp via `resolveSupportedThinkingLevel`, none rejects" contract is enforced by this file's frontmatter `verify:` block (asserts each of the four source files calls the resolver and that `sessions-patch.ts` still clamps the persisted level).
 
 ## Failover and cost-aware routing
 

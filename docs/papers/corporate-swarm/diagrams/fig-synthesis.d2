@@ -1,0 +1,28 @@
+# J10 HIVEMIND — Figure 3: The Agent Network Along Six Axes (whole-paper synthesis)
+# Compact, large fonts, legend stacked below — legible at A4 column width.
+# Render: d2 --layout dagre --pad 20 fig-synthesis.d2 images/fig-synthesis.png
+
+direction: down
+
+humans: "Humans\n(rotate through roles)" { shape: person; style: { fill: "#f5f0e8"; stroke: "#5A3E28"; stroke-width: 2; font-size: 28 } }
+exec: "L3-EXEC · T5" { style: { fill: "#efe6f2"; stroke: "#6B5090"; stroke-width: 3; font-size: 28; bold: true } }
+it: "L2-IT · T4" { style: { fill: "#eef2e2"; stroke: "#4A5D1A"; stroke-width: 2; font-size: 27 } }
+sales: "L2-SALES · T4" { style: { fill: "#eef2e2"; stroke: "#4A5D1A"; stroke-width: 2; font-size: 27 } }
+commons: "Knowledge Commons" { shape: cylinder; style: { fill: "#f3ead8"; stroke: "#5A3E28"; stroke-width: 2; font-size: 27 } }
+srep: "L1-SALES-REP · T3\n(shared)" { style: { fill: "#e6eef5"; stroke: "#2c5b86"; stroke-width: 2; font-size: 26 } }
+
+# one exemplar edge per axis, each a distinct color
+exec -> sales: "clearance ↓" { style: { stroke: "#b23b3b"; stroke-width: 4; font-size: 25; font-color: "#b23b3b" } }
+sales -> srep: "supervision" { style: { stroke: "#6B5090"; stroke-width: 3; stroke-dash: 5; font-size: 25; font-color: "#6B5090" } }
+commons -> srep: "knowledge →" { style: { stroke: "#4A7A1A"; stroke-width: 3; font-size: 25; font-color: "#4A7A1A" } }
+humans -> it: "feature tickets" { style: { stroke: "#2c5b86"; stroke-width: 3; font-size: 25; font-color: "#2c5b86" } }
+it -> commons: "vibe-coded rollout" { style: { stroke: "#2c5b86"; stroke-width: 3; font-size: 25; font-color: "#2c5b86" } }
+srep -> humans: "one answer, many people" { style: { stroke: "#2596a8"; stroke-width: 3; font-size: 25; font-color: "#2596a8" } }
+humans -> srep: "workload routing" { style: { stroke: "#d97a2b"; stroke-width: 3; stroke-dash: 3; font-size: 25; font-color: "#d97a2b" } }
+
+legend: "AXES (one graph, six colored paths)\n● red = Clearance (who may know what)   ● purple = Supervision (who inspects whom)\n● green = Knowledge propagation (commons → all)   ● blue = Self-modification (users → IT → rollout)\n● teal = Bottleneck reduction (one agent, many)   ● orange = Workload sharing (dynamic routing)" {
+  near: bottom-center
+  shape: text
+  width: 900
+  style: { font-size: 26; fill: "#faf7f1" }
+}

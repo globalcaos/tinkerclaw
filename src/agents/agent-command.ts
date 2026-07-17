@@ -48,6 +48,7 @@ import { resolveAgentRunContext } from "./command/run-context.js";
 import { resolveSession } from "./command/session.js";
 import type { AgentCommandIngressOpts, AgentCommandOpts } from "./command/types.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
+import { chooseAutoEffort } from "./effort-allocator.js";
 import { classifyEmbeddedPiRunResultForModelFallback } from "./embedded-agent-runner/result-fallback-classifier.js";
 import { AGENT_LANE_SUBAGENT } from "./lanes.js";
 import { LiveSessionModelSwitchError } from "./live-model-switch.js";
@@ -588,7 +589,26 @@ async function agentCommandInternal(
       });
     }
 
-    let resolvedThinkLevel = thinkOnce ?? thinkOverride ?? persistedThinking;
+    // FORK 2026-06-14 (bible §5.84 Drop 3): on TRUE Auto (no explicit/persisted pick) for a
+    // primary :main turn, the fluid allocator chooses a concrete level — annealed exploration +
+    // surplus-scaled aggressiveness. An explicit slider/`/think`/persisted level always wins (it
+    // short-circuits the `??` chain before the allocator runs). Subagents (their effort comes from
+    // the spawn's `thinking`) and cron/heartbeat keys are excluded by the :main / :subagent guard.
+    const autoEffort =
+      !thinkOnce &&
+      !thinkOverride &&
+      !persistedThinking &&
+      !!sessionKey &&
+      // FORK 2026-06-18 (bible §5.84 Drop 3): fire the Auto allocator for PRIMARY
+      // interactive turns — the CLI/main key (agent:<id>:main) AND every webchat Tinker
+      // tab (agent:<id>:tinker:<tabId>). The old `endsWith(":main")` test silently
+      // excluded every Tinker tab (keys end in :tinker:<tabId>), so Auto NEVER fired in
+      // the UI and every turn fell back to the default thinking budget. The (main|tinker)
+      // allowlist still excludes subagent (:subagent:), cron, and heartbeat keys.
+      /^agent:[^:]+:(?:main|tinker)(?::|$)/.test(sessionKey)
+        ? chooseAutoEffort({ prompt: opts.message ?? "", sessionKey })
+        : undefined;
+    let resolvedThinkLevel = thinkOnce ?? thinkOverride ?? persistedThinking ?? autoEffort;
     const resolvedVerboseLevel =
       verboseOverride ?? persistedVerbose ?? (agentCfg?.verboseDefault as VerboseLevel | undefined);
 
@@ -838,11 +858,7 @@ async function agentCommandInternal(
       })
     ) {
       const explicitThink = Boolean(thinkOnce || thinkOverride);
-      if (explicitThink) {
-        throw new Error(
-          `Thinking level "${resolvedThinkLevel}" is not supported for ${provider}/${model}. Use one of: ${formatThinkingLevels(provider, model, ", ", thinkingCatalog)}.`,
-        );
-      }
+      const requestedThinkLevel = resolvedThinkLevel;
       const fallbackThinkLevel = resolveSupportedThinkingLevel({
         provider,
         model,
@@ -852,6 +868,11 @@ async function agentCommandInternal(
       if (fallbackThinkLevel !== resolvedThinkLevel) {
         const previousThinkLevel = resolvedThinkLevel;
         resolvedThinkLevel = fallbackThinkLevel;
+        if (explicitThink) {
+          console.error(
+            `[agent] thinking level "${requestedThinkLevel}" not supported for ${provider}/${model}; using ${fallbackThinkLevel}.`,
+          );
+        }
         if (
           sessionEntry &&
           sessionStore &&

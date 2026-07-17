@@ -7,6 +7,7 @@ import {
   eegProviderPaint,
   eegCostWidthPx,
   eegStopX,
+  eegToolIdentity,
   EegTraceStore,
   type EegSample,
   type EegTurnEnd,
@@ -21,7 +22,6 @@ const sample = (over: Partial<EegSample> & { runId: string }): EegSample => ({
   model: "claude-sonnet-4-5",
   provider: "anthropic",
   chosenLevel: "medium",
-  forced: false,
   subagent: false,
   startedAt: T0,
   endedAt: T0 + 1_000,
@@ -30,14 +30,20 @@ const sample = (over: Partial<EegSample> & { runId: string }): EegSample => ({
 
 const pathCount = (svg: string): number => (svg.match(/<path/g) || []).length;
 const countOf = (svg: string, needle: string): number => svg.split(needle).length - 1;
+// FORK 2026-06-26: x of the first eeg-main trunk segment = the effort COLUMN.
+const mainX = (svg: string): number => {
+  const m = /<path class="eeg-main"[^>]*\bd="M ([\d.]+)/.exec(svg);
+  return m ? Number(m[1]) : -1;
+};
 const svgHeight = (svg: string): number => Number(/height="([\d.]+)"/.exec(svg)?.[1] ?? 0);
 
-describe("segment length ∝ token cost", () => {
-  it("a higher-token turn renders a longer (taller) segment", () => {
+describe("segment length = euro cost (the owner 2026-06-20: §1 grid)", () => {
+  it("a costlier turn renders a longer (taller) segment", () => {
+    // length = €; use a pricey model + many tokens to clear the ~€0.2 click floor.
     const big = new EegTraceStore();
-    big.record(sample({ runId: "r1", outputTokens: 8000, inputTokens: 40000 }));
+    big.record(sample({ runId: "r1", model: "claude-fable-5", outputTokens: 120000 }));
     const small = new EegTraceStore();
-    small.record(sample({ runId: "r1", outputTokens: 50, inputTokens: 200 }));
+    small.record(sample({ runId: "r1", model: "claude-haiku-4-5", outputTokens: 50 }));
     expect(svgHeight(big.renderSvg({ width: WIDTH }))).toBeGreaterThan(
       svgHeight(small.renderSvg({ width: WIDTH })),
     );
@@ -48,11 +54,29 @@ describe("segment length ∝ token cost", () => {
     store.record(sample({ runId: "r1" })); // no tokens yet
     expect(svgHeight(store.renderSvg({ width: WIDTH }))).toBeGreaterThan(0);
   });
+
+  it("draws a €1 horizontal grid: ruler lines + a €N gutter label", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "r1", model: "claude-fable-5", outputTokens: 120000 }));
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(svg).toContain('class="eeg-eurogrid"');
+    expect(svg).toContain("€1");
+  });
+
+  it("euro length scales with the model's €/Mtok at equal tokens (fable taller than haiku)", () => {
+    const fable = new EegTraceStore();
+    fable.record(sample({ runId: "r1", model: "claude-fable-5", outputTokens: 200000 }));
+    const haiku = new EegTraceStore();
+    haiku.record(sample({ runId: "r1", model: "claude-haiku-4-5", outputTokens: 200000 }));
+    expect(svgHeight(fable.renderSvg({ width: WIDTH }))).toBeGreaterThan(
+      svgHeight(haiku.renderSvg({ width: WIDTH })),
+    );
+  });
 });
 
 describe("eegStopX", () => {
-  it("maps the 8 EEG_STOPS to strictly ascending x values within the rail at width 300", () => {
-    expect(EEG_STOPS).toHaveLength(8);
+  it("maps the 7 EEG_STOPS to strictly ascending x values within the rail at width 300", () => {
+    expect(EEG_STOPS).toHaveLength(7); // Auto + 6 levels (Drop 3 collapsed Auto/Adaptive)
     expect(EEG_STOPS[0].lvl).toBe(""); // Auto first
     const xs = EEG_STOPS.map((s) => eegStopX(s.lvl, WIDTH));
     for (let i = 1; i < xs.length; i++) {
@@ -185,17 +209,38 @@ describe("record() upserts by runId", () => {
   });
 });
 
-describe("forced rendering", () => {
-  it("forced:true draws a dashed strand", () => {
-    const store = new EegTraceStore();
-    store.record(sample({ runId: "rf", forced: true }));
-    expect(store.renderSvg({ width: WIDTH })).toContain("stroke-dasharray");
-  });
+describe("branch never paints into the label row (the owner 2026-06-23: weird max↔high loop on the labels)", () => {
+  const TOP_PAD = 26;
+  const allBranchYs = (svg: string): number[] => {
+    const ys: number[] = [];
+    for (const m of svg.matchAll(/class="eeg-branch"[^>]*\bd="([^"]+)"/g)) {
+      const nums = m[1].replace(/[MCL]/g, " ").trim().split(/\s+/).map(Number);
+      nums.forEach((v, i) => {
+        if (i % 2 === 1) ys.push(v); // odd index = y in the x,y stream
+      });
+    }
+    return ys;
+  };
 
-  it("forced:false does not", () => {
+  it("a near-top ENDED subagent (split close to the top) keeps every branch y >= TOP_PAD", () => {
     const store = new EegTraceStore();
-    store.record(sample({ runId: "rn", forced: false }));
-    expect(store.renderSvg({ width: WIDTH })).not.toContain("stroke-dasharray");
+    // a max main, a high subagent that ends, then nothing newer → the subagent's split sits
+    // right under the top, the case that used to arc onto the labels.
+    store.record(sample({ runId: "M1", chosenLevel: "max", startedAt: T0, endedAt: T0 + 1000 }));
+    store.record(
+      sample({
+        runId: "SUB",
+        subagent: true,
+        parentRunId: "M1",
+        chosenLevel: "high",
+        startedAt: T0 + 1100,
+        endedAt: T0 + 1300,
+      }),
+    );
+    const svg = store.renderSvg({ width: 300 });
+    const ys = allBranchYs(svg);
+    expect(ys.length).toBeGreaterThan(0); // a branch IS drawn (not skipped into invisibility)
+    for (const y of ys) expect(y).toBeGreaterThanOrEqual(TOP_PAD); // ...but never on the labels
   });
 });
 
@@ -211,19 +256,19 @@ describe("concurrency stacking", () => {
       }),
     );
 
-  it("6 overlapping same model+level subagents collapse to <=5 strands with a x6 badge", () => {
+  it("6 overlapping subagents render 6 branches (no cap) with a ×6 multiplicity label", () => {
     const store = new EegTraceStore();
     for (const s of overlapping(6)) store.record(s);
     const svg = store.renderSvg({ width: WIDTH });
-    expect(svg).toContain("×6"); // ×6 badge
-    expect(pathCount(svg)).toBeLessThanOrEqual(5);
+    expect(svg).toContain("×6"); // dynamic ×N gauge at peak concurrency
+    expect(pathCount(svg)).toBe(6); // show ALL branches (bible §5.8h invariant 4, 2026-06-19)
   });
 
-  it("3 overlapping subagents render 3 strands and no xN badge", () => {
+  it("3 overlapping subagents render 3 branches and a ×3 multiplicity label", () => {
     const store = new EegTraceStore();
     for (const s of overlapping(3)) store.record(s);
     const svg = store.renderSvg({ width: WIDTH });
-    expect(svg).not.toMatch(/×\d/);
+    expect(svg).toMatch(/×3/); // dynamic ×N fires at any concurrency ≥2
     expect(pathCount(svg)).toBe(3);
   });
 });
@@ -255,5 +300,532 @@ describe("google gradient", () => {
     expect(svg).toContain("linearGradient");
     expect(svg).toContain("eeg-google");
     expect(svg).toContain("url(#eeg-google)");
+  });
+});
+
+describe("EEG concurrency = depth-shaded stack (bible §5.8h / §5.84, the owner 2026-06-14)", () => {
+  const concurrent = (n: number, over: Partial<EegSample> = {}): string => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "main", subagent: false }));
+    for (let i = 0; i < n; i++) {
+      store.record(
+        sample({
+          runId: `s${i}`,
+          subagent: true,
+          parentRunId: "main",
+          model: "claude-opus-4-8",
+          provider: "anthropic",
+          chosenLevel: "high",
+          startedAt: T0 + 10, // all overlap → one cluster
+          endedAt: T0 + 2000,
+          ...over,
+        }),
+      );
+    }
+    return store.renderSvg({ width: WIDTH });
+  };
+  const branchStrokes = (svg: string): string[] =>
+    [...svg.matchAll(/class="eeg-branch"[^>]*?stroke="([^"]+)"/g)].map((m) => m[1]);
+
+  it("draws one strand per concurrent subagent (≤5) with the bottom strand darkest, lightening upward", () => {
+    const strokes = branchStrokes(concurrent(3));
+    expect(strokes).toHaveLength(3);
+    expect(strokes[0]).toBe(ANTHROPIC_STROKE); // bottom = full brand color (darkest)
+    expect(new Set(strokes).size).toBe(3); // each higher strand a distinct, lighter tint
+  });
+
+  it("shows ALL strands (no cap) plus a ×N multiplicity label (bible §5.8h invariant 4, updated 2026-06-19)", () => {
+    const svg = concurrent(7);
+    expect((svg.match(/class="eeg-branch"/g) || []).length).toBe(7);
+    expect(svg).toContain("×7");
+  });
+
+  it("a rainbow-provider stack stays the gradient but fades by depth (opacity, not tint)", () => {
+    const svg = concurrent(3, { model: "gemini-2.5-pro", provider: "google" });
+    const ops = [...svg.matchAll(/class="eeg-branch"[^>]*?stroke-opacity="([\d.]+)"/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(ops).toHaveLength(3);
+    expect(ops[0]).toBeGreaterThan(ops[2]); // bottom most opaque (darkest), top faded
+  });
+});
+
+describe("tool calls branch off the trunk (the owner 2026-06-25: scope C — see EVERY tool call, color+thickness over precise cost)", () => {
+  it("eegToolIdentity maps a gemini-backed skill (nano-banana) to the google/rainbow identity", () => {
+    const id = eegToolIdentity("Bash", "python3 scripts/generate_image.py --prompt 'a cat'");
+    expect(id.provider).toBe("google");
+    expect(eegProviderPaint(id.provider).isRainbow).toBe(true);
+  });
+
+  it("eegToolIdentity maps a codex/openai-backed call to the openai identity", () => {
+    const id = eegToolIdentity("Bash", "codex exec --model gpt-5");
+    expect(id.provider).toBe("openai");
+    expect(eegProviderPaint(id.provider).stroke).toBe(EEG_PROVIDER_COLORS.openai);
+  });
+
+  it("eegToolIdentity maps plain housekeeping (grep/read/edit) to a neutral thin local identity", () => {
+    const grep = eegToolIdentity("Bash", "grep -rn foo src/");
+    const read = eegToolIdentity("Read", undefined);
+    expect(grep.provider).toBe("tool");
+    expect(read.provider).toBe("tool");
+    // gray, non-rainbow, AND thin (≤1px) so housekeeping never out-shouts a provider call
+    expect(eegProviderPaint(grep.provider).stroke).toBe(FALLBACK_GRAY);
+    expect(eegProviderPaint(grep.provider).isRainbow).toBe(false);
+    expect(eegCostWidthPx(grep.model, "")).toBeLessThanOrEqual(1);
+    expect(eegCostWidthPx(grep.model, "")).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it("a tool sample renders as a BRANCH (not the trunk) tagged data-eeg-tool", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "M1", chosenLevel: "high", startedAt: T0, endedAt: T0 + 4000 }));
+    const id = eegToolIdentity("Bash", "generate_image.py");
+    store.record(
+      sample({
+        runId: "TOOL1",
+        subagent: false,
+        tool: true,
+        parentRunId: "M1",
+        provider: id.provider,
+        model: id.model,
+        chosenLevel: "",
+        label: "Bash: generate_image.py",
+        startedAt: T0 + 500,
+        endedAt: T0 + 1500,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(svg).toContain('data-eeg-tool="1"'); // drawn as a tool branch
+    expect(svg).toContain("url(#eeg-google)"); // …in the gemini rainbow
+    // the tool must NOT be drawn as a trunk segment (eeg-main) — only the real LLM call is
+    const mainCount = (svg.match(/class="eeg-main"/g) || []).length;
+    expect(mainCount).toBe(1);
+  });
+
+  it("a housekeeping tool branch is thin + gray; a provider tool branch is thick + colored", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "M1", startedAt: T0, endedAt: T0 + 6000 }));
+    const grepId = eegToolIdentity("Bash", "grep -rn x");
+    const gemId = eegToolIdentity("Bash", "generate_image.py");
+    store.record(
+      sample({
+        runId: "G",
+        tool: true,
+        subagent: false,
+        parentRunId: "M1",
+        provider: grepId.provider,
+        model: grepId.model,
+        chosenLevel: "",
+        startedAt: T0 + 500,
+        endedAt: T0 + 800,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "I",
+        tool: true,
+        subagent: false,
+        parentRunId: "M1",
+        provider: gemId.provider,
+        model: gemId.model,
+        chosenLevel: "",
+        startedAt: T0 + 1000,
+        endedAt: T0 + 3000,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    // each branch <path> emits stroke-width BEFORE data-eeg-tool, so match in that order
+    const ws = [
+      ...svg.matchAll(/class="eeg-branch"[^>]*stroke-width="([\d.]+)"[^>]*data-eeg-tool="1"/g),
+    ].map((m) => Number(m[1]));
+    expect(ws.length).toBe(2);
+    expect(Math.max(...ws)).toBeGreaterThan(Math.min(...ws)); // gemini thicker than grep
+    expect(svg).toContain("url(#eeg-google)"); // gemini colored
+  });
+
+  it("tool branches do NOT inflate the subagent ×N multiplicity gauge", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "M1", startedAt: T0, endedAt: T0 + 5000 }));
+    // one real subagent + two overlapping tool calls at the same instant
+    store.record(
+      sample({
+        runId: "SUB",
+        subagent: true,
+        parentRunId: "M1",
+        startedAt: T0 + 100,
+        endedAt: T0 + 4000,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "T1",
+        tool: true,
+        parentRunId: "M1",
+        model: "tool:local",
+        provider: "tool",
+        chosenLevel: "",
+        startedAt: T0 + 100,
+        endedAt: T0 + 4000,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "T2",
+        tool: true,
+        parentRunId: "M1",
+        model: "tool:local",
+        provider: "tool",
+        chosenLevel: "",
+        startedAt: T0 + 100,
+        endedAt: T0 + 4000,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    // 3 branches drawn (1 subagent + 2 tools), but the ×N gauge counts only the subagent → never ×2/×3
+    expect((svg.match(/class="eeg-branch"/g) || []).length).toBe(3);
+    expect(svg).not.toContain("×2");
+    expect(svg).not.toContain("×3");
+  });
+});
+
+describe("close-stale + prompt anchors + prompt-break (the owner 2026-06-19)", () => {
+  it("closeStaleRunning closes ONLY dead-running subagent samples, returns their ids, idempotent", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "main", subagent: false, endedAt: undefined }));
+    store.record(sample({ runId: "live", subagent: true, endedAt: undefined }));
+    store.record(sample({ runId: "dead", subagent: true, endedAt: undefined }));
+    store.record(sample({ runId: "done", subagent: true, endedAt: T0 + 500 }));
+    const closed = store.closeStaleRunning((id) => id === "live", T0 + 99_000);
+    expect(closed).toEqual(["dead"]); // not main (not subagent), not live, not done (already ended)
+    expect(store.closeStaleRunning((id) => id === "live", T0 + 99_000)).toEqual([]); // idempotent
+  });
+
+  it("a turnEnd's promptIndex + promptText render as data-eeg-prompt-index + an escaped <title>", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "r1" }));
+    store.turnEnd({
+      turn: 1,
+      runId: "r1",
+      endedAt: T0 + 2_000,
+      promptIndex: 0,
+      promptText: "hello <world>",
+    });
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(svg).toContain('data-eeg-prompt-index="0"');
+    expect(svg).toContain("<title>hello &lt;world&gt;</title>");
+  });
+
+  it("draws the turn boundary as a YELLOW rule carrying data-eeg-prompt-text (the owner 2026-06-22)", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "r1" }));
+    store.turnEnd({
+      turn: 1,
+      runId: "r1",
+      endedAt: T0 + 2_000,
+      promptIndex: 0,
+      promptText: "make the lines yellow <ok>",
+    });
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(svg).toContain('class="eeg-marker"');
+    expect(svg).toContain('stroke="#FFD23F"'); // yellow, not blue/gray
+    expect(svg).toContain('data-eeg-prompt-text="make the lines yellow &lt;ok&gt;"');
+  });
+
+  it("draws the boundary even with NO samples (fresh-session first prompt — the no-line bug)", () => {
+    const store = new EegTraceStore();
+    // a turnEnd recorded at send time, before any model sample lands → n===0
+    store.turnEnd({
+      turn: 1,
+      runId: "send-1",
+      endedAt: T0 + 100,
+      promptIndex: 0,
+      promptText: "first prompt",
+    });
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(svg).toContain('class="eeg-marker"'); // marker drawn despite empty paper
+    expect(svg).toContain('stroke="#FFD23F"');
+    expect(svg).toContain('data-eeg-prompt-index="0"');
+  });
+
+  it("draws EVERY call as a separate segment (no spline) and a prompt gap > a call gap", () => {
+    const hasMainCurve = (svg: string): boolean =>
+      /<path class="eeg-main"[^>]*\sd="[^"]*C[^"]*"/.test(svg);
+    const mainPaths = (svg: string): string[] =>
+      [...svg.matchAll(/<path class="eeg-main"[^>]*\bd="([^"]*)"/g)].map((m) => m[1]);
+    // each d = "M x yBottom L x yTop" (newest at top = smaller y). The gap between two
+    // stacked segments = the OLDER (lower) segment's top edge − the NEWER (upper) one's
+    // bottom edge.
+    const gapBetween = (svg: string): number => {
+      const segs = mainPaths(svg).map((d) => {
+        const nums = d.match(/[\d.]+/g)!.map(Number); // [x, y1, x, y2]
+        return { topY: Math.min(nums[1], nums[3]), botY: Math.max(nums[1], nums[3]) };
+      });
+      segs.sort((p, q) => p.topY - q.topY); // [0] = upper/newer, [1] = lower/older
+      return segs[1].topY - segs[0].botY;
+    };
+    const m1 = sample({ runId: "m1", chosenLevel: "low", startedAt: T0, endedAt: T0 + 1_000 });
+    const m2 = sample({
+      runId: "m2",
+      chosenLevel: "high",
+      startedAt: T0 + 10_000,
+      endedAt: T0 + 11_000,
+    });
+    // two same-turn calls: NO connector spline (no cubic), but TWO distinct segments.
+    const sameTurn = new EegTraceStore();
+    sameTurn.record(m1);
+    sameTurn.record(m2);
+    const svgSame = sameTurn.renderSvg({ width: WIDTH });
+    expect(hasMainCurve(svgSame)).toBe(false); // the spline is gone — calls are separate
+    expect(mainPaths(svgSame)).toHaveLength(2); // two distinct call segments
+    const callGap = gapBetween(svgSame);
+    expect(callGap).toBeGreaterThan(0); // calls visibly separated
+
+    // a prompt boundary between them widens the gap (prompt break > call break).
+    const acrossPrompt = new EegTraceStore();
+    acrossPrompt.record(m1);
+    acrossPrompt.record(m2);
+    acrossPrompt.turnEnd({ turn: 1, runId: "m2", endedAt: T0 + 5_000 });
+    const promptGap = gapBetween(acrossPrompt.renderSvg({ width: WIDTH }));
+    expect(promptGap).toBeGreaterThan(callGap); // prompt separation is the stronger one
+  });
+
+  it("deeper zoom-out genuinely shrinks a long trace (rows scale below the old 14px floor)", () => {
+    const store = new EegTraceStore();
+    for (let i = 0; i < 20; i++) {
+      store.record(
+        sample({
+          runId: `z${i}`,
+          startedAt: T0 + i * 1000,
+          endedAt: T0 + i * 1000 + 400,
+          outputTokens: 50,
+        }),
+      );
+    }
+    const tall = svgHeight(store.renderSvg({ width: WIDTH, zoom: 1 }));
+    const short = svgHeight(store.renderSvg({ width: WIDTH, zoom: 0.05 }));
+    // before the zoom-scaled floor, both floored at n·14px and short === tall (the bug)
+    expect(short).toBeLessThan(tall * 0.5);
+  });
+
+  it("emits a clickable per-prompt hit band carrying promptIndex + escaped promptText", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "r1", startedAt: T0, endedAt: T0 + 1000 }));
+    store.turnEnd({
+      turn: 1,
+      runId: "r1",
+      endedAt: T0 + 1100,
+      promptIndex: 0,
+      promptText: "ultracode this <thing>",
+    });
+    store.record(sample({ runId: "r2", startedAt: T0 + 2000, endedAt: T0 + 2500 }));
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(svg).toContain('class="eeg-promptzone"');
+    expect(svg).toContain('data-eeg-prompt-index="0"');
+    expect(svg).toContain("<title>ultracode this &lt;thing&gt;</title>");
+  });
+
+  it("a subagent finishing AFTER a prompt boundary merges into its OWN turn column (no high→max hop)", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "M1", chosenLevel: "high", startedAt: T0, endedAt: T0 + 1000 }));
+    store.record(
+      sample({
+        runId: "SUB",
+        subagent: true,
+        parentRunId: "M1",
+        chosenLevel: "high",
+        startedAt: T0 + 300,
+        endedAt: T0 + 5000, // finishes well into turn 2
+      }),
+    );
+    store.turnEnd({ turn: 1, runId: "M1", endedAt: T0 + 1100, promptIndex: 0 });
+    store.record(
+      sample({ runId: "M2", chosenLevel: "max", startedAt: T0 + 2000, endedAt: undefined }),
+    );
+    const svg = store.renderSvg({ width: 300 });
+    const maxX = String(eegStopX("max", 300)); // the column the branch must NOT hop into
+    const branchD = [...svg.matchAll(/class="eeg-branch"[^>]*\bd="([^"]*)"/g)]
+      .map((m) => m[1])
+      .join(" ");
+    expect(branchD.length).toBeGreaterThan(0); // a branch WAS drawn
+    expect(branchD).not.toContain(maxX); // ...but it did NOT merge into the next turn's max column
+  });
+
+  it("a subagent branch never draws above the label row (no max↔high loop on the labels)", () => {
+    // the owner 2026-06-23: a high subagent splitting off a max trunk near the TOP used to arc
+    // above TOP_PAD into the column labels and loop max→high→max. Every branch y must clamp.
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "M1",
+        model: "claude-opus-4-8",
+        chosenLevel: "max",
+        startedAt: T0,
+        endedAt: T0 + 1000,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "SUB",
+        subagent: true,
+        parentRunId: "M1",
+        model: "claude-sonnet-4-6",
+        chosenLevel: "high",
+        startedAt: T0 + 1100,
+        endedAt: T0 + 1300,
+      }),
+    );
+    store.record(
+      sample({ runId: "M2", model: "claude-opus-4-8", chosenLevel: "max", startedAt: T0 + 1500 }),
+    );
+    const svg = store.renderSvg({ width: 300 });
+    const TOP_PAD = 26;
+    let minBranchY = Infinity;
+    for (const m of svg.matchAll(/class="eeg-branch"[^>]*\bd="([^"]+)"/g)) {
+      const nums = [...m[1].matchAll(/-?\d+(?:\.\d+)?/g)].map((x) => Number(x[0]));
+      for (let i = 1; i < nums.length; i += 2) minBranchY = Math.min(minBranchY, nums[i]);
+    }
+    // either no branch drawn (skipped for lack of room) or every y stays at/below the labels
+    if (minBranchY !== Infinity) expect(minBranchY).toBeGreaterThanOrEqual(TOP_PAD);
+  });
+
+  it("a fast helper (split≈join row) draws an out-and-back arch with a body, not a closed teardrop", () => {
+    const store = new EegTraceStore();
+    // a max main, a quick low sonnet helper whose start+end snap to one row (the
+    // degenerate-loop trigger), and a NEWER max main above it (so the helper sits in
+    // the scrollback with room for the arch — the case that actually persists).
+    store.record(sample({ runId: "M1", chosenLevel: "max", startedAt: T0, endedAt: T0 + 1000 }));
+    store.record(
+      sample({
+        runId: "H",
+        subagent: true,
+        parentRunId: "M1",
+        chosenLevel: "low",
+        startedAt: T0 + 100,
+        endedAt: T0 + 200,
+      }),
+    );
+    store.record(
+      sample({ runId: "M2", chosenLevel: "max", startedAt: T0 + 3000, endedAt: undefined }),
+    );
+    const svg = store.renderSvg({ width: 300 });
+    const d = /class="eeg-branch"[^>]*\bd="([^"]*)"/.exec(svg)?.[1] ?? "";
+    expect(d).toContain("C"); // a branch was drawn
+    // the path must NOT close on itself: its final point must differ from its start
+    // (a closed teardrop = start === end, the "weird loop").
+    const pts = d.replace(/[MCL]/g, " ").trim().split(/\s+/).map(Number);
+    const startX = pts[0];
+    const startY = pts[1];
+    const endX = pts[pts.length - 2];
+    const endY = pts[pts.length - 1];
+    expect(Math.abs(startX - endX) + Math.abs(startY - endY)).toBeGreaterThan(1);
+  });
+});
+
+describe("whitening only on REAL overlap + per-model lanes (the owner 2026-06-25)", () => {
+  const lum = (hex: string): number => {
+    const n = parseInt(hex.slice(1), 16);
+    return 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+  };
+  // {stroke, col} per branch — col is the strand's vertical-run x (1st cubic ctrl x)
+  const branches = (svg: string): { stroke: string; col: number; run: string }[] =>
+    [
+      ...svg.matchAll(
+        /<path class="eeg-branch" d="M [\d.]+ [\d.]+ C [\d.]+ [\d.]+ ([\d.]+) [\d.]+[^"]*" fill="none" stroke="([^"]+)"[^>]*data-eeg-run="([^"]+)"/g,
+      ),
+    ].map((m) => ({ col: Number(m[1]), stroke: m[2], run: m[3] }));
+
+  it("SEQUENTIAL same-group strands never whiten (they don't run in parallel)", () => {
+    const store = new EegTraceStore();
+    for (let i = 0; i < 3; i++)
+      store.record(
+        sample({
+          runId: `seq${i}`,
+          tool: true,
+          model: "tool:local",
+          provider: "",
+          chosenLevel: "",
+          startedAt: T0 + i * 100,
+          endedAt: T0 + i * 100 + 50, // each ends before the next starts → no overlap
+        }),
+      );
+    const b = branches(store.renderSvg({ width: WIDTH }));
+    expect(b.length).toBe(3);
+    expect(b.every((x) => x.stroke === FALLBACK_GRAY)).toBe(true); // all base, zero whitening
+  });
+
+  it("OVERLAPPING same-group strands still grade toward white", () => {
+    const store = new EegTraceStore();
+    for (let i = 0; i < 3; i++)
+      store.record(
+        sample({
+          runId: `ov${i}`,
+          tool: true,
+          model: "tool:local",
+          provider: "",
+          chosenLevel: "",
+          startedAt: T0 + i,
+          endedAt: T0 + 500, // all overlap → one cluster
+        }),
+      );
+    const b = branches(store.renderSvg({ width: WIDTH }));
+    expect(b.some((x) => lum(x.stroke) >= 195)).toBe(true); // front strand near-white
+    expect(b.some((x) => x.stroke === FALLBACK_GRAY)).toBe(true); // back strand base
+  });
+
+  it("different models at the SAME effort stand side by side (distinct lanes), no cross-whitening", () => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "opus",
+        subagent: true,
+        model: "claude-opus-4-8",
+        provider: "claude-code",
+        chosenLevel: "low",
+        startedAt: T0,
+        endedAt: T0 + 500,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "sonnet",
+        subagent: true,
+        model: "claude-sonnet-4-6",
+        provider: "claude-code",
+        chosenLevel: "low",
+        startedAt: T0 + 1,
+        endedAt: T0 + 500,
+      }),
+    );
+    const b = branches(store.renderSvg({ width: WIDTH }));
+    const opus = b.find((x) => x.run === "opus")!;
+    const sonnet = b.find((x) => x.run === "sonnet")!;
+    expect(opus.col).not.toBe(sonnet.col); // side by side, not stacked
+    // each keeps its brand color (no overlap WITHIN a single-model group → no lift)
+    expect(opus.stroke).toBe(ANTHROPIC_STROKE);
+    expect(sonnet.stroke).toBe(ANTHROPIC_STROKE);
+  });
+});
+
+describe("eegEffectiveLevel — graphs the REQUESTED level, never char-bucketed (2026-06-26)", () => {
+  it("chosenLevel='medium' lands at the medium column regardless of thinkingChars", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "r1", chosenLevel: "medium", thinkingChars: 0 }));
+    expect(mainX(store.renderSvg({ width: WIDTH }))).toBeCloseTo(eegStopX("medium", WIDTH), 0);
+  });
+
+  it("chosenLevel='high' wins even when thinkingChars would have bucketed to 'low'", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "r1", chosenLevel: "high", thinkingChars: 500 }));
+    const x = mainX(store.renderSvg({ width: WIDTH }));
+    expect(x).toBeCloseTo(eegStopX("high", WIDTH), 0);
+    expect(x).not.toBeCloseTo(eegStopX("low", WIDTH), 0);
+  });
+
+  it("empty/off level floors to 'minimal', NOT the Auto gutter, ignoring thinkingChars", () => {
+    const off = new EegTraceStore();
+    off.record(sample({ runId: "r1", chosenLevel: "", thinkingChars: 8000 }));
+    const x = mainX(off.renderSvg({ width: WIDTH }));
+    expect(x).toBeCloseTo(eegStopX("minimal", WIDTH), 0);
+    expect(x).not.toBeCloseTo(eegStopX("", WIDTH), 0); // not the Auto column (idx 0)
+    expect(x).not.toBeCloseTo(eegStopX("high", WIDTH), 0); // not char-bucketed
   });
 });

@@ -640,9 +640,9 @@ export async function performGatewaySessionReset(params: {
     // 2026-05-25: "When a chat is cleared, there should be no going
     // back (unless I ask Jarvis to create a new tab with the
     // previous session)." Reset means reset: drop all the CLI
-    // session pointers; the next chat.send spawns cc-bridge fresh
+    // session pointers; the next chat.send spawns tinker-bridge fresh
     // (no --resume) under a new claude-cli sessionId, and the new
-    // OpenClaw sessionId has no entry in cc-bridge session-map.json
+    // OpenClaw sessionId has no entry in tinker-bridge session-map.json
     // either, so the second augment-path is empty too.
     nextEntry.cliSessionBindings = undefined;
     nextEntry.cliSessionIds = undefined;

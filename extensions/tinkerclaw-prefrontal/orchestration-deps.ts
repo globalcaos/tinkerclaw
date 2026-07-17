@@ -7,7 +7,7 @@
  * `spawn` by MIRRORING the proven `spawnText` sequence in
  * `src/fork/reasoning-runtime.ts` (the same fork.subagents.spawn → agent.wait →
  * chat.history path the round-table + overseer already use — no new transport,
- * shares the cc-bridge billing harness + fan-out budget).
+ * shares the tinker-bridge billing harness + fan-out budget).
  *
  * Live-verify (2026-06-04): the no-spawn orchestrate path was confirmed live; the
  * agent()-spawn path initially failed with `missing scope: operator.admin` — the
@@ -42,7 +42,7 @@ const ADMIN_SCOPES = ["operator.admin"];
 /**
  * Default leaf model for orchestration fan-out (used when a unit omits {model}).
  * MUST be a `claude-code/*` model so every spawned unit is a subscription-billed
- * cc-sp-* worker — the entire reason workflows route through the gateway instead of
+ * tinker-sp-* worker — the entire reason workflows route through the gateway instead of
  * native forked `claude` processes (which trip Anthropic's overage classifier and
  * bill metered). Default = sonnet: a sensible, cheaper middle. Dynamic workflows are
  * a STANDING capability (not a max-effort tier), so the default should not be the
@@ -136,6 +136,7 @@ export async function spawnTextVia(
   parentSessionKey: string,
   runTimeoutSeconds: number,
   model?: string,
+  thinking?: string,
 ): Promise<string> {
   // Pin a claude-code/* model on EVERY spawn here (the billing guard is centralized
   // so no caller can bypass it). Omitted/non-claude-code → DEFAULT_LEAF_MODEL.
@@ -151,6 +152,7 @@ export async function spawnTextVia(
       task,
       label,
       model: leafModel,
+      thinking,
       parentSessionKey,
       runTimeoutSeconds,
       expectsCompletionMessage: false,
@@ -214,8 +216,9 @@ export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts
   const spawn = async (prompt: string, agentOpts?: AgentOpts): Promise<{ finalText: string }> => {
     const label = agentOpts?.label ?? "orchestration-agent";
     // Per-unit model override (agent({model})) is coerced; otherwise the (already
-    // coerced) default leaf model. Either way the spawn is claude-code/* = cc-sp-*.
+    // coerced) default leaf model. Either way the spawn is claude-code/* = tinker-sp-*.
     const model = agentOpts?.model ? coerceClaudeCodeModel(agentOpts.model) : defaultLeafModel;
+    const thinking = agentOpts?.thinking; // per-unit effort override, or undefined to inherit
     const finalText = await spawnTextVia(
       opts.callGateway,
       prompt,
@@ -223,6 +226,7 @@ export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts
       parentSessionKey,
       runTimeoutSeconds,
       model,
+      thinking,
     );
     return { finalText };
   };

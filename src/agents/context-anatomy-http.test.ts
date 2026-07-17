@@ -1,9 +1,24 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { afterEach, describe, expect, test } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeEach, describe, expect, test } from "vitest";
 import type { SessionSystemPromptReport } from "../config/sessions/types.js";
-import { closeAnatomyDb, insertAnatomyEvent } from "./context-anatomy-db.js";
+import {
+  closeAnatomyDb,
+  insertAnatomyEvent,
+  setAnatomyDbPathForTests,
+} from "./context-anatomy-db.js";
 import { handleContextAnatomyRequest } from "./context-anatomy-http.js";
 import { buildContextAnatomy } from "./context-anatomy.js";
+
+// FORK 2026-07-16 (bug-log [eeg-subagent-single-session-gap]): isolate each test to a
+// fresh tmp DB so insertAnatomyEvent (which has no mock) stops polluting the REAL
+// anatomy DB and ordering assertions are deterministic. Previously these tests wrote
+// to ~/.openclaw/data/anatomy-timeline.db and the "event list with limit" case was
+// permanently red from accumulated rows.
+const tmpDir = mkdtempSync(join(tmpdir(), "anatomy-http-"));
+let seq = 0;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -78,9 +93,15 @@ function mockRes(): MockRes {
 // Tests
 // ---------------------------------------------------------------------------
 
-afterEach(() => {
-  // Close the singleton DB between tests so each test gets a fresh in-memory state
+beforeEach(() => {
+  // Fresh isolated tmp DB per test — no real-DB pollution, exact/deterministic counts.
+  setAnatomyDbPathForTests(join(tmpDir, `http-${seq++}.db`));
+});
+
+afterAll(() => {
   closeAnatomyDb();
+  setAnatomyDbPathForTests(null);
+  rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe("handleContextAnatomyRequest", () => {
@@ -108,8 +129,10 @@ describe("handleContextAnatomyRequest", () => {
   });
 
   test("returns latest event", async () => {
-    insertAnatomyEvent({ ...makeEvent(1), sessionKey: "http-test" });
-    insertAnatomyEvent({ ...makeEvent(2), sessionKey: "http-test" });
+    // Explicit, distinct timestamps: buildContextAnatomy stamps Date.now(), which
+    // collides in a tight loop and makes DESC ordering nondeterministic.
+    insertAnatomyEvent({ ...makeEvent(1), sessionKey: "http-test", timestampMs: 1000 });
+    insertAnatomyEvent({ ...makeEvent(2), sessionKey: "http-test", timestampMs: 1001 });
 
     const req = mockReq("GET", "/api/context-anatomy/http-test/latest");
     const res = mockRes();
@@ -122,7 +145,9 @@ describe("handleContextAnatomyRequest", () => {
 
   test("returns event list with limit", async () => {
     for (let i = 0; i < 5; i++) {
-      insertAnatomyEvent({ ...makeEvent(i), sessionKey: "list-test" });
+      // Distinct, increasing timestamps so "newest 3" is deterministic (Date.now()
+      // collides in this loop → arbitrary tie-break otherwise).
+      insertAnatomyEvent({ ...makeEvent(i), sessionKey: "list-test", timestampMs: 1000 + i });
     }
 
     const req = mockReq("GET", "/api/context-anatomy/list-test?limit=3");
@@ -133,7 +158,43 @@ describe("handleContextAnatomyRequest", () => {
     const body = JSON.parse(res.body);
     expect(body.count).toBe(3);
     expect(body.events).toHaveLength(3);
-    expect(body.events[0].turn).toBe(2); // last 3 of 0-4
+    // The endpoint returns the newest N (querySessionEvents = ORDER BY timestamp DESC),
+    // so the last 3 of turns 0-4 are the SET {2,3,4}. Assert the set, order-independent.
+    expect(body.events.map((e: { turn: number }) => e.turn).sort()).toEqual([2, 3, 4]);
+  });
+
+  test("?tree=1 includes the session's subagent family; plain query excludes it", async () => {
+    // FORK 2026-07-16 (EEG fan-out visibility): subagents are minted FLAT under the
+    // agent root (agent:main:subagent:<uuid>). tree=1 must pull them alongside the
+    // viewed main session so the seismograph can paint fan-out branches reload-proof.
+    const mainKey = "agent:main:main";
+    const subKey = "agent:main:subagent:tree-test-uuid";
+    insertAnatomyEvent({ ...makeEvent(1), sessionKey: mainKey });
+    insertAnatomyEvent({ ...makeEvent(1), sessionKey: subKey });
+
+    // Membership assertions (not counts): the real DB may hold other subagent rows.
+    const treeReq = mockReq(
+      "GET",
+      `/api/context-anatomy/${encodeURIComponent(mainKey)}?tree=1&limit=500`,
+    );
+    const treeRes = mockRes();
+    await handleContextAnatomyRequest(treeReq, treeRes as unknown as ServerResponse);
+    expect(treeRes.statusCode).toBe(200);
+    const treeBody = JSON.parse(treeRes.body);
+    const treeKeys = new Set(treeBody.events.map((e: { sessionKey?: string }) => e.sessionKey));
+    expect(treeKeys.has(subKey)).toBe(true);
+    expect(treeKeys.has(mainKey)).toBe(true);
+
+    const plainReq = mockReq(
+      "GET",
+      `/api/context-anatomy/${encodeURIComponent(mainKey)}?limit=500`,
+    );
+    const plainRes = mockRes();
+    await handleContextAnatomyRequest(plainReq, plainRes as unknown as ServerResponse);
+    const plainBody = JSON.parse(plainRes.body);
+    const plainKeys = new Set(plainBody.events.map((e: { sessionKey?: string }) => e.sessionKey));
+    expect(plainKeys.has(subKey)).toBe(false);
+    expect(plainKeys.has(mainKey)).toBe(true);
   });
 
   test("handles URL-encoded session keys", async () => {

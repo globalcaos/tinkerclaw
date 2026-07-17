@@ -1,0 +1,20 @@
+# J10 HIVEMIND — Figure 2: Contextual History + Upward-Tier Filtering (role-bound)
+# Vertical flow, large fonts — legible at A4 column width.
+# Render: d2 --layout dagre --pad 20 fig-history-flow.d2 images/fig-history-flow.png
+
+direction: down
+
+maria: "María (T3): \"brief me on González\"" { shape: person; style: { fill: "#f6e7d4"; stroke: "#d97a2b"; stroke-width: 2; font-size: 26 } }
+agent: "L1-SALES-REP (T3) — one shared agent\nholds the whole team's history natively\n(no cross-agent fan-out)" { style: { fill: "#e6eef5"; stroke: "#2c5b86"; stroke-width: 3; font-size: 26 } }
+filter: "Upward-tier filter\n(declassification gate)" { shape: hexagon; style: { fill: "#fdeaea"; stroke: "#b23b3b"; stroke-width: 3; font-size: 26 } }
+
+brief: "Briefing returned to María" {
+  style: { fill: "#faf7f1"; stroke: "#5A3E28"; font-size: 28; bold: true }
+  pass:   "T3 interactions → verbatim" { style: { fill: "#e7f0db"; stroke: "#4A5D1A"; stroke-width: 2; font-size: 25 } }
+  redact: "T4 pricing → redaction template" { style: { fill: "#f7eccf"; stroke: "#c79a2b"; stroke-width: 2; font-size: 25 } }
+  caution: "T5 legal → caution notice" { style: { fill: "#fbe0e0"; stroke: "#b23b3b"; stroke-width: 2; font-size: 25 } }
+}
+
+maria -> agent: "request" { style: { stroke: "#d97a2b"; stroke-width: 3; font-size: 24 } }
+agent -> filter: "data above the\nsales role's clearance" { style: { stroke: "#2c5b86"; stroke-width: 3; font-size: 24 } }
+filter -> brief: "result respects the\nREQUESTER's clearance" { style: { stroke: "#b23b3b"; stroke-width: 3; font-size: 24 } }

@@ -1,49 +1,55 @@
 ---
 file: tool-loop.md
-purpose: Why cc-bridge's tool loop differs from pi-agent-core's; consequences and the heartbeat-stream proposal
+purpose: Why tinker-bridge's tool loop differs from pi-agent-core's; consequences and the heartbeat-stream proposal
 audience: AI
 last_verified: 2026-05-14
 last_verified_commit: HEAD
 single_owner: yes — this is the one place to learn why fork tool-loop ≠ upstream
-see_also: flows.md (F1 cc-bridge spawn flow), failures.md (M1 idle-watchdog SIGTERM), config-shape.md (timeoutSeconds), panels.md (thinking indicator + prefrontal panel)
+see_also: flows.md (F1 tinker-bridge spawn flow), failures.md (M1 idle-watchdog SIGTERM), config-shape.md (timeoutSeconds), panels.md (thinking indicator + prefrontal panel)
 verify:
-  - name: cc-bridge stream.ts still suppresses tool_use blocks from assistant.message.content
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK (2026-04-22)" in t and "re-execute them via the OpenClaw exec tool" in t, "the 2026-04-22 tool-loop divergence comment block is missing from stream.ts — verify the suppression still holds"'
+  - name: tinker-bridge stream.ts still suppresses tool_use blocks from assistant.message.content
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); assert "FORK (2026-04-22)" in t and "re-execute them via the OpenClaw exec tool" in t, "the 2026-04-22 tool-loop divergence comment block is missing from stream.ts — verify the suppression still holds"'
   - name: idle-timeout-diag log line is emitted on each turn (idle watchdog is wrapped)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-runner/run/attempt.ts")).read(); assert "[idle-timeout-diag]" in t, "the idle-timeout-diag canary log line is missing from attempt.ts"'
-  - name: cc-bridge heartbeat is wired in stream.ts (FORK 2026-05-11)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "FORK 2026-05-11" in t and "heartbeat" in t.lower() and "HEARTBEAT_INTERVAL_MS" in t, "the cc-bridge heartbeat that resets pi-agent-core idle watchdog is missing or undocumented"'
+  - name: tinker-bridge heartbeat is wired in stream.ts (FORK 2026-05-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); assert "FORK 2026-05-11" in t and "heartbeat" in t.lower() and "HEARTBEAT_INTERVAL_MS" in t, "the tinker-bridge heartbeat that resets pi-agent-core idle watchdog is missing or undocumented"'
   - name: tinker-ui has no stale-run watchdog (FORK 2026-05-14 — deleted; trust lifecycle:end instead)
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "STALE_RUN_WATCHDOG_MS" not in t, "STALE_RUN_WATCHDOG_MS reappeared in app.ts — the UI-side stale-run watchdog was deleted on 2026-05-14 and must stay deleted; the cure for a stuck thinking indicator is to harden lifecycle:end emission in attempt.ts, not to add a UI-side timer that lies"; assert re.search(r"activeRuns\.delete\(\s*runId\s*\)[^}]*stalePruned", t) is None, "a force-clear of activeRuns from a timer reappeared — the watchdog pattern is back"; assert "bumpActiveRunActivity" in t, "bumpActiveRunActivity is still useful for keeping lastEventAt fresh (drives lastEventAge in the prefrontal panel); do not delete"'
   - name: lifecycle:end / lifecycle:error are emitted by handleAgentEnd (FORK 2026-05-14 — the UI trusts these to clear the thinking indicator since the watchdog was deleted)
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-subscribe.handlers.lifecycle.ts")).read(); assert "handleAgentEnd" in t and "phase: \"end\"" in t and "phase: \"error\"" in t and "emitAgentEvent" in t, "handleAgentEnd no longer emits a lifecycle:end (or :error) event via emitAgentEvent — the UI trusts these emissions to clear the thinking indicator. Restore the emission or expect stuck thinking indicators that can only be cleared by browser refresh."'
   - name: shutdown-frame handler enrolls activeRuns into unconfirmedRuns (FORK 2026-05-24 — graceful-restart prune wouldn't fire otherwise)
     cmd: python3 -c 'import os,re; t = open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); block = re.search(r"f\.event === \"shutdown\".*?f\.payload\?\.restartExpectedMs.*?\}", t, re.S); assert block, "the shutdown-frame handler in app.ts is missing or has been refactored — re-locate and verify it still adds runIds to unconfirmedRuns"; assert "unconfirmedRuns.add(runId)" in block.group(0), "the shutdown-frame handler no longer enrolls activeRuns into unconfirmedRuns. Without this, an in-tab graceful restart leaves stale activeRuns entries forever (no lifecycle:end will ever come from the dead gateway process), the prefrontal panel shows the indicator + clock frozen at the pre-restart state, and only a page reload clears the ghost. See bug-log.md FIXED 2026-05-24 ghost-run."'
-  - name: in-flight steer is wired end-to-end (FORK 2026-06-10 / P4 — a mid-answer message folds into the live cc-bridge turn instead of next-turn-only)
-    cmd: python3 -c 'import os; R=lambda p: open(os.path.expanduser(p)).read(); assert "steer(text: string): boolean" in R("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker.ts"), "worker.steer() primitive missing — mid-turn stdin injection gone"; assert "tryInflightSteer(sessionId, combined)" in R("~/src/tinkerclaw/src/agents/embedded-agent-runner/runs.ts"), "flushSteerBuffer no longer routes through the in-flight steer hook — mid-turn steer regressed to next-turn-only"; reg=R("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/inflight-worker-registry.ts"); assert "registerInflightSteerHook(" in reg and "worker.steer(text)" in reg, "cc-bridge no longer bridges worker.steer into the core in-flight steer hook"'
-  - name: cc-bridge protocol carries the forward-compat server-tool/redacted CcContentBlock arms (FORK 2026-06-11)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/protocol.ts")).read(); assert "server_tool_use" in t and "web_search_tool_result" in t and "redacted_thinking" in t, "the forward-compat CcContentBlock arms (server_tool_use / web_search_tool_result / redacted_thinking) are missing from protocol.ts — claude-cli currently normalizes WebSearch/WebFetch into plain tool_use/tool_result, but the typed arms must stay so a future schema bump does not fall into the open-ended forward-compat catch-all undecoded"'
-  - name: cc-bridge emits a turn-incomplete lifecycle event for any non-success result.subtype (FORK 2026-06-11)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "turn-incomplete" in t, "the phase:\"turn-incomplete\" lifecycle event is missing from stream.ts — error_max_turns / error_during_execution / generic error results no longer badge the run as incomplete. It MUST be emitted from the result/done branch BEFORE the is_error early-return, because done is always stopReason:\"stop\" and pi-ai StopReason has no incomplete member, so a non-success subtype can only be surfaced as a free-form lifecycle event."; assert "flattenResultContent" in t, "the exported flattenResultContent helper is no longer used in stream.ts — tool_result content blocks (string | CcContentBlock[]) must be flattened to plain text through the shared helper"'
-  - name: cc-bridge sets MAX_THINKING_TOKENS as the third native Claude Code env knob on the claude child (FORK 2026-06-11 — per-session thinking budget)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker.ts")).read(); assert "MAX_THINKING_TOKENS" in t, "MAX_THINKING_TOKENS is gone from worker.ts — the per-session thinking-budget knob (the third native Claude Code env var cc-bridge sets on the claude child, alongside CLAUDE_CODE_MAX_OUTPUT_TOKENS) must be in allowedKeys and set from the resolved per-session think level; for level off the var is OMITTED, not set to 0"'
+  - name: in-flight steer is wired end-to-end (FORK 2026-06-10 / P4 — a mid-answer message folds into the live tinker-bridge turn instead of next-turn-only)
+    cmd: python3 -c 'import os; R=lambda p: open(os.path.expanduser(p)).read(); assert "steer(text: string): boolean" in R("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/worker.ts"), "worker.steer() primitive missing — mid-turn stdin injection gone"; assert "tryInflightSteer(sessionId, combined)" in R("~/src/tinkerclaw/src/agents/embedded-agent-runner/runs.ts"), "flushSteerBuffer no longer routes through the in-flight steer hook — mid-turn steer regressed to next-turn-only"; reg=R("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/inflight-worker-registry.ts"); assert "registerInflightSteerHook(" in reg and "worker.steer(text)" in reg, "tinker-bridge no longer bridges worker.steer into the core in-flight steer hook"'
+  - name: tinker-bridge protocol carries the forward-compat server-tool/redacted CcContentBlock arms (FORK 2026-06-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/protocol.ts")).read(); assert "server_tool_use" in t and "web_search_tool_result" in t and "redacted_thinking" in t, "the forward-compat CcContentBlock arms (server_tool_use / web_search_tool_result / redacted_thinking) are missing from protocol.ts — claude-cli currently normalizes WebSearch/WebFetch into plain tool_use/tool_result, but the typed arms must stay so a future schema bump does not fall into the open-ended forward-compat catch-all undecoded"'
+  - name: tinker-bridge emits a turn-incomplete lifecycle event for any non-success result.subtype (FORK 2026-06-11)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); assert "turn-incomplete" in t, "the phase:\"turn-incomplete\" lifecycle event is missing from stream.ts — error_max_turns / error_during_execution / generic error results no longer badge the run as incomplete. It MUST be emitted from the result/done branch BEFORE the is_error early-return, because done is always stopReason:\"stop\" and pi-ai StopReason has no incomplete member, so a non-success subtype can only be surfaced as a free-form lifecycle event."; assert "flattenResultContent" in t, "the exported flattenResultContent helper is no longer used in stream.ts — tool_result content blocks (string | CcContentBlock[]) must be flattened to plain text through the shared helper"'
+  - name: tinker-bridge sets MAX_THINKING_TOKENS as the third native Claude Code env knob on the claude child (FORK 2026-06-11 — per-session thinking budget)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/worker.ts")).read(); assert "MAX_THINKING_TOKENS" in t, "MAX_THINKING_TOKENS is gone from worker.ts — the per-session thinking-budget knob (the third native Claude Code env var tinker-bridge sets on the claude child, alongside CLAUDE_CODE_MAX_OUTPUT_TOKENS) must be in allowedKeys and set from the resolved per-session think level; for level off the var is OMITTED, not set to 0"'
   - name: the resolved think level rides the pi-ai options smuggle as __openclawThinkLevel into stream.ts (FORK 2026-06-11)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "__openclawThinkLevel" in t, "__openclawThinkLevel is gone from stream.ts — the per-run think level no longer rides the existing pi-ai options smuggle from attempt.ts into pool.getOrCreate; the worker child will spawn without the per-session thinking budget"'
-  - name: cc-bridge stream.ts emits the server-computed stream:"effort" agent-event (FORK 2026-06-11 — actual-effort telemetry)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "effort" in t and "thinkingChars" in t and "hadRealThinking" in t, "the server-computed stream:\"effort\" agent-event (fields thinkingChars / hadRealThinking / configuredBudget …) is gone from stream.ts — the UI effort chip loses its only honest signal for how much the model actually thought. It is computed SERVER-SIDE from accumulatedThinking so it works at every level incl Auto; do not move the computation to the client (the client never sees accumulatedThinking)."'
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); assert "__openclawThinkLevel" in t, "__openclawThinkLevel is gone from stream.ts — the per-run think level no longer rides the existing pi-ai options smuggle from attempt.ts into pool.getOrCreate; the worker child will spawn without the per-session thinking budget"'
+  - name: tinker-bridge stream.ts emits the server-computed stream:"effort" agent-event (FORK 2026-06-11 — actual-effort telemetry)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); assert "effort" in t and "thinkingChars" in t and "hadRealThinking" in t, "the server-computed stream:\"effort\" agent-event (fields thinkingChars / hadRealThinking / configuredBudget …) is gone from stream.ts — the UI effort chip loses its only honest signal for how much the model actually thought. It is computed SERVER-SIDE from accumulatedThinking so it works at every level incl Auto; do not move the computation to the client (the client never sees accumulatedThinking)."'
   - name: the think-level-pending lifecycle phase is emitted when a level change is deferred behind a busy warm worker (FORK 2026-06-11)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/stream.ts")).read(); assert "think-level-pending" in t, "the phase:\"think-level-pending\" lifecycle event is missing from stream.ts — when a think-level change lands on a BUSY warm worker the new budget is deferred one turn (env is read at spawn only), and the UI needs this badge to tell the user the new effort applies next turn rather than now. Without it the chip silently lies about the active budget for one turn."'
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); assert "think-level-pending" in t, "the phase:\"think-level-pending\" lifecycle event is missing from stream.ts — when a think-level change lands on a BUSY warm worker the new budget is deferred one turn (env is read at spawn only), and the UI needs this badge to tell the user the new effort applies next turn rather than now. Without it the chip silently lies about the active budget for one turn."'
   - name: worker-pool getOrCreate compares thinkLevel so a level change is not swallowed by a warm worker (FORK 2026-06-11 — the warm-worker thinkLevel LAG fix)
-    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/src/worker-pool.ts")).read(); assert "thinkLevel" in t, "getOrCreate no longer references thinkLevel — it would hand back the warm worker WITHOUT comparing the requested thinkLevel to the one it was spawned with, so a level change is swallowed until the worker happens to be evicted (the warm-worker thinkLevel LAG). On an idle level-change getOrCreate must evict+respawn with the new MAX_THINKING_TOKENS (--resume re-attaches the same claude conversation, history preserved); on a busy worker it must defer one turn and record the pending level."'
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/worker-pool.ts")).read(); assert "thinkLevel" in t, "getOrCreate no longer references thinkLevel — it would hand back the warm worker WITHOUT comparing the requested thinkLevel to the one it was spawned with, so a level change is swallowed until the worker happens to be evicted (the warm-worker thinkLevel LAG). On an idle level-change getOrCreate must evict+respawn with the new MAX_THINKING_TOKENS (--resume re-attaches the same claude conversation, history preserved); on a busy worker it must defer one turn and record the pending level."'
+  - name: oversized-resume guard + RESUME_MAX_TRANSCRIPT_BYTES are wired (FORK 2026-06-23 — a fat resumed transcript starts FRESH instead of choking claude --resume)
+    cmd: python3 -c 'import os; w = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/worker.ts")).read(); d = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/defaults.ts")).read(); assert "RESUME_MAX_TRANSCRIPT_BYTES" in d, "RESUME_MAX_TRANSCRIPT_BYTES is gone from defaults.ts — the 8MB oversized-resume threshold that makes a fat transcript start FRESH instead of choking claude --resume is missing"; assert "RESUME_MAX_TRANSCRIPT_BYTES" in w, "worker.ts no longer consults RESUME_MAX_TRANSCRIPT_BYTES before --resume — the oversized-resume guard regressed; it MUST be fail-open (stat error → resume as before)"; assert os.path.exists(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/transcript-path.ts")), "transcript-path.ts (resolves the resume transcript path for the stat-size guard) was deleted"'
+  - name: init-only fast-fail stall watchdog is wired and line-count gated (FORK 2026-06-23 — catches the choked-resume never-started shape without killing heavy tool turns)
+    cmd: python3 -c 'import os; s = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); d = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/defaults.ts")).read(); assert "FAST_FAIL_INIT_SILENT_MS" in d and "FAST_FAIL_MAX_INIT_LINES" in d, "the FAST_FAIL_* knobs are gone from defaults.ts"; assert "FAST_FAIL_INIT_SILENT_MS" in s and "FAST_FAIL_MAX_INIT_LINES" in s, "stream.ts no longer fast-fails an init-only stall gated on FAST_FAIL_MAX_INIT_LINES — without the line-count gate it would kill legitimately-silent heavy tool turns; it must NOT lower DEFAULT_REQUEST_TIMEOUT_MS (600s)"'
+  - name: idle-timeout failover suppresses a futile same-model re-resume of a zero-content attempt (FORK 2026-06-23)
+    cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-runner/run.ts")).read(); assert "producedNoContent" in t, "run.ts no longer tracks producedNoContent — the idle-timeout retry would re-resume the same fat transcript that just stalled, reproducing the stall. A same-model re-resume must be suppressed when the aborted attempt produced zero content."'
 ---
 
-# Tool loop — the cc-bridge / claude-cli divergence (FORK 2026-04-22)
+# Tool loop — the tinker-bridge / claude-cli divergence (FORK 2026-04-22)
 
-This is the single most consequential fork-side decision. Every "why does cc-bridge behave like that?" question routes through this section.
+This is the single most consequential fork-side decision. Every "why does tinker-bridge behave like that?" question routes through this section.
 
 ## The upstream behavior
 
-In native (non-cc-bridge) providers, `pi-agent-core`'s agent loop processes the stream as it arrives:
+In native (non-tinker-bridge) providers, `pi-agent-core`'s agent loop processes the stream as it arrives:
 
 1. Stream emits `tool_use` block → block appears in `assistant.message.content`.
 2. Agent loop sees `assistant.message.content[i].type === "tool_use"` → executes via the OpenClaw exec tool (Bash, Read, Edit, etc.).
@@ -51,11 +57,11 @@ In native (non-cc-bridge) providers, `pi-agent-core`'s agent loop processes the 
 
 This is the canonical agent loop. It works because pi-agent-core OWNS the tool execution.
 
-## The cc-bridge problem
+## The tinker-bridge problem
 
-cc-bridge does NOT own tool execution. Inside the `claude-cli` subprocess, tool calls execute _natively_ — claude-cli has its own implementations of Read/Bash/Edit, with its own permission gates (`--permission-mode bypassPermissions`), its own subagent system, its own plugin host. When the stream emits `tool_use` and `tool_result` blocks, they reflect work claude-cli ALREADY did.
+tinker-bridge does NOT own tool execution. Inside the `claude-cli` subprocess, tool calls execute _natively_ — claude-cli has its own implementations of Read/Bash/Edit, with its own permission gates (`--permission-mode bypassPermissions`), its own subagent system, its own plugin host. When the stream emits `tool_use` and `tool_result` blocks, they reflect work claude-cli ALREADY did.
 
-If cc-bridge were to forward those `tool_use` blocks into `assistant.message.content`, pi-agent-core would see them and _re-execute_ via the OpenClaw exec tool. This:
+If tinker-bridge were to forward those `tool_use` blocks into `assistant.message.content`, pi-agent-core would see them and _re-execute_ via the OpenClaw exec tool. This:
 
 1. Re-runs every tool the model already ran (file reads, bash commands, edits).
 2. Hits the prefrontal "Exploration required" gate on the second execution.
@@ -63,14 +69,14 @@ If cc-bridge were to forward those `tool_use` blocks into `assistant.message.con
 
 This was observed and documented in the 2026-04-22 fix.
 
-## The cc-bridge solution
+## The tinker-bridge solution
 
-Tool calls are visible to the user via `stream` events (cc-bridge emits a `tool_start` / `tool_result` synthetic stream event per call), but **NOT placed in `assistant.message.content`**. The final assistant message contains only the model's natural-language output. Pi-agent-core never sees the `tool_use` blocks. No re-execution.
+Tool calls are visible to the user via `stream` events (tinker-bridge emits a `tool_start` / `tool_result` synthetic stream event per call), but **NOT placed in `assistant.message.content`**. The final assistant message contains only the model's natural-language output. Pi-agent-core never sees the `tool_use` blocks. No re-execution.
 
 ```mermaid
 sequenceDiagram
   participant CLI as claude-cli
-  participant CC as cc-bridge stream.ts
+  participant CC as tinker-bridge stream.ts
   participant CON as stream-event consumer (UI)
   participant PI as pi-agent-core (assistant.message.content)
 
@@ -90,16 +96,16 @@ sequenceDiagram
 
 ## The consequence: idle watchdog starvation
 
-`pi-agent-core`'s `streamWithIdleTimeout` resets per `pi-ai` stream event. cc-bridge intentionally suppresses tool-related stream events to pi-ai (the synthetic ones above go to the UI consumer, not into pi-ai's event stream). On a long claude-cli tool chain (read several outlook emails, then several people.read calls, then a write), pi-ai sees NO events flow → idle timer ticks → SIGTERM.
+`pi-agent-core`'s `streamWithIdleTimeout` resets per `pi-ai` stream event. tinker-bridge intentionally suppresses tool-related stream events to pi-ai (the synthetic ones above go to the UI consumer, not into pi-ai's event stream). On a long claude-cli tool chain (read several outlook emails, then several people.read calls, then a write), pi-ai sees NO events flow → idle timer ticks → SIGTERM.
 
-**Workaround (2026-05-05 / corrected 2026-05-10):** bump the idle timeout via provider-level `timeoutSeconds: 600` (cc-bridge plugin overlay path). Heavy turns now have 10 minutes per stretch of silence. See config-shape.md.
+**Workaround (2026-05-05 / corrected 2026-05-10):** bump the idle timeout via provider-level `timeoutSeconds: 600` (tinker-bridge plugin overlay path). Heavy turns now have 10 minutes per stretch of silence. See config-shape.md.
 
-**Architectural fix (LIVE 2026-05-11, commit on cc-bridge `stream.ts`):** cc-bridge now emits an empty-delta heartbeat through the pi-ai stream every 25s of silence during a turn. The 600s overlay timeout becomes belt-and-suspenders rather than load-bearing; a future accidental reset to 120s no longer reproduces the 2026-05-05 incident.
+**Architectural fix (LIVE 2026-05-11, commit on tinker-bridge `stream.ts`):** tinker-bridge now emits an empty-delta heartbeat through the pi-ai stream every 25s of silence during a turn. The 600s overlay timeout becomes belt-and-suspenders rather than load-bearing; a future accidental reset to 120s no longer reproduces the 2026-05-05 incident.
 
 ```mermaid
 sequenceDiagram
   participant CLI as claude-cli
-  participant CC as cc-bridge stream.ts
+  participant CC as tinker-bridge stream.ts
   participant PI as pi-agent-core
 
   loop every 25s while no real event has fired
@@ -145,7 +151,7 @@ What was kept in `app.ts`:
 
 ```mermaid
 sequenceDiagram
-  participant CCB as cc-bridge stream.ts
+  participant CCB as tinker-bridge stream.ts
   participant SRV as gateway / handleAgentEnd
   participant WS as gateway WS
   participant UI as tinker-ui activeRuns
@@ -164,14 +170,14 @@ sequenceDiagram
 
 ## In-flight steer — mid-turn message folds into the live turn (FORK 2026-06-10 / P4)
 
-A message sent while a cc-bridge turn is in flight now **folds into the current answer**, matching Claude Code (whose own loop drains its message queue between tool rounds). Previously a mid-turn message could only run as a **separate next turn** (pi steeringQueue → next `worker.send`), because pi-agent-core cannot inject between claude-cli's internal tool rounds — the whole claude-cli agentic loop is one opaque `worker.send`.
+A message sent while a tinker-bridge turn is in flight now **folds into the current answer**, matching Claude Code (whose own loop drains its message queue between tool rounds). Previously a mid-turn message could only run as a **separate next turn** (pi steeringQueue → next `worker.send`), because pi-agent-core cannot inject between claude-cli's internal tool rounds — the whole claude-cli agentic loop is one opaque `worker.send`.
 
 **Why it works:** `claude -p --input-format stream-json` drains additional `{"type":"user",...}` stdin lines mid-turn, between its internal tool rounds (verified empirically 2026-06-10: a stdin user-line injected during a tool chain was acknowledged before the turn's `result` line). So writing to the live subprocess's stdin reaches the model mid-answer.
 
 **The path:**
 
-1. `worker.steer(text)` (`extensions/tinkerclaw-cc-bridge/src/worker.ts`) writes one user line to the already-open persistent stdin — WITHOUT touching `currentTurn`/`turnQueue`/`kill` (the live turn keeps owning its `result`). No-ops between turns; EPIPE-safe.
-2. `extensions/tinkerclaw-cc-bridge/src/inflight-worker-registry.ts` tracks `openclawSessionId → live worker` (set around `worker.send` in `stream.ts`) and registers a hook into the core via `registerInflightSteerHook` (`src/agents/embedded-agent-runner/inflight-steer-hook.ts`, stored on `globalThis[Symbol.for(...)]` so it crosses the core/extension bundle split).
+1. `worker.steer(text)` (`extensions/tinkerclaw-tinker-bridge/src/worker.ts`) writes one user line to the already-open persistent stdin — WITHOUT touching `currentTurn`/`turnQueue`/`kill` (the live turn keeps owning its `result`). No-ops between turns; EPIPE-safe.
+2. `extensions/tinkerclaw-tinker-bridge/src/inflight-worker-registry.ts` tracks `openclawSessionId → live worker` (set around `worker.send` in `stream.ts`) and registers a hook into the core via `registerInflightSteerHook` (`src/agents/embedded-agent-runner/inflight-steer-hook.ts`, stored on `globalThis[Symbol.for(...)]` so it crosses the core/extension bundle split).
 3. `runs.ts flushSteerBuffer` calls `tryInflightSteer(sessionId, combined)` FIRST; if a live worker accepts it (folds in), it RETURNS and does NOT also `handle.queueMessage` — so the message is delivered exactly once. Only with no live worker does it fall back to the pi steeringQueue (next-turn, old behaviour).
 
 So: during a live turn → mid-turn fold (`worker.steer`); between turns → next turn (pi steeringQueue → `worker.send`). The 300ms debounce still batches rapid messages into one injection.
@@ -180,14 +186,28 @@ So: during a live turn → mid-turn fold (`worker.steer`); between turns → nex
 
 - The two delivery paths MUST stay mutually exclusive (the early `return` in `flushSteerBuffer` after a successful `tryInflightSteer`). Calling both = the message delivered twice (once mid-turn, once as the next round).
 - `worker.steer` MUST NOT touch `currentTurn`/`turnQueue`/`kill` — it only writes stdin. Mutating `currentTurn` would orphan the in-flight `send()` promise (caller hangs); killing would defeat the whole "queue not SIGTERM" point.
-- The hook MUST live on `globalThis[Symbol.for(...)]`, not a module-level var — the registrar (cc-bridge) and caller (core) can be separate runtime bundles.
+- The hook MUST live on `globalThis[Symbol.for(...)]`, not a module-level var — the registrar (tinker-bridge) and caller (core) can be separate runtime bundles.
+
+## Resume size guard + init-only fast-fail (FORK 2026-06-23)
+
+A 14.5MB resumed session transcript fed to `claude --resume <uuid>` choked claude-cli's ingestion at spawn: the worker emitted 2–3 init lines then `text.len=0`/`thinking.len=0` for the **full 600s** idle watchdog window before SIGTERM, and the idle-timeout auto-retry re-resumed the **same** fat transcript → identical stall. Surfaced as "Jarvis not responding". The `gm`/credential angle was a **RED HERRING** — the bridge injects no credential; the spawned `claude` reads its own `~/.claude/.credentials.json` (see §Auth). Three layered guards, none of which lowers the 600s `DEFAULT_REQUEST_TIMEOUT_MS`:
+
+1. **Oversized-resume guard (commit `b7ea26b0a6`)** — before spawning `claude --resume <uuid>`, `stat` the transcript (path resolved by the new `extensions/tinkerclaw-tinker-bridge/src/transcript-path.ts`); if it exceeds `RESUME_MAX_TRANSCRIPT_BYTES` (8MB, `defaults.ts`) start a **FRESH** session instead. **Fail-open**: any stat error resumes as before — a stat failure must never block a turn.
+2. **Init-only fast-fail watchdog (commit `923be5f3e3`, `stream.ts`)** — abort early (SIGTERM) when the worker has emitted only init lines AND produced zero content (`text.len=0`/`thinking.len=0`) past `FAST_FAIL_INIT_SILENT_MS` (90s), **gated on `linesSeen <= FAST_FAIL_MAX_INIT_LINES`**. The line-count gate is load-bearing: a heavy legitimate tool turn emits many lines, so it never trips this fast-fail and keeps the full 600s budget. This catches the _never-started_ shape fast without touching the long-tool-turn budget.
+3. **No futile same-model re-resume (commit `fbebe20648`, `src/agents/embedded-agent-runner/run.ts`)** — when the aborted attempt produced zero content (`producedNoContent`), the idle-timeout failover does NOT re-resume the same model/session. Re-resuming an unchanged transcript can only reproduce the stall.
+
+**Don't regress:**
+
+- The oversized-resume guard MUST stay **fail-open** — a `stat` error resumes (never start fresh on a stat failure, that would silently drop session continuity on a transient FS hiccup).
+- The init-only fast-fail MUST stay gated on `linesSeen <= FAST_FAIL_MAX_INIT_LINES` — without that gate it would kill heavy multi-tool turns that are legitimately silent on the pi-ai event stream (exactly the case the 25s heartbeat + 600s overlay exist to protect). It is NOT a replacement for the 600s `DEFAULT_REQUEST_TIMEOUT_MS`; it is a narrow early-out for the choked-resume shape only.
+- The zero-content re-resume suppression keys on `producedNoContent` — a turn that produced ANY content and then idle-timed-out still retries normally; only the never-produced shape is suppressed.
 
 ## Don't regress
 
-- **NEVER add tool_use blocks back to `assistant.message.content` for cc-bridge.** This re-introduces the red-error-bubble cascade.
-- **NEVER assume cc-bridge timeouts are just like other providers.** They are not. cc-bridge needs longer timeouts because its event stream is sparse during tool work.
+- **NEVER add tool_use blocks back to `assistant.message.content` for tinker-bridge.** This re-introduces the red-error-bubble cascade.
+- **NEVER assume tinker-bridge timeouts are just like other providers.** They are not. tinker-bridge needs longer timeouts because its event stream is sparse during tool work.
 - **NEVER reintroduce a UI-side stale-run watchdog.** The bible verify enforces this — `STALE_RUN_WATCHDOG_MS` must not reappear in `app.ts`, and no force-clear of `activeRuns` from a timer is allowed. If you observe a stuck thinking indicator, the bug is in lifecycle:end emission, not in the UI; fix it server-side in `handleAgentEnd` / `attempt.ts` and add a verify that catches the missed-emission case.
-- The cc-bridge sessionKey hash is djb2 over `${systemPrompt}${openclawSessionId}` (`extensions/tinkerclaw-cc-bridge/src/stream.ts:104:deriveSessionKey`). It drifts when systemPrompt changes (e.g., after [System] continue is prepended on resume). The worker-pool's `getLatestResumeSessionIdByOpenclawSessionId` fallback handles this drift; do not remove it.
+- The tinker-bridge sessionKey hash is djb2 over `${systemPrompt}${openclawSessionId}` (`extensions/tinkerclaw-tinker-bridge/src/stream.ts:104:deriveSessionKey`). It drifts when systemPrompt changes (e.g., after [System] continue is prepended on resume). The worker-pool's `getLatestResumeSessionIdByOpenclawSessionId` fallback handles this drift; do not remove it.
 
 ## Verify (proposed)
 
@@ -201,9 +221,9 @@ verify:
 
 ## See also
 
-- `extensions/tinkerclaw-cc-bridge/src/stream.ts` — the stream pipeline (text-end fix 2026-05-04, runId smuggle 2026-04-27).
-- `extensions/tinkerclaw-cc-bridge/src/worker-pool.ts` — resume lookup priority.
-- `extensions/tinkerclaw-cc-bridge/src/session-map.ts` — openclawSessionId fallback.
+- `extensions/tinkerclaw-tinker-bridge/src/stream.ts` — the stream pipeline (text-end fix 2026-05-04, runId smuggle 2026-04-27).
+- `extensions/tinkerclaw-tinker-bridge/src/worker-pool.ts` — resume lookup priority.
+- `extensions/tinkerclaw-tinker-bridge/src/session-map.ts` — openclawSessionId fallback.
 - `src/agents/embedded-agent-runner/run/llm-idle-timeout.ts` — the watchdog.
 - bible.md §11.6d / §11.6e — the regression + fix history.
 
@@ -211,33 +231,33 @@ verify:
 
 ## Provider mechanics (migrated 2026-05-11 from bible.md §5.66)
 
-> The "why" of cc-bridge is the divergence above. The "how" is below — the spawn shape, the auth path, the lifecycle-fields fix, and the workspace-skills wrapper plugin. Migrated verbatim from bible.md §5.66 (2026-04-17 → 2026-04-20).
+> The "why" of tinker-bridge is the divergence above. The "how" is below — the spawn shape, the auth path, the lifecycle-fields fix, and the workspace-skills wrapper plugin. Migrated verbatim from bible.md §5.66 (2026-04-17 → 2026-04-20).
 
 ### The bridge
 
-Jarvis runs on the real `claude` CLI consuming the flat-rate Claude Code subscription instead of burning Anthropic API tokens. The OpenClaw provider plugin (`extensions/tinkerclaw-cc-bridge/`) registers provider `claude-code` and spawns a persistent `claude` subprocess per OpenClaw session with `--input-format stream-json --output-format stream-json --permission-mode bypassPermissions --disallowedTools Agent,ExitPlanMode,AskUserQuestion,TodoWrite,Task…`. The fork's tool loop stays authoritative; claude only does reasoning (see "The cc-bridge solution" above for what that means in practice).
+Jarvis runs on the real `claude` CLI consuming the flat-rate Claude Code subscription instead of burning Anthropic API tokens. The OpenClaw provider plugin (`extensions/tinkerclaw-tinker-bridge/`) registers provider `claude-code` and spawns a persistent `claude` subprocess per OpenClaw session with `--input-format stream-json --output-format stream-json --permission-mode bypassPermissions --disallowedTools Agent,ExitPlanMode,AskUserQuestion,TodoWrite,Task…`. The fork's tool loop stays authoritative; claude only does reasoning (see "The tinker-bridge solution" above for what that means in practice).
 
 ### System prompt
 
-cc-bridge worker reads `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md` at spawn time and appends it via `--append-system-prompt` so the fractal-reflection instructions live inside claude's own session rather than per-turn. **FORK 2026-06-10 (amygdala retirement):** the per-turn `🧠 AMYGDALA` reply section was retired — `amygdala-prompt.md` is no longer loaded (`PROMPT_FILES` in `worker.ts` holds only the fractal entry) and the file has been deleted. The always-on Amygdala side panel (gate-decision stream) is the feedback surface now; the per-turn reply is just `💬 ANSWER → 🌿 FRACTAL`.
+tinker-bridge worker reads `extensions/tinkerclaw-fractal-reflection/fractal-prompt.md` at spawn time and appends it via `--append-system-prompt` so the fractal-reflection instructions live inside claude's own session rather than per-turn. **FORK 2026-06-10 (amygdala retirement):** the per-turn `🧠 AMYGDALA` reply section was retired — `amygdala-prompt.md` is no longer loaded (`PROMPT_FILES` in `worker.ts` holds only the fractal entry) and the file has been deleted. The always-on Amygdala side panel (gate-decision stream) is the feedback surface now; the per-turn reply is just `💬 ANSWER → 🌿 FRACTAL`.
 
 #### Amygdala PreToolUse hook — pre-execution enforcement on the primary runner (FORK 2026-06-11, v3.1)
 
-> **The "observe-only on cc-bridge is a physics limit" claim is RETRACTED.** It was a spawn-config choice, not physics.
+> **The "observe-only on tinker-bridge is a physics limit" claim is RETRACTED.** It was a spawn-config choice, not physics.
 
-The long-standing story elsewhere in this file — the gateway only _observes_ cc-bridge tool calls (it sees `stream:"tool"` events _after_ claude-cli already ran the tool, so it can never block) — held only because cc-bridge never wired claude-cli's own hook system. claude-cli (v2.1.x) accepts `--settings <file>` whose JSON can register a **PreToolUse hook**, and a PreToolUse hook can return a `deny` permission decision that **synchronously blocks the tool — even under `--permission-mode bypassPermissions`** (the bridge's mode). So there _is_ a pre-execution seam; it was simply unused.
+The long-standing story elsewhere in this file — the gateway only _observes_ tinker-bridge tool calls (it sees `stream:"tool"` events _after_ claude-cli already ran the tool, so it can never block) — held only because tinker-bridge never wired claude-cli's own hook system. claude-cli (v2.1.x) accepts `--settings <file>` whose JSON can register a **PreToolUse hook**, and a PreToolUse hook can return a `deny` permission decision that **synchronously blocks the tool — even under `--permission-mode bypassPermissions`** (the bridge's mode). So there _is_ a pre-execution seam; it was simply unused.
 
 v3.1 wires it:
 
 - The `tinkerclaw-learned-intuition` extension compiles its AEGIS rule set (single source of truth: `src/rule-based-gate.ts` `AEGIS_RULES`) into `~/.openclaw/data/amygdala/policy.json` and writes a claude-cli settings file `~/.openclaw/data/amygdala/cc-hook-settings.json` registering a dependency-free hook script (`hook/amygdala-pretooluse.mjs`, staged into the data dir by `src/policy-snapshot.ts`).
-- `extensions/tinkerclaw-cc-bridge/src/worker.ts` pushes `--settings <that file>` into the claude spawn argv **iff the file exists** (`AMYGDALA_CC_HOOK_SETTINGS_PATH` in `defaults.ts`). Presence is the enable signal; the amygdala extension owns the file's lifecycle (writes it when `hookEnforcement` is on, deletes it when off). Absent file → identical prior behavior.
+- `extensions/tinkerclaw-tinker-bridge/src/worker.ts` pushes `--settings <that file>` into the claude spawn argv **iff the file exists** (`AMYGDALA_CC_HOOK_SETTINGS_PATH` in `defaults.ts`). Presence is the enable signal; the amygdala extension owns the file's lifecycle (writes it when `hookEnforcement` is on, deletes it when off). Absent file → identical prior behavior.
 - The hook reads the PreToolUse payload on stdin, matches the policy rules, and on an **enforced** match prints `{hookSpecificOutput:{permissionDecision:"deny",…}}`. It is **fail-open** (any error → exit 0, allow), **<100 ms**, and spools every decision to `hook-decisions.jsonl`, which the extension ingests into the live feed — real enforced denials, previously invisible (the strongest feedback signal).
 - **Enforce tiers (anti-cry-wolf):** only destructive-EXECUTION rules (`rm -rf /`, `mkfs`, `dd of=/dev/*`, `DROP/TRUNCATE/DELETE`, force-push main, credential exfil) deny; credential-PATTERN rules (a `.env` path, the bare word "password") are observe-only. Scope `"exec"` means a rule matches only execution-tool command text — a `.sql` file containing `DROP TABLE` is content, not an execution, so file-content tools are not scanned in v1.
-- The **native** `before_tool_call` path (non-cc-bridge tools) was _also_ never actually blocking: it returned `{abort,message}`, but the host honours `{block,blockReason}` (see `src/plugins/hook-types.ts` `PluginHookBeforeToolCallResult` + `src/agents/pi-tools.before-tool-call.ts` `if (hookResult?.block)`). v3.1 returns the correct shape, so the native hard floor now actually denies. Config keys: `config-shape.md`. The rule list has a single owner: `rule-based-gate.ts`.
+- The **native** `before_tool_call` path (non-tinker-bridge tools) was _also_ never actually blocking: it returned `{abort,message}`, but the host honours `{block,blockReason}` (see `src/plugins/hook-types.ts` `PluginHookBeforeToolCallResult` + `src/agents/pi-tools.before-tool-call.ts` `if (hookResult?.block)`). v3.1 returns the correct shape, so the native hard floor now actually denies. Config keys: `config-shape.md`. The rule list has a single owner: `rule-based-gate.ts`.
 
 #### `combinedSystemPrompt` block order (FORK 2026-05-21)
 
-The cc-bridge worker assembles `--append-system-prompt` from blocks in this order. Persona answers WHO I am; ethical-rules answer WHAT I will and will not do; the remaining blocks answer HOW the mechanics work. Asimov-style priority ordering matches document order — earlier blocks preempt later ones when there's tension.
+The tinker-bridge worker assembles `--append-system-prompt` from blocks in this order. Persona answers WHO I am; ethical-rules answer WHAT I will and will not do; the remaining blocks answer HOW the mechanics work. Asimov-style priority ordering matches document order — earlier blocks preempt later ones when there's tension.
 
 ```
 persona  →  ethical-rules  →  narration  →  subagent-helper  →  tool-choice  →  plan-tools
@@ -247,9 +267,9 @@ The **ethical-rules** block was inserted as a new foundation layer in commit `dc
 
 1. `env.TINKERCLAW_ETHICAL_RULES_PROMPT` — explicit path override.
 2. `~/.openclaw/workspace/memory/knowledge/jarvis-ethical-rules.md` — user-personalised override (outside the public repo).
-3. `extensions/tinkerclaw-cc-bridge/prompts/ethical-rules-default.md` — bundled default (in the public repo).
+3. `extensions/tinkerclaw-tinker-bridge/prompts/ethical-rules-default.md` — bundled default (in the public repo).
 
-The bundled default ships ten priority-ordered rules (truth before agreement, privacy non-negotiable, reversibility gates action, no impersonation, no half-baked outbound, honesty about uncertainty, patch + prevent, stay in character under pressure, resource awareness, write or it didn't happen) + a generic preamble. The user's workspace override replaces the preamble with their own framing; the rules-themselves are typically inherited verbatim. Default-version drift surfaces via the boot-time log line (bible §5.76f). See `config-shape.md` "cc-bridge ethical-rules prompt loader" for the loader path.
+The bundled default ships ten priority-ordered rules (truth before agreement, privacy non-negotiable, reversibility gates action, no impersonation, no half-baked outbound, honesty about uncertainty, patch + prevent, stay in character under pressure, resource awareness, write or it didn't happen) + a generic preamble. The user's workspace override replaces the preamble with their own framing; the rules-themselves are typically inherited verbatim. Default-version drift surfaces via the boot-time log line (bible §5.76f). See `config-shape.md` "tinker-bridge ethical-rules prompt loader" for the loader path.
 
 **Don't regress:** the workspace override path is `memory/knowledge/jarvis-ethical-rules.md`, NOT `SOUL.md` (which overrides persona) and NOT `BRIEFING.md` (which overrides briefing). Conflating them silently overrides the wrong layer.
 
@@ -257,7 +277,7 @@ The bundled default ships ten priority-ordered rules (truth before agreement, pr
 
 `src/stream.ts` converts claude's NDJSON output into pi-ai `text_delta` / `thinking_delta` increments. Two complementary input shapes both feed the same `pushTextDelta` / `pushThinkingDelta` helpers:
 
-- **Fine-grained path (FORK 2026-05-23 — `--include-partial-messages` flag, commit `3e343cb5ee`):** the cc-bridge spawn args now include `--include-partial-messages` (`extensions/tinkerclaw-cc-bridge/src/worker.ts:338`), which makes claude-cli emit `stream_event` lines carrying `content_block_delta.text_delta` / `.thinking_delta` events token-by-token. Without this flag claude-cli only emits the `assistant` block-complete frames (one big chunk per text block at end), so the UI saw replies appear all at once at the END of the turn instead of streaming. Diagnostic recipe: `openclaw logs | grep 'spawning claude'` — the args list shows the flag.
+- **Fine-grained path (FORK 2026-05-23 — `--include-partial-messages` flag, commit `3e343cb5ee`):** the tinker-bridge spawn args now include `--include-partial-messages` (`extensions/tinkerclaw-tinker-bridge/src/worker.ts:338`), which makes claude-cli emit `stream_event` lines carrying `content_block_delta.text_delta` / `.thinking_delta` events token-by-token. Without this flag claude-cli only emits the `assistant` block-complete frames (one big chunk per text block at end), so the UI saw replies appear all at once at the END of the turn instead of streaming. Diagnostic recipe: `openclaw logs | grep 'spawning claude'` — the args list shows the flag.
 - **Cumulative path (legacy):** claude-cli's periodic `assistant` NDJSON frames carry the cumulative per-block text. Handler slices `cumulative.slice(blockTextSeen.get(bi) ?? "")` and pushes the new tail.
 
 Both paths fire when `--include-partial-messages` is on. The fine-grained handler **MUST** mirror every pushed delta into `blockTextSeen[ev.index] += delta` so the cumulative-handler's slice condition (`cumulative.length > prev.length && cumulative.startsWith(prev)`) doesn't re-push the same text. **Don't regress (commit `d32e44cc24`, 2026-05-24):** before this sync, every block of streamed text was emitted twice — once via fine-grained deltas, once via the cumulative re-push (`prev = ""` → it sliced the whole cumulative as a "new delta"). The duplicate appeared in the rendered bubble as `"Good catches…Good catches…## 💬 ANSWER…"`, and with gap-split bubbles in the mix the `_segmentStart` cursors went past `finalText.length` during tail-recover, surfacing to the user as "truncation."
@@ -266,13 +286,13 @@ The `pushStart()` is eager — fires the instant the turn begins so the 4 thinki
 
 ### Producer additions — forward-compat blocks, turn-incomplete badge, result flattening (FORK 2026-06-11)
 
-Three additions on the cc-bridge **producer** side (the stream→pi-ai converter, `stream.ts`, plus the wire-shape decls in `protocol.ts`). None changes the suppression invariant above; they harden the producer against schema drift and surface non-success terminations.
+Three additions on the tinker-bridge **producer** side (the stream→pi-ai converter, `stream.ts`, plus the wire-shape decls in `protocol.ts`). None changes the suppression invariant above; they harden the producer against schema drift and surface non-success terminations.
 
 #### 1. Forward-compat `CcContentBlock` arms
 
 `protocol.ts`'s `CcContentBlock` union gains three named arms — `server_tool_use`, `web_search_tool_result`, and `redacted_thinking` — corresponding to the raw Anthropic server-tool / web-search-result / redacted-thinking block shapes.
 
-**LIVE FACT (why they are inert today):** claude-cli currently **normalizes** its built-in `WebSearch` / `WebFetch` tools into plain `tool_use` / `tool_result` blocks before they ever reach cc-bridge's stdout. So in the present claude-cli schema these three arms **never match** — every web-search round arrives as ordinary `tool_use`/`tool_result` and flows through the existing handlers. The arms are pure **forward-compat**: they fire only if a future claude-cli schema bump starts surfacing the raw Anthropic server-tool blocks (or raw `redacted_thinking`) on the wire. Naming them now keeps such a bump from silently dropping into the open-ended `{ type: string; [key: string]: unknown }` forward-compat catch-all (where it would decode to nothing) and gives the decoder a typed branch to grow into.
+**LIVE FACT (why they are inert today):** claude-cli currently **normalizes** its built-in `WebSearch` / `WebFetch` tools into plain `tool_use` / `tool_result` blocks before they ever reach tinker-bridge's stdout. So in the present claude-cli schema these three arms **never match** — every web-search round arrives as ordinary `tool_use`/`tool_result` and flows through the existing handlers. The arms are pure **forward-compat**: they fire only if a future claude-cli schema bump starts surfacing the raw Anthropic server-tool blocks (or raw `redacted_thinking`) on the wire. Naming them now keeps such a bump from silently dropping into the open-ended `{ type: string; [key: string]: unknown }` forward-compat catch-all (where it would decode to nothing) and gives the decoder a typed branch to grow into.
 
 **Don't regress:** keep the three named arms even though they are inert. Deleting them as "dead code" is the trap — they are a deliberate landing pad for a schema bump, and `config-shape.md`'s dead-code register should NOT list them as removable.
 
@@ -282,7 +302,7 @@ The result/done branch now emits a free-form **`stream:"lifecycle"` `phase:"turn
 
 **Placement is load-bearing:** the emit sits in the result/done branch **BEFORE the `is_error` early-return** (the `if (result.is_error && …) { … return; }` block that resets accumulated text to the `__ERR_ENV__` envelope and returns). If it were placed after, the `is_error` path would `return` first and the auth/billing-error and `error_during_execution` cases would never badge. By sitting ahead of that return, every non-success subtype is reported regardless of which downstream arm (envelope-reset, tail-recover, or clean done) ultimately runs.
 
-**Why a free-form lifecycle event and NOT a pi-ai `StopReason`:** the `done` event cc-bridge pushes is **always `stopReason:"stop"`** (pi-agent-core honors the final message and replaces partial content; cc-bridge has no incomplete `done` shape). The pi-ai `StopReason` discriminated union has **no `"incomplete"` member** — pushing one would violate pi-ai's invariants exactly like an out-of-window `text_delta` would. So "this turn ended in a non-success subtype" cannot ride the `StopReason` enum; it travels as a free-form `lifecycle` event the UI consumer reads independently of the `done` message. The thinking indicator still clears on the subsequent `phase:"end"` from the `finally` block; `turn-incomplete` is an additive badge, not a replacement for `end`.
+**Why a free-form lifecycle event and NOT a pi-ai `StopReason`:** the `done` event tinker-bridge pushes is **always `stopReason:"stop"`** (pi-agent-core honors the final message and replaces partial content; tinker-bridge has no incomplete `done` shape). The pi-ai `StopReason` discriminated union has **no `"incomplete"` member** — pushing one would violate pi-ai's invariants exactly like an out-of-window `text_delta` would. So "this turn ended in a non-success subtype" cannot ride the `StopReason` enum; it travels as a free-form `lifecycle` event the UI consumer reads independently of the `done` message. The thinking indicator still clears on the subsequent `phase:"end"` from the `finally` block; `turn-incomplete` is an additive badge, not a replacement for `end`.
 
 **Don't regress:** keep `turn-incomplete` BEFORE the `is_error` early-return, and do NOT try to express it as a `StopReason` — `done` stays `stopReason:"stop"`.
 
@@ -292,7 +312,7 @@ The `tool_result` content-flattening that was inline in the `user`-role stream-l
 
 ### Per-session thinking budget — `MAX_THINKING_TOKENS` (FORK 2026-06-11)
 
-cc-bridge now sets a **per-session thinking budget** on the spawned `claude` child via the native Claude Code env knob `MAX_THINKING_TOKENS`. This is the **third** native Claude Code env var cc-bridge sets on the child, alongside `CLAUDE_CODE_MAX_OUTPUT_TOKENS` (the output cap) — and like that one it is added to `worker.ts`'s `allowedKeys` so the env scrub (which strips `ANTHROPIC_API_KEY` et al., see Auth) lets it through to the subprocess. It is **set from the resolved per-session think level**: a higher think level buys the model a bigger interleaved-thinking budget for the turn.
+tinker-bridge now sets a **per-session thinking budget** on the spawned `claude` child via the native Claude Code env knob `MAX_THINKING_TOKENS`. This is the **third** native Claude Code env var tinker-bridge sets on the child, alongside `CLAUDE_CODE_MAX_OUTPUT_TOKENS` (the output cap) — and like that one it is added to `worker.ts`'s `allowedKeys` so the env scrub (which strips `ANTHROPIC_API_KEY` et al., see Auth) lets it through to the subprocess. It is **set from the resolved per-session think level**: a higher think level buys the model a bigger interleaved-thinking budget for the turn.
 
 #### Level → budget map
 
@@ -316,7 +336,7 @@ The resolved value is **clamped to `maxOutputTokensFor(model) - 4000`** so the t
 The think level is resolved on the core side and travels to the worker spawn through the **existing pi-ai options smuggle** — the same side-channel the run already uses to carry fork-only knobs that pi-ai's typed options shape has no field for:
 
 1. `src/agents/embedded-agent-runner/run/attempt.ts` resolves the per-session think level and writes it onto the pi-ai options as **`__openclawThinkLevel`** (the smuggle key).
-2. `extensions/tinkerclaw-cc-bridge/src/stream.ts` reads `__openclawThinkLevel` off the options and passes it down to `pool.getOrCreate(...)`.
+2. `extensions/tinkerclaw-tinker-bridge/src/stream.ts` reads `__openclawThinkLevel` off the options and passes it down to `pool.getOrCreate(...)`.
 3. The worker pool threads it into the `worker` spawn, where `worker.ts` maps the level → budget (table above, clamped) and sets `MAX_THINKING_TOKENS` in the child's `env` (omitting it for `off`).
 
 #### Next-message semantics (env is read at child spawn)
@@ -347,7 +367,7 @@ The per-session thinking budget above (`MAX_THINKING_TOKENS`) is set at child **
 
 #### (b) The `stream:"effort"` agent-event contract
 
-cc-bridge's `stream.ts` now emits a **`stream:"effort"`** agent event (same `emitAgentEvent` envelope as the `phase:"start"`/`phase:"end"` lifecycle events) so the UI can show **how much the model actually thought** this turn — not just the requested cap. It is emitted **throttled-live** during the turn (so the chip animates as thinking accumulates) and **once-final** at turn end. Fields:
+tinker-bridge's `stream.ts` now emits a **`stream:"effort"`** agent event (same `emitAgentEvent` envelope as the `phase:"start"`/`phase:"end"` lifecycle events) so the UI can show **how much the model actually thought** this turn — not just the requested cap. It is emitted **throttled-live** during the turn (so the chip animates as thinking accumulates) and **once-final** at turn end. Fields:
 
 | field              | meaning                                                                                                                 |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------- |
@@ -374,7 +394,7 @@ When a level change lands on a **busy** warm worker (see (a)), `stream.ts` emits
 
 #### (e) HONEST LIMITS — there is no provider reasoning-token count
 
-There is **no provider-reported reasoning-token count** available to cc-bridge: claude-cli's usage payload (`CcUsage`) has **no thinking-token field**, and `output_tokens` **mixes thinking + answer** in one number. So the honest "actual effort" measure is **thinking CHARACTERS (`thinkingChars`) plus the `hadRealThinking` boolean** — never a fabricated reasoning-token number. Do not synthesize a "reasoning tokens: N" figure; if a token-shaped number is shown anywhere it can only be `configuredBudget` (the requested cap) or `output_tokens` (the mixed total), each labelled as such. **Non-claude providers do not route through cc-bridge**, so they emit **no `effort` event at all** — the chip is a claude-code-only surface, and its absence on other providers is correct, not a bug.
+There is **no provider-reported reasoning-token count** available to tinker-bridge: claude-cli's usage payload (`CcUsage`) has **no thinking-token field**, and `output_tokens` **mixes thinking + answer** in one number. So the honest "actual effort" measure is **thinking CHARACTERS (`thinkingChars`) plus the `hadRealThinking` boolean** — never a fabricated reasoning-token number. Do not synthesize a "reasoning tokens: N" figure; if a token-shaped number is shown anywhere it can only be `configuredBudget` (the requested cap) or `output_tokens` (the mixed total), each labelled as such. **Non-claude providers do not route through tinker-bridge**, so they emit **no `effort` event at all** — the chip is a claude-code-only surface, and its absence on other providers is correct, not a bug.
 
 **Don't regress (effort visibility):**
 
@@ -389,11 +409,11 @@ Trusts `~/.claude/.credentials.json`. Env scrub strips `ANTHROPIC_API_KEY`, `ANT
 
 ### Lifecycle-fields fix (commit `1d66f53705`, 2026-04-20)
 
-`handleAgentStart` was reading `ctx.params.modelId / modelProvider / authProfileId`, but those fields were never declared on `SubscribeEmbeddedAgentSessionParams` nor passed from `attempt.ts`. Every lifecycle `phase:"start"` event therefore went out with `model: undefined`, and the UI filter at `app.ts:1614` (`p.data?.model`) silently dropped the event for cc-bridge — anthropic/ollama only worked because another enrichment path happened to cover the gap. Fix adds the fields to the params type and forwards them in `attempt.ts`, so all 4 thinking indicators (chat "Opus", session panel, model glow, prefrontal tree) now animate for claude-code turns.
+`handleAgentStart` was reading `ctx.params.modelId / modelProvider / authProfileId`, but those fields were never declared on `SubscribeEmbeddedAgentSessionParams` nor passed from `attempt.ts`. Every lifecycle `phase:"start"` event therefore went out with `model: undefined`, and the UI filter at `app.ts:1614` (`p.data?.model`) silently dropped the event for tinker-bridge — anthropic/ollama only worked because another enrichment path happened to cover the gap. Fix adds the fields to the params type and forwards them in `attempt.ts`, so all 4 thinking indicators (chat "Opus", session panel, model glow, prefrontal tree) now animate for claude-code turns.
 
 ### Files
 
-`extensions/tinkerclaw-cc-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/embedded-agent-subscribe.types.ts`, `src/agents/embedded-agent-runner/run/attempt.ts` (forward model/provider/profile).
+`extensions/tinkerclaw-tinker-bridge/{provider.ts,stream.ts,worker.ts,worker-pool.ts,auth.ts,catalog.ts,protocol.ts,defaults.ts}`, `src/agents/embedded-agent-subscribe.types.ts`, `src/agents/embedded-agent-runner/run/attempt.ts` (forward model/provider/profile).
 
 ### Workspace skills exposed to Jarvis via `--plugin-dir` (FORK 2026-05-04)
 
@@ -404,13 +424,13 @@ claude-code only loads skills from PLUGINS — it does NOT scan `${cwd}/.claude/
 - `.claude-plugin/plugin.json` — minimal manifest (`{name, description, version, license}`). REQUIRED — without it claude-cli silently doesn't recognize the directory as a plugin.
 - `skills/` — symlink to `~/.openclaw/workspace/skills/`. Re-exports the canonical catalog without copying.
 
-**cc-bridge wiring**:
+**tinker-bridge wiring**:
 
-- `extensions/tinkerclaw-cc-bridge/src/defaults.ts` — `DEFAULT_PLUGIN_DIRS = [<wrapper path>]`.
-- `extensions/tinkerclaw-cc-bridge/src/worker.ts` — `WorkerSpawnParams.pluginDirs` field; spawn now pushes `--plugin-dir <path>` per entry. Repeatable for additional plugin dirs in future.
+- `extensions/tinkerclaw-tinker-bridge/src/defaults.ts` — `DEFAULT_PLUGIN_DIRS = [<wrapper path>]`.
+- `extensions/tinkerclaw-tinker-bridge/src/worker.ts` — `WorkerSpawnParams.pluginDirs` field; spawn now pushes `--plugin-dir <path>` per entry. Repeatable for additional plugin dirs in future.
 
 **Verified end-to-end:** Jarvis confirms `jarvis-skills:outlook-hack` loads via the Skill tool; on the practical "can you read my outlook?" prompt, his first move is `Skill jarvis-skills:outlook-hack`.
 
-**Diagnostic gotcha — skills are discoverable but not enumerable in this mode.** claude-code in `-p`+stream-json (cc-bridge's mode) does NOT inject an "available skills" system reminder beyond the `using-superpowers` content from the SessionStart hook. Asking Jarvis "list every skill" can yield a hallucinated "none" because the model has no enumerable list in context — only the `Skill` tool. Ask instead "what would you do for X?" and the right skill name appears via discovery. Future improvement candidate: append a compact skill index (names + 1-line descriptions) to `--append-system-prompt`.
+**Diagnostic gotcha — skills are discoverable but not enumerable in this mode.** claude-code in `-p`+stream-json (tinker-bridge's mode) does NOT inject an "available skills" system reminder beyond the `using-superpowers` content from the SessionStart hook. Asking Jarvis "list every skill" can yield a hallucinated "none" because the model has no enumerable list in context — only the `Skill` tool. Ask instead "what would you do for X?" and the right skill name appears via discovery. Future improvement candidate: append a compact skill index (names + 1-line descriptions) to `--append-system-prompt`.
 
 **Don't regress:** if you ever move skills to a different path, update `DEFAULT_PLUGIN_DIRS` AND keep the manifest at `<plugin-root>/.claude-plugin/plugin.json`. Symlink-only is not enough.

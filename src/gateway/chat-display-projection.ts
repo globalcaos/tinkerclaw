@@ -367,6 +367,102 @@ function hasAssistantNonTextContent(message: unknown): boolean {
   );
 }
 
+// FORK 2026-06-22: when a turn is interrupted (gateway restart / stop command),
+// `appendInjectedAssistantMessageToTranscript` records the in-flight streamed text
+// as a `gateway-injected` assistant message carrying an `openclawAbort` marker.
+// That echo holds only the display buffer — no thinking blocks. When the turn then
+// resumes, the REAL model message (thinking + full text) is persisted separately,
+// so the transcript ends up with two assistant turns: the partial echo and the
+// complete message. The user sees the answer twice and the echo looks like the
+// thinking got "deleted". This pass drops a superseded echo: an abort echo is
+// hidden when the FIRST real (non-echo) assistant message that follows it begins
+// with the echo's visible text (the echo is always a prefix of the resumed reply).
+// A genuinely aborted turn that never resumed has no following real message, so its
+// echo is kept — the user still sees what was said before the interruption.
+function isAbortEchoMessage(message: Record<string, unknown>): boolean {
+  const abort = message.openclawAbort;
+  return Boolean(
+    abort && typeof abort === "object" && (abort as { aborted?: unknown }).aborted === true,
+  );
+}
+
+function extractAssistantVisibleText(message: Record<string, unknown>): string | undefined {
+  if (typeof message.text === "string") {
+    return message.text;
+  }
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  if (!Array.isArray(message.content)) {
+    return undefined;
+  }
+  const texts: string[] = [];
+  for (const block of message.content) {
+    if (
+      block &&
+      typeof block === "object" &&
+      (block as { type?: unknown }).type === "text" &&
+      typeof (block as { text?: unknown }).text === "string"
+    ) {
+      texts.push((block as { text: string }).text);
+    }
+  }
+  return texts.length > 0 ? texts.join("\n") : undefined;
+}
+
+// Collapse runs of whitespace to a single space (matches the cli-session-history
+// merge layer's normalization). A bare .trim() is too brittle: a gateway respawn
+// re-streams the resumed reply, so newlines/indentation between the partial echo
+// and the completed message diverge even when the visible words are identical —
+// which used to defeat the startsWith() prefix check and leak BOTH bubbles.
+function collapseWhitespaceForEchoMatch(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function suppressSupersededAbortEchoes(
+  messages: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  if (messages.length === 0) {
+    return messages;
+  }
+  let changed = false;
+  const result: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < messages.length; i++) {
+    const current = messages[i];
+    if (current.role === "assistant" && isAbortEchoMessage(current)) {
+      const rawEcho = extractAssistantVisibleText(current);
+      const echo = rawEcho ? collapseWhitespaceForEchoMatch(rawEcho) : undefined;
+      if (echo) {
+        // Only the FIRST following real (non-echo) assistant message decides — the
+        // resumed reply. Earlier-restart echoes from the same turn are skipped so a
+        // run of consecutive echoes all collapse into the one completed message.
+        let superseded = false;
+        for (let j = i + 1; j < messages.length; j++) {
+          const other = messages[j];
+          if (other.role !== "assistant" || isAbortEchoMessage(other)) {
+            continue;
+          }
+          const rawReal = extractAssistantVisibleText(other);
+          const real = rawReal ? collapseWhitespaceForEchoMatch(rawReal) : undefined;
+          // Bidirectional: the echo is normally a prefix of the resumed reply (the
+          // partial streamed buffer), but a respawn can coalesce the resume into a
+          // SHORTER form than the captured partial — so a real message that is itself
+          // a prefix of the echo is also a supersede. Either way the resume is
+          // authoritative and the echo is a stale partial of the same turn.
+          superseded = Boolean(real && (real.startsWith(echo) || echo.startsWith(real)));
+          break;
+        }
+        if (superseded) {
+          changed = true;
+          continue;
+        }
+      }
+    }
+    result.push(current);
+  }
+  return changed ? result : messages;
+}
+
 function shouldDropAssistantHistoryMessage(message: unknown): boolean {
   if (!message || typeof message !== "object") {
     return false;
@@ -517,8 +613,13 @@ export function projectChatDisplayMessages(
 ): Array<Record<string, unknown>> {
   const source = options?.stripEnvelope === false ? messages : stripEnvelopeFromMessages(messages);
   return filterVisibleProjectedHistoryMessages(
-    toProjectedMessages(
-      sanitizeChatHistoryMessages(source, options?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS),
+    suppressSupersededAbortEchoes(
+      toProjectedMessages(
+        sanitizeChatHistoryMessages(
+          source,
+          options?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
+        ),
+      ),
     ),
   );
 }

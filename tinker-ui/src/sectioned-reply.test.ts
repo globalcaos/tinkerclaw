@@ -4,6 +4,7 @@ import {
   renderSectionedReply,
   scrubResidualSectionMarkers,
   splitLeadingNarration,
+  splitReasoningFromAnswer,
 } from "./sectioned-reply";
 
 // Identity stubs — the structural assertions below (which bubbles/classes are
@@ -49,6 +50,17 @@ describe("splitSectionedReply — amygdala retired (only 💬 ANSWER / 🌿 FRAC
     expect(splitSectionedReply("just a plain reply, no markers")).toBeNull();
     expect(splitSectionedReply("")).toBeNull();
   });
+
+  it("MARKER-FREE (bug A): 🌿 FRACTAL with NO 💬 ANSWER keeps the answer prose in `other`", () => {
+    // After retiring the 💬 ANSWER marker the model emits its answer then a 🌿 FRACTAL section.
+    // The answer must stay accessible (renderSectionedReply promotes `other` when a fractal exists),
+    // never lost or buried — this is the marker-free contract the structural run-grouping relies on.
+    const sec = splitSectionedReply("Here is the real answer.\n\n🌿 FRACTAL: my reflection")!;
+    expect(sec).not.toBeNull();
+    expect(sec.other).toBe("Here is the real answer.");
+    expect(sec.fractal).toBe("my reflection");
+    expect(sec.answer).toBeUndefined();
+  });
 });
 
 describe("renderSectionedReply — no fabricated amygdala block, fractal preserved", () => {
@@ -85,6 +97,13 @@ describe("renderSectionedReply — no fabricated amygdala block, fractal preserv
     expect(h).not.toContain("msg-amygdala");
   });
 
+  it("MARKER-FREE (bug A): answer + fractal with NO 💬 ANSWER renders the answer VISIBLE", () => {
+    const sec = splitSectionedReply("Here is the real answer.\n\n🌿 FRACTAL: refl")!;
+    const h = render(sec);
+    expect(h).toContain("Here is the real answer."); // answer surfaced, not hidden
+    expect(h).toContain("fractal-details"); // fractal still its own collapsed bubble
+  });
+
   it("preserves the FRACTAL collapsed bubble for an ANSWER + FRACTAL reply", () => {
     const h = render({ answer: "ans", fractal: "MEMORY: something worth keeping" });
     expect(h).toContain('class="fractal-details"');
@@ -101,7 +120,7 @@ describe("renderSectionedReply — no fabricated amygdala block, fractal preserv
   });
 });
 
-describe("splitLeadingNarration — peels leading cc-bridge inter-tool narration only", () => {
+describe("splitLeadingNarration — peels leading tinker-bridge inter-tool narration only", () => {
   it("is a pure no-op when the first sentence is not narration", () => {
     expect(splitLeadingNarration("The value is 5.")).toEqual({
       narration: "",
@@ -208,5 +227,66 @@ describe("renderSectionedReply — residual section markers never render mid-ans
     const h = render({ answer: "As noted in the 💬 ANSWER above, x." });
     expect(h).not.toMatch(/💬\s*ANSWER/i);
     expect(h).toContain("above, x.");
+  });
+});
+
+describe("splitReasoningFromAnswer", () => {
+  const NARR = "Let me check the merge layer to confirm the dedup case here please.";
+  const NARR2 = "Now let me read the gate region to pick the correct fix carefully.";
+  const ANS = "The backend is clean; the duplication is injected on the serve path.";
+
+  it("peels interleaved narration anywhere, not just the leading run", () => {
+    const text = `${NARR} ${ANS} ${NARR2}`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.reasoning).toContain("Let me check");
+    expect(r.reasoning).toContain("Now let me read");
+    expect(r.answer).toContain("backend is clean");
+    expect(r.answer).not.toContain("Let me check");
+  });
+
+  it("folds everything before a confident conclusion anchor into reasoning (numbered list)", () => {
+    const text = `${NARR} ${NARR2} Found the cause.\n\n1. Root: serve path.\n2. Fix: dedup at the boundary.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer.startsWith("1.")).toBe(true);
+    expect(r.reasoning).toContain("Found the cause");
+  });
+
+  it("folds before a recap phrase anchor", () => {
+    const text = `${NARR} Some finding here that is long enough to matter.\n\nBottom line: pin the model to claude-opus.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer.toLowerCase().startsWith("bottom line")).toBe(true);
+  });
+
+  it("NEVER blanks the answer when there is no anchor and everything looks like notes", () => {
+    const text = `${NARR} ${NARR2}`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer.length).toBeGreaterThan(0);
+  });
+
+  it("is a pure no-op when there is no narration and no anchor", () => {
+    const text = "Here is a single plain answer sentence with no narration and no anchor.";
+    const r = splitReasoningFromAnswer(text);
+    expect(r.reasoning).toBe("");
+    expect(r.answer).toBe(text);
+  });
+
+  it("does not hide content without a confident anchor (only narration removed)", () => {
+    const text = `${NARR} ${ANS} A second substantive finding that is not narration at all.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.answer).toContain("backend is clean");
+    expect(r.answer).toContain("second substantive finding");
+  });
+
+  it("is idempotent on the answer", () => {
+    const text = `${NARR} ${ANS}`;
+    const once = splitReasoningFromAnswer(text).answer;
+    expect(splitReasoningFromAnswer(once).answer).toBe(once);
+  });
+
+  it("handles a working-note stream that ends in a JSON dump without throwing or blanking", () => {
+    const text = `${NARR} ${NARR2} {"raw":"claude subprocess exited (SIGTERM)"}`;
+    const r = splitReasoningFromAnswer(text);
+    expect(typeof r.answer).toBe("string");
+    expect(r.answer.length).toBeGreaterThan(0);
   });
 });

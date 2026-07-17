@@ -1,7 +1,7 @@
 /**
  * FORK 2026-05-10 — runtime overlay for plugin-supplied provider config defaults.
  *
- * **Problem this solves.** Plugins that drive a provider (e.g. cc-bridge for
+ * **Problem this solves.** Plugins that drive a provider (e.g. tinker-bridge for
  * `claude-code`) ship sensible runtime defaults via their `discovery.run`
  * callback — most importantly `timeoutSeconds`. Today those defaults are
  * consumed only when WRITING `models.json` (see `models-config.plan.ts`
@@ -12,7 +12,7 @@
  * the LLM idle watchdog being the canonical one) has to be *duplicated*
  * into `openclaw.json` by hand or it silently doesn't take effect.
  *
- * The 2026-05-05 fix that put `timeoutSeconds: 600` into the cc-bridge
+ * The 2026-05-05 fix that put `timeoutSeconds: 600` into the tinker-bridge
  * catalog was load-bearing in spirit but dead code in practice — it never
  * reached `applyConfiguredProviderOverrides → resolveProviderRequestTimeoutMs
  * → params.model.requestTimeoutMs → resolveLlmIdleTimeoutMs`. The watchdog

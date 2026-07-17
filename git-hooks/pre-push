@@ -8,7 +8,7 @@
 #      — bypass: PATTERN_LINT=off
 #   4. plugin-sdk export integrity — bypass: SDK_EXPORTS_GUARD=off
 #      (src→entrypoints manifest drift + manifest→package.json drift;
-#      catches the 2026-05-21 cc-bridge-can't-load-because-export-missing
+#      catches the 2026-05-21 tinker-bridge-can't-load-because-export-missing
 #      class that bricked the gateway on restart)
 #
 # The invariants runner is tolerant of "gateway down" and "gateway stale"
@@ -78,7 +78,7 @@ else
 fi
 
 # Gate 4 — plugin-sdk export integrity (FORK 2026-05-21)
-# Catches the failure-class that bricked the cc-bridge plugin on 2026-05-21:
+# Catches the failure-class that bricked the tinker-bridge plugin on 2026-05-21:
 # a src/plugin-sdk/*.ts file existed without a matching entry in
 # scripts/lib/plugin-sdk-entrypoints.json + package.json#exports, so the
 # gateway exploded on plugin-load with "Cannot find module '.../dist/...'".

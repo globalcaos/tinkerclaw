@@ -2,7 +2,7 @@
  * SS0 / capability-parity A1 (2026-06-04): the NATIVE orchestration runtime.
  *
  * `agent / parallel / pipeline / phase` are currently BORROWED from the Claude
- * Code Workflow tool via cc-bridge — alive only while Claude Code drives the turn
+ * Code Workflow tool via tinker-bridge — alive only while Claude Code drives the turn
  * and metered/at-risk from 2026-06-15. This module makes them native to Jarvis's
  * own gateway, built over the existing subagent-spawn substrate (a `spawn` dep,
  * defaulted in production to fork.subagents.spawn + agent.wait + chat.history,
@@ -34,11 +34,17 @@ export interface AgentOpts {
   label?: string;
   /**
    * Optional leaf model for this unit. The production runtime COERCES this to a
-   * `claude-code/*` model (subscription-billed cc-sp-* worker) — a non-claude-code
+   * `claude-code/*` model (subscription-billed tinker-sp-* worker) — a non-claude-code
    * value is overridden, never honoured, so a fan-out can't silently spill onto
    * the metered API. Omit to inherit the runtime's default leaf model.
    */
   model?: string;
+  /**
+   * Optional thinking/effort level for this unit (e.g. "low", "medium", "high",
+   * "max"). Forwarded to fork.subagents.spawn → child session thinkingLevel.
+   * Omit to inherit the runtime default (none = off). Bible §5.84-A.
+   */
+  thinking?: string;
 }
 
 export interface OrchestrationDeps {

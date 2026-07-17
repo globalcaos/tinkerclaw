@@ -27,7 +27,7 @@ We DO NOT test upstream's code. Upstream has its own tests; running them here is
 
 - `src/agents/plugin-provider-config-overlay.ts` (FORK 2026-05-10)
 - `src/agents/main-session-restart-recovery.ts` (FORK 2026-05-09/10)
-- `extensions/tinkerclaw-cc-bridge/` (all)
+- `extensions/tinkerclaw-tinker-bridge/` (all)
 - `extensions/tinkerclaw-whatsapp/` (fork-owned)
 - `extensions/tinkerclaw-people/` (fork-owned)
 - `extensions/tinkerclaw-prefrontal/` (fork-owned)
@@ -48,7 +48,7 @@ A typical fork-side test file:
 /**
  * Test target: src/agents/plugin-provider-config-overlay.ts
  * Bible anchor: config-shape.md §4.1 ("Plugin runtime overlay")
- * Bug history:  failures.md M1 (cc-bridge SIGTERM), bug-log.md 2026-05-10
+ * Bug history:  failures.md M1 (tinker-bridge SIGTERM), bug-log.md 2026-05-10
  * Catches:      regression of the overlay-merge-into-cfg behavior shipped 2026-05-10
  */
 import { describe, it, expect, beforeEach } from "vitest";
@@ -132,8 +132,8 @@ Each layer catches what the layer above missed. Unit tests catch logic bugs; bib
 
 1. `plugin-provider-config-overlay.ts` — small, well-bounded, catches the dead-code regression class. Start here.
 2. `main-session-restart-recovery.ts` — `pushRestartWarningEnvelope`, `resumeMainSession`, `recoverStore`. Each takes a fake session-store + a mock callGateway and asserts the envelope payload and resume invocation order.
-3. `extensions/tinkerclaw-cc-bridge/src/session-map.ts` — the openclawSessionId fallback path is small and recently broke.
-4. `extensions/tinkerclaw-cc-bridge/src/worker-pool.ts` — the lookup-priority rule. Tests the openclawSessionId-first ordering.
+3. `extensions/tinkerclaw-tinker-bridge/src/session-map.ts` — the openclawSessionId fallback path is small and recently broke.
+4. `extensions/tinkerclaw-tinker-bridge/src/worker-pool.ts` — the lookup-priority rule. Tests the openclawSessionId-first ordering.
 5. `src/gateway/server-methods/files-resolve-bare.ts` — pure file-system search, easy to mock.
 6. `src/gateway/server-methods/briefing.ts` — fallback chain.
 7. `src/fork/error-envelope.ts` — error classification table; one test per category.

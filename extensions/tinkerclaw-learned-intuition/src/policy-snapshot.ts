@@ -7,7 +7,7 @@
  *   - `policy.json`           — the serialized rules + the hookEnforcement flag,
  *                               read by the dependency-free PreToolUse hook.
  *   - `cc-hook-settings.json` — a claude-cli settings file registering the hook,
- *                               passed by cc-bridge via `--settings` on every
+ *                               passed by tinker-bridge via `--settings` on every
  *                               spawn. Its mere presence is the enable signal.
  *
  * The hook script is STAGED (copied) into the data dir so the settings can point
@@ -15,7 +15,7 @@
  *
  * When hook enforcement is OFF we still write policy.json (so an observe-only
  * deployment keeps spooling) but DELETE cc-hook-settings.json, which makes
- * cc-bridge stop injecting `--settings` (no pre-execution deny).
+ * tinker-bridge stop injecting `--settings` (no pre-execution deny).
  */
 
 import {
@@ -154,7 +154,7 @@ export function writePolicySnapshot(
   return { staged: paths.stagedHookPath, settingsWritten: true };
 }
 
-/** Remove the claude-cli settings file so cc-bridge stops injecting --settings. */
+/** Remove the claude-cli settings file so tinker-bridge stops injecting --settings. */
 export function removeHookSettings(dataDir?: string): void {
   const paths = policyPaths(dataDir);
   try {

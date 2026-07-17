@@ -45,6 +45,7 @@ import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
+import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
   hasNonEmptyString,
@@ -913,11 +914,12 @@ export async function runAgentTurnWithFallback(params: {
       logVerbose(`compaction ${phase} notice delivery failed (non-fatal): ${String(err)}`);
     }
   };
-  const shouldSurfaceToControlUi = isInternalMessageChannel(
-    params.followupRun.run.messageProvider ??
-      params.sessionCtx.Surface ??
-      params.sessionCtx.Provider,
-  );
+  const shouldSurfaceToControlUi =
+    isInternalMessageChannel(
+      params.followupRun.run.messageProvider ??
+        params.sessionCtx.Surface ??
+        params.sessionCtx.Provider,
+    ) || isSubagentSessionKey(params.sessionKey);
   if (params.sessionKey) {
     registerAgentRunContext(runId, {
       sessionKey: params.sessionKey,

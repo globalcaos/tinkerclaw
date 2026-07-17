@@ -48,7 +48,7 @@ We launch with three. Each was chosen by the leverage test: the SLO either (a) n
 - Why this is the SLO: morning-briefing is the user-facing flagship. When it takes 10 minutes instead of 1, the user notices, and the lag is usually a precursor to a fail. Tracking p95 latency catches the slow-creep regressions before they tip over into outright failures.
 - Window: rolling 7 days, successful runs only (failed runs have their own SLO).
 - Burn rate: target 95% within budget → budget is 5% slow runs. Observed via `durationMs` field in each receipt.
-- Recommended action when burning: read `details.p50Ms`, `details.p95Ms`, `details.maxMs`. If p95 is creeping toward 300s, investigate `failures.md` M1 (cc-bridge SIGTERM) — slow briefings often precede outright timeouts.
+- Recommended action when burning: read `details.p50Ms`, `details.p95Ms`, `details.maxMs`. If p95 is creeping toward 300s, investigate `failures.md` M1 (tinker-bridge SIGTERM) — slow briefings often precede outright timeouts.
 
 ## How the probe surfaces this
 

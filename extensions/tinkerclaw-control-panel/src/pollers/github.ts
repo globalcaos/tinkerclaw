@@ -69,3 +69,55 @@ export const githubOpenIssues: PollerFn = async (args) => {
   const data = await fetchRepo(owner, repo);
   return data.open_issues_count;
 };
+
+/**
+ * FORK 2026-06-26 — exact star-gain timeline for the Pulse "GitHub stars" graph.
+ * The 6h stargazers poller only records the live count at `now`, so the curve
+ * starts wherever polling began — no origin, no intermediate gain points. This
+ * reconstructs the TRUE curve from GitHub directly: the repo's `created_at`
+ * (the zero dot — stars=0 the moment the repo went up) plus one `starred_at`
+ * per stargazer (each an intermediate point where a star was gained). The
+ * backfill turns these into a cumulative 0→N series. Uses the
+ * `application/vnd.github.star+json` media type, which adds `starred_at` to
+ * each stargazer entry. Paginated (per_page=100, capped) so a growing repo
+ * stays correct; 14 stars today fit one page.
+ */
+export type StargazerTimeline = { createdAtMs: number; starredAtMs: number[] };
+
+export async function fetchStargazerTimeline(args: string): Promise<StargazerTimeline> {
+  const { owner, repo } = parseOwnerRepo(args);
+  const repoData = (await fetchRepo(owner, repo)) as RepoFields & { created_at?: string };
+  // fetchRepo caches the plucked fields but not created_at; fetch it explicitly.
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "tinkerclaw-control-panel",
+  };
+  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  const metaRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+  if (!metaRes.ok) {
+    throw new Error(`github repo ${owner}/${repo}: HTTP ${metaRes.status} ${metaRes.statusText}`);
+  }
+  const meta = (await metaRes.json()) as { created_at: string };
+  const createdAtMs = Date.parse(meta.created_at);
+
+  const starHeaders = { ...headers, Accept: "application/vnd.github.star+json" };
+  const starredAtMs: number[] = [];
+  const MAX_PAGES = 20; // 2000 stars — far beyond current scale, a safety cap.
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repo}/stargazers?per_page=100&page=${page}`,
+      { headers: starHeaders },
+    );
+    if (!res.ok) {
+      throw new Error(`github stargazers ${owner}/${repo}: HTTP ${res.status} ${res.statusText}`);
+    }
+    const batch = (await res.json()) as Array<{ starred_at?: string }>;
+    if (batch.length === 0) break;
+    for (const s of batch) {
+      if (s.starred_at) starredAtMs.push(Date.parse(s.starred_at));
+    }
+    if (batch.length < 100) break;
+  }
+  starredAtMs.sort((a, b) => a - b);
+  return { createdAtMs, starredAtMs };
+}

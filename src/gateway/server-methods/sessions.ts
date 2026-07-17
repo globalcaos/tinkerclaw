@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { copyAnatomyEventsToNewKey } from "../../agents/context-anatomy-db.js";
 import {
   abortEmbeddedPiRun,
   isEmbeddedPiRunActive,
@@ -89,6 +90,7 @@ import {
 import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 import { chatHandlers } from "./chat.js";
+import { suggestTitleViaBridge } from "./suggest-title.js";
 import type {
   GatewayClient,
   GatewayRequestContext,
@@ -640,6 +642,22 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     });
     respond(true, result, undefined);
   },
+  // FORK 2026-06-25: one-shot cc-bridge Sonnet title suggester. Read params
+  // manually (no params-schema validator), like forensic.summarize.
+  // SUBSCRIPTION-billed via the claude-code provider — not the metered API.
+  "sessions.suggestTitle": async ({ params, respond, context }) => {
+    const prompt =
+      params && typeof (params as { prompt?: unknown }).prompt === "string"
+        ? ((params as { prompt: string }).prompt as string)
+        : "";
+    if (!prompt) {
+      respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "prompt required"));
+      return;
+    }
+    const cfg = context.getRuntimeConfig();
+    const title = await suggestTitleViaBridge({ prompt, cfg });
+    respond(true, { title }, undefined);
+  },
   "sessions.subscribe": ({ client, context, respond }) => {
     const connId = client?.connId?.trim();
     if (connId) {
@@ -1021,6 +1039,99 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         reason: "send",
       });
     }
+  },
+  // FORK 2026-06-24 — sessions.fork: true EAGER transcript fork for the Tinker "Clone tab" action.
+  // The dashboard clones a tab by calling this RPC first; we copy the parent session's live
+  // transcript into a brand-new session (via SessionManager.forkFrom — the same primitive that
+  // powers compaction branch/restore), so the clone opens already showing the parent's full
+  // conversation. The client falls back to lineage-only sessions.create ONLY if this RPC is absent.
+  "sessions.fork": async ({ params, respond, context }) => {
+    const p = params as { key?: unknown; label?: unknown };
+    const key = requireSessionKey(p.key, respond);
+    if (!key) {
+      return;
+    }
+    const loaded = loadSessionEntry(key);
+    const { cfg, entry, canonicalKey } = loaded;
+    if (!entry?.sessionId) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `session not found: ${key}`),
+      );
+      return;
+    }
+    const target = resolveGatewaySessionStoreTarget({ cfg, key: canonicalKey });
+    // FORK 2026-07-16 — resolve the source transcript by sessionId the SAME way chat.history does,
+    // instead of trusting entry.sessionFile. `tinker:*` sessions routinely carry a null/stale
+    // sessionFile in the store while a real <sessionId>.jsonl exists on disk: chat.history finds it
+    // (so the tab shows full history), but the old fork read entry.sessionFile directly, saw
+    // null/stale, and bailed "session transcript is missing" — the client then fell back to an
+    // EMPTY clone. Cloning a live, populated tinker tab must NOT come up blank.
+    // See reference_tinker_clone_tab_and_session_fork_paths.
+    const sourceFile = resolveSessionFilePath(
+      entry.sessionId,
+      entry.sessionFile ? { sessionFile: entry.sessionFile } : undefined,
+      resolveSessionFilePathOptions({ agentId: target.agentId, storePath: target.storePath }),
+    );
+    if (!sourceFile || !fs.existsSync(sourceFile)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "session transcript is missing"),
+      );
+      return;
+    }
+    const sourceSession = SessionManager.open(sourceFile, path.dirname(sourceFile));
+    const forkedSession = SessionManager.forkFrom(
+      sourceFile,
+      sourceSession.getCwd(),
+      path.dirname(sourceFile),
+    );
+    const forkedSessionFile = forkedSession.getSessionFile();
+    if (!forkedSessionFile) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "failed to create fork transcript"),
+      );
+      return;
+    }
+    const nextKey = buildDashboardSessionKey(target.agentId);
+    const label =
+      normalizeOptionalString(p.label) ?? (entry.label?.trim() ? entry.label.trim() : undefined);
+    const nextEntry = cloneCheckpointSessionEntry({
+      currentEntry: entry,
+      nextSessionId: forkedSession.getSessionId(),
+      nextSessionFile: forkedSessionFile,
+      label,
+      parentSessionKey: canonicalKey,
+    });
+    await updateSessionStore(target.storePath, (store) => {
+      store[nextKey] = nextEntry;
+    });
+    // Fork the EEG/anatomy trace alongside the transcript: copy the parent's
+    // anatomy_events rows under the clone's new key so the clone's seismograph
+    // restores durably on load (the client reconciles the EEG from the server,
+    // keyed by session_key). Best-effort — an anatomy-DB hiccup must never fail
+    // the transcript fork itself.
+    try {
+      copyAnatomyEventsToNewKey(canonicalKey, nextKey);
+    } catch {
+      // anatomy DB unavailable/locked — the transcript fork still succeeds
+    }
+    respond(
+      true,
+      {
+        ok: true,
+        sourceKey: canonicalKey,
+        key: nextKey,
+        sessionId: nextEntry.sessionId,
+        entry: nextEntry,
+      },
+      undefined,
+    );
+    emitSessionsChanged(context, { sessionKey: nextKey, reason: "fork" });
   },
   "sessions.compaction.branch": async ({ params, respond, context }) => {
     if (

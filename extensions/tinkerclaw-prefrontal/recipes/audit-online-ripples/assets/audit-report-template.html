@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Online-Presence Audit</title>
+<style>
+  :root{
+    --bg:#1c140d; --panel:#2b2017; --panel-2:#342619; --line:#4a3a28;
+    --ink:#f0e6d2; --ink-dim:#b29a78; --ink-faint:#8a755a;
+    --green:#5fb87a; --amber:#e0a33a; --red:#e0625a; --flag:#ff5247; --blue:#6fa8c7;
+    --chip-ink:#1c140d;
+    --shadow:0 8px 30px rgba(0,0,0,.45);
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:radial-gradient(1200px 600px at 70% -10%,#2a1d12 0%,var(--bg) 55%) fixed;
+    color:var(--ink);
+    font:14px/1.55 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+    padding:28px 22px 60px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:980px;margin:0 auto}
+
+  /* ---- hero ---- */
+  header.hero{
+    display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
+    padding:22px 24px;border:1px solid var(--line);border-radius:var(--radius);
+    background:linear-gradient(180deg,var(--panel) 0%,#241a11 100%);box-shadow:var(--shadow);
+  }
+  .hero h1{margin:0;font-size:21px;letter-spacing:.2px;display:flex;align-items:center;gap:10px}
+  .hero .sub{margin:6px 0 0;color:var(--ink-faint);font-size:12.5px}
+  .verdict{
+    flex:none;text-align:center;padding:12px 18px;border-radius:12px;min-width:150px;
+    border:1px solid var(--line);
+  }
+  .verdict .lbl{font-size:10.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--ink-faint)}
+  .verdict .val{font-size:22px;font-weight:800;margin-top:3px}
+  .v-green{background:rgba(95,184,122,.12)} .v-green .val{color:var(--green)}
+  .v-amber{background:rgba(224,163,58,.12)} .v-amber .val{color:var(--amber)}
+  .v-red{background:rgba(224,98,90,.14)} .v-red .val{color:var(--red)}
+
+  /* ---- stat tiles ---- */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:12px;margin:18px 0}
+  .tile{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 14px;
+    position:relative;overflow:hidden;
+  }
+  .tile .n{font-size:25px;font-weight:800;line-height:1}
+  .tile .k{font-size:11px;color:var(--ink-faint);margin-top:5px;letter-spacing:.4px}
+  .tile.acc-red::before,.tile.acc-amber::before,.tile.acc-green::before,.tile.acc-blue::before{
+    content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+  .tile.acc-red::before{background:var(--red)} .tile.acc-amber::before{background:var(--amber)}
+  .tile.acc-green::before{background:var(--green)} .tile.acc-blue::before{background:var(--blue)}
+
+  /* ---- section ---- */
+  section{margin:26px 0 0}
+  h2{font-size:13px;letter-spacing:1.2px;text-transform:uppercase;color:var(--ink-dim);
+     margin:0 0 12px;display:flex;align-items:center;gap:9px}
+  h2 .count{font-size:11px;color:var(--ink-faint);font-weight:600;letter-spacing:.5px}
+
+  /* ---- clawhub skill grid ---- */
+  .skills{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:11px}
+  .skill{
+    background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 13px;
+    display:flex;flex-direction:column;gap:7px;
+  }
+  .skill .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .skill .name{font-weight:700;font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .skill .ver{font-size:11.5px;color:var(--ink-faint);font-variant-numeric:tabular-nums}
+  .skill .ver b{color:var(--ink-dim)}
+  .skill.bad{border-color:rgba(255,82,71,.5);box-shadow:inset 0 0 0 1px rgba(255,82,71,.15)}
+
+  /* ---- badges / chips ---- */
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;
+    letter-spacing:.4px;padding:3px 8px;border-radius:999px;color:var(--chip-ink);white-space:nowrap}
+  .b-pass{background:var(--green)} .b-current{background:var(--green)}
+  .b-stale,.b-staleskill{background:var(--amber)} .b-drift{background:var(--amber)} .b-nohero{background:var(--amber)}
+  .b-flagged{background:var(--flag);color:#fff;box-shadow:0 0 0 3px rgba(255,82,71,.18)}
+  .b-dead{background:var(--red);color:#fff} .b-mispointed{background:var(--red);color:#fff}
+  .b-unpublished{background:#6b5640;color:var(--ink)} .b-orphan{background:#6b5640;color:var(--ink)}
+  .b-unknown{background:#48586b;color:#dfe7f0}
+
+  /* ---- findings table ---- */
+  table{width:100%;border-collapse:separate;border-spacing:0;
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  thead th{font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;color:var(--ink-faint);
+    text-align:left;padding:11px 13px;background:var(--panel-2);font-weight:700}
+  tbody td{padding:11px 13px;border-top:1px solid var(--line);vertical-align:top;font-size:12.8px}
+  tbody tr:hover{background:rgba(255,255,255,.018)}
+  .surface{font-weight:700;color:var(--ink);white-space:nowrap}
+  .loc{display:block;color:var(--ink-faint);font-size:11px;margin-top:2px;font-family:ui-monospace,monospace}
+  .claim{color:var(--ink-faint);text-decoration:line-through;text-decoration-color:var(--red)}
+  .truth{color:var(--green)}
+  .action{color:var(--ink-dim)}
+  .row-flagged td{box-shadow:inset 3px 0 0 var(--flag)}
+  .row-dead td{box-shadow:inset 3px 0 0 var(--red)}
+
+  /* ---- checks performed (coverage map) ---- */
+  .checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:11px}
+  .check{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 13px;
+    display:flex;flex-direction:column;gap:8px;position:relative;overflow:hidden}
+  .check::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+  .check.ok::before{background:var(--green)} .check.warn::before{background:var(--amber)}
+  .check.bad::before{background:var(--flag)} .check.skip::before{background:var(--ink-faint)}
+  .check .hd{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .check .nm{font-weight:700;font-size:12.8px;color:var(--ink)}
+  .check .dx{font-size:11px;color:var(--ink-faint);line-height:1.45}
+  .check .cnts{display:flex;flex-wrap:wrap;gap:5px;margin-top:1px}
+  .cnt{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;
+    padding:2px 7px;border-radius:999px;background:var(--panel-2);color:var(--ink-dim);font-variant-numeric:tabular-nums}
+  .cnt.g{color:var(--green)} .cnt.a{color:var(--amber)} .cnt.r{color:var(--flag)} .cnt.u{color:var(--blue)}
+  .cnt .dot{width:7px;height:7px;border-radius:50%}
+  .cnt.g .dot{background:var(--green)} .cnt.a .dot{background:var(--amber)}
+  .cnt.r .dot{background:var(--flag)} .cnt.u .dot{background:var(--blue)}
+  .check .none{font-size:11px;color:var(--ink-faint);font-style:italic}
+
+  .empty{padding:22px;text-align:center;color:var(--ink-faint);border:1px dashed var(--line);border-radius:12px;font-size:13px}
+  footer{margin-top:34px;color:var(--ink-faint);font-size:11.5px;border-top:1px solid var(--line);padding-top:14px;line-height:1.7}
+  a{color:var(--blue)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- ===== DATA INJECTION POINT — replace the object below, the page renders itself ===== -->
+  <script>
+  const DATA = {
+    generatedAt: "2026-06-26",
+    verdict: "AMBER",            // GREEN | AMBER | RED  (RED if any FLAGGED/DEAD; AMBER if any STALE/DRIFT/etc; else GREEN)
+    verdictNote: "1 skill flagged, 2 behind source",
+    surfacesAudited: 7,
+    stats: [                     // tiles — order = severity
+      {k:"Flagged",      n:1, acc:"red"},
+      {k:"Stale skills", n:2, acc:"amber"},
+      {k:"Drift / dead", n:3, acc:"amber"},
+      {k:"Clean",        n:14, acc:"green"}
+    ],
+    // EVERY check the audit runs — green ones too — so the coverage surface is visible at a glance.
+    // green=clean/current, amber=needs action, red=flagged/dead, unknown=unreachable/unmapped. Omit a count that's 0.
+    checks: [
+      {name:"ClawHub audit status",  desc:"ClawScan verdict per uploaded skill (benign vs review)", green:8, red:1},
+      {name:"ClawHub version drift", desc:"published version vs local source SKILL.md",             green:14, amber:2, unknown:3},
+      {name:"README claims",         desc:"paper/skill/cron counts, model names, version badges",   green:6, amber:1},
+      {name:"thetinkerzone posts",   desc:"each post live + referenced paper version current",      green:15, unknown:1},
+      {name:"Tinker UI links",       desc:"ZONE_DOCS concept→post IDs resolve & topic matches",     green:5},
+      {name:"Hero images",           desc:"concept image present, not a first-page PDF screenshot",  green:7, amber:1},
+      {name:"Cross-surface links",   desc:"internal links between our surfaces resolve",            green:42, red:1}
+    ],
+    links: {checked:43, ok:42, broken:1},   // summary only — not a full list
+    clawhub: [                   // every uploaded slug, severity-sorted (flagged → stale → unpublished → current)
+      {slug:"whatsapp-ultimate", published:"4.0.3", local:"4.1.0", status:"FLAGGED"},
+      {slug:"jarvis-voice",      published:"2.2.2", local:"2.3.0", status:"STALE-SKILL"},
+      {slug:"subagent-overseer", published:"1.1.1", local:"1.1.1", status:"PASS"}
+    ],
+    findings: [                  // non-clawhub surfaces, severity-sorted
+      {surface:"README badge", loc:"README.md:12", claim:"papers-11", truth:"15 live / 18 written", status:"DRIFT", action:"bump badge to 15"}
+    ],
+    proposedEdits: [
+      "README.md:12  papers-11 → papers-15",
+      "clawhub: rescan whatsapp-ultimate after fixing flagged pattern"
+    ]
+  };
+  </script>
+
+  <header class="hero" id="hero"></header>
+  <div class="tiles" id="tiles"></div>
+
+  <section id="checks-sec">
+    <h2>🧭 Checks performed <span class="count" id="checks-count"></span></h2>
+    <div class="checks" id="checks"></div>
+  </section>
+
+  <section id="clawhub-sec">
+    <h2>🪝 ClawHub skills &amp; plugins <span class="count" id="clawhub-count"></span></h2>
+    <div class="skills" id="skills"></div>
+  </section>
+
+  <section id="findings-sec">
+    <h2>🔎 Staleness findings <span class="count" id="findings-count"></span></h2>
+    <div id="findings"></div>
+  </section>
+
+  <section id="edits-sec">
+    <h2>🛠️ Proposed de-stale edits <span class="count">read-only · human approves</span></h2>
+    <div id="edits"></div>
+  </section>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+  const esc = s => String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+  const badgeClass = s => "b-"+String(s).toLowerCase().replace(/[^a-z]+/g,"");
+  const D = DATA;
+
+  // hero
+  document.getElementById("hero").innerHTML =
+    `<div><h1>🤖 Online-Presence Audit</h1>
+     <p class="sub">${esc(D.surfacesAudited)} surfaces traced · generated ${esc(D.generatedAt)} · read-only proposal</p></div>
+     <div class="verdict v-${esc(String(D.verdict).toLowerCase())}">
+       <div class="lbl">Verdict</div><div class="val">${esc(D.verdict)}</div>
+       <div class="sub" style="font-size:11px;margin-top:4px;color:inherit;opacity:.85">${esc(D.verdictNote||"")}</div>
+     </div>`;
+
+  // tiles
+  document.getElementById("tiles").innerHTML = (D.stats||[]).map(t=>
+    `<div class="tile acc-${esc(t.acc||"blue")}"><div class="n">${esc(t.n)}</div><div class="k">${esc(t.k)}</div></div>`).join("");
+
+  // checks performed (coverage map) — shows every check, green ones included
+  const cnt = (cls,lbl,n)=> (n>0?`<span class="cnt ${cls}"><i class="dot"></i>${esc(n)} ${lbl}</span>`:"");
+  const checks = D.checks||[];
+  document.getElementById("checks-count").textContent = checks.length+" categories";
+  document.getElementById("checks").innerHTML = checks.map(c=>{
+    const r=+c.red||0, a=+c.amber||0, g=+c.green||0, u=+c.unknown||0;
+    const sev = r>0?"bad":a>0?"warn":g>0?"ok":"skip";
+    const chips = [cnt("g","ok",g),cnt("a","todo",a),cnt("r","flagged",r),cnt("u","unknown",u)].filter(Boolean).join("");
+    return `<div class="check ${sev}">
+      <div class="hd"><span class="nm">${esc(c.name)}</span></div>
+      <div class="dx">${esc(c.desc||"")}</div>
+      <div class="cnts">${chips||'<span class="none">not run</span>'}</div></div>`;
+  }).join("");
+  // links summary appended as one coverage card (no full list)
+  if(D.links){
+    const L=D.links, broken=+L.broken||0, ok=+L.ok||0;
+    document.getElementById("checks").insertAdjacentHTML("beforeend",
+      `<div class="check ${broken>0?"bad":"ok"}">
+        <div class="hd"><span class="nm">Links — summary</span></div>
+        <div class="dx">${esc(L.checked||ok+broken)} cross-surface links checked (counts only, not listed)</div>
+        <div class="cnts">${cnt("g","ok",ok)}${cnt("r","broken",broken)}</div></div>`);
+  }
+
+  // clawhub
+  const ch = D.clawhub||[];
+  document.getElementById("clawhub-count").textContent = ch.length+" uploaded";
+  document.getElementById("skills").innerHTML = ch.length ? ch.map(s=>{
+    const bad = /FLAG|STALE|UNPUB/i.test(s.status);
+    const verLine = (s.published||s.local)
+      ? `<div class="ver">pub <b>${esc(s.published||"—")}</b> · local <b>${esc(s.local||"—")}</b></div>` : "";
+    return `<div class="skill${bad?" bad":""}">
+      <div class="top"><span class="name">${esc(s.slug)}</span>
+      <span class="badge ${badgeClass(s.status)}">${esc(s.status)}</span></div>
+      ${verLine}</div>`;
+  }).join("") : `<div class="empty">No ClawHub skills in the inventory.</div>`;
+
+  // findings
+  const f = D.findings||[];
+  document.getElementById("findings-count").textContent = f.length+" found";
+  document.getElementById("findings").innerHTML = f.length ? `<table>
+    <thead><tr><th>Surface</th><th>Claimed</th><th>Truth</th><th>Status</th><th>Action</th></tr></thead>
+    <tbody>${f.map(r=>{
+      const sev = /FLAG/i.test(r.status)?"row-flagged":/DEAD|MISPOINT/i.test(r.status)?"row-dead":"";
+      return `<tr class="${sev}">
+        <td><span class="surface">${esc(r.surface)}</span><span class="loc">${esc(r.loc||"")}</span></td>
+        <td class="claim">${esc(r.claim||"")}</td>
+        <td class="truth">${esc(r.truth||"")}</td>
+        <td><span class="badge ${badgeClass(r.status)}">${esc(r.status)}</span></td>
+        <td class="action">${esc(r.action||"")}</td></tr>`;
+    }).join("")}</tbody></table>` : `<div class="empty">✅ Every audited surface is current.</div>`;
+
+  // edits
+  const e = D.proposedEdits||[];
+  document.getElementById("edits").innerHTML = e.length ? `<table><tbody>${
+    e.map(x=>`<tr><td style="font-family:ui-monospace,monospace;font-size:12px;color:var(--ink-dim)">${esc(x)}</td></tr>`).join("")
+  }</tbody></table>` : `<div class="empty">Nothing to change.</div>`;
+
+  document.getElementById("footer").innerHTML =
+    `Read-only audit — proposes edits, never applies or publishes them. ClawHub status reads are auth-free; rescans/re-publishes need <code>clawhub login</code>. `+
+    `Part of <a href="https://github.com/globalcaos/tinkerclaw">TinkerClaw</a> · recipe <code>audit-online-ripples</code>.`;
+</script>
+</body>
+</html>

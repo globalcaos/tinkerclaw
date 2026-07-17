@@ -9,7 +9,7 @@
  *   debug.session.config({provider})  — effective resolved providerConfig
  *                                       including plugin overlay (the
  *                                       canary that catches the 2026-05-10
- *                                       cc-bridge timeoutSeconds dead-code
+ *                                       tinker-bridge timeoutSeconds dead-code
  *                                       regression class).
  *
  *   debug.session.state({sessionKey}) — session-store entry + computed

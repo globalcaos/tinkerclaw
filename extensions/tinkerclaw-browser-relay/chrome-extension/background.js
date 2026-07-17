@@ -47,6 +47,13 @@ const childSessionToTab = new Map();
 /** @type {Map<number, {resolve:(v:any)=>void, reject:(e:Error)=>void}>} */
 const pending = new Map();
 
+// FORK 2026-06-20: per-tab re-attach backoff timers. When chrome.debugger
+// detaches for a TRANSIENT reason (MV3 service-worker recycle, a second CDP
+// client bumping the debugger while Jarvis drives the tab, DevTools opened),
+// we keep the share alive and auto-re-attach instead of silently unsharing.
+/** @type {Map<number, {timer:any}>} */
+const reattachTimers = new Map();
+
 // ---------------------------------------------------------------------------
 // Relay port + auth token
 // ---------------------------------------------------------------------------
@@ -513,6 +520,13 @@ async function attachTab(tabId, opts = {}) {
 }
 
 async function detachTab(tabId, reason) {
+  // FORK 2026-06-20: cancel any pending auto-re-attach for this tab — an
+  // intentional unshare/close must win over a transient-detach retry.
+  const pendingReattach = reattachTimers.get(tabId);
+  if (pendingReattach) {
+    clearTimeout(pendingReattach.timer);
+    reattachTimers.delete(tabId);
+  }
   const tab = tabs.get(tabId);
   if (tab?.sessionId && tab?.targetId) {
     try {
@@ -804,19 +818,90 @@ function onDebuggerEvent(source, method, params) {
   }
 }
 
+// FORK 2026-06-20: auto-re-attach a shared tab after a TRANSIENT debugger
+// detach, with exponential backoff (1s → 2s → 4s → 8s → 15s cap). The share
+// entry in `tabs` is preserved throughout — the badge shows "connecting" (…)
+// while re-attaching and returns to "ON" on success. Mirrors the relay-WS
+// reconnect resilience (onRelayClosed) for the debugger side. The user's
+// explicit unshare goes through detachTab (which removes the tab from `tabs`
+// first), so this path never fights an intentional unshare.
+function reattachTabWithBackoff(tabId, backoffMs = 1000) {
+  if (reattachTimers.has(tabId)) {
+    return; // a retry is already scheduled for this tab
+  }
+  const timer = setTimeout(async () => {
+    reattachTimers.delete(tabId);
+    if (!tabs.has(tabId)) {
+      return; // user unshared (or tab removed) while we waited
+    }
+    const exists = await chrome.tabs.get(tabId).catch(() => null);
+    if (!exists) {
+      // Tab is genuinely gone now → permanent, legitimate unshare.
+      await removeTabFromGroup(tabId);
+      await detachTab(tabId, "tab_closed");
+      await saveSharedTabs();
+      updateGlobalBadge();
+      return;
+    }
+    try {
+      await ensureRelayConnection();
+      // Clear any lingering attachment before a clean re-attach.
+      await chrome.debugger.detach({ tabId }).catch(() => {});
+      await attachTab(tabId); // sets state→connected, re-announces, badge→ON
+      await addTabToGroup(tabId);
+      await saveSharedTabs();
+      updateGlobalBadge();
+      console.log(`[tinkerclaw-relay] re-attached tab ${tabId} after transient detach`);
+    } catch (err) {
+      const next = Math.min(backoffMs * 2, 15000);
+      console.warn(
+        `[tinkerclaw-relay] re-attach failed for tab ${tabId} ` +
+          `(${err instanceof Error ? err.message : String(err)}); retry in ${next}ms`,
+      );
+      setBadge(tabId, "connecting");
+      reattachTabWithBackoff(tabId, next);
+    }
+  }, backoffMs);
+  reattachTimers.set(tabId, { timer });
+}
+
+// Reasons Chrome reports when the TAB itself is gone — a real, permanent end of
+// the share. Everything else (canceled_by_user, replaced_with_devtools, or an
+// undefined reason from a service-worker recycle) is treated as transient.
+const PERMANENT_DETACH_REASONS = new Set(["target_closed", "tab_closed"]);
+
 function onDebuggerDetach(source, reason) {
   const tabId = source.tabId;
   if (!tabId) {
     return;
   }
   if (!tabs.has(tabId)) {
-    return;
+    return; // not a shared tab, or our own intentional detach (tabs entry already removed)
   }
   void (async () => {
-    await removeTabFromGroup(tabId);
-    await detachTab(tabId, reason);
-    await saveSharedTabs();
-    updateGlobalBadge();
+    const stillExists = await chrome.tabs.get(tabId).catch(() => null);
+    if (!stillExists || PERMANENT_DETACH_REASONS.has(reason)) {
+      // Tab really closed → legitimate, permanent unshare.
+      await removeTabFromGroup(tabId);
+      await detachTab(tabId, reason);
+      await saveSharedTabs();
+      updateGlobalBadge();
+      return;
+    }
+    // Transient detach → KEEP the share, show "…", and auto-re-attach.
+    // This is the fix for "shared tab flips ON → … and stops working after
+    // Jarvis uses it": the tab stays shared until the user explicitly unshares.
+    console.warn(
+      `[tinkerclaw-relay] transient debugger detach (${reason || "no-reason"}) on tab ${tabId}; ` +
+        `keeping share, auto-re-attaching`,
+    );
+    const tab = tabs.get(tabId);
+    if (tab) {
+      tab.state = "connecting";
+    }
+    setBadge(tabId, "connecting");
+    await ensureKeepAlive(); // make sure the SW stays warm to run the retry
+    reattachTabWithBackoff(tabId);
   })();
 }
 

@@ -4,7 +4,7 @@
     "onStartup": true
   },
   "name": "Learned Intuition",
-  "description": "AMYGDALA v3.1 \u2014 safety gate: deterministic AEGIS rules enforced pre-execution (cc-bridge PreToolUse hook + native), a validated k-NN novelty 'ask' channel that habituates with experience, and a clause-cosine incongruity check. The legacy 5-net ONNX ensemble is retired from the decision path (re-enable with legacyEnsemble).",
+  "description": "AMYGDALA v3.1 \u2014 safety gate: deterministic AEGIS rules enforced pre-execution (tinker-bridge PreToolUse hook + native), a validated k-NN novelty 'ask' channel that habituates with experience, and a clause-cosine incongruity check. The legacy 5-net ONNX ensemble is retired from the decision path (re-enable with legacyEnsemble).",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -39,7 +39,7 @@
       "hookEnforcement": {
         "type": "boolean",
         "default": true,
-        "description": "Write the claude-cli PreToolUse hook settings so destructive-execution AEGIS rules deny synchronously on the cc-bridge runner (works under bypassPermissions). False removes the settings file (observe-only spool)."
+        "description": "Write the claude-cli PreToolUse hook settings so destructive-execution AEGIS rules deny synchronously on the tinker-bridge runner (works under bypassPermissions). False removes the settings file (observe-only spool)."
       }
     }
   }

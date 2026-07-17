@@ -34,7 +34,20 @@ function extractComparableText(message: unknown): string | undefined {
   if (!joined) {
     return undefined;
   }
-  const visible = role === "user" ? stripInboundMetadata(joined) : joined;
+  let visible = role === "user" ? stripInboundMetadata(joined) : joined;
+  // FORK 2026-06-20: cc-bridge appends "<!-- TINKERCLAW … -->" narration-contract
+  // blocks to every user message before forwarding to claude-cli. The JSONL therefore
+  // stores a longer version of each user message than the OpenClaw local session file,
+  // causing the role+text dedup to always fail (different strings → no match → both
+  // copies land in the merged result and the UI shows the prompt twice).
+  // Truncate at the first HTML-comment boundary so both sides normalize to the same
+  // user-visible text regardless of which injected suffix each store carries.
+  if (role === "user") {
+    const htmlInjectionStart = visible.indexOf("\n<!--");
+    if (htmlInjectionStart !== -1) {
+      visible = visible.slice(0, htmlInjectionStart);
+    }
+  }
   const normalized = visible.replace(/\s+/g, " ").trim();
   return normalized || undefined;
 }
@@ -78,7 +91,7 @@ function resolveImportedExternalId(message: unknown): string | undefined {
 // match is taken as a re-import regardless of timestamp distance.
 // Hit on the duplicate-prompt bug: cli-session jsonl + local
 // sessionFile both held the same user prompts, but timestamps
-// differed by hours across cc-bridge respawns, so the 5-min window
+// differed by hours across tinker-bridge respawns, so the 5-min window
 // failed for every long historical message and chat.history
 // returned the entire conversation twice.
 const LONG_TEXT_DEDUP_MIN_LEN = 50;
@@ -97,7 +110,29 @@ function isEquivalentImportedMessage(existing: unknown, imported: unknown): bool
 
   const existingText = extractComparableText(existing);
   const importedText = extractComparableText(imported);
-  if (!existingText || !importedText || existingText !== importedText) {
+  if (!existingText || !importedText) {
+    return false;
+  }
+  if (existingText !== importedText) {
+    // FORK 2026-06-22: claude-cli records an assistant turn's LEADING text segment
+    // (the narration emitted before the turn's first tool call, stop_reason:"tool_use")
+    // as a standalone JSONL entry, while the local OpenClaw session coalesces the whole
+    // turn into ONE assistant message that BEGINS with that same narration. The imported
+    // segment is therefore a strict PREFIX of the local message — never text-equal — so it
+    // slips past the equality check and renders as a duplicated, thinking-less echo of the
+    // answer (the recurring "I see my answer twice" report). Dedup an imported ASSISTANT
+    // message whose visible text is a strict prefix of a LONGER existing message. Direction
+    // is one-way: we only drop the shorter import (local always carries the full coalesced
+    // turn), never the fuller text. Min-length guard avoids collapsing legit short repeats
+    // ("ok", "done"); user messages are excluded — "ok" vs "ok do it" are distinct prompts.
+    if (
+      importedRole === "assistant" &&
+      importedText.length >= LONG_TEXT_DEDUP_MIN_LEN &&
+      importedText.length < existingText.length &&
+      existingText.startsWith(importedText)
+    ) {
+      return true;
+    }
     return false;
   }
 
@@ -135,6 +170,26 @@ function compareHistoryMessages(
   return a.order - b.order;
 }
 
+// FORK 2026-06-22: When local messages are present, the JSONL spans the entire
+// cc-bridge worker's lifetime — often several compaction cycles and multiple gateway
+// restarts. Each restart spawns a fresh cc-bridge instance that re-answers already-
+// covered prompts, so the JSONL accumulates hundreds of assistant messages that are
+// NOT text-equivalent to local (different spawn → different wording), all of which
+// pass the text-dedup check and flood into the merged history.
+//
+// Two-layer defence:
+//   1. Timestamp floor: drop any imported message whose timestamp predates the
+//      local session's earliest message by more than IMPORT_PREHISTORY_GRACE_MS.
+//      This excludes pre-compaction history that the local session never saw.
+//   2. Assistant-slot coverage: if local already has an assistant message within
+//      ASSISTANT_SLOT_COVER_MS of an imported assistant message, the import is a
+//      redundant spawn response — suppress it even when the texts differ.
+//      User-role messages are intentionally left to text-dedup only (we still
+//      want to pull in cc-bridge gateway injections like "Continue from where you
+//      left off." for context continuity).
+const IMPORT_PREHISTORY_GRACE_MS = 15 * 60 * 1000; // 15 min before first local msg
+const ASSISTANT_SLOT_COVER_MS = 5 * 60 * 1000; // 5 min around each local assistant
+
 export function mergeImportedChatHistoryMessages(params: {
   localMessages: unknown[];
   importedMessages: unknown[];
@@ -142,9 +197,51 @@ export function mergeImportedChatHistoryMessages(params: {
   if (params.importedMessages.length === 0) {
     return params.localMessages;
   }
+
+  let filteredImports = params.importedMessages;
+  if (params.localMessages.length > 0) {
+    // --- layer 1: timestamp floor ---
+    let localTsMin = Infinity;
+    for (const msg of params.localMessages) {
+      const ts = resolveComparableTimestamp(msg);
+      if (ts !== undefined && ts < localTsMin) {
+        localTsMin = ts;
+      }
+    }
+    const importFloor = Number.isFinite(localTsMin)
+      ? localTsMin - IMPORT_PREHISTORY_GRACE_MS
+      : -Infinity;
+
+    // --- layer 2: local assistant timestamps for slot-coverage check ---
+    const localAssistantTs: number[] = [];
+    for (const msg of params.localMessages) {
+      if (resolveComparableRole(msg) === "assistant") {
+        const ts = resolveComparableTimestamp(msg);
+        if (ts !== undefined) {
+          localAssistantTs.push(ts);
+        }
+      }
+    }
+
+    filteredImports = params.importedMessages.filter((imported) => {
+      const ts = resolveComparableTimestamp(imported);
+      // layer 1: prehistory gate (messages without a timestamp always pass)
+      if (ts !== undefined && ts < importFloor) {
+        return false;
+      }
+      // layer 2: assistant slot coverage
+      if (resolveComparableRole(imported) === "assistant" && ts !== undefined) {
+        if (localAssistantTs.some((localTs) => Math.abs(localTs - ts) <= ASSISTANT_SLOT_COVER_MS)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
   const merged = params.localMessages.map((message, index) => ({ message, order: index }));
   let nextOrder = merged.length;
-  for (const imported of params.importedMessages) {
+  for (const imported of filteredImports) {
     if (merged.some((existing) => isEquivalentImportedMessage(existing.message, imported))) {
       continue;
     }

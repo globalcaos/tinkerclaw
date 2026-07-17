@@ -459,7 +459,9 @@ describe("resolveReplyDirectives", () => {
       kind: "continue",
       result: expect.objectContaining({
         resolvedThinkLevel: "low",
-        resolvedReasoningLevel: "off",
+        // §5.84 fork streams native thinking to Tinker WS clients → "stream" (was "off");
+        // resolveDefaultReasoningLevel is still skipped, the test's actual purpose.
+        resolvedReasoningLevel: "stream",
       }),
     });
     expect(resolveDefaultReasoningLevel).not.toHaveBeenCalled();

@@ -12,7 +12,7 @@
  * run ends.
  *
  * Stays frontier-clean: no modifications to pi-agent-core, no new plugin hook
- * surface. When the fork swaps cc-bridge for a regular LLM provider, the
+ * surface. When the fork swaps tinker-bridge for a regular LLM provider, the
  * regular provider's sessions_spawn tool keeps working; this RPC just sits
  * unused until someone wires a different frontend to it.
  */
