@@ -43,9 +43,18 @@ const colorAt = (i: number) => PALETTE[i % PALETTE.length];
 const ASSET_BASE = import.meta.env.BASE_URL ?? "/";
 
 const ICONS: Record<string, string> = {
-  github: "🐙",
+  // GitHub TinkerClaw → real GitHub invertocat (white variant, bundled from
+  // githubassets favicon-dark.png so it reads on the dark woody card).
+  github: `<img src="${ASSET_BASE}github.png" width="14" height="14" style="vertical-align:-2px"/>`,
+  stars: "⭐",
   moltbook: "🦞",
-  clawhub: "🧩",
+  // ClawHub views → real ClawHub lobster logomark (bundled from clawhub.ai's
+  // logo-transparent.png); installs keep the down-arrow to read apart.
+  clawhub: `<img src="${ASSET_BASE}clawhub.png" width="14" height="14" style="vertical-align:-2px"/>`,
+  // ClawHub installs → a thick solid down-arrow (inline SVG, transparent
+  // background) instead of the ⬇️ emoji's white-arrow-on-blue pill. Download
+  // green so it reads "installs" and stays distinct from the gold stars arrow.
+  clawhubinstalls: `<svg width="14" height="14" viewBox="0 0 24 24" style="vertical-align:-2px"><path fill="#4ade80" d="M9 2h6v9h5l-8 10-8-10h5z"/></svg>`,
   inbound: "🔗",
   // tinkerclaw UI favicon (the app's own brand mark) for the Website graph.
   website: `<img src="${ASSET_BASE}favicon.png" width="14" height="14" style="vertical-align:-2px;border-radius:3px"/>`,

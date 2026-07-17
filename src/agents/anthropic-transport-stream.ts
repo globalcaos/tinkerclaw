@@ -14,6 +14,7 @@ import {
   applyAnthropicPayloadPolicyToParams,
   resolveAnthropicPayloadPolicy,
 } from "./anthropic-payload-policy.js";
+import { captureRateLimitHeaders } from "./anthropic-ratelimit-store.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./copilot-dynamic-headers.js";
 import { resolveProviderEndpoint } from "./provider-attribution.js";
 import { buildGuardedModelFetch } from "./provider-transport-fetch.js";
@@ -605,6 +606,10 @@ function createAnthropicMessagesClient(params: {
           body: JSON.stringify(body),
           signal: options?.signal,
         });
+        // FORK 2026-07-09: harvest live rate-limit utilization from the response
+        // headers of the brain's REAL traffic (fable/claude-code included) so the
+        // MODELS panel has a token-free source when the OAuth-usage poll is down.
+        captureRateLimitHeaders(response.headers);
         if (!response.ok) {
           const detail = await response.text().catch(() => "");
           throw new Error(

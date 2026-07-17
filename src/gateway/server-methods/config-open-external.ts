@@ -57,6 +57,19 @@ function buildAllowlist(workspaceDir: string | undefined | null): string[] {
   list.push(path.resolve(home, ".openclaw"));
   list.push(path.resolve(home, "src/tinkerclaw"));
   list.push(path.resolve(home, "src/jarvis-icu"));
+  // FORK 2026-07-08: the four roots above are code/workspace dirs, but the
+  // user's REAL documents (drafts, PDFs, plans we point him at) live under the
+  // standard XDG home dirs. Every `.fs-link` to a real doc — e.g. an Olivella
+  // licence draft under ~/Documents — was rejected server-side with "outside
+  // allowlist" even after the client matcher learned to render spaced/accented
+  // paths as clickable. The client fix was necessary but not sufficient; the
+  // server guard is where the click actually died. This RPC is ADMIN_SCOPE
+  // gated + trusted-caller only and merely xdg-opens (a reversible viewer open,
+  // no data egress), so widening to the human-file dirs is proportionate.
+  list.push(path.resolve(home, "Documents"));
+  list.push(path.resolve(home, "Downloads"));
+  list.push(path.resolve(home, "Desktop"));
+  list.push(path.resolve(home, "Pictures"));
   return list;
 }
 
@@ -105,8 +118,18 @@ export const configOpenExternalHandlers: GatewayRequestHandlers = {
     try {
       const fn = spawnImpl ?? defaultSpawn;
       const { cmd, argsBefore } = platformOpenCommand();
+      // XIVATO 2026-07-13: measure the spawn hand-off. xdg-open returns as soon
+      // as it delegates to the desktop handler, so serverMs only covers OUR leg;
+      // a slow viewer app (MarkText cold start) shows up as a gap AFTER this.
+      const t0 = Date.now();
       fn(cmd, [...argsBefore, absPath]);
-      respond(true, { ok: true, path: absPath }, undefined);
+      const serverMs = Date.now() - t0;
+      context.logGateway?.info?.("config.openExternalFile spawned", {
+        path: absPath,
+        cmd,
+        serverMs,
+      });
+      respond(true, { ok: true, path: absPath, serverMs }, undefined);
     } catch (err) {
       context.logGateway?.error?.("config.openExternalFile spawn failed", {
         path: absPath,

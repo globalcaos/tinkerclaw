@@ -7,6 +7,7 @@ version: "1.0.0"
 owner: "globalcaos"
 license: "MIT"
 category: "coding"
+subdivision: "planning"
 tags:
   [
     "plan",

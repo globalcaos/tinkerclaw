@@ -9,6 +9,7 @@
     "preview": "vite preview --port 18790"
   },
   "dependencies": {
+    "dompurify": "^3.2.0",
     "lit": "^3.2.0",
     "markdown-it": "^14.1.1"
   },

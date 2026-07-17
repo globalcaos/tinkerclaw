@@ -142,6 +142,19 @@ export function renderFractalDock(row: FractalDockRow): HTMLElement {
   summary.textContent =
     `🌿 Fractal · ${statusWord(row)}` +
     (findings.length > 0 ? ` · ${findings.length} finding${findings.length === 1 ? "" : "s"}` : "");
+  // FORK 2026-06-24 (bible §5.8k) — ⓘ link to the FRACTAL paper (post 198, stable
+  // ?p= form). Lives on the summary so it is visible wherever a reflection renders;
+  // stopPropagation keeps the click from toggling the dock open/closed.
+  const fractalDoc = document.createElement("a");
+  fractalDoc.className = "rpanel-doc-link";
+  fractalDoc.href = "https://thetinkerzone.com/?p=198";
+  fractalDoc.target = "_blank";
+  fractalDoc.rel = "noopener";
+  fractalDoc.textContent = "ⓘ";
+  fractalDoc.title = "FRACTAL reasoning — read on The Tinker Zone";
+  fractalDoc.addEventListener("click", (e) => e.stopPropagation());
+  summary.appendChild(document.createTextNode(" "));
+  summary.appendChild(fractalDoc);
   dock.appendChild(summary);
 
   const body = document.createElement("div");

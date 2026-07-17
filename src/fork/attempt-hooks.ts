@@ -156,6 +156,7 @@ function resolveBundledPersonaCandidates(): string[] {
  */
 /** Candidate paths for the AMYGDALA nudge file */
 const AMYGDALA_NUDGE_PATHS = [
+  join(process.env.HOME ?? "/tmp", ".openclaw/cognitive/personality-nudge.json"),
   join(process.cwd(), "data/amygdala/personality-nudge.json"),
   join(process.env.HOME ?? "/tmp", ".openclaw/workspace/data/amygdala/personality-nudge.json"),
 ];
