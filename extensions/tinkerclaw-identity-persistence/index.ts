@@ -94,6 +94,9 @@ function readPersonalityNudge(): string {
     if (typeof raw.text === "string" && raw.text.length > 0) {
       return raw.text;
     }
+    if (Array.isArray(raw.adjustments) && raw.adjustments.length > 0) {
+      return (raw.adjustments as string[]).join("\n");
+    }
   } catch {
     // Malformed or unreadable -- ignore
   }

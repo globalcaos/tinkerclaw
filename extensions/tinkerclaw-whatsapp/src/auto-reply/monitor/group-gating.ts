@@ -115,8 +115,17 @@ export async function applyGroupGating(params: ApplyGroupGatingParams) {
     params.conversationId,
   );
   if (conversationGroupPolicy.allowlistEnabled && !conversationGroupPolicy.allowed) {
-    params.logVerbose(`Skipping group message ${params.conversationId} (not in allowlist)`);
-    return { shouldProcess: false };
+    // 2026-07-08: owner+"Jarvis" prefix must bypass the allowlist gate too.
+    // The bypass logic at the mention-requirement stage runs AFTER this early
+    // exit, so ownerPrefixTriggered messages were silently dropped here before
+    // ever reaching it. Let them fall through; non-owner messages still stop.
+    if (params.msg.ownerPrefixTriggered !== true) {
+      params.logVerbose(`Skipping group message ${params.conversationId} (not in allowlist)`);
+      return { shouldProcess: false };
+    }
+    console.log(
+      `[wa-trigger] group-gating: owner-prefix overrides allowlist gate for ${params.conversationId}`,
+    );
   }
 
   noteGroupMember(

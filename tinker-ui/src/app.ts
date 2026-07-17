@@ -1,3 +1,4 @@
+import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 // FORK 2026-06-11 (fractal v3, bible §5.67b) — fractal dock renderer lives in its
 // own one-concern module (the sectioned-reply.ts extraction precedent); app.ts
@@ -20,6 +21,7 @@ import {
   eegStopLeftCss,
   eegProviderPaint,
   eegCostWidthPx,
+  eegToolIdentity,
   type EegSample,
   type EegTurnEnd,
 } from "./panels/eeg-trace.js";
@@ -72,7 +74,7 @@ import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 
 // FORK 2026-05-09: linkify was auto-converting plain text like "BRIEFING.md"
 // into <a href="http://BRIEFING.md"> which navigates to a search page on click.
-// FORK 2026-06-14 (the architect): re-enable linkify but with fuzzyLink OFF — only URLs
+// FORK 2026-06-14 (the owner): re-enable linkify but with fuzzyLink OFF — only URLs
 // carrying an explicit scheme (http://, https://, mailto:) are linked, so a bare
 // "https://thetinkerzone.com" in chat is clickable while "BRIEFING.md" stays
 // plain text (no scheme → no link), preserving the 2026-05-09 fix. Real file
@@ -146,6 +148,28 @@ const GW_WS = import.meta.env.DEV
   : `ws${window.location.protocol === "https:" ? "s" : ""}://${window.location.host}`;
 const BASE = import.meta.env.BASE_URL ?? "/";
 
+// FORK 2026-06-24 (bible §5.8k) — "learn more" links from the UI to the published
+// papers/explainers on thetinkerzone.com. Each always-visible surface (right-rail
+// panel header, fractal dock) carries a small ⓘ chip linking to the post that
+// explains the concept behind it. The always-visible panels link to friendly
+// explainer posts (448–451, written 2026-06-24); those explainers in turn link to
+// the deep J-series papers — so the deep papers are reachable from the UI in one
+// hop without crowding the chrome. Post IDs are STABLE (?p=ID survives slug
+// changes); never link by slug. Map is the single source of truth for the wiring.
+const ZONE_DOCS = {
+  eeg: { id: 448, label: "The EEG view" },
+  recipes: { id: 449, label: "The Recipe Book" },
+  slider: { id: 450, label: "The effort × model slider" },
+  commandCenter: { id: 451, label: "The Command Center" },
+  amygdala: { id: 211, label: "AMYGDALA: humor & salience" },
+  fractal: { id: 198, label: "FRACTAL reasoning" },
+  prefrontal: { id: 233, label: "PREFRONTAL" },
+} as const;
+function zoneDoc(key: keyof typeof ZONE_DOCS): string {
+  const d = ZONE_DOCS[key];
+  return `<a class="rpanel-doc-link" href="https://thetinkerzone.com/?p=${d.id}" target="_blank" rel="noopener" data-hint="${d.label} — read on The Tinker Zone" onclick="event.stopPropagation()">ⓘ</a>`;
+}
+
 // FORK 2026-06-07 — auto full-reload on any dev HMR update. This app renders once at
 // import time with no granular hot-accept, so a Vite hot-swap replaces the module but
 // never re-paints the DOM — which is why structural UI edits looked "stuck" until a
@@ -204,6 +228,25 @@ let expandedTools = new Set<string>();
 let initialized = false;
 let _budgetData: unknown = null;
 let budgetUsageData: unknown = null;
+// FORK 2026-07-09: per-model TOKEN totals for the MODELS panel rows (the owner: the
+// panel showed only rate-limit % bars, no token numbers — "models show zero
+// token usage"). Aggregated from sessions.usage `usage.modelUsage[]` in
+// loadBudget(); keyed `${provider}/${model}` to match config model ids.
+let modelTokensAll: Record<string, number> = {};
+let modelTokensBySession: Record<string, Record<string, number>> = {};
+
+function fmtTokCount(n: number): string {
+  if (n >= 1e9) {
+    return `${(n / 1e9).toFixed(1)}B`;
+  }
+  if (n >= 1e6) {
+    return `${(n / 1e6).toFixed(1)}M`;
+  }
+  if (n >= 1e3) {
+    return `${(n / 1e3).toFixed(0)}K`;
+  }
+  return String(n);
+}
 let _forensicMode = false;
 // FORK: Active recipe step name for thinking indicator + message tags
 let activeRecipeStep: string | null = null;
@@ -215,6 +258,7 @@ let activeRecipeStep: string | null = null;
 // deployed. recipeRefListenerAttached guards the single delegated click wiring.
 let currentRecipeRef: string | null = null;
 let lastRecipeList: any[] = [];
+let lastRenderedBrocaRecipe: BrocaRecipe | null = null;
 let recipeRefListenerAttached = false;
 let budgetScope: "session" | "all" = "session";
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
@@ -246,6 +290,10 @@ interface Tab {
   // fortune-cookie phrase. Persisted to localStorage via saveTabs(), so custom/auto names
   // survive both a hard refresh AND a gateway restart.
   titleLocked?: boolean;
+  // FORK 2026-06-24 — P2 shimmer: in-flight flag for the async auto-name. Held on the Tab model
+  // (not the DOM) so renderTabs() re-applies the `tab-renaming` shimmer class on every rebuild,
+  // independent of focus/tab-active. Set true around generateTabTitle()'s body, cleared in finally.
+  titleGenerating?: boolean;
 }
 
 // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts:
@@ -1099,13 +1147,21 @@ function chatEventIsSubagentOfView(evtKey?: unknown): boolean {
   }
   // FORK 2026-06-15: subagents are minted FLAT under the agent root —
   // `agent:main:subagent:<uuid>` — regardless of whether the spawning view was
-  // `agent:main:main` or a tab like `agent:main:tinker:<id>` (verified live: the
-  // parentSessionKey does NOT propagate into the child key). So match on the shared
-  // agent root (first two segments), not the full view key. The old full-key prefix
-  // only matched the `:main` view → every subagent lane vanished from a tinker tab,
-  // i.e. the EEG showed "no parallelism" for any fan-out launched from the UI.
+  // `agent:main:main` or a tab like `agent:main:tinker:<id>` (the parentSessionKey
+  // does NOT propagate into the child key). The shared-root match below admitted a
+  // subagent into EVERY tab under that root.
   const agentRoot = sessionKey.split(":").slice(0, 2).join(":");
-  return evtKey.startsWith(agentRoot + ":subagent:");
+  if (!evtKey.startsWith(agentRoot + ":subagent:")) return false;
+  // FORK 2026-06-25 (bug: two tabs bled messages) — when we KNOW which tab spawned
+  // this subagent (resolved from its parentRunId at birth), it belongs to the view
+  // ONLY when that owner is the viewed session. This is the precise, no-bleed answer.
+  const owner = subagentOwnerTab.get(evtKey);
+  if (owner) return owner === sessionKey || sessionKeyMatches(owner);
+  // Owner not yet resolved (a delta racing ahead of the spawn event). Fall back to the
+  // loose root match ONLY when this is the lone tab on the root — with siblings open we
+  // refuse the ambiguous match so an unattributed subagent never leaks across tabs (it
+  // still appears in the Prefrontal/EEG panels, and the parent turn's output is intact).
+  return attachedTabCountForRoot(agentRoot) <= 1;
 }
 
 // FORK 2026-05-30: per-subagent streaming bubbles in the PARENT chat. Each subagent
@@ -1330,6 +1386,12 @@ function generateTabId(): string {
   return "tab-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+// FORK 2026-06-25: dedup title generation by a RUNTIME-ONLY set (never persisted), so a
+// stale/persisted titleGenerating flag can NEVER permanently block a rename. (The old guard
+// keyed on the persisted tab.titleGenerating; a tab saved mid-generate restored "generating"
+// forever and every future rename short-circuited — tabs "blinked for hours" + never renamed.)
+const titleInFlight = new Set<string>();
+
 function saveTabs() {
   try {
     // FORK (2026-04-21): persist tab-main too. Previously filtered out, which meant
@@ -1337,7 +1399,12 @@ function saveTabs() {
     // browser refresh), causing the connect handshake's `defs.mainSessionKey` default
     // to restore yesterday's agent:main:main session instead of the user's fresh
     // tinker:* continuation.
-    localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(tabs));
+    // FORK 2026-06-25: NEVER persist titleGenerating — it is a transient in-flight/shimmer
+    // flag; persisting it true strands a tab as "generating" forever (see titleInFlight above).
+    localStorage.setItem(
+      TAB_STORAGE_KEY,
+      JSON.stringify(tabs.map((t) => ({ ...t, titleGenerating: undefined }))),
+    );
   } catch {}
 }
 
@@ -1353,6 +1420,10 @@ function loadTabs() {
     // manually by closing and reopening the tab.
     let changed = false;
     for (const tab of stored) {
+      // FORK 2026-06-25: titleGenerating is transient — clear any persisted "generating"
+      // state on load so an old tab saved mid-generate isn't stuck blinking forever and the
+      // dedup guard doesn't block its rename. (Defense-in-depth with the no-persist in saveTabs.)
+      tab.titleGenerating = false;
       if (tab.id === "tab-main" && tab.title !== "🏠 Main") {
         tab.title = "🏠 Main";
         changed = true;
@@ -1697,6 +1768,38 @@ type ActiveRunInfo = {
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 
+// FORK 2026-06-25 (bug: two tabs bleed messages) — subagent session keys are minted
+// FLAT under the agent root (`agent:main:subagent:<uuid>`) with NO parent-tab encoding,
+// so chatEventIsSubagentOfView()'s agent-root match admitted a subagent into EVERY tab
+// sharing the root (main + every dashboard/tinker tab is `agent:main:*`). Result: a
+// fan-out launched from tab A streamed its subagent sub-bubbles into tab B too.
+// Fix: attribute each subagent to the ONE tab that spawned it by resolving its
+// parentRunId → the owning run's sessionKey, captured at birth while the parent run is
+// still in activeRuns, resolved transitively past intermediate subagent runs.
+const subagentOwnerTab = new Map<string, string>(); // subagent sessionKey → owning tab sessionKey
+function recordSubagentOwner(subKey: unknown, parentRunId: unknown): void {
+  if (typeof subKey !== "string" || !subKey.includes(":subagent:")) return;
+  if (typeof parentRunId !== "string" || !parentRunId) return;
+  if (subagentOwnerTab.has(subKey)) return;
+  let owner = activeRuns.get(parentRunId)?.sessionKey;
+  if (owner && owner.includes(":subagent:")) owner = subagentOwnerTab.get(owner) ?? owner;
+  if (owner && !owner.includes(":subagent:")) subagentOwnerTab.set(subKey, owner);
+}
+/** How many attached tabs share this `agent:<id>` root — used to decide whether an
+ *  UNATTRIBUTED subagent may safely fall back to the loose agent-root match. */
+function attachedTabCountForRoot(agentRoot: string): number {
+  let n = 0;
+  for (const t of tabs) {
+    if (
+      t.isAttached &&
+      typeof t.sessionKey === "string" &&
+      t.sessionKey.split(":").slice(0, 2).join(":") === agentRoot
+    )
+      n++;
+  }
+  return n;
+}
+
 // FORK 2026-04-20: Prefrontal dashboard state. Three slices:
 // - latestTreeFromExtension: last `prefrontal-tree` WS event from the extension.
 //   When present, it's the canonical source of the tree (has labels, progress,
@@ -1760,8 +1863,15 @@ const collapsedModelSections = new Set<string>(["models"]);
 // end-of-turn counter feeding the turn markers. Keyed by the event's FULL
 // session key so tab switches repaint the right session's paper.
 const eegStores = new Map<string, EegTraceStore>();
+// FORK 2026-06-25 (the owner): ephemeral utility sessions (`temp:title-suggest` et al.)
+// are internal housekeeping — a sonnet call to NAME a tab, not cognitive work. They
+// were leaking into the EEG "all" overlay as dim, thin, near-white sonnet threads
+// bouncing auto↔low, which "does not make sense at all". Never plot them.
+function isEphemeralEegSession(sk: unknown): boolean {
+  return typeof sk === "string" && sk.startsWith("temp:");
+}
 const eegTurnCounters = new Map<string, number>();
-// FORK 2026-06-22 (the architect): true while the in-flight turn's blue boundary was already
+// FORK 2026-06-22 (the owner): true while the in-flight turn's blue boundary was already
 // drawn at SEND time — so the lifecycle end-handler skips adding a duplicate line.
 const eegBoundaryAtSend = new Map<string, boolean>();
 // FORK 2026-06-13 (eeg): billed INPUT tokens accumulated per runId across the
@@ -1770,7 +1880,7 @@ const eegBoundaryAtSend = new Map<string, boolean>();
 const eegInputByRun = new Map<string, number>();
 // FORK 2026-06-13 (eeg): persist the trace to localStorage so a HARD REFRESH (which
 // wipes the in-memory store) restores the session's activity instead of erasing it
-// (the architect 2026-06-13). Keyed per session; capped so storage stays bounded.
+// (the owner 2026-06-13). Keyed per session; capped so storage stays bounded.
 const EEG_STORAGE_PREFIX = "tinker-eeg:";
 const EEG_PERSIST_CAP = 2000;
 function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
@@ -1781,7 +1891,7 @@ function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
     }
     const snap = JSON.parse(raw) as { samples?: EegSample[]; ends?: EegTurnEnd[] };
     if (Array.isArray(snap.samples)) {
-      // FORK 2026-06-23 (the architect): drop any persisted subagent BRANCH samples on load too, so an
+      // FORK 2026-06-23 (the owner): drop any persisted subagent BRANCH samples on load too, so an
       // OLD snapshot (written before branches stopped being persisted) can't restore a stale
       // "banana" arch. Branches are live-only; the main call-line is what persists.
       store.backfill(
@@ -1799,7 +1909,7 @@ function saveEegStore(sk: string): void {
     localStorage.setItem(
       EEG_STORAGE_PREFIX + sk,
       JSON.stringify({
-        // FORK 2026-06-23 (the architect "weird max→high banana that lingers"): do NOT persist
+        // FORK 2026-06-23 (the owner "weird max→high banana that lingers"): do NOT persist
         // subagent BRANCH samples. They are LIVE activity (a fan-out in progress), not durable
         // history — persisting them froze an old sub-call into a stale max→high arch ("banana")
         // that was restored on every reload long after the fan-out finished. The main call-line
@@ -1873,7 +1983,7 @@ function saveModelPin(key: string, id: string): void {
   }
 }
 // FORK 2026-06-13 (eeg): re-render the seismograph SVG at the live pixel width
-// of its host so it fills the whole panel (the architect 2026-06-13). Called after every
+// of its host so it fills the whole panel (the owner 2026-06-13). Called after every
 // panel render and on window resize.
 let eegResizeBound = false;
 // FORK 2026-06-13 (eeg): vertical SCALE for the seismograph length axis, driven
@@ -1918,7 +2028,9 @@ function fillEegPaper(): void {
   const overlay =
     eegScope === "all"
       ? [...eegStores].flatMap(([sk, store]) =>
-          sk === sessionKey ? [] : store.taggedSamples({ sessionKey: sk, dim: true }),
+          sk === sessionKey || isEphemeralEegSession(sk)
+            ? []
+            : store.taggedSamples({ sessionKey: sk, dim: true }),
         )
       : undefined;
   paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w, zoom: eegZoom, overlay });
@@ -2022,7 +2134,7 @@ function bindEegPanelOnce(): void {
       node.classList.remove("eeg-hl");
     }
   };
-  // FORK 2026-06-22 (the architect): a styled hover overlay showing the prompt text (the native
+  // FORK 2026-06-22 (the owner): a styled hover overlay showing the prompt text (the native
   // SVG <title> is slow + unstyleable). One lazily-created floating div, positioned next
   // to the cursor, fed from the boundary's data-eeg-prompt-text.
   let eegOverlay: HTMLElement | null = null;
@@ -3795,6 +3907,11 @@ function onEvent(evt: unknown) {
   if (evt.event === "agent") {
     const p = evt.payload;
     bumpActiveRunActivity(p ?? {});
+    // FORK 2026-06-25 (bug: two tabs bled messages) — capture this subagent's owning
+    // tab from its parentRunId while the parent run is still active, so the chat/EEG
+    // attribution (chatEventIsSubagentOfView) can route it to the ONE tab that spawned
+    // it instead of every tab sharing the agent root.
+    recordSubagentOwner((p as any)?.sessionKey, (p as any)?.data?.parentRunId);
     // ─── Live Tool Events ───
     // Capture tool-use/tool-result events and inject them as visible messages.
     // FORK (2026-04-21): use sessionKeyMatches so a server-canonicalized key
@@ -3837,6 +3954,32 @@ function onEvent(evt: unknown) {
           ],
           _temporary: true,
         });
+        // FORK 2026-06-25 (the owner scope C): feed the EEG — every tool call becomes a
+        // BRANCH off the trunk, colored + weighted by the provider it drives (so a
+        // nano-banana→Gemini call peels off as a rainbow strand, a grep as a thin gray
+        // one). Parent = the trunk run that fired the tool (p.runId). Feed must never
+        // break the tool consumer.
+        try {
+          const cmd =
+            d.args && typeof (d.args as { command?: unknown }).command === "string"
+              ? ((d.args as { command?: string }).command as string)
+              : undefined;
+          const id = eegToolIdentity(String(d.name), cmd);
+          getEegStore(sessionKey).record({
+            runId: String(d.toolCallId),
+            model: id.model,
+            provider: id.provider,
+            chosenLevel: "",
+            subagent: false,
+            tool: true,
+            label: cmd ? `${d.name}: ${cmd.slice(0, 80)}` : String(d.name),
+            parentRunId: typeof p.runId === "string" ? p.runId : undefined,
+            startedAt: Date.now(),
+          });
+          updateBudgetPanel();
+        } catch {
+          /* eeg tool feed must never break the tool consumer */
+        }
         updateChat();
       } else if (d.phase === "result" && d.toolCallId) {
         // Tool completed — back to thinking
@@ -3870,6 +4013,14 @@ function onEvent(evt: unknown) {
           ],
           _temporary: true,
         });
+        // FORK 2026-06-25 (scope C): stamp the tool branch's end so it merges back into
+        // the trunk at its real finish time (mirrors the subagent final-effort markEnded).
+        try {
+          getEegStore(sessionKey).markEnded(String(d.toolCallId), Date.now());
+          updateBudgetPanel();
+        } catch {
+          /* eeg tool feed must never break the tool consumer */
+        }
         updateChat();
       }
     }
@@ -3926,7 +4077,7 @@ function onEvent(evt: unknown) {
         } as ActiveRunInfo);
       // FORK 2026-06-13 (eeg): the effort event now self-describes its model
       // (cc-bridge), so even an Auto run colours by the ACTUAL model running
-      // underneath instead of falling back to gray (the architect 2026-06-13). Keep any
+      // underneath instead of falling back to gray (the owner 2026-06-13). Keep any
       // existing non-empty model if the event omits it.
       if (typeof d.model === "string" && d.model) r.model = d.model;
       if (typeof d.provider === "string" && d.provider) r.provider = d.provider;
@@ -3949,7 +4100,7 @@ function onEvent(evt: unknown) {
       // FORK 2026-06-13 (eeg): feed the seismograph (bible §5.8h). Effort events
       // arrive incrementally per run; record() upserts by runId so every emit just
       // refreshes the run's sample. The store is keyed by the VIEWED sessionKey to
-      // match the render at updateBudgetPanel(). FORK 2026-06-14 (the architect): the gate
+      // match the render at updateBudgetPanel(). FORK 2026-06-14 (the owner): the gate
       // above now ALSO admits `:subagent:` descendants of the viewed session (via
       // chatEventIsSubagentOfView, same predicate the chat consumer uses), so a
       // subagent's effort event records into the PARENT's store (evtSk = the viewed
@@ -3993,6 +4144,7 @@ function onEvent(evt: unknown) {
     if (
       p?.stream === "effort" &&
       eegScope === "all" &&
+      !isEphemeralEegSession(p.sessionKey) &&
       !sessionKeyMatches(p.sessionKey) &&
       !chatEventIsSubagentOfView(p.sessionKey)
     ) {
@@ -4440,6 +4592,20 @@ function onEvent(evt: unknown) {
           });
         }
         updatePrefrontalTree();
+        // Live-update .broca-step--live highlight when recipe-detail page is open.
+        if (
+          lastRenderedBrocaRecipe &&
+          currentRecipe &&
+          currentRecipe.recipeId === currentRecipeRef
+        ) {
+          const prog = document.querySelector(".recipe-detail-program");
+          if (prog) {
+            prog.innerHTML = renderBrocaProgram(lastRenderedBrocaRecipe, {
+              linkTitle: false,
+              liveStep: currentRecipe.step,
+            });
+          }
+        }
       }
     }
 
@@ -4803,7 +4969,7 @@ function onEvent(evt: unknown) {
                 ? p.data.sessionKey
                 : sessionKey;
             if (eegEvtSk && !eegEvtSk.includes(":subagent:")) {
-              // FORK 2026-06-22 (the architect): the blue boundary is now normally drawn at SEND
+              // FORK 2026-06-22 (the owner): the blue boundary is now normally drawn at SEND
               // time (immediate, while the turn runs). If it was, skip adding a 2nd line
               // here — just reuse the already-bumped turn number to stamp the answer bubble.
               // The fallback (queued sends, which don't draw at send) still records here.
@@ -4838,7 +5004,7 @@ function onEvent(evt: unknown) {
                   promptIndex,
                   promptText,
                 });
-                // persist the completed turn so a hard refresh restores it (the architect 2026-06-13)
+                // persist the completed turn so a hard refresh restores it (the owner 2026-06-13)
                 saveEegStore(eegEvtSk);
               }
               if (sessionKeyMatches(eegEvtSk)) {
@@ -4867,7 +5033,9 @@ function onEvent(evt: unknown) {
         const turnNum = currentTurnNumber;
         setTimeout(() => {
           if (sk && timelineCtrl) {
-            const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+            // FORK 2026-06-26: same-origin (relative) anatomy fetch — see the load-reconcile
+            // note below; the DEV :18789 hardcode hit the gateway cross-origin and returned 0.
+            const base = "";
             const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
             fetch(
               `${base}/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=10`,
@@ -5211,28 +5379,56 @@ async function loadChat() {
   // fields simply omit the halo; failure must never break the panel or chat load.
   try {
     const eegSk = sessionKey;
-    // FORK 2026-06-22 (the architect): fetch the anatomy on EVERY session load (not only when the
+    // FORK 2026-06-22 (the owner): fetch the anatomy on EVERY session load (not only when the
     // store is empty) so the EEG restores in lockstep with the chat history — the reconcile
     // decision (rebuild vs keep-local) is made AFTER the fetch, below.
     if (eegSk) {
-      const base = import.meta.env.DEV ? "http://localhost:18789" : "";
+      // FORK 2026-06-26 (the owner "EEG history vanished after restart"): fetch the durable
+      // anatomy SAME-ORIGIN (relative), like every other API call + like chat history.
+      // The old `DEV ? :18789` hardcode bypassed the vite proxy and hit the gateway
+      // cross-origin, which returns 0 events (auth/CORS) — so the reconcile silently
+      // aborted and the EEG depended entirely on fragile localStorage. When a reboot
+      // cleared localStorage, history was gone even though the anatomy DB still had it.
+      // Relative "" resolves to :18790 in dev (vite proxies /tinker → gateway, verified
+      // to return the session's events) and to the gateway origin in prod.
+      const base = "";
       const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
       fetch(
         // limit=500: restore the WHOLE session on reload (permanent retention,
-        // the architect 2026-06-13) so all activity is scrollable, not just recent turns.
-        `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?limit=500`,
+        // the owner 2026-06-13) so all activity is scrollable, not just recent turns.
+        // FORK 2026-07-16: tree=1 also pulls the subagent family (flat
+        // `<root>:subagent:%` keys) so a fan-out's branches restore reload-proof —
+        // the single-session anatomy fetch was why fan-outs never showed in the EEG.
+        `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?tree=1&limit=500`,
         Object.keys(hdrs).length ? { headers: hdrs } : undefined,
       )
-        .then((r) => (r.ok ? r.json() : null))
+        .then((r) => {
+          console.log("[eeg-dbg] fetch", {
+            eegSk,
+            sessionKey,
+            status: r.status,
+            ok: r.ok,
+            hasToken: !!TOKEN,
+          });
+          return r.ok ? r.json() : null;
+        })
         .then((body) => {
           if (!body) {
+            console.log("[eeg-dbg] body NULL (fetch non-200) — abort, no rebuild");
             return;
           }
           const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+          console.log(
+            "[eeg-dbg] events",
+            events.length,
+            "localStoreSamples",
+            getEegStore(eegSk).toSnapshot().samples.length,
+          );
           if (!events.length) {
+            console.log("[eeg-dbg] events EMPTY — abort, no rebuild");
             return;
           }
-          // FORK 2026-06-22 (the architect): EEG must restore hand-in-hand with chat on every
+          // FORK 2026-06-22 (the owner): EEG must restore hand-in-hand with chat on every
           // (re)load — not only when the local store happens to be empty. The old isEmpty
           // gate let a stale/partial localStorage snapshot permanently BLOCK the re-fetch,
           // so the EEG drifted from (or got wiped relative to) the chat. Rebuild whenever
@@ -5240,13 +5436,40 @@ async function loadChat() {
           // keep local only when it is already as rich or richer (a live in-progress run).
           const store = getEegStore(eegSk);
           if (store.toSnapshot().samples.length >= events.length) {
+            console.log(
+              "[eeg-dbg] early-return: local >= events, NOT rebuilding",
+              store.toSnapshot().samples.length,
+              events.length,
+            );
             return;
           }
           store.clear();
           const samples: EegSample[] = [];
           const ends: EegTurnEnd[] = [];
           let lastTurn: number | undefined;
-          // FORK 2026-06-22 (the architect): carry the prompt text + index onto restored boundaries
+          // FORK 2026-07-16 (EEG fan-out visibility): the tree fetch is root-wide — the
+          // flat subagent key can't say WHICH tab spawned it, so it also returns fan-outs
+          // from other tabs/heartbeat/cron and from long-ago sessions. Bound subagent rows
+          // to THIS session's own time window (its main events, + slack for a fan-out that
+          // outruns the last recorded main turn) so stale/foreign branches don't clutter
+          // the paper. Same-window/same-root bleed remains a known v1 limit (precise
+          // per-tab attribution needs a parent_session_key column — a larger job).
+          const tsOf = (ev: any): number =>
+            typeof ev.timestampMs === "number"
+              ? ev.timestampMs
+              : typeof ev.timestamp === "number"
+                ? ev.timestamp
+                : 0;
+          const mainTs = events
+            .filter(
+              (ev) => !(typeof ev?.sessionKey === "string" && ev.sessionKey.includes(":subagent:")),
+            )
+            .map(tsOf)
+            .filter((t) => t > 0);
+          const SUB_WINDOW_SLACK_MS = 60 * 60 * 1000; // 1h past the last main turn
+          const minMainTs = mainTs.length ? Math.min(...mainTs) : 0;
+          const maxMainTs = mainTs.length ? Math.max(...mainTs) + SUB_WINDOW_SLACK_MS : Infinity;
+          // FORK 2026-06-22 (the owner): carry the prompt text + index onto restored boundaries
           // (anatomy events include `userMessage`) so a reloaded/restored EEG line is just as
           // hoverable + clickable as a live one — history "hand in hand" with the chat.
           const mkEnd = (t: number, rid: string, endedAt: number, um: string): EegTurnEnd => {
@@ -5269,13 +5492,28 @@ async function loadChat() {
                   ? ev.timestamp
                   : Date.now();
             const runId = typeof ev.runId === "string" && ev.runId ? ev.runId : `eeg-backfill-${i}`;
+            // FORK 2026-07-16 (EEG fan-out visibility): the tree fetch mixes the main
+            // session with its subagents. A row whose sessionKey carries `:subagent:`
+            // is a fan-out branch — tag it so eeg-trace.ts routes it through the branch
+            // renderer (split off the trunk, arch, join back) instead of the main line.
+            // Its parentRunId stays undefined: the renderer anchors the branch to the
+            // trunk by START TIME (mainColAt), which is exactly right for history.
+            const isSubagent =
+              typeof ev.sessionKey === "string" && ev.sessionKey.includes(":subagent:");
+            // Drop subagent rows outside this session's window (stale/foreign fan-outs).
+            if (isSubagent && (ts < minMainTs || ts > maxMainTs)) {
+              continue;
+            }
+            // A durable branch needs a real end so it renders as a closed out-and-back
+            // arch, not a still-running strand open to the top. Anatomy carries durationMs.
+            const durMs = typeof ev.durationMs === "number" ? ev.durationMs : 0;
             samples.push({
               runId,
               model,
               provider:
                 typeof ev.provider === "string" && ev.provider ? ev.provider : providerOf(model),
               chosenLevel: typeof ev.thinkLevel === "string" ? ev.thinkLevel : "",
-              subagent: false,
+              subagent: isSubagent,
               parentRunId: undefined,
               ...(typeof ev.thinkingChars === "number" ? { thinkingChars: ev.thinkingChars } : {}),
               // tokens → segment length (area ∝ cost). Best-effort from anatomy.
@@ -5289,10 +5527,12 @@ async function loadChat() {
                 };
               })(),
               startedAt: ts,
-              endedAt: undefined,
+              endedAt: isSubagent ? ts + Math.max(0, durMs) : undefined,
             });
-            const turn = typeof ev.turn === "number" ? ev.turn : undefined;
-            // FORK 2026-06-22 (the architect): anchor each turn's boundary at the turn's START — just
+            // Only MAIN-session events define prompt boundaries — a single-turn subagent
+            // must never mint a spurious yellow prompt rule on the parent's timeline.
+            const turn = isSubagent ? undefined : typeof ev.turn === "number" ? ev.turn : undefined;
+            // FORK 2026-06-22 (the owner): anchor each turn's boundary at the turn's START — just
             // before its first event (ts-1) — so the yellow line sits BELOW (chronologically
             // earlier than) that turn's calls. Newest-at-top ⇒ earlier = lower. The old code
             // anchored at the turn TRANSITION (≈ the turn's END), drawing the line ABOVE its call.
@@ -5305,9 +5545,34 @@ async function loadChat() {
           getEegStore(eegSk).backfill(samples, ends);
           eegTurnCounters.set(eegSk, Math.max(eegTurnCounters.get(eegSk) ?? 0, lastTurn ?? 0));
           saveEegStore(eegSk); // persist the anatomy-rebuilt history so it survives the next reload
+          console.log("[eeg-dbg] REBUILT store", {
+            builtSamples: samples.length,
+            ends: ends.length,
+            storeNow: getEegStore(eegSk).toSnapshot().samples.length,
+            sessionEqEegSk: sessionKey === eegSk,
+            sessionKey,
+            eegSk,
+          });
+          // FORK 2026-06-26 — REDRAW the seismograph now that its store was rebuilt. Without this,
+          // the panel keeps showing whatever switchToTab() painted BEFORE this async fetch resolved
+          // — i.e. an empty paper for a freshly cloned tab, which then has no further events to
+          // trigger a later redraw, so the forked EEG stayed invisible despite the data being present.
+          if (sessionKey === eegSk) {
+            renderEegPanel();
+          }
+          const dbgPaper = document.getElementById("eeg-paper");
+          const dbgBody = document.getElementById("eeg-panel-body");
+          console.log("[eeg-dbg] after render", {
+            paperExists: !!dbgPaper,
+            paperWidth: dbgPaper ? dbgPaper.clientWidth : -1,
+            panelBodyExists: !!dbgBody,
+            svgLen: dbgPaper ? dbgPaper.innerHTML.length : -1,
+          });
           updateBudgetPanel();
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.log("[eeg-dbg] CATCH error in backfill", err);
+        });
     }
   } catch {
     /* eeg backfill must never break chat load */
@@ -5365,39 +5630,23 @@ async function hydrateTab(tab: Tab): Promise<void> {
   tabStates.set(tab.id, target);
 }
 
-// FORK 2026-06-04 — task-mpzcjw6n (auto-rename fix): generateTabTitle hardcoded
-// "qwen3:14b-q4_K_M", which is NOT installed on this box (only gemma4:26b + an embed model), so
-// every auto-name (the menu button AND the periodic titler) silently 404'd and looked broken.
-// Resolve an AVAILABLE ollama chat model dynamically (cached), excluding embedding models, so it
-// works regardless of which model is pulled. Returns null (→ caller skips) if ollama is down or
-// only embedding models exist.
-let _ollamaTitleModel: string | null | undefined = undefined;
-async function resolveOllamaTitleModel(): Promise<string | null> {
-  if (_ollamaTitleModel !== undefined) {
-    return _ollamaTitleModel;
-  }
+// FORK 2026-06-24 — tab-title via the gateway `sessions.suggestTitle` RPC (replaces
+// the old fire-and-forget subagent-spawn + async-correlation isolation layer). The RPC
+// runs the title model server-side and returns {title:string|null} synchronously; no
+// chat/EEG event isolation is needed client-side. Resolves to the title string, or null
+// on unavailable/error.
+async function spawnTitleViaBridge(
+  prompt: string,
+  _tabId: string,
+  sessionKey: string,
+): Promise<string | null> {
   try {
-    const res = await fetch("http://localhost:11434/api/tags")
-      .then((r) => r.json())
-      .catch(() => null);
-    const names: string[] = ((res?.models ?? []) as Array<{ name?: string }>)
-      .map((m) => m?.name ?? "")
-      .filter(Boolean);
-    const isEmbed = (n: string) => /embed/i.test(n);
-    // Prefer a fast small instruct model if present, else the first non-embedding model installed.
-    const preferred = [
-      "qwen3:14b-q4_K_M",
-      "qwen2.5:7b",
-      "llama3.2:3b",
-      "llama3.1:8b",
-      "gemma4:26b",
-    ];
-    _ollamaTitleModel =
-      preferred.find((p) => names.includes(p)) ?? names.find((n) => !isEmbed(n)) ?? null;
-  } catch {
-    _ollamaTitleModel = null;
+    const r = await req<{ title?: string | null }>("sessions.suggestTitle", { sessionKey, prompt });
+    return r?.title ?? null;
+  } catch (err) {
+    console.log("[tabs] title rpc failed:", err);
+    return null;
   }
-  return _ollamaTitleModel;
 }
 
 async function generateTabTitle(tab: Tab) {
@@ -5422,7 +5671,6 @@ async function generateTabTitle(tab: Tab) {
     return t.trim();
   };
   const userPrompts: string[] = [];
-  let lastAssistant = "";
   for (let i = tabMessages.length - 1; i >= 0; i--) {
     const m = tabMessages[i];
     const role = (m?.role || "").toLowerCase();
@@ -5432,92 +5680,137 @@ async function generateTabTitle(tab: Tab) {
       // Newest prompt gets the lion's share of the budget.
       userPrompts.unshift(text.slice(0, userPrompts.length === 0 ? 600 : 200));
       if (userPrompts.length >= TAB_TITLE_INTERVAL) break;
-    } else if (role === "assistant" && !lastAssistant) {
-      lastAssistant = text.slice(0, 200);
     }
   }
 
   if (userPrompts.length === 0) {
+    console.log("[tabs] title skipped — no user prompts", {
+      tab: tab.id,
+      sessionKey: tab.sessionKey,
+      msgs: tabMessages.length,
+    });
+    return;
+  }
+  // Need a live gateway session to spawn the title subagent against; bail (keep the
+  // current name) if this tab has no session yet.
+  if (!tab.sessionKey) {
     return;
   }
 
-  // FORK 2026-06-04 — task-mpzcjw6n (auto-rename fix): use an INSTALLED ollama model, not a
-  // hardcoded one that may be absent. Skip gracefully if none is available.
-  const titleModel = await resolveOllamaTitleModel();
-  if (!titleModel) {
-    console.log("[tabs] auto-name skipped — no ollama chat model installed (only embed/none)");
+  // FORK 2026-06-24 — P2 shimmer: now that we are committed to an LLM call, mark the tab
+  // in-flight on the Tab model and re-render so the shimmer shows on ANY tab (periodic OR menu
+  // trigger), independent of focus. Dedup: if a generate is already running for this tab, bail.
+  if (titleInFlight.has(tab.id)) {
     return;
   }
-
-  // FORK 2026-06-10 — u3-tab-naming: gather the OTHER tabs' deliberate (locked) names so the model
-  // can make THIS one distinct, then ask for a short, specific, prompt-driven title with one
-  // relevant leading emoji.
-  const siblingTitles = tabs
-    .filter((t) => t.id !== tab.id && t.id !== "tab-main" && t.titleLocked && t.title)
-    .map((t) => {
-      const e = leadingEmoji(t.title);
-      return (e ? t.title.slice(e.length) : t.title).trim();
-    })
-    .filter((s) => s.length > 0)
-    .slice(0, 8);
-  const prompt = [
-    `Give this chat tab a SHORT, SPECIFIC name (it shows in a narrow tab strip) that captures what I am working on in THIS conversation and what makes it DIFFERENT from my other tabs.`,
-    `Base it on MY messages below — my intent is what matters; the assistant's replies are only secondary context.`,
-    siblingTitles.length
-      ? `My OTHER tabs are already named: ${siblingTitles.join("; ")}. Make THIS name clearly distinct from those — name what is unique here; do not reuse their words or settle for a generic shared theme.`
-      : "",
-    `Reply with ONLY: one emoji relevant to the topic, then a space, then 2-4 words. No quotes, no trailing punctuation. Examples: 🔧 Auth token refresh — 📊 Q3 revenue model — 🐛 Flaky CI retries.`,
-    ``,
-    `My recent messages (oldest to newest):`,
-    userPrompts.map((p) => `- ${p}`).join("\n"),
-    lastAssistant ? `\n(Assistant context, secondary: ${lastAssistant})` : "",
-  ]
-    .filter((line) => line !== "")
-    .join("\n");
+  titleInFlight.add(tab.id);
+  tab.titleGenerating = true;
+  renderTabs();
 
   try {
-    // Try local Ollama first (free, fast)
-    const ollamaRes = await fetch("http://localhost:11434/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: titleModel, prompt, stream: false }),
-    })
-      .then((r) => r.json())
-      .catch(() => null);
+    // FORK 2026-06-10 — u3-tab-naming: gather the OTHER tabs' deliberate (locked) names so the model
+    // can make THIS one distinct, then ask for a short, specific, prompt-driven title with one
+    // relevant leading emoji.
+    const siblingTitles = tabs
+      .filter((t) => t.id !== tab.id && t.id !== "tab-main" && t.titleLocked && t.title)
+      .map((t) => {
+        const e = leadingEmoji(t.title);
+        return (e ? t.title.slice(e.length) : t.title).trim();
+      })
+      .filter((s) => s.length > 0)
+      .slice(0, 8);
+    // FORK 2026-06-24 — P3: build the prompt PURELY from MY (user) messages — my intent is the
+    // signal; the assistant's replies are not included. Mark the newest message explicitly and tell
+    // the model to weight the LAST messages most (that is what I'm working on right now).
+    const bulletLines = userPrompts
+      .map((p, i) => (i === userPrompts.length - 1 ? `- (MOST RECENT) ${p}` : `- ${p}`))
+      .join("\n");
+    const prompt = [
+      `Give this chat tab a SHORT, SPECIFIC name (it shows in a narrow tab strip) that captures what I am working on in THIS conversation and what makes it DIFFERENT from my other tabs.`,
+      `Base it ONLY on MY messages below — my intent is what matters. Weight the LAST messages most: they are what I'm working on now (the newest one is marked "(MOST RECENT)").`,
+      siblingTitles.length
+        ? `The title MUST NOT overlap or duplicate these existing tab names: ${siblingTitles.join("; ")}. Make it clearly distinct — name what is unique here; do not reuse their words or settle for a generic shared theme.`
+        : "",
+      `Reply with ONLY the tab title text (max 48 chars, no quotes, no preamble, no explanation): one emoji relevant to the topic, then a space, then 2-4 words. No trailing punctuation. Examples: 🔧 Auth token refresh — 📊 Q3 revenue model — 🐛 Flaky CI retries.`,
+      ``,
+      `My recent messages (oldest to newest):`,
+      bulletLines,
+    ]
+      .filter((line) => line !== "")
+      .join("\n");
 
-    let title = ollamaRes?.response?.trim();
+    try {
+      // FORK 2026-06-24 — generate the title via the cc-bridge Sonnet subagent
+      // (subscription-billed claude-code worker — NOT the metered API, NOT ollama).
+      // Fire-and-forget spawn + async correlation lives in spawnTitleViaBridge; it
+      // resolves to the subagent's final text (or null on unavailable/timeout/error,
+      // in which case we leave the existing tab name untouched).
+      const raw = await spawnTitleViaBridge(prompt, tab.id, tab.sessionKey);
+      // Take the FIRST non-empty line (the model may add a stray trailing line even
+      // when asked for title-only), then strip any wrapping quotes/backticks.
+      // FORK 2026-06-25 (BUG: doubled title) — the title model / cc-bridge occasionally emits the
+      // generated phrase twice in one payload ("Fix auth bugFix auth bug"). The RPC itself is clean
+      // (verified over 18 live calls), so collapse an EXACT whole-string self-concatenation here,
+      // before it becomes the tab name. Only fires when both halves are identical AND each is >=4
+      // chars, so legitimate short reduplications ("Go Go") are left untouched.
+      const collapseDoubled = (s: string): string => {
+        const t = (s ?? "").trim();
+        if (t.length >= 8 && t.length % 2 === 0) {
+          const h = t.slice(0, t.length / 2);
+          if (h === t.slice(t.length / 2) && h.trim().length >= 4) return h.trim();
+        }
+        if (t.length >= 9 && t.length % 2 === 1) {
+          const mid = (t.length - 1) / 2;
+          const h2 = t.slice(0, mid);
+          if (/\s/.test(t[mid]) && h2 === t.slice(mid + 1) && h2.trim().length >= 4)
+            return h2.trim();
+        }
+        return t;
+      };
+      let title = (raw ?? "")
+        .split("\n")
+        .map((l) => l.trim())
+        .find((l) => l.length > 0);
+      if (title) {
+        title = title.replace(/^["'`]+|["'`]+$/g, "").trim();
+        title = collapseDoubled(title);
+      }
 
-    // Strip any quotes or punctuation wrapping
-    if (title) {
-      title = title.replace(/^["'`]+|["'`]+$/g, "").trim();
+      console.log("[tabs] bridge title response:", JSON.stringify(raw));
+      if (title && title.length > 0 && title.length <= 48) {
+        // FORK 2026-06-06 \u2014 u2-tab-naming: KEEP a relevant leading emoji.
+        // 1) split off any leading emoji the LLM returned (per the prompt) from the word part.
+        const preferred = leadingEmoji(title);
+        const words = collapseDoubled(
+          preferred ? title.slice(preferred.length).trim() : title.trim(),
+        );
+        // 2) choose a final icon that is RELEVANT to the summary and NOT already used by another tab
+        //    (preferred LLM emoji \u2192 summary-mapped emoji \u2192 AUTO_NAME_ICON sentinel \u2192 next free catalog
+        //    emoji). This guarantees every tab's leading icon is distinct.
+        const icon = pickUniqueTabIcon(preferred, words, tab.id);
+        tab.title = words ? `${icon} ${words}` : `${icon} ${title.trim()}`;
+        // 3) lock the title so loadSessions() won't clobber it with the server fortune-cookie phrase;
+        //    persists via saveTabs() so it survives hard refresh AND gateway restart.
+        tab.titleLocked = true;
+        console.log("[tabs] title updated to:", tab.title);
+        renderTabs();
+        saveTabs();
+        // FORK 2026-06-10 — u3-tab-naming: persist the auto-name server-side so it survives any
+        // restart/browser/device, not just this browser's localStorage.
+        persistTabNameToServer(tab);
+        updateSessionsPanel();
+      } else {
+        console.log("[tabs] title rejected — length:", title?.length, "value:", title);
+      }
+    } catch (err) {
+      console.error("[tabs] generateTabTitle error:", err);
     }
-
-    console.log("[tabs] ollama response:", JSON.stringify(ollamaRes));
-    if (title && title.length > 0 && title.length <= 48) {
-      // FORK 2026-06-06 \u2014 u2-tab-naming: KEEP a relevant leading emoji.
-      // 1) split off any leading emoji the LLM returned (per the prompt) from the word part.
-      const preferred = leadingEmoji(title);
-      const words = preferred ? title.slice(preferred.length).trim() : title.trim();
-      // 2) choose a final icon that is RELEVANT to the summary and NOT already used by another tab
-      //    (preferred LLM emoji \u2192 summary-mapped emoji \u2192 AUTO_NAME_ICON sentinel \u2192 next free catalog
-      //    emoji). This guarantees every tab's leading icon is distinct.
-      const icon = pickUniqueTabIcon(preferred, words, tab.id);
-      tab.title = words ? `${icon} ${words}` : `${icon} ${title.trim()}`;
-      // 3) lock the title so loadSessions() won't clobber it with the server fortune-cookie phrase;
-      //    persists via saveTabs() so it survives hard refresh AND gateway restart.
-      tab.titleLocked = true;
-      console.log("[tabs] title updated to:", tab.title);
-      renderTabs();
-      saveTabs();
-      // FORK 2026-06-10 — u3-tab-naming: persist the auto-name server-side so it survives any
-      // restart/browser/device, not just this browser's localStorage.
-      persistTabNameToServer(tab);
-      updateSessionsPanel();
-    } else {
-      console.log("[tabs] title rejected — length:", title?.length, "value:", title);
-    }
-  } catch (err) {
-    console.error("[tabs] generateTabTitle error:", err);
+  } finally {
+    // FORK 2026-06-24 — P2 shimmer: always clear the in-flight flag and re-render — covers
+    // success, the 48-char gate, errors, and 404s — so the pulse never gets stuck on.
+    titleInFlight.delete(tab.id);
+    tab.titleGenerating = false;
+    renderTabs();
   }
 }
 
@@ -5801,7 +6094,7 @@ async function send(text: string) {
   }
   scrollChat();
 
-  // FORK 2026-06-22 (the architect): draw the blue prompt-boundary line the INSTANT the prompt
+  // FORK 2026-06-22 (the owner): draw the blue prompt-boundary line the INSTANT the prompt
   // is sent — not at turn end — so every turn is visibly delimited while it still runs.
   // The boundary carries this prompt's stable user-message index + text → hover overlay
   // + click-scroll. Only the live (non-queued) send draws here; a QUEUED send's turn is
@@ -5973,16 +6266,43 @@ async function abort() {
 }
 
 async function loadBudget() {
-  const [s, mc, bu] = await Promise.all([
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const [s, mc, bu, su] = await Promise.all([
     req("budget.status", {}).catch(() => null),
     req("config.models", {}).catch(() => null),
     req("budget.usage", {}).catch(() => null),
+    req("sessions.usage", { startDate: weekAgo, endDate: today }).catch(() => null),
   ]);
   _budgetData = { budget: null, status: s };
   if (mc) {
     modelConfigData = mc;
   }
   budgetUsageData = bu;
+  // FORK 2026-07-09: aggregate per-model token totals (7d) for the MODELS rows.
+  // The per-call split lives in usage.modelUsage[] — the session-level `model`
+  // field is null for ~half the sessions (see bug-log usage-tab-model-attribution).
+  if (su?.sessions) {
+    const all: Record<string, number> = {};
+    const bySession: Record<string, Record<string, number>> = {};
+    for (const sess of su.sessions as unknown[]) {
+      const sk = sess.key ?? sess.sessionKey ?? "";
+      for (const mu of sess.usage?.modelUsage ?? []) {
+        if (!mu?.model) {
+          continue;
+        }
+        const tok = mu.totals?.totalTokens ?? 0;
+        if (!tok) {
+          continue;
+        }
+        const id = `${mu.provider ?? "unknown"}/${mu.model}`;
+        all[id] = (all[id] ?? 0) + tok;
+        (bySession[sk] ??= {})[id] = (bySession[sk][id] ?? 0) + tok;
+      }
+    }
+    modelTokensAll = all;
+    modelTokensBySession = bySession;
+  }
   updateBudgetPanel();
 }
 
@@ -5991,11 +6311,140 @@ function esc(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// FORK 2026-06-24: live HTML rendering in chat. openclaw's own UI deliberately
+// ESCAPES raw assistant HTML (ui/src/ui/markdown.ts overrides html_block/inline
+// per ticket #13937) — so "copy openclaw's feature" would give us escaping, the
+// opposite of what we want. Instead we render an EXPLICIT, opt-in ```html-render
+// fenced block inside a sandboxed <iframe srcdoc> (the brain-diagram precedent,
+// inline in chat). Plain ```html still renders as escaped source code. The frame
+// is sandboxed allow-scripts WITHOUT allow-same-origin, so it cannot touch the
+// parent DOM, cookies, or storage — only post its height back for auto-resize.
+function htmlRenderFrame(rawHtml: string): string {
+  const resizeScript =
+    "<scr" +
+    "ipt>(function(){function p(){try{var de=document.documentElement,b=document.body;var h=Math.max(de.scrollHeight,b?b.scrollHeight:0,b?Math.ceil(b.getBoundingClientRect().bottom):0)+1;parent.postMessage({__tinkerHtmlFrame:1,h:h},'*');}catch(e){}}" +
+    "if(window.ResizeObserver){new ResizeObserver(p).observe(document.documentElement);}" +
+    "window.addEventListener('load',p);[50,200,500].forEach(function(t){setTimeout(p,t);});if(document.fonts&&document.fonts.ready){document.fonts.ready.then(p);}p();})();</scr" +
+    "ipt>";
+  const doc =
+    "<!doctype html><html><head><meta charset='utf-8'>" +
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+    // FORK 2026-06-25 (the owner) — responsive base reset for EVERY html-render block:
+    // adapt to the chat's width and NEVER show a horizontal scrollbar. The frame is
+    // width:100% of the bubble; this reset stops inner content (fixed-px widths, wide
+    // tables, nowrap, long unbreakable strings, oversized media) from forcing overflow.
+    "<style>" +
+    "*,*::before,*::after{box-sizing:border-box}" +
+    "html,body{margin:0;max-width:100%;overflow-x:hidden}" +
+    "body{padding:8px;font-family:system-ui,-apple-system,sans-serif;color:#1a1a1a;overflow-wrap:anywhere;word-break:break-word}" +
+    // FORK 2026-06-25 (the owner) — fill the bubble: a top-level card with only `max-width`
+    // would shrink-wrap to its content and leave a gap on the right. Force direct block
+    // children to width:100%; a card that ALSO sets max-width then centers within the
+    // full width instead of left-capping.
+    "body>*{width:100%}" +
+    "body>*[style*='max-width']{margin-left:auto;margin-right:auto}" +
+    "table{width:100%;max-width:100%;table-layout:fixed;border-collapse:collapse}" +
+    "td,th{overflow-wrap:anywhere;word-break:break-word}" +
+    "img,svg,video,canvas,iframe{max-width:100%;height:auto}" +
+    "pre,code{white-space:pre-wrap;overflow-wrap:anywhere}" +
+    "</style>" +
+    "</head><body>" +
+    rawHtml +
+    resizeScript +
+    "</body></html>";
+  // srcdoc is an HTML attribute value: escape & and " (order matters — & first).
+  const srcdoc = doc.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  return (
+    `<iframe class="chat-html-frame" scrolling="no" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" ` +
+    `srcdoc="${srcdoc}" loading="lazy" ` +
+    `style="width:100%;min-height:40px;overflow:hidden;border:1px solid var(--border,rgba(0,0,0,0.15));border-radius:8px;background:#fff;display:block"></iframe>`
+  );
+}
+
+// FORK 2026-06-25 (the owner — flicker/scroll-jump fix): a ```html-render block with
+// NO <script> is a static card (every closing summary is one). Render it INLINE as
+// DOMPurify-sanitized HTML — the same approach openclaw's own UI uses — instead of a
+// sandboxed iframe. An iframe reloads on every chat innerHTML rebuild (so it flashed
+// white on each thinking-stream delta) and its async load+resize shifted scrollHeight
+// AFTER the scroll restore (yanking the view off the bottom onto the card). Inline
+// sanitized HTML rebuilds synchronously with the rest of the chat: no reload, no async
+// resize, stable height → no flicker, no jump. The iframe path is kept ONLY for blocks
+// that contain <script> (interactive widgets need JS isolation).
+function htmlRenderInline(rawHtml: string): string {
+  const clean = DOMPurify.sanitize(rawHtml, { ADD_ATTR: ["target"] });
+  return `<div class="chat-html-inline">${clean}</div>`;
+}
+
+// Scoped responsive reset for inline html-render cards (mirrors the iframe base reset:
+// adapt to bubble width, never force a horizontal scrollbar) + kill scroll-anchoring on
+// the message list so a late-resizing iframe can't drag the viewport onto itself.
+if (typeof document !== "undefined" && !(window as any).__tinkerHtmlInlineStyled) {
+  (window as any).__tinkerHtmlInlineStyled = true;
+  const st = document.createElement("style");
+  st.textContent =
+    "#messages{overflow-anchor:none}" +
+    ".chat-html-inline{max-width:100%;overflow-x:hidden;overflow-wrap:anywhere;word-break:break-word}" +
+    ".chat-html-inline *{box-sizing:border-box;max-width:100%}" +
+    ".chat-html-inline table{width:100%;table-layout:fixed;border-collapse:collapse}" +
+    ".chat-html-inline td,.chat-html-inline th{overflow-wrap:anywhere;word-break:break-word}" +
+    ".chat-html-inline img,.chat-html-inline svg,.chat-html-inline video{max-width:100%;height:auto}" +
+    ".chat-html-inline pre,.chat-html-inline code{white-space:pre-wrap;overflow-wrap:anywhere}";
+  document.head.appendChild(st);
+}
+
+// Auto-resize sandboxed chat HTML frames (the <script>-bearing path) from their own
+// postMessage height. Sandbox has no same-origin, so we match by event.source identity.
+if (typeof window !== "undefined" && !(window as any).__tinkerHtmlFrameResizeWired) {
+  (window as any).__tinkerHtmlFrameResizeWired = true;
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || d.__tinkerHtmlFrame !== 1 || typeof d.h !== "number") {
+      return;
+    }
+    const frames = document.querySelectorAll<HTMLIFrameElement>("iframe.chat-html-frame");
+    for (const f of frames) {
+      if (f.contentWindow === ev.source) {
+        // Re-pin to the bottom if we were there: the height change below grows
+        // scrollHeight, which would otherwise leave the view stranded mid-scroll.
+        const msgs = document.getElementById("messages");
+        const wasAtBottom = msgs
+          ? msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80
+          : false;
+        f.style.height = Math.min(Math.max(d.h, 40), 2000) + "px";
+        if (wasAtBottom && msgs) {
+          msgs.scrollTop = msgs.scrollHeight;
+        }
+        break;
+      }
+    }
+  });
+}
+
 function md(text: string): string {
+  // FORK 2026-06-24: pull ```html-render blocks out BEFORE markdown render so
+  // their raw HTML survives untouched, then swap in the sandboxed iframe after.
+  const htmlFrames: string[] = [];
+  const preExtracted = text.replace(/```html-render[ \t]*\r?\n([\s\S]*?)\r?\n?```/g, (_m, code) => {
+    const i = htmlFrames.length;
+    htmlFrames.push(code);
+    return `\n\nxTINKERHTMLFRAMEx${i}x\n\n`;
+  });
   // Ensure a blank line before table-header rows so markdown-it parses them
   // as tables even when they follow a list or paragraph with no gap.
-  const fixed = text.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
+  const fixed = preExtracted.replace(/([^\n])\n(\|[^\n]+\|\s*\n\|[\s:|-]+\|\s*\n)/g, "$1\n\n$2");
   let h = mdParser.render(fixed);
+  if (htmlFrames.length > 0) {
+    // markdown-it wraps the bare placeholder line in <p>…</p>; consume that too.
+    h = h.replace(/<p>\s*xTINKERHTMLFRAMEx(\d+)x\s*<\/p>|xTINKERHTMLFRAMEx(\d+)x/g, (_m, a, b) => {
+      const raw = htmlFrames[Number(a ?? b)];
+      if (raw === undefined) {
+        return "";
+      }
+      // Scripted widgets need JS isolation → sandboxed iframe. Static cards
+      // (every closing summary) render inline → no reload flicker, no scroll jump.
+      return /<script[\s>]/i.test(raw) ? htmlRenderFrame(raw) : htmlRenderInline(raw);
+    });
+  }
 
   // Jarvis voice styling
   h = h.replace(
@@ -6023,8 +6472,21 @@ function md(text: string): string {
   // still enforced server-side by config.openExternalFile's root allowlist,
   // so over-matching here cannot open anything outside the allowed roots.
   // Trailing punctuation guard: don't swallow a path-final '.' or '-'.
+  // FORK 2026-07-08: spaces + unicode letters/digits now supported so that
+  // real paths like "/home/user/HOME Olivella/Llicència projecte/file.md"
+  // linkify. \p{L}/\p{N} (requires /u flag) cover accented chars (\w is
+  // ASCII-only). Spaces are allowed inside the path BUT not when followed
+  // by '-' or whitespace — that pattern signals a shell flag (" --flag",
+  // " -f") and rejects the whole span. Shell metacharacters |;=&"` are
+  // absent from the char class, providing a second guard layer. data-path
+  // is double-quoted; double-quotes can't appear in the match (not in the
+  // class), so no attribute escaping is needed. \p{M} admits combining
+  // marks so NFD-encoded accents (e.g. macOS filenames) also linkify.
+  // FORK 2026-07-15: '·' (U+00B7, Catalan punt volat as in "Sol·licitud") is
+  // punctuation (Po), outside \p{L}\p{M}\p{N} — added literally to both
+  // char classes here and in the bare-filename regex below.
   h = h.replace(
-    /<code>(~\/[\w./-]*[\w/]|\/(?:home|usr|tmp|var|opt|etc|mnt|media|data|srv)\/[\w./-]*[\w/])<\/code>/g,
+    /<code>(~\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]| (?![-\s]))*[\p{L}\p{M}\p{N}·/_()+,'@#~-]|\/(?:home|usr|tmp|var|opt|etc|mnt|media|data|srv)\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]| (?![-\s]))*[\p{L}\p{M}\p{N}·/_()+,'@#~-])<\/code>/gu,
     '<code class="fs-link" data-path="$1" title="Click to open in system viewer">$1</code>',
   );
   // FORK 2026-05-10: ALSO wrap bare filenames (no slash, just `BRIEFING.md`)
@@ -6034,8 +6496,12 @@ function md(text: string): string {
   // got the .fs-link class above. The whitelist of extensions matches the
   // server-side allowlist behavior (we don't want `report.docx` resolving
   // because it's neither a text file nor an OS-openable doc here).
+  // FORK 2026-07-08: unicode + digit-first filenames. The old [A-Za-z][\w.-]*
+  // left `memòria_informe.html` (ò is not \w) and `3d_raw_data.html` (digit
+  // first) as dead text. \p{L}\p{M}\p{N} (with /u) mirror the absolute-path
+  // regex above.
   h = h.replace(
-    /<code>([A-Za-z][\w.-]*\.(?:md|txt|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|png|jpg|jpeg|gif|webp|svg|pdf|sh|py|css|html|htm|xml|toml|ini|csv|mp4|mp3|wav|go|rs|rb|php|sql|log))<\/code>/g,
+    /<code>([\p{L}\p{N}][\p{L}\p{M}\p{N}·._-]*\.(?:md|txt|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|png|jpg|jpeg|gif|webp|svg|pdf|sh|py|css|html|htm|xml|toml|ini|csv|mp4|mp3|wav|go|rs|rb|php|sql|log))<\/code>/gu,
     (full, name) => {
       // If this <code> is already the start of an fs-link replacement (the
       // earlier regex would have transformed it), skip. We can't easily look
@@ -6452,7 +6918,7 @@ async function buildInjectedPrompt(userText: string): Promise<string> {
   // section" (see reconstructInjectionFields).
   return (
     userText +
-    "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line (blank line before it): follow the fractal rules in your system prompt (MEMORY / PATTERN / RIPPLE / IMPROVE, ACTION-prefix when you changed something). The UI renders it as a separate collapsed bubble. Do NOT add a 💬 ANSWER label or any other section marker — just your normal answer, then the 🌿 FRACTAL section."
+    "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line (blank line before it). Fractal is the slow thinker: judge the finished turn, then leave DURABLE change — write the lesson or fix to disk NOW (memory, doc, recipe, note) instead of describing it; live evidence contradicting a stored note means update the note immediately, dated. If the turn's friction traced to a bug or limitation in our own code (tinkerclaw UI, gateway, a skill, a bridge prompt), NAME it as a bug and ATTEMPT the code fix in this reflection — or, if the fix is too large for the turn, file a one-line repro in `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/bug-log.md`. A workaround or memory note alone counts as a MISS when the root cause is our own code. Clean turn → exactly one line: `🌿 FRACTAL: clean — <one honest observation>`. Real signal only (a correction, a surprise, a recurrence, something made stale) → up to ~6 more lines: instance → pattern → producing system, touched surfaces, artifacts written (with paths). ATTRIBUTION IS STRICT: prefix `🌿 FRACTAL ACTION:` ONLY for changes the reflection itself made after the answer ended — never re-claim main-turn work. The UI renders it as a separate collapsed bubble. Do NOT add a 💬 ANSWER label or any other section marker."
   );
 }
 
@@ -6814,7 +7280,7 @@ function renderEnvelope(env: Envelope): string {
   const explanation = env.explanation
     ? `<div class="env-explanation">${md(env.explanation)}</div>`
     : "";
-  // FORK 2026-05-30 (the architect directive): progressive disclosure. The COLLAPSED
+  // FORK 2026-05-30 (the owner directive): progressive disclosure. The COLLAPSED
   // view is just the icon + headline — a small, plain-language warning the
   // normal user can glance past ("Gateway restarted"). Everything else
   // (explanation, actions, the technical kv/raw block) lives inside the
@@ -7120,7 +7586,14 @@ function renderMsg(
         text.startsWith("⚠️ Agent failed") ||
         text.startsWith("⚠ Agent failed") ||
         text.includes("Previous run is still shutting down") ||
-        text.includes("All models failed")
+        text.includes("All models failed") ||
+        // FORK 2026-07-08: raw SDK transport errors surfaced as assistant text —
+        // compaction spawns a second CC process on the live session and cuts the
+        // in-flight API stream ("socket connection was closed"). Compact bubble,
+        // not a full assistant reply. Length guard keeps real answers that merely
+        // QUOTE an API error out of this branch.
+        (text.startsWith("API Error:") && text.length < 400) ||
+        (text.includes("socket connection was closed unexpectedly") && text.length < 400)
       ) {
         h += `<div class="msg-overload-bubble exhausted">${md(text)}${retryBtn}</div>`;
         return h;
@@ -7464,7 +7937,7 @@ function renderThinkingIndicator(): string {
     // FORK 2026-06-04 — bug task-mpzgsvbo (Thinking indicators): the CHAT indicator is now
     // BINARY — it shows ONLY whether the viewed session has a live LLM call, as ONE row.
     // It used to render one row PER active run (main + each subagent), which is what produced
-    // the "multiple indicators at once" the architect reported. The per-run / per-subagent breakdown
+    // the "multiple indicators at once" the owner reported. The per-run / per-subagent breakdown
     // now lives ONLY in the RECIPES panel (+ the collapsible subagent chat bubbles). The Stop
     // button has always called the session-level abort() (see the delegated #messages handler),
     // so one Stop is the correct semantics. runBelongsToViewedSession stays the ONE shared
@@ -7782,7 +8255,11 @@ function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   h += `<span class="usage-bars-wrap" data-hint="${esc(usage.tooltip)}">`;
   h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${topW}%;background:${topColor}"></span></span>`;
   h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${bottomW}%;background:${bottomColor}"></span></span>`;
-  h += `</span></span>`;
+  h += `</span>`;
+  // FORK 2026-07-10: numeric % next to the bars — at real-world low utilization
+  // (e.g. 3%) the bars alone read as "0/broken" (three user reports).
+  h += `<span style="font-size:8px;color:var(--muted);font-family:'SF Mono',monospace;margin-left:3px;white-space:nowrap">${Math.round(usage.topPct)}·${Math.round(usage.bottomPct)}%</span>`;
+  h += `</span>`;
   return h;
 }
 
@@ -8284,6 +8761,12 @@ function renderTabs() {
     if (!tab.isAttached) {
       classes.push("tab-unattached");
     }
+    // FORK 2026-06-24 — P2 shimmer: re-apply the auto-name pulse on every rebuild, driven by the
+    // Tab model (not imperative DOM toggling), so switchToTab→renderTabs can't drop it and it
+    // pulses on ANY tab regardless of focus.
+    if (tab.titleGenerating) {
+      classes.push("tab-renaming");
+    }
 
     const isMain = tab.id === "tab-main";
     const closeBtn = isMain
@@ -8354,23 +8837,10 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
       } else if (action === "auto") {
         const t = tabs.find((tt) => tt.id === tabId);
         if (t) {
-          // FORK 2026-06-06 — u2-tab-naming: while the (local-LLM) summary runs, KEEP the tab's
-          // current title (icon + words) visible and gently pulse it via the .tab-renaming class —
-          // do NOT swap in a placeholder. generateTabTitle replaces the title on success; on
-          // failure/empty it leaves the title untouched. Either way we remove the pulse when done.
-          const setRenaming = (on: boolean) => {
-            const el = document.querySelector<HTMLElement>(
-              `#tab-bar-scroll [data-tab-id="${t.id}"]`,
-            );
-            if (el) el.classList.toggle("tab-renaming", on);
-          };
-          setRenaming(true);
-          void generateTabTitle(t).finally(() => {
-            setRenaming(false);
-            // generateTabTitle re-renders on success (dropping the class with the old node); ensure
-            // the class is cleared on the current node too in the no-change path.
-            setRenaming(false);
-          });
+          // FORK 2026-06-24 — P2 shimmer: the renaming pulse is now driven by tab.titleGenerating
+          // (set inside generateTabTitle, re-applied by renderTabs on every rebuild), so we no
+          // longer toggle the .tab-renaming DOM class imperatively here — just kick off the title.
+          void generateTabTitle(t);
         }
       }
     });
@@ -8556,6 +9026,16 @@ function closeTab(tabId: string) {
   tabs.splice(idx, 1);
   tabStates.delete(tabId);
 
+  // FORK 2026-06-25 — closing a non-empty tab must NOT evict its session from the
+  // SESSIONS panel. The session persists server-side (soft-delete invariant); it only
+  // vanished because a freshly-used session isn't in the stale local `sessions` array
+  // yet, so the panel showed it solely via the open-tab injection in updateSessionsPanel
+  // (which drops the moment the tab is spliced out). Re-fetch sessions.list so the
+  // now-detached session re-appears as a real server-backed row and stays until the user
+  // explicitly removes it via the bin icon (sessions.delete). loadSessions() repaints the
+  // panel itself, so the close path below only needs to handle tab focus.
+  void loadSessions();
+
   if (activeTabId === tabId) {
     switchToTab("tab-main");
     // switchToTab already calls renderTabs + saveTabs
@@ -8575,14 +9055,28 @@ function closeTab(tabId: string) {
 //      turn. This is the "seeded from the parent's session" fallback.
 //   3. A pure client-side `tinker:*` key — last resort if both RPCs are unreachable; the gateway
 //      lazily auto-creates it on first send (no context inheritance).
-async function resolveClonedSessionKey(parentKey: string, label: string): Promise<string> {
+// FORK 2026-07-16 — return WHETHER the parent's transcript was actually forked, not just a key.
+// Cause of a silent "blank clone": the parent tab was a client-only `tinker:*` session with no
+// server-persisted transcript, so `sessions.fork` rejects with UNAVAILABLE "session transcript is
+// missing" — and the old catch{} swallowed that, falling through to an EMPTY `sessions.create`
+// lineage session with zero user-visible signal. Now the caller can toast the truth instead of
+// leaving the user staring at an unexplained blank tab.
+async function resolveClonedSessionKey(
+  parentKey: string,
+  label: string,
+): Promise<{ key: string; forked: boolean }> {
   try {
     const r = await req<{ key?: string }>("sessions.fork", { key: parentKey, label });
     if (r?.key) {
-      return r.key;
+      return { key: r.key, forked: true };
     }
-  } catch {
-    // RPC not present on this gateway build — fall through to the deployed lineage path.
+  } catch (e) {
+    // Distinguish "RPC absent on this build" (fall through silently) from "RPC present but the
+    // parent has no transcript to copy" — the latter is why the clone comes up empty.
+    const msg = String((e as { message?: string })?.message ?? e ?? "").toLowerCase();
+    if (msg.includes("transcript") || msg.includes("unavailable")) {
+      console.warn(`[cloneTab] fork of ${parentKey} failed (no transcript) — clone will be empty`);
+    }
   }
   try {
     const r = await req<{ key?: string }>("sessions.create", {
@@ -8590,12 +9084,12 @@ async function resolveClonedSessionKey(parentKey: string, label: string): Promis
       label,
     });
     if (r?.key) {
-      return r.key;
+      return { key: r.key, forked: false };
     }
   } catch {
     // sessions.create unavailable / rejected — fall through to a client-only key.
   }
-  return `tinker:${Date.now().toString(36)}`;
+  return { key: `tinker:${Date.now().toString(36)}`, forked: false };
 }
 
 async function cloneTab(parentTabId: string) {
@@ -8612,9 +9106,15 @@ async function cloneTab(parentTabId: string) {
   const icon = leadingEmoji(parent.title);
   const title = icon ? `${icon}${parent.title}` : parent.title;
 
-  const sessionKey = parent.sessionKey
+  const resolved = parent.sessionKey
     ? await resolveClonedSessionKey(parent.sessionKey, parent.title)
-    : `tinker:${Date.now().toString(36)}`;
+    : { key: `tinker:${Date.now().toString(36)}`, forked: false };
+  const sessionKey = resolved.key;
+  // FORK 2026-07-16 — a clone whose parent had no server-persisted transcript comes up blank; say
+  // so instead of leaving the user guessing (the old silent-empty-fallback confusion).
+  if (!resolved.forked) {
+    showToast("Cloned as a fresh tab — the source had no saved history to copy.", true);
+  }
 
   const clone: Tab = {
     id: generateTabId(),
@@ -8632,6 +9132,10 @@ async function cloneTab(parentTabId: string) {
   renderTabs();
   switchToTab(clone.id);
   updateSessionsPanel();
+  // FORK 2026-06-26 — a freshly cloned tab KEEPS its doubled-icon parent title; it is NOT
+  // auto-renamed on creation. (An earlier immediate kick wiped the clone's identity before the
+  // user had even used it.) It renames normally via the turn-"end" titler once the user takes a
+  // turn in the clone — the 45s title-RPC timeout fix is what made that path actually land.
 }
 
 function attachSessionToTab(key: string) {
@@ -8785,6 +9289,7 @@ function describeError(reason: string, errMsg: string): string {
 
 const SHORT_NAMES: Record<string, string> = {
   "qwen3:14b-q4_K_M": "qwen3-14b",
+  "gemini-3.5-flash-preview": "gem-3.5-fl",
   "gemini-3.1-pro-preview": "gem-3.1-pro",
   "gemini-3-flash-preview": "gem-3-fl",
   "gemini-2.5-pro": "gem-2.5-pro",
@@ -8801,13 +9306,18 @@ function modelName(id: string): string {
   let short = SHORT_NAMES[name] || SHORT_NAMES[clean] || clean;
   // Anthropic model names: opus-4-6 → opus4.6, sonnet-4-6 → sonnet4.6, haiku-4-5 → haiku4.5
   short = short.replace(/^(opus|sonnet|haiku)-(\d+)-(\d+).*$/, "$1$2.$3");
+  // FORK 2026-07-10: single-version anthropic ids (fable-5, sonnet-5) + trim
+  // noise suffixes so rows stay compact (the owner: "names should be shortened").
+  short = short.replace(/^(opus|sonnet|haiku|fable)-(\d+)$/, "$1$2");
+  short = short.replace(/-(preview|latest)$/, "");
   return short;
 }
 
 function simplifyProfileLabel(label: string, mode: string): string {
-  // "default" with api_key mode → "api"
+  // FORK 2026-07-10: "default" api-key profiles carry no signal — drop the
+  // " · api" suffix entirely (the owner: redundant).
   if (label === "default") {
-    return mode === "api_key" ? "api" : "";
+    return "";
   }
   // cli-gm / oauth-gm → oauth (GM is primary, no suffix needed)
   if (/^(?:cli|oauth)-gm$/i.test(label)) {
@@ -8967,13 +9477,16 @@ function updateBudgetPanel() {
     chain.push(...fallbacks);
   }
   const _badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467"];
-  const chainSet = new Set(chain);
-  const otherIds = Object.keys(models || {}).filter((id) => !chainSet.has(id));
-  // FORK 2026-05-09: sort by explicit JSON rank first (user-chosen global
-  // performance order in openclaw.json), fall back to bible's tier-matching
-  // when rank is missing on both sides. This honors finer-grained orderings
-  // like gpt-5.5 above gpt-5.4 within the same tier.
-  otherIds.sort((a, b) => {
+  // FORK 2026-07-10: ONE list ordered purely by rank (smartness). The old
+  // chain-first layout pinned the primary (opus-4.8) above smarter models
+  // (fable, gpt-5.6-sol) \u2014 the owner: "models should be in order of smartness".
+  // Chain membership keeps its circled badge, but position = rank.
+  const chainBadge = new Map<string, string>();
+  for (let i = 0; i < chain.length; i++) {
+    chainBadge.set(chain[i], _badges[i] ?? "");
+  }
+  const allIds = [...new Set([...chain, ...Object.keys(models || {})])];
+  allIds.sort((a, b) => {
     const ra = (models?.[a] as { rank?: number } | undefined)?.rank ?? 999;
     const rb = (models?.[b] as { rank?: number } | undefined)?.rank ?? 999;
     if (ra !== rb) {
@@ -8981,16 +9494,13 @@ function updateBudgetPanel() {
     }
     return modelPerfRank(a) - modelPerfRank(b);
   });
-  if (chain.length || otherIds.length) {
+  if (allIds.length) {
     const open = !collapsedModelSections.has("models");
     html += `<div class="model-group${open ? " open" : ""}" data-section="models">`;
     html += '<div class="model-group-label">MODELS</div>';
     html += '<div class="model-group-body">';
-    for (let i = 0; i < chain.length; i++) {
-      renderAuthKeyRows(chain[i], _badges[i] ?? "");
-    }
-    for (const id of otherIds) {
-      renderAuthKeyRows(id, "");
+    for (const id of allIds) {
+      renderAuthKeyRows(id, chainBadge.get(id) ?? "");
     }
     html += "</div></div>";
   }
@@ -9041,7 +9551,7 @@ function updateBudgetPanel() {
   });
 
   // FORK 2026-06-13 (eeg): SECONDARY (horizontal/tilt) wheel = vertical SCALE zoom
-  // of the length axis (the architect 2026-06-13). the architect's secondary wheel emits a
+  // of the length axis (the owner 2026-06-13). the owner's secondary wheel emits a
   // HORIZONTAL delta (deltaX) — which was sliding the panel sideways; we capture
   // that (and Ctrl+wheel as a no-tilt-wheel fallback) for zoom instead. The
   // VERTICAL wheel (deltaY) still scrolls history normally.
@@ -9210,6 +9720,18 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
 
 // ─── Model Panel Rows ───
 
+// FORK 2026-07-09: visible per-model token count (7d, Session/All aware) — the
+// panel previously showed only rate-limit % bars, which read as "zero usage".
+function modelTokenLabel(modelId: string): string {
+  const src = budgetScope === "session" ? (modelTokensBySession[sessionKey] ?? {}) : modelTokensAll;
+  const t = src[modelId] ?? 0;
+  if (t <= 0) {
+    return '<span class="model-tokens-col" style="min-width:40px"></span>';
+  }
+  const scopeTip = budgetScope === "session" ? "this session" : "all sessions, 7d";
+  return `<span class="model-tokens-col" data-hint="${fmtTokCount(t)} tokens (${scopeTip})" style="min-width:40px;text-align:right;font-size:9px;color:var(--muted);font-family:'SF Mono',monospace">${fmtTokCount(t)}</span>`;
+}
+
 function renderModelRow(
   id: string,
   provider: string,
@@ -9247,6 +9769,7 @@ function renderModelRow(
 
   return `<div class="model-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    ${modelTokenLabel(id)}
     ${barsHtml}
     ${costHtml}
     ${countBadge}
@@ -9288,6 +9811,7 @@ function renderAuthKeyRow(
 
   return `<div class="model-row auth-key-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
     <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    ${modelTokenLabel(modelId)}
     ${barsHtml}
     ${costHtml}
     ${countBadge}
@@ -9365,6 +9889,16 @@ function classifySession(key: string): { group: string; shortLabel: string } {
     const label = tab?.title || tinkerSuffix?.slice(0, 8) || "tab";
     return { group: "pinned", shortLabel: label };
   }
+  // FORK 2026-06-25 (the owner) — dashboard:* keys are real user chat sessions (e.g. a
+  // cloned tab). Without this branch they fell through to "other", which is COLLAPSED
+  // by default — so a closed clone-tab vanished from the panel entirely. Group them with
+  // the pinned tabs (labelled by their cookiePhrase via renderSessionRow) so they stay
+  // discoverable and reopenable like any other tab.
+  if (/:dashboard:/.test(key)) {
+    const tab = tabs.find((t) => sessionKeyMatches(key, t.sessionKey));
+    const uuid = key.split(":dashboard:")[1] ?? "";
+    return { group: "pinned", shortLabel: tab?.title || uuid.slice(0, 8) };
+  }
   return { group: "other", shortLabel: key.slice(0, 24) };
 }
 
@@ -9399,7 +9933,7 @@ const THINK_STOPS: { lvl: string; label: string; short: string }[] = [
 ];
 
 // FORK 2026-06-13 (eeg): shared tick-label layer printed UNDER a force slider so
-// EVERY stop is visible (the architect's "every option written in the slider") and each
+// EVERY stop is visible (the owner's "every option written in the slider") and each
 // label centers on the SAME x as its seismograph column (eegStopLeftCss → bible
 // §5.8h invariant 2 alignment). The active stop is bolded via .active.
 function renderSliderStops(labels: string[], activeIdx: number): string {
@@ -9432,12 +9966,12 @@ function highlightSliderStop(e: Event, rowSelector: string): void {
 // FORK 2026-06-13 (eeg): the model-force slider's tick row — each stop shows a
 // short horizontal line "chip" in that model's EEG IDENTITY (provider color +
 // cost-thickness, google = rainbow), so the slider previews how each model will
-// appear on the seismograph (the architect 2026-06-13). Auto = a thin gray dashed chip
+// appear on the seismograph (the owner 2026-06-13). Auto = a thin gray dashed chip
 // (router's choice). Thickness uses the model's cost at a fixed MEDIUM reference
 // effort so the chips are comparable across models.
 function renderModelChip(id: string | null, idx: number): string {
   const W = 30;
-  const H = 13; // tall enough for fable's 10px line (the architect's linear scale)
+  const H = 13; // tall enough for fable's 10px line (the owner's linear scale)
   const y = H / 2;
   if (id === null) {
     return (
@@ -9518,7 +10052,7 @@ function shortModelLabel(id: string): string {
   if (/gpt-?[\d.]+/.test(lo)) {
     const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
     const k = /pro/.test(lo) ? "p" : /mini/.test(lo) ? "m" : /nano/.test(lo) ? "n" : "";
-    // "GPT" prefix (the architect 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
+    // "GPT" prefix (the owner 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
     // suffix is dropped — only gpt-5.3-codex carries it and there is no plain 5.3.
     return `GPT${v}${k}`;
   }
@@ -9579,7 +10113,7 @@ function renderThinkingSlider(): string {
 
 // FORK 2026-06-13 (eeg): stops for the model-force slider (bible §5.8h q2) —
 // stop 0 = Auto (router controls the model axis), then the configured models
-// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (the architect 2026-06-13), so
+// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (the owner 2026-06-13), so
 // the model axis reads low→high left→right exactly like the effort slider. Rank
 // (Artificial-Analysis Intelligence Index in openclaw.json; lower = smarter) is
 // the sort key, modelPerfRank breaks ties. Capped at 7 (keeping the 7 smartest)
@@ -9594,11 +10128,11 @@ function modelForceStops(): { id: string | null; label: string }[] {
     return stops;
   }
   // FORK 2026-06-13 (eeg): drop the older claude-opus-4-7 (keep only opus-4-8) and
-  // gpt-5.3-codex (the architect: "never makes sense to use it"). From Anthropic the slider
+  // gpt-5.3-codex (the owner: "never makes sense to use it"). From Anthropic the slider
   // keeps Sonnet, Opus and Fable.
   const EEG_SLIDER_EXCLUDE = /opus-4-7|gpt-5\.3/i;
   const rankOf = (id: string): number => cfg.models?.[id]?.rank ?? 999;
-  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (the architect:
+  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (the owner:
   // "remove 5.4m, no need if it is not as smart as sonnet"). Sonnet's rank is the
   // intelligence floor; anything ranked below it (mini/nano/haiku/older) is cut.
   let sonnetRank = 999;
@@ -9608,8 +10142,13 @@ function modelForceStops(): { id: string | null; label: string }[] {
       break;
     }
   }
+  // FORK 2026-06-24: Fable is the owner's flagship but export-controlled today, so a
+  // model-rank-refresh scores it at the BOTTOM (rank ~25). Always whitelist it past
+  // the sonnet-rank intelligence gate so it stays visible on the slider for when it
+  // returns — the owner wants to see it even while it can't yet be selected for real.
+  const FORCE_INCLUDE = /fable/i;
   const ids = Object.keys(cfg.models || {}).filter(
-    (id) => !EEG_SLIDER_EXCLUDE.test(id) && rankOf(id) <= sonnetRank,
+    (id) => !EEG_SLIDER_EXCLUDE.test(id) && (rankOf(id) <= sonnetRank || FORCE_INCLUDE.test(id)),
   );
   // smartest FIRST (lower rank = smarter)
   ids.sort((a, b) => {
@@ -9621,16 +10160,16 @@ function modelForceStops(): { id: string | null; label: string }[] {
     return modelPerfRank(a) - modelPerfRank(b);
   });
   // keep the 8 SMARTEST (8 so claude-sonnet-4-6 at rank 7 / 8th-smartest makes
-  // the cut — the architect 2026-06-13), then flip so the smartest sits on the RIGHT
-  const top = ids.slice(0, 8);
+  // the cut — the owner 2026-06-13), then flip so the smartest sits on the RIGHT.
+  // Fable sorts LAST by rank (it's unavailable), so reserve its slot explicitly —
+  // otherwise slice(0,8) would evict it again the next time the ranks refresh.
+  const fableId = ids.find((id) => FORCE_INCLUDE.test(id));
+  const top = ids.filter((id) => !FORCE_INCLUDE.test(id)).slice(0, fableId ? 7 : 8);
   top.reverse();
-  // FORK 2026-06-13: the architect pins FABLE to the far right (his flagship sits at the
-  // end of the intelligence axis, ahead of the rank-1 opus). The rest keep their
-  // intelligence order.
-  const fi = top.findIndex((id) => /fable/i.test(id));
-  if (fi >= 0) {
-    const [fable] = top.splice(fi, 1);
-    top.push(fable);
+  // FORK 2026-06-13: the owner pins FABLE to the far right (his flagship sits at the
+  // end of the intelligence axis, ahead of the rank-1 opus).
+  if (fableId) {
+    top.push(fableId);
   }
   for (const id of top) {
     stops.push({ id, label: modelName(id) });
@@ -10130,7 +10669,7 @@ function init() {
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🕸️ Models
+        <div class="rpanel-header">🕸️ Models ${zoneDoc("slider")}
           <span class="ct-switch" id="budget-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -10141,7 +10680,7 @@ function init() {
         <div id="budget-panel" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel" id="eeg-panel">
-        <div class="rpanel-header">📈 EEG
+        <div class="rpanel-header">📈 EEG ${zoneDoc("eeg")}
           <span class="ct-switch" id="eeg-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-eeg-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -10151,7 +10690,7 @@ function init() {
         <div id="eeg-panel-body" class="rpanel-body"></div>
       </div>
       <div class="rpanel" id="prefrontal-panel">
-        <div class="rpanel-header"><button id="recipes-book-btn" class="rpanel-header-btn" title="Open the recipe book">🌳 RECIPES</button> <span id="prefrontal-count" class="sessions-count"></span>
+        <div class="rpanel-header"><button id="recipes-book-btn" class="rpanel-header-btn" title="Open the recipe book">🌳 RECIPES</button> <span id="prefrontal-count" class="sessions-count"></span> ${zoneDoc("recipes")}${zoneDoc("prefrontal")}
           <span class="ct-switch" id="prefrontal-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -10162,7 +10701,7 @@ function init() {
         <div id="recipe-progress" class="recipe-progress-container" style="display:none"></div>
       </div>
       <div class="rpanel" id="amygdala-panel">
-        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span>
+        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span> ${zoneDoc("amygdala")}
           <span class="ct-switch" id="amygdala-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -10486,15 +11025,27 @@ function init() {
   // same filename across multiple bubbles.
   const bareNameCache = new Map<string, string | null>();
   function openResolvedPath(link: HTMLElement, path: string): void {
+    // XIVATO 2026-07-13: time the click→RPC-ack leg so slow opens can be
+    // attributed. If rpcMs is small, everything after the ack is the viewer
+    // app's own cold start (e.g. MarkText/Electron) — not gateway or UI.
+    const t0 = performance.now();
+    console.info(`[fs-link] click → opening ${path}`);
     link.classList.add("fs-link-opening");
     req("config.openExternalFile", { path })
-      .then((res: { ok?: boolean; error?: string; path?: string }) => {
+      .then((res: { ok?: boolean; error?: string; path?: string; serverMs?: number }) => {
+        const rpcMs = Math.round(performance.now() - t0);
         link.classList.remove("fs-link-opening");
         if (res?.ok === false) {
+          console.warn(`[fs-link] FAILED after ${rpcMs}ms: ${res.error} (${path})`);
           link.classList.add("fs-link-error");
           link.title = res.error ?? "open failed";
           setTimeout(() => link.classList.remove("fs-link-error"), 4000);
         } else {
+          console.info(
+            `[fs-link] RPC ack ${rpcMs}ms · gateway spawn ${res?.serverMs ?? "?"}ms — ` +
+              `qualsevol espera posterior és l'app visor arrencant`,
+          );
+          link.title = `obert — RPC ${rpcMs}ms; la resta és l'app visor`;
           link.classList.add("fs-link-opened");
           setTimeout(() => link.classList.remove("fs-link-opened"), 1500);
         }
@@ -10900,7 +11451,7 @@ function init() {
         (m) => (m.id.startsWith("kpi.") || m.id.startsWith("graph.")) && m.class === "SNAPSHOT",
       );
       // FORK 2026-06-05 — load ALL recorded history (no time window). The 30d
-      // cap was hiding months of already-collected data; the architect wants the full
+      // cap was hiding months of already-collected data; the owner wants the full
       // record. No from_ts → every observation since the metric's first point;
       // the chart's fullRange auto-fits the span and zoom/pan covers it all.
       const obsLists = await Promise.all(
@@ -10925,6 +11476,10 @@ function init() {
       // adaptive time X axis, colored lines + legend + hover crosshair.
       const GROUP_TITLES: Record<string, string> = {
         github: "GitHub",
+        // FORK 2026-06-26 — stars get their own card (group key = id segment[1]
+        // = "stars") so the 0–N star scale isn't crushed by the cumulative
+        // views/clones on the github-traffic card.
+        stars: "GitHub stars",
         moltbook: "Moltbook",
         clawhub: "ClawHub views",
         clawhubinstalls: "ClawHub installs",
@@ -10963,6 +11518,10 @@ function init() {
         // all-time-tracked total: a rising line instead of spiky daily counts. (The old
         // "don't sum — it's a 14d rolling total" caveat predates the 2026-06-05 switch to
         // real daily counts and no longer applies.)
+        // FORK 2026-06-26 — GitHub stars over time (gold ⭐). Values are already
+        // cumulative counts (0 at repo creation → N), so NOT cumulative-summed.
+        // Left axis, its own card (group "stars").
+        "graph.stars.tinkerclaw": { color: "#fbbf24", axis: "left", label: "tinkerclaw" },
         "graph.github.traffic.clones14d": { color: "#8ECAE6", axis: "left", cumulative: true },
         "graph.github.traffic.views14d": { color: "#F4A261", axis: "right", cumulative: true },
         // FORK 2026-06-14 — Website visits (GA4 daily sessions) shown CUMULATIVE, one
@@ -15189,25 +15748,51 @@ function init() {
     const totals = usageData?.totals ?? {};
     const sessionUsage: unknown[] = usageData?.sessions ?? [];
     const dailyCost: unknown[] = costData?.daily ?? [];
-    const totalIn = totals.inputTokens ?? 0;
-    const totalOut = totals.outputTokens ?? 0;
-    const totalCost = costData?.totalCost != null ? Number(costData.totalCost) : null;
-    sub.textContent = `${startDate} → ${today} · ${altTokens(totalIn + totalOut)} tokens${totalCost != null ? ` · $${totalCost.toFixed(2)}` : ""}`;
+    // FORK 2026-07-08 — field-name alignment: the sessions.usage / usage.cost RPCs
+    // return `input`/`output` (not `inputTokens`/`outputTokens`), per-session totals
+    // nested under `s.usage`, provider under `s.modelProvider`, and cost under
+    // `costData.totals`. The panel read the wrong paths → every figure rendered 0.
+    const totalIn = totals.input ?? 0;
+    const totalOut = totals.output ?? 0;
+    const totalCache = (totals.cacheRead ?? 0) + (totals.cacheWrite ?? 0);
+    const totalAll = totals.totalTokens ?? totalIn + totalOut + totalCache;
+    const costTotals = costData?.totals ?? {};
+    const totalCost = costTotals.totalCost != null ? Number(costTotals.totalCost) : null;
+    sub.textContent = `${startDate} → ${today} · ${altTokens(totalAll)} tokens${totalCost != null ? ` · $${totalCost.toFixed(2)}` : ""}`;
 
     // Insights: top model, provider, session
     const modelMap: Record<string, number> = {};
     const providerMap: Record<string, number> = {};
     let topSession = { key: "", tokens: 0 };
     for (const s of sessionUsage) {
-      const tok = (s.inputTokens ?? 0) + (s.outputTokens ?? 0);
-      if (s.model) {
-        modelMap[s.model] = (modelMap[s.model] ?? 0) + tok;
-      }
-      if (s.provider) {
-        providerMap[s.provider] = (providerMap[s.provider] ?? 0) + tok;
+      const u = s.usage ?? {};
+      const tok = u.totalTokens ?? (u.input ?? 0) + (u.output ?? 0);
+      // FORK 2026-07-09 — attribute tokens by the ACTUAL per-call model, not the
+      // session-level `s.model` (an override/last-model that is null for ~half of
+      // sessions → 59M tokens fell into a phantom bucket and fable read far below
+      // its real share). The real split is in `usage.modelUsage[]`.
+      const mu: unknown[] = u.modelUsage ?? [];
+      if (mu.length) {
+        for (const e of mu) {
+          const et = e.totals?.totalTokens ?? (e.totals?.input ?? 0) + (e.totals?.output ?? 0);
+          if (e.model) {
+            modelMap[e.model] = (modelMap[e.model] ?? 0) + et;
+          }
+          if (e.provider) {
+            providerMap[e.provider] = (providerMap[e.provider] ?? 0) + et;
+          }
+        }
+      } else {
+        if (s.model) {
+          modelMap[s.model] = (modelMap[s.model] ?? 0) + tok;
+        }
+        const prov = s.modelProvider ?? s.providerOverride;
+        if (prov) {
+          providerMap[prov] = (providerMap[prov] ?? 0) + tok;
+        }
       }
       if (tok > topSession.tokens) {
-        topSession = { key: s.sessionKey ?? s.key ?? "?", tokens: tok };
+        topSession = { key: s.key ?? s.sessionKey ?? "?", tokens: tok };
       }
     }
     const topModel = Object.entries(modelMap).toSorted((a, b) => b[1] - a[1])[0];
@@ -15215,7 +15800,7 @@ function init() {
 
     // Daily bar chart data
     const maxDailyCost =
-      dailyCost.reduce((mx: number, d: unknown) => Math.max(mx, Number(d.cost ?? 0)), 0) || 1;
+      dailyCost.reduce((mx: number, d: unknown) => Math.max(mx, Number(d.totalCost ?? 0)), 0) || 1;
 
     // Period selector
     const periodBar = `<div class="alt-card" style="display:flex;gap:6px;align-items:center;padding:20px 12px;flex-wrap:wrap">
@@ -15230,13 +15815,13 @@ function init() {
         <div class="alt-card"><h3>Tokens</h3>
           ${altRow("Input", altTokens(totalIn))}
           ${altRow("Output", altTokens(totalOut))}
-          ${altRow("Total", `<strong>${altTokens(totalIn + totalOut)}</strong>`)}
-          ${totals.contextTokens != null ? altRow("Context", altTokens(totals.contextTokens)) : ""}
+          ${totalCache > 0 ? altRow("Cache", altTokens(totalCache)) : ""}
+          ${altRow("Total", `<strong>${altTokens(totalAll)}</strong>`)}
         </div>
         <div class="alt-card"><h3>Cost</h3>
           ${totalCost != null ? altRow("Total", `<strong>$${totalCost.toFixed(4)}</strong>`) : ""}
-          ${costData?.inputCost != null ? altRow("Input", `$${Number(costData.inputCost).toFixed(4)}`) : ""}
-          ${costData?.outputCost != null ? altRow("Output", `$${Number(costData.outputCost).toFixed(4)}`) : ""}
+          ${costTotals.inputCost != null ? altRow("Input", `$${Number(costTotals.inputCost).toFixed(4)}`) : ""}
+          ${costTotals.outputCost != null ? altRow("Output", `$${Number(costTotals.outputCost).toFixed(4)}`) : ""}
           ${totalCost != null && periodDays > 1 ? altRow("Avg/day", `$${(totalCost / periodDays).toFixed(4)}`) : ""}
           ${!costData ? altRow("Info", "Cost API not available") : ""}
         </div>
@@ -15263,7 +15848,7 @@ function init() {
         <div style="display:flex;flex-direction:column;gap:3px">
           ${dailyCost
             .map((d: unknown) => {
-              const c = Number(d.cost ?? 0);
+              const c = Number(d.totalCost ?? 0);
               const pct = maxDailyCost > 0 ? (c / maxDailyCost) * 100 : 0;
               return `<div style="display:flex;align-items:center;gap:8px;font-size:10px">
               <span style="width:70px;color:var(--muted);font-family:'SF Mono',monospace;flex-shrink:0">${altEsc(d.date ?? "?")}</span>
@@ -15296,21 +15881,29 @@ function init() {
             ${sessionUsage
               .toSorted(
                 (a: unknown, b: unknown) =>
-                  (b.inputTokens ?? 0) +
-                  (b.outputTokens ?? 0) -
-                  ((a.inputTokens ?? 0) + (a.outputTokens ?? 0)),
+                  (b.usage?.totalTokens ?? 0) - (a.usage?.totalTokens ?? 0),
               )
               .slice(0, 50)
               .map((s: unknown) => {
-                const inT = s.inputTokens ?? 0;
-                const outT = s.outputTokens ?? 0;
+                const u = s.usage ?? {};
+                const inT = u.input ?? 0;
+                const outT = u.output ?? 0;
+                const totT = u.totalTokens ?? inT + outT;
+                // Session-level model is often null — fall back to the dominant
+                // model actually used in this session (usage.modelUsage[]).
+                const dom = (u.modelUsage ?? []).toSorted(
+                  (a: unknown, b: unknown) =>
+                    (b.totals?.totalTokens ?? 0) - (a.totals?.totalTokens ?? 0),
+                )[0];
+                const modelName = s.model ?? dom?.model ?? "—";
+                const provName = s.modelProvider ?? s.providerOverride ?? dom?.provider ?? "—";
                 return `<tr style="border-bottom:1px solid rgba(74,63,48,0.2)">
-                <td style="padding:4px 8px;color:var(--accent);font-family:'SF Mono',monospace;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${altEsc(s.sessionKey ?? s.key ?? "?")}</td>
-                <td style="padding:4px 6px;color:var(--muted)">${altEsc(s.model ?? "—")}</td>
-                <td style="padding:4px 6px;color:var(--muted)">${altEsc(s.provider ?? "—")}</td>
+                <td style="padding:4px 8px;color:var(--accent);font-family:'SF Mono',monospace;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${altEsc(s.key ?? s.sessionKey ?? "?")}</td>
+                <td style="padding:4px 6px;color:var(--muted)">${altEsc(modelName)}</td>
+                <td style="padding:4px 6px;color:var(--muted)">${altEsc(provName)}</td>
                 <td style="padding:4px 6px;text-align:right;color:var(--muted)">${altTokens(inT)}</td>
                 <td style="padding:4px 6px;text-align:right">${altTokens(outT)}</td>
-                <td style="padding:4px 6px;text-align:right;font-weight:600">${altTokens(inT + outT)}</td>
+                <td style="padding:4px 6px;text-align:right;font-weight:600">${altTokens(totT)}</td>
               </tr>`;
               })
               .join("")}
@@ -16366,14 +16959,27 @@ function init() {
   });
 
   // ═══════════════ RECIPES ═══════════════
-  const RECIPE_CATEGORIES = {
+  const RECIPE_CATEGORIES: Record<string, { label: string; color: string; icon: string }> = {
     coding: { label: "Coding", color: "#6b8e23", icon: "\u2328\uFE0F" },
     writing: { label: "Writing & Research", color: "#8b5cf6", icon: "\uD83D\uDCDD" },
     operations: { label: "Operations", color: "#f59e0b", icon: "\u2699\uFE0F" },
     analysis: { label: "Analysis", color: "#3b82f6", icon: "\uD83D\uDD0D" },
     security: { label: "Security", color: "#ef4444", icon: "\uD83D\uDEE1\uFE0F" },
     communication: { label: "Communication", color: "#10b981", icon: "\uD83D\uDCAC" },
-  } as const;
+    marketing: { label: "Marketing", color: "#f97316", icon: "\uD83D\uDCE3" },
+    combinator: { label: "Combinators", color: "#14b8a6", icon: "\uD83E\uDDE9" },
+  };
+  // Fallback rendering for any category emitted by the backend that isn't declared
+  // above \u2014 guarantees a new category folder NEVER silently drops from the tab.
+  const RECIPE_CAT_FALLBACK = { color: "#c19a6b", icon: "\uD83D\uDCE6" };
+  function recipeCatMeta(key: string): { label: string; color: string; icon: string } {
+    return (
+      RECIPE_CATEGORIES[key] ?? {
+        label: key.replace(/[-_]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        ...RECIPE_CAT_FALLBACK,
+      }
+    );
+  }
 
   // FORK 2026-05-14 — RECIPE_CATALOG deleted. Kit data comes exclusively from
   // prefrontal.kit.list (which parses kit.md on disk for both source-tree and
@@ -16487,6 +17093,7 @@ function init() {
       summary: string;
       tags: string[];
       category: string;
+      subdivision?: string;
       source: "ours" | "downloaded";
       path: string;
     };
@@ -16559,7 +17166,14 @@ function init() {
       }
 
       let totalVisible = 0;
-      for (const [catKey, cat] of Object.entries(RECIPE_CATEGORIES)) {
+      // Ordered category keys: the declared ones first (in their curated order),
+      // then any extra category the backend emitted that we don't declare — so a
+      // new category folder is ALWAYS rendered, never silently dropped.
+      const declaredKeys = Object.keys(RECIPE_CATEGORIES);
+      const extraKeys = [...grouped.keys()].filter((k) => !declaredKeys.includes(k)).sort();
+      const orderedCatKeys = [...declaredKeys, ...extraKeys];
+      for (const catKey of orderedCatKeys) {
+        const cat = recipeCatMeta(catKey);
         const allInCat = grouped.get(catKey) ?? [];
         const items = allInCat.filter((k) => {
           if (!ql) return true;
@@ -16578,8 +17192,32 @@ function init() {
         html += `<span class="recipe-cat-label">${cat.label}</span>`;
         html += `<span class="recipe-cat-count">${items.length}</span>`;
         html += `</div><div class="recipe-cat-items">`;
+        // Group items by subdivision (sub-category). Undeclared subdivision → the
+        // category's direct bucket (rendered first, no sub-header).
+        const bySub = new Map<string, NormalizedKit[]>();
         for (const kit of items) {
-          html += recipeCardHtml(kit);
+          const key = kit.subdivision?.trim() || "";
+          const arr = bySub.get(key) ?? [];
+          arr.push(kit);
+          bySub.set(key, arr);
+        }
+        const subKeys = [...bySub.keys()].sort((a, b) => {
+          if (a === "") return -1; // ungrouped items first
+          if (b === "") return 1;
+          return a.localeCompare(b);
+        });
+        const hasNamedSub = subKeys.some((s) => s !== "");
+        for (const subKey of subKeys) {
+          if (subKey !== "" || (hasNamedSub && subKey === "")) {
+            const label =
+              subKey === ""
+                ? "General"
+                : subKey.replace(/[-_/]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+            html += `<div class="recipe-subdiv-label">${altEsc(label)}</div>`;
+          }
+          for (const kit of bySub.get(subKey) ?? []) {
+            html += recipeCardHtml(kit);
+          }
         }
         html += `</div></div>`;
       }
@@ -16994,7 +17632,8 @@ function init() {
         ? `<div class="recipe-detail-lineage muted" style="font-size:11px;margin-top:4px">${lineageBits.join(" · ")}</div>`
         : "") +
       `</div>` +
-      `<div class="recipe-detail-program" style="margin-top:12px">${renderBrocaProgram(recipe, { linkTitle: false })}</div>`;
+      `<div class="recipe-detail-program" style="margin-top:12px">${renderBrocaProgram(recipe, { linkTitle: false, liveStep: currentRecipe?.recipeId === ref ? currentRecipe?.step : undefined })}</div>`;
+    lastRenderedBrocaRecipe = recipe;
     wireBack();
   }
 
@@ -17056,6 +17695,10 @@ function init() {
     renderTabs();
     switchToTab(tab.id);
     updateSessionsPanel();
+    // FORK 2026-06-24 (the owner): on a NEW tab, put the cursor straight in the
+    // prompt composer so you can start typing immediately. rAF so it wins any
+    // focus/render that switchToTab's async loadChat might do.
+    requestAnimationFrame(() => ($("chat-textarea") as HTMLTextAreaElement | null)?.focus());
   });
 
   $("tab-nav-left")!.addEventListener("click", () => {

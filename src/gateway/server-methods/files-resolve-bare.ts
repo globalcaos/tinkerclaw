@@ -26,7 +26,10 @@ import * as path from "node:path";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
-const MAX_DEPTH = 4;
+// FORK 2026-07-08: 4 → 6. Real deliverables live deeper than 4 under
+// ~/Documents (e.g. Documents/Insync/__Projects/<project>/Workshop/<sub>/x.html
+// is depth 5). ~2k dirs at depth 6 across the roots — still a sub-second walk.
+const MAX_DEPTH = 6;
 const MAX_CANDIDATES_PER_ROOT = 8;
 const SKIP_DIRS = new Set([
   "node_modules",
@@ -106,6 +109,13 @@ function buildRoots(workspaceDir: string | undefined | null): string[] {
   roots.push(path.resolve(home, "src/tinkerclaw"));
   roots.push(path.resolve(home, "src/jarvis-icu"));
   roots.push(path.resolve(home, ".openclaw"));
+  // FORK 2026-07-08: mirror config-open-external's user-content roots — a bare
+  // name the click handler can open must also be findable here, or the link
+  // renders fine and then dies at resolve ("no match in allowlisted roots").
+  roots.push(path.resolve(home, "Documents"));
+  roots.push(path.resolve(home, "Downloads"));
+  roots.push(path.resolve(home, "Desktop"));
+  roots.push(path.resolve(home, "Pictures"));
   // De-dupe (workspaceDir might overlap with ~/.openclaw)
   const seen = new Set<string>();
   return roots.filter((r) => {
@@ -124,7 +134,10 @@ function isSafeFilename(name: string): boolean {
   if (!name.includes(".")) return false;
   // Restrict to a sensible character set — letters, digits, dots, dashes,
   // underscores. This excludes anything weird like wildcards or quotes.
-  return /^[\w.\-]+$/.test(name);
+  // FORK 2026-07-08: unicode (\p{L}\p{M}\p{N}, /u) — the old \w-only class
+  // rejected accented filenames like `memòria_informe.html` as "invalid name",
+  // the same ASCII bug fixed in the client linkifier the same day.
+  return /^[\p{L}\p{M}\p{N}.\-_]+$/u.test(name);
 }
 
 export const filesResolveBareHandlers: GatewayRequestHandlers = {

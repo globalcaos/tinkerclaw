@@ -3,6 +3,7 @@ schema: recipe/1.0
 slug: overseer
 title: Overseer
 category: operations
+subdivision: "workflow"
 owner: globalcaos
 tools: [read]
 summary: A completion-enforcing self-loop — after each Jarvis turn, a distinct Overseer persona judges whether THE TASK is fully done; if not, it nudges Jarvis to keep going, and the loop only ends when the task is genuinely complete.

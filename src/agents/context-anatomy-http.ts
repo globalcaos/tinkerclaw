@@ -11,7 +11,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { queryRecentEvents, querySessionEvents } from "./context-anatomy-db.js";
+import { queryRecentEvents, querySessionEvents, querySessionTree } from "./context-anatomy-db.js";
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, {
@@ -107,10 +107,14 @@ export async function handleContextAnatomyRequest(
     return true;
   }
 
-  // Return last N events
+  // Return last N events. ?tree=1 also pulls the subagent family (EEG fan-out
+  // visibility, FORK 2026-07-16) so the seismograph paints branches reload-proof.
   const limitParam = url.searchParams.get("limit");
   const limit = limitParam ? Math.min(Math.max(1, parseInt(limitParam, 10) || 50), 500) : 50;
-  const events = querySessionEvents(sessionKey, limit);
+  const wantTree = url.searchParams.get("tree") === "1";
+  const events = wantTree
+    ? querySessionTree(sessionKey, limit)
+    : querySessionEvents(sessionKey, limit);
   sendJson(res, 200, { sessionKey, count: events.length, events });
   return true;
 }
