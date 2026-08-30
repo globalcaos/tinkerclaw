@@ -1822,6 +1822,38 @@ export function buildOpenAICompletionsParams(
   return params;
 }
 
+/**
+ * Billed output tokens, for providers that disagree about where reasoning goes.
+ *
+ * OpenAI counts reasoning INSIDE `completion_tokens`, and every OpenAI-compatible
+ * mapper assumes that. xAI's Grok does not: it reports reasoning alongside, so the
+ * provider's own totals only reconcile as
+ * `total = prompt + completion + reasoning`. Trusting `completion_tokens` there
+ * undercounts a thinking-heavy turn enormously — measured against the live proxy,
+ * a turn billed 3 completion + 498 reasoning tokens was recorded as 3.
+ *
+ * Rather than keying off a provider name (which misses the next vendor to make the
+ * same choice), detect the convention from the arithmetic the provider itself
+ * reports. The identity only holds when reasoning is a separate bucket, so
+ * OpenAI-shaped payloads fall through unchanged and cannot be double-counted.
+ */
+function resolveCompletionsOutputTokens(
+  rawUsage: NonNullable<ChatCompletionChunk["usage"]>,
+): number {
+  const completionTokens = rawUsage.completion_tokens || 0;
+  const reasoningTokens =
+    (rawUsage.completion_tokens_details as { reasoning_tokens?: number } | undefined)
+      ?.reasoning_tokens || 0;
+  if (reasoningTokens <= 0) {
+    return completionTokens;
+  }
+  const promptTokens = rawUsage.prompt_tokens || 0;
+  const totalTokens = rawUsage.total_tokens || 0;
+  const reasoningCountedSeparately =
+    totalTokens > 0 && promptTokens + completionTokens + reasoningTokens === totalTokens;
+  return reasoningCountedSeparately ? completionTokens + reasoningTokens : completionTokens;
+}
+
 export function parseTransportChunkUsage(
   rawUsage: NonNullable<ChatCompletionChunk["usage"]>,
   model: Model<Api>,
@@ -1829,7 +1861,7 @@ export function parseTransportChunkUsage(
   const cachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
   const promptTokens = rawUsage.prompt_tokens || 0;
   const input = Math.max(0, promptTokens - cachedTokens);
-  const outputTokens = rawUsage.completion_tokens || 0;
+  const outputTokens = resolveCompletionsOutputTokens(rawUsage);
   const usage = {
     input,
     output: outputTokens,

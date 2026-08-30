@@ -3,6 +3,17 @@ import type { GatewayServiceRenderArgs } from "./service-types.js";
 
 const SYSTEMD_LINE_BREAKS = /[\r\n]/;
 
+/**
+ * Stop budget the supervisor grants the gateway before it escalates to SIGKILL.
+ *
+ * The gateway's own shutdown watchdog is derived from this same number (see
+ * `resolveSupervisorStopTimeoutMs` in `cli/gateway-cli/run-loop.ts`), so the
+ * unit and the runtime can never disagree about how long a stop may take.
+ * Operators who raise `TimeoutStopSec` via a drop-in must also set
+ * `OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS` so the runtime learns the new budget.
+ */
+export const SERVICE_STOP_TIMEOUT_SEC = 30;
+
 function assertNoSystemdLineBreaks(value: string, label: string): void {
   if (SYSTEMD_LINE_BREAKS.test(value)) {
     throw new Error(`${label} cannot contain CR or LF characters.`);
@@ -77,7 +88,7 @@ export function buildSystemdUnit({
     "Restart=always",
     "RestartSec=5",
     "RestartPreventExitStatus=78",
-    "TimeoutStopSec=30",
+    `TimeoutStopSec=${SERVICE_STOP_TIMEOUT_SEC}`,
     "TimeoutStartSec=30",
     "SuccessExitStatus=0 143",
     // Keep service children in the same lifecycle so restarts do not leave

@@ -1,3 +1,4 @@
+import { ensureAuthProfileStore, resolveApiKeyForProfile } from "openclaw/plugin-sdk/agent-runtime";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/core";
 import { resolvePluginConfigObject } from "openclaw/plugin-sdk/plugin-config-runtime";
 import type { ProviderRuntimeModel } from "openclaw/plugin-sdk/plugin-entry";
@@ -28,6 +29,7 @@ import type {
 const DEFAULT_DISCOVERY_TIMEOUT_MS = 2500;
 const LIVE_DISCOVERY_ENV = "OPENCLAW_CODEX_DISCOVERY_LIVE";
 const MODEL_DISCOVERY_PAGE_LIMIT = 100;
+const OPENAI_CODEX_DEFAULT_PROFILE_ID = "openai-codex:default";
 const codexCatalogLog = createSubsystemLogger("codex/catalog");
 
 type CodexModelLister = (options: {
@@ -80,6 +82,47 @@ export function buildCodexProvider(options: BuildCodexProviderOptions = {}): Pro
       source: "codex-app-server",
       mode: "token",
     }),
+    // FORK 2026-07-24 (bug [codex-provider-accountId-extraction-fails]):
+    // Embedded (PI) runs resolve provider "codex" to the synthetic marker
+    // "codex-app-server" (buildCodexProviderConfig apiKey), which pi-ai's
+    // openai-codex-responses provider treats as the bearer JWT and dies in
+    // extractAccountId ("Failed to extract accountId from token") — the marker
+    // string is not a JWT. Swap the marker for the stored openai-codex ChatGPT
+    // OAuth access token: that JWT carries the chatgpt_account_id claim pi-ai
+    // needs, and resolveApiKeyForProfile refreshes only when the stored token
+    // has actually expired. Degrades to the previous behavior when no
+    // openai-codex credential exists.
+    prepareRuntimeAuth: async (ctx) => {
+      if (ctx.apiKey !== CODEX_APP_SERVER_AUTH_MARKER) {
+        return undefined;
+      }
+      const store = ensureAuthProfileStore(ctx.agentDir, { allowKeychainPrompt: false });
+      const profileId =
+        ctx.profileId && store.profiles[ctx.profileId]
+          ? ctx.profileId
+          : OPENAI_CODEX_DEFAULT_PROFILE_ID;
+      if (!store.profiles[profileId]) {
+        return undefined;
+      }
+      const resolved = await resolveApiKeyForProfile({
+        cfg: ctx.config,
+        store,
+        profileId,
+        agentDir: ctx.agentDir,
+      });
+      if (!resolved?.apiKey) {
+        return undefined;
+      }
+      const credential = store.profiles[profileId];
+      const expires =
+        credential && "expires" in credential && typeof credential.expires === "number"
+          ? credential.expires
+          : undefined;
+      return {
+        apiKey: resolved.apiKey,
+        ...(expires && expires > Date.now() ? { expiresAt: expires } : {}),
+      };
+    },
     resolveThinkingProfile: ({ modelId }) => ({
       levels: [
         { id: "off" },

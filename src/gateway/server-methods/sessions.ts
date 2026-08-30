@@ -268,6 +268,20 @@ function rejectWebchatSessionMutation(params: {
   if (params.action === "delete") {
     return false;
   }
+  // FORK 2026-08-28 (the architect: manual evict/compact buttons in the CONTEXT WINDOW panel) — allow
+  // webchat compact. This adds NO authority:
+  //   - `sessions.compact` is ADMIN-scoped in method-scopes.ts, and that gate has already run by
+  //     the time this handler is reached. This check is a client-CLASS check, not an authz one.
+  //   - `/compact` is ALREADY reachable from exactly this client through `chat.send` — see
+  //     handleCompactCommand in src/auto-reply/reply/commands-compact.ts. A webchat client can
+  //     therefore run a narrative compaction today, by typing it.
+  //   - The Tinker UI is the operator console, but it connects with mode "webchat" by
+  //     construction (id "webchat-ui"), which is the only reason isWebchatClient catches it at
+  //     all — the same asymmetry the model-picker carve-out documents below.
+  // Deliberately NOT extended to patch/restore: those still stay behind the class check.
+  if (params.action === "compact") {
+    return false;
+  }
 
   params.respond(
     false,
@@ -291,6 +305,182 @@ function isDisplayNameOnlyPatch(params: { [k: string]: unknown }): boolean {
     keys.some((k) => k === "cookiePhrase" || k === "cookiePhraseUserSet") &&
     keys.every((k) => DISPLAY_NAME_PATCH_KEYS.has(k))
   );
+}
+
+const MODEL_PATCH_KEYS = new Set(["key", "model"]);
+// FORK 2026-08-06 — the Tinker UI model picker. A patch that ONLY sets the session
+// model (or clears it with `model: null`) is safe to accept from the webchat client,
+// because that client can ALREADY write a durable override through `chat.send`'s
+// `model` param — agent-command persists it as modelOverrideSource:"user". This adds
+// no authority; it only lets the picker CLEAR what it can already SET.
+//
+// That asymmetry was the bug: pressing Auto dropped the client-side pin and sent no
+// `model` param, so the stored override survived and every "Auto" turn kept routing to
+// the last model pinned in that tab. `model: null` reaches
+// applyModelOverrideToSessionEntry({ isDefault: true }), which deletes
+// modelOverride/providerOverride so the default chain resolves again.
+//
+// Deliberately NARROW: `model` is the only mutable field allowed through, and only
+// when it is the whole patch. Every other session-metadata mutation stays behind
+// rejectWebchatSessionMutation.
+function isModelOnlyPatch(params: { [k: string]: unknown }): boolean {
+  const keys = Object.keys(params).filter((k) => params[k] !== undefined);
+  return keys.includes("model") && keys.every((k) => MODEL_PATCH_KEYS.has(k));
+}
+
+// FORK 2026-08-28 (the architect: the CONTEXT WINDOW panel's manual "evict" button) — transcript-aware
+// EVICTION: drop the oldest turns, keep the newest, no model call.
+//
+// This exists instead of reusing the `maxLines` branch of sessions.compact, which does a raw
+// `lines.slice(-maxLines)`. A pi transcript is NOT a flat log: line 0 is a `{type:"session"}`
+// header and every later entry carries `id` + `parentId`, forming a chain that
+// SessionManager.open(file).getBranch() walks (session-utils.fs.ts). A blind tail slice drops the
+// header and severs that chain, so the branch walk stops at the first broken link and silently
+// loses everything before it. `maxLines` is left exactly as it was — other callers depend on it —
+// but it must not be what a button in the UI fires.
+//
+// Three rules make the rewrite safe:
+//   1. EVERY non-message entry is kept regardless of position (session header, model_change,
+//      thinking_level_change, custom). They are tiny, they are structural, and any of them may be
+//      the parent of a kept message.
+//   2. The cut is snapped FORWARD to a turn boundary: the first kept message must be a `user`
+//      message carrying no tool-result blocks. Cutting mid-turn would orphan a toolResult from
+//      its toolCall, which every provider rejects with an immediate 400. When no such boundary
+//      exists at or after the target we keep MORE messages, never fewer.
+//   3. The kept entries are re-chained — each one's `parentId` is rewritten to the previous kept
+//      entry's `id` — so the walk is unbroken end to end.
+export type TranscriptEvictionResult =
+  | { ok: false; reason: string }
+  | { ok: true; evicted: 0; evictedTokens: 0; kept: number; lines: null; reason: string }
+  | {
+      ok: true;
+      evicted: number;
+      /** ESTIMATE. ceil(chars / 3.5) over the dropped entries — the same ladder
+       *  context-anatomy uses, so the panel's numbers stay on one scale. Never a billed count:
+       *  nothing re-tokenises an evicted transcript, so a real figure does not exist. */
+      evictedTokens: number;
+      kept: number;
+      lines: string[];
+      reason?: undefined;
+    };
+
+/** True when a transcript entry's message carries a tool RESULT block. */
+function entryCarriesToolResult(entry: { message?: unknown }): boolean {
+  const content = (entry.message as { content?: unknown } | undefined)?.content;
+  if (!Array.isArray(content)) {
+    return false;
+  }
+  return content.some((block) => {
+    const type = (block as { type?: unknown } | null)?.type;
+    return type === "tool_result" || type === "toolResult";
+  });
+}
+
+/** The transcript's own role for an entry, or "" when it is not a message. */
+function entryRole(entry: { type?: unknown; message?: unknown }): string {
+  if (entry.type !== "message") {
+    return "";
+  }
+  const role = (entry.message as { role?: unknown } | undefined)?.role;
+  return typeof role === "string" ? role : "";
+}
+
+export function evictTranscriptTail(raw: string, keepFraction: number): TranscriptEvictionResult {
+  const rawLines = raw.split(/\r?\n/).filter((l) => Boolean(normalizeOptionalString(l)));
+  const entries: Array<Record<string, unknown>> = [];
+  for (const line of rawLines) {
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return { ok: false, reason: "unparsable transcript" };
+      }
+      entries.push(parsed as Record<string, unknown>);
+    } catch {
+      // Abort rather than write: a transcript we cannot fully parse is one we cannot safely
+      // rewrite, and half-understanding it is how you lose a conversation.
+      return { ok: false, reason: "unparsable transcript" };
+    }
+  }
+
+  const messageIdx = entries.map((e, i) => (e.type === "message" ? i : -1)).filter((i) => i >= 0);
+  if (messageIdx.length < 4) {
+    return {
+      ok: true,
+      evicted: 0,
+      evictedTokens: 0,
+      kept: messageIdx.length,
+      lines: null,
+      reason: "too few messages to evict",
+    };
+  }
+
+  // Target: keep the newest ceil(count * keepFraction), never fewer than 2.
+  const targetKeep = Math.max(2, Math.ceil(messageIdx.length * keepFraction));
+  const targetOrdinal = messageIdx.length - targetKeep;
+  // Rule 2 — snap FORWARD from the target to the first safe boundary.
+  let cutOrdinal = -1;
+  for (let ord = targetOrdinal; ord < messageIdx.length; ord++) {
+    const entry = entries[messageIdx[ord]];
+    if (entryRole(entry) === "user" && !entryCarriesToolResult(entry)) {
+      cutOrdinal = ord;
+      break;
+    }
+  }
+  if (cutOrdinal < 0 || cutOrdinal === 0) {
+    // No safe boundary after the target (or the only one is the very first message): there is
+    // nothing we can drop without risking an orphaned tool result.
+    return {
+      ok: true,
+      evicted: 0,
+      evictedTokens: 0,
+      kept: messageIdx.length,
+      lines: null,
+      reason: "no safe turn boundary to evict at",
+    };
+  }
+
+  const firstKeptIndex = messageIdx[cutOrdinal];
+  const kept: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    // Rule 1 — structural entries always survive; messages only from the cut onwards.
+    if (entry.type !== "message" || i >= firstKeptIndex) {
+      kept.push(entry);
+    }
+  }
+
+  // Rule 3 — re-chain. The first kept entry keeps whatever parent link it had (it is the session
+  // header in practice, which has none).
+  let prevId: string | undefined;
+  for (const entry of kept) {
+    const id = typeof entry.id === "string" ? entry.id : undefined;
+    if (prevId !== undefined && "parentId" in entry) {
+      entry.parentId = prevId;
+    }
+    if (id !== undefined) {
+      prevId = id;
+    }
+  }
+
+  const keptMessages = kept.filter((e) => e.type === "message").length;
+  // Estimate what the eviction actually bought, in tokens. Measured over the DROPPED message
+  // entries only — the structural entries all survive, so counting them would inflate the win.
+  // ceil(chars / 3.5) is the anatomy's own ladder; reusing it keeps this number comparable with
+  // the composition figures the panel shows beside it instead of introducing a second scale.
+  const keptSet = new Set(kept);
+  let droppedChars = 0;
+  for (const entry of entries) {
+    if (entry.type === "message" && !keptSet.has(entry)) {
+      droppedChars += JSON.stringify(entry).length;
+    }
+  }
+  return {
+    ok: true,
+    evicted: messageIdx.length - keptMessages,
+    evictedTokens: Math.ceil(droppedChars / 3.5),
+    kept: keptMessages,
+    lines: kept.map((e) => JSON.stringify(e)),
+  };
 }
 
 function buildDashboardSessionKey(agentId: string): string {
@@ -1454,6 +1644,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     // Tinker UI webchat client (durable server-side tab names); block all else.
     if (
       !isDisplayNameOnlyPatch(p as unknown as { [k: string]: unknown }) &&
+      !isModelOnlyPatch(p as unknown as { [k: string]: unknown }) &&
       rejectWebchatSessionMutation({ action: "patch", client, isWebchatConnect, respond })
     ) {
       return;
@@ -1817,6 +2008,93 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       return;
     }
 
+    // FORK 2026-08-28 — EVICTION mode. Checked FIRST: it is the only branch that rewrites the
+    // transcript without a model call, and `keepFraction` is what selects it.
+    const keepFraction =
+      typeof p.keepFraction === "number" && Number.isFinite(p.keepFraction)
+        ? p.keepFraction
+        : undefined;
+    if (keepFraction !== undefined) {
+      // Rewriting a transcript under a live run is exactly the race that corrupts a session, so
+      // stop the run first — the same call the narrative branch below makes.
+      const interruptResult = await interruptSessionRunIfActive({
+        req,
+        context,
+        client,
+        isWebchatConnect,
+        requestedKey: key,
+        canonicalKey: target.canonicalKey,
+        sessionId,
+      });
+      if (interruptResult.error) {
+        respond(false, undefined, interruptResult.error);
+        return;
+      }
+
+      const eviction = evictTranscriptTail(fs.readFileSync(filePath, "utf-8"), keepFraction);
+      if (!eviction.ok) {
+        respond(
+          true,
+          { ok: false, key: target.canonicalKey, compacted: false, reason: eviction.reason },
+          undefined,
+        );
+        return;
+      }
+      if (eviction.lines === null) {
+        // Nothing safely evictable — say so and leave the file byte-identical on disk.
+        respond(
+          true,
+          {
+            ok: true,
+            key: target.canonicalKey,
+            compacted: false,
+            kept: eviction.kept,
+            reason: eviction.reason,
+          },
+          undefined,
+        );
+        return;
+      }
+
+      const archivedTranscript = archiveFileOnDisk(filePath, "bak");
+      fs.writeFileSync(filePath, `${eviction.lines.join("\n")}\n`, "utf-8");
+
+      await updateSessionStore(storePath, (store) => {
+        const entryKey = compactTarget.primaryKey;
+        const entryToUpdate = store[entryKey];
+        if (!entryToUpdate) {
+          return;
+        }
+        // Same invalidation as the maxLines branch: every cached token count now describes a
+        // transcript that no longer exists.
+        delete entryToUpdate.inputTokens;
+        delete entryToUpdate.outputTokens;
+        delete entryToUpdate.totalTokens;
+        delete entryToUpdate.totalTokensFresh;
+        entryToUpdate.updatedAt = Date.now();
+      });
+
+      respond(
+        true,
+        {
+          ok: true,
+          key: target.canonicalKey,
+          compacted: true,
+          evicted: eviction.evicted,
+          evictedTokens: eviction.evictedTokens,
+          kept: eviction.kept,
+          archived: archivedTranscript,
+        },
+        undefined,
+      );
+      emitSessionsChanged(context, {
+        sessionKey: target.canonicalKey,
+        reason: "compact",
+        compacted: true,
+      });
+      return;
+    }
+
     if (maxLines === undefined) {
       const interruptResult = await interruptSessionRunIfActive({
         req,
@@ -1923,6 +2201,11 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       return;
     }
 
+    // HAZARD (documented 2026-08-28, deliberately NOT changed — callers depend on this exact
+    // behaviour): this is a blind tail slice of the raw JSONL. It drops the `{type:"session"}`
+    // header on line 0 and severs the `parentId` chain, so SessionManager.getBranch() will stop
+    // at the first broken link. Use `keepFraction` (the eviction branch above) for anything
+    // user-facing; this path is an admin escape hatch.
     const archived = archiveFileOnDisk(filePath, "bak");
     const keptLines = lines.slice(-maxLines);
     fs.writeFileSync(filePath, `${keptLines.join("\n")}\n`, "utf-8");

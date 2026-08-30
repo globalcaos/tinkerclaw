@@ -36,9 +36,32 @@ export const STATIC_EXTENSION_ASSETS = [
   // this entry the staging pipeline silently drops the prompt and the plugin
   // falls back to a one-line hard-coded stub that breaks the UI formatting and
   // lets HEARTBEAT_OK leak into fractal responses.
+  //
+  // NOTE: the first line of this comment is the idempotency marker that
+  // scripts/merge-drivers/apply-fork-wiring.mjs greps for
+  // ("FORK: tinkerclaw-fractal-reflection reads fractal-prompt.md"). Keep it
+  // byte-identical or the merge driver will try to re-inject this block, fail
+  // its anchor, and skip the copyStaticExtensionAssets reorder patch with it.
   {
     src: "extensions/tinkerclaw-fractal-reflection/fractal-prompt.md",
     dest: "dist/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md",
+  },
+  // FORK: the v3 doctrine pair. src/fractal-run.ts:300-313 (loadTriagePrompt)
+  // reads triage-prompt.md straight out of the extension dir at run time, and
+  // the fix lane reads fix-prompt.md the same way. Both files shipped in the
+  // repo from day one but were NEVER declared here, so they never reached
+  // dist/ or dist-runtime/ — which is what the gateway actually loads. Result:
+  // 2026-06-11 → 2026-08-04, every single fractal run failed with
+  // "triage-prompt.md missing or unreadable in the extension dir" (2,067 of
+  // 2,379 ledger rows; 245 of 245 in August; zero successes ever). The repo
+  // copy is not the deployed copy — declare the asset or it does not ship.
+  {
+    src: "extensions/tinkerclaw-fractal-reflection/triage-prompt.md",
+    dest: "dist/extensions/tinkerclaw-fractal-reflection/triage-prompt.md",
+  },
+  {
+    src: "extensions/tinkerclaw-fractal-reflection/fix-prompt.md",
+    dest: "dist/extensions/tinkerclaw-fractal-reflection/fix-prompt.md",
   },
 ];
 

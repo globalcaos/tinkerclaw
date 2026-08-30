@@ -8,7 +8,13 @@ import { join } from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createEventStore, estimateTokens } from "./event-store.js";
 import type { EventStore } from "./event-store.js";
-import { assembleRetrievalPack, DEFAULT_RETRIEVAL_MAX_TOKENS } from "./retrieval-integration.js";
+import type { MemoryEvent } from "./event-types.js";
+import {
+  assembleRetrievalPack,
+  DEFAULT_RETRIEVAL_MAX_TOKENS,
+  mmrRerank,
+  type ScoredEvent,
+} from "./retrieval-integration.js";
 
 let tmpDir: string;
 let store: EventStore;
@@ -220,6 +226,162 @@ describe("large store bounding", () => {
     const eventLines = result.split("\n").filter((l) => l.startsWith("[") && l.includes("]"));
     // Should have fewer than 60 lines due to token budget
     expect(eventLines.length).toBeLessThan(60);
+  });
+});
+
+// ─── MMR rerank: equivalence with the naive implementation ───────────────────
+//
+// FORK 2026-08-19. `mmrRerank` used to rebuild both operands' word sets on every
+// comparison: for the default 50 candidates that is 20,825 comparisons and 41,650 set
+// constructions from full event text, measured at 99.3% of the whole pack build and
+// ~20s of the pre-prompt wait on a real corpus. The fix builds each set once.
+//
+// That is an EXACT-EQUIVALENCE claim, so it needs a test that can fail. `naiveRerank`
+// below is a verbatim transcription of the original algorithm; the optimised one must
+// agree with it element for element, including tie-breaking.
+
+/** The ORIGINAL implementation, kept as the oracle. Do not "optimise" this one. */
+function naiveRerank(candidates: ScoredEvent[], lambda = 0.7, maxItems = 50): ScoredEvent[] {
+  const wordJaccard = (a: string, b: string): number => {
+    const words = (s: string): Set<string> =>
+      new Set(
+        s
+          .toLowerCase()
+          .split(/\s+/)
+          .filter((w) => w.length > 2),
+      );
+    const setA = words(a);
+    const setB = words(b);
+    if (setA.size === 0 || setB.size === 0) return 0;
+    let intersection = 0;
+    for (const w of setA) if (setB.has(w)) intersection++;
+    const union = setA.size + setB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
+  };
+
+  if (candidates.length <= 1) return [...candidates];
+  const selected: ScoredEvent[] = [];
+  const remaining = [...candidates];
+  while (remaining.length > 0 && selected.length < maxItems) {
+    let bestScore = -Infinity;
+    let bestIdx = 0;
+    for (let i = 0; i < remaining.length; i++) {
+      const c = remaining[i];
+      let maxSim = 0;
+      for (const s of selected) {
+        const sim = wordJaccard(c.event.content, s.event.content);
+        if (sim > maxSim) maxSim = sim;
+      }
+      const mmr = lambda * c.score - (1 - lambda) * maxSim;
+      if (mmr > bestScore) {
+        bestScore = mmr;
+        bestIdx = i;
+      }
+    }
+    selected.push(remaining[bestIdx]);
+    remaining.splice(bestIdx, 1);
+  }
+  return selected;
+}
+
+/** Deterministic pseudo-random source — a seeded LCG, so a failure is reproducible. */
+function makeRng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+}
+
+function makeCandidates(count: number, seed: number): ScoredEvent[] {
+  const rng = makeRng(seed);
+  const vocab = [
+    "authentication",
+    "token",
+    "refresh",
+    "database",
+    "schema",
+    "migration",
+    "deployment",
+    "docker",
+    "kubernetes",
+    "latency",
+    "retrieval",
+    "compaction",
+    "gateway",
+    "session",
+    "prompt",
+    "cache",
+    "worker",
+    "spawn",
+    "panel",
+    "budget",
+  ];
+  return Array.from({ length: count }, (_, i) => {
+    const len = 8 + Math.floor(rng() * 60);
+    const content = Array.from({ length: len }, () => vocab[Math.floor(rng() * vocab.length)]).join(
+      " ",
+    );
+    const event: MemoryEvent = {
+      id: `evt-${i}`,
+      turnId: i,
+      sessionKey: "test-session",
+      kind: "user_message",
+      content,
+      tokens: estimateTokens(content),
+      timestamp: new Date(1_700_000_000_000 + i * 1000).toISOString(),
+      metadata: { importance: 5 },
+    } as MemoryEvent;
+    return { event, score: rng() };
+  });
+}
+
+describe("mmrRerank equivalence with the naive original", () => {
+  it("agrees element-for-element on the production shape (50 candidates)", () => {
+    const candidates = makeCandidates(50, 12345);
+    expect(mmrRerank(candidates).map((c) => c.event.id)).toEqual(
+      naiveRerank(candidates).map((c) => c.event.id),
+    );
+  });
+
+  it("agrees across many independent corpora", () => {
+    for (let seed = 1; seed <= 25; seed++) {
+      const candidates = makeCandidates(30, seed);
+      expect(mmrRerank(candidates).map((c) => c.event.id)).toEqual(
+        naiveRerank(candidates).map((c) => c.event.id),
+      );
+    }
+  });
+
+  it("agrees when several candidates have identical content (tie-breaking)", () => {
+    // Ties are where an index-parallel array can desync without changing any score.
+    const base = makeCandidates(12, 99);
+    const tied = base.map((c, i) => ({
+      ...c,
+      event: {
+        ...c.event,
+        content: i % 3 === 0 ? "identical repeated content here" : c.event.content,
+      },
+      score: i % 4 === 0 ? 0.5 : c.score,
+    }));
+    expect(mmrRerank(tied).map((c) => c.event.id)).toEqual(
+      naiveRerank(tied).map((c) => c.event.id),
+    );
+  });
+
+  it("agrees on the degenerate inputs", () => {
+    expect(mmrRerank([])).toEqual([]);
+    const one = makeCandidates(1, 7);
+    expect(mmrRerank(one).map((c) => c.event.id)).toEqual(naiveRerank(one).map((c) => c.event.id));
+  });
+
+  it("selects every candidate — it is a reorder, not a filter", () => {
+    // Documenting a real quirk rather than asserting it is desirable: `maxItems`
+    // defaults to FTS_TOP_N (50) and the candidate list is already sliced to 50, so
+    // the selection loop never binds. The token-budget loop in assembleRetrievalPack
+    // is what actually drops rows. Changing this is a behaviour change, not a cleanup.
+    const candidates = makeCandidates(50, 4242);
+    expect(mmrRerank(candidates)).toHaveLength(50);
   });
 });
 

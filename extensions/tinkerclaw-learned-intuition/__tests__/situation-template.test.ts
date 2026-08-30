@@ -54,7 +54,10 @@ describe("situation-template", () => {
     });
 
     it("classifies sqlite targets as database", () => {
-      expect(classifyTargetType("data.sqlite", stubConfig)).toBe("file");
+      // Fixed 2026-08-02: this asserted "file" while its own name said "database", and the
+      // implementation returns "database" — so the suite had been red on a self-contradictory
+      // expectation. The deleted src/amygdala twin asserted "database" correctly.
+      expect(classifyTargetType("data.sqlite", stubConfig)).toBe("database");
     });
   });
 

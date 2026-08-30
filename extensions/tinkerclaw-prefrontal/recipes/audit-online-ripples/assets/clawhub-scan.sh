@@ -1,7 +1,7 @@
 #!/bin/bash
 slugs="jarvis-voice whatsapp-ultimate youtube-ultimate chatgpt-exporter-ultimate token-panel-ultimate shell-security-ultimate token-efficiency-guide subagent-overseer computational-humor fork-and-skill-scanner-ultimate outlook-hack memory-bench-pioneer smart-model-router model-prompt-adapter owntracks-location agent-sensei-ultimate agent-superpowers tinker-command-center wordpress-ultimate"
-declare -A SRC=( [smart-model-router]="/home/user/.openclaw/workspace/skills/model-router/SKILL.md" )
-roots="/home/user/.openclaw/workspace/skills /home/user/src/tinkerclaw/skills"
+declare -A SRC=( [smart-model-router]="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/workspace/skills/model-router/SKILL.md" )
+roots="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/workspace/skills ${TINKERCLAW_DIR:-$HOME/src/tinkerclaw}/skills"
 localver(){ local s="$1" f="${SRC[$s]}"
   if [ -z "$f" ]; then for r in $roots; do for c in "$r/$s/SKILL.md" "$r/${s%-ultimate}/SKILL.md" "$r/$s/README.md" "$r/$s/GUIDE.md" "$r/$s/BUDGET_README.md"; do [ -f "$c" ] && { f="$c"; break 2; }; done; done; fi
   [ -z "$f" ] && { echo "?"; return; }
@@ -29,4 +29,4 @@ except Exception:
     print('paperposts UNREACHABLE')
 " 2>/dev/null || echo "paperposts UNREACHABLE"
 echo "---README---"
-grep -aoiE 'papers?-[0-9]+' /home/user/src/tinkerclaw/README.md 2>/dev/null | head -1
+grep -aoiE 'papers?-[0-9]+' "${TINKERCLAW_DIR:-$HOME/src/tinkerclaw}/README.md" 2>/dev/null | head -1

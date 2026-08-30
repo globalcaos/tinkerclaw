@@ -495,10 +495,48 @@ describe("readSessionMessages", () => {
       timestamp?: number;
     };
     expect(marker.role).toBe("system");
-    expect(marker.content?.[0]?.text).toBe("Compaction");
+    // FORK 2026-07-28: the marker SURFACES the compaction summary when the entry carries one,
+    // falling back to the literal "Compaction" only when it does not (session-utils.fs.ts:157
+    // and :209, `summary?.trim() || "Compaction"`, which also store it on __openclaw.summary).
+    // This expectation still asserted the old always-literal behaviour and so failed against the
+    // fixture's own `summary: "Compacted history"`. Both branches are now covered — see the
+    // sibling case below — because pinning only one of them is how the stale half survived.
+    expect(marker.content?.[0]?.text).toBe("Compacted history");
     expect(marker.__openclaw?.kind).toBe("compaction");
     expect(marker.__openclaw?.id).toBe("comp-1");
     expect(typeof marker.timestamp).toBe("number");
+  });
+
+  // FORK 2026-07-28 — the fallback half of the branch above. A compaction entry with no summary
+  // (or a whitespace-only one) must still render a readable marker rather than an empty bubble.
+  test("falls back to the literal 'Compaction' when the entry carries no summary", () => {
+    const sessionId = "test-session-compaction-nosummary";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({ message: { role: "user", content: "Hello" } }),
+      JSON.stringify({
+        type: "compaction",
+        id: "comp-2",
+        timestamp: "2026-02-07T00:00:00.000Z",
+        summary: "   ",
+        firstKeptEntryId: "x",
+        tokensBefore: 123,
+      }),
+      JSON.stringify({ message: { role: "assistant", content: "World" } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    const marker = out[1] as {
+      role: string;
+      content?: Array<{ text?: string }>;
+      __openclaw?: { kind?: string; summary?: string };
+    };
+    expect(marker.role).toBe("system");
+    expect(marker.content?.[0]?.text).toBe("Compaction");
+    // A blank summary must not be stored as if it were real content.
+    expect(marker.__openclaw?.summary).toBeUndefined();
   });
 
   test("reads only the active branch when transcript rewrites abandon older entries", () => {

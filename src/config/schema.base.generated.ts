@@ -1133,7 +1133,7 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 email: {
                   type: "string",
                 },
-                displayName: {
+                credentialFile: {
                   type: "string",
                 },
               },
@@ -3524,6 +3524,17 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     streaming: {
                       type: "boolean",
                     },
+                    rank: {
+                      type: "integer",
+                      exclusiveMinimum: 0,
+                      maximum: 9007199254740991,
+                    },
+                    intelligenceIndex: {
+                      type: "number",
+                    },
+                    relCost: {
+                      type: "number",
+                    },
                   },
                   additionalProperties: false,
                 },
@@ -4884,6 +4895,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                         type: "string",
                         const: "safeguard",
                       },
+                      {
+                        type: "string",
+                        const: "engram",
+                      },
                     ],
                     title: "Compaction Mode",
                     description:
@@ -4926,6 +4941,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     title: "Compaction Max History Share",
                     description:
                       "Maximum fraction of total context budget allowed for retained history after compaction (range 0.1-0.9). Use lower shares for more generation headroom or higher shares for deeper historical continuity.",
+                  },
+                  pointerMode: {
+                    type: "boolean",
                   },
                   customInstructions: {
                     type: "string",
@@ -5340,6 +5358,20 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 exclusiveMinimum: 0,
                 maximum: 9007199254740991,
               },
+              activityGraceSeconds: {
+                description:
+                  "Sliding activity grace window in seconds for agent run timeouts. When the run deadline (agents.defaults.timeoutSeconds) fires but the agent produced a stream or tool event within this window, the deadline extends instead of aborting an actively-working turn. Set 0 to disable sliding extension and restore the legacy fixed wall-clock abort. Default: 600.",
+                type: "integer",
+                minimum: 0,
+                maximum: 9007199254740991,
+              },
+              maxRunSeconds: {
+                description:
+                  "Hard cap in seconds on total agent run duration measured from run start. Activity-based timeout extensions never push a run past this cap. Default: 172800 (48 hours).",
+                type: "integer",
+                exclusiveMinimum: 0,
+                maximum: 9007199254740991,
+              },
               mediaMaxMb: {
                 type: "number",
                 exclusiveMinimum: 0,
@@ -5471,6 +5503,19 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                 type: "integer",
                 exclusiveMinimum: 0,
                 maximum: 9007199254740991,
+              },
+              sessions: {
+                type: "object",
+                properties: {
+                  maxConcurrent: {
+                    description:
+                      'Max concurrent embedded session runs (global lane: "sessions"). Default: 8.',
+                    type: "integer",
+                    exclusiveMinimum: 0,
+                    maximum: 9007199254740991,
+                  },
+                },
+                additionalProperties: false,
               },
               subagents: {
                 type: "object",
@@ -23790,74 +23835,33 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
         description:
           "Plugin system controls for enabling extensions, constraining load scope, configuring entries, and tracking installs. Keep plugin policy explicit and least-privilege in production environments.",
       },
-      surfaces: {
+      fork: {
         type: "object",
-        propertyNames: {
-          type: "string",
-        },
-        additionalProperties: {
-          type: "object",
-          properties: {
-            silentReply: {
-              type: "object",
-              properties: {
-                direct: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "allow",
-                    },
-                    {
-                      type: "string",
-                      const: "disallow",
-                    },
-                  ],
-                },
-                group: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "allow",
-                    },
-                    {
-                      type: "string",
-                      const: "disallow",
-                    },
-                  ],
-                },
-                internal: {
-                  anyOf: [
-                    {
-                      type: "string",
-                      const: "allow",
-                    },
-                    {
-                      type: "string",
-                      const: "disallow",
-                    },
-                  ],
-                },
-              },
-              additionalProperties: false,
+        properties: {
+          cognitive: {
+            type: "object",
+            propertyNames: {
+              type: "string",
             },
-            silentReplyRewrite: {
-              type: "object",
-              properties: {
-                direct: {
-                  type: "boolean",
+            additionalProperties: {
+              anyOf: [
+                {
+                  type: "string",
+                  const: "inline",
                 },
-                group: {
-                  type: "boolean",
+                {
+                  type: "string",
+                  const: "extension",
                 },
-                internal: {
-                  type: "boolean",
+                {
+                  type: "string",
+                  const: "disabled",
                 },
-              },
-              additionalProperties: false,
+              ],
             },
           },
-          additionalProperties: false,
         },
+        additionalProperties: false,
       },
       proxy: {
         type: "object",

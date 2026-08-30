@@ -1,6 +1,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { setUsageSnapshot } from "../infra/usage-snapshot-store.js";
-import { allocateEffort, deriveQuotaPressure, type EffortCalib } from "./effort-allocator.js";
+import {
+  allocateEffort,
+  deriveQuotaPressure,
+  userTaskLength,
+  type EffortCalib,
+} from "./effort-allocator.js";
 
 const calib = (count: number, perLevel: Record<string, number> = {}): EffortCalib => ({
   count,
@@ -100,5 +105,43 @@ describe("allocateEffort — burn-down effort allocator policy (bible §5.84 / �
       tick: 1,
     });
     expect(level).toBe("xhigh");
+  });
+});
+
+// FORK 2026-07-26 (the architect: "when I move the effort level it magically hops to high") — the
+// UI appends a ~3,369-char FRACTAL trailer to EVERY message, which saturated the task-size
+// bucket (`taskLen >= 1200 -> high`) so the allocator could never pick low or medium.
+describe("userTaskLength — the size heuristic measures the USER's ask, not our envelope", () => {
+  // The real trailer is ~3,369 chars; anything over the 1200 `high` cutoff reproduces the bug.
+  const FRACTAL_TRAILER =
+    "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line " +
+    (
+      "(blank line before it). Fractal is the slow thinker: judge the finished turn, then leave " +
+      "DURABLE change — write the lesson or fix to disk NOW instead of describing it. "
+    ).repeat(20);
+
+  it("strips the injected trailer so a short question stays short", () => {
+    const asked = "what time is it?";
+    expect(FRACTAL_TRAILER.length).toBeGreaterThan(1200); // the trailer alone saturates the bucket
+    expect(userTaskLength(asked + FRACTAL_TRAILER)).toBe(asked.length);
+  });
+
+  it("keeps a genuinely long request long", () => {
+    const long = "x".repeat(5000);
+    expect(userTaskLength(long + FRACTAL_TRAILER)).toBe(5000);
+  });
+
+  it("a short question no longer lands in the high bucket", () => {
+    const withTrailer = "hi" + FRACTAL_TRAILER;
+    // pre-fix behaviour: raw length is >1200 -> taskIdx 3 (high)
+    expect(withTrailer.length).toBeGreaterThanOrEqual(1200);
+    // post-fix: measured length is tiny -> the low bucket
+    expect(userTaskLength(withTrailer)).toBeLessThan(280);
+  });
+
+  it("handles an absent prompt and a bare marker", () => {
+    expect(userTaskLength(undefined)).toBe(0);
+    expect(userTaskLength("")).toBe(0);
+    expect(userTaskLength("<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>> blah")).toBe(0);
   });
 });

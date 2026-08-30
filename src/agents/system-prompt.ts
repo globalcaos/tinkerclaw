@@ -5,6 +5,8 @@ import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { resolveChannelApprovalCapability } from "../channels/plugins/approvals.js";
 import { getChannelPlugin } from "../channels/plugins/index.js";
 import type { MemoryCitationsMode } from "../config/types.memory.js";
+import { recordAlgorithmOutcome } from "../infra/algorithm-metrics.js";
+import { declareInstrument, noteInstrumentFired } from "../infra/instrument-liveness.js";
 import { buildMemoryPromptSection } from "../plugins/memory-state.js";
 import {
   normalizeLowercaseStringOrEmpty,
@@ -33,6 +35,61 @@ import type {
   ProviderSystemPromptSectionId,
 } from "./system-prompt-contribution.js";
 import type { PromptMode, SilentReplyPromptMode } from "./system-prompt.types.js";
+
+// FORK 2026-07-28 — LIVENESS: the INJECTION half of the AMYGDALA nudge pair.
+//
+// The thermostat fails in two independent places: a nudge can fail to be WRITTEN, and a written
+// nudge can fail to be INJECTED into the prompt. Only the pair makes the second visible — with
+// the writer alone, a nudge computed and then dropped on the floor looks exactly like a nudge
+// that was never needed. That is the shape of every dead component this registry exists for.
+//
+// Verified 2026-07-28: nothing in `src/` ever populates `amygdalaNudge` with a non-empty list —
+// it is threaded through embedded-agent-runner/system-prompt.ts and arrives undefined. So this
+// instrument is EXPECTED to report `neverFired` from day one. That report is the finding, not a
+// fault in the instrument, and it is deliberately NOT marked `conditional`: silence here is a
+// defect waiting to be fixed, not a configuration consequence to be excused.
+//
+// `expectFireWithinMs` is 6h rather than the 30m default: a personality thermostat that only
+// nudges on real drift is legitimately quiet for hours, and an instrument that cries every half
+// hour is one nobody reads.
+declareInstrument({
+  id: "amygdala:nudge-injection",
+  kind: "hook",
+  description: "AMYGDALA personality-nudge block emitted into the system prompt",
+  expectFireWithinMs: 6 * 60 * 60 * 1000,
+});
+
+/**
+ * FORK 2026-07-28 — the FIRE half of `amygdala:nudge-injection`.
+ *
+ * Pass-through BY CONSTRUCTION: it returns the very array it was handed, so measuring the block
+ * cannot alter the block. It is called from inside the branch that actually emits the section,
+ * never from a check that `params.amygdalaNudge` merely exists — "the parameter arrived" is the
+ * registration-is-liveness confusion this registry was built to catch.
+ *
+ * `injectedChars` counts the whole emitted section (heading + preamble + adjustment lines),
+ * because that is what the prompt actually pays for; `adjustments` is stored as its own part so
+ * no later analysis has to reconstruct a ratio (algorithm-metrics rule 2: parts, never ratios).
+ */
+function noteAmygdalaNudgeInjected(block: string[], adjustments: number): string[] {
+  try {
+    const injectedChars = block.join("\n").length;
+    noteInstrumentFired(
+      "amygdala:nudge-injection",
+      `${adjustments} adjustment(s), ${injectedChars} chars`,
+    );
+    recordAlgorithmOutcome({
+      algorithm: "persona-nudge",
+      variant: "amygdala-thermostat",
+      outcome: "injected",
+      metrics: { adjustments, injectedChars },
+      provenance: { adjustments: "local-measured", injectedChars: "local-measured" },
+    });
+  } catch {
+    /* instrumentation must never disturb the prompt it observes */
+  }
+  return block;
+}
 
 /**
  * Controls which hardcoded sections are included in the system prompt.
@@ -722,13 +779,18 @@ export function buildAgentSystemPrompt(params: {
     // FORK: Tier 1 persona block from CORTEX runtime — injected near the top, always cached.
     ...(params.personaBlock ? [params.personaBlock, ""] : []),
     // FORK: AMYGDALA personality thermostat — behavioural nudges from the Personality networks.
+    // FORK 2026-07-28 — instrumented: the fire is INSIDE this branch, so it records an actual
+    // injection of a non-empty nudge list and never the mere presence of the parameter.
     ...(params.amygdalaNudge?.length
-      ? [
-          "## AMYGDALA Personality Nudge (active)",
-          "The Personality networks detected drift from your target personality. Adjustments:",
-          ...params.amygdalaNudge.map((a) => `- ${a}`),
-          "",
-        ]
+      ? noteAmygdalaNudgeInjected(
+          [
+            "## AMYGDALA Personality Nudge (active)",
+            "The Personality networks detected drift from your target personality. Adjustments:",
+            ...params.amygdalaNudge.map((a) => `- ${a}`),
+            "",
+          ],
+          params.amygdalaNudge.length,
+        )
       : []),
     // FORK: Tier 1 persona block from CORTEX runtime — injected near the top for identity reinforcement.
     ...(params.personaBlock ? [params.personaBlock, ""] : []),

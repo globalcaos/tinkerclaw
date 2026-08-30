@@ -85,6 +85,7 @@ export function loadSessionStore(
       storePath,
       mtimeMs: currentFileStat?.mtimeMs,
       sizeBytes: currentFileStat?.sizeBytes,
+      clone: opts.clone,
     });
     if (cached) {
       return cached;

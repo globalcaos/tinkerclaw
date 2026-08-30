@@ -452,16 +452,27 @@ export async function searchKeyword(params: {
   const sourceFilterSql = params.sourceFilter.sql.replace(/\bsource\b/g, "f.source");
   const temporal = temporalPredicate(params.temporalMode ?? "current", "c", params.asOfTime);
 
+  // ALIAS TRAP (fixed 2026-08-03) — read this before touching the statement below.
+  // `MATCH` and the FTS5 auxiliary functions (bm25/rank/snippet) do NOT take a table or an
+  // alias: they take the table's HIDDEN COLUMN, which FTS5 always names after the TABLE.
+  // Aliasing changes only the qualifier, never the bare column name — so under
+  // `FROM chunks_fts f` there is no column `f`, and BOTH `f MATCH ?` and `bm25(f)` fail to
+  // PREPARE with "no such column: f". This query therefore threw on every single call, and
+  // MemoryIndexManager.search()'s `.catch(() => [])` reported it as "no matches" for months.
+  // Ordinary columns (f.id, f.path, f.model, f.text, ...) DO resolve through the alias, which
+  // is why only the MATCH left-hand side and the bm25() argument are spelled with the table
+  // name. `ORDER BY rank` still binds to the SELECT alias, and the MATCH stays pushed into the
+  // FTS index (EXPLAIN QUERY PLAN: SCAN f VIRTUAL TABLE INDEX 0:M7) — no extra scan.
   const rows = params.db
     .prepare(
       `SELECT f.id AS id, f.path AS path, f.source AS source,\n` +
         `       f.start_line AS start_line, f.end_line AS end_line, f.text AS text,\n` +
         `       c.verification_status AS verification_status,\n` +
         `       c.test_coverage_percent AS test_coverage_percent,\n` +
-        `       bm25(f) AS rank\n` +
+        `       bm25(${params.ftsTable}) AS rank\n` +
         `  FROM ${params.ftsTable} f\n` +
         `  JOIN chunks c ON c.id = f.id\n` +
-        ` WHERE f MATCH ?${modelClause}${sourceFilterSql}${temporal.sql}\n` +
+        ` WHERE ${params.ftsTable} MATCH ?${modelClause}${sourceFilterSql}${temporal.sql}\n` +
         ` ORDER BY rank ASC\n` +
         ` LIMIT ?`,
     )

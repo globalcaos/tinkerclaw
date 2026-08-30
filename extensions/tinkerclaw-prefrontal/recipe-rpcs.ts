@@ -2,9 +2,7 @@ import fs from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import AjvPkg from "ajv";
-import { fetch as undiciFetch } from "undici";
-import { parse as parseYaml } from "yaml";
-import { callGateway } from "../../src/gateway/call.js";
+import { createSubsystemLogger } from "openclaw/plugin-sdk/core";
 import {
   PrefrontalKitSearchParamsSchema,
   PrefrontalKitGetParamsSchema,
@@ -28,11 +26,13 @@ import {
   type PrefrontalKitMatchParams,
   type PrefrontalKitOrchestrateParams,
   type PrefrontalKitReadParams,
-} from "../../src/gateway/protocol/schema/prefrontal-kit.js";
-import { createSubsystemLogger } from "../../src/logging/subsystem.js";
-import { createEventStore } from "../../src/memory/engram/event-store.js";
-import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
-import { createSkillLibrary } from "../../src/memory/engram/skill-library.js";
+} from "openclaw/plugin-sdk/fork-prefrontal-schema";
+import { makeFitnessLookup } from "openclaw/plugin-sdk/fork-recipe-engine";
+import { createSkillLibrary } from "openclaw/plugin-sdk/fork-recipe-engine";
+import { createEventStore } from "openclaw/plugin-sdk/memory-engram";
+import { callGateway } from "openclaw/plugin-sdk/testing";
+import { fetch as undiciFetch } from "undici";
+import { parse as parseYaml } from "yaml";
 import {
   skillMdToRecipeSpec,
   buildBridgedKitMd,
@@ -310,7 +310,7 @@ function recipeFileSlug(fileName: string): string {
  *      folders (`writing/papers/*.md`). Every `.md` at any depth becomes visible;
  *      slug = frontmatter id/slug or the filename; category = the TOP folder name;
  *      subdivision = the nested folder path beneath it (frontmatter `subdivision`
- *      overrides). This is the owner's "subfolders as subdivisions of the same
+ *      overrides). This is the architect's "subfolders as subdivisions of the same
  *      category" contract.
  * A bare `<name>.md` sitting at the recipes root is also surfaced (category from
  * frontmatter). DUAL-READ within a kit dir: recipe.md first, kit.md legacy.
@@ -1508,6 +1508,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       const runtime = createProductionOrchestrationRuntime({
         callGateway,
         parentSessionKey: p.sessionKey,
+        runTimeoutSeconds: p.runTimeoutSeconds,
         onPhase: (title) => {
           void callGateway({
             method: "fork.prefrontal.setRecipe",
@@ -1735,7 +1736,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         // plan-store root, parse each, keep those whose frontmatter kitRef matches.
         readArchivedPlans: async () => {
           if (!deps.planStore) return [];
-          const plans: import("../../src/gateway/protocol/schema/prefrontal-plan.js").Plan[] = [];
+          const plans: import("openclaw/plugin-sdk/fork-prefrontal-schema").Plan[] = [];
           const archiveRoot = path.join(deps.planStore.rootDirPublic(), "archive");
           let dateDirs: string[] = [];
           try {

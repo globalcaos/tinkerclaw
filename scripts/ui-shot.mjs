@@ -36,6 +36,24 @@ try {
 const OUT = process.argv[2] || "/tmp/ui-shot.png";
 const SEL = process.argv[3] !== undefined ? process.argv[3] : ".exec-panel";
 const PULSE = process.argv.includes("--pulse");
+// FORK 2026-07-28: --wait-for <selector> / --wait <ms>. The fixed 2.5s delay was
+// enough for the exec panel but NOT for panels fed by a later gateway WS burst —
+// screenshotting #models-panel captured its "Loading…" placeholder, which reads as
+// a broken panel and sent me tuning CSS against a render that had not happened.
+// Any panel with an async fill should be captured with --wait-for its real content.
+const argOf = (flag) => {
+  const i = process.argv.indexOf(flag);
+  return i > -1 && process.argv[i + 1] ? process.argv[i + 1] : null;
+};
+const WAIT_FOR = argOf("--wait-for");
+const EXTRA_WAIT = Number(argOf("--wait")) || 0;
+// --click <selector> (repeatable): open collapsed sections before capturing. A
+// collapsed group renders NO children, so without this the shot silently shows an
+// empty section and you measure a layout that isn't on screen.
+const CLICKS = process.argv.reduce(
+  (acc, a, i) => (a === "--click" && process.argv[i + 1] ? [...acc, process.argv[i + 1]] : acc),
+  [],
+);
 
 const browser = await chromium.launch({
   executablePath: CHROME,
@@ -73,6 +91,24 @@ try {
       logs.push("[warn] no .pg-chart after 25s");
     }
     await page.waitForTimeout(1800);
+  }
+  for (const sel of CLICKS) {
+    try {
+      await page.locator(sel).first().click({ timeout: 8000 });
+      await page.waitForTimeout(500);
+    } catch (e) {
+      logs.push(`[warn] --click "${sel}": ${e.message.split("\n")[0]}`);
+    }
+  }
+  if (WAIT_FOR) {
+    try {
+      await page.waitForSelector(WAIT_FOR, { timeout: 30000 });
+    } catch {
+      logs.push(`[warn] --wait-for "${WAIT_FOR}" never appeared in 30s`);
+    }
+  }
+  if (EXTRA_WAIT > 0) {
+    await page.waitForTimeout(EXTRA_WAIT);
   }
   const target = SEL ? page.locator(SEL).first() : null;
   if (target && (await target.count()) > 0) {

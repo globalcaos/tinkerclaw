@@ -12,7 +12,10 @@ export function resolveGlobalLane(lane?: string) {
   if (cleaned === CommandLane.Cron) {
     return CommandLane.CronNested;
   }
-  return cleaned ? cleaned : CommandLane.Main;
+  // Default embedded session runs get the sessions lane so they never compete
+  // with explicit main-lane system work; per-session ordering still comes from
+  // the session lane.
+  return cleaned ? cleaned : CommandLane.Sessions;
 }
 
 export function resolveEmbeddedSessionLane(key: string) {

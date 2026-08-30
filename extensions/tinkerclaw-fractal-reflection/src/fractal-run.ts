@@ -21,6 +21,7 @@ import {
   RequestScopedSubagentRuntimeError,
   SUBAGENT_RUNTIME_REQUEST_SCOPE_ERROR_CODE,
 } from "openclaw/plugin-sdk/error-runtime";
+import { declareInstrument, noteInstrumentFired } from "openclaw/plugin-sdk/fork-instrumentation";
 import { FRACTAL_SESSION_PREFIX, type FractalConfig, type FractalRow } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -38,11 +39,36 @@ import { FRACTAL_SESSION_PREFIX, type FractalConfig, type FractalRow } from "./t
 export const DIGEST_CHAR_CEILING = 8_000;
 
 /**
- * CEILING on how long we wait for the triage run, aligned with the U5
- * dead-run watchdog ceiling (~120s of total silence — §5.67b). Triage runs at
- * low thinking and should finish well under this.
+ * CEILING on how long we wait for the triage run, aligned with the U5 dead-run
+ * watchdog ceiling (FRACTAL_LIVENESS_CEILING_MS — §5.67b). Move the two together.
+ *
+ * PROVENANCE (design-principles.md #20 — a measurement carries its provenance).
+ * This was 120_000 with the note "triage runs at low thinking and should finish
+ * well under this". That was an ASSUMPTION, and on 2026-08-04 the recorded runs
+ * refuted it. Measured over the 291 rows in ~/.openclaw/data/fractal/results.jsonl
+ * that carry `timeToDockMs`:
+ *
+ *     min 9.3s · p50 66.0s · p90 128.5s · max 260.4s
+ *
+ * p90 was ABOVE the ceiling, so roughly one run in eight was cut off for being
+ * normal. Across all 2,466 recorded rows the only statuses ever written are
+ * `error` (2,407) and `skipped` (59). The three SUCCESS statuses this function
+ * can return — `clean`, `flagged`, `gap` — have never once been recorded.
+ *
+ * What makes the old value actively harmful rather than merely tight: NEITHER
+ * ceiling cancels anything. `waitForRun` is `agent.wait`, a deadline on the
+ * WAIT; the watchdog's `fire()` only invokes `onDead`. The triage subagent runs
+ * on and writes a perfectly good verdict into a run we have already recorded as
+ * `status:"error", findings:[]`. Proven on 2026-08-04: the run for parent
+ * dc39a4e1 was docked as a timeout at 21:00:29 and its verdict ("act", with a
+ * headline) landed in the ENGRAM store at 21:02:50 — 2m21s later, discarded.
+ *
+ * 300s covers the observed max with ~15% headroom. Raising it costs no
+ * concurrency, precisely because the ceiling never freed the slot to begin with.
+ * If the measured max moves, re-derive from the ledger rather than guessing:
+ *   node -e 'const r=require("fs").readFileSync(process.env.HOME+"/.openclaw/data/fractal/results.jsonl","utf8").split("\n").filter(Boolean).map(JSON.parse).map(x=>x.timeToDockMs).filter(Number.isFinite).sort((a,b)=>a-b);console.log({n:r.length,p50:r[r.length>>1],p90:r[Math.floor(r.length*0.9)],max:r.at(-1)})'
  */
-export const TRIAGE_WAIT_CEILING_MS = 120_000;
+export const TRIAGE_WAIT_CEILING_MS = 300_000;
 
 /**
  * Dedicated triage lane — split from the fix lane so coalescing can never
@@ -64,6 +90,32 @@ const NOTES_SECTION_OVERHEAD_CHARS = 64;
 
 /** How many trailing session messages to fetch when extracting the triage reply. */
 const TRIAGE_REPLY_FETCH_LIMIT = 8;
+
+/**
+ * Declared once per process, lazily, from inside runTriage — NOT at module scope.
+ * Module scope would register the pair merely because something imported the file
+ * (a test, a type-only consumer), and an instrument that is declared without its
+ * work ever being reachable is a permanent false "pending" in the liveness report.
+ * The declaration belongs with the call, so declared-and-never-fired keeps meaning
+ * "this ran and produced nothing".
+ */
+let triageInstrumentsDeclared = false;
+function declareTriageInstruments(): void {
+  if (triageInstrumentsDeclared) {
+    return;
+  }
+  triageInstrumentsDeclared = true;
+  declareInstrument({
+    id: "fractal:triage-entry",
+    kind: "producer",
+    description: "a finished turn reached the fractal triage runner (before any early return)",
+  });
+  declareInstrument({
+    id: "fractal:triage-docked",
+    kind: "producer",
+    description: "a triage verdict came back, parsed, and produced a clean/flagged/gap row",
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -158,6 +210,18 @@ export type TriageVerdict = {
 const DIGEST_HEADER = [
   "# Finished-turn digest (fractal triage, COLD arm)",
   "",
+  "ATTRIBUTION — read this before anything else. Everything below was written by",
+  "SOMEONE ELSE: a different agent, on a different lane, in a turn that had already",
+  "finished before you were spawned. You did NOT write it, you did NOT edit those",
+  "files, you did NOT run those commands. You have no editing tools. Your entire",
+  "contribution is the judgement you are about to return.",
+  "",
+  "So: never write in the first person about anything in this digest, and never",
+  "report the main agent's edits, commands, or deliverables as things achieved.",
+  'Say "the turn edited X", never "I edited X" or "updated X". If the only true',
+  "sentence about a turn is that the main agent did the work and you found nothing",
+  "wrong with it, the verdict is `clean` and the headline says exactly that.",
+  "",
   "NOTE: this triage lane is COLD — it did NOT inherit the main session's",
   "retrieval/memory evidence (no forked context). Retrieval evidence may be",
   "absent from this digest, so GROUNDING / `gap` findings MUST be conservative:",
@@ -207,11 +271,16 @@ function assembleDigest(notes: string[], lastUser: string, finalAnswer: string):
   if (notes.length > 0) {
     parts.push("## Earlier turns (oldest first, one line each)", ...notes, "");
   }
+  // The section titles carry the attribution STRUCTURALLY, not as a rule to be remembered.
+  // They used to read "## Final assistant answer (in full)", and the judge — itself an
+  // assistant, reading a block labelled "assistant", inside a single user message — routinely
+  // adopted that text as its own voice and reported the MAIN turn's file edits as work it had
+  // done. A prompt rule alone does not survive that pull; the label has to disagree with it.
   parts.push(
-    "## Last user message",
+    "## What the ARCHITECT asked the main agent (not you)",
     lastUser,
     "",
-    "## Final assistant answer (in full)",
+    "## What the MAIN AGENT answered — someone else's words, quote them, never adopt them",
     finalAnswer,
   );
   return parts.join("\n");
@@ -274,7 +343,10 @@ export function buildTurnDigest(messages: unknown[]): string {
     if (!turn) {
       continue;
     }
-    const note = `- [${turn.role}] ${toOneLine(turn.text, NOTE_LINE_MAX_CHARS)}`;
+    // Same reason as the section titles: `[assistant]` reads to an assistant as its own prior
+    // output. `[main-agent]` cannot. See DIGEST_HEADER.
+    const speaker = turn.role === "assistant" ? "main-agent" : turn.role;
+    const note = `- [${speaker}] ${toOneLine(turn.text, NOTE_LINE_MAX_CHARS)}`;
     if (note.length + 1 > budget) {
       break;
     }
@@ -519,7 +591,95 @@ async function readRecurrenceCount(
  * Never throws — failures return a status "error" row.
  * NOTE: usage telemetry is omitted — SubagentWaitResult carries no usage today.
  */
+/**
+ * Backoff schedule (ms) for re-reading the triage session after the run ends. ~8.25s total across
+ * 6 reads, front-loaded because the observed lag is short — most runs are readable on the retry
+ * immediately after the first miss.
+ */
+export const REPLY_READ_BACKOFF_MS = [250, 500, 1_000, 1_500, 2_000, 3_000];
+
+/**
+ * Read the triage reply, retrying while the transcript catches up.
+ *
+ * THE BUG THIS FIXES, measured 2026-08-05. `triage run produced no assistant reply text` was the
+ * single largest failure mode after the ceiling fix — 25 of 45 rows. It is a READ-AFTER-WRITE
+ * RACE, not a missing reply: `waitForRun` is `agent.wait`, which returns when the RUN reaches a
+ * terminal state, while `getSessionMessages` goes to `sessions.get` -> `readSessionMessages`,
+ * which reads the PERSISTED transcript. Those are two different events and nothing orders them.
+ * The plugin read instantly, saw only its own prompt, and binned a finished verdict.
+ *
+ * Proven rather than reasoned: six sessions that had been docked `no assistant reply text` were
+ * re-read afterwards and FIVE returned the full assistant reply — four of them carrying a valid
+ * fenced JSON verdict, one 6,884 chars long. The text was always there. We asked too early.
+ *
+ * Why a bounded retry and not a longer wait before the first read: a fixed sleep pays the worst
+ * case on every run, including the majority that are ready immediately. The loop exits on the
+ * first successful read, so the common path costs one extra call and nothing else.
+ *
+ * The loop reports what it saw (`attempts`, `waitedMs`) and those numbers reach the error row and
+ * the log. A retry that silently smooths over a race turns a measurable defect into a slow
+ * mystery — if the lag ever grows past this budget, the row says how long it waited instead of
+ * repeating the old bare sentence.
+ */
+export async function readReplyWithBackoff(params: {
+  subagent: TriageSubagentSurface;
+  sessionKey: string;
+  log: TriageLog;
+  parentRunId: string;
+  backoffMs?: number[];
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<{ text: string | null; attempts: number; waitedMs: number }> {
+  const backoff = params.backoffMs ?? REPLY_READ_BACKOFF_MS;
+  const sleep = params.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  let waitedMs = 0;
+
+  for (let attempt = 0; attempt <= backoff.length; attempt++) {
+    let messages: unknown[] = [];
+    try {
+      ({ messages } = await params.subagent.getSessionMessages({
+        sessionKey: params.sessionKey,
+        limit: TRIAGE_REPLY_FETCH_LIMIT,
+      }));
+    } catch (err) {
+      // A transient read failure is exactly what the retry is for; only the last one is fatal.
+      params.log.warn(
+        `[fractal-reflection] session read failed (attempt ${attempt + 1}, parent=${params.parentRunId}): ${formatErrorMessage(err)}`,
+      );
+    }
+    const text = extractLastAssistantText(messages);
+    if (text) {
+      if (attempt > 0) {
+        params.log.info(
+          `[fractal-reflection] triage reply appeared on read ${attempt + 1} after ${waitedMs}ms (parent=${params.parentRunId}) — transcript lagged the run's terminal event`,
+        );
+      }
+      return { text, attempts: attempt + 1, waitedMs };
+    }
+    if (attempt < backoff.length) {
+      await sleep(backoff[attempt]);
+      waitedMs += backoff[attempt];
+    }
+  }
+  return { text: null, attempts: backoff.length + 1, waitedMs };
+}
+
 export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Promise<FractalRow> {
+  // FORK 2026-08-04 — this lane had NO instruments at all, which is the whole
+  // reason it stayed broken for eight weeks in plain sight. It wrote a row for
+  // every failure into results.jsonl and nobody read the file; the liveness
+  // report, which IS read, knew nothing about fractal.
+  //
+  // The pair is deliberate and mirrors engram:ingest-{entry,assistant}:
+  //   fractal:triage-entry  — we were called (fires before ANY early return)
+  //   fractal:triage-docked — a verdict actually came back and parsed
+  // entry live + docked never = "we run and always bail", which is exactly the
+  // state this lane was in (2,466 rows, `status:"ok"` zero times). Both silent
+  // = the turn hook never reaches us, a different bug in a different file.
+  // Per design-principles #20, an instrument goes where the work happens, never
+  // behind the condition that decides whether it is registered.
+  declareTriageInstruments();
+  noteInstrumentFired("fractal:triage-entry", input.sessionKey || "(no sessionKey)");
+
   const ts = new Date().toISOString();
   let spawnedAtMs: number | undefined;
   let triageRunId: string | undefined;
@@ -595,14 +755,20 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
       );
     }
 
-    const { messages: sessionMessages } = await subagent.getSessionMessages({
+    // (5b) READ THE REPLY — with backoff, because `agent.wait` returning is NOT the same event
+    // as the transcript being readable. See readReplyWithBackoff.
+    const reply = await readReplyWithBackoff({
+      subagent,
       sessionKey: triageSessionKey,
-      limit: TRIAGE_REPLY_FETCH_LIMIT,
+      log: deps.log,
+      parentRunId: input.parentRunId,
     });
-    const replyText = extractLastAssistantText(sessionMessages);
-    if (!replyText) {
-      return errorRow("triage run produced no assistant reply text");
+    if (!reply.text) {
+      return errorRow(
+        `triage run produced no assistant reply text (after ${reply.attempts} reads over ${reply.waitedMs}ms)`,
+      );
     }
+    const replyText = reply.text;
 
     // (6) parse the LAST fenced json verdict block
     const parsed = parseTriageVerdict(replyText);
@@ -632,6 +798,10 @@ export async function runTriage(deps: RunTriageDeps, input: RunTriageInput): Pro
     // (9) final row — Drop 1 never spawns the fix lane: findings → "flagged"
     const status: FractalRow["status"] =
       findings.length > 0 ? "flagged" : parsed.verdict === "gap" ? "gap" : "clean";
+    // SUCCESS instrument — the only line in this file that proves the lane works.
+    // Reached only with a parsed verdict in hand, so it cannot report health that
+    // a returned-but-empty row would fake.
+    noteInstrumentFired("fractal:triage-docked", `${status} in ${timeToDockMs}ms`);
     return {
       v: 1,
       parentRunId: input.parentRunId,

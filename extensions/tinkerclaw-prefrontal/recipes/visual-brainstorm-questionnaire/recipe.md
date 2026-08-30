@@ -44,7 +44,7 @@ Collect all design decisions in one user pass, with visuals, without a chat ping
 ## When to Use
 
 - A feature design has 5+ open questions and visual mockups would clarify them
-- the owner says 'show me visually' or 'make a page with the choices'
+- the architect says 'show me visually' or 'make a page with the choices'
 - Any brainstorm where chat one-question-at-a-time would take many turns
 
 ## Steps

@@ -15,6 +15,35 @@
 // list were log-only dead code that hardcoded a stale, drifting model roster —
 // deleted along with isModelInTier and the EffortRoutingConfig/RoutingDecision
 // types that only existed to serve them.
+//
+// FORK 2026-07-28 — LIVENESS + EFFECTIVENESS ENROLMENT (src/infra/instrument-liveness.ts +
+// src/infra/algorithm-metrics.ts). This router had exactly the shape the liveness registry
+// exists to catch: an `effortRouting` block sitting in openclaw.plugin.json made it LOOK
+// alive, while nothing anywhere proved a classification had ever been produced on real
+// traffic. Declaration lives here at module scope — loading the extension is merely
+// "registered" — and the FIRE lives down in buildEffortGuidance at the point a routing
+// DECISION is actually made. Never at classifyComplexity's definition and never in the
+// plugin's register(): inferring liveness from either reproduces the exact bug.
+//
+// These cross into fork core through the published plugin-SDK subpath, never `../../src/…`
+// (which resolves only inside this monorepo): the instrumentation plane is a declared SDK
+// surface (src/plugin-sdk/fork-instrumentation.ts), so the extension stays installable on
+// vanilla OpenClaw.
+import { recordAlgorithmOutcome } from "openclaw/plugin-sdk/fork-instrumentation";
+import { declareInstrument, noteInstrumentFired } from "openclaw/plugin-sdk/fork-instrumentation";
+
+/** Stable instrument id — it is grepped and it appears in liveness reports. Do not rename. */
+const EFFORT_ROUTE_INSTRUMENT_ID = "prefrontal:effort-route";
+
+// No `expectFireWithinMs`: buildEffortGuidance runs on essentially every prompt build (it is
+// called unconditionally from index.ts's before_prompt_build hook), so the registry default —
+// 30 minutes of silence is suspicious — is the correct tolerance. No `conditional` either:
+// that call site is not flag-gated, so silence here would be a genuine defect, not config.
+declareInstrument({
+  id: EFFORT_ROUTE_INSTRUMENT_ID,
+  kind: "gate",
+  description: "effort router producing a complexity classification for a prompt",
+});
 
 export type EffortLevel = "minimal" | "standard" | "maximum";
 
@@ -66,7 +95,7 @@ export type ComplexityLevel = "trivial" | "standard" | "deep" | "ultra";
 export type OrchestrationMode = "solo" | "parallel" | "workflow";
 
 // FORK 2026-06-22: quota-headroom bias. When the weekly token quota is mostly
-// unspent (e.g. Monday morning, ~100% left) the owner wants the auto-allocator to
+// unspent (e.g. Monday morning, ~100% left) the architect wants the auto-allocator to
 // "go aggressive in choosing both model and effort on the fly" — so a high
 // headroom bumps every non-trivial turn up one gear, and a tight quota pulls it
 // down one. Pure acks/greetings (trivial) are never escalated: spending opus on
@@ -390,6 +419,40 @@ export function buildEffortGuidance(
   bias: EffortBias = resolveEffortBias(),
 ): string | null {
   const rec = classifyComplexity(prompt, bias);
+  // FORK 2026-07-28 — fire HERE: this is where a classification becomes a turn-shaping
+  // DECISION. Deliberately BEFORE the trivial early-return below — recording only the tiers
+  // that produce guidance would make the ledger a survivorship sample, and "trivial → inject
+  // nothing" is a routing outcome like any other. Numbers only: no prompt text ever reaches
+  // the ledger. Both calls swallow their own errors and never throw into this path.
+  //
+  // The explicit noteInstrumentFired is NOT redundant with recordAlgorithmOutcome: that one
+  // notes `algorithm:effort-router`, a DIFFERENT id from the one declared above, so without
+  // this line `prefrontal:effort-route` would be reported neverFired forever.
+  noteInstrumentFired(EFFORT_ROUTE_INSTRUMENT_ID, `${rec.level}/score=${rec.score}`);
+  recordAlgorithmOutcome({
+    algorithm: "effort-router",
+    variant: rec.level,
+    outcome: "routed",
+    metrics: {
+      clauses: rec.signals.clauses,
+      independentAsks: rec.signals.independentAsks,
+      words: rec.signals.words,
+      score: rec.score,
+    },
+    // Rule 3 (measured vs estimated is EXPLICIT) applied honestly: clauses, words and
+    // independentAsks are counts over text we hold, so they are local-measured. `score` is
+    // NOT — it is a hand-tuned weighted sum of thresholded signals, a heuristic proxy for
+    // complexity, and calling it "measured" is precisely the mistake rule 3 was written after.
+    provenance: {
+      clauses: "local-measured",
+      independentAsks: "local-measured",
+      words: "local-measured",
+      score: "estimated",
+    },
+    // `bias` is an INPUT that shaped this tier (applyEffortBias shifts the level), so it has
+    // to be segmentable later — otherwise a flush-quota week reads as a harder workload.
+    config: { bias },
+  });
   if (rec.level === "trivial") return null;
   const biasNote =
     bias === "aggressive"

@@ -551,7 +551,7 @@ export async function discoverAllSessions(params?: {
   return Array.from(discovered.values()).toSorted((a, b) => b.mtime - a.mtime);
 }
 
-export async function loadSessionCostSummary(params: {
+export type LoadSessionCostSummaryParams = {
   sessionId?: string;
   sessionEntry?: SessionEntry;
   sessionFile?: string;
@@ -559,7 +559,136 @@ export async function loadSessionCostSummary(params: {
   agentId?: string;
   startMs?: number;
   endMs?: number;
-}): Promise<SessionCostSummary | null> {
+};
+
+/**
+ * FORK 2026-08-16 — MEMOISED ON FILE IDENTITY.
+ * FORK 2026-08-28 — IDENTITY MOVED INTO THE VALUE; SINGLE-FLIGHT; EXACT (bigint) IDENTITY.
+ *
+ * `sessions.usage` is still the gateway's largest event-loop blocker: journald over 240 min,
+ * measured twice independently — n=68, mean 37,681 ms, p50 4,582 ms, max 461,480 ms, 64/68
+ * calls over 1s (budget.usage: mean 9,156 ms, max 183,755 ms). ~104 store entries sit against
+ * ~12,576 transcript files, so the redundant work is re-parses of transcripts whose bytes have
+ * not changed since the previous poll.
+ *
+ * Three defects in the 2026-08-16 shape, fixed here:
+ *
+ * 1. The identity lived in the KEY, so every write to a live session ADDED a key instead of
+ *    replacing its own, and the FIFO then evicted the idle, unchanged sessions this memo exists
+ *    to serve in order to keep superseded copies of the few active ones. The identity now lives
+ *    in the VALUE and the key is (file, window): churn overwrites in place, and eviction is LRU
+ *    (a hit re-inserts), so what is actually being read outlives what was merely written.
+ *
+ * 2. No in-flight coalescing. Several panel tabs polling at once each re-parsed the same
+ *    transcripts — the 40-460s tail above is that pile-up. N concurrent callers now join one
+ *    scan, the same shape as the discovery coalescer in server-methods/usage.ts.
+ *
+ * 3. Float `mtimeMs` and no `ino`: a same-millisecond same-size write was invisible, and an
+ *    atomic rename-into-place can replace every byte while preserving mtime and size. One
+ *    statSync(..., { bigint: true }) gives exact mtimeNs plus the inode, so the identity tracks
+ *    the BYTES, not the clock. Steady state is one stat per session and ZERO reads.
+ *
+ * Still deliberately NOT a TTL cache, and still not a staleness tradeoff: any write changes the
+ * identity and invalidates on the next call. Totals are byte-identical to the uncached path by
+ * construction — this memo only removes repeat executions of a pure function.
+ */
+const SESSION_COST_SUMMARY_CACHE_MAX = 512;
+
+type SessionCostSummaryCacheEntry = {
+  /** Identity of the bytes the summary was computed from — mismatch means recompute. */
+  identity: string;
+  summary?: SessionCostSummary | null;
+  inFlight?: Promise<SessionCostSummary | null>;
+};
+
+const sessionCostSummaryCache = new Map<string, SessionCostSummaryCacheEntry>();
+
+/**
+ * Exact content identity: `ino` catches an atomic rename that preserves mtime and size;
+ * `mtimeNs` catches a same-size write inside one millisecond that float `mtimeMs` would miss.
+ */
+function statTranscriptIdentity(filePath: string): string | undefined {
+  try {
+    const stats = fs.statSync(filePath, { bigint: true });
+    return `${stats.ino}|${stats.mtimeNs}|${stats.size}`;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Test seam: drop the memo so a test that rewrites a transcript mid-run is not fooled. */
+export function resetSessionCostSummaryCacheForTest(): void {
+  sessionCostSummaryCache.clear();
+}
+
+export async function loadSessionCostSummary(
+  params: LoadSessionCostSummaryParams,
+): Promise<SessionCostSummary | null> {
+  const sessionFile = resolveExistingUsageSessionFile(params);
+  if (!sessionFile) {
+    return await computeSessionCostSummary(params);
+  }
+  const identity = statTranscriptIdentity(sessionFile);
+  if (!identity) {
+    // Cannot establish identity ⇒ cannot cache safely. Fall through to a real read.
+    return await computeSessionCostSummary(params);
+  }
+
+  const cacheKey = `${sessionFile}|${params.startMs ?? ""}|${params.endMs ?? ""}`;
+  const cached = sessionCostSummaryCache.get(cacheKey);
+  if (cached?.identity === identity) {
+    // LRU: re-insert so "recently read" outranks "recently added" when the cap evicts.
+    sessionCostSummaryCache.delete(cacheKey);
+    sessionCostSummaryCache.set(cacheKey, cached);
+    // Coalesce: join the running scan rather than starting a second one over the same bytes.
+    if (cached.inFlight) {
+      return await cached.inFlight;
+    }
+    if (cached.summary !== undefined) {
+      return cached.summary;
+    }
+  }
+
+  const entry: SessionCostSummaryCacheEntry = { identity };
+  // Pin the already-resolved file so the compute cannot re-resolve to a different transcript
+  // (an archive appearing mid-call) and cache its summary under this file's identity.
+  const inFlight = computeSessionCostSummary({ ...params, sessionFile })
+    .then((summary) => {
+      entry.summary = summary;
+      return summary;
+    })
+    .catch((err: unknown) => {
+      // A failed scan must never be memoised: an entry with no summary would read as "this
+      // session cost nothing" and silently zero a real session's totals.
+      if (sessionCostSummaryCache.get(cacheKey) === entry) {
+        sessionCostSummaryCache.delete(cacheKey);
+      }
+      throw err;
+    })
+    .finally(() => {
+      if (entry.inFlight === inFlight) {
+        entry.inFlight = undefined;
+      }
+    });
+  entry.inFlight = inFlight;
+
+  // Replace in place when the file changed, so churn cannot grow the map.
+  sessionCostSummaryCache.delete(cacheKey);
+  sessionCostSummaryCache.set(cacheKey, entry);
+  while (sessionCostSummaryCache.size > SESSION_COST_SUMMARY_CACHE_MAX) {
+    const oldest = sessionCostSummaryCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    sessionCostSummaryCache.delete(oldest);
+  }
+
+  return await inFlight;
+}
+
+async function computeSessionCostSummary(
+  params: LoadSessionCostSummaryParams,
+): Promise<SessionCostSummary | null> {
   const sessionFile = resolveExistingUsageSessionFile(params);
   if (!sessionFile || !fs.existsSync(sessionFile)) {
     return null;

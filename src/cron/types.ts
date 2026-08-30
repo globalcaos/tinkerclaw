@@ -111,9 +111,22 @@ export type CronFailureAlert = {
   accountId?: string;
 };
 
-export type CronPayload = { kind: "systemEvent"; text: string } | CronAgentTurnPayload;
+/**
+ * A systemEvent that targets the main session wakes a real agent turn, so it can
+ * legitimately outlive the generic 10-minute job ceiling. `timeoutSeconds` lets such a
+ * job raise its own limit, exactly as an agentTurn payload can.
+ */
+export type CronSystemEventPayload = {
+  kind: "systemEvent";
+  text: string;
+  timeoutSeconds?: number;
+};
 
-export type CronPayloadPatch = { kind: "systemEvent"; text?: string } | CronAgentTurnPayloadPatch;
+export type CronPayload = CronSystemEventPayload | CronAgentTurnPayload;
+
+export type CronPayloadPatch =
+  | { kind: "systemEvent"; text?: string; timeoutSeconds?: number }
+  | CronAgentTurnPayloadPatch;
 
 type CronAgentTurnPayloadFields = {
   message: string;

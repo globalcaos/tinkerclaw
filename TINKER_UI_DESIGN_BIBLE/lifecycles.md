@@ -2,7 +2,7 @@
 file: lifecycles.md
 purpose: State machines for entities that have non-trivial lifecycles
 audience: AI
-last_verified: 2026-06-02
+last_verified: 2026-07-21
 last_verified_commit: 06f8647fdc
 single_owner: yes — state-transition facts live here, not in bible.md or flows.md
 see_also: flows.md (sequence of calls), failures.md (transitions that don't fire), probes.md (`debug.session.state` proposed), config-shape.md (U7 7D/7G dead-code RPC traps), subagents-and-recipes.md (recipe selection/fitness scoring)
@@ -21,6 +21,10 @@ verify:
     cmd: python3 -c 'import os; e=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/recipe-evolution.ts")).read(); a=open(os.path.expanduser("~/src/tinkerclaw/src/memory/engram/recipe-archive.ts")).read(); assert "export function isAutoPromotable(" in e and "export function proposeMutations(" in e and "needsHumanReview" in e, "recipe-evolution proposed/auto-promotable transitions renamed — L-RECIPE-VARIANT stale"; assert "NEVER deletes" in a and "deprecate(recipeId" in a and "putVariant(recipeId" in a, "recipe-archive never-delete (deprecate not delete) broke — L-RECIPE-VARIANT archived-edge stale"'
   - name: L-CURIOSITY-GAP — curiosity gap lifecycle producers + RPCs still present (U2)
     cmd: python3 -c 'import os; s=open(os.path.expanduser("~/src/tinkerclaw/src/fork/curiosity-store.ts")).read(); h=open(os.path.expanduser("~/src/tinkerclaw/src/fork/attempt-hooks.ts")).read(); i=open(os.path.expanduser("~/src/tinkerclaw/src/fork/idle-goals.ts")).read(); r=open(os.path.expanduser("~/src/tinkerclaw/src/fork/curiosity-rpc.ts")).read(); assert "export function appendGap(" in s and "export function topGaps(" in s and "export function markResolved(" in s, "curiosity-store gap lifecycle fns renamed — L-CURIOSITY-GAP stale"; assert "detectUncertaintySpans" in h and "appendGap" in h, "2a hedge→gap producer unwired from onTurnComplete — L-CURIOSITY-GAP logged-edge stale"; assert "proposeIdleGoals" in i and "curiosity-goal-proposal" in i, "2d idle-goal proposer changed — L-CURIOSITY-GAP surfaced→proposed edge stale"; assert "fork.curiosity.logGap" in r and "fork.curiosity.topGaps" in r and "fork.curiosity.resolveGap" in r, "curiosity RPC names changed — L-CURIOSITY-GAP RPC labels stale"'
+  - name: L-PROMPT — the queue gate keeps its run-liveness term, tolerates the shape app.ts passes, and never gates delivery
+    cmd: python3 -c 'import os,re; a=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); r=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/run-state.ts")).read(); q=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/queued-sends.ts")).read(); assert "hasFreshActiveRunForSession:" in a, "the shouldQueue call site has drifted off the renamed field again — the gate silently degenerates to streamRunId||sending (2026-08-26, two days of falsely-queued prompts)"; assert len([l for l in a.splitlines() if "shouldQueue({" in l and not l.strip().startswith(("//", "*"))]) == 1, "shouldQueue is invoked from somewhere other than the one shared predicate — a second call site is a second opinion about deferral, which is the drift this entry exists to stop"; assert "Array.isArray(item) ? item[1] : item" in r, "sessionHasFreshClientRun stopped normalising per item — passing activeRuns.values() throws TypeError at the TOP of send(), blanking the composer without drawing or delivering the prompt (2026-08-26)"; assert "queue gate threw" in a, "the send-path fail-safe around the queue gate is gone — an exception there costs the user their prompt on screen"; assert "function sendWouldDefer(" in a and a.count("sendWouldDefer()") >= 2, "send() and updateBtn() no longer share ONE deferral predicate — the button can again promise a hold the send path will not perform (the subagent case)"; assert "hasFreshActiveRunForSession !== \"boolean\"" in q, "shouldQueue no longer rejects a drifted call site; a missing field would silently disable the run-liveness term again"'
+  - name: L6 — restart-deferral drain partitions fresh vs stale active tasks
+    cmd: python3 -c 'import os; m=open(os.path.expanduser("~/src/tinkerclaw/src/tasks/task-registry.maintenance.ts")).read(); h=open(os.path.expanduser("~/src/tinkerclaw/src/gateway/server-reload-handlers.ts")).read(); assert "export function getRestartBlockingTaskSummary(" in m and "RESTART_BLOCKING_TASK_STALE_MS" in m and "staleIgnored" in m, "getRestartBlockingTaskSummary fresh/stale partition renamed or removed — L6 diagram stale; dead workers with a live session-store entry would again defer restarts indefinitely (observed 2026-07-21)"; assert "getRestartBlockingTaskSummary" in h and "stale task run(s) ignored" in h, "server-reload-handlers no longer consumes getRestartBlockingTaskSummary — restart gate reverted to raw active counts; L6 blocking edge stale"'
 ---
 
 # Lifecycles — state machines
@@ -197,6 +201,120 @@ stateDiagram-v2
 - `agentRunSeq` map is the source of truth for run sequence numbers; `delete` is the cleanup signal.
 
 **Open follow-up:** unify the lifecycle path (`server-chat.ts:emitChatFinal`) and the backstop path (`chat.ts:.then() broadcastChatFinal`) into a single emitter. Today they coexist as defense-in-depth; ultimately one should call the other.
+
+---
+
+## L-PROMPT — One user prompt, from keystroke to answer (client lane)
+
+**Status:** DEPLOYED (FORK 2026-08-28). L5 above is the SERVER's view of the same turn, keyed by `runId`; this is the BROWSER's view of the same act, keyed by `_clientMsgId`. They meet at `chat.send`.
+
+**Entity:** one user prompt in `tinker-ui`, identified by the single `clientMsgId` minted in `send()` (`tinker-ui/src/app.ts`) and reused as the outbox id, the bubble id and the gateway `idempotencyKey`.
+
+### The distinction the whole diagram exists to make
+
+"Queued" was one word for two orthogonal facts, and every bug in this area came out of the confusion:
+
+|                       | question                                                                                                          | who owns the answer                                       | surface allowed to paint it                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------- |
+| **DEFERRED**          | _where is the bubble stored?_ — held out of `messages[]` so the running turn's later bubbles cannot land above it | the CLIENT (`pendingQueuedSends`, gated by `shouldQueue`) | the trailing dimmed bubble, and nothing else |
+| **transport backlog** | _is the server holding the text unprocessed?_                                                                     | the SERVER (`queueDepth` in diagnostics)                  | a server-sourced surface, or nothing         |
+
+**`chat.send` is not gated by the deferral decision.** It fires on every send, deferred or not. Therefore a client-side "queued" bubble NEVER means "your words are still in your browser" — it means only "this bubble is parked below the fold". A surface that reads DEFERRED and says _queued_ to the user is asserting a transport fact it does not hold, which is why "it says queued while it is obviously the one being processed" was a truthful bug report and not a race.
+
+`_undelivered` is the third, genuinely different fact — _nobody has this but your browser_ — and must never be styled like either of the others.
+
+```mermaid
+stateDiagram-v2
+  [*] --> composed
+  composed --> protected: send() writes outbox + journal BEFORE any await
+  protected --> echoed: not deferred -> pushUserMsgDeduped -> messages[]
+  protected --> deferred: shouldQueue() true -> pendingQueuedSends (tagged _queuedSession)
+
+  echoed --> in_flight: chat.send fires
+  deferred --> in_flight: chat.send fires ANYWAY (deferral is rendering, not transport)
+
+  in_flight --> accepted_pending: RPC resolves - gateway holds it, no model open yet
+  accepted_pending --> accepted_live: first model-bearing lifecycle phase start
+  accepted_live --> answered: chat terminal for this session
+  accepted_pending --> answered: terminal without a model call
+
+  deferred --> echoed: settleQueuedSession on THIS session's turn end
+  deferred --> stranded: queued > QUEUED_STRANDED_MS with no fresh run left
+  in_flight --> undelivered: chat.send rejects - amber lane, retry offered
+  undelivered --> in_flight: retry - same bubble id, FRESH idempotencyKey
+
+  answered --> [*]: outbox entry retired only when proven in chat.history
+  stranded --> [*]: surfaced to the user - never silently dropped
+
+  note right of protected
+    The prompt is on disk here.
+    Everything after this point may
+    fail without losing the text.
+  end note
+  note right of accepted_pending
+    THE PRE-MODEL WINDOW: measured 21-36 s.
+    All five activity indicators light HERE,
+    not at accepted_live. See the table below.
+  end note
+```
+
+**Invariants:**
+
+- **PROTECTED precedes every yield.** The outbox write, the journal write and the one `clientMsgId` all happen before the first `await` in `send()`. Everything downstream is recoverable because of this, and it is why the 2026-08-26 crash cost seconds rather than the prompt itself.
+- **ECHO IS SYNCHRONOUS AND UNCONDITIONAL.** A prompt reaches `echoed` or `deferred` on the same task that cleared the composer — never after a network round-trip. The composer's keydown handler does not `await send()`, so a throw inside `send()` blanks the box regardless: **any exception on this path costs the user their text on screen.** The deferral decision is therefore wrapped and fails safe to _not deferred_ — cosmetic misordering beats a prompt that vanishes.
+- **DEFERRED never gates transport.** `chat.send` sits outside every deferral branch. Moving it inside would convert a rendering choice into a delivery choice, which is the bug class this whole entry documents.
+- **One prompt, one bubble.** The outbox backstop re-injects from disk only for ids absent from BOTH `messages[]` and `pendingQueuedSends`; de-duplicating against `messages[]` alone paints a second, amber copy of every deferred prompt within 5 s.
+- **Deferral is per SESSION, not per tab.** Every deferred entry carries `_queuedSession`; the render filters by it and the drain keys on the session whose turn ended, not on the tab being viewed (2026-06-08).
+- **ACK IS NOT DURABILITY.** The outbox entry is retired only when `chat.history` proves the turn, never in the `chat.send` `.then()` (2026-08-24).
+
+### The five activity indicators
+
+The architect's rule (2026-08-28): **all five light from the moment the prompt is sent until the answer arrives** — i.e. across `accepted_pending` AND `accepted_live`, not from the first model token. They are deliberately synchronized for user simplicity, even though the models panel is strictly speaking naming a model that has not started computing yet.
+
+| #   | surface                   | trigger membership                                                                                                                                       |
+| --- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | chat thinking pill        | `repaintActivitySurfaces()`                                                                                                                              |
+| 2   | tab glow                  | `repaintActivitySurfaces()`                                                                                                                              |
+| 3   | sessions-panel row        | `repaintActivitySurfaces()`                                                                                                                              |
+| 4   | models panel              | `repaintActivitySurfaces()`                                                                                                                              |
+| 5   | recipes / prefrontal tree | **sibling call in `activityTick`, NOT in the trigger** — and the only one that never consults `resolveSessionRunState`, so it carries no freshness bound |
+
+**The consequence the architect accepted, and the condition attached to it:** because all five light during the pre-model window, **AUTO model selection must stay fast.** The synchronization is only honest while "which model?" is a cheap decision. **If model selection becomes materially more expensive — a routing call, a scoring pass, a negotiation — the (models, recipes) pair must be dissociated from the (chat, tab, sessions) trio,** so the first three keep meaning _your turn is being worked on_ while the last two go back to meaning _this specific model is computing_. That dissociation is NOT implemented today; this note is the trigger condition for building it.
+
+see also: done-signals.md (owns which signal wins when they disagree, and the R2a rule that a predicate clears nothing), architecture.md (the ONE PREDICATE · ONE TRIGGER · ONE CLOCK · ONE STATE SET row for UI session-activity indication), turn-latency.md (owns the measured cost of the pre-model stages), tinker-ui.md (owns the visual language of the three bubble lanes), bug-log.md (the 2026-08-26 incident this entry was written from).
+
+---
+
+## L6. Restart-deferral drain (task freshness gate)
+
+**Status:** DEPLOYED (FORK 2026-07-21, `aec445bfbb` + `dbfc255cbe`). last_verified 2026-07-21.
+
+**Entity:** one reconciled queued/running `TaskRecord`, as seen by the gateway restart/reload drain (`waitForActiveWorkBeforeChannelReload` and the restart gate in `src/gateway/server-reload-handlers.ts`).
+
+**Code:** `getRestartBlockingTaskSummary` in `src/tasks/task-registry.maintenance.ts`; consumed by `getActiveCounts` in `src/gateway/server-reload-handlers.ts`.
+
+```mermaid
+stateDiagram-v2
+  [*] --> active: reconcile pass keeps task queued/running
+  active --> fresh_blocking: now - (lastEventAt ?? startedAt ?? createdAt) < RESTART_BLOCKING_TASK_STALE_MS (10 min)
+  active --> stale_ignored: silent >= 10 min on the same freshness reference
+  fresh_blocking --> vetoes_restart: blocking++ → getActiveCounts totalActive
+  stale_ignored --> still_displayed: getInspectableTaskRegistrySummary untouched — shows as running everywhere
+  vetoes_restart --> [*]: gateway restart / channel reload deferred until fresh work drains
+  still_displayed --> [*]: logged as N stale task run(s) ignored — restart proceeds
+```
+
+**Invariants:**
+
+- Freshness reference = `lastEventAt ?? startedAt ?? createdAt` — the SAME chain as `hasLostGraceExpired`, so the restart gate and lost-marking never disagree about what "silent" means. Silent ≥ 10 min (`RESTART_BLOCKING_TASK_STALE_MS`) → `staleIgnored`; otherwise → `blocking`.
+- **Fresh/stale is a restart-gate VIEW, not a status transition.** A stale task still displays as running everywhere (`getInspectableTaskRegistrySummary` untouched); it only stops vetoing a gateway restart or channel reload.
+- `getActiveCounts` folds ONLY `blocking` into `totalActive`; `staleIgnored` surfaces in deferral messages as `<n> stale task run(s) ignored`, so the drain's decision stays auditable in the logs.
+- The same reconcile pass runs first (durable cron recovery + lost-marking still apply); the fresh/stale partition only touches tasks that SURVIVE reconciliation.
+- **Why (2026-07-21):** a running task whose session-store entry still exists is never marked lost (`hasBackingSession`), so a dead worker could block restarts indefinitely — observed live: 10 zombies deferring a gateway restart 4+ hours.
+
+see also: config-shape.md (owns config-key semantics — the 10-min threshold is the code constant `RESTART_BLOCKING_TASK_STALE_MS` today, `staleAfterMs` is an opts override, no config key yet), failures.md (deferral that never completes), flows.md (restart drain sequence).
+
+**Probe:** none dedicated yet — `getRestartBlockingTaskSummary()` is callable in-process; the deferral log line (`<n> stale task run(s) ignored`) is the observable surface.
 
 ---
 

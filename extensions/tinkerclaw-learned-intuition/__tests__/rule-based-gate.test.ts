@@ -99,5 +99,20 @@ describe("rule-based-gate", () => {
       const result = evaluateRuleBased("exec", "rm temp.txt");
       expect(result.decision).toBe("allow");
     });
+
+    // Regression: the -r group in the first FS_DESTRUCTIVE_ROOT rule was optional,
+    // so a non-recursive delete of any absolute path was blocked as "recursive
+    // delete from root filesystem". The existing allow-case used a relative path
+    // and never exercised it.
+    it("allows non-recursive rm of an absolute path", () => {
+      expect(evaluateRuleBased("exec", "rm -f /tmp/scratch.bin").decision).toBe("allow");
+      expect(evaluateRuleBased("exec", "rm /tmp/scratch.bin").decision).toBe("allow");
+    });
+
+    it("still blocks recursive deletes of absolute paths", () => {
+      for (const cmd of ["rm -rf /", "rm -fr /home", "rm -r /home/user", "rm -f -r /var"]) {
+        expect(evaluateRuleBased("exec", cmd).decision).toBe("hard_block");
+      }
+    });
   });
 });

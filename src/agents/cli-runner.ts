@@ -1,5 +1,6 @@
 import type { ReplyPayload } from "../auto-reply/reply-payload.js";
 import { SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
+import { emitCacheTelemetry } from "../infra/cache-telemetry.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { loadCliSessionHistoryMessages } from "./cli-runner/session-history.js";
@@ -233,6 +234,46 @@ export async function runPreparedCliAgent(
     const text = resultParams.output.text?.trim();
     const rawText = resultParams.output.rawText?.trim();
     const payloads = text ? [{ text }] : undefined;
+    const lastStep = resultParams.output.lastStepUsage;
+    const lastStepPromptTokens = lastStep
+      ? (lastStep.input ?? 0) + (lastStep.cacheRead ?? 0) + (lastStep.cacheWrite ?? 0)
+      : 0;
+    // FORK 2026-07-25 (the architect, Context Cache panel): the CLI pipe's `stream:"cache"`
+    // producer, i.e. the `claude-cli` cliBackend ONLY.
+    //
+    // CORRECTION 2026-07-28: this comment used to claim "claude-code/* is the MAIN pipe, so
+    // without this emission the panel is blind". Both halves are false. `claude-code` is a
+    // provider-runtime PLUGIN (extensions/tinkerclaw-tinker-bridge, `PROVIDER_ID =
+    // "claude-code"` registered via api.registerProvider), NOT a cliBackend — it routes through
+    // runEmbeddedPiAgent and therefore emits from embedded-agent-subscribe.handlers.messages.ts.
+    // And `cliBackends` is absent from the live config, so THIS producer never fires at all.
+    // The upshot is worth stating plainly: the correct per-call logic below sits on a dead path,
+    // while the pipe that actually serves the panel carries a turn aggregate. There are THREE
+    // serving pipes, not two.
+    //
+    // It deliberately reads `lastStepUsage` — the LAST API call's usage —
+    // and NEVER `output.usage`, the CLI's turn-AGGREGATE summed across internal
+    // steps; reading that aggregate as a context snapshot was the 2026-07-24
+    // accounting bug. Emitting here (rather than at the call sites) keeps the
+    // telemetry on the exact value agentMeta persists, so the two cannot drift.
+    // Guarded on `lastStep` so a usage-less run stays silent, and fire-and-forget
+    // so observation can never disturb the served turn. Note `toCliUsage` only
+    // picks values > 0, mapping a genuine 0 to `undefined` — `?? 0` restores the
+    // real zero instead of inventing one.
+    if (lastStep && lastStepPromptTokens > 0) {
+      emitCacheTelemetry({
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        model: context.modelId,
+        provider: params.provider,
+        input: lastStep.input ?? 0,
+        cacheRead: lastStep.cacheRead ?? 0,
+        cacheWrite: lastStep.cacheWrite ?? 0,
+        output: lastStep.output ?? 0,
+        promptTokens: lastStepPromptTokens,
+        timestampMs: Date.now(),
+      });
+    }
 
     return {
       payloads,
@@ -275,6 +316,11 @@ export async function runPreparedCliAgent(
           provider: params.provider,
           model: context.modelId,
           usage: resultParams.output.usage,
+          // The last assistant step's prompt-side tokens ≈ real context size.
+          // Without this, session-store derives totalTokens from `usage` — the
+          // CLI's turn-AGGREGATE (summed across internal steps), which can be
+          // many multiples of the context window and falsely trips compaction.
+          ...(lastStepPromptTokens > 0 ? { promptTokens: lastStepPromptTokens } : {}),
           ...(resultParams.effectiveCliSessionId
             ? {
                 cliSessionBinding: {

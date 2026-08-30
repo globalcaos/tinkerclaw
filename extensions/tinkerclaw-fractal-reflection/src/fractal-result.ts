@@ -14,17 +14,37 @@
  *      the last observed event — never wall-clock since spawn; design-principle #19:
  *      the 120s idle kill is the canonical bug; liveness checks never assert doneness).
  *
- * Emit path taken: the REAL core surface — `emitAgentEvent` from
- * `src/infra/agent-events.ts` — the exact surface tinkerclaw-learned-intuition uses
- * for its `stream:"lifecycle"` amygdala-decision broadcasts and tinkerclaw-tinker-bridge
- * uses from `src/stream.ts`. There is no plugin-sdk emit wrapper; bundled fork
- * extensions import core infra directly (established pattern), so NO no-op fallback
- * was needed. `emitFractalEvent` is the SINGLE chokepoint — nothing else in this
+ * Emit path taken: the REAL core surface — `emitAgentEvent` — reached through the
+ * DECLARED plugin-sdk subpath `openclaw/plugin-sdk/agent-harness-runtime`, which
+ * re-exports the very same binding out of `src/infra/agent-events.ts`: the exact
+ * surface tinkerclaw-learned-intuition uses for its `stream:"lifecycle"`
+ * amygdala-decision broadcasts and tinkerclaw-tinker-bridge uses in `src/stream.ts`.
+ *
+ * CORRECTION 2026-08-04 — this paragraph used to assert "there is no plugin-sdk emit
+ * wrapper; bundled fork extensions import core infra directly". That was FALSE when it
+ * was written: `emitAgentEvent` had been published on `agent-harness-runtime` since
+ * upstream 4d09d753047 (2026-04-25), roughly seven weeks before this file (2026-06-11);
+ * `getAgentRunContext` joined it on 2026-08-04. The note is CORRECTED rather than
+ * deleted, because the relative reach it licensed is a real hazard worth remembering:
+ * this extension is `publishToNpm: true`, its tarball ships only its own directory, so
+ * a relative reach into the repo `src/` tree cannot resolve on an installed user's disk
+ * — FOUNDATION #9 (bounded, replicable), enforced by
+ * `scripts/check-no-extension-src-imports.ts` (`pnpm lint:plugins:no-extension-src-imports`),
+ * whose fork allowlist deliberately does NOT cover this extension. The SDK subpath is
+ * the sanctioned crossing, and it is still a HARD dependency by design: these are
+ * declared exports, so a host that lacks them fails at plugin LOAD, loudly, instead of
+ * silently degrading — hence, as before, NO no-op fallback. Crossing costs nothing at
+ * runtime: agent-events keeps its listener set and run-context map on a
+ * `Symbol.for("openclaw.agentEvents.state")` global singleton, so the SDK re-export and
+ * the core module address ONE registry — the watchdog below observes exactly what the
+ * harness writes.
+ *
+ * `emitFractalEvent` is the SINGLE chokepoint — nothing else in this
  * plugin may emit `stream:"fractal"` — and the ENVELOPE carries the MAIN session's
  * sessionKey (all tinker-ui stream consumers are sessionKey-gated return-early;
  * lane runIds ride inside `data`, i.e. the row).
  *
- * Run-state surface for the watchdog: `getAgentRunContext` from the same module —
+ * Run-state surface for the watchdog: `getAgentRunContext` from the same SDK subpath —
  * contexts are registered at run start (`agent-command.ts:471/596`), `lastActiveAt`
  * is refreshed on EVERY `emitAgentEvent` for that runId, and the context is cleared
  * on the run's terminal lifecycle event (`agent-command.ts:1201`, `server-chat.ts`).
@@ -32,7 +52,7 @@
  * `now - lastActiveAt` = total event silence.
  */
 
-import { emitAgentEvent, getAgentRunContext } from "../../../src/infra/agent-events.js";
+import { emitAgentEvent, getAgentRunContext } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { FractalRow } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -51,8 +71,30 @@ export const FRACTAL_ROW_VERSION = 1;
  * §5.67b re-derives it from the ledger's own p50/p95 timeToDock once rows exist.
  * It is NEVER "time since spawn": a run that keeps emitting events resets the
  * silence clock indefinitely.
+ *
+ * 2026-08-04: raised 120_000 -> 300_000, kept equal to TRIAGE_WAIT_CEILING_MS
+ * (fractal-run.ts) — the two are a pair and drift between them is a bug. The
+ * measurement that set it is written out in full there; the short version is
+ * p90 = 128.5s against a 120s ceiling, max 260.4s, and not one of the 2,466
+ * recorded rows carries a success status (`clean`/`flagged`/`gap`) — only
+ * `error` (2,407) and `skipped` (59).
+ *
+ * A triage run is one long model call that emits nothing while it thinks, so
+ * "total event silence" and "time since spawn" are the SAME quantity here. That
+ * is why this ceiling mattered at all, and it is why the distinction the comment
+ * above draws — correct in general — bought nothing on this lane: the watchdog
+ * read a normal 128s of thinking as verified deadness and converted a live run's
+ * pending stub to `error`. The two silence-ceiling deaths recorded at 120007ms
+ * and 125651ms are that, not dead lanes.
+ *
+ * STILL NOT IMPLEMENTED: the §5.67b re-derivation this comment has promised
+ * since the module was written. The ledger now holds 291 rows carrying
+ * timeToDockMs, so the input exists and the excuse ("once rows exist") has
+ * expired — this is a hand-set boot value calibrated from those rows ONCE, by
+ * hand, and it will go stale again the same way. Deriving it at boot is the
+ * actual fix and is tracked separately.
  */
-export const FRACTAL_LIVENESS_CEILING_MS = 120_000;
+export const FRACTAL_LIVENESS_CEILING_MS = 300_000;
 
 /** Default watchdog poll cadence (ms). */
 export const FRACTAL_WATCHDOG_POLL_MS = 15_000;

@@ -22,6 +22,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import { loadProviderUsageSummary } from "openclaw/plugin-sdk/provider-usage";
+import { ACTION_MARKER, checkActionClaims, claimWarnings } from "./src/action-claims.js";
 import { emitFractalEvent, StubWatchdog } from "./src/fractal-result.js";
 import { runTriage, type FractalRunnerApi } from "./src/fractal-run.js";
 import { FractalGovernor, type UsageSnapshot } from "./src/governor.js";
@@ -58,6 +60,29 @@ interface FractalControlState {
   suspended: boolean;
   suspendReason?: string;
   updatedAt?: string;
+}
+
+/** FORK 2026-07-27: flatten a turn's assistant text so the FRACTAL block can be scanned.
+ *  Shape-tolerant on purpose — `messages` is `unknown[]` here and the runner's exact content
+ *  shape is not this plugin's contract, so anything unrecognised simply yields "". */
+function assistantTextOf(messages: unknown[]): string {
+  const out: string[] = [];
+  for (const m of messages ?? []) {
+    const msg = m as { role?: string; content?: unknown };
+    if (msg?.role !== "assistant") continue;
+    const c = msg.content;
+    if (typeof c === "string") {
+      out.push(c);
+      continue;
+    }
+    if (Array.isArray(c)) {
+      for (const part of c) {
+        const p = part as { type?: string; text?: unknown };
+        if (typeof p?.text === "string") out.push(p.text);
+      }
+    }
+  }
+  return out.join("\n");
 }
 
 type QueuedTurn = {
@@ -166,23 +191,30 @@ export default definePluginEntry({
     const ledger = new FractalLedger(stateDir);
 
     // Governor usage feed: `usage.status` is a gateway server-method
-    // (src/gateway/server-methods/usage.ts) backed by loadProviderUsageSummary()
-    // in src/infra/provider-usage.js. Plugins run in-process with the gateway, so
-    // the implementation IS reachable — but we resolve it dynamically and treat
-    // ANY failure (module moved, out-of-process host, fetch error) as "no signal"
-    // by returning null: the governor then fails-to-NEUTRAL (§5.67b — the throttle
-    // branch falls back to the maxFixSpawnsPerHour ceiling, the surplus-spend
-    // branch disarms). The gateway has no fresh quota signal for the tinker-bridge
-    // subscription path anyway, so null is an expected steady state, not an error.
+    // (src/gateway/server-methods/usage.ts) backed by loadProviderUsageSummary(),
+    // published on the `openclaw/plugin-sdk/provider-usage` SDK subpath. FOUNDATION #9
+    // (bounded, replicable): this extension is `publishToNpm: true`, so its tarball ships
+    // only its own directory and a relative reach into the repo `src/` tree cannot
+    // resolve on an installed user's disk. The declared SDK subpath is the sanctioned
+    // crossing; being a TYPED static import it also retires the runtime feature-detection
+    // this call used to carry (`typeof … !== "function"`), which existed only because a
+    // dynamic import may resolve a module that lacks the symbol. A host that does not
+    // publish it now fails at plugin LOAD, loudly, instead of degrading to a silent null.
+    //
+    // The try/catch and the null STAY: ANY failure (out-of-process host, fetch error, no
+    // usable auth) is "no signal", and the governor then fails-to-NEUTRAL (§5.67b — the
+    // throttle branch falls back to the maxFixSpawnsPerHour ceiling, the surplus-spend
+    // branch disarms). Null is an expected steady state, not an error — the gateway has
+    // no fresh quota signal for the tinker-bridge subscription path. The static type also
+    // makes the extractor's TODO above CONCRETE: UsageSummary is
+    // `{ updatedAt, providers[{ windows[{ label, usedPercent, resetAt }] }] }`, which
+    // shares no key with the shapes extractUsageSnapshot() probes — so this feed is
+    // structurally null today, not merely empty. Re-pointing it at providers[].windows[]
+    // would ARM the derived-pressure throttle for the first time: a deliberate behaviour
+    // change, not this patch.
     const readUsage = async (): Promise<UsageSnapshot | null> => {
       try {
-        const mod = (await import("../../src/infra/provider-usage.js")) as {
-          loadProviderUsageSummary?: () => Promise<unknown>;
-        };
-        if (typeof mod.loadProviderUsageSummary !== "function") {
-          return null;
-        }
-        const summary = (await mod.loadProviderUsageSummary()) as Record<string, unknown> | null;
+        const summary = await loadProviderUsageSummary();
         return extractUsageSnapshot(summary);
       } catch {
         return null;
@@ -292,6 +324,34 @@ export default definePluginEntry({
     // -----------------------------------------------------------------------
     const handleTurn = (turn: QueuedTurn): void => {
       const { parentRunId, sessionKey } = turn;
+
+      // FORK 2026-07-27: verify this turn's `🌿 FRACTAL ACTION:` claims against the disk.
+      // Four consecutive reflections claimed artifacts that were never written; nothing
+      // noticed. WARNING-ONLY and fully guarded — a detector that can break a turn is worse
+      // than the bug it reports.
+      try {
+        const text = assistantTextOf(turn.messages);
+        if (text.includes(ACTION_MARKER)) {
+          const warnings = claimWarnings(
+            checkActionClaims(text, {
+              home: homedir(),
+              exists: (abs) => existsSync(abs),
+              read: (abs) => {
+                try {
+                  return readFileSync(abs, "utf8");
+                } catch {
+                  return "";
+                }
+              },
+            }),
+          );
+          for (const w of warnings) {
+            log.warn(`[fractal-reflection] ${w} (parent=${parentRunId})`);
+          }
+        }
+      } catch (err) {
+        log.warn(`[fractal-reflection] action-claim check failed (non-fatal): ${String(err)}`);
+      }
 
       if (control.suspended) {
         appendRow(

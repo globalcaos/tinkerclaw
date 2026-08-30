@@ -10,6 +10,7 @@ import { isTruthyEnvValue } from "../infra/env.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import { resetDirectoryCache } from "../infra/outbound/target-resolver.js";
 import {
+  DEFAULT_RESTART_DEFERRAL_MAX_WAIT_MS,
   deferGatewayRestartUntilIdle,
   emitGatewayRestart,
   setGatewaySigusr1RestartPolicy,
@@ -20,7 +21,7 @@ import {
   clearSecretsRuntimeSnapshot,
   getActiveSecretsRuntimeSnapshot,
 } from "../secrets/runtime.js";
-import { getInspectableTaskRegistrySummary } from "../tasks/task-registry.maintenance.js";
+import { getRestartBlockingTaskSummary } from "../tasks/task-registry.maintenance.js";
 import type { ChannelHealthMonitor } from "./channel-health-monitor.js";
 import { enqueueConfigRecoveryNotice } from "./config-recovery-notice.js";
 import type { ChannelKind } from "./config-reload-plan.js";
@@ -146,12 +147,14 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
     const queueSize = getTotalQueueSize();
     const pendingReplies = getTotalPendingReplies();
     const embeddedRuns = getActiveEmbeddedRunCount();
-    const activeTasks = getInspectableTaskRegistrySummary().active;
+    const taskSummary = getRestartBlockingTaskSummary();
+    const activeTasks = taskSummary.blocking;
     return {
       queueSize,
       pendingReplies,
       embeddedRuns,
       activeTasks,
+      staleTasks: taskSummary.staleIgnored,
       totalActive: queueSize + pendingReplies + embeddedRuns + activeTasks,
     };
   };
@@ -168,6 +171,9 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
     }
     if (counts.activeTasks > 0) {
       details.push(`${counts.activeTasks} task run(s)`);
+    }
+    if (counts.staleTasks > 0) {
+      details.push(`${counts.staleTasks} stale task run(s) ignored`);
     }
     return details;
   };
@@ -186,11 +192,16 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         ", ",
       )} complete`,
     );
+    // Same contract as deferGatewayRestartUntilIdle: omitted → default cap so a
+    // stuck queue cannot defer the reload forever; an explicitly configured
+    // value <= 0 (or non-finite) is the opt-out that waits indefinitely.
     const timeoutMsRaw = nextConfig.gateway?.reload?.deferralTimeoutMs;
     const timeoutMs =
-      typeof timeoutMsRaw === "number" && Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
-        ? Math.max(CHANNEL_RELOAD_DEFERRAL_POLL_MS, Math.floor(timeoutMsRaw))
-        : undefined;
+      timeoutMsRaw === undefined
+        ? DEFAULT_RESTART_DEFERRAL_MAX_WAIT_MS
+        : typeof timeoutMsRaw === "number" && Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0
+          ? Math.max(CHANNEL_RELOAD_DEFERRAL_POLL_MS, Math.floor(timeoutMsRaw))
+          : undefined;
     const startedAt = Date.now();
     let nextStillPendingAt = startedAt + CHANNEL_RELOAD_STILL_PENDING_WARN_MS;
     while (true) {

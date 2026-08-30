@@ -121,7 +121,7 @@ describe("quota-headroom effort bias", () => {
 });
 
 describe('"Branch" layer — compound-prompt fan-out', () => {
-  it("counts two independent asks in the owner's compound prompt", () => {
+  it("counts two independent asks in the architect's compound prompt", () => {
     const rec = classifyComplexity(
       "Update your model allocation code and dynamic workflows to spin multiple subagents when I ask for multiple things in the same prompt. Inform me of the name we should call it and its online presence.",
     );

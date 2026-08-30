@@ -619,10 +619,15 @@ describe("runReplyAgent typing (heartbeat)", () => {
     vi.useRealTimers();
   });
 
-  it("announces model fallback only when verbose mode is enabled", async () => {
+  // A model substitution is a correctness disclosure, not verbose chatter: the
+  // user selected model A and model B answered. Gating this behind verbose let
+  // two days of "Sol" replies pass as Opus — bug-log
+  // [codex-sol-accountid-silent-opus-fallback]. It must announce at every
+  // verbose level.
+  it("announces model fallback at every verbose level", async () => {
     const cases = [
       { name: "verbose on", verbose: "on" as const, expectNotice: true },
-      { name: "verbose off", verbose: "off" as const, expectNotice: false },
+      { name: "verbose off", verbose: "off" as const, expectNotice: true },
     ] as const;
     for (const testCase of cases) {
       const sessionEntry: SessionEntry = {
@@ -668,13 +673,10 @@ describe("runReplyAgent typing (heartbeat)", () => {
       const payload = Array.isArray(res)
         ? (res[0] as { text?: string })
         : (res as { text?: string });
-      if (testCase.expectNotice) {
-        expect(payload.text, testCase.name).toContain("Model Fallback:");
-        expect(payload.text, testCase.name).toContain("deepinfra/moonshotai/Kimi-K2.5");
-        expect(sessionEntry.fallbackNoticeReason, testCase.name).toBe("rate limit");
-        continue;
-      }
-      expect(payload.text, testCase.name).not.toContain("Model Fallback:");
+      expect(testCase.expectNotice, testCase.name).toBe(true);
+      expect(payload.text, testCase.name).toContain("Model Fallback:");
+      expect(payload.text, testCase.name).toContain("deepinfra/moonshotai/Kimi-K2.5");
+      expect(sessionEntry.fallbackNoticeReason, testCase.name).toBe("rate limit");
       expect(
         phases.filter((phase) => phase === "fallback"),
         testCase.name,
@@ -682,7 +684,10 @@ describe("runReplyAgent typing (heartbeat)", () => {
     }
   });
 
-  it("announces model fallback only once per active fallback state", async () => {
+  // A sustained CROSS-PROVIDER substitution is indistinguishable, from the
+  // chat, from the model picker being silently ignored — so it is disclosed on
+  // every turn, not just on the transition. The lifecycle event stays an edge.
+  it("announces a cross-provider fallback on every turn it stays active", async () => {
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
@@ -725,11 +730,79 @@ describe("runReplyAgent typing (heartbeat)", () => {
       });
       const first = await run();
       const second = await run();
+      const third = await run();
+      off();
+
+      // Selected is anthropic/claude (createMinimalRun); active is deepinfra —
+      // a different PROVIDER, so every turn discloses it.
+      const firstText = Array.isArray(first) ? first[0]?.text : first?.text;
+      const secondText = Array.isArray(second) ? second[0]?.text : second?.text;
+      const thirdText = Array.isArray(third) ? third[0]?.text : third?.text;
+      expect(firstText).toContain("Model Fallback:");
+      expect(secondText).toContain("Model Fallback:");
+      expect(thirdText).toContain("Model Fallback:");
+      // The lifecycle event is still transition-only: re-emitting `fallback`
+      // on an unchanged state would double-emit into every consumer.
+      expect(fallbackEvents).toHaveLength(1);
+    } finally {
+      fallbackSpy.mockRestore();
+    }
+  });
+
+  // CONTROL for the test above: a substitution WITHIN the selected provider is
+  // a model-version slip, and repeating it every turn is noise — it keeps the
+  // transition-only behaviour. Without this the cross-provider rule would pass
+  // equally against a blanket "announce always".
+  it("announces a same-provider fallback only once per active fallback state", async () => {
+    const sessionEntry: SessionEntry = {
+      sessionId: "session",
+      updatedAt: Date.now(),
+    };
+    const sessionStore = { main: sessionEntry };
+
+    state.runEmbeddedPiAgentMock.mockResolvedValue({
+      payloads: [{ text: "final" }],
+      meta: {},
+    });
+    const fallbackSpy = vi
+      .spyOn(modelFallbackModule, "runWithModelFallback")
+      .mockImplementation(
+        async ({ run }: { run: (provider: string, model: string) => Promise<unknown> }) => ({
+          // Same provider as the selected one ("anthropic"), different model.
+          result: await run("anthropic", "claude-opus-4-6"),
+          provider: "anthropic",
+          model: "claude-opus-4-6",
+          attempts: [
+            {
+              provider: "anthropic",
+              model: "claude",
+              error: "Provider anthropic is in cooldown (all profiles unavailable)",
+              reason: "rate_limit",
+            },
+          ],
+        }),
+      );
+    try {
+      const { run } = createMinimalRun({
+        resolvedVerboseLevel: "on",
+        sessionEntry,
+        sessionStore,
+        sessionKey: "main",
+      });
+      const fallbackEvents: Array<Record<string, unknown>> = [];
+      const off = onAgentEvent((evt) => {
+        if (evt.stream === "lifecycle" && evt.data?.phase === "fallback") {
+          fallbackEvents.push(evt.data);
+        }
+      });
+      const first = await run();
+      const second = await run();
       off();
 
       const firstText = Array.isArray(first) ? first[0]?.text : first?.text;
       const secondText = Array.isArray(second) ? second[0]?.text : second?.text;
       expect(firstText).toContain("Model Fallback:");
+      expect(firstText).toContain("anthropic/claude-opus-4-6");
       expect(secondText).not.toContain("Model Fallback:");
       expect(fallbackEvents).toHaveLength(1);
     } finally {
@@ -887,7 +960,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
     }
   });
 
-  it("emits fallback lifecycle events while verbose is off", async () => {
+  it("emits fallback lifecycle events and both notices while verbose is off", async () => {
     const sessionEntry: SessionEntry = {
       sessionId: "session",
       updatedAt: Date.now(),
@@ -955,8 +1028,10 @@ describe("runReplyAgent typing (heartbeat)", () => {
 
       const firstText = Array.isArray(first) ? first[0]?.text : first?.text;
       const secondText = Array.isArray(second) ? second[0]?.text : second?.text;
-      expect(firstText).not.toContain("Model Fallback:");
-      expect(secondText).not.toContain("Model Fallback cleared:");
+      // Verbose off still surfaces both notices — a model substitution and its
+      // recovery are correctness disclosures, not verbose chatter.
+      expect(firstText).toContain("Model Fallback:");
+      expect(secondText).toContain("Model Fallback cleared:");
       expect(phases.filter((phase) => phase === "fallback")).toHaveLength(1);
       expect(phases.filter((phase) => phase === "fallback_cleared")).toHaveLength(1);
     } finally {
@@ -1025,7 +1100,9 @@ describe("runReplyAgent typing (heartbeat)", () => {
         });
         const res = await run();
         const firstText = Array.isArray(res) ? res[0]?.text : res?.text;
-        expect(firstText).not.toContain("Model Fallback:");
+        // Sustained but CROSS-PROVIDER (selected anthropic/claude, active
+        // deepinfra/...), so the disclosure repeats even with no transition.
+        expect(firstText).toContain("Model Fallback:");
         expect(sessionEntry.fallbackNoticeReason).toBe(testCase.expectedReason);
       } finally {
         fallbackSpy.mockRestore();

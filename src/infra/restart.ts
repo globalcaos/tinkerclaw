@@ -20,6 +20,8 @@ const SPAWN_TIMEOUT_MS = 2000;
 const SIGUSR1_AUTH_GRACE_MS = 5000;
 const DEFAULT_DEFERRAL_POLL_MS = 500;
 const DEFAULT_DEFERRAL_STILL_PENDING_WARN_MS = 30_000;
+// An unconfigured deferral must still force a restart eventually — a hung task must not block recovery forever.
+export const DEFAULT_RESTART_DEFERRAL_MAX_WAIT_MS = 15 * 60_000;
 const RESTART_COOLDOWN_MS = 30_000;
 const LAUNCHCTL_ALREADY_LOADED_EXIT_CODE = 37;
 const GATEWAY_RESTART_INTENT_FILENAME = "gateway-restart-intent.json";
@@ -411,7 +413,9 @@ async function emitPreparedGatewayRestart(
 
 /**
  * Poll pending work until it drains, then emit one restart signal.
+ * maxWaitMs unset → default 15-minute cap (DEFAULT_RESTART_DEFERRAL_MAX_WAIT_MS).
  * A positive maxWaitMs keeps the old capped behavior for explicit configs.
+ * An explicit maxWaitMs <= 0 (or non-finite) disables the cap — wait forever (explicit opt-out).
  * Shared by both the direct RPC restart path and the config watcher path.
  */
 export function deferGatewayRestartUntilIdle(opts: {
@@ -425,9 +429,11 @@ export function deferGatewayRestartUntilIdle(opts: {
   const pollMsRaw = opts.pollMs ?? DEFAULT_DEFERRAL_POLL_MS;
   const pollMs = Math.max(10, Math.floor(pollMsRaw));
   const maxWaitMs =
-    typeof opts.maxWaitMs === "number" && Number.isFinite(opts.maxWaitMs) && opts.maxWaitMs > 0
-      ? Math.max(pollMs, Math.floor(opts.maxWaitMs))
-      : undefined;
+    opts.maxWaitMs === undefined
+      ? DEFAULT_RESTART_DEFERRAL_MAX_WAIT_MS
+      : typeof opts.maxWaitMs === "number" && Number.isFinite(opts.maxWaitMs) && opts.maxWaitMs > 0
+        ? Math.max(pollMs, Math.floor(opts.maxWaitMs))
+        : undefined;
 
   let pending: number;
   try {

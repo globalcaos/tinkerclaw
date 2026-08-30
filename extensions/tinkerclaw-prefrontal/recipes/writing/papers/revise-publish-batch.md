@@ -73,7 +73,7 @@ Pipeline stage 1 = `revise-paper` Steps 1–6 per paper. Bump the version (never
 **Tools:** exec, write
 **Done when:** Each revised `.md` has a Serra PDF; failures reported, not fatal
 
-Pipeline stage 2 = `compile-paper` Steps 1–7 per paper: generate missing figures (TikZ/matplotlib from `diagram-suggestions.md`, or the `d2-diagrams`/`napkin-diagrams` skills), `md-to-tex.sh`, enrich `refs.bib`, `build-paper.sh`. A compile failure drops that paper to a reported error — it does not abort the batch.
+Pipeline stage 2 = `compile-paper` Steps 1–7 per paper: generate missing figures per {{paper-figures}} (conceptual → `napkin-diagrams` + the Nano Banana Pro cohesion pass; numeric charts → matplotlib; D2/TikZ only as fallback), `md-to-tex.sh`, enrich `refs.bib`, `build-paper.sh`. A compile failure drops that paper to a reported error — it does not abort the batch.
 
 ### 4. Aggregate + report
 

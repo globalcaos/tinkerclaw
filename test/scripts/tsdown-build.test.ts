@@ -3,8 +3,10 @@ import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertNoLiveProcessOnOutputRoots,
   cleanTsdownOutputRoots,
   createTsdownOutputScanner,
+  findProcessesRunningOutputRoots,
   pruneSourceCheckoutBundledPluginNodeModules,
   pruneStaleRootChunkFiles,
   resolveTsdownBuildInvocation,
@@ -280,5 +282,160 @@ describe("runTsdownBuildInvocation", () => {
     expect(result.status).toBeNull();
     expect(result.signal).toBe("SIGTERM");
     expect(output.chunks.join("")).toContain("timeout after 50ms");
+  });
+});
+
+describe("findProcessesRunningOutputRoots", () => {
+  function createFixture() {
+    const rootDir = createTempDir("openclaw-tsdown-live-");
+    const cwd = path.join(rootDir, "tinkerclaw");
+    const procRoot = path.join(rootDir, "proc");
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(procRoot, { recursive: true });
+    return { rootDir, cwd, procRoot };
+  }
+
+  function writeProcTree(procRoot: string, processes: Record<number, string[]>): void {
+    for (const [pid, argv] of Object.entries(processes)) {
+      const pidDir = path.join(procRoot, pid);
+      fs.mkdirSync(pidDir, { recursive: true });
+      fs.writeFileSync(path.join(pidDir, "cmdline"), `${argv.join("\0")}\0`);
+    }
+  }
+
+  it("detects a gateway running from this checkout's dist entry", () => {
+    const { cwd, procRoot } = createFixture();
+    const entry = path.join(cwd, "dist", "index.js");
+    writeProcTree(procRoot, {
+      1234: ["node", entry, "gateway", "--port", "18789"],
+      5678: ["node", path.join(cwd, "scripts", "unrelated.mjs")],
+    });
+    fs.mkdirSync(path.join(procRoot, "self"), { recursive: true });
+
+    const matches = findProcessesRunningOutputRoots({ cwd, procRoot, selfPid: 1, ppid: 2 });
+
+    expect(matches).toHaveLength(1);
+    expect(matches[0].pid).toBe(1234);
+    expect(matches[0].argv).toContain(entry);
+  });
+
+  it("detects a process running from the dist-runtime entry", () => {
+    const { cwd, procRoot } = createFixture();
+    writeProcTree(procRoot, { 4242: ["node", path.join(cwd, "dist-runtime", "index.js")] });
+
+    const matches = findProcessesRunningOutputRoots({ cwd, procRoot, selfPid: 1, ppid: 2 });
+
+    expect(matches.map((match) => match.pid)).toEqual([4242]);
+  });
+
+  it("does not block a detached-worktree build while the live gateway runs elsewhere", () => {
+    const { rootDir, cwd, procRoot } = createFixture();
+    const liveEntry = path.join(cwd, "dist", "index.js");
+    const deployCheckout = path.join(rootDir, ".tclaw-deploy-2026-07-29");
+    writeProcTree(procRoot, { 4343: ["node", liveEntry, "gateway", "--port", "18789"] });
+
+    const matches = findProcessesRunningOutputRoots({
+      cwd: deployCheckout,
+      procRoot,
+      selfPid: 1,
+      ppid: 2,
+    });
+
+    expect(matches).toEqual([]);
+  });
+
+  it("ignores this process and its parent", () => {
+    const { cwd, procRoot } = createFixture();
+    const entry = path.join(cwd, "dist", "index.js");
+    writeProcTree(procRoot, { 111: ["node", entry], 222: ["node", entry] });
+
+    expect(findProcessesRunningOutputRoots({ cwd, procRoot, selfPid: 111, ppid: 222 })).toEqual([]);
+  });
+
+  it("returns an empty list when the proc root is missing", () => {
+    const { cwd, rootDir } = createFixture();
+    let matches: unknown;
+
+    expect(() => {
+      matches = findProcessesRunningOutputRoots({
+        cwd,
+        procRoot: path.join(rootDir, "no-such-proc"),
+        selfPid: 1,
+        ppid: 2,
+      });
+    }).not.toThrow();
+    expect(matches).toEqual([]);
+  });
+});
+
+describe("assertNoLiveProcessOnOutputRoots", () => {
+  function createFixture() {
+    const rootDir = createTempDir("openclaw-tsdown-guard-");
+    const cwd = path.join(rootDir, "tinkerclaw");
+    const procRoot = path.join(rootDir, "proc");
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(procRoot, { recursive: true });
+    return { rootDir, cwd, procRoot };
+  }
+
+  function writeLiveGateway(procRoot: string, pid: number, entry: string): void {
+    const pidDir = path.join(procRoot, String(pid));
+    fs.mkdirSync(pidDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pidDir, "cmdline"),
+      `${["node", entry, "gateway", "--port", "18789"].join("\0")}\0`,
+    );
+  }
+
+  it("exits 1 and explains the ERR_MODULE_NOT_FOUND failure mode", () => {
+    const { cwd, procRoot } = createFixture();
+    const entry = path.join(cwd, "dist", "index.js");
+    writeLiveGateway(procRoot, 9001, entry);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.fn();
+
+    assertNoLiveProcessOnOutputRoots({ cwd, procRoot, selfPid: 1, ppid: 2, env: {}, exit });
+
+    expect(exit).toHaveBeenCalledWith(1);
+    const message = String(error.mock.calls[0]?.[0]);
+    expect(message).toContain("9001");
+    expect(message).toContain(entry);
+    expect(message).toContain("ERR_MODULE_NOT_FOUND");
+    expect(message).toContain("scripts/deploy-worktree.sh");
+    expect(message).toContain("systemctl --user stop openclaw-gateway");
+    expect(message).toContain("OPENCLAW_BUILD_ALLOW_LIVE_GATEWAY");
+
+    error.mockRestore();
+  });
+
+  it("warns but continues when OPENCLAW_BUILD_ALLOW_LIVE_GATEWAY is set", () => {
+    const { cwd, procRoot } = createFixture();
+    writeLiveGateway(procRoot, 9002, path.join(cwd, "dist", "index.js"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const exit = vi.fn();
+
+    assertNoLiveProcessOnOutputRoots({
+      cwd,
+      procRoot,
+      selfPid: 1,
+      ppid: 2,
+      env: { OPENCLAW_BUILD_ALLOW_LIVE_GATEWAY: "1" },
+      exit,
+    });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(String(warn.mock.calls[0]?.[0])).toContain("9002");
+
+    warn.mockRestore();
+  });
+
+  it("stays silent when nothing is running from the output roots", () => {
+    const { cwd, procRoot } = createFixture();
+    const exit = vi.fn();
+
+    expect(
+      assertNoLiveProcessOnOutputRoots({ cwd, procRoot, selfPid: 1, ppid: 2, env: {}, exit }),
+    ).toEqual([]);
+    expect(exit).not.toHaveBeenCalled();
   });
 });

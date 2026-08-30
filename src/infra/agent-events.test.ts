@@ -7,6 +7,7 @@ import {
   registerAgentRunContext,
   resetAgentEventsForTest,
   resetAgentRunContextForTest,
+  getSessionRunLiveness,
   sweepStaleRunContexts,
 } from "./agent-events.js";
 
@@ -257,4 +258,70 @@ test("clearAgentRunContext also cleans up seqByRun to prevent memory leak (#6364
   stop();
 
   expect(seqs).toEqual([1]);
+});
+
+// FORK 2026-07-29 — THE RUN SET. These assert the property the whole run-liveness rework rests on:
+// this map describes the PROCESS, so it is true only while a run is open, and every failure mode
+// decays to "not running" rather than latching at "running".
+describe("getSessionRunLiveness", () => {
+  beforeEach(() => {
+    resetAgentEventsForTest();
+  });
+
+  test("is live only between register and clear", () => {
+    const key = "agent:main:tinker:abc";
+    expect(getSessionRunLiveness(key).live).toBe(false);
+
+    registerAgentRunContext("run-1", { sessionKey: key });
+    expect(getSessionRunLiveness(key)).toMatchObject({ live: true, count: 1 });
+
+    clearAgentRunContext("run-1");
+    expect(getSessionRunLiveness(key).live).toBe(false);
+  });
+
+  test("counts CONCURRENT runs per session, and a superseded run's close cannot silence a sibling", () => {
+    // The embedded runner permits concurrent runs on one session (run_replaced). Collapsing to a
+    // single slot per session would let a late close on the superseded run blank a live one —
+    // "no indicator while the llm is streaming", by construction.
+    const key = "agent:main:tinker:abc";
+    registerAgentRunContext("run-a", { sessionKey: key });
+    registerAgentRunContext("run-b", { sessionKey: key });
+    expect(getSessionRunLiveness(key).count).toBe(2);
+
+    clearAgentRunContext("run-a");
+    expect(getSessionRunLiveness(key)).toMatchObject({ live: true, count: 1 });
+
+    clearAgentRunContext("run-b");
+    expect(getSessionRunLiveness(key).live).toBe(false);
+  });
+
+  test("does not leak across sessions", () => {
+    registerAgentRunContext("run-1", { sessionKey: "agent:main:tinker:aaa" });
+    expect(getSessionRunLiveness("agent:main:tinker:bbb").live).toBe(false);
+    expect(getSessionRunLiveness("").live).toBe(false);
+  });
+
+  test("a heartbeat run is counted separately and does not make a session look busy", () => {
+    const key = "agent:main:heartbeat";
+    registerAgentRunContext("run-hb", { sessionKey: key, isHeartbeat: true });
+    expect(getSessionRunLiveness(key)).toMatchObject({ live: false, count: 0, heartbeatCount: 1 });
+  });
+
+  test("the TTL sweep is what bounds a run whose close was never delivered", () => {
+    // This is the decay property: a lost terminal event costs at most the sweep window, it does
+    // NOT latch forever the way a persisted status can.
+    const key = "agent:main:tinker:abc";
+    registerAgentRunContext("run-orphan", { sessionKey: key, registeredAt: 1, lastActiveAt: 1 });
+    expect(getSessionRunLiveness(key).live).toBe(true);
+
+    sweepStaleRunContexts(1);
+    expect(getSessionRunLiveness(key).live).toBe(false);
+  });
+
+  test("reports since and lastActiveAt from the oldest start and newest activity", () => {
+    const key = "agent:main:tinker:abc";
+    registerAgentRunContext("run-a", { sessionKey: key, registeredAt: 100, lastActiveAt: 150 });
+    registerAgentRunContext("run-b", { sessionKey: key, registeredAt: 200, lastActiveAt: 900 });
+    expect(getSessionRunLiveness(key)).toMatchObject({ since: 100, lastActiveAt: 900 });
+  });
 });

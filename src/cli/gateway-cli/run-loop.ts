@@ -1,4 +1,5 @@
 import net from "node:net";
+import { SERVICE_STOP_TIMEOUT_SEC } from "../../daemon/systemd-unit.js";
 import type { startGatewayServer } from "../../gateway/server.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { acquireGatewayLock } from "../../infra/gateway-lock.js";
@@ -8,12 +9,44 @@ import type { RuntimeEnv } from "../../runtime.js";
 const gatewayLog = createSubsystemLogger("gateway");
 const LAUNCHD_SUPERVISED_RESTART_EXIT_DELAY_MS = 1500;
 const DEFAULT_RESTART_DRAIN_TIMEOUT_MS = 300_000;
+/** Headroom for our own force-exit to beat the supervisor's SIGKILL. */
+const SUPERVISOR_KILL_MARGIN_MS = 5_000;
+/** Headroom reserved after the drain for `server.close()` and lock release. */
+const SHUTDOWN_CLOSE_RESERVE_MS = 5_000;
 const RESTART_DRAIN_STILL_PENDING_WARN_MS = 30_000;
 const UPDATE_RESPAWN_HEALTH_TIMEOUT_MS = 10_000;
 const UPDATE_RESPAWN_HEALTH_POLL_MS = 200;
 
 type GatewayRunSignalAction = "stop" | "restart";
-type RestartDrainTimeoutMs = number | undefined;
+
+/**
+ * How long a stop may take before the supervisor SIGKILLs us.
+ *
+ * Defaults to the value written into the generated systemd unit. A drop-in that
+ * raises `TimeoutStopSec` must also export `OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS`,
+ * otherwise the runtime keeps budgeting against the smaller default — which is
+ * safe (we stop early) but wastes the extra budget.
+ */
+export function resolveSupervisorStopTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const parsed = Number(env.OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : SERVICE_STOP_TIMEOUT_SEC * 1_000;
+}
+
+/**
+ * Split the supervisor's stop budget into our own watchdog and drain windows.
+ *
+ * INVARIANT: `maxRestartDrainMs < shutdownTimeoutMs < supervisorStopTimeoutMs`.
+ * Any drain we grant ourselves beyond the supervisor's budget is time we never
+ * get — the process is SIGKILLed mid-flight instead of shutting down cleanly.
+ */
+export function resolveShutdownBudgetsMs(supervisorStopTimeoutMs: number): {
+  shutdownTimeoutMs: number;
+  maxRestartDrainMs: number;
+} {
+  const shutdownTimeoutMs = Math.max(1_000, supervisorStopTimeoutMs - SUPERVISOR_KILL_MARGIN_MS);
+  const maxRestartDrainMs = Math.max(0, shutdownTimeoutMs - SHUTDOWN_CLOSE_RESERVE_MS);
+  return { shutdownTimeoutMs, maxRestartDrainMs };
+}
 
 type EmbeddedRunsModule = typeof import("../../agents/embedded-agent-runner/runs.js");
 type RuntimeConfigModule = typeof import("../../config/config.js");
@@ -275,18 +308,36 @@ export async function runGatewayLoop(params: {
     exitProcess(0);
   };
 
-  const SUPERVISOR_STOP_TIMEOUT_MS = 30_000;
-  const SHUTDOWN_TIMEOUT_MS = SUPERVISOR_STOP_TIMEOUT_MS - 5_000;
-  const resolveRestartDrainTimeoutMs = async (): Promise<RestartDrainTimeoutMs> => {
+  const SUPERVISOR_STOP_TIMEOUT_MS = resolveSupervisorStopTimeoutMs();
+  const { shutdownTimeoutMs: SHUTDOWN_TIMEOUT_MS, maxRestartDrainMs: MAX_RESTART_DRAIN_MS } =
+    resolveShutdownBudgetsMs(SUPERVISOR_STOP_TIMEOUT_MS);
+  const resolveRestartDrainTimeoutMs = async (): Promise<number> => {
+    let configuredMs: number | undefined;
     try {
       const { getRuntimeConfig } = await loadRuntimeConfigModule();
       const timeoutMs = getRuntimeConfig().gateway?.reload?.deferralTimeoutMs;
-      return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
-        ? timeoutMs
-        : undefined;
+      configuredMs =
+        typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0
+          ? timeoutMs
+          : undefined;
     } catch {
-      return DEFAULT_RESTART_DRAIN_TIMEOUT_MS;
+      configuredMs = DEFAULT_RESTART_DRAIN_TIMEOUT_MS;
     }
+    // An unconfigured drain used to mean "wait indefinitely", which also left
+    // the force-exit watchdog unarmed for the whole drain — the one path
+    // guaranteed to end in SIGKILL. Every drain is bounded now.
+    if (configuredMs === undefined) {
+      return MAX_RESTART_DRAIN_MS;
+    }
+    if (configuredMs > MAX_RESTART_DRAIN_MS) {
+      gatewayLog.warn(
+        `restart drain budget ${configuredMs}ms exceeds the supervisor stop budget ` +
+          `(${SUPERVISOR_STOP_TIMEOUT_MS}ms); clamping to ${MAX_RESTART_DRAIN_MS}ms. Raise ` +
+          `TimeoutStopSec and OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS together to drain longer.`,
+      );
+      return MAX_RESTART_DRAIN_MS;
+    }
+    return configuredMs;
   };
 
   const request = (action: GatewayRunSignalAction, signal: string, restartReason?: string) => {
@@ -329,22 +380,13 @@ export async function runGatewayLoop(params: {
 
     void (async () => {
       const restartDrainTimeoutMs = isRestart ? await resolveRestartDrainTimeoutMs() : 0;
-      if (!isRestart) {
-        armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
-      } else if (restartDrainTimeoutMs !== undefined) {
-        // Allow extra time for draining active turns on explicitly capped restarts.
-        armForceExitTimer(restartDrainTimeoutMs + SHUTDOWN_TIMEOUT_MS);
-      }
+      // Armed unconditionally, on every path, at a value the drain can never
+      // outlive. The restart path used to arm at `drain + SHUTDOWN_TIMEOUT_MS`,
+      // putting our own escape hatch *beyond* the supervisor's stop budget, so
+      // the SIGKILL always landed first and this timer never ran.
+      armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
 
-      const formatRestartDrainBudget = () =>
-        restartDrainTimeoutMs === undefined
-          ? "without a timeout"
-          : `with timeout ${restartDrainTimeoutMs}ms`;
-      const armCloseForceExitTimerForIndefiniteRestart = () => {
-        if (isRestart && restartDrainTimeoutMs === undefined) {
-          armForceExitTimer(SHUTDOWN_TIMEOUT_MS);
-        }
-      };
+      const formatRestartDrainBudget = () => `with timeout ${restartDrainTimeoutMs}ms`;
 
       try {
         // On restart, wait for in-flight agent turns to finish before
@@ -406,7 +448,6 @@ export async function runGatewayLoop(params: {
           }
         }
 
-        armCloseForceExitTimerForIndefiniteRestart();
         await server?.close({
           reason: isRestart ? "gateway restarting" : "gateway stopping",
           restartExpectedMs: isRestart ? 1500 : null,

@@ -32,11 +32,68 @@ import {
   parseStreamJsonLine,
   serializeStdinLine,
 } from "./protocol.js";
-import { setResumeSessionId } from "./session-map.js";
+import { forgetResumeSessionId, setResumeSessionId } from "./session-map.js";
 import { thinkLevelToMaxThinkingTokens } from "./thinking-budget.js";
-import { isTranscriptOversized, resolveTranscriptPath } from "./transcript-path.js";
+import {
+  isTranscriptOversized,
+  resolveTranscriptPath,
+  transcriptExists,
+} from "./transcript-path.js";
 
 const log = createSubsystemLogger("tinkerclaw-tinker-bridge");
+
+/**
+ * FORK 2026-08-19 — NUL quarantine for the spawn argv.
+ *
+ * Node's `spawn` REFUSES any argv entry containing a NUL ("The argument
+ * 'args[45]' must be a string without null bytes") and throws BEFORE the child
+ * exists, so the worker dies fatally and the user sees "Provider error — I'm
+ * retrying" on a loop that can never succeed.
+ *
+ * We do not choose to send that byte. `--append-system-prompt` carries the
+ * persona plus whatever the session transcript replays into it, and an agent
+ * that once READ a file containing a NUL owns that byte in its history
+ * permanently — fixing the file does not un-poison the transcript. The
+ * `--setenv=` values ride the same argv and inherit the same exposure, which is
+ * why this runs over the WHOLE array and not just the prompt argument.
+ *
+ * MEASURED by decoding the base36 timestamp out of every distinct `err_*` id
+ * that carried this message: 49 fatal spawn deaths spread over 2026-08-06 (8),
+ * 08-07 (1), 08-09 (7), 08-10 (1), 08-13 (2), 08-16 (3) and 08-18 (27).
+ *
+ * READ THAT DISTRIBUTION BEFORE BLAMING A FILE. The 08-18 spike does have a
+ * single identifiable cause — three commits shipped a literal NUL as the
+ * separator in board-types.ts's `stableItemId`, and the byte outlived the
+ * same-day correction in 197 transcript copies — but the twenty-two failures
+ * BEFORE it did not come from that file. NULs reach transcripts from whatever
+ * an agent happens to read, on no schedule, from sources that will not be
+ * enumerable in advance. That is precisely why the fix belongs at this boundary
+ * and not in any one source file: chasing the emitter is unbounded work,
+ * tolerating the byte here is four lines.
+ *
+ * (Counting method matters here: counting forensic dumps that MENTION the
+ * message gave 34 and was wrong in both directions — once an error is delivered
+ * into a session, every later dump of that session quotes it, while a single
+ * dump can quote dozens of distinct failures. Count identities, not files.)
+ *
+ * A NUL carries no meaning in a prompt or an env value, so dropping it costs
+ * nothing where it lands and the alternative is no child process at all. The
+ * count is returned rather than swallowed: a number that keeps rising means
+ * something upstream is writing binary into a text field, which is a real bug
+ * even though this makes it survivable.
+ */
+export function stripNulBytesFromArgv(argv: string[]): { argv: string[]; stripped: number } {
+  const NUL = "\u0000";
+  let stripped = 0;
+  const cleaned = argv.map((a) => {
+    if (!a.includes(NUL)) {
+      return a;
+    }
+    stripped += a.split(NUL).length - 1;
+    return a.split(NUL).join("");
+  });
+  return { argv: cleaned, stripped };
+}
 
 // FORK 2026-04-18 (paths de-hardcoded 2026-04-28 per bible §5.76):
 // read the amygdala + fractal prompt .md files at spawn time and append
@@ -262,6 +319,28 @@ function buildEthicalRulesBlock(): string {
   });
 }
 
+// FORK 2026-07-26 (the architect): objectives foundation layer. The ethical rules above say what the
+// assistant must never do; the persona says how it sounds; the orchestration block below says
+// how to spend effort. NONE of them said what the work is FOR — so every task arrived at the
+// same importance and effort was allocated by quota pressure and prompt length. Prompt length
+// is a poor proxy for consequence. This block supplies the missing term: the operator's own
+// objective + a reach × permanence × proximity value model the effort/fan-out decisions can
+// key off. Advisory (no code enforces it), and it can raise EFFORT but never AUTONOMY — the
+// ethical rules keep priority, which is why it is inserted after them.
+// Resolution order (per loadPromptFile defaults):
+//   1. env var TINKERCLAW_OBJECTIVES_PROMPT
+//   2. ~/.openclaw/workspace/memory/knowledge/jarvis-objectives.md (user — personal strategy)
+//   3. extensions/tinkerclaw-tinker-bridge/prompts/objectives-default.md (bundled, generic)
+function buildObjectivesBlock(): string {
+  return loadPromptFile({
+    plugin: "tinkerclaw-tinker-bridge",
+    subdir: "prompts",
+    file: "objectives-default.md",
+    envVar: "TINKERCLAW_OBJECTIVES_PROMPT",
+    workspaceFile: "memory/knowledge/jarvis-objectives.md",
+  });
+}
+
 // FORK 2026-05-29: orchestration-disposition advisory block. Maps task classes
 // to quality kits (adversarial-verify, judge-panel, completeness-critic,
 // multi-modal-sweep, loop-until-dry) so the agent picks the right kit without
@@ -452,6 +531,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     const narrationBody = buildChatNarrationBlock();
     const planToolsBody = buildPlanToolsBlock();
     const ethicalRulesBody = buildEthicalRulesBlock();
+    const objectivesBody = buildObjectivesBlock();
     const orchestrationDispositionBody = buildOrchestrationDispositionBlock();
     // FORK 2026-04-24 (ROOT CAUSE, subscription-billing regression):
     // OpenClaw's embedded-agent-runner appends its full tool catalog + OpenClaw
@@ -527,6 +607,7 @@ export class ClaudeCodeWorker extends EventEmitter {
       personaOnly,
       subagentRoleBlock ? `\n\n${subagentRoleBlock}\n` : "",
       ethicalRulesBody,
+      objectivesBody,
       orchestrationDispositionBody,
       narrationBody,
       subagentHelpBody,
@@ -554,7 +635,20 @@ export class ClaudeCodeWorker extends EventEmitter {
       let skipResume = false;
       try {
         const transcriptPath = resolveTranscriptPath(cwd, this.params.resumeSessionId);
-        if (isTranscriptOversized(transcriptPath, RESUME_MAX_TRANSCRIPT_BYTES)) {
+        // FORK 2026-07-27 (dead-resume guard): a MISSING transcript is not an
+        // "unknown size" to fail open on — it is a KNOWN-dead id. `claude
+        // --resume` on it exits code=1 ("No conversation found with session
+        // ID") before any stream event, the turn surfaces as an incomplete
+        // terminal response, and since the binding survives, every retry —
+        // and every model — fails identically. Start fresh and purge the id so
+        // the fallback-by-openclawSessionId lookup cannot resurrect it.
+        if (!transcriptExists(transcriptPath)) {
+          skipResume = true;
+          const purged = forgetResumeSessionId(this.params.resumeSessionId);
+          log.warn(
+            `[dead-resume] sessionKey=${this.sessionKey} resumeSessionId=${this.params.resumeSessionId} transcript missing (${transcriptPath}) — starting FRESH, purged ${purged} stale session-map binding(s)`,
+          );
+        } else if (isTranscriptOversized(transcriptPath, RESUME_MAX_TRANSCRIPT_BYTES)) {
           skipResume = true;
           const sizeMb = (fs.statSync(transcriptPath).size / 1_000_000).toFixed(1);
           const thresholdMb = (RESUME_MAX_TRANSCRIPT_BYTES / 1_000_000).toFixed(1);
@@ -781,7 +875,18 @@ export class ClaudeCodeWorker extends EventEmitter {
         setenvArgs.push(`--setenv=${k}=${v}`);
       }
     }
-    const wrapperArgs = [...wrapperBaseArgs, ...setenvArgs, binary, ...args];
+    const rawWrapperArgs = [...wrapperBaseArgs, ...setenvArgs, binary, ...args];
+
+    // One stray NUL anywhere on this argv — the appended system prompt or any
+    // --setenv value — makes Node refuse to start the child at all. See
+    // stripNulBytesFromArgv for why the byte gets there and why dropping it is safe.
+    const { argv: wrapperArgs, stripped: nulHits } = stripNulBytesFromArgv(rawWrapperArgs);
+    if (nulHits > 0) {
+      log.warn(
+        `stripped ${nulHits} NUL byte(s) from spawn argv — Node would have refused to start the child. ` +
+          `Something upstream (transcript replay, a file the agent read) carries binary in a text field.`,
+      );
+    }
 
     this.proc = spawn(wrapperBinary, wrapperArgs, {
       cwd,
@@ -872,6 +977,22 @@ export class ClaudeCodeWorker extends EventEmitter {
     log.info(
       `claude exit[${this.sessionKey}] code=${code} signal=${signal} stderr_tail=${this.stderrBuf.slice(-500)}`,
     );
+    // FORK 2026-07-27 (dead-resume self-heal): belt-and-braces for the case the
+    // pre-spawn guard cannot see — the transcript existed at stat time but the
+    // CLI still refuses the id (relocated/renamed project dir, cwd drift, a
+    // transcript deleted between stat and spawn). The CLI names the offending
+    // id in stderr; purge exactly that one so the NEXT turn spawns fresh
+    // instead of re-deriving the same corpse forever.
+    const deadResume = /No conversation found with session ID:\s*([0-9a-fA-F-]{8,})/.exec(
+      this.stderrBuf,
+    );
+    if (deadResume) {
+      const deadId = deadResume[1];
+      const purged = forgetResumeSessionId(deadId);
+      log.warn(
+        `[dead-resume] sessionKey=${this.sessionKey} claude rejected resume id=${deadId} — purged ${purged} session-map binding(s); next turn starts FRESH`,
+      );
+    }
     if (stale) {
       stale.reject(
         new Error(

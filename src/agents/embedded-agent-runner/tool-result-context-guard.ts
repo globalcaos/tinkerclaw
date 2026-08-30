@@ -1,12 +1,13 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ContextEngine, ContextEngineRuntimeContext } from "../../context-engine/types.js";
+import { logCompactionDecision } from "../compaction-diagnostics.js";
 import {
   CHARS_PER_TOKEN_ESTIMATE,
   TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE,
   type MessageCharEstimateCache,
   createMessageCharEstimateCache,
-  estimateContextChars,
-  estimateMessageCharsCached,
+  estimateMessageWeightedCharsCached,
+  estimateRawContextChars,
   getToolResultText,
   invalidateMessageCharsCacheEntry,
   isToolResultMessage,
@@ -88,7 +89,8 @@ function truncateToolResultToChars(
     return msg;
   }
 
-  const estimatedChars = estimateMessageCharsCached(msg, cache);
+  // Single-tool-result budget stays on the conservative weighted estimate.
+  const estimatedChars = estimateMessageWeightedCharsCached(msg, cache);
   if (estimatedChars <= maxChars) {
     return msg;
   }
@@ -131,19 +133,20 @@ function toolResultsNeedTruncation(params: {
     if (!isToolResultMessage(message)) {
       continue;
     }
-    if (estimateMessageCharsCached(message, estimateCache) > maxSingleToolResultChars) {
+    if (estimateMessageWeightedCharsCached(message, estimateCache) > maxSingleToolResultChars) {
       return true;
     }
   }
   return false;
 }
 
-function exceedsPreemptiveOverflowThreshold(params: {
-  messages: AgentMessage[];
-  maxContextChars: number;
-}): boolean {
-  const estimateCache = createMessageCharEstimateCache();
-  return estimateContextChars(params.messages, estimateCache) > params.maxContextChars;
+/**
+ * Raw on-the-wire char total for the whole transformed context. Same 4-chars/token
+ * convention as `maxContextChars`, so the comparison against it is honest: it trips
+ * near ~90% of the model window rather than at roughly half of it.
+ */
+function estimateGuardContextChars(messages: AgentMessage[]): number {
+  return estimateRawContextChars(messages, createMessageCharEstimateCache());
 }
 
 function applyMessageMutationInPlace(
@@ -331,12 +334,27 @@ export function installToolResultContextGuard(params: {
         maxSingleToolResultChars,
       });
     }
-    if (
-      exceedsPreemptiveOverflowThreshold({
-        messages: contextMessages,
-        maxContextChars,
-      })
-    ) {
+    const estimatedContextChars = estimateGuardContextChars(contextMessages);
+    if (estimatedContextChars > maxContextChars) {
+      // FORK 2026-07-27 (the architect: "instrument the compaction predicate") — this guard is the
+      // one observed throwing live: every [context-overflow-diag] line carries this exact
+      // message, and all of them land on small-window models (grok/codex), because
+      // maxContextChars is linear in the window.
+      // The estimate used to count toolResult.details — STRIPPED before send by
+      // normalizeMessagesForLlmBoundary — and then weighted tool results at 2 chars/token
+      // against a 4-chars/token budget, so the nominal 0.9 ratio actually tripped at
+      // roughly half of the real window. It is now the raw on-the-wire char count under
+      // one uniform 4-chars/token convention. The pessimistic 2-chars/token weighting and
+      // the details charge survive only in maxSingleToolResultChars, where being
+      // conservative about ONE oversized tool result is the intent.
+      logCompactionDecision({
+        gate: "tool-loop-guard",
+        tokens: Math.round(estimatedContextChars / CHARS_PER_TOKEN_ESTIMATE),
+        threshold: Math.round(maxContextChars / CHARS_PER_TOKEN_ESTIMATE),
+        contextWindow: contextWindowTokens,
+        source: "raw chars/token over transformed messages (details excluded, unweighted)",
+        fires: true,
+      });
       throw new Error(PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE);
     }
 

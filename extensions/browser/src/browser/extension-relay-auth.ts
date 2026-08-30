@@ -1,10 +1,7 @@
 import { createHmac } from "node:crypto";
-import {
-  normalizeSecretInputString,
-  resolveSecretInputRef,
-} from "../../../../src/config/types.secrets.js";
-import { secretRefKey } from "../../../../src/secrets/ref-contract.js";
-import { resolveSecretRefValues } from "../../../../src/secrets/resolve.js";
+import { resolveSecretInputRef, secretRefKey } from "openclaw/plugin-sdk/fork-secret-refs";
+import { resolveSecretRefValues } from "openclaw/plugin-sdk/runtime-secret-resolution";
+import { normalizeSecretInputString } from "openclaw/plugin-sdk/secret-input";
 import { getRuntimeConfig as loadConfig } from "../config/config.js";
 
 const RELAY_TOKEN_CONTEXT = "openclaw-extension-relay-v1";

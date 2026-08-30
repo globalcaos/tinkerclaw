@@ -113,6 +113,12 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "gateway.flow.replay",
     "gateway.observability.snapshot",
     "gateway.slo.burnRate",
+    // FORK 2026-08-18: the READ half of the session-attachments surface. Pure inspection —
+    // it lists in-flight runs, queued turns and child processes and signals nothing. The
+    // MUTATING half (sessions.attachmentStop) is classified WRITE_SCOPE below; leaving
+    // either UNCLASSIFIED silently falls back to ADMIN on the server and to [] on the
+    // least-privilege client, which is the two-sided trap documented in the fork.* note.
+    "sessions.attachments",
     "sessions.list",
     "sessions.get",
     "sessions.preview",
@@ -141,6 +147,30 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "talk.config",
     "agents.files.list",
     "agents.files.get",
+    // FORK 2026-08-04: fork.* least-privilege classification (READ half).
+    //
+    // These methods were UNCLASSIFIED, and unclassified is a two-sided trap: the CLIENT
+    // (resolveLeastPrivilegeOperatorScopesForMethod) asks for [] while the SERVER
+    // (authorizeOperatorScopesForMethod) falls back to `?? ADMIN_SCOPE`. So every
+    // least-privilege BACKEND caller (callGateway -> callGatewayLeastPrivilege, see
+    // gateway/call.ts) was refused `missing scope: operator.admin` ~1ms in, at warn level
+    // only. That killed the Overseer loop and the idle curiosity chips for months, while
+    // callers passing EXPLICIT admin scopes kept working -- so the surface looked half-alive
+    // and nobody chased it. Classifying here fixes BOTH ends at once, because the client
+    // derives its ask from this same table.
+    //
+    // READ = inspection only: returns state, mutates nothing, spawns nothing.
+    "fork.curiosity.topGaps",
+    "fork.memory.search",
+    "fork.skill.search",
+    "fork.strategy.switch.list",
+    "fork.strategy.switch.review",
+    "fork.overseer.status",
+    // Pure derive: bounded (128 inputs / 64KB), no persistence, fails safe to []. READ is
+    // also the most reachable tier -- READ methods are granted to WRITE holders too (see
+    // authorizeOperatorScopesForMethod below) -- which matters because this is the J13
+    // recipe matcher's embedding lane and it must degrade to lexical, never to refused.
+    "fork.prefrontal.embed",
   ],
   [WRITE_SCOPE]: [
     "message.action",
@@ -170,6 +200,12 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "sessions.send",
     "sessions.steer",
     "sessions.abort",
+    // FORK 2026-08-18: sessions.attachmentStop MUTATES — it aborts a live run or signals a
+    // child process (SIGTERM, then SIGKILL only on explicit escalation). Scoped exactly like
+    // `chat.abort` / `sessions.abort` above. It must NEVER be classified READ: READ is also
+    // granted to WRITE holders (authorizeOperatorScopesForMethod), so a READ classification
+    // would hand a kill switch to every read-only operator token.
+    "sessions.attachmentStop",
     "sessions.compaction.branch",
     "doctor.memory.backfillDreamDiary",
     "doctor.memory.resetDreamDiary",
@@ -182,6 +218,27 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "push.web.unsubscribe",
     "push.web.test",
     "node.pending.enqueue",
+    // FORK 2026-08-04: fork.* least-privilege classification (WRITE half). See the READ
+    // block above for why UNCLASSIFIED == dead. WRITE = mutates durable state, emits a
+    // broadcast, or spawns/burns compute -- the same tier this table already assigns to
+    // `agent` / `sessions.create` / `sessions.send` / `doctor.memory.*`.
+    "fork.subagents.spawn", // spawns a child run: same tier as `agent` + `sessions.create`
+    "fork.overseer.activate",
+    "fork.overseer.deactivate",
+    "fork.curiosity.logGap",
+    "fork.curiosity.resolveGap",
+    "fork.prefrontal.setRecipe",
+    "fork.prefrontal.trailEvent",
+    "fork.skill.put",
+    "fork.skill.recordOutcome",
+    "fork.strategy.switch.apply",
+    "fork.reasoning.search", // bounded tree-of-thoughts: real model calls, not a lookup
+    // Heavy ENGRAM sleep-consolidation run. WRITE, not ADMIN: every sibling memory-
+    // maintenance mutation already in this table (doctor.memory.backfillDreamDiary /
+    // resetDreamDiary / resetGroundedShortTerm / repairDreamingArtifacts /
+    // dedupeDreamDiary) is WRITE. `cron.run` is ADMIN because it runs an ARBITRARY named
+    // job; this runs one fixed, known job.
+    "fork.engram.consolidate.run",
   ],
   [ADMIN_SCOPE]: [
     "channels.start",
@@ -302,4 +359,22 @@ export function isGatewayMethodClassified(method: string): boolean {
     return true;
   }
   return resolveRequiredOperatorScopeForMethod(method) !== undefined;
+}
+
+/**
+ * FORK 2026-08-04: true when an error is the gateway's operator-scope REFUSAL -- the
+ * `missing scope: operator.x` shape minted in server-methods.ts and the HTTP helpers.
+ *
+ * WHY THIS EXISTS: a refusal arrives at a backend caller as an ordinary rejected promise,
+ * so it gets folded into whatever generic "the call failed" branch is nearest, and that
+ * branch is usually indistinguishable from "ran fine, nothing to report". That is exactly
+ * how the unclassified-`fork.*` outage above stayed invisible for months at warn level.
+ * Callers use this to report a refusal as its OWN outcome, loudly, because a refusal is a
+ * wiring bug that will never self-heal -- unlike a transient transport error.
+ *
+ * Pattern mirrors MISSING_SCOPE_PATTERN in src/commands/gateway-status/helpers.ts.
+ */
+export function isOperatorScopeDenial(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return /\bmissing scope:\s*[a-z0-9._-]+/i.test(message);
 }

@@ -1,4 +1,5 @@
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { emitEffortTelemetry } from "../infra/effort-telemetry.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import { getRateLimitSnapshot } from "./anthropic-ratelimit-store.js";
 import {
@@ -38,6 +39,18 @@ export function handleAgentStart(ctx: EmbeddedPiSubscribeContext) {
   void ctx.params.onAgentEvent?.({
     stream: "lifecycle",
     data: { phase: "start" },
+  });
+  // FORK 2026-07-24 (the architect, EEG deep-layer feed): the embedded pipe's effort
+  // telemetry — see src/infra/effort-telemetry.ts for the layering doctrine.
+  // Without this the EEG only ever saw the claude-CLI bridge's events and was
+  // blind to every non-anthropic provider (bug [eeg-blind-to-non-anthropic-providers]).
+  emitEffortTelemetry({
+    runId: ctx.params.runId,
+    sessionKey: ctx.params.sessionKey,
+    model: ctx.params.modelId ?? "",
+    provider: ctx.params.modelProvider,
+    phase: "live",
+    thinkLevel: ctx.params.thinkingLevel,
   });
 }
 
@@ -114,6 +127,27 @@ export function handleAgentEnd(ctx: EmbeddedPiSubscribeContext): void | Promise<
   } else {
     ctx.log.debug(`embedded run agent end: runId=${ctx.params.runId} isError=${isError}`);
   }
+
+  // FORK 2026-07-24 (the architect, EEG deep-layer feed): final effort sample for the
+  // embedded pipe — model/provider/usage from the run's own last assistant
+  // message when present (truth of what executed), params as fallback. Errors
+  // still emit (isError) so the EEG shows the attempt. Doctrine in
+  // src/infra/effort-telemetry.ts.
+  emitEffortTelemetry({
+    runId: ctx.params.runId,
+    sessionKey: ctx.params.sessionKey,
+    model:
+      (isAssistantMessage(lastAssistant) ? lastAssistant.model : undefined) ??
+      ctx.params.modelId ??
+      "",
+    provider:
+      (isAssistantMessage(lastAssistant) ? lastAssistant.provider : undefined) ??
+      ctx.params.modelProvider,
+    phase: "final",
+    thinkLevel: ctx.params.thinkingLevel,
+    outputTokens: isAssistantMessage(lastAssistant) ? (lastAssistant.usage?.output ?? 0) : 0,
+    isError,
+  });
 
   const rateLimit = ctx.params.modelProvider === "anthropic" ? getRateLimitSnapshot() : undefined;
   const emitLifecycleTerminal = () => {

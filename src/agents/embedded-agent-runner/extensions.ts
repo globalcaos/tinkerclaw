@@ -108,7 +108,12 @@ function buildContextPruningFactory(params: {
   return contextPruningExtension;
 }
 
-function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | "engram" {
+/**
+ * FORK 2026-07-28: exported so `applyPiAutoCompactionGuard` callers can tell whether one of
+ * OUR compaction extensions owns compaction. A non-"default" mode registers a
+ * `session_before_compact` handler, which means pi's own decider must be switched off.
+ */
+export function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | "engram" {
   const compaction = cfg?.agents?.defaults?.compaction;
   // A registered compaction provider requires the safeguard extension path
   if (compaction?.provider) {
@@ -181,7 +186,20 @@ export function buildEmbeddedExtensionFactories(params: {
         linkBuilder,
       });
 
-      const ptrHandler = createPointerCompactionHandler(eventStore);
+      // FORK 2026-07-26 (the architect: "why so many compactions if the context cache is
+      // so empty?") — createPointerCompactionHandler() defaults ctxTokens to
+      // 100_000, so pointerCompact() evicted at ctx-headroom = 96k REGARDLESS of
+      // the model's real window. On claude-opus-5 (1M) that compacted every turn
+      // at ~10% utilisation while the CONTEXT CACHE panel honestly showed ~5%.
+      // Feed it the SAME resolved window the rest of this file uses.
+      const ptrHandler = createPointerCompactionHandler(eventStore, {
+        ctxTokens: resolveContextWindowTokens({
+          cfg: params.cfg,
+          provider: params.provider,
+          modelId: params.modelId,
+          model: params.model,
+        }),
+      });
       setPointerCompactionRuntime(params.sessionManager, ptrHandler);
 
       initReflectionRuntime(params.sessionManager, eventStore);

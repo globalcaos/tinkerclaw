@@ -1,0 +1,50 @@
+{
+  "id": "tinkerclaw-task-panel",
+  "name": "Task Panel",
+  "description": "Exec-mode Today tab: live task board + axes + est-presets + calendar cache served over taskpanel.* RPCs. Replaces Todoist. Split from tinkerclaw-control-panel 2026-07-24; keeps the same SQLite store.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dataDir": {
+        "type": "string",
+        "description": "Directory holding the task-board SQLite store. Defaults to ~/.openclaw/data/control-panel/ (the pre-split location — live data)."
+      },
+      "calendarSync": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Calendar sync configuration. Default: google.primary at 30 min cadence.",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "cadenceSeconds": { "type": "integer", "minimum": 300 },
+          "sources": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["google.primary", "outlook.serra"] }
+          }
+        }
+      },
+      "briefingImport": {
+        "type": "boolean",
+        "description": "If true, the morning briefing's task manifest is auto-imported via taskpanel.tasks.import. Default: true."
+      },
+      "execMode": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Exec mode UI defaults.",
+        "properties": {
+          "leftPanelWidthPx": { "type": "integer", "minimum": 280, "maximum": 520 },
+          "splitGraphsPct": { "type": "integer", "minimum": 10, "maximum": 80 },
+          "splitCalendarPct": { "type": "integer", "minimum": 5, "maximum": 30 },
+          "defaultModeOnLaunch": { "type": "string", "enum": ["dev", "exec", "last-used"] }
+        }
+      }
+    }
+  },
+  "uiHints": {
+    "dataDir": { "label": "Data dir", "help": "Where the task-board SQLite store lives." }
+  }
+}

@@ -2121,7 +2121,9 @@ describe("subagent announce formatting", () => {
     };
     expect(call?.params?.channel).toBe(testCase.expectedChannel);
     expect(call?.params?.accountId).toBe(testCase.expectedAccountId);
-    expect(call?.expectFinal).toBe(true);
+    // No completion fallback text, so nothing ever reads the gateway response:
+    // the direct announce waits for admission only, never the requester's turn.
+    expect(call?.expectFinal).toBe(false);
   });
 
   it("keeps direct announce delivery enabled for extension channels", async () => {
@@ -2148,7 +2150,9 @@ describe("subagent announce formatting", () => {
     expect(call?.params?.channel).toBe("bluebubbles");
     expect(call?.params?.to).toBe("+1234567890");
     expect(call?.params?.accountId).toBe("acct-bb");
-    expect(call?.expectFinal).toBe(true);
+    // No completion fallback text, so nothing ever reads the gateway response:
+    // the direct announce waits for admission only, never the requester's turn.
+    expect(call?.expectFinal).toBe(false);
   });
 
   it("injects direct announce into requester subagent session as a user-turn agent call", async () => {

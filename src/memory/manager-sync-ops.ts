@@ -134,6 +134,8 @@ export abstract class MemoryManagerSyncOps {
     loadError?: string;
   } = { enabled: false, available: false };
   protected vectorReady: Promise<boolean> | null = null;
+  /** One-shot: has `this.vector.dims` been reconciled against the table's real schema? */
+  protected vectorDimsVerified = false;
   protected watcher: FSWatcher | null = null;
   protected watchTimer: NodeJS.Timeout | null = null;
   protected sessionWatchTimer: NodeJS.Timeout | null = null;
@@ -229,7 +231,40 @@ export abstract class MemoryManagerSyncOps {
     }
   }
 
+  /**
+   * The dimension the vec0 table is ACTUALLY declared with, read back from sqlite_master.
+   * `this.vector.dims` is what we believe; this is what is true. They diverged in production.
+   */
+  private readVectorTableDims(): number | undefined {
+    try {
+      const row = this.db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
+        .get(VECTOR_TABLE) as { sql?: string } | undefined;
+      const m = /FLOAT\s*\[\s*(\d+)\s*\]/i.exec(row?.sql ?? "");
+      return m ? Number(m[1]) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private ensureVectorTable(dimensions: number): void {
+    // FORK 2026-08-04 — VERIFY BEFORE TRUSTING THE EARLY RETURN. `this.vector.dims` is seeded
+    // from persisted meta, and meta can LIE: measured on the live index, meta said
+    // vectorDims=1024 while chunks_vec was declared FLOAT[3072]. With only the equality check
+    // below, ensureVectorTable(1024) returned immediately and never looked at the table, so the
+    // mismatch could never heal and every insert threw forever. Reconcile against the real
+    // schema once per manager, then the fast path is safe.
+    if (!this.vectorDimsVerified) {
+      this.vectorDimsVerified = true;
+      const onDisk = this.readVectorTableDims();
+      if (onDisk !== undefined && onDisk !== this.vector.dims) {
+        log.warn(
+          `${VECTOR_TABLE} is declared FLOAT[${onDisk}] but stored meta claimed ` +
+            `${this.vector.dims ?? "none"} — trusting the table and rebuilding if needed.`,
+        );
+        this.vector.dims = onDisk;
+      }
+    }
     if (this.vector.dims === dimensions) {
       return;
     }
@@ -242,16 +277,63 @@ export abstract class MemoryManagerSyncOps {
         `  embedding FLOAT[${dimensions}]\n` +
         `)`,
     );
-    this.vector.dims = dimensions;
+
+    // FORK 2026-08-04 — VERIFY, DO NOT ASSUME. This used to set `this.vector.dims =
+    // dimensions` unconditionally. `CREATE VIRTUAL TABLE IF NOT EXISTS` is a NO-OP when the
+    // table survives, and dropVectorTable() swallowed its own failure into log.debug — so a
+    // failed drop left the OLD table in place while the manager recorded the NEW dimension.
+    // From then on the `this.vector.dims === dimensions` early-return above made the mismatch
+    // permanent and every single insert threw.
+    //
+    // Measured on the live index before this fix: chunks_vec declared FLOAT[3072] while the
+    // configured embedder (ollama mxbai-embed-large) emits 1024. Result — chunks 5,258 and
+    // chunks_fts 5,305 rows, but chunks_vec_rowids ZERO. Semantic search had been silently
+    // dead, degraded to keyword-only, inside a 1.5 GB database, reporting only
+    // `memory sync failed (...)` at warn level (198 times in three days).
+    const actual = this.readVectorTableDims();
+    if (actual === dimensions) {
+      this.vector.dims = dimensions;
+      return;
+    }
+
+    // The table is not the shape we need and we could not make it so. Degrade HONESTLY:
+    // disable the vector path rather than throw on every insert forever, and say what to do.
+    this.vector.available = false;
+    this.vector.dims = actual;
+    this.vector.loadError =
+      `${VECTOR_TABLE} is declared FLOAT[${actual ?? "unknown"}] but the embedding provider ` +
+      `emits ${dimensions} dimensions, and the table could not be rebuilt.`;
+    log.error(
+      `${VECTOR_TABLE} dimension mismatch: table is FLOAT[${actual ?? "unknown"}], provider emits ` +
+        `${dimensions}. Vector search is DISABLED (keyword search still works). The table could ` +
+        `not be dropped and recreated — most often stale vec0 shadow tables. Remedy: stop the ` +
+        `gateway and drop ${VECTOR_TABLE} plus its ${VECTOR_TABLE}_* shadow tables, then resync.`,
+    );
   }
 
-  private dropVectorTable(): void {
+  /** @returns true when the table is gone afterwards. A failed drop must never look like a success. */
+  private dropVectorTable(): boolean {
     try {
       this.db.exec(`DROP TABLE IF EXISTS ${VECTOR_TABLE}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log.debug(`Failed to drop ${VECTOR_TABLE}: ${message}`);
+      // Was log.debug — invisible. A failed drop is the first domino of a permanently broken
+      // vector index, so it is worth a warning even though the caller now re-checks.
+      log.warn(`Failed to drop ${VECTOR_TABLE}: ${message}`);
     }
+    // vec0 keeps shadow tables (<name>_chunks/_info/_rowids/_vector_chunks00). If the virtual
+    // table itself is gone but they survive, the next CREATE can fail — clear them too.
+    if (this.readVectorTableDims() !== undefined) {
+      return false;
+    }
+    for (const suffix of ["chunks", "info", "rowids", "vector_chunks00"]) {
+      try {
+        this.db.exec(`DROP TABLE IF EXISTS ${VECTOR_TABLE}_${suffix}`);
+      } catch {
+        // best effort — the virtual table drop normally takes these with it
+      }
+    }
+    return true;
   }
 
   protected buildSourceFilter(alias?: string): { sql: string; params: MemorySource[] } {

@@ -32,12 +32,35 @@ import { getRetrievalRuntime } from "../agents/pi-extensions/retrieval-runtime.j
 import type { SerializedTree } from "../agents/reasoning-tree.js";
 import { captureForensicDump, finalizeForensicRun } from "../forensic/dump-writer.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { recordAlgorithmOutcome } from "../infra/algorithm-metrics.js";
+import { declareInstrument, noteInstrumentFired } from "../infra/instrument-liveness.js";
 import { estimateTokens } from "../memory/engram/event-store.js";
 import type { MemoryEvent } from "../memory/engram/event-types.js";
 import type { ContextCache, CompactionBudgets } from "../memory/engram/pointer-compaction.js";
 import { pointerCompact, estimateCacheTokens } from "../memory/engram/pointer-compaction.js";
 import { renderMarkers } from "../memory/engram/time-range-marker.js";
 import { appendGap, detectUncertaintySpans, extractTopic, makeGap } from "./curiosity-store.js";
+
+// FORK 2026-07-28 — LIVENESS. Two instruments on this file's traffic path declare themselves
+// here, at module scope, and fire at the line where the work ACTUALLY happens (see
+// infra/instrument-liveness.ts: declaring is a static property, being on the traffic path is a
+// dynamic one, and only the second is worth anything).
+//
+// `eeg:anatomy-write` is bound to the insert inside `onTurnComplete`, deliberately NOT to
+// `emitPrePromptAnatomy` further down — that function also calls `insertAnatomyEvent`, but it
+// has ZERO callers (attempt.ts never wires it; the comment at the onTurnComplete insert admits
+// as much). Instrumenting the orphan would declare an instrument that can only ever read NEVER,
+// i.e. reproduce the exact defect this registry exists to catch.
+declareInstrument({
+  id: "eeg:anatomy-write",
+  kind: "hook",
+  description: "context-anatomy row reaching SQLite on turn completion",
+});
+declareInstrument({
+  id: "engram:retrieval-pack-inject",
+  kind: "producer",
+  description: "per-turn engram retrieval pack injected into the system prompt",
+});
 
 // ---------------------------------------------------------------------------
 // Cognitive feature-flag helper
@@ -206,8 +229,19 @@ export function getAmygdalaNudge(): string[] | undefined {
  * (one-line touch — the merge guardian wiring check enforces the call
  * survives upstream merges).
  *
+ * FORK 2026-07-30 (the architect: "Grok is firing without stop") — the run.ts call site
+ * only covers `stage:"prompt"`. A `stage:"assistant"` surface_error (an xAI
+ * stream that dies mid-turn) throws from `handleAssistantFailover` and never
+ * passed through here, so `status:"running"` survived on disk and the Tinker UI
+ * re-lit the thinking indicator from every `sessions.list` poll — un-stoppable
+ * until the next gateway boot. The reply runner now calls this at its terminal
+ * "failed before reply" funnel, which covers EVERY pre-reply failure path
+ * (prompt stage, assistant stage, and fallback exhaustion) rather than one
+ * branch. See failures.md M10.
+ *
  * Behaviour:
- *   - Scans every agent's `sessions.json` store under `<state>/agents/`.
+ *   - With `storePath`: marks that store only.
+ *   - Otherwise scans every agent's `sessions.json` store under `<state>/agents/`.
  *   - Whichever store contains `sessionKey`, transition its entry from
  *     `status:"running"` → `status:"failed"` with `abortedLastRun:true`,
  *     `endedAt:Date.now()`.
@@ -219,15 +253,37 @@ export function getAmygdalaNudge(): string[] | undefined {
 export async function markFailedOnSurfaceError(params: {
   sessionKey: string | undefined;
   reason: string;
+  /**
+   * FORK 2026-07-30 — when the caller already knows which store owns the
+   * session (the reply runner does: `params.storePath`), mark it directly and
+   * skip the scan. Omit it and we fall back to scanning every agent store.
+   */
+  storePath?: string;
+  /**
+   * FORK 2026-07-30 — pass `false` when recording a provider FAILURE rather than
+   * a user abort, so the next turn is not prefixed with the "aborted by the
+   * user" hint. See `markSessionFailed`.
+   */
+  abortedLastRun?: boolean;
 }): Promise<void> {
   if (!params.sessionKey) return;
   try {
-    const [{ resolveStateDir }, { resolveAgentSessionDirs }, { markSessionFailed }] =
-      await Promise.all([
-        import("../config/paths.js"),
-        import("../agents/session-dirs.js"),
-        import("../agents/main-session-restart-recovery.js"),
-      ]);
+    const { markSessionFailed } = await import("../agents/main-session-restart-recovery.js");
+    if (params.storePath) {
+      await markSessionFailed({
+        storePath: params.storePath,
+        sessionKey: params.sessionKey,
+        reason: params.reason,
+        ...(params.abortedLastRun === undefined ? {} : { abortedLastRun: params.abortedLastRun }),
+      }).catch(() => {
+        // best-effort: never mask the caller's original failure
+      });
+      return;
+    }
+    const [{ resolveStateDir }, { resolveAgentSessionDirs }] = await Promise.all([
+      import("../config/paths.js"),
+      import("../agents/session-dirs.js"),
+    ]);
     const stateDir = resolveStateDir();
     const sessionDirs = await resolveAgentSessionDirs(stateDir);
     const { default: pathMod } = await import("node:path");
@@ -240,6 +296,7 @@ export async function markFailedOnSurfaceError(params: {
         storePath,
         sessionKey: params.sessionKey,
         reason: params.reason,
+        ...(params.abortedLastRun === undefined ? {} : { abortedLastRun: params.abortedLastRun }),
       }).catch(() => {
         // ignore per-store errors; we tried.
       });
@@ -271,6 +328,19 @@ export async function injectRetrievalPack(
       return systemPromptText;
     }
     log.info(`engram: injected retrieval pack (${pack.length} chars)`);
+    // FORK 2026-07-28 — fire HERE: `assemble()` returned a non-null pack and the very next
+    // line concatenates it onto the system prompt. Firing at the `isInlineMode` guard above
+    // would only prove this function was entered, not that anything reached the model — the
+    // "registered means running" conflation instrument-liveness.ts exists to catch.
+    noteInstrumentFired("engram:retrieval-pack-inject", `${pack.length} chars`);
+    recordAlgorithmOutcome({
+      algorithm: "retrieval",
+      variant: "engram-fts+vector-mmr",
+      outcome: "injected",
+      // A real char count over content we hold — genuinely local-measured.
+      metrics: { packChars: pack.length },
+      provenance: { packChars: "local-measured" },
+    });
     return systemPromptText + "\n\n" + pack;
   } catch (err) {
     log.info(`engram: retrieval pack failed: ${String(err)}`);
@@ -809,6 +879,15 @@ export interface PostTurnParams {
         | undefined)
     | null;
   authProfileId?: string;
+  /**
+   * Reasoning effort this turn ran at ("off" | "low" | "medium" | "high" | "xhigh" | …).
+   *
+   * Recorded into anatomy_events.effort. Without it the table can say WHICH model answered but not
+   * HOW HARD it was asked to think, so any comparison between two turns is silently comparing two
+   * different experiments — the column existed from schema v4 and was NULL on every gateway row
+   * until this was plumbed through.
+   */
+  thinkLevel?: string;
   heartbeatReason?: string;
   /** Channel/sender info for fractal inject routing */
   lastFrom?: string;
@@ -911,6 +990,33 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         authProfileId: params.authProfileId,
       });
       if (contextAnatomy) {
+        // Effort is decided in the runner and was never carried this far, which is why every
+        // gateway row had effort=NULL while Claude Code rows had it. Stamped here beside runId,
+        // the same way that field is attached after the build.
+        (contextAnatomy as unknown as Record<string, unknown>).effort = params.thinkLevel;
+        // FORK 2026-07-25 (anatomy-cache-fix): pin an EXPLICIT round number on the
+        // anatomy object BEFORE it is inserted. `buildContextAnatomy` is called
+        // above WITHOUT `roundNumber`, so the row was written with
+        // `round_number = NULL`; the later `updateAnatomyResponse(runId, 0, …)`
+        // matches `WHERE run_id = ? AND round_number = ?`, and in SQLite
+        // `NULL = 0` evaluates to NULL (never true) — so ZERO rows were updated
+        // and cache_read_tokens / cache_creation_tokens stayed NULL for every
+        // row written after 2026-03-26. Persisting the same value we later match
+        // on makes the UPDATE hit its own row again.
+        const anatomyRound = contextAnatomy.roundNumber ?? 0;
+        contextAnatomy.roundNumber = anatomyRound;
+        // Cache tokens are already known here (`usageTotals` was read above for
+        // buildContextAnatomy) — attach them BEFORE the emit so the live UI event
+        // actually carries the fields `AnatomyEvent` declares. Previously the emit
+        // fired first and the cache read happened ~45 lines later, so the pushed
+        // anatomy never had them. Only assign when defined, so a provider that
+        // reports no cache usage leaves the fields absent instead of undefined.
+        if (usageTotals?.cacheRead !== undefined) {
+          contextAnatomy.cacheReadTokens = usageTotals.cacheRead;
+        }
+        if (usageTotals?.cacheWrite !== undefined) {
+          contextAnatomy.cacheCreationTokens = usageTotals.cacheWrite;
+        }
         // Push updated anatomy (now with response tokens) to UI
         emitAgentEvent({
           runId: params.runId,
@@ -956,13 +1062,47 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         }
 
         insertAnatomyEvent(contextAnatomy);
-        // Update cache/response token columns on the row we just inserted
-        const usage = params.getUsageTotals?.();
-        if (params.runId && usage) {
-          const roundNumber = (contextAnatomy as { roundNumber?: number }).roundNumber ?? 0;
-          updateAnatomyResponse(params.runId, roundNumber, {
-            cacheReadTokens: usage.cacheRead,
-            cacheCreationTokens: usage.cacheWrite,
+        // FORK 2026-07-28 — fire AFTER the row reaches SQLite, so the instrument attests to the
+        // write rather than to having entered the block. This is the LIVE anatomy writer;
+        // `emitPrePromptAnatomy` above is orphaned and is deliberately left uninstrumented.
+        noteInstrumentFired(
+          "eeg:anatomy-write",
+          `turn=${turnNumber} round=${anatomyRound} session=${params.sessionKey ?? "?"}`,
+        );
+        // PARTS only — never a fill ratio (algorithm-metrics rule 2); `windowTokens` rides
+        // along as the denominator so a later analysis can sanity-check its own ratio.
+        // These token figures come from `estimateTokens(chars)` (ceil(chars/3.5), documented in
+        // context-anatomy.ts as "good enough for anatomy — not billing"), so their provenance is
+        // "estimated": recording a heuristic as a measurement is precisely rule 3's failure.
+        recordAlgorithmOutcome({
+          algorithm: "context-budget",
+          variant: "anatomy-split",
+          outcome: "observed",
+          metrics: {
+            systemPromptTokens: contextAnatomy.contextSent.systemPromptTokens,
+            toolSchemaTokens: contextAnatomy.contextSent.toolSchemasTokens,
+            historyTokens: contextAnatomy.contextSent.conversationHistoryTokens,
+            windowTokens: contextAnatomy.contextWindow.maxTokens,
+          },
+          provenance: {
+            systemPromptTokens: "estimated",
+            toolSchemaTokens: "estimated",
+            historyTokens: "estimated",
+            windowTokens: "local-measured",
+          },
+          sessionKey: params.sessionKey,
+          model: params.modelId,
+          provider: params.provider,
+        });
+        // Update cache/response token columns on the row we just inserted.
+        // Reuses the SINGLE `usageTotals` read from the top of this block (a
+        // second `getUsageTotals()` call could observe different totals) and the
+        // SAME `anatomyRound` that was actually persisted, so the
+        // `WHERE run_id = ? AND round_number = ?` predicate matches its row.
+        if (params.runId && usageTotals) {
+          updateAnatomyResponse(params.runId, anatomyRound, {
+            cacheReadTokens: usageTotals.cacheRead,
+            cacheCreationTokens: usageTotals.cacheWrite,
           });
         }
       }
@@ -1248,21 +1388,37 @@ export function maybeTriggerFractalReflection(
 
   const prompt = loadFractalPrompt();
 
-  // Write prompt to temp file (too large for CLI --text argument)
-  // then use `cat` to pipe it into the system event command.
-  const { writeFileSync } = require("node:fs");
-  const tmpPath = "/tmp/openclaw-fractal-prompt.txt";
-  try {
-    writeFileSync(tmpPath, prompt, "utf-8");
-  } catch (err) {
-    log.info(`[fractal] failed to write temp prompt: ${String(err)}`);
+  // FORK 2026-08-05 — was: write the prompt to /tmp/openclaw-fractal-prompt.txt, then run
+  //   exec(`openclaw system event --text "$(cat ${tmpPath})" --mode now`, {shell: "/bin/bash"})
+  // Three problems, none of which needed to exist:
+  //
+  // 1. THE STATED REASON WAS FALSE. The comment said the prompt was "too large for CLI --text".
+  //    It is 811 bytes (src/fork/fractal-prompt.md) — the extension's copy is 7,120 — against a
+  //    per-argument limit of 131,072. An assumption nobody re-measured, which then justified a
+  //    shell and a temp file for years.
+  // 2. A PREDICTABLE PATH IN A WORLD-WRITABLE DIRECTORY. Any local process could rewrite
+  //    /tmp/openclaw-fractal-prompt.txt between the write and the `cat`, substituting its own
+  //    text into a prompt this agent then acts on. Prompt injection through the filesystem, no
+  //    privileges required.
+  // 3. A SHELL ON THE PATH FOR NO GAIN. `$(cat …)` output is not re-scanned by bash, so this was
+  //    not itself exploitable — but it kept a /bin/bash on a hot path where one edit to tmpPath
+  //    would have made it so, which is exactly how git-cache.ts launched /usr/bin/orca on this
+  //    host on 2026-08-05. Flagged by scripts/check-shell-interpolation.mjs on its first run.
+  //
+  // argv array, no shell, no temp file: all three disappear at once.
+  const MAX_ARG_BYTES = 100_000; // headroom under Linux MAX_ARG_STRLEN (131_072)
+  if (Buffer.byteLength(prompt, "utf-8") > MAX_ARG_BYTES) {
+    log.info(
+      `[fractal] prompt too large to pass as an argument (${prompt.length} chars) — skipped`,
+    );
     return;
   }
 
-  const { exec: execChild } = require("node:child_process");
-  execChild(
-    `openclaw system event --text "$(cat ${tmpPath})" --mode now`,
-    { timeout: 10_000, shell: "/bin/bash" },
+  const { execFile } = require("node:child_process");
+  execFile(
+    "openclaw",
+    ["system", "event", "--text", prompt, "--mode", "now"],
+    { timeout: 10_000 },
     (err: Error | null) => {
       if (err) {
         log.info(`[fractal] system event injection failed: ${err.message}`);
@@ -1270,7 +1426,7 @@ export function maybeTriggerFractalReflection(
     },
   );
 
-  log.info("[fractal] reflection injected via system event (file-based)");
+  log.info("[fractal] reflection injected via system event (argv, no shell)");
 }
 
 // ---------------------------------------------------------------------------

@@ -446,7 +446,28 @@ export function mountContextTimeline(
   }
 
   function totalTokensFor(ev: AnatomyEvent): number {
-    return ev.contextWindow?.usedTokens ?? ev.contextSent?.totalTokens ?? 0;
+    // FORK 2026-07-28 — `contextWindow.usedTokens` is a TURN-AGGREGATE counter, not this turn's
+    // context size. app.ts:342-345 already states the rule verbatim ("NEVER from
+    // anatomy.contextWindow.usedTokens or anatomy.utilizationPercent"); this reader predated it.
+    // The producer ALWAYS sets usedTokens, so the honest `contextSent.totalTokens` fallback below
+    // could never fire — and the value is compared against the window on two axes here (bar
+    // height, and the per-model window marker), so a bar routinely rendered ABOVE the line
+    // marking the model's own limit. Measured live: usedTokens 6,448,106 against maxTokens
+    // 1,000,000, where the real context was 52,116.
+    //
+    // Historic rows persisted before the producer-side fix still carry poisoned values, so this
+    // guard stays even though `context-anatomy.ts` now rejects implausible figures at source.
+    const used = ev.contextWindow?.usedTokens;
+    const max = ev.contextWindow?.maxTokens;
+    const usedIsPlausible =
+      typeof used === "number" &&
+      Number.isFinite(used) &&
+      used > 0 &&
+      (typeof max !== "number" || max <= 0 || used <= max);
+    if (usedIsPlausible) {
+      return used as number;
+    }
+    return ev.contextSent?.totalTokens ?? 0;
   }
 
   function maxTokensFor(ev: AnatomyEvent): number {

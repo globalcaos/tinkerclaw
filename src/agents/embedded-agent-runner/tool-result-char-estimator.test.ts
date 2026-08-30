@@ -2,7 +2,9 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { describe, expect, it } from "vitest";
 import {
   createMessageCharEstimateCache,
-  estimateMessageCharsCached,
+  estimateMessageRawCharsCached,
+  estimateMessageWeightedCharsCached,
+  estimateRawContextChars,
   getToolResultText,
 } from "./tool-result-char-estimator.js";
 
@@ -25,9 +27,10 @@ describe("tool-result-char-estimator", () => {
     } as unknown as AgentMessage;
 
     const cache = createMessageCharEstimateCache();
-    expect(() => estimateMessageCharsCached(malformed, cache)).not.toThrow();
+    expect(() => estimateMessageWeightedCharsCached(malformed, cache)).not.toThrow();
     // Malformed block should be estimated via the unknown-block fallback, not zero
-    expect(estimateMessageCharsCached(malformed, cache)).toBeGreaterThan(0);
+    expect(estimateMessageWeightedCharsCached(malformed, cache)).toBeGreaterThan(0);
+    expect(estimateMessageRawCharsCached(malformed, cache)).toBeGreaterThan(0);
   });
 
   it("does not crash on toolResult with null content entries", () => {
@@ -39,7 +42,8 @@ describe("tool-result-char-estimator", () => {
     } as unknown as AgentMessage;
 
     const cache = createMessageCharEstimateCache();
-    expect(() => estimateMessageCharsCached(malformed, cache)).not.toThrow();
+    expect(() => estimateMessageWeightedCharsCached(malformed, cache)).not.toThrow();
+    expect(() => estimateMessageRawCharsCached(malformed, cache)).not.toThrow();
   });
 
   it("getToolResultText skips malformed text blocks without crashing", () => {
@@ -63,7 +67,75 @@ describe("tool-result-char-estimator", () => {
     } as unknown as AgentMessage;
 
     const cache = createMessageCharEstimateCache();
-    const chars = estimateMessageCharsCached(msg, cache);
-    expect(chars).toBeGreaterThanOrEqual(11); // "hello world".length
+    // "hello world".length === 11; the weighted estimate scores tool results x2.
+    expect(estimateMessageRawCharsCached(msg, cache)).toBe(11);
+    expect(estimateMessageWeightedCharsCached(msg, cache)).toBe(22);
+  });
+});
+
+/**
+ * FORK 2026-07-27 — raw vs weighted split.
+ *
+ * The whole-context overflow predicate must measure what actually goes on the wire
+ * (uniform 4 chars/token, `toolResult.details` excluded, no x2 weighting). The
+ * per-single-tool-result truncation budget deliberately keeps the pessimistic
+ * 2-chars/token weighting AND charges `details`. These two must never be confused.
+ */
+describe("raw vs weighted char estimates", () => {
+  function makeToolResultMessage(text: string, details?: unknown): AgentMessage {
+    return {
+      role: "toolResult",
+      toolName: "read",
+      content: [{ type: "text", text }],
+      isError: false,
+      timestamp: Date.now(),
+      ...(details === undefined ? {} : { details }),
+    } as unknown as AgentMessage;
+  }
+
+  it("excludes toolResult.details from the raw estimate but keeps them in the weighted one", () => {
+    const plain = makeToolResultMessage("x".repeat(1_000));
+    const withDetails = makeToolResultMessage("x".repeat(1_000), {
+      blob: "d".repeat(50_000),
+    });
+    const cache = createMessageCharEstimateCache();
+
+    expect(estimateMessageRawCharsCached(plain, cache)).toBe(1_000);
+    expect(estimateMessageRawCharsCached(withDetails, cache)).toBe(1_000);
+
+    expect(estimateMessageWeightedCharsCached(plain, cache)).toBe(2_000);
+    expect(estimateMessageWeightedCharsCached(withDetails, cache)).toBeGreaterThan(100_000);
+  });
+
+  it("does not apply the 2x tool-result weighting to the raw estimate", () => {
+    const msg = makeToolResultMessage("y".repeat(4_096));
+    const cache = createMessageCharEstimateCache();
+
+    expect(estimateMessageRawCharsCached(msg, cache)).toBe(4_096);
+    expect(estimateMessageWeightedCharsCached(msg, cache)).toBe(8_192);
+  });
+
+  it("totals only on-the-wire chars in estimateRawContextChars", () => {
+    const user = {
+      role: "user",
+      content: "u".repeat(500),
+      timestamp: Date.now(),
+    } as unknown as AgentMessage;
+    const toolResult = makeToolResultMessage("t".repeat(1_500), {
+      blob: "d".repeat(20_000),
+    });
+    const cache = createMessageCharEstimateCache();
+
+    expect(estimateRawContextChars([user, toolResult], cache)).toBe(2_000);
+  });
+
+  it("keeps the raw and weighted caches from contaminating each other", () => {
+    const msg = makeToolResultMessage("z".repeat(100));
+    const cache = createMessageCharEstimateCache();
+
+    expect(estimateMessageRawCharsCached(msg, cache)).toBe(100);
+    expect(estimateMessageWeightedCharsCached(msg, cache)).toBe(200);
+    expect(estimateMessageRawCharsCached(msg, cache)).toBe(100);
+    expect(estimateMessageWeightedCharsCached(msg, cache)).toBe(200);
   });
 });

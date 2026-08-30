@@ -94,18 +94,34 @@ describe("normalizeUsage", () => {
     expect(hasNonzeroUsage({ total: 1 })).toBe(true);
   });
 
-  it("does not clamp derived session total tokens to the context window", () => {
-    expect(
-      deriveSessionTotalTokens({
-        usage: {
-          input: 27,
-          cacheRead: 2_400_000,
-          cacheWrite: 0,
-          total: 2_402_300,
-        },
-        contextTokens: 200_000,
-      }),
-    ).toBe(2_400_027);
+  // FORK 2026-07-28 — REWRITTEN, deliberately, not deleted.
+  //
+  // This case used to assert `.toBe(2_400_027)` under the title "does not clamp derived
+  // session total tokens to the context window". Its real intent — never FABRICATE a
+  // window-sized value (i.e. never return 200_000 just because the input was bigger) — is
+  // preserved and asserted below. Its literal assertion, however, encoded the turn-aggregate
+  // bug: 2,400,000 cacheRead against a 200,000 window is not a context size, it is an
+  // accumulator that leaked into a snapshot field. Persisting it as SessionEntry.totalTokens
+  // is what drove compaction on sessions at a few percent of real fill (measured 2026-07-28:
+  // 6,448,106 tokens reported at 644.8% of a 1M window).
+  //
+  // New contract: an implausible value is reported as UNKNOWN (undefined), never as a raw
+  // aggregate and never as a fabricated clamp. Callers map undefined to totalTokensFresh:false.
+  it("reports an implausible aggregate as unknown, and never fabricates a clamped value", () => {
+    const derived = deriveSessionTotalTokens({
+      usage: {
+        input: 27,
+        cacheRead: 2_400_000,
+        cacheWrite: 0,
+        total: 2_402_300,
+      },
+      contextTokens: 200_000,
+    });
+
+    expect(derived).toBeUndefined();
+    // The original guarantee this test was written to protect: no clamped-to-window fake.
+    expect(derived).not.toBe(200_000);
+    expect(derived).not.toBe(2_400_027);
   });
 
   it("uses prompt tokens when within context window", () => {

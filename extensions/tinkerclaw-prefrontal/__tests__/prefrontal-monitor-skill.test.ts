@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { createPrefrontalMonitor, type SubagentRunInfo } from "../prefrontal-monitor.js";
 
-const monitor = createPrefrontalMonitor({ model: "claude-code/claude-opus-4-8" } as never);
+const monitor = createPrefrontalMonitor({ model: "claude-code/claude-opus-5" } as never);
 
 function run(over: Partial<SubagentRunInfo>): SubagentRunInfo {
   return {

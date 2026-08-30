@@ -3,10 +3,10 @@ import { CommandLane } from "../../process/lanes.js";
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 
 describe("resolveGlobalLane", () => {
-  it("defaults to main lane when no lane is provided", () => {
-    expect(resolveGlobalLane()).toBe(CommandLane.Main);
+  it("defaults to the sessions lane when no lane is provided", () => {
+    expect(resolveGlobalLane()).toBe(CommandLane.Sessions);
     for (const lane of ["", "  "]) {
-      expect(resolveGlobalLane(lane)).toBe(CommandLane.Main);
+      expect(resolveGlobalLane(lane)).toBe(CommandLane.Sessions);
     }
   });
 
@@ -22,6 +22,7 @@ describe("resolveGlobalLane", () => {
   it("preserves other lanes as-is", () => {
     for (const [lane, expected] of [
       ["main", CommandLane.Main],
+      ["sessions", CommandLane.Sessions],
       ["subagent", CommandLane.Subagent],
       ["cron-nested", CommandLane.CronNested],
       ["nested", CommandLane.Nested],

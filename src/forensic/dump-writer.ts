@@ -4,8 +4,12 @@
  * current prompt, and totals — so you can measure where tokens are spent.
  *
  * Dumps are stored **per-session** in memory (LRU-capped) and on disk
- * under `forensic-sessions/`.  Legacy `forensic-latest.json` is read
- * once for cold-start migration and never written to again.
+ * under `forensic-sessions/`.  Disk reads are **lazy and single-key**: a
+ * session is loaded only when it is asked for by key (`loadSessionFromDisk`).
+ * Nothing ever enumerates `forensic-sessions/` — see the FORK 2026-08-28 note
+ * below for the 11–14 s cold-start stall that rule exists to prevent.
+ * Legacy `forensic-latest.json` is read once for cold-start migration and
+ * never written to again.
  *
  * Writing to the forensic-dumps/ archive only happens when forensic mode
  * is enabled.
@@ -59,7 +63,9 @@ const MAX_SESSIONS = 20;
 // ─── Per-session in-memory store ───
 const sessionRuns = new Map<string, ForensicRun>();
 const sessionAccessOrder: string[] = []; // LRU tracking
-let loadedFromDisk = false;
+// FORK 2026-08-28 — one-shot guard for the legacy `forensic-latest.json` migration.
+// Replaces `loadedFromDisk`, which guarded the deleted directory-wide sweep.
+let legacyMigrationAttempted = false;
 
 // ─── Helpers ───
 
@@ -81,58 +87,83 @@ function touchSession(sk: string): void {
   }
 }
 
-function loadAllSessionsFromDisk(): void {
-  if (loadedFromDisk) {
-    return;
-  }
-  loadedFromDisk = true;
-
-  // Try loading per-session files first
+// FORK 2026-08-28 (R4 — no multi-second event-loop stalls): the eager sweep is GONE.
+// `loadAllSessionsFromDisk()` used to `readdirSync` the whole `forensic-sessions/`
+// directory on the first touch after every gateway start, then `readFileSync` +
+// `JSON.parse` EVERY file. That directory is 0.97 GB / 3,269 files (individual dumps up
+// to 31.8 MB) and `touchSession` immediately evicted through MAX_SESSIONS = 20 — so
+// 3,249 of the 3,269 parses were discarded in the same tick. Measured cold-start cost on
+// four separate gateway starts: 11,658 / 11,172 / 11,132 / 14,612 ms of synchronous
+// blocking in a single tick (warm figure the same day: 309 ms).
+//
+// HONESTY: adversarial verification REFUTED this as the cause of the 12:39 tab freeze —
+// it fires once per process and had already fired 3h20m earlier. It is removed because it
+// independently violates R4 with a hard receipt, NOT because it caused that incident.
+//
+// Everything now goes through this: one `existsSync` + one `readFileSync`, for the ONE
+// session actually asked for, by key.
+function loadSessionFromDisk(sk: string): ForensicRun | null {
   try {
-    fs.mkdirSync(FORENSIC_SESSION_DIR, { recursive: true });
-    const files = fs.readdirSync(FORENSIC_SESSION_DIR).filter((f) => f.endsWith(".json"));
-    for (const f of files) {
-      try {
-        const raw = fs.readFileSync(path.join(FORENSIC_SESSION_DIR, f), "utf-8");
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.runId && Array.isArray(parsed.dumps)) {
-          const sk =
-            parsed.dumps[0]?.meta?.sessionKey ?? f.replace(/^forensic-/, "").replace(/\.json$/, "");
-          sessionRuns.set(sk, parsed);
-          touchSession(sk);
-        }
-      } catch {
-        /* skip corrupt files */
-      }
+    const fp = sessionFilePath(sk);
+    if (!fs.existsSync(fp)) {
+      return null;
+    }
+    const raw = fs.readFileSync(fp, "utf-8");
+    const parsed = JSON.parse(raw);
+    // `dumps` must be an array: every consumer (`getDumpForSession`, `upsertRun`,
+    // `finalizeForensicRun`) indexes into it or pushes to it. The pre-2026-08-28 lazy
+    // path checked only `parsed.runId`, so a truncated file handed back a run whose
+    // `.dumps` was undefined and blew up in the caller instead of reading as absent.
+    if (parsed && parsed.runId && Array.isArray(parsed.dumps)) {
+      return parsed as ForensicRun;
     }
   } catch {
-    /* dir doesn't exist yet — fine */
+    /* missing or corrupt — treat as absent */
   }
+  return null;
+}
 
-  // Cold-start migration: if no session files found, try legacy file
-  if (sessionRuns.size === 0) {
-    try {
-      const raw = fs.readFileSync(LEGACY_DUMP_PATH, "utf-8");
-      const parsed = JSON.parse(raw);
-      let run: ForensicRun;
-      if (parsed && !parsed.dumps) {
-        // Old single-dump format
-        run = {
-          runId: parsed.meta?.runId ?? "unknown",
-          dumps: [parsed],
-          startedAt: parsed.meta?.timestamp ?? new Date().toISOString(),
-        };
-      } else {
-        run = parsed;
-      }
-      const sk = run.dumps?.[0]?.meta?.sessionKey ?? "main";
-      sessionRuns.set(sk, run);
-      touchSession(sk);
-      // Persist migrated data to new location
-      persistSessionRun(sk);
-    } catch {
-      /* no legacy file — fresh install */
+// FORK 2026-08-28 — cold-start migration of the pre-per-session `forensic-latest.json`.
+// Kept, but lazy + one-shot: it costs one `existsSync` on the first cache miss of a cold
+// store and never repeats. It used to live inside the sweep, gated on "no session files
+// exist on disk" — a condition that itself required the 0.97 GB `readdir` to evaluate.
+// Deliberately NOT called from `getLatestRun()`: see the note there.
+function migrateLegacyDumpOnce(): void {
+  if (legacyMigrationAttempted || sessionRuns.size > 0) {
+    return;
+  }
+  legacyMigrationAttempted = true;
+  try {
+    if (!fs.existsSync(LEGACY_DUMP_PATH)) {
+      return;
     }
+    const raw = fs.readFileSync(LEGACY_DUMP_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    let run: ForensicRun;
+    if (parsed && !parsed.dumps) {
+      // Old single-dump format
+      run = {
+        runId: parsed.meta?.runId ?? "unknown",
+        dumps: [parsed],
+        startedAt: parsed.meta?.timestamp ?? new Date().toISOString(),
+      };
+    } else {
+      run = parsed;
+    }
+    const sk = run.dumps?.[0]?.meta?.sessionKey ?? "main";
+    // The per-session file is authoritative: if one already exists for this key the
+    // legacy blob is stale and must NOT overwrite it. The old gate was "no session files
+    // on disk AT ALL", which is only evaluable with the sweep this commit deletes; one
+    // stat on the ONE key the legacy run names is the cheap, equivalent guard.
+    if (fs.existsSync(sessionFilePath(sk))) {
+      return;
+    }
+    sessionRuns.set(sk, run);
+    touchSession(sk);
+    // Persist migrated data to new location
+    persistSessionRun(sk);
+  } catch {
+    /* no legacy file — fresh install */
   }
 }
 
@@ -159,27 +190,26 @@ function lastAccessedSessionKey(): string | null {
 
 // ─── Session-aware exports ───
 
+// FORK 2026-08-28 — the ONE disk path into the forensic store. Memory first, then a
+// single-file read for this key (a session may have been evicted past MAX_SESSIONS, or
+// simply never loaded in this process), then the one-shot legacy migration.
 export function getRunForSession(sk: string): ForensicRun | null {
-  loadAllSessionsFromDisk();
-  const run = sessionRuns.get(sk);
-  if (run) {
+  const cached = sessionRuns.get(sk);
+  if (cached) {
     touchSession(sk);
-    return run;
+    return cached;
   }
-  // Try loading from disk (may have been evicted from memory)
-  try {
-    const fp = sessionFilePath(sk);
-    if (fs.existsSync(fp)) {
-      const raw = fs.readFileSync(fp, "utf-8");
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.runId) {
-        sessionRuns.set(sk, parsed);
-        touchSession(sk);
-        return parsed;
-      }
-    }
-  } catch {
-    /* missing */
+  const fromDisk = loadSessionFromDisk(sk);
+  if (fromDisk) {
+    sessionRuns.set(sk, fromDisk);
+    touchSession(sk);
+    return fromDisk;
+  }
+  migrateLegacyDumpOnce();
+  const migrated = sessionRuns.get(sk);
+  if (migrated) {
+    touchSession(sk);
+    return migrated;
   }
   return null;
 }
@@ -202,8 +232,14 @@ export function getDumpByIndexForSession(sk: string, index: number): any {
 
 // ─── Backward-compat exports (fall back to most-recently-accessed session) ───
 
+// FORK 2026-08-28 — deliberately does NO disk I/O, and must stay that way.
+// `lastAccessedSessionKey()` means "most recently touched IN THIS PROCESS", so on a cold
+// LRU the only honest answer is `null`. Re-deriving a "latest" from `readdir` + mtime
+// would silently hand back a DIFFERENT session's run — a correctness regression far worse
+// than the latency it would save. Every caller already handles null: `forensic.getLive`,
+// `getLiveDetail`, `summarize`, `getResponseLive` and `getResponseDetail` all respond
+// NO_DATA ("No context captured yet." / "No response data yet.").
 export function getLatestRun(): ForensicRun | null {
-  loadAllSessionsFromDisk();
   const sk = lastAccessedSessionKey();
   if (!sk) {
     return null;
@@ -293,8 +329,12 @@ function buildDump(input: ForensicDumpInput): any {
 // ─── Shared append logic, scoped to a session key ───
 // Keeps dumps across runs so the timeline can access all historical calls.
 function upsertRun(sk: string, dump: any, runId: string): void {
-  loadAllSessionsFromDisk();
-  const existing = sessionRuns.get(sk);
+  // FORK 2026-08-28 — lazy single-key load (was: sweep the whole directory).
+  // This also fixes a latent data-loss bug: the old sweep evicted down to
+  // MAX_SESSIONS = 20, so a session whose file was on disk but outside the last 20
+  // was invisible to `sessionRuns.get(sk)` here, and `persistSessionRun` below then
+  // OVERWROTE that file with a brand-new one-dump run.
+  const existing = getRunForSession(sk);
 
   if (existing) {
     if (existing.runId !== runId) {
@@ -324,8 +364,10 @@ export async function finalizeForensicRun(
   runId: string,
   messagesSnapshot: unknown[],
 ): Promise<void> {
-  loadAllSessionsFromDisk();
-  const run = sessionRuns.get(sk);
+  // FORK 2026-08-28 — lazy single-key load. `_currentRunStart` is an own enumerable
+  // property, so it survives the `safeJsonStringify` round-trip in `persistSessionRun`:
+  // a run re-read from disk finalizes exactly like one still resident in memory.
+  const run = getRunForSession(sk);
   if (!run || run.runId !== runId) {
     return;
   }

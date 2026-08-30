@@ -388,4 +388,86 @@ describe("applyPluginAutoEnable channels", () => {
       expect(result.changes.join("\n")).toContain("iMessage configured, enabled automatically.");
     });
   });
+
+  describe("fork plugin replacing a bundled channel plugin", () => {
+    // A fork can ship its own plugin for a bundled channel and park the stock
+    // one (tinkerclaw-whatsapp claims the "whatsapp" channel; the stock
+    // "whatsapp" plugin is parked and never registers). Auto-enable must
+    // allowlist the plugin that actually claims the channel, not the channel
+    // id -- an id nothing resolves to makes config validation warn
+    // "plugin not found: whatsapp" on every gateway start, and because
+    // auto-enable rewrites the config, removing the entry by hand cannot hold.
+    const forkRegistry = makeRegistry([{ id: "tinkerclaw-whatsapp", channels: ["whatsapp"] }]);
+
+    // A channel only counts as configured when it carries a key other than
+    // "enabled" (hasMeaningfulChannelConfigShallow), so a bare {enabled:true}
+    // fixture would never reach the resolver and would pass vacuously.
+    const forkChannels = { whatsapp: { dmPolicy: "allowlist" } };
+
+    it("allowlists the claiming plugin id while still enabling the channel", () => {
+      const result = applyPluginAutoEnable({
+        config: {
+          channels: forkChannels,
+          plugins: { allow: ["anthropic"], entries: {} },
+        },
+        env: makeIsolatedEnv(),
+        manifestRegistry: forkRegistry,
+      });
+
+      // The channel still gets enabled -- only the allowlist target changes.
+      expect(result.config.channels?.whatsapp?.enabled).toBe(true);
+      expect(result.config.plugins?.allow).toContain("tinkerclaw-whatsapp");
+      expect(result.config.plugins?.allow).not.toContain("whatsapp");
+      expect(result.config.plugins?.entries?.whatsapp).toBeUndefined();
+      // Guard against a vacuous pass: auto-enable must actually have acted.
+      expect(result.changes).not.toEqual([]);
+    });
+
+    it("does not re-add the bare channel id after it is removed", () => {
+      // Reproduces the live loop exactly: the architect deletes "whatsapp" from
+      // plugins.allow, the gateway restarts and appends it straight back.
+      const liveShapedConfig = {
+        channels: { whatsapp: { enabled: true, dmPolicy: "allowlist" } },
+        plugins: {
+          allow: ["tinkerclaw-whatsapp"],
+          entries: { "tinkerclaw-whatsapp": { enabled: true } },
+        },
+      };
+
+      const first = applyPluginAutoEnable({
+        config: liveShapedConfig,
+        env: makeIsolatedEnv(),
+        manifestRegistry: forkRegistry,
+      });
+
+      expect(first.config.plugins?.allow).not.toContain("whatsapp");
+      expect(first.changes).toEqual([]);
+
+      // Feeding the result back in must converge, so the gateway stops
+      // rewriting openclaw.json on every start.
+      const second = applyPluginAutoEnable({
+        config: first.config,
+        env: makeIsolatedEnv(),
+        manifestRegistry: forkRegistry,
+      });
+
+      expect(second.config.plugins?.allow).not.toContain("whatsapp");
+      expect(second.changes).toEqual([]);
+    });
+
+    it("still allowlists the bundled id when that plugin really is registered", () => {
+      // Stock OpenClaw: the plugin providing "whatsapp" IS called "whatsapp",
+      // so nothing about this behaviour may change.
+      const result = applyPluginAutoEnable({
+        config: {
+          channels: forkChannels,
+          plugins: { allow: ["anthropic"], entries: {} },
+        },
+        env: makeIsolatedEnv(),
+        manifestRegistry: makeRegistry([{ id: "whatsapp", channels: ["whatsapp"] }]),
+      });
+
+      expect(result.config.plugins?.allow).toContain("whatsapp");
+    });
+  });
 });

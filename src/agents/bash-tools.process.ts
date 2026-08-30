@@ -129,7 +129,7 @@ export function createProcessTool(
     displaySummary: PROCESS_TOOL_DISPLAY_SUMMARY,
     description: describeProcessTool({ hasCronTool: defaults?.hasCronTool === true }),
     parameters: processSchema,
-    execute: async (_toolCallId, args, _signal, _onUpdate): Promise<AgentToolResult<unknown>> => {
+    execute: async (_toolCallId, args, signal, _onUpdate): Promise<AgentToolResult<unknown>> => {
       const params = args as {
         action:
           | "list"
@@ -307,9 +307,27 @@ export function createProcessTool(
           if (pollWaitMs > 0 && !scopedSession.exited) {
             const deadline = Date.now() + pollWaitMs;
             while (!scopedSession.exited && Date.now() < deadline) {
+              if (signal?.aborted) {
+                break;
+              }
               await new Promise((resolve) =>
                 setTimeout(resolve, Math.max(0, Math.min(250, deadline - Date.now()))),
               );
+            }
+            if (signal?.aborted && !scopedSession.exited) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: "Poll aborted — the turn was stopped.",
+                  },
+                ],
+                details: {
+                  status: "failed",
+                  sessionId: params.sessionId,
+                  name: deriveSessionName(scopedSession.command),
+                },
+              };
             }
           }
           const { stdout, stderr } = drainSession(scopedSession);

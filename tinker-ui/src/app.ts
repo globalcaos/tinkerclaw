@@ -1,26 +1,155 @@
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
+// FORK 2026-08-18 (the architect: "if a process is attached to a tab and it prevents me to send more
+// prompts ... I would prefer if it was shown as a progress indicator with a stop button, so I can
+// kill it or understand it better"). The ATTACHED ACTIVITY strip's pure rules — live age, row
+// order, button verb, and success-vs-refused classification — live in their own unit-tested module
+// (the outbox.ts / queued-sends.ts extraction precedent). app.ts owns only the poll, the markup and
+// the click handler; it re-derives none of those rules inline.
+import {
+  attachmentButtonLabel,
+  attachmentDotFilled,
+  classifyStopOutcome,
+  formatAttachmentAge,
+  liveAgeMs,
+  sortAttachments,
+  stopButtonTitle,
+  type Attachment,
+  type AttachmentStopResult,
+} from "./attachments.js";
+import {
+  dropBackgroundRunsForSession,
+  noteBackgroundRunEvent,
+  touchBackgroundRuns,
+  type BackgroundRun,
+} from "./background-runs.js";
+// FORK 2026-08-13 (the architect) — the gateway's own narration of the 21-36s pre-turn gap.
+// FORK 2026-08-16 — what each timing row MEANS, plus the papers behind it. Pure data + lookup,
+// unit-tested; app.ts owns only the overlay that renders it.
+import { missingClientRows, recordClientRow, updateClientRow } from "./client-rows.js";
+// FORK 2026-08-24: the single predicate that decides whether an assistant bubble is an
+// error report and whether that error is one the system can ride out. Both render paths and
+// the retry lifecycle read it, so bubble colour and countdown cannot disagree — and a marker
+// added later cannot land on one render path only, which is precisely how a 529 came to be
+// painted as an ordinary answer. See error-bubble.ts.
+import { assistantTextOfPayloadMessage, classifyErrorBubble } from "./error-bubble.js";
+// FORK 2026-08-05 — THE LAW for the final reconciliation (a bubble's text may only GROW; a
+// divergent remainder comes back as `appendTail` to be PUSHED, never written over a bubble the
+// user has already read) lives in a pure, unit-tested module. See stream-reslice.ts.
+import {
+  fingerprintText,
+  runTextBubbles,
+  sameTextCount,
+  supersedingAppendTail,
+} from "./final-supersede.js";
 // FORK 2026-06-11 (fractal v3, bible §5.67b) — fractal dock renderer lives in its
 // own one-concern module (the sectioned-reply.ts extraction precedent); app.ts
 // keeps only the KNOWN_STREAMS entry, the stream:"fractal" dispatch, and the
 // dock-anchor lookup over app.ts-owned message state.
-import { upsertFractalDock } from "./fractal-dock.js";
+import { upsertFractalDock, renderTranscriptSection, type FractalDockRow } from "./fractal-dock.js";
+import { splitInjectedPrompt, type InjectedKind } from "./injected-prompt.js";
 import { openExternalLinksInNewTab } from "./md-links.js";
+import {
+  getModelUsage as sharedGetModelUsage,
+  type ModelUsageInfo,
+  refreshTooltipReset,
+} from "./model-usage.js";
+// FORK 2026-08-05 (the architect: "messages appear out of chronological order, some old messages get
+// rewritten, others disappear") — message IDENTITY (`_uid`) and RENDER ORDER (`_seq` = the Nth
+// message this client ever put on screen) live in a pure, unit-tested module. app.ts never
+// re-derives either rule inline; it only stamps and reads. See msg-order.ts.
+import {
+  findByUid,
+  isClientOnlyBubble,
+  reinsertByTurnAnchor,
+  renderOrder,
+  stampOrder,
+  turnAnchorOf,
+  type AnchoredMsg,
+} from "./msg-order.js";
+// FORK 2026-08-16 — bug "a prompt typed while the gateway/UI is being rebuilt is silently lost":
+// the durable outbox. A typed prompt is persisted BEFORE any await or network call and removed
+// only on proof the gateway has it, so no restart, reload or dropped socket can swallow it.
+import {
+  OUTBOX_REPLAY_GRACE_MS,
+  appendJournal,
+  dueForReplay,
+  enqueueOutbox,
+  markAttempted,
+  outboxEntriesNeedingBubble,
+  outboxForSession,
+  readOutbox,
+  reconcileWithHistory,
+  removeFromOutbox,
+  type OutboxEntry,
+  type OutboxStore,
+} from "./outbox.js";
 // FORK 2026-06-06 — BROCA recipe visibility: shared render module for the
 // single-recipe (recipe-detail) page. renderBrocaProgram turns a parsed recipe
 // into interleaved code+prose; BrocaRecipe is the read DTO shape.
 import { renderBrocaProgram, type BrocaRecipe } from "./panels/broca.js";
+// FORK 2026-07-25 (the architect) — 💾 CONTEXT CACHE panel renderer. Pure markup module (the
+// fractal-dock.ts / routing-rationale.ts one-concern precedent); app.ts owns only the
+// state + the two dispatch sites that feed it.
+import { renderCachePanelHtml, type CachePanelState } from "./panels/context-cache.js";
 import { mountContextTimeline } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
+import {
+  CRON_SKIM,
+  cronCardChrome,
+  cronSkimTag,
+  parseCronItemText,
+} from "./panels/cron-item-voice.js";
+import {
+  DEFAULT_TZ,
+  WEEKDAYS,
+  buildSchedule,
+  humanizeSchedule,
+  parseSchedule,
+  type CronRepeat,
+  type CronScheduleInput,
+  type CronScheduleView,
+} from "./panels/cron-schedule.js";
+import {
+  CRON_FILTER_DEFAULT,
+  CRON_FILTER_KEY,
+  CRON_FILTERS,
+  CRON_TAXONOMY_KEY,
+  CRON_UNSORTED_ID,
+  EMPTY_CRON_TAXONOMY,
+  addCronGroup,
+  assignJob,
+  buildCronGroupTree,
+  cronFilterAccepts,
+  cronGroupFoldKey,
+  deleteCronGroup,
+  groupIdForJob,
+  jobsInGroup,
+  parseCronFilter,
+  parseCronTaxonomy,
+  renameCronGroup,
+  reorderCronGroups,
+  reparentCronGroup,
+  serializeCronTaxonomy,
+  mergeVisibleOrder,
+  type CronFilter,
+  type CronGroupNode,
+  type CronTaxonomy,
+} from "./panels/cron-taxonomy.js";
 // FORK 2026-06-13 (eeg): seismograph trace store (bible §5.8h) — pure state +
 // SVG renderer live in their own unit-tested module; app.ts only feeds and
 // mounts it (effort stream → record, lifecycle end → turnEnd, history → backfill).
 import {
   EegTraceStore,
   eegStopLeftCss,
-  eegProviderPaint,
-  eegCostWidthPx,
+  eegRelCost,
+  resolveEegPaint,
+  resolveEegGlowColor,
+  EEG_GOOGLE_GLOW,
+  eegCostLunaMult,
+  EEG_COST_COMPARE_LABEL,
+  EEG_COST_COMPARE_REL,
   eegToolIdentity,
   type EegSample,
   type EegTurnEnd,
@@ -42,12 +171,119 @@ import {
   attachPresenceGraphs,
   type GGroup,
 } from "./panels/presence-graph.js";
+// FORK 2026-08-04 (the architect): vendor-resolved logo + accent for OpenRouter models —
+// the MODEL id, not the provider key, carries the vendor.
+import { getModelLogoSvg } from "./panels/provider-logos.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
+// FORK 2026-07-25 (the architect): the "why this routing" card under the MODEL slider — two
+// phrases justifying the model/effort in force and the fan-out count, each with its reason.
+import {
+  BIAS_DEFAULT_IDX,
+  renderRoutingRationale,
+  type RoutingSignals,
+} from "./panels/routing-rationale.js";
+// FORK 2026-08-29 (the architect: the rail lit a model while the picker said Auto). Which
+// override a session row actually carries, and which model actually served its last turn, are
+// two different facts that three call sites below (both slider derivations + the Auto tooltip)
+// must read identically — factored into its own unit so none of the three can disagree.
+import { serverPinOf, servedLabelIdOf } from "./panels/session-model-pin.js";
+// FORK 2026-08-06 (the architect): SMARTNESS × COST constellation chart — pure SVG
+// renderer lives in its own unit-tested module, same contract as eeg-trace.ts.
+import {
+  renderSmartCostChart,
+  scFmtCtx,
+  scDefaultCtx,
+  scAssignTwins,
+  scSyncTwinContext,
+  scApiPointsFor,
+  scApiMultiple,
+  scRouteTag,
+  scComputeScales,
+  scCostX,
+  scCostFromX,
+  scUtilAtCost,
+  scCostAtUtil,
+  SC_PLAN_UTIL,
+  type ScModel,
+  type ScTwinInfo,
+  type ScView,
+  scClampView,
+  SC_VIEW_FULL,
+} from "./panels/smart-cost-chart.js";
+// FORK 2026-08-06 #3 (the architect): SMART MODELS dossier — best-at + trained refusals.
+import {
+  renderDossierTable,
+  renderCnProviderMatrix,
+  CN_PROVIDER_PRICES,
+  attachDossierTooltips,
+  attachDossierSort,
+  scDossierFor,
+  type DossierRow,
+} from "./panels/smart-model-dossier.js";
+// FORK 2026-08-02 (the architect) — unified UI-state store (spec 2026-08-02-unified-ui-state-
+// persistence-design.md, jarvis-icu docs/superpowers/specs). Grown from the 2026-07-25
+// per-panel right-rail collapse map: ONE module now owns every piece of persisted UI
+// chrome (collapsed / flag / choice namespaces), with ONE contract — absent means the
+// caller's stated default, and a setter deletes the entry when the value agrees with
+// that default. Call sites state non-`false` defaults explicitly; default-expanded
+// folds lean on the collapsed namespace's documented `false`.
+import {
+  applyStoredOrder,
+  getChoice,
+  getFlag,
+  getOrderedIds,
+  hydrateUiState,
+  isCollapsed,
+  loadCollapsed,
+  migrateLegacyUiState,
+  scheduleUiStateMirror,
+  setChoice,
+  setCollapsed,
+  setFlag,
+  setOrderedIds,
+  TABS_KEY,
+} from "./panels/ui-state.js";
+import { vendorOfModel, vendorMarkFor } from "./panels/vendor-marks.js";
+import {
+  phaseDocFor,
+  pluginDisplayName,
+  pluginDocFor,
+  stageDisplayName,
+  stageDocFor,
+  stageOwner,
+} from "./phase-docs.js";
+// FORK 2026-08-24 (the architect) — ONE live timing block per turn, upserted in place, instead of one
+// chat row per finished stage walking down the transcript. Pure + unit-tested.
+import {
+  needsDecomposition,
+  phaseChildrenInOrder,
+  phaseGroupCountLabel,
+  phaseGroupIsLive,
+  phaseGroupSpanMs,
+  resolveAutoDisclosure,
+  upsertPhaseEntry,
+  type PhaseChild,
+  type PhaseEntry,
+} from "./phase-group.js";
+import {
+  clearPreModelFor as clearPreModelForIn,
+  openPreModelWindow,
+  sessionPending as sessionPendingIn,
+} from "./pre-model-window.js";
 // FORK 2026-06-08 — bug "queued prompts stick forever + show in every tab": pure, unit-tested
 // helpers that scope the queued-send array by session (render only the active tab's entries; settle
 // a session's entries when ITS turn ends, independent of which tab is viewed). See queued-sends.ts.
 import { queuedForSession, settleQueuedSession, shouldQueue } from "./queued-sends.js";
 import { narrationIndices, type RunMsgKind } from "./reply-grouping.js";
+// FORK 2026-08-04 (auto-retry x background tabs): the auto-retry LIFECYCLE decision —
+// whose track a chat event moves, and which way — is a pure sibling of retry-policy.ts,
+// extracted so the per-session keying is unit-testable (queued-sends.ts precedent, same
+// class of viewed-session-gate bug). See retry-lifecycle.ts.
+import {
+  retryLifecycleAction,
+  type RetryLifecycleDeps,
+  type RetryLifecycleEvent,
+} from "./retry-lifecycle.js";
 // FORK 2026-06-24 (recoverable-retry, spec 2026-06-24-recoverable-error-retry-design.md):
 // pure, DOM-free policy for the client-side auto-retry controller. RetryKind is
 // authored by the sibling retry-policy unit (must export `type RetryKind`).
@@ -59,22 +295,78 @@ import {
   labelFor,
   type RetryKind,
 } from "./retry-policy.js";
+import {
+  bareModelTail,
+  clientRunIsFresh,
+  liveCountForModel,
+  liveRunCountsByModel,
+  resolveSessionRunState,
+  sessionHasFreshClientRun,
+} from "./run-state.js";
 // FORK 2026-06-10 (amygdala retirement): the 3-section reply split/render logic
 // lives in its own unit-tested module. Recognises only 💬 ANSWER / 🌿 FRACTAL;
 // the retired 🧠 AMYGDALA section is no longer split or compacted (live panel owns it).
 import {
+  isFractalSectionText,
   renderSectionedReply,
   splitSectionedReply,
   splitLeadingNarration,
   splitReasoningFromAnswer,
 } from "./sectioned-reply.js";
+import { isSentenceContinuation, sameRun } from "./sentence-continuation.js";
+// FORK 2026-08-24 — the server lane, kept LIVE. `sessions[]` used to be written only by
+// loadSessions() (connect / first message / turn end / abort), so `row.run` — the gateway's
+// authoritative run set — was a snapshot taken before the turn began. See session-rows-live.ts.
+import { extractChangedRow, mergeChangedRow, type LiveSessionRow } from "./session-rows-live.js";
+import { resliceSegments } from "./stream-reslice.js";
+import {
+  subagentBelongsToViewedTab,
+  type SubagentAttributionDeps,
+} from "./subagent-attribution.js";
 // FORK 2026-05-30: shared per-subagent identity color (chat sub-bubble + RECIPES
 // panel row + thinking-row all import the SAME function so colors always match).
 import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
+// FORK 2026-08-24 — the post-restart wake-up is injected as a USER turn; this tells it apart from
+// something the human actually typed so it can be rendered as an automated notice. See
+// system-notice.ts.
+import { detectSystemNotice } from "./system-notice.js";
+import { compactUnknownModelLabel, isTranscriptOnlyModel } from "./transcript-only-models.js";
+import {
+  appendTurnPhase,
+  isPhaseCompletion,
+  pendingPillLabel,
+  readTurnPhaseEvent,
+  TURN_PHASE_STREAM,
+  TURN_STAGE_STREAM,
+  readTurnStageEvent,
+  turnPhaseLabelFor,
+  turnPhaseSteps,
+  type TurnPhase,
+} from "./turn-phase.js";
+
+// FORK 2026-08-02 (the architect) — durable UI state: HYDRATE BEFORE ANYTHING READS IT.
+// localStorage stopped being the source of truth for UI chrome. On the architect's machine Chrome
+// wipes site data on every clean exit, so localStorage is now only a per-tab CACHE in
+// front of a server-side snapshot; hydrateUiState() pulls that snapshot back into it.
+//
+// The POSITION of this line is load-bearing, not stylistic. It is a TOP-LEVEL await, so
+// module evaluation PAUSES right here and every module-scope statement below resumes with
+// a warm store — critically the `activeTabId` initializer (~L1720), which calls
+// migrateLegacyUiState() + getChoice("tab:active", "") at module-evaluation time. Put this
+// await anywhere below such an initializer and that initializer reads an EMPTY store: the
+// restored tab, the panel folds and every persisted choice silently fall back to their
+// defaults on a cold load, and nothing anywhere reports an error. Keep it immediately
+// after the import block, ahead of the first module-scope statement.
+//
+// No try/catch, on purpose: hydrateUiState() NEVER rejects — it resolves `false` on
+// timeout, transport failure or blocked Storage. A rejection at top level would abort
+// module evaluation and black-page the entire UI, so that guarantee is enforced on the
+// callee side (panels/ui-state.ts) rather than papered over with a handler here.
+await hydrateUiState();
 
 // FORK 2026-05-09: linkify was auto-converting plain text like "BRIEFING.md"
 // into <a href="http://BRIEFING.md"> which navigates to a search page on click.
-// FORK 2026-06-14 (the owner): re-enable linkify but with fuzzyLink OFF — only URLs
+// FORK 2026-06-14 (the architect): re-enable linkify but with fuzzyLink OFF — only URLs
 // carrying an explicit scheme (http://, https://, mailto:) are linked, so a bare
 // "https://thetinkerzone.com" in chat is clickable while "BRIEFING.md" stays
 // plain text (no scheme → no link), preserving the 2026-05-09 fix. Real file
@@ -176,20 +468,571 @@ function zoneDoc(key: keyof typeof ZONE_DOCS): string {
 // manual hard refresh. Self-accepting with location.reload() makes dev edits actually
 // appear live, matching the "dev server loads code directly" expectation. Dev-only:
 // import.meta.hot is undefined (and this block stripped) in the production build.
+/**
+ * Set when an HMR update arrives mid-turn; drained once the turn finishes. Declared before the
+ * accept handler that writes it so the ordering is a fact rather than a timing assumption.
+ */
+let pendingHmrReload = false;
+
 if (import.meta.hot) {
   import.meta.hot.accept(() => {
+    // FORK 2026-08-24 — NEVER reload on top of a turn in flight.
+    //
+    // The architect: "One with a fresh window only shows 'sending', nothing else." Measured, his
+    // window was reloaded six times in three minutes, because another session was saving this file
+    // while his prompt was running. A reload mid-turn discards `preparingSince` and
+    // `preparingStages` — both module-level `let`s — so the window that was being measured can
+    // never be closed, and every row after the reload is lost. The one row that came back,
+    // `sending`, is simply the one already written to localStorage before the reload landed.
+    //
+    // This is the chat's immutability rule ("once something is written it should not be erased")
+    // colliding with a dev-server convenience. The rule wins: the edit waits for the turn.
+    if (viewedSessionBusy()) {
+      console.info("[hmr] update deferred — a turn is in flight; reloading when it finishes");
+      pendingHmrReload = true;
+      return;
+    }
     location.reload();
   });
 }
 
+/**
+ * Drain the deferred reload once the turn is over.
+ *
+ * Polled rather than called from each turn-end site: there are several of them, they are edited
+ * often and by other sessions, and a reload that silently never happens is a worse dev experience
+ * than one that arrives a second late. Dev-only — the whole block is stripped from the production
+ * build with `import.meta.hot`.
+ */
+if (import.meta.hot) {
+  setInterval(() => {
+    if (pendingHmrReload && !viewedSessionBusy()) {
+      pendingHmrReload = false;
+      location.reload();
+    }
+  }, 1000);
+}
+
 let ws: WebSocket | null = null;
 let connected = false;
+// FORK 2026-08-24 — an EDGE for the authed handshake, so nothing has to poll for it.
+// `connected` flips only after the challenge→connect exchange; every boot path that
+// needed to know used its own `setTimeout` ladder and therefore idled for most of a
+// second after the gateway was already answering. Waiters registered here are released
+// on the same tick the handshake lands. Resolve-only: a waiter never rejects, so a
+// caller that also wants a ceiling races this against its own timer.
+let connectedWaiters: Array<() => void> = [];
+function whenConnected(): Promise<void> {
+  if (connected) return Promise.resolve();
+  return new Promise<void>((resolve) => connectedWaiters.push(resolve));
+}
+function releaseConnectedWaiters(): void {
+  const waiters = connectedWaiters;
+  connectedWaiters = [];
+  for (const resolve of waiters) resolve();
+}
+
+// FORK 2026-08-24 — FIRST-PAINT SNAPSHOTS for the right rail.
+// The sessions list and the models catalog spend their entire visible latency
+// waiting for data this browser already drew last time: the page is ~550ms old
+// before the socket is even open, and the answer costs ~400ms more. None of that
+// is spent deciding WHAT to draw. Remember the last good payload per panel, paint
+// it on the first frame, and let the real response reconcile behind it.
+//
+// Deliberately one OWN localStorage key per panel rather than the ui-state
+// snapshot: that snapshot is POSTed to the gateway on every setter, and this is
+// tens of KB of volatile per-browser data that no other client needs.
+//
+// Never a requirement. Every read and write is guarded; a miss just falls through
+// to the existing "Loading…" path.
+const SESSIONS_SNAPSHOT_KEY = "tinker-sessions-snapshot";
+const MODEL_CONFIG_SNAPSHOT_KEY = "tinker-modelconfig-snapshot";
+const PANEL_SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const PANEL_SNAPSHOT_MAX_BYTES = 512 * 1024;
+
+function writePanelSnapshot(key: string, data: unknown): void {
+  try {
+    const payload = JSON.stringify({ at: Date.now(), data });
+    if (payload.length > PANEL_SNAPSHOT_MAX_BYTES) {
+      // Not worth evicting months of drafts and the prompt outbox for — this
+      // origin is already under storage pressure (see outbox.ts's quota retry).
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, payload);
+  } catch {
+    /* quota or storage disabled — an optimisation, never a requirement */
+  }
+}
+
+// `sessions` has TWO writers — loadSessions() and the `sessions.changed` server
+// lane — and on a live gateway the push lane is usually the one that fills the
+// rail first. Snapshotting from only one of them left the cache empty in exactly
+// the case that matters. Rate-limited rather than debounced: the FIRST write goes
+// through immediately (so one page view is enough to warm the cache), and the push
+// lane, which can fire several times a second during a turn, then costs at most
+// one 60KB serialise every 5s.
+let sessionsSnapshotTimer: ReturnType<typeof setTimeout> | null = null;
+let sessionsSnapshotAt = 0;
+const SESSIONS_SNAPSHOT_MIN_INTERVAL_MS = 5_000;
+
+function scheduleSessionsSnapshot(): void {
+  if (Date.now() - sessionsSnapshotAt >= SESSIONS_SNAPSHOT_MIN_INTERVAL_MS) {
+    sessionsSnapshotAt = Date.now();
+    writePanelSnapshot(SESSIONS_SNAPSHOT_KEY, sessions);
+    return;
+  }
+  if (sessionsSnapshotTimer !== null) return; // a trailing write is already queued
+  sessionsSnapshotTimer = setTimeout(() => {
+    sessionsSnapshotTimer = null;
+    sessionsSnapshotAt = Date.now();
+    writePanelSnapshot(SESSIONS_SNAPSHOT_KEY, sessions);
+  }, SESSIONS_SNAPSHOT_MIN_INTERVAL_MS);
+}
+
+function readPanelSnapshot<T>(key: string, maxAgeMs: number): { at: number; data: T } | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { at?: unknown; data?: unknown };
+    if (typeof parsed.at !== "number" || parsed.data === undefined) return null;
+    if (Date.now() - parsed.at > maxAgeMs) return null;
+    return { at: parsed.at, data: parsed.data as T };
+  } catch {
+    return null;
+  }
+}
 let pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: unknown) => void }>();
 let sessionKey = "";
 let sessions: unknown[] = [];
+// FORK 2026-07-29 — `sessions` is a SNAPSHOT, and nothing refreshed it when a turn ended, so its
+// rows could keep claiming "running" after the fact. These two stamps let the resolver compare the
+// AGE of each lane's information instead of blindly preferring one: `sessionsFetchedAt` is when the
+// snapshot was taken, `sessionEndedAt` is when THIS client watched a session finish.
+let sessionsFetchedAt = 0;
+const sessionEndedAt = new Map<string, number>();
+
+// FORK 2026-08-23 (the architect: "when I delete a tab from the sessions panel, why does it take so
+// long? I want it nearly instantaneous, at least in appearance") — OPTIMISTIC DELETE.
+// The bin icon used to await the ENTIRE server-side teardown before the row moved:
+// sessions.delete → cleanupSessionBeforeMutation → waitForEmbeddedPiRunEnd (≤15s) +
+// closeTrackedBrowserTabs + plugin host cleanup + ACP cancel (≤15s) + ACP close (≤15s) +
+// MCP runtime retire + transcript archival + session-unbound lifecycle hooks — and THEN a
+// second sessions.list round-trip before the panel repainted. The row only dimmed to 0.3
+// in the meantime, so the click read as "nothing happened" for seconds.
+// Now the row is dropped from the panel on the click itself and the RPC runs unawaited.
+// These keys are suppressed from EVERY repaint while in flight, because two things would
+// otherwise resurrect the row mid-teardown: the periodic loadSessions() (server still
+// reports the session until the delete lands) and the open-tab injection in
+// updateSessionsPanel (which re-adds any tab-bound key missing from the server list).
+const pendingSessionDeletes = new Set<string>();
+
+function isPendingSessionDelete(key: string | undefined | null): boolean {
+  if (!key) {
+    return false;
+  }
+  for (const pendingKey of pendingSessionDeletes) {
+    if (sessionKeyMatches(pendingKey, key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * When each session entered its PRE-MODEL window — prompt accepted, no model named yet.
+ *
+ * FORK 2026-08-17 (the architect: "when I switch tabs, the progress indicator on the tab titles that are
+ * not focused should not go away").
+ *
+ * `pending` was the last piece of activity state that was still a property of THE VIEWED TAB rather
+ * than of a session. It lived in the `sending` boolean, and `tabsRunningNow()` could therefore only
+ * grant the pending glow to `tab.id === activeTabId`. Send a prompt, switch away inside the 21-36s
+ * pre-model window (turn-latency.md), and the tab you left went dark — while its turn was very much
+ * alive — until a model was finally named and the run lanes took over.
+ *
+ * run-state.ts's header called this out and deliberately kept `pending` out of the resolver, on the
+ * grounds that it is "client-local knowledge about the viewed tab, not a property of the gateway's
+ * run set". The first half of that is what this map fixes: pending is per-SESSION, exactly like
+ * `sessionEndedAt` above, and once it is keyed by session there is nothing viewed-specific left. It
+ * stays out of run-state.ts because the second half still holds — the gateway's run set genuinely
+ * does not know about this window — but every SURFACE can now ask about any session, not just the
+ * one on screen.
+ *
+ * Cleared by proof the window closed: a model-bearing lifecycle event, a chat delta (the model is
+ * already answering), or any terminal chat event — each recorded for EVERY session, above every
+ * viewed gate. Bounded by PRE_MODEL_MAX_MS so a dropped clear degrades to a glow that stops, never
+ * to one that never stops.
+ */
+const preModelSince = new Map<string, number>();
+
+/** Is this session in its pre-model window RIGHT NOW? Thin binding over pre-model-window.ts, which
+ *  owns the rule (and its tests). THE ONE DERIVATION of `pending` — the chat pill and the tab glow
+ *  both come through here, so they cannot answer differently. */
+function sessionPending(key: string): boolean {
+  return sessionPendingIn(preModelSince, key, Date.now(), sessionKeyMatches);
+}
+
+/** Close the pre-model window for one session, wherever the proof arrived from. Idempotent. */
+function clearPreModelFor(key: unknown): void {
+  clearPreModelForIn(preModelSince, key, sessionKeyMatches);
+}
+
+// FORK 2026-07-29 (STAGE 1 of the run-liveness rework) — give the freshness bound a CLOCK.
+//
+// `RUN_STALE_MS` in run-state.ts is evaluated on every render path, but nothing in this app
+// repaints on the passage of TIME: the thinking tick only rewrites the elapsed text and returns
+// early once `activeRuns.size === 0`, and its own comment states it never touches `activeRuns`.
+// A ghost is by definition an entry that emits no further events — so the very thing that would
+// expire it never runs. The bound was dead code for exactly the case it was written for.
+//
+// This is not another precedence rule. It adds no new notion of truth; it makes an existing
+// expiry actually elapse. Deliberately drives BOTH updaters so the panel, the tab bar and the
+// models count age out in step rather than one at a time.
+/** The row fields liveness depends on. `run` is THE RUN SET (stage 2) and outranks everything. */
+type SessionRowForLiveness = {
+  status?: string;
+  hasActiveSubagentRun?: boolean;
+  startedAt?: number;
+  run?: { live: boolean; count?: number; heartbeatCount?: number; since?: number };
+};
+
+// STAGE 3 kill switch. `localStorage.tinkerDisableRunSet = "1"` (then no reload needed on the next
+// repaint) strips the run set from every row, dropping the resolver back to its legacy path. This
+// exists because stage 3 changes what EVERY surface believes at once, and the revert unit for that
+// is the client, not a pixel.
+function runSetDisabled(): boolean {
+  try {
+    return localStorage.getItem("tinkerDisableRunSet") === "1";
+  } catch {
+    return false;
+  }
+}
+/** The model the SERVER says the viewed session is using. The client's own run entry starts with
+ *  an empty model, so this is what stops the indicator reading "working" during that window. */
+function viewedSessionRowModel(): string | undefined {
+  if (!sessionKey || !Array.isArray(sessions)) {
+    return undefined;
+  }
+  const row = (sessions as Array<Record<string, unknown>>).find(
+    (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, sessionKey),
+  );
+  const model = row?.model;
+  return typeof model === "string" && model ? model : undefined;
+}
+
+/**
+ * FORK 2026-07-31 — companion to viewedSessionRowModel, for the thinking
+ * indicator's provider colour. A session row carries its provider under
+ * `modelProvider`, with `providerOverride` as the explicit user pin — the same
+ * pair the Models panel reads (~17360).
+ */
+function viewedSessionRowProvider(): string | undefined {
+  if (!sessionKey || !Array.isArray(sessions)) {
+    return undefined;
+  }
+  const row = (sessions as Array<Record<string, unknown>>).find(
+    (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, sessionKey),
+  );
+  const provider = row?.modelProvider ?? row?.providerOverride;
+  return typeof provider === "string" && provider ? provider : undefined;
+}
+
+/** Apply the kill switch to a row before it reaches the resolver. */
+function forLiveness(row: SessionRowForLiveness | undefined): SessionRowForLiveness | undefined {
+  if (!row || !runSetDisabled()) {
+    return row;
+  }
+  const { run: _dropped, ...rest } = row;
+  return rest;
+}
+
+/**
+ * THE ONE CLOCK. Every progress/activity surface ticks from here and from nowhere else.
+ *
+ * FORK 2026-08-17 (the architect: "make sure it is all governed by the same mechanism, that all the
+ * progress indicators are synchronized, and that their refresh rate is less than 1 second
+ * (ideally 0.5s)"). Before this there were TWO clocks rendering the same facts at different
+ * moments, which is the third way these surfaces could disagree after ONE PREDICATE
+ * (run-state.ts) and ONE TRIGGER (repaintActivitySurfaces) had each been fixed:
+ *
+ *   - startLivenessRepaint, 5s  -> tab glow, session rows, models count, chat indicator
+ *   - startThinkingTick,    1s  -> the elapsed counters + updatePrefrontalTree()
+ *
+ * Two clocks means two phases: a fact could be 5s old on one surface and 1s old on another, and
+ * the worst case for "is it working?" was a full 5 seconds of visible disagreement on every turn.
+ * Worse, the 1s tick SELF-TERMINATED on `activeRuns.size === 0` — which is precisely the
+ * out-of-focus case background-runs.ts exists to cover, so a background turn's counters never
+ * ticked at all.
+ *
+ * TWO CADENCES, ONE CLOCK, and the split is by COST, not by subject:
+ *   - every tick (500ms): the surgical, allocation-free work — rewrite the elapsed counters' TEXT
+ *     and drive the retry countdowns. Text-only on purpose: replacing the indicator NODE restarts
+ *     its CSS dot animation, so a 2Hz node swap would visibly stutter.
+ *   - on CHANGE (or every FULL_REPAINT_EVERY_TICKS as a backstop): the expensive surfaces.
+ *     updateBudgetPanel -> liveRunCountsByModel walks EVERY session row (~900 live), so running it
+ *     unconditionally at 2Hz would be 10x the work for an answer that is almost always identical.
+ *
+ * Net effect: 10x more responsive than the old 5s clock AND strictly less work when idle, because
+ * the expensive pass now runs on change instead of on every beat. The forced backstop keeps the
+ * pre-2026-08-17 unconditional 5s cadence intact for everything else those panels render.
+ */
+const ACTIVITY_TICK_MS = 500;
+/** 10 ticks = 5s: the old unconditional cadence, kept as a backstop so a fingerprint that fails to
+ *  notice something (it is a summary, not the whole state) can never stall a surface for longer
+ *  than the clock it replaced. */
+const FULL_REPAINT_EVERY_TICKS = 10;
+let activityClockInterval: ReturnType<typeof setInterval> | null = null;
+let activityTickCount = 0;
+let lastActivityFingerprint = "";
+
+function startActivityClock() {
+  if (activityClockInterval) {
+    return;
+  }
+  activityClockInterval = setInterval(activityTick, ACTIVITY_TICK_MS);
+}
+
+/**
+ * Retained entry point. Its five call sites all mean "a run just started, make sure the clock is
+ * live"; that is still exactly right, there is simply one clock to start now instead of two.
+ */
+function startThinkingTick() {
+  startActivityClock();
+}
+
+function activityTick(): void {
+  if (!connected) {
+    return;
+  }
+  activityTickCount++;
+  // Every tick, unconditionally: these iterate STATE, not the DOM, and one of them FIRES pending
+  // retries — so it must not be gated behind a repaint decision.
+  driveRetryCountdowns();
+  refreshElapsedCounters();
+  const fingerprint = activityFingerprint();
+  const forced = activityTickCount % FULL_REPAINT_EVERY_TICKS === 0;
+  if (fingerprint === lastActivityFingerprint && !forced) {
+    return;
+  }
+  lastActivityFingerprint = fingerprint;
+  // FORK 2026-08-28 — updatePrefrontalTree() moved INSIDE repaintActivitySurfaces(), so the five
+  // activity surfaces share one trigger rather than four-plus-one. Calling it again here would
+  // paint the tree twice per tick.
+  repaintActivitySurfaces();
+}
+
+/**
+ * A cheap summary of everything the activity surfaces DISPLAY, used to skip the expensive repaint
+ * when nothing has changed.
+ *
+ * Derived from tabsRunningNow() — the SAME single derivation the tab glow already renders from —
+ * rather than re-deriving liveness here. A fingerprint that asked the question its own way would be
+ * a second opinion, and a second opinion is the exact bug class run-state.ts was written to end.
+ *
+ * Deliberately EXCLUDES elapsed seconds: those change every second by construction, so including
+ * them would force the expensive pass once a second and defeat the gate. They are rendered by
+ * refreshElapsedCounters() instead, which is why that runs unconditionally.
+ */
+function activityFingerprint(): string {
+  const parts: string[] = [];
+  for (const [tabId, info] of tabsRunningNow()) {
+    parts.push(`${tabId}:${info.pending ? "p" : "l"}:${info.provider ?? ""}:${info.model ?? ""}`);
+  }
+  parts.sort();
+  // Run-set size and per-run phase/tool: makes a tool label or a RESTARTING badge appear within one
+  // tick instead of waiting for the backstop. Both maps are small (one entry per open run).
+  const runs: string[] = [];
+  for (const [runId, info] of activeRuns) {
+    runs.push(`${runId}:${info.phase}:${info.currentTool ?? ""}:${info.state ?? ""}`);
+  }
+  runs.sort();
+  parts.push(`a|${runs.join(",")}`);
+  parts.push(`b|${backgroundRuns.size}`);
+  parts.push(`r|${retryState.size}`);
+  return parts.join("~");
+}
+
+/**
+ * Rewrite the seconds shown on every visible counter. TEXT ONLY — never replaces a node, because
+ * the indicator's dots are CSS-animated and a node swap restarts the animation (a 2Hz swap reads
+ * as a stutter). This is why the counters can tick at 500ms while the node itself is rebuilt only
+ * when its identity changes.
+ */
+function refreshElapsedCounters(): void {
+  document.querySelectorAll<HTMLElement>(".thinking-run[data-run-id]").forEach((el) => {
+    const runId = el.getAttribute("data-run-id");
+    if (!runId) {
+      return;
+    }
+    const info = activeRuns.get(runId);
+    if (!info) {
+      return;
+    }
+    const span = el.querySelector(".thinking-elapsed");
+    if (span) {
+      span.textContent = `${Math.floor((Date.now() - info.startedAt) / 1000)}s`;
+    }
+  });
+  // FORK 2026-08-17 — the PRE-MODEL pill's counter too. It carries no data-run-id (no model has
+  // been chosen yet, so there is no run to key on), so the old 1s tick skipped it entirely and its
+  // seconds only advanced when something else happened to repaint the node. That is the 21-36s
+  // window the architect reads as a hang, and it was the one counter that could sit visibly frozen.
+  if (preparingSince !== null) {
+    const waited = Math.floor((Date.now() - preparingSince) / 1000);
+    document
+      .querySelectorAll<HTMLElement>(".thinking-run:not([data-run-id]) .thinking-elapsed")
+      .forEach((span) => {
+        span.textContent = `${waited}s`;
+      });
+  }
+  refreshLivePhaseRows();
+}
+
+/**
+ * FORK 2026-08-24 — tick the RUNNING stage inside a turn's timing block.
+ *
+ * In place, not by re-rendering the chat: the 2026-08-15 note on repaintThinkingIndicator applies
+ * verbatim — a 1s full repaint drops text selection, re-runs every post-render pass, and fights
+ * the scroll anchor. This rewrites one text node per live stage and nothing else.
+ *
+ * Reads the DOM rather than state on purpose: the same block can be mounted in two places (the
+ * transcript, and — for a reflection's stages — inside the 🌿 Fractal section), and a state-driven
+ * updater would have to know about both.
+ */
+function refreshLivePhaseRows(): void {
+  document.querySelectorAll<HTMLElement>("[data-phase-live-since]").forEach((span) => {
+    const since = Number(span.getAttribute("data-phase-live-since"));
+    if (!Number.isFinite(since) || since <= 0) {
+      return;
+    }
+    span.textContent = phaseDurationText(Math.max(0, Date.now() - since));
+  });
+}
+
+/**
+ * FORK 2026-06-24 (recoverable-retry): live countdown. Rewrite each active retry-warning's
+ * "retrying in {remaining}" from its session's nextRetryAt; when the wait elapses (and the track
+ * isn't cancelled / already firing), FIRE the retry. Iterate state (not DOM) so a backgrounded tab
+ * still fires.
+ */
+function driveRetryCountdowns(): void {
+  for (const [sk, st] of retryState) {
+    if (st.cancelled) {
+      continue;
+    }
+    const remainMs = st.nextRetryAt - Date.now();
+    const skSel =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(sk) : sk;
+    document
+      .querySelectorAll<HTMLElement>(`[data-retry-warning="${skSel}"] .retry-countdown`)
+      .forEach((span) => {
+        span.textContent = formatWait(Math.max(0, remainMs));
+      });
+    if (remainMs <= 0 && !st.firing) {
+      void retryLastTurn(sk);
+    }
+  }
+}
+
+/**
+ * Repaint EVERY surface governed by the activity state, in one call.
+ *
+ * FORK 2026-08-15 (the architect: "this all has to be gated from the same structure, they need to be
+ * synchronized"). run-state.ts gave the four surfaces one PREDICATE; this gives them one
+ * TRIGGER. Both halves are required, and each has now been shipped separately and been wrong:
+ * a shared predicate repainted on four different schedules desynchronizes exactly as badly as
+ * four predicates on one schedule.
+ *
+ * Measured before this existed: pressing send lit the chat immediately (updateChat) but left the
+ * tab and the session row dark for up to a full repaint interval, because only the slow clock
+ * repainted them — 4 seconds of visible disagreement on every single turn. (That interval is now
+ * ACTIVITY_TICK_MS = 500ms; see THE ONE CLOCK above.)
+ *
+ * Call this instead of repainting any one of them alone whenever activity state changes.
+ */
+function repaintActivitySurfaces(): void {
+  updateSessionsPanel(); // also calls syncTabActivityGlow() (tab bar) on its first line
+  updateBudgetPanel(); // models-panel live counts
+  // FORK 2026-08-15 — the chat indicator joins the SAME liveness funnel as the other three
+  // surfaces. Until now the tab glow, the session rows and the models count all repainted on
+  // this clock and the chat never did, so the chat could hold a stale answer indefinitely —
+  // not late, uncorrectable. See docs/2026-08-15-chat-thinking-indicator-missing-while-tab-
+  // glows.md §2.2.
+  //
+  // Deliberately NOT updateChat(): that rewrites the whole message list, which drops the
+  // user's text selection and re-runs the fractal decoration over every reply — every 5s.
+  // This repaints only the indicator node (the handoff's option 3.2).
+  //
+  // This does not violate done-signals.md R2. R2 forbids a UI timer that CLEARS a run (a
+  // timer that lies about doneness). This one clears nothing: it re-reads the server's own
+  // authoritative answer — the identical call syncTabActivityGlow() already makes on this
+  // very tick — and can only ever ADD an indicator the server says should be there.
+  repaintThinkingIndicator();
+  // FORK 2026-08-28 (the architect: "we will synchronize the 5 thinking indicators (chat, tab, sessions,
+  // models and recipes) for simplicity towards the user"). The recipes/prefrontal tree was the
+  // FIFTH activity surface and the only one outside this funnel: it was a sibling call in
+  // activityTick(), so it repainted on the CLOCK but not on any of the EVENTS that call this
+  // function — most visibly not on the send path, where every other surface lights the instant the
+  // prompt leaves the composer. That is the same half-a-fix this function's own header describes:
+  // one predicate without one trigger desynchronizes exactly as badly as the reverse.
+  //
+  // Moving it here is behaviour-neutral on the tick (activityTick called both, back to back, under
+  // one fingerprint gate) and strictly better everywhere else, because it inherits the ~15 event
+  // call sites this trigger already has.
+  //
+  // NOTE, deliberately left standing: the tree still derives its own liveness from the raw
+  // activeRuns map (scopedActiveRuns) instead of resolveSessionRunState, so it alone carries no
+  // freshness bound and no server lane. This change gives the five ONE TRIGGER; it does not yet
+  // give them ONE PREDICATE. See lifecycles.md L-PROMPT for the remaining gap and the condition
+  // under which (models, recipes) should be dissociated from (chat, tab, sessions) again.
+  updatePrefrontalTree();
+  // FORK 2026-08-28 — the composer button is an activity surface too, and it was the only one not
+  // on this trigger: every one of its 15 call sites is a discrete event, so a state it entered on
+  // an event it could still be showing minutes later. That was survivable only while its predicate
+  // was a pair of latches; now that it asks `sendWouldDefer()` — freshness-bounded by RUN_STALE_MS
+  // through sessionHasFreshClientRun — a periodic re-ask is what lets a stale "Queue" DECAY back to
+  // "Send" on its own instead of waiting for an event that a dropped terminator will never send.
+  updateBtn();
+}
+function stopActivityClock() {
+  if (activityClockInterval) {
+    clearInterval(activityClockInterval);
+    activityClockInterval = null;
+  }
+  // Force the next tick after reconnect to do a full repaint: while disconnected the underlying
+  // state kept changing with nothing rendering it, so a fingerprint captured before the gap says
+  // nothing about what is on screen now.
+  lastActivityFingerprint = "";
+}
 let messages: unknown[] = [];
-/** Index into messages[] of the current streaming temporary message, or -1 if none. */
-let streamMsgIdx = -1;
+// FORK 2026-08-05 (the architect: "old messages get rewritten") — this used to be `streamMsgIdx: number`,
+// a RAW ARRAY INDEX into `messages`. Six paths remove elements from the MIDDLE of that array (the
+// error purge, abort(), the reasoning purge, dedupeAssistantAnswers, retryProvider, loadChat) and
+// every one of them shifts every subsequent index by one — while the compensating reset is SKIPPED
+// whenever another run is live (the `streamRunId === p.runId` guard). The next text delta then wrote
+// into a DIFFERENT, OLDER, already-rendered bubble. That is verbatim the report. The cursor is now
+// the target's STABLE IDENTITY (`_uid`, owned by msg-order.ts): an array reshape cannot move it, and
+// a bubble that is genuinely gone resolves to `undefined` and opens a NEW bubble instead of
+// silently overwriting an innocent one.
+/** `_uid` of the current streaming temporary message, or null when nothing is streaming. */
+let streamMsgUid: string | null = null;
+/**
+ * FORK 2026-08-05 — sorted render is ON. Kept as a NAMED switch, and re-read from
+ * `window.__tinkerRenderSorted` on every repaint, so it can be flipped from the browser console
+ * without a redeploy if it ever misbehaves.
+ */
+const RENDER_SORTED = true;
+function renderSortedEnabled(): boolean {
+  const override = (window as unknown as Record<string, unknown>).__tinkerRenderSorted;
+  return typeof override === "boolean" ? override : RENDER_SORTED;
+}
+/**
+ * FORK 2026-08-05 — a chat.history reload that arrives DURING a live turn is DEFERRED, never
+ * dropped: loadChat sets this instead of demolishing the transcript, and the turn-final handler
+ * re-arms it once the session is quiet.
+ */
+let pendingHistoryReload = false;
 let streamRunId: string | null = null;
 let streamProvider = "";
 let streamProfileId = "";
@@ -210,6 +1053,42 @@ let lastDeltaLen = 0;
  * Used to detect gaps >5s and split assistant bubbles. Reset on final/error/clear. */
 let lastDeltaAt = 0;
 let sending = false;
+/**
+ * When `chat.send` RESOLVED, i.e. the gateway has the message and a runId exists but
+ * has not yet emitted a lifecycle event naming the model. Null while the send is still
+ * in flight (and between turns). Drives the pending pill's two states — see updateChat.
+ */
+let preparingSince: number | null = null;
+/**
+ * When the user pressed send, i.e. the start of the "sending" half of the pending pill —
+ * before `chat.send` has come back. Cleared at exactly the same sites as `preparingSince`.
+ *
+ * FORK 2026-08-16 (the architect: "certain phases like 'preparing context' do not leave a tag with
+ * elapsed time"). The two pill states are CLIENT-SIDE windows, not gateway phases: "sending"
+ * and "preparing context" are what `pendingPillLabel` falls back to when the gateway has
+ * narrated nothing. So no completion envelope ever arrives for them and the timing-row path
+ * — which only fires on a gateway completion — could never cover them. They are also the
+ * ONLY account we currently have of the ~350s pre-model wait, since the single narrated
+ * gateway stage (before_prompt_build) measures 11ms of it.
+ *
+ * These two stamps let the client close and time its own windows.
+ */
+let pendingSince: number | null = null;
+/**
+ * FORK 2026-08-13 — the latest `stream:"turn-phase"` envelope the gateway sent for the
+ * turn being prepared, or null when it has sent none (an un-rebuilt gateway, or the gap
+ * between turns). Lives beside `preparingSince` and is cleared at exactly the same three
+ * sites — new send, send failure, disconnect — so a phase can never outlive its turn.
+ * Read only by the pending-pill branch of updateChat, via turnPhaseLabelFor().
+ */
+let turnPhase: TurnPhase | null = null;
+/**
+ * FORK 2026-08-15 (the architect: "itemized as much as possible") — the ORDERED trail of phases
+ * for the turn being prepared, so the pill can show where the seconds went and not just
+ * what is happening this instant. Same lifetime and the same three clear sites as
+ * `turnPhase`; durations are derived from real event arrival times only.
+ */
+let turnPhaseTrail: TurnPhase[] = [];
 let currentTurnNumber = 0;
 let expandedTools = new Set<string>();
 
@@ -228,25 +1107,74 @@ let expandedTools = new Set<string>();
 let initialized = false;
 let _budgetData: unknown = null;
 let budgetUsageData: unknown = null;
-// FORK 2026-07-09: per-model TOKEN totals for the MODELS panel rows (the owner: the
+// FORK 2026-07-25 (the architect): the fan-out limits the gateway actually enforces, reported by
+// `prefrontal.status`. The routing card quotes them instead of guessing — the gateway may
+// run on a different host than this browser, so navigator.hardwareConcurrency would lie.
+let orchestrationCaps: {
+  concurrencyCap?: number;
+  cores?: number;
+  policyPath?: string;
+} = {};
+// FORK 2026-07-26 (the architect): the ORCA fast↔smart dial, per session. Persisted CLIENT-SIDE like
+// the effort/model pins (webchat cannot patch session metadata) AND pushed to the gateway so
+// the orchestrator can actually read it — a dial that only moves a label would be decoration.
+const ORCA_BIAS_LS_PREFIX = "tinker-orca-bias:";
+const orcaBiasBySession = new Map<string, number>();
+function loadOrcaBias(key: string): number {
+  if (!key) return BIAS_DEFAULT_IDX;
+  const mem = orcaBiasBySession.get(key);
+  if (typeof mem === "number") return mem;
+  try {
+    const raw = localStorage.getItem(ORCA_BIAS_LS_PREFIX + key);
+    const n = raw === null ? Number.NaN : Number(raw);
+    if (Number.isFinite(n)) {
+      orcaBiasBySession.set(key, n);
+      return n;
+    }
+  } catch {
+    /* ignore */
+  }
+  return BIAS_DEFAULT_IDX;
+}
+function saveOrcaBias(key: string, idx: number): void {
+  if (!key) return;
+  orcaBiasBySession.set(key, idx);
+  try {
+    localStorage.setItem(ORCA_BIAS_LS_PREFIX + key, String(idx));
+  } catch {
+    /* ignore */
+  }
+  // Best-effort push so the Conductor picks it up on the next routed run; a failed write
+  // costs the dial its effect on the NEXT run, never this repaint.
+  req("prefrontal.orcaBias", { biasIdx: idx }).catch(() => null);
+}
+// FORK 2026-07-25 (the architect): the routing calls ORCA made during the turn, as recorded by the
+// Conductor and served by `prefrontal.routes`. Raw model IDs — mapped to friendly names at
+// render time via modelName() so the panel never invents a second naming scheme.
+// THALAMUS routing decisions for the current turn (fed by `prefrontal.routes`, which tails
+// ~/.openclaw/orca-routes.jsonl). Named for the feed, not the panel: ORCA's conductor is what
+// writes it today, but the CONTENT is routing — see the THALAMUS card in renderModelsPanel().
+let orcaRoutes: Array<{
+  unit?: string;
+  task?: string;
+  mode?: string;
+  model?: string;
+  critic?: string;
+  panel?: string[];
+  // The classified domain — the key the router actually chose on. It was read at the
+  // routingSignals() mapping without being declared here, so it survived only because the
+  // cast does not strip unknown keys at runtime. Declared now so it is type-checked.
+  domain?: string;
+  /** the router's one-line justification for this supplier (persisted 2026-07-29). */
+  why?: string;
+}> = [];
+// FORK 2026-07-09: per-model TOKEN totals for the MODELS panel rows (the architect: the
 // panel showed only rate-limit % bars, no token numbers — "models show zero
 // token usage"). Aggregated from sessions.usage `usage.modelUsage[]` in
 // loadBudget(); keyed `${provider}/${model}` to match config model ids.
 let modelTokensAll: Record<string, number> = {};
 let modelTokensBySession: Record<string, Record<string, number>> = {};
 
-function fmtTokCount(n: number): string {
-  if (n >= 1e9) {
-    return `${(n / 1e9).toFixed(1)}B`;
-  }
-  if (n >= 1e6) {
-    return `${(n / 1e6).toFixed(1)}M`;
-  }
-  if (n >= 1e3) {
-    return `${(n / 1e3).toFixed(0)}K`;
-  }
-  return String(n);
-}
 let _forensicMode = false;
 // FORK: Active recipe step name for thinking indicator + message tags
 let activeRecipeStep: string | null = null;
@@ -262,6 +1190,510 @@ let lastRenderedBrocaRecipe: BrocaRecipe | null = null;
 let recipeRefListenerAttached = false;
 let budgetScope: "session" | "all" = "session";
 let timelineCtrl: ReturnType<typeof mountContextTimeline> | null = null;
+
+// FORK 2026-07-25 (the architect) — 💾 CONTEXT CACHE panel state. Live prompt-cache economics
+// for the viewed session: how much of the prompt was served FROM cache (cacheRead) vs
+// had to be re-written (cacheWrite), plus how full the model's context window is.
+// POISON WARNING: the fill ratio is derived from promptTokens / contextSent.totalTokens
+// and NEVER from anatomy.contextWindow.usedTokens or anatomy.utilizationPercent — those
+// are TURN-AGGREGATE counters (they sum every round of a turn) and read well past 100%
+// on long turns. See the 2026-07-24 per-turn-compaction root-cause.
+// FORK 2026-07-26 (the architect: "no matter what tab I choose, the context cache does not
+// change") — the panel is VIEWED-SESSION-SCOPED, so its state must be keyed by session,
+// not module-global. A single shared object showed whichever session emitted last and
+// never followed the tab. Same bug class as the prefrontal/MODELS glow — see the
+// refreshViewedSessionIndicators() note (bible panels.md §147); the cure is the same:
+// keep per-session state and re-render through that one helper.
+const cachePanelStates = new Map<string, CachePanelState>();
+/** Mutable state for the VIEWED session (auto-created). Never cache the reference across
+ *  a tab switch — always go through this. */
+function cacheStateFor(key?: string): CachePanelState {
+  const k = key ?? sessionKey ?? "";
+  let s = cachePanelStates.get(k);
+  if (!s) {
+    s = {};
+    cachePanelStates.set(k, s);
+  }
+  return s;
+}
+/** Sessions whose one-shot anatomy backfill has already been attempted. */
+const cacheBackfilled = new Set<string>();
+let cacheFlashTimer: ReturnType<typeof setTimeout> | null = null;
+// contextSent is the anatomy's composition OBJECT ({ totalTokens, ...segments }) — see
+// ContextEvent in panels/context-timeline.ts — NOT a scalar. Read defensively so either
+// shape yields a usable number for the header badge.
+function cacheUsedTokens(state: CachePanelState): number {
+  const s = state as any;
+  // FORK 2026-07-28 — same guard as renderCachePanelHtml: on the cc-bridge lane promptTokens is
+  // a TURN AGGREGATE, not this call's context size (measured 6,448,106 against a 1,000,000
+  // window whose real context was 52,116). A value above the window cannot be a fill, so fall
+  // through to the anatomy composition below, which is the honest per-call number. Without this
+  // the header badge read "645%".
+  const maxWindow = typeof s.maxWindow === "number" && s.maxWindow > 0 ? s.maxWindow : 0;
+  if (
+    typeof s.promptTokens === "number" &&
+    s.promptTokens > 0 &&
+    (maxWindow <= 0 || s.promptTokens <= maxWindow)
+  ) {
+    return s.promptTokens;
+  }
+  if (typeof s.contextSent === "number") {
+    return s.contextSent;
+  }
+  if (s.contextSent && typeof s.contextSent.totalTokens === "number") {
+    return s.contextSent.totalTokens;
+  }
+  return 0;
+}
+// FORK 2026-08-28 (the architect: "when a specific model is selected ... show the context window of the
+// specific model being used").
+//
+// `CachePanelState.maxWindow` only lands AFTER a call has been made — it comes from the anatomy
+// or from the cache event. So pinning a model in the picker and looking at the rail showed the
+// window of the model that answered LAST, not the one the next turn will use, which is precisely
+// backwards for a control whose whole job is to let you decide before you send.
+//
+// The catalog already knows every configured model's contextWindow; fetchScProviderModels()
+// memoises `config.get` for the SMART×COST chart, so this reuses it rather than adding a second
+// fetch. Keys are provider-qualified catalog ids ("xai/grok-4.6"), which is exactly the shape
+// modelPinBySession stores.
+// FORK 2026-08-29 (the architect, 3rd report: "I still do not see the outline shrinking nor changing
+// color") — THE LATCH WAS SET BEFORE THE WORK SUCCEEDED, so it only ever recorded that we had
+// TRIED once.
+//
+// The boot paint (renderCachePanel() at the end of init()) is the first caller. At that moment
+// the websocket handshake has not landed — `connected` flips only after the
+// challenge→connect exchange resolves, which is strictly after init() returns — and req()
+// rejects immediately with "disconnected" when the socket is not OPEN. So on EVERY page load
+// the sequence was: latch := true, fetch rejects, `.catch` swallows it, and catalogWindowById
+// stayed empty for the lifetime of the tab. `pinnedWindow` was therefore always 0, the pin
+// override never ran once, and BOTH reported symptoms — no shrink and no colour change —
+// were the same silent no-op wearing two faces.
+//
+// Three changes make that unrepresentable:
+//   1. wait on whenConnected() (the sanctioned handshake edge, ~L515) instead of racing it;
+//   2. latch only on a load that actually produced entries — a resolved-but-empty catalog is
+//      not success, it is the same nothing that started this;
+//   3. an in-flight guard so retries do not stack while one is pending.
+// The failure path deliberately leaves the latch DOWN so the next repaint retries.
+const catalogWindowById = new Map<string, number>();
+let catalogWindowsLoaded = false;
+let catalogWindowsInFlight = false;
+function loadCatalogWindows(): void {
+  if (catalogWindowsLoaded || catalogWindowsInFlight) {
+    return;
+  }
+  catalogWindowsInFlight = true;
+  void whenConnected()
+    .then(() => fetchScProviderModels())
+    .then((providers) => {
+      for (const [pid, models] of Object.entries(providers)) {
+        for (const m of models) {
+          if (m?.id && typeof m.contextWindow === "number" && m.contextWindow > 0) {
+            catalogWindowById.set(`${pid}/${m.id}`, m.contextWindow);
+          }
+        }
+      }
+      catalogWindowsInFlight = false;
+      if (catalogWindowById.size === 0) {
+        // Resolved, but with nothing usable. Leave the latch down: this is exactly the state
+        // the old code recorded as "done" and then never recovered from.
+        return;
+      }
+      catalogWindowsLoaded = true;
+      // Repaint: the first render always happens before this resolves.
+      renderCachePanel();
+    })
+    .catch(() => {
+      // Leave the latch DOWN so the next repaint retries. A missing catalog is not an error
+      // state for this panel — it falls back to the measured window — but it must not become
+      // a permanent one.
+      catalogWindowsInFlight = false;
+    });
+}
+
+// FORK 2026-08-29 (the architect: a THIS SESSION panel — "accumulated evicted memory (which should count
+// as a win), an estimate of the amount of tokens saved by the eviction, the number of turns, the
+// number of compactions").
+//
+// Accumulated CLIENT-side from the live streams, per session. Keyed by session for the same
+// reason cachePanelStates is — a single global object would show whichever session emitted last
+// and never follow the tab (the 2026-07-26 bug).
+//
+// CORRECTED 2026-08-29: this comment used to say "nothing anywhere counts turns", and the panel
+// was built on that premise — so a reload or a session switch showed turns 0 / compactions 0 on
+// a session provably mid-conversation. The anatomy row DOES count both (`turn`,
+// `compactionCycle`); backfillCachePanel seeds these from it, and the live streams take over from
+// there. evictedTokens has no such source and genuinely still starts at the tab's attach.
+interface CacheSessionStats {
+  turns: number;
+  compactions: number;
+  evictedTokens: number;
+}
+const cacheSessionStats = new Map<string, CacheSessionStats>();
+function sessionStatsFor(key?: string): CacheSessionStats {
+  const k = key ?? sessionKey ?? "";
+  let v = cacheSessionStats.get(k);
+  if (!v) {
+    v = { turns: 0, compactions: 0, evictedTokens: 0 };
+    cacheSessionStats.set(k, v);
+  }
+  return v;
+}
+
+// FORK 2026-08-29 (the architect: "whenever the numbers change, they should glow for 5 seconds").
+//
+// A DEADLINE per stat key, not a timer per stat: the panel repaints several times a turn, and a
+// per-repaint animation would restart the clock on every one of them, so a value that changed
+// once would glow for as long as the turn kept painting. Holding an expiry instant makes the
+// glow a pure function of the clock — any number of repaints inside the window paint the same
+// glow, and the first repaint after it drops the class.
+/** Local positive-or-zero coercion; the render module has its own and neither should import
+ *  the other's. */
+const pos0 = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
+const CACHE_GLOW_MS = 5000;
+const cacheGlowUntil = new Map<string, number>();
+/** Last painted value per stat key, so "changed" means changed — not merely re-rendered. */
+const cacheStatLast = new Map<string, number | undefined>();
+let cacheGlowTimer: ReturnType<typeof setTimeout> | null = null;
+/** Arm the glow for every key whose value actually moved. Seeds silently on first sight, so a
+ *  freshly attached tab does not light up every stat at once for something that did not change. */
+function noteCacheStatChanges(values: Record<string, number | undefined>): void {
+  const now = Date.now();
+  let armed = false;
+  for (const [key, value] of Object.entries(values)) {
+    const had = cacheStatLast.has(key);
+    const prev = cacheStatLast.get(key);
+    cacheStatLast.set(key, value);
+    if (!had || prev === value || value === undefined) {
+      continue;
+    }
+    cacheGlowUntil.set(key, now + CACHE_GLOW_MS);
+    armed = true;
+  }
+  if (!armed) {
+    return;
+  }
+  // One repaint when the window closes, so the glow ends on its own rather than lingering until
+  // the next unrelated event.
+  if (cacheGlowTimer !== null) {
+    clearTimeout(cacheGlowTimer);
+  }
+  cacheGlowTimer = setTimeout(() => {
+    cacheGlowTimer = null;
+    renderCachePanel();
+  }, CACHE_GLOW_MS + 50);
+}
+/** Keys still inside their glow window. */
+function activeCacheGlow(): string[] {
+  const now = Date.now();
+  const live: string[] = [];
+  for (const [key, until] of cacheGlowUntil) {
+    if (until > now) {
+      live.push(key);
+    } else {
+      cacheGlowUntil.delete(key);
+    }
+  }
+  return live;
+}
+
+/** Repaint the panel from the VIEWED session's state. Safe to call any time. */
+function renderCachePanel(): void {
+  const body = document.getElementById("cache-panel-body");
+  if (!body) {
+    return;
+  }
+  loadCatalogWindows();
+  let state = cacheStateFor();
+  // The pin wins when it names a model the MEASURED state does not — that is the case where the
+  // two genuinely disagree about what the next turn will use. Comparison follows the same
+  // convention as serverModelStopIndex: the state's model is BARE with the provider in its own
+  // field, the pin is provider-qualified, so qualify before comparing. Rendered as a DISPLAY
+  // override on a shallow copy — never written back, or a pin would permanently overwrite the
+  // anatomy's reading of the model that actually answered.
+  const pinned = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
+  const pinnedWindow = pinned ? (catalogWindowById.get(pinned) ?? 0) : 0;
+  if (pinned && pinnedWindow > 0) {
+    const measured = state.model ?? "";
+    const qualified =
+      measured && state.provider && !measured.includes("/")
+        ? `${state.provider}/${measured}`
+        : measured;
+    if (!state.maxWindow || qualified !== pinned) {
+      // The provider must move with the model: the outline is drawn in the PROVIDER's identity
+      // colour, so leaving the measured provider behind would frame the pinned model's window in
+      // the previous vendor's colour — a two-way lie in one rectangle.
+      const slash = pinned.indexOf("/");
+      state = {
+        ...state,
+        maxWindow: pinnedWindow,
+        windowSource: "catalog",
+        model: slash > 0 ? pinned.slice(slash + 1) : pinned,
+        provider: slash > 0 ? pinned.slice(0, slash) : state.provider,
+      };
+    }
+  }
+  // FORK 2026-08-29 — the two stat panels. Session counters and the glow set are attached HERE
+  // rather than stored on the panel state, because they are per-VIEWED-session view data: the
+  // renderer stays a pure function of what it is handed, and nothing it paints is written back.
+  const stats = sessionStatsFor();
+  state = {
+    ...state,
+    sessionStats: {
+      turns: stats.turns,
+      compactions: stats.compactions,
+      evictedTokens: stats.evictedTokens,
+    },
+  };
+  // Arm glows BEFORE painting, so the very repaint that carries a new number also carries its
+  // highlight — a change that lit up only on the following repaint would frequently never be
+  // seen at all.
+  const cr = pos0(state.cacheRead);
+  const cw = pos0(state.cacheWrite);
+  const pt = pos0(state.promptTokens);
+  noteCacheStatChanges({
+    cached: pt > 0 ? cr : undefined,
+    written: pt > 0 ? cw : undefined,
+    new: pt > 0 ? Math.max(0, pt - cr - cw) : undefined,
+    output: pos0(state.output) || undefined,
+    evicted: state.lastEvictedTokens,
+    turns: stats.turns,
+    compactions: stats.compactions,
+    "evicted-total": stats.evictedTokens,
+  });
+  const glow = activeCacheGlow();
+  body.innerHTML = renderCachePanelHtml(glow.length > 0 ? { ...state, glow } : state);
+  const count = document.getElementById("cache-count");
+  if (count) {
+    const max = state.maxWindow ?? 0;
+    const used = cacheUsedTokens(state);
+    count.textContent = max > 0 && used > 0 ? `${Math.round((used / max) * 100)}%` : "";
+  }
+}
+// FORK 2026-07-26 — one-shot backfill so a freshly loaded page (or a tab visited for the
+// first time) shows the LAST call's composition instead of an empty box. Without this the
+// panel stays blank until the session's next turn, which reads as "broken". Mirrors the
+// EEG's anatomy backfill: same-origin relative fetch (a DEV :18789 absolute URL hits the
+// gateway cross-origin and returns nothing).
+function backfillCachePanel(key?: string): void {
+  const sk = key ?? sessionKey;
+  if (!sk || cacheBackfilled.has(sk)) {
+    return;
+  }
+  cacheBackfilled.add(sk);
+  const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
+  fetch(
+    `/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=1`,
+    Object.keys(hdrs).length ? { headers: hdrs } : undefined,
+  )
+    .then((r) => (r.ok ? r.json() : null))
+    .then((body) => {
+      const events: unknown[] = Array.isArray(body) ? body : (body?.events ?? []);
+      const latest = events[events.length - 1] as any;
+      if (!latest) {
+        return;
+      }
+      const s = cacheStateFor(sk);
+      // Only fill gaps — a live event that landed while this fetch was in flight is
+      // fresher than the DB row and must win.
+      if (!s.contextSent && latest.contextSent) {
+        s.contextSent = latest.contextSent;
+      }
+      if (!s.model && typeof latest.model === "string") {
+        s.model = latest.model;
+      }
+      if (!s.provider && typeof latest.provider === "string") {
+        s.provider = latest.provider;
+      }
+      const maxTokens = latest.contextWindow?.maxTokens;
+      if (!s.maxWindow && typeof maxTokens === "number" && maxTokens > 0) {
+        s.maxWindow = maxTokens;
+        s.windowSource = "anatomy";
+      }
+      // FORK 2026-08-29 — THIS CALL is NOT restorable from this row, and the old attempt to do
+      // it was a lie that only fired on short sessions.
+      //
+      // cacheReadTokens/cacheCreationTokens are written from `getUsageTotals()`
+      // (src/fork/attempt-hooks.ts:1070) — SESSION-CUMULATIVE totals stamped onto a per-turn row,
+      // not that call's cache split. Measured on two live sessions: 1.79M read on a session whose
+      // per-call prompt is 45.9k, and 3.75M read on one whose prompt is 449k. The previous code
+      // assigned them to s.cacheRead/s.cacheWrite/s.promptTokens behind a `cr + cw <= maxWindow`
+      // guard, so a LONG session was correctly rejected (leaving THIS CALL blank) while a SHORT
+      // one silently painted lifetime totals as "this call" — wrong in the direction nobody
+      // checks. Neither branch is worth keeping: a per-call cache split does not exist in this
+      // row, so THIS CALL stays honestly empty until the live `cache` stream reports a real call.
+      //
+      // What IS restorable is restored below. Before this, NOTHING refilled these on a reload or
+      // a session switch, so every stat cell in both panels read "—"/0 on arrival — the panel
+      // looked broken on a session that was merely not currently talking.
+      if (
+        s.output == null &&
+        typeof latest.responseTokens === "number" &&
+        latest.responseTokens > 0
+      ) {
+        s.output = latest.responseTokens;
+      }
+      // THIS SESSION's counters. The comment on CacheSessionStats used to claim "nothing anywhere
+      // counts turns" — the anatomy row does, in `turn` (and compactions in `compactionCycle`).
+      // Only fill a counter still at its zero value, so live events that already landed win.
+      const st = sessionStatsFor(sk);
+      if (st.turns === 0 && typeof latest.turn === "number" && latest.turn > 0) {
+        st.turns = latest.turn;
+      }
+      if (
+        st.compactions === 0 &&
+        typeof latest.compactionCycle === "number" &&
+        latest.compactionCycle > 0
+      ) {
+        st.compactions = latest.compactionCycle;
+      }
+      if (sk === sessionKey) {
+        renderCachePanel();
+      }
+    })
+    .catch(() => {});
+}
+// One-shot flash — the eeg-focus add/setTimeout-remove idiom. Both classes are stripped
+// and a reflow forced before re-adding so back-to-back events actually RE-trigger the
+// CSS animation (0.6s x 2 = 1.2s; the timer clears at 1300ms). Any pending timer is
+// cancelled first, otherwise a write-flash landing mid-read-flash gets cut short by the
+// older timer firing on the shared element.
+function flashCachePanel(kind: "read" | "write"): void {
+  const el = document.getElementById("cache-panel");
+  if (!el) {
+    return;
+  }
+  if (cacheFlashTimer !== null) {
+    clearTimeout(cacheFlashTimer);
+    cacheFlashTimer = null;
+  }
+  el.classList.remove("cache-flash-read", "cache-flash-write");
+  void el.offsetWidth;
+  el.classList.add(kind === "write" ? "cache-flash-write" : "cache-flash-read");
+  cacheFlashTimer = setTimeout(() => {
+    el.classList.remove("cache-flash-read", "cache-flash-write");
+    cacheFlashTimer = null;
+  }, 1300);
+}
+
+// FORK 2026-08-28 (the architect: "while Jarvis is doing the eviction or compaction operation, the
+// context cache panel should be pulsating, meaning it is actively doing something (either
+// triggered manually or automatically)").
+//
+// A DEPTH COUNTER, not a boolean, because two independent sources raise it for what is often
+// the SAME operation: the button handler below (which knows when its RPC started and finished)
+// and the gateway's own `compaction` stream (which reports pi's compaction start/end). Pressing
+// "compact" produces both — and with a boolean the stream's `end` would clear the pulse while
+// the RPC was still in flight, so the panel would go quiet mid-operation. Clamped at 0 so a
+// stray `end` with no matching `start` (a compaction that began before this tab was opened)
+// cannot drive the counter negative and wedge the pulse on forever.
+let cacheBusyDepth = 0;
+function setCacheBusy(on: boolean): void {
+  cacheBusyDepth = on ? cacheBusyDepth + 1 : Math.max(0, cacheBusyDepth - 1);
+  const el = document.getElementById("cache-panel");
+  if (!el) {
+    return;
+  }
+  el.classList.toggle("cache-busy", cacheBusyDepth > 0);
+}
+
+// FORK 2026-08-28 (the architect: "two small buttons ... one for 'evict', one for 'compact', which should
+// trigger what it says, manually").
+//
+// DELEGATED, and bound once at module scope, because renderCachePanel() replaces the whole
+// innerHTML of #cache-panel-body on every cache event — a handler bound to the button elements
+// themselves would be destroyed within seconds of the next model call. Same idiom as the
+// amygdala row listener further down.
+//
+// The two buttons are the two HONEST ways to shrink a context, and they are not variations of
+// one operation:
+//   - compact  → sessions.compact { key }                  — pi summarises the conversation into
+//                                                            a shorter prefix. Costs a real,
+//                                                            billed model call, hence the timeout
+//                                                            override below.
+//   - evict    → sessions.compact { key, keepFraction }    — the oldest turns are dropped from the
+//                                                            transcript outright. No model call,
+//                                                            instant, and the previous transcript
+//                                                            is archived as a .bak first.
+document.addEventListener("click", (ev) => {
+  const btn = (ev.target as HTMLElement | null)?.closest?.("[data-cache-act]") as
+    | HTMLButtonElement
+    | null
+    | undefined;
+  if (!btn) {
+    return;
+  }
+  // Scope the delegation: `data-cache-act` is ours, but the listener is on `document`, so prove
+  // the hit is actually inside this panel before firing a session mutation.
+  //
+  // FIXED 2026-08-29 — this scoped to #cache-panel-body, and 6bfe4fa4f3b moved the two buttons
+  // out of the body and into the panel's LABEL (`.cache-actions` inside `.model-group-label`).
+  // The label is a SIBLING of `.model-group-body`, so `body.contains(btn)` was false for every
+  // click and both buttons were completely dead — no request, no toast, no error, nothing to see.
+  // Verified against the live DOM: body.contains(button) === false, and the disable-both query
+  // below returned 0 elements, so a click could not even grey the buttons out.
+  // #cache-panel wraps BOTH the label and the body, which is the scope this guard always meant.
+  const panel = document.getElementById("cache-panel");
+  if (!panel || !panel.contains(btn)) {
+    return;
+  }
+  const act = btn.dataset.cacheAct;
+  const sk = sessionKey;
+  if (!sk || (act !== "evict" && act !== "compact")) {
+    return;
+  }
+  const buttons = Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-cache-act]"));
+  // Both buttons, not just the pressed one: a compaction running while an eviction rewrites the
+  // same transcript is precisely the race that corrupts a session.
+  for (const b of buttons) {
+    b.disabled = true;
+  }
+  setCacheBusy(true);
+  // REQ_TIMEOUT_MS is documented above as a stuck-forever guard sized for INTERACTIVE calls.
+  // Compaction legitimately runs a model over the whole conversation; the `sessions.suggestTitle`
+  // precedent (measured 61.5s–118.1s against a 60s ceiling, so it never once completed) is the
+  // same failure mode, so it gets its own budget. Eviction is pure file I/O and keeps the default.
+  const call =
+    act === "compact"
+      ? req("sessions.compact", { key: sk }, { timeoutMs: 180_000 })
+      : req("sessions.compact", { key: sk, keepFraction: 0.5 });
+  void call
+    .then((res: unknown) => {
+      const r = (res ?? {}) as { compacted?: unknown; reason?: unknown; evictedTokens?: unknown };
+      // FORK 2026-08-29 — a MANUAL eviction is a saving too, and it arrives on the RPC reply
+      // rather than on the compaction stream, so it has to be banked here or the THIS SESSION
+      // total would only ever count the automatic ones.
+      const evictedTokens = typeof r.evictedTokens === "number" ? r.evictedTokens : 0;
+      if (r.compacted && evictedTokens > 0) {
+        const st = sessionStatsFor(sk);
+        st.compactions += 1;
+        st.evictedTokens += evictedTokens;
+        cacheStateFor(sk).lastEvictedTokens = evictedTokens;
+      }
+      showToast(
+        r.compacted
+          ? `${act === "compact" ? "Compacted" : "Evicted"}${evictedTokens > 0 ? ` — ${evictedTokens.toLocaleString()} tokens freed` : " — context window refreshed"}`
+          : `Nothing to ${act}${r.reason ? `: ${String(r.reason)}` : ""}`,
+      );
+      // backfillCachePanel is a one-shot latch keyed by session; without dropping the latch it
+      // will not re-fetch, and the panel would keep showing the PRE-compaction composition until
+      // the next model call.
+      cacheBackfilled.delete(sk);
+      backfillCachePanel(sk);
+    })
+    .catch((err: unknown) => {
+      // Never throw into the event loop from a click handler — the panel has to stay readable,
+      // and the numbers on screen are still true, they are just now stale.
+      showToast(`${act} failed: ${(err as { message?: string })?.message || String(err)}`, true);
+    })
+    .finally(() => {
+      setCacheBusy(false);
+      for (const b of buttons) {
+        b.disabled = false;
+      }
+    });
+});
 
 // FORK (2026-04-21): reload the timeline for the current session, but respect
 // the filter toggle. Previously every tab switch called loadSession() directly,
@@ -999,7 +2431,9 @@ function looksLikeLegacy2WordPhrase(value: string | undefined): boolean {
 // switchToTab does atomic save/load swap via saveCurrentTabState/loadTabState.
 interface TabState {
   messages: unknown[];
-  streamMsgIdx: number;
+  /** FORK 2026-08-05: the `_uid` of the live streaming bubble, NOT an array index — see
+   *  `streamMsgUid`. A saved index was invalidated by any mutation of the saved array. */
+  streamMsgUid: string | null;
   streamRunId: string | null;
   lastDeltaLen: number;
   /** FORK 2026-05-09 (Feature C): timestamp of the last delta for gap detection. */
@@ -1015,7 +2449,7 @@ const tabStates = new Map<string, TabState>();
 function freshTabState(): TabState {
   return {
     messages: [],
-    streamMsgIdx: -1,
+    streamMsgUid: null,
     streamRunId: null,
     lastDeltaLen: 0,
     lastDeltaAt: 0,
@@ -1039,7 +2473,7 @@ function saveCurrentTabState() {
   // showed corrupted/empty history. A shallow copy per save isolates each
   // tab's transcript (message objects are treated as immutable once pushed).
   s.messages = (messages as unknown[]).slice();
-  s.streamMsgIdx = streamMsgIdx;
+  s.streamMsgUid = streamMsgUid;
   s.streamRunId = streamRunId;
   s.lastDeltaLen = lastDeltaLen;
   s.lastDeltaAt = lastDeltaAt;
@@ -1064,7 +2498,7 @@ function loadTabState(tabId: string) {
   // stays frozen while this tab streams. Pairs with the slice-on-save above —
   // together they guarantee no two tabs ever share a messages array.
   messages = (s.messages as unknown[]).slice();
-  streamMsgIdx = s.streamMsgIdx;
+  streamMsgUid = s.streamMsgUid;
   streamRunId = s.streamRunId;
   lastDeltaLen = s.lastDeltaLen;
   lastDeltaAt = s.lastDeltaAt;
@@ -1079,8 +2513,399 @@ function loadTabState(tabId: string) {
   tabStates.set(tabId, s);
 }
 
+/**
+ * FORK 2026-08-26 — retire a DEAD delta cursor from a BACKGROUND tab's SAVED state.
+ *
+ * `streamRunId` is persisted per tab (saveCurrentTabState/loadTabState above), and the ONE place
+ * it is nulled sits BELOW the viewed-session gate in onEvent. A tab whose turn ended off screen
+ * therefore kept a cursor pointing at a run that no longer exists, and loadTabState faithfully
+ * restored it on the way back in — where loadChat's `streamRunId !== null` clause defers the
+ * history merge all over again, with no live run left to ever re-arm the deferral.
+ *
+ * So the orphaned `activeRuns` entry and the orphaned cursor are TWO INDEPENDENT LATCHES on the
+ * same symptom. Clearing only one leaves the tab spinning, which is why they are cleared together.
+ *
+ * `sending` goes with them at one remove: shouldQueue() reads it (queued-sends.ts) and
+ * loadTabState restores it verbatim, so a stale saved `true` parks every prompt later typed into
+ * that tab — the third path to the reported "my prompts go nowhere".
+ *
+ * NEVER touches the ACTIVE tab: its cursor lives in the globals and is owned by the below-gate
+ * reset, and the saved copy is a stale snapshot until the next saveCurrentTabState.
+ * Scoped by runId: a tab that has already begun its NEXT turn owns a LIVE cursor, and clearing
+ * that would orphan the delta stream it is midway through.
+ */
+function clearSavedStreamStateFor(evtSessionKey: unknown, runId?: string | null): void {
+  if (typeof evtSessionKey !== "string" || !evtSessionKey) {
+    return;
+  }
+  for (const tab of tabs) {
+    if (tab.id === activeTabId || !tab.sessionKey) {
+      continue;
+    }
+    if (!sessionKeyMatches(evtSessionKey, tab.sessionKey)) {
+      continue;
+    }
+    const st = tabStates.get(tab.id);
+    if (!st) {
+      continue;
+    }
+    if (runId && st.streamRunId && st.streamRunId !== runId) {
+      continue;
+    }
+    st.streamRunId = null;
+    st.streamMsgUid = null;
+    st.lastDeltaLen = 0;
+    st.lastDeltaAt = 0;
+    st.sending = false;
+  }
+}
+
 // FORK: Session keys may be short ("tinker:xxx") or canonical ("agent:main:tinker:xxx").
 // Used as fallback in event filters during the window between chat.send and canonicalization.
+// FORK 2026-08-11 (the architect) — LEVEL-3 transcript loader, ONE implementation, two mounts
+// (the fractal dock, and the `details.fractal-details` reply bubble via
+// decorateFractalReplyBubbles below). NO protocol change was needed: the triage session
+// key is DERIVED, not transported. The plugin builds it as
+// `${FRACTAL_SESSION_PREFIX}${parentRunId}` (fractal-run.ts), and both surfaces already
+// know the parentRunId. Two spellings are tried because the plugin spawns with the SHORT
+// key while the session store registers the agent-namespaced one (agent:main:fractal-…).
+// VERIFIED against the live gateway: chat.history on a real triage key returns the run's
+// full transcript. ~13% of triage sessions have no transcript file on disk, which is why
+// the empty case is a real rendered state and not an error.
+// FORK 2026-08-11 — this used to be `JSON.stringify(content, null, 2)`, which rendered
+// the level-3 panel as a wall of raw message JSON with every newline escaped as a
+// literal \n. The transcript loaded correctly and was still unreadable. This view is
+// titled "Full reasoning", so thinking and tool steps belong in it — but as prose, not
+// as a serialized wire format.
+function fractalTranscriptText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return content == null ? "" : String(content);
+  }
+  const parts: string[] = [];
+  for (const raw of content) {
+    if (typeof raw === "string") {
+      parts.push(raw);
+      continue;
+    }
+    if (!raw || typeof raw !== "object") {
+      continue;
+    }
+    const b = raw as Record<string, unknown>;
+    const type = String(b.type ?? "").toLowerCase();
+    if (type === "text" && typeof b.text === "string") {
+      parts.push(b.text);
+    } else if (type === "thinking") {
+      const t = typeof b.thinking === "string" ? b.thinking : String(b.text ?? "");
+      parts.push(t.trim() ? `🤔 ${t}` : "🤔 (thinking)");
+    } else if (type === "tool_use" || type === "toolcall" || type === "tooluse") {
+      parts.push(`⚙ tool: ${String(b.name ?? "?")}`);
+    } else if (type === "tool_result" || type === "toolresult") {
+      const out = typeof b.content === "string" ? b.content : "";
+      parts.push(out.trim() ? `⇒ ${out.slice(0, 600)}` : "⇒ (tool result)");
+    } else if (typeof b.text === "string") {
+      parts.push(b.text);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+async function loadFractalTranscript(runForTranscript: string): Promise<string> {
+  const keys = [
+    `fractal-reflection:${runForTranscript}`,
+    `agent:main:fractal-reflection:${runForTranscript}`,
+  ];
+  for (const key of keys) {
+    const res = await req<{ messages?: Array<Record<string, unknown>> }>("chat.history", {
+      sessionKey: key,
+      limit: 200,
+    }).catch(() => null);
+    const msgs = res?.messages ?? [];
+    if (msgs.length === 0) {
+      continue;
+    }
+    return msgs
+      .map((m) => {
+        const role = String(m.role ?? "").toLowerCase() || "?";
+        return `── ${role} ──\n${fractalTranscriptText(m.content ?? m.text ?? "")}`;
+      })
+      .join("\n\n");
+  }
+  return "";
+}
+
+// FORK 2026-08-11 (the architect: "I cannot see the extra expansion button in the ui once I
+// expand the fractal once") — SECOND MOUNT for level 3.
+//
+// The bug was a name collision, not a missing feature. Two unrelated elements in chat
+// are both called "the fractal":
+//   1. `details.fractal-details` — the 🌿 FRACTAL section of the assistant's own reply,
+//      split out by sectioned-reply.ts. This is the one the architect actually expands.
+//   2. `details.fractal-dock` — the COLD triage lane's verdict row (fractal-dock.ts).
+// Level 3 was mounted on (2) alone, so expanding (1) showed nothing new.
+//
+// This pass grafts the SAME renderTranscriptSection element into (1). It runs after
+// every chat render, is idempotent (a `data-fractal-transcript-mounted` latch, because
+// updateChat re-renders innerHTML), and is a no-op on bubbles the fractal lane never
+// tagged — the parentRunId comes from the `data-fractal-parent-run` attribute app.ts
+// already stamps on the answer bubble, so no new state is introduced.
+function decorateFractalReplyBubbles(): void {
+  const container = $("messages");
+  if (!container) {
+    return;
+  }
+  // The tag now sits ON the <details> (threaded through renderSectionedReply), so select
+  // it directly. The previous version required a tagged ANCESTOR, which never existed —
+  // the sectioned-reply branch returns before app.ts emits that attribute — so the graft
+  // silently mounted nowhere. Selecting both shapes keeps the plain-markdown path working.
+  //
+  // FORK 2026-08-11 (later the same day) — the graft used to mount on EVERY 🌿 section,
+  // tagged or not, rendering an explanation of the missing tag in the section body. The
+  // reasoning was sound while debugging ("a skip that renders nothing is indistinguishable
+  // from a feature that was never built"), but it is a DEVELOPER diagnostic and it landed
+  // in front of the architect: `_fractalParentRunId` is written only by the live
+  // `stream:"fractal"` handler (~app.ts:5423) and is never persisted to, or rehydrated
+  // from, chat history — verified: `chat.history` messages carry only
+  // {importedFrom, cliSessionId, externalId}, no runId. So after ANY reload the tag is
+  // absent on 100% of replies, and a 109-message tab rendered 109 expanders that could
+  // only ever fail, each printing internal prose naming app.ts and `sessionKeyMatches`.
+  //
+  // Keep the no-silent-swallow intent, move it to where it belongs: skip the graft when
+  // there is no run to load (historical replies render clean), and report the skip ONCE
+  // per pass on the console for whoever is working on the lane. Making the expander work
+  // after a reload needs the parent run id persisted onto the assistant message — a
+  // gateway/protocol change, tracked separately; it cannot be done from the client.
+  const targets = container.querySelectorAll<HTMLElement>("details.fractal-details");
+  let skippedUntagged = 0;
+  targets.forEach((details) => {
+    if (details.dataset.fractalTranscriptMounted === "1") {
+      return;
+    }
+    const body = details.querySelector<HTMLElement>(".msg-fractal");
+    if (!body) {
+      return;
+    }
+    const parentRunId =
+      details.dataset.fractalParentRun ??
+      details.closest<HTMLElement>("[data-fractal-parent-run]")?.dataset.fractalParentRun ??
+      "";
+    if (!parentRunId) {
+      // Latch it anyway so a re-render does not re-count the same section.
+      details.dataset.fractalTranscriptMounted = "1";
+      skippedUntagged += 1;
+      return;
+    }
+    details.dataset.fractalTranscriptMounted = "1";
+    body.appendChild(renderTranscriptSection(parentRunId, loadFractalTranscript));
+  });
+  if (skippedUntagged > 0) {
+    console.debug(
+      `[fractal] level-3 expander skipped on ${skippedUntagged} reply section(s) with no ` +
+        `data-fractal-parent-run tag — no ledger row matched them.`,
+    );
+  }
+}
+
+/**
+ * FORK 2026-08-24 (the architect: "The timings of the fractal pass should show only when expanding
+ * Fractal") — move a reflection's timing block INTO its 🌿 section.
+ *
+ * Grafted rather than rendered in place for the reason the level-3 expander is: the section is the
+ * run's BOUNDARY message, emitted after the run's own contents, so at string-build time there is
+ * nothing to nest into yet.
+ *
+ * Runs after every chat render, like `decorateFractalReplyBubbles`, and needs no latch: the moved
+ * node is destroyed with the rest of `innerHTML` on the next pass and re-created from the message,
+ * so there is nothing to leak and nothing to double-mount.
+ */
+function graftReflectionTimingBlocks(): void {
+  const container = $("messages");
+  if (!container) {
+    return;
+  }
+  // Snapshotted BEFORE anything moves: each graft resolves against the layout as rendered, so an
+  // earlier move cannot change which section a later block lands in.
+  const grafts = Array.from(container.querySelectorAll<HTMLElement>("[data-phase-graft-into]"));
+  const sections = Array.from(container.querySelectorAll<HTMLElement>("details.fractal-details"));
+  grafts.forEach((graft) => {
+    const uid = graft.dataset.phaseGraftInto ?? "";
+    const escaped = uid.replace(/["\\]/g, "\\$&");
+    const details = uid
+      ? container.querySelector<HTMLElement>(
+          `details.fractal-details[data-fractal-uid="${escaped}"]`,
+        )
+      : // No uid: the block was tagged by runId while its own 🌿 section had not been emitted
+        // yet, so the section it belongs to is simply the next one in the transcript.
+        (sections.find(
+          (d) =>
+            (graft.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
+            !d.contains(graft),
+        ) ?? null);
+    if (!details) {
+      // No section to nest into — the reflection rendered as a plain bubble, or a reloaded
+      // history carries no fractal markup for it. LEAVE THE BLOCK WHERE IT IS, visible: hiding a
+      // measurement because its preferred mount is missing turns a feature into a disappearance,
+      // which is the failure this area has produced twice already.
+      graft.classList.add("is-unnested");
+      return;
+    }
+    graft.classList.remove("is-unnested");
+    (details.querySelector<HTMLElement>(".msg-fractal, .msg.assistant") ?? details).appendChild(
+      graft,
+    );
+  });
+}
+
+// FORK 2026-08-11 — REHYDRATE the fractal anchor from the ledger, closing the
+// "KNOWN REMAINING DEPENDENCY" recorded in bug-log.md and the standing
+// fractal-v3 note at the live writer below.
+//
+// The problem: `_fractalParentRunId` had exactly ONE writer — the live
+// `stream:"fractal"` websocket handler — and `chat.history` carries no runId for
+// answer bubbles (verified: messages hold only {importedFrom, cliSessionId,
+// externalId}). So the tag died on every reload AND every reconnect (which arrive
+// "in storms of 5-7 per minute"), and the architect reported the missing level-3
+// button three separate times while three technically-correct DOM fixes shipped.
+// The missing datum was on the wire, not in the DOM.
+//
+// The fix needs no protocol change: the fractal plugin already keeps a restart-safe
+// append-only ledger (`<stateDir>/fractal/results.jsonl`) and already exposes it as
+// `fractal.feed`. Each row carries `parentRunId` (the dock anchor) + the parent's
+// `sessionKey` + `ts`. Verified against the live gateway: 7 of 8 sampled rows
+// resolve to a real transcript through loadFractalTranscript (the ~13% that do not
+// are the known transcript-less triage sessions).
+//
+// Matching is deliberately conservative. A row is written at the parent's
+// agent_end, i.e. just AFTER its answer, so each row claims the latest not-yet-
+// claimed answer bubble at or before its own timestamp, within a bounded window.
+// One row, one bubble. Anything ambiguous is left untagged — showing the WRONG
+// transcript would be worse than showing no button.
+const FRACTAL_FEED_TTL_MS = 60_000;
+const FRACTAL_ANCHOR_MAX_LAG_MS = 30 * 60_000;
+let fractalFeedCache: { at: number; rows: Array<Record<string, unknown>> } | null = null;
+
+async function fetchFractalLedgerRows(): Promise<Array<Record<string, unknown>>> {
+  const now = Date.now();
+  if (fractalFeedCache && now - fractalFeedCache.at < FRACTAL_FEED_TTL_MS) {
+    return fractalFeedCache.rows;
+  }
+  const res = await req<{ rows?: Array<Record<string, unknown>> }>("fractal.feed", {
+    limit: 500,
+  }).catch(() => null);
+  const rows = Array.isArray(res?.rows) ? res.rows : [];
+  fractalFeedCache = { at: now, rows };
+  return rows;
+}
+
+// assistantMsgText() collapses every run of whitespace to a single space — fine for
+// its dedup callers, fatal here: splitSectionedReply's section markers are
+// line-anchored, so a collapsed body parses as "no fractal section" and the bubble
+// is never considered an anchor candidate. Measured: 21 candidates instead of 109.
+function assistantMsgRawText(m: Record<string, unknown>): string {
+  const content = m.content;
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .filter((b: unknown) => (b as { type?: unknown })?.type === "text")
+      .map((b: unknown) => String((b as { text?: unknown })?.text ?? ""))
+      .join("");
+  }
+  return "";
+}
+
+function msgTimestampMs(m: Record<string, unknown>): number {
+  const raw = m.createdAtMs ?? m.timestamp;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw;
+  }
+  if (typeof raw === "string") {
+    const parsed = Date.parse(raw);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return 0;
+}
+
+async function hydrateFractalAnchorsFromLedger(keyAtStart: string): Promise<void> {
+  const rows = await fetchFractalLedgerRows();
+  // The await above is long enough for the user to switch tabs; tagging the wrong
+  // tab's messages is exactly the class of bug this file keeps re-learning.
+  if (rows.length === 0 || !sessionKeyMatches(keyAtStart)) {
+    return;
+  }
+  const mine = rows
+    .filter(
+      (r) =>
+        typeof r.parentRunId === "string" &&
+        r.parentRunId &&
+        sessionKeyMatches(keyAtStart, String(r.sessionKey ?? "")),
+    )
+    .map((r) => ({ runId: String(r.parentRunId), at: Date.parse(String(r.ts ?? "")) }))
+    .filter((r) => Number.isFinite(r.at))
+    .sort((a, b) => a.at - b.at);
+  if (mine.length === 0) {
+    return;
+  }
+
+  // Candidate anchors: real answer bubbles that actually render a 🌿 section.
+  const candidates: Array<{ m: Record<string, unknown>; at: number }> = [];
+  for (const raw of messages) {
+    const m = raw as Record<string, unknown>;
+    if (String(m.role ?? "").toLowerCase() !== "assistant") {
+      continue;
+    }
+    if (m._isReasoning || m._temporary || m._subagentId || m._fractalParentRunId) {
+      continue;
+    }
+    const sectioned = splitSectionedReply(assistantMsgRawText(m));
+    if (!sectioned?.fractal) {
+      continue;
+    }
+    candidates.push({ m, at: msgTimestampMs(m) });
+  }
+  if (candidates.length === 0) {
+    return;
+  }
+  candidates.sort((a, b) => a.at - b.at);
+
+  const claimed = new Set<Record<string, unknown>>();
+  let tagged = 0;
+  for (const row of mine) {
+    let best: { m: Record<string, unknown>; at: number } | null = null;
+    for (const c of candidates) {
+      if (claimed.has(c.m) || c.at <= 0) {
+        continue;
+      }
+      const lag = row.at - c.at;
+      if (lag < 0 || lag > FRACTAL_ANCHOR_MAX_LAG_MS) {
+        continue;
+      }
+      if (!best || c.at > best.at) {
+        best = c;
+      }
+    }
+    if (!best) {
+      continue;
+    }
+    claimed.add(best.m);
+    (best.m as Record<string, unknown>)._fractalParentRunId = row.runId;
+    tagged += 1;
+  }
+  if (tagged > 0) {
+    console.debug(
+      `[fractal] rehydrated ${tagged} answer anchor(s) from the ledger ` +
+        `(${mine.length} row(s) for this session, ${candidates.length} candidate bubble(s)).`,
+    );
+    // skipScroll: this lands seconds after the transcript painted; do not yank the viewport.
+    updateChat(true);
+  }
+}
+
 function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): boolean {
   const ref = refKey ?? sessionKey;
   if (!evtKey || !ref) {
@@ -1126,12 +2951,49 @@ function runBelongsToViewedSession(info: ActiveRunInfo): boolean {
   if (sessionKeyMatches(sk)) {
     return true;
   }
-  return (
-    sk.includes(":subagent:") &&
-    !!sessionKey &&
-    sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
-  );
+  // FORK 2026-07-28 (the architect: the models tab must count running instances INCLUDING subagents) —
+  // this used to build the prefix with `sessionKey.replace(/:main$/, "")`, which is wrong because
+  // subagent keys are minted FLAT under the AGENT ROOT as `agent:main:subagent:<uuid>` (this file
+  // documents that itself at :1373-1377). The arithmetic:
+  //   viewing agent:main:main        -> prefix "agent:main:subagent:"            -> matches EVERY
+  //                                     tab's subagents, including other tabs'
+  //   viewing agent:main:tinker:abc  -> prefix "agent:main:tinker:abc:subagent:" -> matches NONE
+  // So the Models badge and the `model-live` glow counted other tabs' subagents on Main and showed
+  // ZERO on every other tab. `chatEventIsSubagentOfView` 20 lines below already derives the agent
+  // root correctly (`split(":").slice(0,2)`); this is the same concept computed a second, wrong
+  // way — design principle #18. Use the one derivation.
+  //
+  // Ownership is resolved inside the predicate (see below): the agent-root match is necessary
+  // but NOT sufficient, because it would attribute every tab's subagents to every other tab.
+  return isSubagentOfViewedSession(info);
 }
+
+/**
+ * CANONICAL: is this run a subagent belonging to the viewed session's agent?
+ *
+ * FORK 2026-07-28 — this predicate previously existed as THREE inlined copies of the same
+ * (incorrect) expression: here, in renderThinkingIndicator's `subagentCount`, and in its `isSub`.
+ * Fixing one left the others wrong, which is precisely the failure design principle #18 describes.
+ * One derivation, named, called from all three.
+ */
+function isSubagentOfViewedSession(info: ActiveRunInfo): boolean {
+  // FORK 2026-07-28b (the architect, while TYPING in an unrelated tab: "I see Sol and Grok triggering on
+  // their own... as if I had already pressed enter"). This used to match on the agent root alone,
+  // which admitted work dispatched from ANOTHER tab — or by an external orchestrator driving the
+  // same agent — into EVERY tab, so a tab rendered a thinking indicator for a turn its user never
+  // submitted. The rule now lives in ONE tested module shared with the render path below.
+  return subagentBelongsToViewedTab(info.sessionKey, sessionKey, subagentAttributionDeps);
+}
+
+/** Ambient lookups for the shared attribution rule; see subagent-attribution.ts. */
+const subagentAttributionDeps: SubagentAttributionDeps = {
+  ownerOf: (subKey) => subagentOwnerTab.get(subKey),
+  attachedTabCount: (agentRoot) => attachedTabCountForRoot(agentRoot),
+  keyMatches: (candidate) => sessionKeyMatches(candidate),
+  // FORK 2026-08-08: lets the rule tell a rival TAB from a controller lane like
+  // `agent:main:orchestrator` — see subagent-attribution.ts (c').
+  isTab: (candidate) => isKnownTabKey(candidate),
+};
 
 // FORK 2026-05-30: a chat event whose sessionKey is a subagent OF the viewed
 // session. sessionKeyMatches() is intentionally strict (it returns false for
@@ -1139,29 +3001,10 @@ function runBelongsToViewedSession(info: ActiveRunInfo): boolean {
 // the colored sub-bubble renderer (_subagentId) was dead code. This predicate
 // re-admits them so a subagent's thinking streams into the parent chat live.
 function chatEventIsSubagentOfView(evtKey?: unknown): boolean {
-  if (typeof evtKey !== "string" || !sessionKey) {
-    return false;
-  }
-  if (!evtKey.includes(":subagent:")) {
-    return false;
-  }
-  // FORK 2026-06-15: subagents are minted FLAT under the agent root —
-  // `agent:main:subagent:<uuid>` — regardless of whether the spawning view was
-  // `agent:main:main` or a tab like `agent:main:tinker:<id>` (the parentSessionKey
-  // does NOT propagate into the child key). The shared-root match below admitted a
-  // subagent into EVERY tab under that root.
-  const agentRoot = sessionKey.split(":").slice(0, 2).join(":");
-  if (!evtKey.startsWith(agentRoot + ":subagent:")) return false;
-  // FORK 2026-06-25 (bug: two tabs bled messages) — when we KNOW which tab spawned
-  // this subagent (resolved from its parentRunId at birth), it belongs to the view
-  // ONLY when that owner is the viewed session. This is the precise, no-bleed answer.
-  const owner = subagentOwnerTab.get(evtKey);
-  if (owner) return owner === sessionKey || sessionKeyMatches(owner);
-  // Owner not yet resolved (a delta racing ahead of the spawn event). Fall back to the
-  // loose root match ONLY when this is the lone tab on the root — with siblings open we
-  // refuse the ambiguous match so an unattributed subagent never leaks across tabs (it
-  // still appears in the Prefrontal/EEG panels, and the parent turn's output is intact).
-  return attachedTabCountForRoot(agentRoot) <= 1;
+  if (typeof evtKey !== "string") return false;
+  // FORK 2026-07-28b: the rule (flat subagent keys, ownership when known, refuse the ambiguous
+  // match with siblings open) is shared with the counting path — see subagent-attribution.ts.
+  return subagentBelongsToViewedTab(evtKey, sessionKey, subagentAttributionDeps);
 }
 
 // FORK 2026-05-30: per-subagent streaming bubbles in the PARENT chat. Each subagent
@@ -1169,7 +3012,10 @@ function chatEventIsSubagentOfView(evtKey?: unknown): boolean {
 // renderer paints it with colorForSubagent + a "▸ label" badge and PARALLEL subagents
 // never clobber each other or the single-stream main-run state. On final/end the
 // bubble is frozen (drop _temporary) so it persists in the transcript.
-const subagentStreamIdx = new Map<string, number>();
+// FORK 2026-08-05: keyed on the bubble's STABLE `_uid`, not its array index. The index moved under
+// this map on every mid-array removal, and the next subagent delta then overwrote whichever older
+// bubble had slid into that slot.
+const subagentStreamUid = new Map<string, string>();
 // FORK 2026-05-30: which subagent bubbles are expanded (collapsed by default). The
 // colored "▸ label" header is always shown (the live roster); the thinking body is
 // behind a <details> the user expands. Persisted here so it survives the per-delta
@@ -1200,30 +3046,33 @@ function handleSubagentChatEvent(p: {
     if (!text) {
       return;
     }
-    const existing = subagentStreamIdx.get(runId);
-    const live =
-      existing !== undefined &&
-      !!messages[existing] &&
-      (messages[existing] as Record<string, unknown>)._temporary === true &&
-      (messages[existing] as Record<string, unknown>)._subagentId === runId;
-    if (!live) {
-      messages.push({
+    const existingUid = subagentStreamUid.get(runId);
+    const existing = existingUid ? msgByUid(existingUid) : undefined;
+    if (existing === undefined || existing._temporary !== true || existing._subagentId !== runId) {
+      const m: Record<string, unknown> = {
         role: "assistant",
         content: [{ type: "text", text }],
         _temporary: true,
         _bubbleStartedAt: Date.now(),
-      });
-      const idx = messages.length - 1;
-      const m = messages[idx] as Record<string, unknown>;
+        // FORK 2026-08-05: the subagent bubble carried NO `_runId`, so `ownsTempMsg` fell through
+        // to `streamRunId === p.runId` and the NEXT main run claimed it — then re-sliced it with
+        // ITS finalText. Stamp the owner so no other run can ever adopt this bubble.
+        _runId: runId,
+      };
       m._subagentId = runId;
       m._subagentLabel = subagentLabelFor(runId, sk);
-      subagentStreamIdx.set(runId, idx);
+      const uid = pushAndUid(m);
+      if (uid) {
+        subagentStreamUid.set(runId, uid);
+      }
     } else {
-      const block = (messages[existing].content as Array<{ type: string; text?: string }>).find(
+      const block = (existing.content as Array<{ type: string; text?: string }>).find(
         (b) => b.type === "text",
       );
-      if (block) {
-        block.text = text; // server-cumulative text for this run
+      // MONOTONE: `text` is server-CUMULATIVE, so it can only ever GROW. A value that does not
+      // EXTEND what is on screen means the provider buffer was RESET — keep what the user read.
+      if (block && (typeof block.text !== "string" || text.startsWith(block.text))) {
+        block.text = text;
       }
     }
     updateChat();
@@ -1233,21 +3082,22 @@ function handleSubagentChatEvent(p: {
     p.state === "error" ||
     p.state === "aborted"
   ) {
-    const idx = subagentStreamIdx.get(runId);
-    if (idx !== undefined && (messages[idx] as Record<string, unknown>)?._subagentId === runId) {
+    const finalUid = subagentStreamUid.get(runId);
+    const finalBubble = finalUid ? msgByUid(finalUid) : undefined;
+    if (finalBubble !== undefined && finalBubble._subagentId === runId) {
       if (text) {
-        const block = (messages[idx].content as Array<{ type: string; text?: string }>).find(
+        const block = (finalBubble.content as Array<{ type: string; text?: string }>).find(
           (b) => b.type === "text",
         );
-        if (block) {
+        // MONOTONE (see the delta branch): only ever GROW the text of a rendered bubble.
+        if (block && (typeof block.text !== "string" || text.startsWith(block.text))) {
           block.text = text;
         }
       }
-      // Freeze: keep the bubble + its tag, drop _temporary so it survives the next
-      // `messages.filter(m => !m._temporary)` purge and persists in the transcript.
-      delete (messages[idx] as Record<string, unknown>)._temporary;
+      // Freeze: keep the bubble + its tag, drop _temporary so it persists in the transcript.
+      delete finalBubble._temporary;
     }
-    subagentStreamIdx.delete(runId);
+    subagentStreamUid.delete(runId);
     // FORK 2026-06-22 (bug "thinking indicator stuck ON after a fractal turn"):
     // a subagent's terminal chat event is AUTHORITATIVE — its answer is in — so
     // close its activeRuns entry HERE, exactly as the main-run path does on
@@ -1300,12 +3150,853 @@ function scopedActiveRuns(): Array<[string, ActiveRunInfo]> {
  *  runs — the multi-tab "sending forever" bug was the global `activeRuns.size`
  *  check staying non-zero because a DIFFERENT tab still had a run. */
 function viewedSessionBusy(): boolean {
-  for (const [, info] of activeRuns) {
-    if (runBelongsToViewedSession(info)) {
+  // FORK 2026-08-26 — route through the SHARED freshness predicate instead of walking the raw
+  // map. A dropped terminator used to be PERMANENT here: one orphaned entry and this returned
+  // true for the life of the page, which pinned `sending`, blocked loadChat's merge behind
+  // `pendingHistoryReload`, and parked every later prompt through shouldQueue(). The predicate
+  // declines to believe a run silent for RUN_STALE_MS. It is a PREDICATE, not a watchdog: it
+  // clears nothing and force-terminates nothing (done-signals.md R2a), and it is the same rule
+  // resolveSessionRunState already applies to the indicator, so the surfaces cannot disagree.
+  //
+  // `matches` carries the FULL viewed-ownership rule rather than bare sessionKeyMatches, because
+  // that is what this helper has always meant: runBelongsToViewedSession() is
+  // `sessionKeyMatches(sk) || isSubagentOfViewedSession(info)`, and subagent runs are minted
+  // under their own flat keys and admitted into activeRuns by the `:subagent:` arm of the
+  // lifecycle gate. Dropping that arm would make a tab whose only live work is a subagent read
+  // IDLE mid-turn — a new bug of exactly the shape this change exists to remove.
+  return sessionHasFreshClientRun({
+    runs: activeRuns.values(),
+    refKey: sessionKey,
+    matches: (runKey, refKey) =>
+      sessionKeyMatches(runKey, refKey) ||
+      subagentBelongsToViewedTab(runKey, refKey, subagentAttributionDeps),
+    now: Date.now(),
+  });
+}
+
+/**
+ * Does the viewed session hold a run the gateway told us it is RESTARTING?
+ *
+ * FORK 2026-08-28 — the ONE case where a client run entry that outlived its socket is not a ghost.
+ * The `shutdown` handler marks every live run "restarting" on a graceful gateway restart precisely
+ * because cc-bridge resumes it under the SAME runId: its answer is still being produced and is NOT
+ * in `chat.history` yet, while the partial it has produced so far is already on screen. A forced
+ * history merge there would delete that partial and put nothing in its place — and "a message
+ * rendered to screen is never deleted" is a law of this file.
+ *
+ * Deliberately narrow: it reads ONE marker and decides nothing about liveness (run-state.ts remains
+ * THE ONE PREDICATE). Its only caller is loadChat's forced path.
+ */
+function viewedSessionHasRestartingRun(): boolean {
+  for (const info of activeRuns.values()) {
+    if (info.state === "restarting" && sessionKeyMatches(info.sessionKey)) {
       return true;
     }
   }
   return false;
+}
+
+/**
+ * THE PRE-MODEL WINDOW: this client has a turn accepted for the viewed session, but the gateway
+ * has not opened a model call yet — so the run set is legitimately empty and `resolveSessionRunState`
+ * legitimately says "not live".
+ *
+ * FORK 2026-08-15 (the architect: "now I have the opposite problem, the chat one is showing but the rest
+ * are mute. Again, this all has to be gated from the same structure, they need to be synchronized").
+ *
+ * This is a SECOND activity state, and it used to exist only as an inline condition inside
+ * renderThinkingIndicator's pending branch. That is why it desynchronized: the chat rendered a
+ * pill for 21-36s (turn-latency.md) while the tab bar and the session row — which only ever ask
+ * the run-state oracle — stayed dark, because by the oracle's (correct) reckoning nothing was
+ * running yet. Two different questions were being asked about one session.
+ *
+ * Naming it makes it shareable. `live` (a model is computing) and `pending` (a turn is in flight,
+ * no model yet) are now both derived here and both consumed by every surface.
+ *
+ * Only the viewed session can be pending, and that is structural rather than a simplification:
+ * `sending` is recomputed as `viewedSessionBusy()` at every site that touches it, so it is a
+ * property of the viewed tab by construction. A background tab's turn is visible through the run
+ * set instead, which is the lane that actually describes other sessions.
+ */
+/**
+ * FORK 2026-08-28 (the architect: "review the state of the send-queue button ... make sure it is properly
+ * synchronized with what actually happens under the hood").
+ *
+ * THE ONE PREDICATE for "will the next Enter DEFER this bubble?" — asked once, consumed by the two
+ * surfaces that must never disagree about it: `send()`, which acts on it, and `updateBtn()`, which
+ * PREDICTS it to the user. They used to derive it separately and differently:
+ *
+ *   send()     shouldQueue(...) with the BARE matcher — a subagent under this session is NOT a
+ *              reason to hold the architect's next turn
+ *   updateBtn  `sending || streamRunId || viewedSessionBusy()` — and viewedSessionBusy() carries the
+ *              subagent-INCLUSIVE matcher on purpose
+ *
+ * So with only a subagent running, the button promised "Queue" and the send path pushed straight
+ * into messages[]. The button was describing a different question and calling it the same thing.
+ *
+ * The two MATCHERS stay different — each is deliberate and documented at its own site. What
+ * collapses here is the DECISION, which is the thing the user is shown.
+ *
+ * Fails safe to "will not defer" for the same reason `send()` does: a thrown predicate must never
+ * cost a prompt, and a wrong `false` is cosmetic (bubble ordering) where a wrong `true` parks a
+ * message behind a drain that may never arrive.
+ */
+function sendWouldDefer(): boolean {
+  try {
+    return shouldQueue({
+      hasFreshActiveRunForSession: sessionHasFreshClientRun({
+        runs: activeRuns.values(),
+        refKey: sessionKey,
+        matches: sessionKeyMatches,
+        now: Date.now(),
+      }),
+      streamRunId,
+      sending,
+    });
+  } catch (err) {
+    console.error(
+      "[send] queue gate threw — treating this prompt as an immediate send rather than risking it. " +
+        "Bubble ordering is unguaranteed until this is fixed.",
+      err,
+    );
+    return false;
+  }
+}
+
+function viewedSessionPending(): boolean {
+  // FORK 2026-08-17 — `sending` is this tab's copy of the pre-model window; `sessionPending` is the
+  // per-session record every other tab reads. Both are consulted so the viewed tab can never
+  // disagree with its own tab title, which is the desync class this whole area keeps producing.
+  // `sending` remains first because it is set on paths that predate the map (a delta arriving with
+  // no phase:start), so dropping it would narrow the pill.
+  return (sending || sessionPending(sessionKey)) && !viewedSessionBusy();
+}
+
+/**
+ * Human duration for a timing row or trail chip.
+ *
+ * FORK 2026-08-16 (the architect: "All the phase elapsed times should always show even though the time is
+ * small or zero"). Three bands, and the reason for each:
+ *   >= 1s   -> "1.4s"   one decimal; the range where whole seconds lose real detail
+ *   >= 1ms  -> "24ms"   sub-second stages stay in ms; a warm cache makes these the COMMON case,
+ *                       and rounding them into "0s" reads as "did not happen"
+ *   < 1ms   -> "<1ms"   still a measurement. `Math.round` would print "0ms", which looks like a
+ *                       missing value rather than an instant one — the exact confusion this fix
+ *                       exists to remove.
+ * Negative input cannot happen (both producers clamp at 0) but is floored anyway rather than
+ * rendering "-0ms".
+ */
+function phaseDurationText(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "<1ms";
+  }
+  if (ms >= 1000) {
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+  return ms < 1 ? "<1ms" : `${Math.round(ms)}ms`;
+}
+
+/**
+ * Leave one timing row in the transcript for a finished stage.
+ *
+ * ONE builder for both provenances, because they must be visually comparable but must NOT be
+ * confusable:
+ *   - "gateway" — measured server-side around the stage's own work, shipped as `ms` on a
+ *     turn-phase completion envelope.
+ *   - "client"  — a window only this browser can see (the pending pill's two states). It is
+ *     WALL TIME INCLUDING QUEUEING, which is the honest thing to show for a wait, but it is
+ *     not the same measurement as a gateway stage and is marked so it cannot be read as one.
+ */
+/**
+ * FORK 2026-08-23 — runner stages collected for the CURRENT pre-model window.
+ *
+ * "preparing context" is measured in the browser and spans `chat.send` returning to a model
+ * being named. The gateway emits each runner stage as it finishes; they are buffered here and
+ * attached to that row when the window closes, which is the only moment their total is known.
+ *
+ * Cleared when the window OPENS, not when it closes: a turn that never reached a model (a
+ * disconnect, a failed send) must not donate its stages to the next turn's breakdown.
+ */
+let preparingStages: Array<{ id: string; ms: number; plugin?: string }> = [];
+
+/** Bounded: a runaway emitter cannot make one chat row unbounded. */
+const MAX_PREPARING_STAGES = 40;
+
+/**
+ * FORK 2026-08-24 (the architect) — THE TURN'S TIMING BLOCK, and the run that owns it.
+ *
+ * This used to be one chat MESSAGE per finished stage. Three things were wrong with that and all
+ * three are what the architect reported:
+ *
+ *   - a stage appeared only once it had FINISHED, so the stage actually being waited on was
+ *     visible only in the pill and never in the list;
+ *   - every completion appended another message, so the list crawled down the transcript as the
+ *     turn ran, and the fractal reflection's own stages (a SEPARATE run on the same session key)
+ *     landed at the very bottom of the chat, below the answer;
+ *   - being N messages it could not be folded as a unit at turn end the way tool calls are.
+ *
+ * One message now holds the whole ordered list and is upserted in place. `phaseGroupRunId` is what
+ * separates the main turn's block from the reflection's: a stage from a different run opens a new
+ * block rather than extending the one on screen.
+ */
+let phaseGroupMsg: Record<string, unknown> | null = null;
+let phaseGroupRunId = "";
+
+/** Forget the current block, so the next stage starts a new one. */
+function resetPhaseGroup(): void {
+  phaseGroupMsg = null;
+  phaseGroupRunId = "";
+}
+
+/**
+ * Re-acquire the block after a `loadChat` merge may have replaced the object we were holding.
+ *
+ * Reconnects "arrive in storms of 5-7 per minute" (the fractal-anchor note says so, measured), and
+ * every one of them rebuilds `messages`. Writing to a detached object would look like the block
+ * had frozen mid-turn — the exact failure class this whole area keeps producing. Re-found by
+ * `_clientRowId`, which is stable across the re-injection.
+ */
+function livePhaseGroup(): Record<string, unknown> | null {
+  if (!phaseGroupMsg) {
+    return null;
+  }
+  if (messages.includes(phaseGroupMsg as never)) {
+    return phaseGroupMsg;
+  }
+  const id = phaseGroupMsg._clientRowId;
+  const found =
+    typeof id === "string" && id
+      ? (messages.find((m: Record<string, unknown>) => m?._clientRowId === id) as
+          | Record<string, unknown>
+          | undefined)
+      : undefined;
+  phaseGroupMsg = found ?? null;
+  return phaseGroupMsg;
+}
+
+/**
+ * Record one stage into the current turn's block, creating the block if this is its first stage.
+ *
+ * `entry.done === false` is a stage STARTING — that is the whole point of the block over the old
+ * rows, which could only ever show work already over.
+ */
+function recordPhaseTiming(entry: PhaseEntry, runId = ""): void {
+  const now = Date.now();
+  let group = livePhaseGroup();
+  // A stage belonging to a DIFFERENT run opens its own block. Without this the reflection lane's
+  // stages extended the main turn's list, which is why they appeared under the answer.
+  if (group && runId && phaseGroupRunId && runId !== phaseGroupRunId) {
+    resetPhaseGroup();
+    group = null;
+  }
+  if (!group) {
+    const created: Record<string, unknown> = {
+      role: "assistant",
+      // NON-EMPTY so any consumer that does not know `_isPhaseTiming` still has something to
+      // show. The run-grouping loop reads the FLAG, not the text — see the explicit branch there.
+      content: "turn timing",
+      _isPhaseTiming: true,
+      _phaseEntries: [] as PhaseEntry[],
+      _phaseRunId: runId,
+      ts: now,
+    };
+    messages.push(created);
+    group = created;
+    phaseGroupMsg = created;
+    phaseGroupRunId = runId;
+    // FORK 2026-08-23 — PERSIST IT. `_isPhaseTiming` has been a CLIENT_ONLY_FLAG since
+    // 2026-08-15, so this row already survived a RECONNECT. It did not survive a page reload:
+    // the message list is stored nowhere, `loadChat` refills it from SERVER history, and the
+    // server never had these rows. See client-rows.ts.
+    const storedId = recordClientRow(sessionKey, created, turnAnchorOf(messages, created));
+    if (storedId) {
+      // Stamp the LIVE object too, so the re-injection on the next load recognises this row as
+      // already present rather than adding a second copy of it.
+      created._clientRowId = storedId;
+    }
+  } else if (runId && !phaseGroupRunId) {
+    // The client windows ("sending", "preparing context") open the block before any runId exists.
+    // The first gateway stage names the run the block belongs to.
+    phaseGroupRunId = runId;
+    group._phaseRunId = runId;
+  }
+  const entries = Array.isArray(group._phaseEntries) ? (group._phaseEntries as PhaseEntry[]) : [];
+  group._phaseEntries = upsertPhaseEntry(entries, entry, now);
+  // Re-persist the WHOLE block rather than appending a delta: appending is what made the old
+  // shape restore N partial copies of the same list after a reload.
+  const id = group._clientRowId;
+  if (typeof id === "string" && id) {
+    updateClientRow(sessionKey, id, group);
+  }
+}
+
+/**
+ * Remove a still-running entry with this label from the current block.
+ *
+ * ONE caller, one reason: `before_prompt_build` announces itself as "recalling memories" and then
+ * completes as EIGHT plugin entries. The placeholder was not left unmeasured — it was replaced by
+ * its own members — so closing it out as an unfinished stage would invent a ninth row that double
+ * counts all eight. Removal is safe here and nowhere else: nothing is lost, it is superseded.
+ */
+function dropOpenPhaseEntry(label: string): void {
+  const group = livePhaseGroup();
+  if (!group || !Array.isArray(group._phaseEntries)) {
+    return;
+  }
+  const entries = group._phaseEntries as PhaseEntry[];
+  const last = entries[entries.length - 1];
+  if (last && !last.done && last.label === label) {
+    group._phaseEntries = entries.slice(0, -1);
+  }
+}
+
+/** A finished stage, in the shape `recordPhaseTiming` wants. */
+function finishedPhase(
+  label: string,
+  ms: number,
+  measuredBy: "gateway" | "client",
+  plugins?: Array<{ id: string; ms: number }>,
+  breakdownKind: "plugin" | "stage" = "plugin",
+  /** Set when this entry IS a plugin (promoted out of its chain), so clicking opens its doc. */
+  pluginId?: string,
+): PhaseEntry {
+  return {
+    label,
+    ms,
+    done: true,
+    startedAt: Date.now() - Math.max(0, ms),
+    // A gateway phase carries its PLUGIN breakdown; the client "preparing context" window
+    // carries its RUNNER STAGE breakdown. Both are honest, and they are different quantities:
+    // plugins sum to their phase, stages do NOT sum to the window (the gaps between them are
+    // real waiting, and on a traced turn were two thirds of it).
+    ...(plugins && plugins.length > 0 ? { plugins, kind: breakdownKind } : {}),
+    ...(pluginId ? { pluginId } : {}),
+    ...(measuredBy === "client" ? { client: true } : {}),
+  };
+}
+
+/**
+ * Read a timing message's entry list.
+ *
+ * Tolerates the PRE-2026-08-24 shape (`_phaseLabel`/`_phaseMs`, one message per stage), because
+ * `client-rows` has been persisting those since 2026-08-23 and they are re-injected on every load.
+ * Dropping them would erase measurements the architect already has on screen — the exact rule
+ * ("once something is written it should not be erased") the client-rows store exists to keep.
+ */
+function phaseEntriesOf(msg: Record<string, unknown>): PhaseEntry[] {
+  const entries = msg._phaseEntries;
+  if (Array.isArray(entries)) {
+    return entries as PhaseEntry[];
+  }
+  const label = typeof msg._phaseLabel === "string" ? msg._phaseLabel : "";
+  if (!label) {
+    return [];
+  }
+  const plugins = Array.isArray(msg._phasePlugins)
+    ? (msg._phasePlugins as Array<{ id: string; ms: number }>)
+    : undefined;
+  return [
+    {
+      label,
+      ms: Number(msg._phaseMs ?? 0),
+      done: true,
+      ...(msg._phaseClientMeasured === true ? { client: true } : {}),
+      ...(typeof msg._phasePluginId === "string" && msg._phasePluginId
+        ? { pluginId: msg._phasePluginId }
+        : {}),
+      ...(plugins && plugins.length > 0
+        ? { plugins, kind: (msg._phaseBreakdownKind ?? "plugin") as "plugin" | "stage" }
+        : {}),
+    },
+  ];
+}
+
+/**
+ * FORK 2026-08-24 (the architect) — ONE subdivision line, at any depth.
+ *
+ * Three rules the architect set, and the reason each one is not what it replaces:
+ *
+ *   - **No popup on a subdivision.** Every child used to be clickable and opened a doc. At depth 2
+ *     that is a doc about a doc: the parent's popup already says what the stage is FOR, and the
+ *     child's only honest content is its own number. A click that opens a generic fallback is
+ *     worse than no click, because it teaches that the affordance is not worth using.
+ *   - **Ordered by time, not by size.** See `phaseChildrenInOrder`.
+ *   - **Over 1s and childless ⇒ say so.** The list states its own unfinished instrumentation
+ *     rather than presenting an opaque second as a finished measurement.
+ *
+ * A child that has children of its own is NOT a leaf: it renders through `renderPhaseRow` and gets
+ * the same chevron and ⓘ as a top-level entry ("Total Recall" is the case that forced this).
+ */
+function renderPhaseChild(
+  child: PhaseChild,
+  kind: "plugin" | "stage",
+  measuredTotal: number,
+  ownerTid: string,
+  depth: number,
+): string {
+  const nameOf = kind === "stage" ? stageDisplayName : pluginDisplayName;
+  const kids = Array.isArray(child.children) ? child.children : [];
+  if (kids.length > 0) {
+    // A parent in its own right — same affordances as a top-level row, one level in.
+    return renderPhaseRow({
+      label: nameOf(child.id),
+      ms: child.ms,
+      docPluginId: child.kind === "stage" ? undefined : child.id,
+      docStageId: child.kind === "stage" ? child.id : undefined,
+      children: kids,
+      childKind: child.childKind ?? "stage",
+      tid: `${ownerTid}/${child.id}`,
+      depth,
+    });
+  }
+  const share = measuredTotal > 0 ? Math.round((100 * child.ms) / measuredTotal) : 0;
+  // The bar is share of what was MEASURED, not of the parent line. For a gateway phase those are
+  // the same thing. For "preparing context" they are NOT: the stages sit inside a client-measured
+  // window that also contains queueing, and on a traced turn accounted for 26s of 90s.
+  const owes = needsDecomposition(child.ms, false);
+  const owesMark = owes
+    ? `<span class="mpp-owes" title="${esc("Over 1s and not broken down any further — this measurement still owes an explanation. Instrumenting it is outstanding work, not a finished number.")}">⋯</span>`
+    : "";
+  return `<div class="msg-phase-plugin${owes ? " owes-breakdown" : ""}"><span class="mpp-bar" style="width:${esc(String(Math.max(share, 1)))}%"></span><span class="mpp-name">${esc(nameOf(child.id))}</span>${owesMark}<span class="mpp-dur">${esc(phaseDurationText(child.ms))}</span></div>`;
+}
+
+/**
+ * FORK 2026-08-24 (the architect: "Make 'recalling memories', 'total recall' and 'preparing context'
+ * collapsable. At the end add an (i) icon to open the popup explanation.") — the row shell shared
+ * by a top-level entry and by a child that has children.
+ *
+ * The click contract CHANGED here, deliberately: the row body used to open the popup. It now
+ * TOGGLES (when there is something to toggle) and the popup moves to an explicit ⓘ at the end.
+ * The old shape had one gesture doing two jobs badly — you could not open a breakdown without
+ * also being shown a modal, which is why the breakdowns were always open and always in the way.
+ */
+function renderPhaseRow(o: {
+  label: string;
+  ms: number;
+  running?: boolean;
+  client?: boolean;
+  inferred?: boolean;
+  liveSince?: number;
+  docPluginId?: string;
+  docStageId?: string;
+  children: PhaseChild[];
+  childKind: "plugin" | "stage";
+  tid: string;
+  depth: number;
+}): string {
+  const collapsible = o.children.length > 0;
+  const open = collapsible && expandedTools.has(o.tid);
+  const running = o.running === true;
+  const slow = !running && o.ms >= 5000 ? " is-slow" : "";
+  const cls =
+    `msg-phase-timing${slow}${o.client ? " is-client" : ""}${running ? " is-running" : ""}` +
+    `${o.inferred ? " is-inferred" : ""}${collapsible ? " is-collapsible" : ""}${o.depth > 0 ? " is-nested" : ""}`;
+  const hint = running
+    ? "running now — the gateway has announced this stage and has not yet reported it finished"
+    : o.inferred
+      ? "derived from when the NEXT stage started: this stage never reported its own completion, so the number includes event-loop and network latency"
+      : collapsible
+        ? "click to open the breakdown — ⓘ explains what this stage does"
+        : o.client
+          ? "measured in the browser: wall time you waited, including queueing"
+          : "measured by the gateway around this stage's own work";
+  const chevron = collapsible
+    ? `<span class="mpt-chevron">${open ? "▾" : "▸"}</span>`
+    : `<span class="mpt-chevron is-empty"></span>`;
+  // The doc ids ride as data-* so the ⓘ handler does not have to parse them back out of the text.
+  const docAttrs =
+    `${o.docPluginId ? ` data-doc-plugin-id="${esc(o.docPluginId)}"` : ""}` +
+    `${o.docStageId ? ` data-doc-stage-id="${esc(o.docStageId)}"` : ""}`;
+  // ⓘ LAST, after the duration — "at the end", as asked.
+  const info = `<span class="mpt-info" role="button" tabindex="0" title="${esc(`What "${o.label}" does, and what a big number here means`)}" data-phase-label="${esc(o.label)}" data-phase-ms="${esc(String(o.ms))}"${o.client ? ` data-phase-client="1"` : ""}${docAttrs}>ⓘ</span>`;
+  const liveAttr =
+    running && o.liveSince ? ` data-phase-live-since="${esc(String(o.liveSince))}"` : "";
+  // `data-tid` is the EXISTING collapse mechanism (tool rows, system blocks, reasoning groups all
+  // use it): one delegated toggler, one `expandedTools` set, and the scroll-anchor preservation
+  // that comes with it. A second collapse implementation would drift from that one.
+  const tidAttr = collapsible ? ` data-tid="${esc(o.tid)}"` : "";
+  let out = `<div class="${cls}" title="${esc(hint)}"${tidAttr}>${chevron}<span class="msg-phase-timing-label">${esc(o.label)}</span><span class="msg-phase-timing-dur"${liveAttr}>${o.client && !running ? "~" : ""}${esc(phaseDurationText(o.ms))}</span>${info}</div>`;
+  if (!collapsible) {
+    return out;
+  }
+  // Emitted even when collapsed, `hidden` rather than absent — the 2026-08-05 rule: a fold is a
+  // change of APPEARANCE, and content that leaves the document cannot be found by Ctrl-F, reached
+  // by a screen reader, or copied.
+  const ordered = phaseChildrenInOrder(o.children);
+  const measured = ordered.reduce((sum, p) => sum + (p.ms || 0), 0);
+  out += `<div class="msg-phase-plugins${o.depth > 0 ? " is-nested" : ""}"${open ? "" : " hidden"}>`;
+  for (const c of ordered) {
+    out += renderPhaseChild(c, o.childKind, measured, o.tid, o.depth + 1);
+  }
+  // The unaccounted remainder, stated rather than left as an inference. A stage list that silently
+  // sums to less than its row reads as a complete picture.
+  const gap = o.ms - measured;
+  if (o.childKind === "stage" && gap > 250) {
+    out += `<div class="msg-phase-plugin is-gap" title="${esc("Time inside this window that no instrumented stage accounts for — queueing, lane admission, and the gaps between stages. Not yet measured.")}"><span class="mpp-name">not accounted for by any stage</span><span class="mpp-dur">${esc(phaseDurationText(gap))}</span></div>`;
+  }
+  out += `</div>`;
+  return out;
+}
+
+/**
+ * FORK 2026-08-24 — the two ledgers `resolveAutoDisclosure` reads.
+ *
+ * They record what the AUTOMATIC mechanism did, never what the user did, which is the only reason
+ * a manual toggle survives the next repaint. A live turn repaints every second; without these,
+ * "open while running" would re-assert itself on every tick and a row the architect closed would
+ * flap back open under the cursor.
+ *
+ * Bounded, and pruned oldest-first: a long session accumulates one entry per collapsible row per
+ * turn, and an unbounded Set in a tab that stays open for days is a leak however small each key is.
+ */
+const phaseAutoOpened = new Set<string>();
+const phaseAutoCollapsed = new Set<string>();
+const MAX_AUTO_DISCLOSURE_KEYS = 2000;
+
+function rememberDisclosure(set: Set<string>, tid: string): void {
+  set.add(tid);
+  if (set.size > MAX_AUTO_DISCLOSURE_KEYS) {
+    // Insertion-ordered, so the first key is the oldest. Dropping it can only cost ONE extra
+    // auto-open on a block far above the viewport.
+    const oldest = set.values().next().value;
+    if (oldest !== undefined) {
+      set.delete(oldest);
+    }
+  }
+}
+
+/**
+ * Open every collapsible row while the task runs; fold them into the task row when it completes.
+ *
+ * Called from the renderer because that is where the tids are known (they are keyed on the
+ * message's `_uid`, stamped at render). It mutates `expandedTools`, which is a render-time side
+ * effect — the same shape as the `_narration` stamping in updateChat, and idempotent for the same
+ * reason: both transitions are ledgered and each fires at most once per row.
+ */
+function applyAutoDisclosure(entries: PhaseEntry[], tidPrefix: string, live: boolean): void {
+  const tids: string[] = [];
+  for (const e of entries) {
+    const kids = Array.isArray(e.plugins) ? e.plugins : [];
+    if (kids.length === 0) {
+      continue;
+    }
+    const tid = `${tidPrefix}/${e.label}`;
+    tids.push(tid);
+    // Nested parents (Total Recall inside the chain) disclose on the same rule as their parent —
+    // the architect asked to watch the breakdown, and a nested row that stayed shut would hide
+    // exactly the plugin the nesting was built for.
+    for (const c of kids) {
+      if (Array.isArray(c.children) && c.children.length > 0) {
+        tids.push(`${tid}/${c.id}`);
+      }
+    }
+  }
+  if (tids.length === 0) {
+    return;
+  }
+  const { toOpen, toClose } = resolveAutoDisclosure({
+    tids,
+    live,
+    autoOpened: phaseAutoOpened,
+    autoCollapsed: phaseAutoCollapsed,
+  });
+  for (const tid of toOpen) {
+    expandedTools.add(tid);
+    rememberDisclosure(phaseAutoOpened, tid);
+  }
+  for (const tid of toClose) {
+    expandedTools.delete(tid);
+    rememberDisclosure(phaseAutoCollapsed, tid);
+  }
+}
+
+/** One top-level entry: the row shell, told what this entry is. */
+function renderPhaseEntry(e: PhaseEntry, nowMs: number, tidPrefix: string): string {
+  const running = !e.done;
+  const ms = running ? Math.max(0, nowMs - (e.startedAt ?? nowMs)) : Math.max(0, e.ms);
+  const children = Array.isArray(e.plugins) ? e.plugins : [];
+  return renderPhaseRow({
+    label: e.label,
+    ms,
+    running,
+    client: e.client === true,
+    inferred: e.inferred === true,
+    liveSince: e.startedAt,
+    // A promoted plugin row carries its id so ⓘ opens the PLUGIN doc rather than looking its
+    // display name up in the phase table and finding nothing.
+    docPluginId: e.pluginId,
+    children,
+    childKind: (e.kind ?? "plugin") as "plugin" | "stage",
+    // Keyed on the block's message uid + the label, so the open/closed state survives a repaint
+    // and cannot be handed to a different block's row of the same name.
+    tid: `${tidPrefix}/${e.label}`,
+    depth: 0,
+  });
+}
+
+/**
+ * FORK 2026-08-24 (the architect) — the turn's timing block: a HEADER plus its stages, as ONE element.
+ *
+ * Why an element and not N sibling rows: the run-grouping loop folds intermediates into
+ * "▸ Reasoning" at turn end, and folding is per-message. As N messages the list could only ever be
+ * folded N times or not at all; as one it folds like a tool call does, which is what was asked for.
+ */
+function renderPhaseGroup(msg: Record<string, unknown>): string {
+  const entries = phaseEntriesOf(msg);
+  if (entries.length === 0) {
+    return "";
+  }
+  const now = Date.now();
+  // A STAGE is running — drives the pulsing chrome, and nothing else.
+  const live = phaseGroupIsLive(entries);
+  // FORK 2026-08-24 — "the TASK is still running", which is a different and broader question, and
+  // the one automatic disclosure must ask.
+  //
+  // `phaseGroupIsLive` alone is wrong here and the failure is silent: between two gateway phases
+  // there is NO open entry, because a completion event closes one stage before the next start
+  // event opens the next. So liveness flickers false several times per turn — and 'recalling
+  // memories' acquires its eight children on exactly such a completion. Disclosing on that signal
+  // would collapse the breakdown in the same frame it first became showable.
+  //
+  // The honest boundary is the pre-model window: the task is running until a model is named, which
+  // is precisely when `closePreModelWindow` clears `preparingSince`. Identity-checked against the
+  // block being rendered so a finished block further up the transcript is not re-opened by the
+  // NEXT turn's window.
+  const taskRunning = live || (preparingSince !== null && phaseGroupMsg === msg);
+  // SPAN, not the sum: "preparing context" is a client window that CONTAINS the gateway stages,
+  // so adding the entries up reports roughly twice the wall time actually spent.
+  const span = phaseGroupSpanMs(entries, now);
+  const head = `<div class="mpg-head"><span class="mpg-icon">⏱</span><span class="mpg-title">Turn timing</span><span class="mpg-meta">${esc(phaseGroupCountLabel(entries))} · ${esc(phaseDurationText(span))}</span></div>`;
+  // Collapse state is keyed on the message's stable `_uid`, not its array position — the same
+  // lesson as the reasoning group's `rg-${_uid}`: an ordinal key hands one row's open state to a
+  // different row the moment anything is inserted above it.
+  const tidPrefix = `ph-${String(msg._uid ?? msg._clientRowId ?? "x")}`;
+  applyAutoDisclosure(entries, tidPrefix, taskRunning);
+  const rows = entries.map((e) => renderPhaseEntry(e, now, tidPrefix)).join("");
+  return `<div class="msg-phase-group${live ? " is-live" : ""}">${head}<div class="mpg-rows">${rows}</div></div>`;
+}
+
+/**
+ * The explainer popup for one timing row.
+ *
+ * FORK 2026-08-16 — the rows say how LONG; this says what the stage was doing and what a big
+ * number there actually means, with the papers behind it. Content lives in phase-docs.ts (pure,
+ * unit-tested); this function is only the overlay.
+ *
+ * Reuses the `.sc-overlay` chrome the SMARTNESS × COST and dossier modals already use, so there
+ * is one modal look rather than a third one.
+ */
+function openPhaseDoc(label: string, ms: number, clientMeasured: boolean): void {
+  const doc = phaseDocFor(label);
+  const measured = clientMeasured
+    ? "measured in your browser — wall time you waited, including time queued behind other work"
+    : "measured by the gateway, around this stage's own work";
+  const refs = doc.refs
+    .map((r) => {
+      // A reference with no confirmed URL still gets listed — it is real, and silently dropping
+      // it would misrepresent the evidence. It just does not become a link.
+      const head = r.url
+        ? `<a class="pd-ref-link" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.label)}</a>`
+        : `<span class="pd-ref-link is-unlinked">${esc(r.label)}</span>`;
+      return `<li class="pd-ref">${head}<span class="pd-ref-note">${esc(r.note)}</span></li>`;
+    })
+    .join("");
+  const overlay = document.createElement("div");
+  overlay.className = "sc-overlay pd-overlay";
+  overlay.innerHTML = `
+    <div class="sc-card pd-card">
+      <div class="sc-head">
+        <div>
+          <div class="sc-title">${esc(doc.title.toUpperCase())}</div>
+          <div class="sc-sub">${esc(measured)}</div>
+        </div>
+        <button class="sc-close" title="Close">✕</button>
+      </div>
+      <div class="pd-body">
+        <div class="pd-figure"><span class="pd-figure-num">${esc(phaseDurationText(ms))}</span><span class="pd-figure-cap">this turn</span></div>
+        <h4 class="pd-h">What is actually happening</h4>
+        <p class="pd-p">${esc(doc.what)}</p>
+        ${doc.profit ? `<h4 class="pd-h pd-h--profit">What these seconds buy</h4><p class="pd-p pd-profit">${esc(doc.profit)}</p>` : ""}
+        <h4 class="pd-h">What a large number here means</h4>
+        <p class="pd-p">${esc(doc.whenSlow)}</p>
+        ${doc.caveat ? `<h4 class="pd-h pd-h--caveat">Where that argument does not hold</h4><p class="pd-p pd-caveat">${esc(doc.caveat)}</p>` : ""}
+        ${doc.observed ? `<h4 class="pd-h">Observed on this system</h4><p class="pd-p pd-observed">${esc(doc.observed)}</p>` : ""}
+        <h4 class="pd-h">References</h4>
+        <ul class="pd-refs">${refs}</ul>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".sc-close")?.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      close();
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+}
+
+/**
+ * The explainer popup for ONE PLUGIN inside a phase.
+ *
+ * FORK 2026-08-22 (the architect: "I would like a breakdown per plugin ... framed as what the profit
+ * is ... both for me and for a newcomer that just cloned our repo").
+ *
+ * Deliberately a different shape from `openPhaseDoc`: a stage answers "what is happening",
+ * a plugin has to answer "why is this on the critical path at all". So WHAT THESE MILLISECONDS
+ * BUY comes first and in the accent colour, the measured evidence is attributed, and the
+ * caveat — where the claimed benefit is NOT currently being realised on this box — is a
+ * first-class section rather than a footnote. Several of these plugins are excellent and
+ * currently buying nothing here, and a newcomer must be able to learn that from the UI.
+ *
+ * Content lives in phase-docs.ts (pure, unit-tested); this is only the overlay, and it shares
+ * the `.sc-overlay` / `.pd-card` chrome so there is one modal look rather than a fourth.
+ */
+function openPluginDoc(pluginId: string, ms: number): void {
+  const doc = pluginDocFor(pluginId);
+  const refs = doc.refs
+    .map((r) => {
+      const head = r.url
+        ? `<a class="pd-ref-link" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">${esc(r.label)}</a>`
+        : `<span class="pd-ref-link is-unlinked">${esc(r.label)}</span>`;
+      return `<li class="pd-ref">${head}<span class="pd-ref-note">${esc(r.note)}</span></li>`;
+    })
+    .join("");
+  const overlay = document.createElement("div");
+  overlay.className = "sc-overlay pd-overlay";
+  overlay.innerHTML = `
+    <div class="sc-card pd-card">
+      <div class="sc-head">
+        <div>
+          <div class="sc-title">${esc(doc.title.toUpperCase())}</div>
+          <div class="sc-sub">${esc(`one plugin inside this stage — ${pluginId}`)}</div>
+        </div>
+        <button class="sc-close" title="Close">✕</button>
+      </div>
+      <div class="pd-body">
+        <div class="pd-figure"><span class="pd-figure-num">${esc(phaseDurationText(ms))}</span><span class="pd-figure-cap">this turn</span></div>
+        <h4 class="pd-h pd-h--profit">What these milliseconds buy</h4>
+        <p class="pd-p pd-profit">${esc(doc.profit)}</p>
+        <h4 class="pd-h">What it is doing</h4>
+        <p class="pd-p">${esc(doc.what)}</p>
+        ${doc.evidence ? `<h4 class="pd-h">Evidence</h4><p class="pd-p pd-observed">${esc(doc.evidence)}</p>` : ""}
+        ${doc.caveat ? `<h4 class="pd-h pd-h--caveat">Where that argument does not hold</h4><p class="pd-p pd-caveat">${esc(doc.caveat)}</p>` : ""}
+        ${refs ? `<h4 class="pd-h">References</h4><ul class="pd-refs">${refs}</ul>` : ""}
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".sc-close")?.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      close();
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+}
+
+/**
+ * The explainer popup for ONE RUNNER STAGE inside "preparing context".
+ *
+ * FORK 2026-08-23 (the architect: "'Preparing context' is still the longest item, even in a nearly-empty
+ * context. Dissect it even further into its constituent parts in the ui").
+ *
+ * Same shape as the plugin popup — profit first — because the question is the same: this step
+ * is on the critical path, what is it buying? Several of these measure 0ms and say so; a stage
+ * that is genuinely free should be visible as free rather than omitted, or the list reads as
+ * twelve suspects instead of one.
+ */
+function openStageDoc(stage: string, ms: number): void {
+  const doc = stageDocFor(stage);
+  const overlay = document.createElement("div");
+  overlay.className = "sc-overlay pd-overlay";
+  overlay.innerHTML = `
+    <div class="sc-card pd-card">
+      <div class="sc-head">
+        <div>
+          <div class="sc-title">${esc(doc.title.toUpperCase())}</div>
+          <div class="sc-sub">${esc(`one runner stage inside "preparing context" — ${stage}`)}</div>
+        </div>
+        <button class="sc-close" title="Close">✕</button>
+      </div>
+      <div class="pd-body">
+        <div class="pd-figure"><span class="pd-figure-num">${esc(phaseDurationText(ms))}</span><span class="pd-figure-cap">this turn</span></div>
+        <h4 class="pd-h pd-h--profit">What these milliseconds buy</h4>
+        <p class="pd-p pd-profit">${esc(doc.profit)}</p>
+        <h4 class="pd-h">What it is doing</h4>
+        <p class="pd-p">${esc(doc.what)}</p>
+        ${doc.evidence ? `<h4 class="pd-h">Evidence</h4><p class="pd-p pd-observed">${esc(doc.evidence)}</p>` : ""}
+        ${doc.caveat ? `<h4 class="pd-h pd-h--caveat">Where that argument does not hold</h4><p class="pd-p pd-caveat">${esc(doc.caveat)}</p>` : ""}
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".sc-close")?.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) {
+      close();
+    }
+  });
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      close();
+      document.removeEventListener("keydown", onKey);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+}
+
+/**
+ * Close the pre-model window and leave its timing row.
+ *
+ * FORK 2026-08-16 — `preparingSince` had NO close site for the normal, successful path. It was
+ * cleared only on disconnect, on the next send, and on send failure; when the model was finally
+ * named the pill simply stopped rendering because `viewedSessionBusy()` became true, and the
+ * window it had been counting was never closed or recorded. That is precisely why the longest
+ * stage of the turn was the one stage that left no tag.
+ *
+ * Idempotent: the first caller wins, so wiring it to several run-admission sites is safe.
+ */
+function closePreModelWindow(): void {
+  if (preparingSince !== null) {
+    // FORK 2026-08-23 — attach the runner stages collected during this window. This is the
+    // only moment they can be attached: the row is created here, and the stages are only
+    // complete once a model has been named.
+    // FORK 2026-08-24 — a stage OWNED by a plugin is rendered under that plugin's own row (see the
+    // promotion branch in the turn-phase consumer). It must not ALSO appear here: the same
+    // milliseconds in two breakdowns is how a reader ends up double-counting the biggest plugin
+    // on the path, and the two panels would visibly disagree with each other.
+    const unownedStages = preparingStages.filter((s) => !stageOwner(s));
+    recordPhaseTiming({
+      ...finishedPhase(
+        "preparing context",
+        Date.now() - preparingSince,
+        "client",
+        unownedStages.length > 0 ? unownedStages : undefined,
+        "stage",
+      ),
+      // The REAL start, not one derived back from the duration: this window is the one the
+      // block's span is anchored on, and deriving it would drift by an event loop turn.
+      startedAt: preparingSince,
+    });
+    preparingSince = null;
+    preparingStages = [];
+  }
+  // A model named without `chat.send` having resolved would leave this dangling into the next
+  // turn's measurement.
+  pendingSince = null;
 }
 
 // FORK 2026-05-17: the ONE place `budgetScope` is mutated (bible panels.md
@@ -1354,15 +4045,25 @@ let tabs: Tab[] = [];
 // FORK (2026-04-21): initialize from localStorage so a hard refresh preserves
 // focus on whichever tab was active pre-reload. Previously defaulted to "" and
 // the connect handler fell through to "tab-main", losing sub-session focus.
+// FORK 2026-08-02 (the architect): fold every pre-unification localStorage key into the unified
+// ui-state store BEFORE its first read — this module-scope initializer (and the fractal
+// toggle load further down) runs long before the boot block that also migrates
+// (idempotent, so the second call there is a no-op). The try/catch stays: in
+// blocked-storage contexts even ACCESSING window.localStorage throws (SecurityError),
+// which ui-state's internal error-swallowing cannot catch for us at module init.
 let activeTabId = (() => {
   try {
-    return localStorage.getItem("tinker-active-tab") || "";
+    migrateLegacyUiState();
+    return getChoice("tab:active", "");
   } catch {
     return "";
   }
 })();
-const TAB_STORAGE_KEY = "tinker-tabs";
-const ACTIVE_TAB_STORAGE_KEY = "tinker-active-tab";
+// FORK 2026-08-16 (the architect: "when I close the browser and restart it, the tinker ui tabs that I had
+// opened are not anymore"). The literal moved to panels/ui-state.ts, which now mirrors this key to
+// the durable file alongside the rest of the UI chrome. Imported rather than re-declared: two
+// spellings of one storage key is a bug whose only symptom is silently losing the tab list.
+const TAB_STORAGE_KEY = TABS_KEY;
 const TAB_TITLE_INTERVAL = 5;
 // FORK 2026-06-04 — jarvis-upgrade task-mpzcjw6n-n45zs (Tab name summary): the sentinel icon
 // prefixed to AUTO-summarized tab names so they're visually distinct from fortune-cookie names
@@ -1373,12 +4074,15 @@ const AUTO_NAME_ICON = "🏷️";
 let tabContextMenuEl: HTMLElement | null = null;
 
 function saveActiveTabId(): void {
+  // FORK 2026-08-02 (the architect): routed through the unified ui-state store ("" = default =
+  // no entry). The empty-check keeps the old semantics — a blank id never clears the
+  // last persisted focus.
   try {
     if (activeTabId) {
-      localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
+      setChoice("tab:active", activeTabId, "");
     }
   } catch {
-    // Private-mode / quota errors — silent fail; refresh falls back to tab-main.
+    // Blocked-storage contexts — silent fail; refresh falls back to tab-main.
   }
 }
 
@@ -1390,7 +4094,12 @@ function generateTabId(): string {
 // stale/persisted titleGenerating flag can NEVER permanently block a rename. (The old guard
 // keyed on the persisted tab.titleGenerating; a tab saved mid-generate restored "generating"
 // forever and every future rename short-circuited — tabs "blinked for hours" + never renamed.)
-const titleInFlight = new Set<string>();
+// FORK 2026-07-21 — Map with start timestamps instead of a Set: an entry older than
+// TITLE_INFLIGHT_STALE_MS is treated as abandoned (stranded await, lost ws frame,
+// killed gateway turn) and no longer blocks the next rename. A plain Set once left
+// tabs permanently un-renamable after a gateway restart stranded the in-flight RPC.
+const titleInFlight = new Map<string, number>();
+const TITLE_INFLIGHT_STALE_MS = 90_000;
 
 function saveTabs() {
   try {
@@ -1405,6 +4114,13 @@ function saveTabs() {
       TAB_STORAGE_KEY,
       JSON.stringify(tabs.map((t) => ({ ...t, titleGenerating: undefined }))),
     );
+    // FORK 2026-08-16 — write-through to the durable file. localStorage alone does not
+    // survive a browser exit on this profile (clear-on-exit), which is why a restart used
+    // to come back with a lone "🏠 Main". Debounced and coalescing, so the bursts of
+    // saveTabs() that loadSessions() fires cost ONE POST. Inside the try on purpose: if
+    // the setItem above threw, the cache and the file would disagree, and the mirror
+    // reads the CACHE — it would faithfully persist the write that just failed.
+    scheduleUiStateMirror();
   } catch {}
 }
 
@@ -1431,6 +4147,10 @@ function loadTabs() {
     }
     if (changed) {
       localStorage.setItem(TAB_STORAGE_KEY, JSON.stringify(stored));
+      // The other writer of this key, so it mirrors too — otherwise the "🏠 Main"
+      // normalisation above would be re-applied on every single cold start instead of
+      // being fixed once, and the file would keep serving the stale title back.
+      scheduleUiStateMirror();
     }
     return stored;
   } catch {
@@ -1463,11 +4183,19 @@ const PROVIDER_COLORS: Record<string, string> = {
   "claude-code": "#D97757", // FORK: cc-bridge runs Claude models; reuse Anthropic orange
   google: "#16a34a",
   openai: "#6b7280",
+  // FORK 2026-07-30 (the architect): Copilot = Windows blue, distinct from OpenAI gray/green.
+  "github-copilot": "#00A4EF",
   ollama: "#ca8a04",
   meta: "#0668E1",
   mistral: "#f97316",
   deepseek: "#4f8ff7",
 };
+
+// FORK 2026-07-31 — isTranscriptOnlyModel / compactUnknownModelLabel live in
+// ./transcript-only-models.ts (imported above) so they can be unit-tested outside
+// this monolith, same reasoning as the subagent-color.ts extraction. They exist
+// because the gateway's own injected messages (provider "openclaw",
+// model "gateway-injected") were being painted as the answering model.
 
 // FORK 2026-05-30: colorForSubagent / shortSubagentId / SUBAGENT_PALETTE moved to
 // ./subagent-color.ts (imported at the top of this file) so the RECIPES panel and
@@ -1475,30 +4203,10 @@ const PROVIDER_COLORS: Record<string, string> = {
 // this they were local to app.ts and unused by the panel — which is exactly why
 // panel/thinking-row colors (provider-based) never matched the bubble colors.
 
-// API cost per MTok [input, output] by model short name
-const MODEL_COST: Record<string, [number, number]> = {
-  // Anthropic (source: platform.claude.com/docs/en/docs/about-claude/models)
-  "claude-opus-4-6": [5, 25],
-  "claude-sonnet-4-6": [3, 15],
-  "claude-haiku-4-5": [1, 5],
-  // OpenAI (source: developers.openai.com/api/docs/pricing)
-  "gpt-5.4-pro": [30, 180],
-  "gpt-5.4": [2.5, 15],
-  "gpt-5.2-pro": [21, 168],
-  "gpt-5.2": [1.75, 14],
-  "gpt-5.1": [1.25, 10],
-  "gpt-4.1": [2, 8],
-  "gpt-4o": [2.5, 10],
-  o3: [2, 8],
-  "o4-mini": [1.1, 4.4],
-  // Gemini (source: ai.google.dev/pricing)
-  "gemini-3.1-pro-preview": [2, 12],
-  "gemini-3-flash-preview": [0.5, 3],
-  "gemini-2.5-pro": [1.25, 10],
-  "gemini-2.5-flash": [0.3, 2.5],
-  "gemini-2.0-flash": [0.1, 0.4],
-  "gemini-2.0-flash-lite": [0.075, 0.3],
-};
+// FORK 2026-07-27: the MODEL_COST sticker-price table was deleted — it had gone
+// stale (no opus-5 / fable-5 / sol-terra-luna / grok) and its only consumer, the
+// right-most panel column, now renders the EEG cost stroke from EEG_COST_TABLE
+// (real €/Mtok under the architect's billing), which is the maintained source of truth.
 
 // ─── Provider Icons (14px inline SVGs) ───
 const ANTHROPIC_ICON_SVG = `<svg width="14" height="14" viewBox="0 0 24 24"><polygon points="12,1 13.5,8.3 19.8,4.2 15.7,10.5 23,12 15.7,13.5 19.8,19.8 13.5,15.7 12,23 10.5,15.7 4.2,19.8 8.3,13.5 1,12 8.3,10.5 4.2,4.2 10.5,8.3" fill="#D97757"/></svg>`;
@@ -1510,11 +4218,38 @@ const PROVIDER_ICONS: Record<string, string> = {
   "claude-code": ANTHROPIC_ICON_SVG,
   google: `<svg width="14" height="14" viewBox="0 0 48 48"><path d="M43.6 20.5H42V20H24v8h11.3C33.6 33.4 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" fill="#FFC107"/><path d="M6.3 14.7l6.6 4.8C14.5 15.9 18.9 13 24 13c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" fill="#FF3D00"/><path d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.3c-2 1.5-4.5 2.3-7.3 2.3-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z" fill="#4CAF50"/><path d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.7l6.2 5.3C37 39.4 44 34 44 24c0-1.2-.1-2.3-.4-3.5z" fill="#1976D2"/></svg>`,
   openai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22.28 9.37a5.88 5.88 0 0 0-.51-4.86 5.97 5.97 0 0 0-6.43-2.83A5.9 5.9 0 0 0 10.87 0a5.97 5.97 0 0 0-5.69 4.13 5.88 5.88 0 0 0-3.93 2.85 5.97 5.97 0 0 0 .74 6.99 5.88 5.88 0 0 0 .51 4.86 5.97 5.97 0 0 0 6.43 2.83A5.9 5.9 0 0 0 13.4 24a5.97 5.97 0 0 0 5.69-4.13 5.88 5.88 0 0 0 3.93-2.85 5.97 5.97 0 0 0-.74-6.99zM13.4 22.3a4.42 4.42 0 0 1-2.84-1.03l.14-.08 4.72-2.73a.77.77 0 0 0 .39-.67v-6.66l2 1.15a.07.07 0 0 1 .04.06v5.52a4.46 4.46 0 0 1-4.46 4.44zM3.48 18.2a4.42 4.42 0 0 1-.53-2.97l.14.08 4.72 2.73a.77.77 0 0 0 .77 0l5.76-3.33v2.31a.07.07 0 0 1-.03.06l-4.77 2.76a4.46 4.46 0 0 1-6.06-1.64zM2.2 7.87A4.42 4.42 0 0 1 4.52 5.9v5.62a.77.77 0 0 0 .39.67l5.76 3.33-2 1.15a.07.07 0 0 1-.07 0L3.83 13.9A4.46 4.46 0 0 1 2.2 7.87zm17.33 4.03l-5.76-3.33 2-1.15a.07.07 0 0 1 .07 0l4.77 2.76a4.46 4.46 0 0 1-.69 8.05v-5.66a.77.77 0 0 0-.39-.67zM21.5 9.7l-.14-.08-4.72-2.73a.77.77 0 0 0-.77 0L10.1 10.2V7.9a.07.07 0 0 1 .03-.06l4.77-2.76a4.46 4.46 0 0 1 6.6 4.62zM8.93 13.34l-2-1.15a.07.07 0 0 1-.04-.06V6.61a4.46 4.46 0 0 1 7.3-3.42l-.14.08-4.72 2.73a.77.77 0 0 0-.39.67zm1.08-2.34L12 9.77l1.99 1.15v2.3L12 14.36l-1.99-1.15z" fill="#10a37f"/></svg>`,
+  // FORK 2026-08-04 (the architect: "Copilot still has the blue logo, change it for its
+  // mostly-used colorful one"). Was the 2023 blue/purple ribbon PNG; now the
+  // current multi-colour Copilot mark as SVG — crisp at 14px, no retina twin.
+  "github-copilot": `<img src="${BASE}copilot-logo.svg" width="14" height="14" alt="Copilot" style="display:block"/>`,
   ollama: `<svg width="14" height="14" viewBox="0 0 24 24"><text x="3" y="17" font-size="14" font-weight="bold" fill="#ca8a04">O</text></svg>`,
   meta: `<svg width="14" height="14" viewBox="0 0 24 24"><path d="M4 12c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6zm8 0c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6z" stroke="#0668E1" stroke-width="2" fill="none"/></svg>`,
   mistral: `<svg width="14" height="14" viewBox="0 0 24 24"><rect x="2" y="3" width="5" height="5" fill="#f97316"/><rect x="10" y="3" width="5" height="5" fill="#f97316"/><rect x="17" y="3" width="5" height="5" fill="#f97316"/><rect x="2" y="10" width="5" height="5" fill="#f97316"/><rect x="10" y="10" width="5" height="5" fill="#f97316"/><rect x="2" y="17" width="5" height="5" fill="#f97316"/><rect x="17" y="17" width="5" height="5" fill="#f97316"/></svg>`,
   deepseek: `<svg width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" stroke="#4f8ff7" stroke-width="2" fill="none"/><path d="M8 12l3 3 5-6" stroke="#4f8ff7" stroke-width="2" fill="none"/></svg>`,
+  // FORK 2026-07-21 (the architect): Grok/xAI "planet with one ring" mark — a broken ring
+  // (gaps where the ring crosses) with a diagonal that cuts through the middle.
+  // Rendered white (like the OpenAI mark) so the black brand stays legible on the
+  // dark panel.
+  xai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18.6 8.9 A7.3 7.3 0 0 1 8.9 18.6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M5.4 15.1 A7.3 7.3 0 0 1 15.1 5.4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M3.2 20.8 L8 16 M16 8 L20.8 3.2" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>`,
 };
+PROVIDER_ICONS.grok = PROVIDER_ICONS.xai;
+// FORK 2026-07-22 (the architect): gpt-5.5/5.6 run on the `codex` / `openai-codex`
+// providers (ChatGPT-sub backends) — show the OpenAI mark before their name in
+// the models list, not an anonymous grey dot.
+PROVIDER_ICONS.codex = PROVIDER_ICONS.openai;
+PROVIDER_ICONS["openai-codex"] = PROVIDER_ICONS.openai;
+
+// FORK 2026-08-04 (the architect): every OpenRouter model reports provider "openrouter",
+// which is in no icon table — so Kimi, Qwen, GLM and DeepSeek all rendered the
+// anonymous grey dot. Resolve the vendor from the MODEL id first, and only fall
+// back to the provider-keyed table.
+function modelIcon(modelId: string, provider: string): string {
+  const svg = getModelLogoSvg(modelId);
+  if (svg) {
+    return `<span class="model-provider-icon">${svg}</span>`;
+  }
+  return providerIcon(provider);
+}
 
 function providerIcon(provider: string): string {
   if (PROVIDER_ICONS[provider]) {
@@ -1524,14 +4259,9 @@ function providerIcon(provider: string): string {
   return `<span class="model-provider-dot" style="background:${color}"></span>`;
 }
 
-function findLastIndex<T>(arr: T[], pred: (v: T) => boolean): number {
-  for (let i = arr.length - 1; i >= 0; i--) {
-    if (pred(arr[i])) {
-      return i;
-    }
-  }
-  return -1;
-}
+// FORK 2026-08-05: `findLastIndex` is gone with its only caller. It existed to locate the last
+// assistant message so persisted error bubbles could be SPLICED in front of it — the mid-array
+// insert that reordered the transcript on every reload. Client-side notes are appended now.
 
 // ─── Persisted Error Messages ───
 const ERROR_STORAGE_KEY = "tinker-errors";
@@ -1562,6 +4292,30 @@ function clearPersistedErrors(sk: string) {
   try {
     const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
     delete all[sk];
+    localStorage.setItem(ERROR_STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* ignore */
+  }
+}
+
+// FORK 2026-08-04 (auto-retry x background tabs): retire ONLY the orange auto-retry
+// countdown bubbles for a session. A turn that eventually SUCCEEDS makes its
+// "retrying in 7m..." bubble a lie, and loadChat() re-injects persisted bubbles into
+// the transcript on every open (see loadPersistedErrors above) -- so an uncleared one
+// is immortal. Deliberately NOT clearPersistedErrors(): that also drops genuine red
+// errors, which for a session the user has not opened yet are history never seen.
+function clearPersistedRetryWarnings(sk: string) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ERROR_STORAGE_KEY) || "{}");
+    const list = all[sk];
+    if (!Array.isArray(list)) return;
+    const kept = list.filter((m: unknown) => !(m as Record<string, unknown>)?._isRetryWarning);
+    if (kept.length === list.length) return;
+    if (kept.length) {
+      all[sk] = kept;
+    } else {
+      delete all[sk];
+    }
     localStorage.setItem(ERROR_STORAGE_KEY, JSON.stringify(all));
   } catch {
     /* ignore */
@@ -1610,6 +4364,40 @@ function lastUserTextFor(msgs: unknown[]): string {
   return "";
 }
 
+// --- FORK 2026-08-04: auto-retry is PER-SESSION, not per-VIEW -------------------
+// The controller below used to be reachable ONLY from the viewed-session branch of
+// onEvent and keyed off the GLOBAL `sessionKey`. It now runs for every session this
+// client hosts in a tab, which needs three things it did not before: a key that is
+// stable regardless of which form the WS event carried, a "is this the transcript on
+// screen?" test to guard every mutation of `messages`, and a way to read the last
+// user turn of a tab that is NOT on screen.
+
+/** True when `sk` is the session currently rendered in the global `messages`. */
+function retryTargetIsViewed(sk: string): boolean {
+  return !!sk && (sk === sessionKey || sessionKeyMatches(sk));
+}
+
+/** Ambient lookups for the shared retry-lifecycle rule; see retry-lifecycle.ts. */
+function retryLifecycleDeps(): RetryLifecycleDeps {
+  return {
+    viewedKey: sessionKey,
+    tabKeys: tabs.map((t) => t.sessionKey),
+    keyMatches: (evtKey, refKey) => sessionKeyMatches(evtKey, refKey),
+  };
+}
+
+/**
+ * Last real user turn for ANY hosted session: the live transcript when it is the
+ * viewed one, else the background tab's stored copy (the same source
+ * generateTabTitle() reads). Reading the global `messages` for a non-viewed session
+ * would capture ANOTHER chat's prompt and re-send it into this one.
+ */
+function lastUserTextForSession(sk: string): string {
+  if (retryTargetIsViewed(sk)) return lastUserTextFor(messages);
+  const tab = tabs.find((t) => t.sessionKey && sessionKeyMatches(sk, t.sessionKey));
+  return tab ? lastUserTextFor(tabStates.get(tab.id)?.messages ?? []) : "";
+}
+
 // Schedule (or advance) the retry for a session after a surfaced recoverable
 // error. Uses the current attempt index to pick the next ladder step (honoring a
 // provider Retry-After when larger). When the ladder is exhausted, pushes a
@@ -1643,10 +4431,14 @@ function scheduleRetry(
       _isError: true,
       _isExhausted: true,
     };
-    messages.push(exhaustedMsg);
+    // FORK 2026-08-04: this controller now runs for EVERY hosted session, so only
+    // splice into `messages` when `sk` IS the transcript on screen -- otherwise a
+    // background session's bubble lands in the wrong chat. The bubble is persisted
+    // unconditionally, so it still shows up when that tab is opened.
+    if (retryTargetIsViewed(sk)) messages.push(exhaustedMsg);
     persistErrorMsg(sk, exhaustedMsg);
     retryState.delete(sk);
-    updateChat();
+    if (retryTargetIsViewed(sk)) updateChat();
     return;
   }
   st.nextRetryAt = Date.now() + delay;
@@ -1667,10 +4459,14 @@ function scheduleRetry(
     _retryAttempt: st.attempt,
     _retryDelayMs: delay,
   };
-  messages.push(warnMsg);
+  // FORK 2026-08-04: same viewed-session guard as the exhausted branch above.
+  // `persistErrorMsg` and `startThinkingTick` stay UNCONDITIONAL on purpose -- a
+  // backgrounded session must keep climbing its ladder (the 1s tick iterates state,
+  // not the DOM), and its countdown must be there when the user returns to that tab.
+  if (retryTargetIsViewed(sk)) messages.push(warnMsg);
   persistErrorMsg(sk, warnMsg);
   startThinkingTick(); // keep the 1s tick alive to drive the countdown / fire
-  updateChat();
+  if (retryTargetIsViewed(sk)) updateChat();
 }
 
 // Fire the pending retry for a session: re-issue the captured last-user turn via
@@ -1693,15 +4489,33 @@ async function retryLastTurn(sk: string) {
     return;
   }
   st.attempt++;
+  // FORK 2026-08-28: a retry must carry the SAME pins the original turn carried. This was
+  // the only one of the three chat.send call sites that omitted them, so an auto-retried
+  // turn arrived pin-less and the gateway resolved it against whatever durable override the
+  // session happened to hold — the architect's current selection silently replaced, on a
+  // turn he never re-issued. Keyed by `sk`, NEVER the module-level `sessionKey`: the ladder
+  // fires for BACKGROUND tabs too, so reading the viewed session's pins would apply one
+  // session's model to another session's turn. Same property names and same order as send()
+  // and resendOutboxEntry — three call sites, one shape. Reads sit OUTSIDE the try on
+  // purpose: Map.get cannot throw, and the catch below must keep meaning "RPC failure".
+  const effortPin = effortPinBySession.get(sk);
+  const modelPin = modelPinBySession.get(sk);
   try {
     await req("chat.send", {
       sessionKey: sk,
       message: text,
       idempotencyKey: uuid(),
+      ...(effortPin ? { thinking: effortPin } : {}),
+      ...(modelPin ? { model: modelPin } : {}),
     });
   } catch {
-    // RPC failure issuing the retry: keep backing off rather than stalling.
-    scheduleRetry(sk, st.kind, text);
+    // RPC failure issuing the retry: keep backing off rather than stalling -- but NOT
+    // when the track was cancelled while this send was in flight (a `/clear` or a
+    // manual stop landing inside the firing window). FORK 2026-08-04: `scheduleRetry`
+    // re-creates a DELETED entry from scratch, so without this guard the cancel would
+    // be silently undone and the ladder would resurrect itself -- which would make the
+    // `/clear` fix below non-airtight.
+    if (!st.cancelled) scheduleRetry(sk, st.kind, text);
   }
 }
 
@@ -1717,9 +4531,68 @@ function cancelRetry(sk: string, pushBubble: boolean) {
       content: [{ type: "text", text: "↩︎ Auto-retry cancelled." }],
       _isWarning: true,
     };
-    messages.push(cancelMsg);
+    // FORK 2026-08-04: viewed-session guard, as in scheduleRetry above.
+    if (retryTargetIsViewed(sk)) messages.push(cancelMsg);
     persistErrorMsg(sk, cancelMsg);
-    updateChat();
+    if (retryTargetIsViewed(sk)) updateChat();
+  }
+}
+
+/**
+ * FORK 2026-08-04 -- THE single entry point for advancing a session's auto-retry
+ * ladder from a `chat` event, keyed on the EVENT's session rather than on whichever
+ * tab happens to be on screen.
+ *
+ * Before this, the two lifecycle calls (`scheduleRetry` on a surfaced recoverable
+ * error, `retryState.delete` on success) lived ~300 lines into onEvent, BELOW the
+ * non-viewed-session early return and keyed off the global `sessionKey`. Switching
+ * tabs while a rate-limited turn waited -- the normal thing to do during a 7m or 15m
+ * step -- therefore (a) killed the ladder after ONE attempt, because the next
+ * surfaced error never re-scheduled, and (b) never retired the orange countdown
+ * bubble, which loadChat() then re-injected into that transcript on every later open
+ * even though the turn had long since succeeded, while the surviving retryState entry
+ * kept the 1 Hz tick (updatePrefrontalTree + querySelectorAll) alive for the life of
+ * the page -- the tick only stops at `activeRuns.size === 0 && retryState.size === 0`.
+ *
+ * Called from BOTH sides of that gate: from the non-viewed branch (so a background
+ * session still advances) and from the viewed final/error handlers, which stay where
+ * they are on purpose so the orange bubble is pushed AFTER this turn's own final /
+ * partial bubbles have been promoted and re-sliced, not above the text it warns about.
+ *
+ * The DECISION (whose track, which way) is the pure, unit-tested rule in
+ * retry-lifecycle.ts — extracted the way queued-sends.ts was for the identical
+ * viewed-gate bug in 2026-06-08. This function is the thin binding that performs it
+ * against app.ts's live state.
+ */
+function advanceRetryLifecycle(p: RetryLifecycleEvent | undefined): void {
+  // FORK 2026-08-24: lift the final turn's own text into the decision. A `final` whose whole
+  // body is "API Error: 529 Overloaded…" is a FAILURE wearing a success's state word; judged
+  // on `state` alone it cancelled the ladder, which is why that 529 dead-ended with no orange
+  // bubble and no clock. Done here, once, rather than at each of the three call sites.
+  const withText: RetryLifecycleEvent | undefined = p
+    ? {
+        ...p,
+        finalText: assistantTextOfPayloadMessage((p as { message?: unknown }).message),
+      }
+    : p;
+  const action = retryLifecycleAction(withText, retryLifecycleDeps());
+  if (action.kind === "schedule") {
+    // Nothing to re-send -- a tab whose transcript this page has never loaded has no
+    // stored messages yet. Do NOT mint a countdown bubble we could never retire: the
+    // ladder would cancel itself on its first fire (retryLastTurn bails on empty text)
+    // and leave a persisted "retrying in 3s…" that no `final` ever clears — a fresh
+    // instance of the very immortal-bubble defect this fork removes. An entry that
+    // already exists captured its text at schedule time, so it may keep climbing.
+    const text = lastUserTextForSession(action.sessionKey);
+    if (!text && !retryState.has(action.sessionKey)) return;
+    scheduleRetry(action.sessionKey, action.retryKind, text, action.retryAfterSec);
+  } else if (action.kind === "cancel") {
+    // A successful turn ends the ladder AND retires its countdown bubbles: leaving
+    // them persisted is exactly what made the fake "retrying in 7m..." immortal.
+    // cancelRetry (not a bare retryState.delete) so a retry firing at this very
+    // instant sees `st.cancelled` and cannot re-schedule itself.
+    cancelRetry(action.sessionKey, false);
+    clearPersistedRetryWarnings(action.sessionKey);
   }
 }
 
@@ -1768,6 +4641,27 @@ type ActiveRunInfo = {
 };
 const activeRuns = new Map<string, ActiveRunInfo>();
 
+/**
+ * FORK 2026-08-16 (the architect: "when a tab is out of focus, the progress indicator should still show").
+ *
+ * Runs observed for sessions this tab is NOT viewing. `activeRuns` cannot hold them: the lifecycle
+ * admission gate returns before `activeRuns.set` for any non-viewed, non-subagent session, which is
+ * the "STRUCTURALLY BLIND" property called out on sessionHasActiveRuns below. The server row was
+ * supposed to cover that gap, and does — except `sessions[]` is only refetched at turn END, so
+ * during the turn it says idle and the tab stays dark for exactly as long as the work lasts.
+ *
+ * Fed into the SAME resolver as `activeRuns` (never consulted on its own), so run-state.ts stays
+ * the one predicate and all four surfaces keep agreeing. See background-runs.ts for the full note.
+ */
+const backgroundRuns = new Map<string, BackgroundRun>();
+
+/** The client lane in full: what this browser knows is running, in the viewed tab AND outside it.
+ *  Every surface must resolve from this, not from `activeRuns` alone — reading only `activeRuns` is
+ *  what made a background tab unable to know its own session was working. */
+function clientRunEvidence(): Iterable<ActiveRunInfo | BackgroundRun> {
+  return [...activeRuns.values(), ...backgroundRuns.values()];
+}
+
 // FORK 2026-06-25 (bug: two tabs bleed messages) — subagent session keys are minted
 // FLAT under the agent root (`agent:main:subagent:<uuid>`) with NO parent-tab encoding,
 // so chatEventIsSubagentOfView()'s agent-root match admitted a subagent into EVERY tab
@@ -1785,6 +4679,26 @@ function recordSubagentOwner(subKey: unknown, parentRunId: unknown): void {
   if (owner && owner.includes(":subagent:")) owner = subagentOwnerTab.get(owner) ?? owner;
   if (owner && !owner.includes(":subagent:")) subagentOwnerTab.set(subKey, owner);
 }
+/**
+ * FORK 2026-08-08: is this session key a TAB in this UI at all?
+ *
+ * `recordSubagentOwner` only guarantees the owner it stores is not itself a `:subagent:` key — it
+ * does NOT guarantee the owner is a tab. A fan-out dispatched through the orchestrator is minted
+ * with `requesterSessionKey = "agent:main:orchestrator"`, so the leg's owner resolves to that lane
+ * and matched no tab, making the whole fan-out invisible in every tab at once (the architect 2026-08-08:
+ * "Jarvis is doing things in parallel but the EEG does not show the traces").
+ *
+ * Deliberately does NOT require `isAttached`: a detached tab is still a tab, and treating it as one
+ * keeps the conservative answer (someone else's work) rather than risking a phantom.
+ */
+function isKnownTabKey(candidate: string): boolean {
+  if (!candidate) return false;
+  for (const t of tabs) {
+    if (typeof t.sessionKey === "string" && t.sessionKey === candidate) return true;
+  }
+  return false;
+}
+
 /** How many attached tabs share this `agent:<id>` root — used to decide whether an
  *  UNATTRIBUTED subagent may safely fall back to the loose agent-root match. */
 function attachedTabCountForRoot(agentRoot: string): number {
@@ -1856,14 +4770,39 @@ function restoreProviderErrors() {
     /* ignore */
   }
 }
-// FORK 2026-06-13 (eeg): panel sections are now 'models' (parity with the old
-// 'configured' default-collapsed) and 'eeg' (open by default — absent here).
-const collapsedModelSections = new Set<string>(["models"]);
+// FORK 2026-06-13 (eeg): panel sections are 'models' (parity with the old
+// 'configured' default-collapsed) and 'eeg' (open by default).
+// FORK 2026-07-30 (the architect): 'more-models' (the AA < 50 tail) joins them, collapsed by
+// default — it exists to keep the long tail reachable, not on screen.
+// FORK 2026-08-02 (the architect): the in-memory Set is gone — model-group collapse state now
+// persists in the unified ui-state store (panels/ui-state.ts, ids "model:<section>").
+// This map states each section's DEFAULT exactly once, used by both the render reads
+// and the click-binding write-through. A section id missing here defaults to expanded.
+// FORK 2026-08-02 (the architect, EEG-as-subtitle): 'eeg' CHANGED OWNER. It used to name the
+// thinking + model-force slider card — a historical name from back when that card WAS
+// the EEG card — while the seismograph lived in its own #eeg-panel .rpanel. Now that the
+// seismograph is a .model-group in the Models panel, the honest split is: the slider card
+// is 'thinking', the seismograph is 'eeg'. Both default to expanded, so the persisted id
+// swap ("model:eeg" now folds the seismograph, "model:thinking" the sliders) is harmless:
+// it is cosmetic collapse state, and the architect's browser storage is wiped on every clean
+// Chrome exit anyway — the worst case is one panel remembering the wrong fold, once.
+// FORK 2026-08-06 (the architect: "move the context cache panel on top of the EEG, inside MODELS"):
+// 'cache' joins them. It was a top-level .rpanel keyed by the raw id "cache-panel"; as a
+// Models subtitle its fold state moves to "model:cache". The old key simply goes unread —
+// same cosmetic-only consequence as the 2026-08-02 'eeg' owner swap above.
+const MODEL_SECTION_DEFAULT_COLLAPSED: Record<string, boolean> = {
+  models: true,
+  "more-models": true,
+  thinking: false,
+  thalamus: false,
+  cache: false,
+  eeg: false,
+};
 // FORK 2026-06-13 (eeg): one seismograph store per session plus a per-session
 // end-of-turn counter feeding the turn markers. Keyed by the event's FULL
 // session key so tab switches repaint the right session's paper.
 const eegStores = new Map<string, EegTraceStore>();
-// FORK 2026-06-25 (the owner): ephemeral utility sessions (`temp:title-suggest` et al.)
+// FORK 2026-06-25 (the architect): ephemeral utility sessions (`temp:title-suggest` et al.)
 // are internal housekeeping — a sonnet call to NAME a tab, not cognitive work. They
 // were leaking into the EEG "all" overlay as dim, thin, near-white sonnet threads
 // bouncing auto↔low, which "does not make sense at all". Never plot them.
@@ -1871,7 +4810,7 @@ function isEphemeralEegSession(sk: unknown): boolean {
   return typeof sk === "string" && sk.startsWith("temp:");
 }
 const eegTurnCounters = new Map<string, number>();
-// FORK 2026-06-22 (the owner): true while the in-flight turn's blue boundary was already
+// FORK 2026-06-22 (the architect): true while the in-flight turn's blue boundary was already
 // drawn at SEND time — so the lifecycle end-handler skips adding a duplicate line.
 const eegBoundaryAtSend = new Map<string, boolean>();
 // FORK 2026-06-13 (eeg): billed INPUT tokens accumulated per runId across the
@@ -1880,7 +4819,7 @@ const eegBoundaryAtSend = new Map<string, boolean>();
 const eegInputByRun = new Map<string, number>();
 // FORK 2026-06-13 (eeg): persist the trace to localStorage so a HARD REFRESH (which
 // wipes the in-memory store) restores the session's activity instead of erasing it
-// (the owner 2026-06-13). Keyed per session; capped so storage stays bounded.
+// (the architect 2026-06-13). Keyed per session; capped so storage stays bounded.
 const EEG_STORAGE_PREFIX = "tinker-eeg:";
 const EEG_PERSIST_CAP = 2000;
 function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
@@ -1891,7 +4830,7 @@ function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
     }
     const snap = JSON.parse(raw) as { samples?: EegSample[]; ends?: EegTurnEnd[] };
     if (Array.isArray(snap.samples)) {
-      // FORK 2026-06-23 (the owner): drop any persisted subagent BRANCH samples on load too, so an
+      // FORK 2026-06-23 (the architect): drop any persisted subagent BRANCH samples on load too, so an
       // OLD snapshot (written before branches stopped being persisted) can't restore a stale
       // "banana" arch. Branches are live-only; the main call-line is what persists.
       store.backfill(
@@ -1909,7 +4848,7 @@ function saveEegStore(sk: string): void {
     localStorage.setItem(
       EEG_STORAGE_PREFIX + sk,
       JSON.stringify({
-        // FORK 2026-06-23 (the owner "weird max→high banana that lingers"): do NOT persist
+        // FORK 2026-06-23 (the architect "weird max→high banana that lingers"): do NOT persist
         // subagent BRANCH samples. They are LIVE activity (a fan-out in progress), not durable
         // history — persisting them froze an old sub-call into a stale max→high arch ("banana")
         // that was restored on every reload long after the fan-out finished. The main call-line
@@ -1964,6 +4903,43 @@ function saveEffortPin(key: string, lvl: string): void {
 // `model` param. Absent = Auto (router/allocator picks the model). Mirrors effortPinBySession.
 const modelPinBySession = new Map<string, string>();
 const MODEL_PIN_LS_PREFIX = "tinker-model-pin:";
+/** Sessions where Auto was pressed and the sessions.patch{model:null} has not yet come
+ *  back in a sessions.list row. Without this the click handler's own updateBudgetPanel()
+ *  four lines later re-lights the pin it just cleared. Self-retiring. */
+const autoAssertedSessions = new Set<string>();
+
+/**
+ * The active tab's session key, minting one for an unattached tab if needed.
+ *
+ * FORK 2026-08-04 (the architect: "after selecting a model and asking a question, the
+ * model slider goes back to auto"). A tab that has never sent carries
+ * `sessionKey === ""`, and BOTH slider `change` handlers were wrapped in
+ * `if (sessionKey) { ... }` — so on a fresh tab the pin was silently dropped:
+ * the thumb moved and the stop highlighted (that is pure DOM), but nothing was
+ * written to `modelPinBySession` or localStorage. The first `chat.send` then
+ * minted `tinker:<ts>`, repainted the panel, looked the pin up under the NEW key,
+ * missed, and rendered stop 0 — "Auto". Select, ask, reverts.
+ *
+ * The key is minted the same way the send path mints it, so the pin lands under
+ * exactly the key the imminent send will use. Returns "" only when there is no
+ * active tab at all, which is the one case a caller must still skip.
+ */
+function ensureActiveSessionKey(): string {
+  if (sessionKey) {
+    return sessionKey;
+  }
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  if (!activeTab) {
+    return "";
+  }
+  const newKey = `tinker:${Date.now().toString(36)}`;
+  sessionKey = newKey;
+  activeTab.sessionKey = newKey;
+  activeTab.isAttached = true;
+  saveTabs();
+  renderTabs();
+  return newKey;
+}
 function loadModelPin(key: string): void {
   if (!key) return;
   try {
@@ -1983,7 +4959,7 @@ function saveModelPin(key: string, id: string): void {
   }
 }
 // FORK 2026-06-13 (eeg): re-render the seismograph SVG at the live pixel width
-// of its host so it fills the whole panel (the owner 2026-06-13). Called after every
+// of its host so it fills the whole panel (the architect 2026-06-13). Called after every
 // panel render and on window resize.
 let eegResizeBound = false;
 // FORK 2026-06-13 (eeg): vertical SCALE for the seismograph length axis, driven
@@ -2008,11 +4984,24 @@ function sweepDeadEegBranches(): void {
     return now - last <= STALE_MS;
   };
   for (const store of eegStores.values()) {
-    const closed = store.closeStaleRunning(isLive, now);
-    for (const runId of closed) {
-      activeRuns.delete(runId);
-      rememberTerminated(runId); // a late effort frame must not resurrect it
-    }
+    // FORK 2026-08-17 — closes the EEG BRANCH (a drawing) and nothing else. It used to also do
+    //     activeRuns.delete(runId); rememberTerminated(runId);
+    // which made this the stale-run watchdog done-signals.md R2a permanently forbids, hiding on a
+    // PAINT path: activityTick -> repaintActivitySurfaces -> updateBudgetPanel -> renderEegPanel
+    // -> fillEegPaper -> here. Two things made it dangerous rather than merely wrong:
+    //
+    //   1. `rememberTerminated` BLACKLISTS the runId, and the restore path is gated on it
+    //      (`if (!terminatedRuns.has(p.runId)) activeRuns.set(...)`). So a run that simply went
+    //      quiet for 90s — a long tool call is exactly that — was deleted AND made
+    //      unresurrectable. Its indicator died mid-turn and could never come back. That is a
+    //      thinking-indicator disappearance with a UI timer as its sole cause, which is the
+    //      failure R2a exists to make impossible.
+    //   2. On 2026-08-17 the clock went 5s -> 500ms, so this ran 10x more often.
+    //
+    // Nothing renders differently for dropping it: the SAME 90s bound is applied at READ time by
+    // clientRunIsFresh() inside the one predicate (run-state.ts), so a stale entry was already
+    // invisible to every surface. Deleting it only destroyed the evidence needed to recover.
+    store.closeStaleRunning(isLive, now);
   }
 }
 function fillEegPaper(): void {
@@ -2037,10 +5026,21 @@ function fillEegPaper(): void {
   paper.scrollTop = ratio * (paper.scrollHeight || 1);
 }
 
-// FORK 2026-06-19 (bible §5.8h): the EEG is now its OWN side panel (#eeg-panel,
-// peer to Models) — renderEegPanel() paints the seismograph into it; bindings are
-// delegated on #eeg-panel-body ONCE. updateBudgetPanel() calls this at its tail so
-// the existing repaint triggers (effort events, tab switch) still drive the EEG.
+// FORK 2026-06-19 (bible §5.8h): renderEegPanel() paints the seismograph into
+// #eeg-panel-body; the wheel-zoom + marker-click bindings are delegated on that node
+// ONCE. updateBudgetPanel() calls this at its tail so the existing repaint triggers
+// (effort events, tab switch) still drive the EEG.
+// FORK 2026-08-02 (the architect: "make the EEG a subtitle of the MODELS panel"): the host moved
+// AGAIN — #eeg-panel-body is no longer inside a standalone #eeg-panel .rpanel, it is the
+// body of a .model-group[data-section="eeg"] that sits INSIDE #models-panel, right after
+// the #budget-panel div. What did NOT move, and must not, is the property this latch
+// silently depends on: #eeg-panel-body is STATIC markup — built once at boot and never
+// rewritten. updateBudgetPanel() does `el.innerHTML = html` on #budget-panel on every
+// repaint. Relocate the EEG markup into that generated string (it LOOKS tidier, since the
+// other model-groups live there) and the bound node is destroyed and recreated on every
+// repaint while eegPanelBound stays `true` — wheel-zoom and marker-click die permanently,
+// with no error in the console. #eeg-scope-toggle is bound by id ONCE at boot and has the
+// exact same fragility. Bind-once latch + re-rendered host = silent dead controls.
 let eegPanelBound = false;
 function renderEegPanel(): void {
   const body = document.getElementById("eeg-panel-body");
@@ -2134,7 +5134,7 @@ function bindEegPanelOnce(): void {
       node.classList.remove("eeg-hl");
     }
   };
-  // FORK 2026-06-22 (the owner): a styled hover overlay showing the prompt text (the native
+  // FORK 2026-06-22 (the architect): a styled hover overlay showing the prompt text (the native
   // SVG <title> is slow + unstyleable). One lazily-created floating div, positioned next
   // to the cursor, fed from the boundary's data-eeg-prompt-text.
   let eegOverlay: HTMLElement | null = null;
@@ -2462,19 +5462,79 @@ function scheduleUnconfirmedPrune() {
 // Restore on load
 restoreActiveRuns();
 
-// FORK 2026-06-14: model ids appear BARE ("claude-opus-4-8") from cc-bridge effort
-// events and provider-PREFIXED ("claude-code/claude-opus-4-8") from the catalog;
-// compare on the bare tail everywhere the two meet.
-const bareModelTail = (m?: string): string | undefined =>
-  m && m.includes("/") ? m.split("/").slice(1).join("/") : m;
+// FORK 2026-07-29: `bareModelTail` now lives in ./run-state.ts (imported above), alongside the
+// liveness resolver and the model-count derivation that both depend on it — one owner for the
+// bare-vs-prefixed rule. It used to be defined here and re-implemented there.
+
+// FORK 2026-08-04 (the architect: a model row lights up on a provider that never ran). THE
+// QUALIFIER. A bare tail is NOT a model identity — `openai-codex/gpt-5.5`,
+// `github-copilot/gpt-5.5` and `openai/gpt-5.5` are three different models that share one,
+// and so are `google/gemini-3.1-pro-preview` and `github-copilot/gemini-3.1-pro-preview`.
+// Comparing tails erased the only field that told them apart, so ONE run lit BOTH rows.
+//
+// The model id's own prefix is the trustworthy source: it is the same id space as the
+// catalog key. `ActiveRunInfo.provider` is the fallback for events that send a BARE model
+// (cc-bridge effort frames do) — and it speaks the same words, because the gateway composes
+// the pair back as `${modelProvider}/${model}` (src/tui/tui.ts). But that field is seeded
+// with `providerOf(model)` at lifecycle:start, and `providerOf` on a BARE id returns the id
+// ITSELF — a provider-shaped lie that would make a legitimate row go dark. So it is believed
+// only when it is not simply the tail echoed back.
+//
+// Note the segment is `split("/")[0]`, never `split("/").pop()`: three-segment ids
+// (`openrouter/moonshotai/kimi-k3`) have provider `openrouter` and tail `moonshotai/kimi-k3`,
+// which is exactly what `bareModelTail` returns.
+function panelProviderSegment(model?: string | null, provider?: string | null): string | undefined {
+  if (typeof model === "string" && model.includes("/")) {
+    return model.split("/")[0] || undefined;
+  }
+  const tail = bareModelTail(model);
+  if (typeof provider === "string" && provider.length > 0 && provider !== tail) {
+    return provider;
+  }
+  return undefined;
+}
+
+/**
+ * Does a run on `runModel` (qualified by `runProvider`) belong to catalog row `catalogId`?
+ *
+ * The ONE membership rule for every lit state in this panel, mirroring the qualified matching
+ * in ./run-state.ts: tails must match, and providers must match too WHEN BOTH SIDES CARRY ONE.
+ * A provider-less reference falls back to tail-only — the event told us nothing to disqualify
+ * it with, and refusing to match would black out every provider-less event. That residual case
+ * is irreducible, not ignored: it narrows the moment any provider is known.
+ *
+ * This predicate is a strict SUBSET of the bare-tail comparison it replaces, so it can only
+ * ever remove a light, never add one. Do not grow a second convention next to it — three
+ * surfaces (`.model-live`, `.model-recent`, the auth-key split) must answer the same question.
+ */
+function modelMatchesCatalogRow(
+  runModel: string | null | undefined,
+  runProvider: string | null | undefined,
+  catalogId: string,
+): boolean {
+  const tail = bareModelTail(catalogId);
+  if (!tail || bareModelTail(runModel) !== tail) {
+    return false;
+  }
+  const runSegment = panelProviderSegment(runModel, runProvider);
+  const rowSegment = panelProviderSegment(catalogId);
+  return !runSegment || !rowSegment || runSegment === rowSegment;
+}
 
 // FORK 2026-06-14 (bug #1): the model of the most recent live run, captured WHILE
 // live in updateBudgetPanel, so the collapsed MODELS section keeps showing the
 // last model that computed AFTER it finishes. Module-scoped; only a newer live
 // run overwrites it.
+// FORK 2026-08-04: the PROVIDER is now captured in lockstep. `.model-recent` outlives its run
+// by design, and base.css hides every non-lit `.model-row` inside a collapsed group — so with
+// both model sections default-collapsed, a falsely-recent twin in MORE MODELS was in practice
+// the ONLY row on screen. A pin that outlives its run must carry the whole identity.
 let lastComputedModel: string | null = null;
+let lastComputedProvider: string | null = null;
 function rowIsRecentModel(modelId: string): boolean {
-  return !!lastComputedModel && bareModelTail(lastComputedModel) === bareModelTail(modelId);
+  return (
+    !!lastComputedModel && modelMatchesCatalogRow(lastComputedModel, lastComputedProvider, modelId)
+  );
 }
 
 function getAuthKeyCounts(forModel?: string): Map<string, number> {
@@ -2483,7 +5543,13 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
     // Compare on the bare tail (cc-bridge effort events send the bare id while
     // forModel is the prefixed catalog key); key the count under the prefixed
     // forModel so the counts.get(modelId) fallback (renderAuthKeyRows) lands.
-    if (forModel && bareModelTail(info.model) !== bareModelTail(forModel)) {
+    //
+    // FORK 2026-08-04: the tail ALONE let a run leak onto its cross-provider twin. With no
+    // authProfileId on the event the count is keyed under `forModel`, so a bare-tail match
+    // wrote the phantom straight into the TWIN's bucket, where the count chain in
+    // renderAuthKeyRows then resurrected it. Same qualifier as `rowIsRecentModel` — the
+    // client lane and the recent pin must not disagree about what "this model" means.
+    if (forModel && !modelMatchesCatalogRow(info.model, info.provider, forModel)) {
       continue;
     }
     const key = info.authProfileId || forModel || info.model;
@@ -2493,13 +5559,91 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
 }
 
 // FORK: Check if a session has active LLM runs (for session-live glow)
-function sessionHasActiveRuns(sessionKey: string): { live: boolean; provider?: string } {
-  for (const info of activeRuns.values()) {
-    if (info.sessionKey && sessionKeyMatches(info.sessionKey, sessionKey)) {
-      return { live: true, provider: info.provider };
+/**
+ * Is this session running right now?
+ *
+ * FORK 2026-07-28 (the architect: "check the session active indicator works correctly") — two defects,
+ * both fixed by preferring the SERVER's answer over our own.
+ *
+ * 1. STRUCTURALLY BLIND. This scanned only `activeRuns`, and every write into that map is
+ *    viewed-gated (the lifecycle admission gate hard-returns unless the key matches the viewed
+ *    session or contains ":subagent:"). So a genuinely running cron, WhatsApp or other-tab session
+ *    could NEVER glow — the indicator could only ever light the row you were already looking at.
+ * 2. STUCK-ON IN TWO CLICKS. Send in tab A, switch to B before the turn ends: A's `chat.final` and
+ *    A's `lifecycle:end` are BOTH dropped by viewed-session guards that sit above the
+ *    `activeRuns.delete`, and nothing sweeps the map. A's row then shimmers until page reload.
+ *
+ * The gateway already computes this authoritatively and broadcasts it per session row
+ * (`status: SessionRunStatus` and `hasActiveSubagentRun`, src/gateway/session-utils.types.ts:83-85,
+ * set in session-utils.ts and re-broadcast by server-session-events.ts) — and the UI read NEITHER.
+ * That is the "one concept, four derivations" trap (design principle #18): the server's value is
+ * the single owner, so use it, and keep the client map only as a fallback for rows the server has
+ * not described yet.
+ */
+function sessionHasActiveRuns(
+  sessionKey: string,
+  // `startedAt` and `run` are load-bearing: `run` is THE RUN SET and decides on its own when
+  // present; `startedAt` only matters on the legacy path. Do not narrow either away at a call site.
+  row?: SessionRowForLiveness,
+  // `model` is carried through so the server-fallback indicator can NAME the model instead of
+  // rendering a bare "working" — the resolver already resolves it from the row.
+): { live: boolean; provider?: string; model?: string } {
+  // FORK 2026-07-29 — this is now a thin adapter over the ONE resolver in ./run-state.ts.
+  // It used to carry its own precedence rule, and crucially its "no usable status" branch trusted
+  // `activeRuns` unconditionally: with 61 of 315 rows carrying no status at all, one orphaned
+  // entry lit this row (and the tab, and the model count) forever while the chat correctly showed
+  // nothing. The resolver applies the freshness bound that branch was missing.
+  return resolveSessionRunState({
+    sessionKey,
+    row: forLiveness(row),
+    // FORK 2026-08-16 — the client lane is `activeRuns` PLUS the background runs this tab is not
+    // viewing. With `activeRuns` alone this call was structurally incapable of returning live for
+    // any tab other than the one on screen (see #1 in the note above), which is the whole reason
+    // the server row was made the owner — and the server row is stale for the length of the turn.
+    runs: clientRunEvidence(),
+    matches: (runKey, refKey) => sessionKeyMatches(runKey, refKey),
+    now: Date.now(),
+    rowsFetchedAt: sessionsFetchedAt,
+    endedAt: lastEndedAtFor(sessionKey),
+  });
+}
+
+/** The client's own "this session ended" stamp, tolerant of the canonical/unprefixed key drift
+ *  (the store key is `agent:main:tinker:abc` while a tab may carry `tinker:abc`). */
+function lastEndedAtFor(key: string): number | undefined {
+  const exact = sessionEndedAt.get(key);
+  if (typeof exact === "number") {
+    return exact;
+  }
+  let best: number | undefined;
+  for (const [k, t] of sessionEndedAt) {
+    if (sessionKeyMatches(k, key) && (best === undefined || t > best)) {
+      best = t;
     }
   }
-  return { live: false };
+  return best;
+}
+
+/** Every surface's entry point into the resolver, so none of them re-derives the inputs.
+ *  `sessions` is the server lane, `activeRuns` the client lane, `sessionKeyMatches` the one
+ *  membership predicate. */
+function liveModelCounts(): Map<string, number> {
+  return liveRunCountsByModel({
+    rows: Array.isArray(sessions)
+      ? ((sessions as SessionRowForLiveness[]).map((r) => forLiveness(r)) as Parameters<
+          typeof liveRunCountsByModel
+        >[0]["rows"])
+      : [],
+    // FORK 2026-08-16 — same widened client lane as sessionHasActiveRuns, so the models-panel
+    // count cannot disagree with the tab it is counting. `liveRunCountsByModel` de-duplicates
+    // against the rows it has already seen, so a background run that also has a row is not
+    // double-counted.
+    runs: clientRunEvidence(),
+    matches: (runKey, refKey) => sessionKeyMatches(runKey, refKey),
+    now: Date.now(),
+    rowsFetchedAt: sessionsFetchedAt,
+    endedAt: sessionEndedAt,
+  });
 }
 
 let modelConfigData: unknown = null;
@@ -2827,19 +5971,14 @@ function updateRecipeProgress(data: unknown) {
   document.head.appendChild(rpStyle);
 }
 
-// FORK 2026-06-06 — u2-tab-naming: subtle "renaming in progress" shimmer. While an auto-name's
-// async LLM call is running we keep the tab's CURRENT title (icon + words) visible and gently
-// pulse it, rather than swapping in a placeholder. The keyframe lives here (injected from JS, no
-// separate CSS file) and is toggled via the .tab-renaming class on the tab element.
-{
-  const tnStyle = document.createElement("style");
-  tnStyle.id = "tab-renaming-styles";
-  tnStyle.textContent = `
-    @keyframes tab-rename-pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
-    .tab.tab-renaming .tab-title { animation: tab-rename-pulse 1.1s ease-in-out infinite; }
-  `;
-  document.head.appendChild(tnStyle);
-}
+// FORK 2026-06-06 — u2-tab-naming: while an auto-name's async LLM call is running we keep the
+// tab's CURRENT title (icon + words) visible and mark it, rather than swapping in a placeholder.
+// Still toggled via the .tab-renaming class on the tab element (see renderTabs).
+//
+// FORK 2026-07-29: the rule used to be INJECTED FROM HERE as a <style> appended to <head>, which
+// made it win over base.css by load order. It now lives in base.css next to .tab-thinking, so the
+// two tab-title states are written side by side and can be kept visually distinct on purpose.
+// Injecting it here again would silently override that.
 
 // FORK 2026-06-06 — u2-tab-naming: tab-icon helpers (relevance + uniqueness).
 // Match a single leading emoji (the convention is "<emoji> <words>" for every named tab).
@@ -2920,13 +6059,133 @@ function uuid() {
   return crypto.randomUUID();
 }
 
+// FORK 2026-08-25 (the architect: "it seems to not want to connect" after a hard refresh —
+// again fixed only by closing and reopening the browser; the same signature as the
+// 2026-08-12 incident noted below the close handler).
+//
+// The 2026-08-12 fix covers a socket that CLOSED while the tab was hidden. It does not
+// cover a socket that never finishes its handshake, and that is the case that wedges the
+// tab permanently. A `WebSocket` stuck in CONNECTING fires neither `open` nor `close`, so:
+//
+//   - the close handler's `setTimeout(gwConnect, 2000)` ladder never arms (no close), and
+//   - the guard below treats CONNECTING as "a connect is already in progress", so the
+//     visibilitychange hook and the `online` hook both return early, forever.
+//
+// Every recovery path funnels through `gwConnect`, so ONE stalled handshake disables all
+// of them at once and only killing the renderer clears it. Measured during this incident:
+// the gateway logged ZERO handshakes from the browser for 25 minutes — it logs one line
+// per successful connect, and a probe from the same host completed a full boot in 818ms —
+// while a connect that FAILED would have retried every 2s and left hundreds of lines.
+// Silence, not failure, is the fingerprint of this bug.
+//
+// The deadline covers the whole path to usable, not just the TCP upgrade: a socket can
+// reach OPEN and still stall waiting for `connect.challenge`, which leaves the page just
+// as dead. `close()` on a CONNECTING socket aborts it and fires `close`, so recovery hands
+// straight back to the 2s ladder that already exists.
+const GW_CONNECT_TIMEOUT_MS = 10_000;
+
+// FORK 2026-08-28 (the architect: "I never had to reload the tabs or restart the browser before,
+// and now it seems like I have to do it a few times a day"). ONE WATCHDOG PER DIAL — never one
+// module global.
+//
+// `connectWatchdog` was a single module-level handle, and the close handler cleared it
+// UNCONDITIONALLY on the stated reasoning that "this dial is over either way". Both halves of that
+// are true only while there is exactly one socket — and the whole reason `gwConnect` had to be made
+// idempotent is that there can be two: a STALE dial A whose `close` fires AFTER `gwConnect` has
+// already opened dial B. A's close then disarmed B's watchdog. B stalled in CONNECTING, fired
+// neither `open` nor `close`, and the guard at the top of gwConnect — which treats CONNECTING as "a
+// connect is already in progress" — held forever. That is exactly the wedge the header above says
+// this watchdog exists to kill, and exactly what gwConnect's own comment warns about: the guard is
+// "safe to keep treating CONNECTING as in progress ONLY because the watchdog armed below bounds how
+// long that state can last". A shared handle removed the bound and restored the deadlock.
+//
+// Keyed BY THE SOCKET, so a dial can only ever disarm its own timer. WeakMap: the entry dies with
+// the socket, so a torn-down dial cannot leak a handle.
+const connectWatchdogs = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
+
+/** Arm the handshake deadline for ONE dial. */
+function armConnectWatchdog(dialed: WebSocket): void {
+  const timer = setTimeout(() => {
+    connectWatchdogs.delete(dialed);
+    // `connected` flips only once the connect frame has been answered, so this catches
+    // both a handshake that never opened and one that opened and then went quiet.
+    if (connected || ws !== dialed) {
+      return;
+    }
+    console.warn(
+      `[gw] handshake did not complete within ${GW_CONNECT_TIMEOUT_MS}ms (readyState=${dialed.readyState}) — aborting so the reconnect ladder can retry`,
+    );
+    try {
+      dialed.close();
+    } catch {
+      /* already gone; the close handler still runs the ladder */
+    }
+  }, GW_CONNECT_TIMEOUT_MS);
+  connectWatchdogs.set(dialed, timer);
+}
+
+/** Disarm ONE dial's handshake deadline. Never touches another dial's — that was the bug. */
+function clearConnectWatchdogFor(sock: WebSocket | null): void {
+  if (!sock) {
+    return;
+  }
+  const timer = connectWatchdogs.get(sock);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    connectWatchdogs.delete(sock);
+  }
+}
+
 function gwConnect() {
+  // Idempotent: the reconnect ladder is now driven from three places (the close
+  // handler's timer, returning to the tab, and the network coming back), and two of
+  // them can fire in the same tick. Without this guard that leaks a second socket
+  // whose own close handler schedules yet another reconnect.
+  //
+  // Safe to keep treating CONNECTING as "in progress" ONLY because the watchdog armed
+  // below bounds how long that state can last. Without it this guard is the deadlock.
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) {
+    return;
+  }
   ws = new WebSocket(GW_WS);
+  const dialed = ws;
+  armConnectWatchdog(dialed);
   ws.addEventListener("message", (ev) => onFrame(JSON.parse(ev.data)));
   ws.addEventListener("close", () => {
+    // FORK 2026-08-28 — A STALE DIAL MUST NOT RUN THIS LADDER. Everything below rewrites LIVE,
+    // GLOBAL state: it flips `connected`, rejects every entry in `pending`, wipes `activeRuns`,
+    // blanks the turn's phase trail and schedules another `gwConnect`. All of that is correct for
+    // the CURRENT socket and destructive for any other. `gwConnect` re-dials as soon as `ws` is
+    // merely CLOSING, so a socket whose `close` event is still queued can land AFTER its successor
+    // is already connected — and then it tore down the successor's turn. Identity check FIRST,
+    // before any mutation.
+    //
+    // The one thing this early return gives up is the eager rejection of `pending` for a stale
+    // dial: those orphaned requests now wait out REQ_TIMEOUT_MS (60s) instead of rejecting at
+    // once. That guard exists for exactly this shape and is bounded; rejecting the LIVE socket's
+    // in-flight requests — which is what the old code did — was not.
+    if (ws !== dialed) {
+      clearConnectWatchdogFor(dialed);
+      return;
+    }
     connected = false;
+    clearConnectWatchdogFor(dialed); // ONLY this dial's timer — see armConnectWatchdog
+    stopActivityClock(); // STAGE 1: no repaint while disconnected; restarted on hello-ok
+    // FORK 2026-07-21 — reject every in-flight req() on disconnect: response frames for
+    // the old connection can never arrive, so an orphaned await strands its caller's
+    // finally/cleanup (e.g. titleInFlight entries never cleared → tab auto-rename
+    // permanently blocked after a gateway restart mid-title). Same "disconnected"
+    // value req() rejects with when sending while closed, so callers already handle it.
+    for (const p of pending.values()) p.reject("disconnected");
+    pending.clear();
     sending = false;
-    streamMsgIdx = -1;
+    // Discarded WITHOUT a row: the window did not finish, it was cut off. A duration for a
+    // stage that never completed would read as a measurement of that stage, which it is not.
+    preparingSince = null;
+    pendingSince = null;
+    turnPhase = null; // the socket that would have narrated this turn is gone
+    turnPhaseTrail = [];
+    streamMsgUid = null;
     lastDeltaLen = 0;
     lastDeltaAt = 0;
     streamRunId = null;
@@ -2942,6 +6201,63 @@ function gwConnect() {
     setTimeout(gwConnect, 2000);
   });
 }
+
+// FORK 2026-08-12 (the architect: "the ui does not connect" — fixed only by restarting Chrome).
+//
+// The reconnect ladder above was a lone `setTimeout`, and a background tab is exactly
+// where that stops being reliable: Chrome throttles hidden-page timers to once a
+// MINUTE after 5 minutes hidden, and a frozen or discarded tab does not run them at
+// all. Measured during the incident: the tab held ZERO sockets — not to the gateway
+// on :18789 and not even to vite's HMR on :18790 — while Chrome kept four healthy
+// connections to Google. The page had simply stopped executing; it painted its last
+// frame reading "Disconnected" forever, and no server-side fix could reach it.
+//
+// So give it the one event Chrome guarantees when the user comes back: reconnect on
+// becoming visible, and on the network returning. `gwConnect` is idempotent now, so a
+// kick that races the pending timer is a no-op. This does NOT rescue a fully frozen
+// renderer (nothing in-page can — that still needs a reload), but it does close the
+// far commoner case: a tab that was merely backgrounded while the socket dropped.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !connected) {
+    gwConnect();
+  }
+});
+window.addEventListener("online", () => {
+  if (!connected) {
+    gwConnect();
+  }
+});
+
+// FORK 2026-08-16 — outbox backstop. The reconnect hook above is the fast path, but it only fires
+// if a `close` was actually observed; a frame handed to an OPEN-but-dying socket is dropped by the
+// browser with no error and no close in time, and a page that loads while the gateway is still down
+// gets no hello at all. This slow tick guarantees that any prompt the gateway cannot be shown to
+// have received is retried for as long as the tab is open. It is cheap: `dueForReplay` returns
+// nothing at all unless something is genuinely unconfirmed, which on a healthy day is never.
+setInterval(() => void flushOutbox("tick"), 20_000);
+
+// FORK 2026-08-16 — and SHOW them. `reinjectOutboxBubbles` otherwise only runs inside loadChat,
+// which needs a live gateway — so a prompt rescued from disk after a reload stayed invisible for
+// as long as the gateway was down. That is the reported symptom ("it does not show in the UI
+// history") reproduced by the very code meant to cure it: recovered, but not on screen.
+// Resolves the tab's key from disk when the connect handler has not run yet, for the same reason.
+function ensureOutboxBubblesVisible(): void {
+  try {
+    const key = sessionKey || sessionKeyFromStoredTabs(activeTabId);
+    if (!key) {
+      return;
+    }
+    const before = messages.length;
+    reinjectOutboxBubbles(key);
+    if (messages.length !== before) {
+      updateChat();
+    }
+  } catch {
+    /* a repaint must never break the page */
+  }
+}
+setTimeout(ensureOutboxBubblesVisible, 800);
+setInterval(ensureOutboxBubblesVisible, 5_000);
 
 // FORK 2026-06-07 — AMYGDALA live panel: stream gate decisions into the right rail
 // (the learned-intuition plugin broadcasts one `amygdala-decision` per tool call).
@@ -3062,7 +6378,28 @@ function onFrame(f: unknown) {
       })
         .then((hello: unknown) => {
           connected = true;
+          // The handshake landed — stop THIS dial's abort timer, and no other. `ws` is provably
+          // the dial that answered: `req()` sends on the module-level socket and rejects unless it
+          // is OPEN, and `gwConnect` refuses to re-dial while a socket is CONNECTING or OPEN, so
+          // nothing can have reassigned `ws` between the challenge and this response.
+          clearConnectWatchdogFor(ws);
+          releaseConnectedWaiters(); // wake every boot path that was waiting on the handshake
+          startActivityClock(); // THE ONE CLOCK: every activity surface ticks from here
+          // FORK 2026-08-24 — SUBSCRIBE TO THE SERVER LANE. Without this the gateway never sends
+          // `sessions.changed`, and `sessions[]` stays frozen for the length of every turn (its
+          // only writer, loadSessions(), does not run during one). Re-issued on every reconnect
+          // because the subscription lives on the connection, not on the session. Failure is
+          // non-fatal: the pre-2026-08-24 client-lane paths still run, they are just lossy.
+          void req("sessions.subscribe", {}).catch(() => {
+            /* older gateway, or refused: fall back to the client lane alone */
+          });
           void fetchAmygdalaAll(); // seed persisted Amygdala feed on connect
+          // FORK 2026-08-16 — the gateway is back, so replay anything it never provably received.
+          // This is the exact moment the reported bug used to bite: a restart drops the socket,
+          // every in-flight chat.send is rejected, and the prompt died there. Now the reconnect
+          // that follows the rebuild is what delivers it. Deferred past this handler so the tab
+          // restore below has run and the replayed turn lands in a fully initialised client.
+          setTimeout(() => void flushOutbox("reconnect"), 1500);
           const defs = hello?.snapshot?.sessionDefaults;
           if (defs?.mainSessionKey) {
             sessionKey = defs.mainSessionKey;
@@ -3090,6 +6427,12 @@ function onFrame(f: unknown) {
           // localStorage; force-rebind here so the next sessions.list
           // surfaces a single canonical main row and clicking it
           // focuses tab-main correctly.
+          // FORK 2026-07-28: capture the rotation BEFORE the rebind mutates sessionKey — the
+          // cache-reset decision below needs to know it happened, and after this block the two
+          // values are equal by construction, so testing them later always reads "no rotation".
+          const mainSessionRotated = Boolean(
+            restoredMain && defs?.mainSessionKey && restoredMain.sessionKey !== defs.mainSessionKey,
+          );
           if (
             restoredMain &&
             defs?.mainSessionKey &&
@@ -3101,8 +6444,21 @@ function onFrame(f: unknown) {
           const mainTab = restoredMain ?? defaultMainTab;
           const others = restored.filter((t) => t.id !== "tab-main");
           tabs = [mainTab, ...others];
-          // FORK: Initialize TabState for main and all restored tabs
-          tabStates.set(mainTab.id, freshTabState());
+          // FORK: Initialize TabState for main and all restored tabs.
+          //
+          // FORK 2026-07-28 (the architect: "the history often appears blank for a few seconds") — this
+          // line used to be an UNCONDITIONAL `tabStates.set(mainTab.id, freshTabState())`, while
+          // every OTHER tab below is guarded by `if (!tabStates.has(...))`. This function runs on
+          // every ws connect AND reconnect (61 connects in one day, in storms of 5-7 per minute),
+          // so tab-main was the only tab whose cached transcript was destroyed each time — and it
+          // is also excluded from the background hydrate sweep below (`others` drops tab-main).
+          // Net effect: after any reconnect where Main was not the focused tab, switching to Main
+          // guaranteed a cold fetch against the slowest session in the workspace, which is exactly
+          // the blank the architect sees. Preserve the cache; only reset when the session genuinely
+          // rotated, which the rebind check 10 lines above already detects.
+          if (!tabStates.has(mainTab.id) || mainSessionRotated) {
+            tabStates.set(mainTab.id, freshTabState());
+          }
           for (const t of others) {
             if (!tabStates.has(t.id)) {
               tabStates.set(t.id, freshTabState());
@@ -3144,21 +6500,64 @@ function onFrame(f: unknown) {
           renderTabs();
           updateDots();
           updateBtn();
-          loadSessions({ loadChat: true });
+          // FORK 2026-08-28 — THE THIRD RELEASE POINT for the deferred history merge, and the one
+          // that makes "the tab repaints the turn it missed" true (R2: a tab must NEVER need a
+          // manual reload).
+          //
+          // `pendingHistoryReload` is latched by loadChat whenever a merge is refused under a live
+          // run, and it had exactly TWO releases: the turn-final frame in onEvent (which sits BELOW
+          // a viewed-session gate) and a manual tab switch. A socket that dies MID-TURN reaches
+          // neither — the turn that would have released it was being narrated by a socket that no
+          // longer exists — so the answer produced while the tab was deaf was never fetched, and
+          // only a manual reload brought it back. That is the architect's "I have to reload a few
+          // times a day", and the 14-of-25 prompts he spent chasing missing answers.
+          //
+          // SCOPED HARD, because forcing is not free: loadChat's merge does `messages = incoming`,
+          // and an assistant bubble still being written by a run the gateway is RESUMING (cc-bridge
+          // preserves the runId across a graceful restart — see the `shutdown` handler) carries
+          // none of msg-order's CLIENT_ONLY_FLAGS, so the preserve loop would not save it and
+          // nothing in history would replace it. So force ONLY when a merge is genuinely OWED. The
+          // remaining hazards (a live delta cursor, a bubble mid-stream, a "restarting" run) are
+          // vetoed inside loadChat itself, where they have a single owner.
+          const historyMergeOwed = pendingHistoryReload;
+          loadSessions({ loadChat: true, forceChat: historyMergeOwed });
           loadBudget();
           refreshTreemap();
           refreshTimelineRespectingMode();
+          // FORK 2026-07-26 — the viewed sessionKey is only known here (restored from the
+          // active tab), so this is the first point the cache panel can be filled from
+          // history. Without it a hard refresh leaves the panel blank until the next turn.
+          renderCachePanel();
+          backfillCachePanel();
           scheduleUnconfirmedPrune();
           // FORK 2026-06-04 — bug task-mppceqsu-24yex (Tab context loads only on
           // switching tabs): proactively hydrate every restored background tab's
           // transcript so its content is present BEFORE the user clicks it (they used to
-          // be empty until switched to). Fire-and-forget, batched via allSettled to avoid
-          // a thundering herd of chat.history RPCs when many tabs are open.
-          void Promise.allSettled(
-            others
-              .filter((t) => t.isAttached && t.sessionKey && t.id !== activeTabId)
-              .map((t) => hydrateTab(t)),
-          );
+          // be empty until switched to).
+          //
+          // FORK 2026-07-28 — the previous comment claimed this was "batched via allSettled to
+          // avoid a thundering herd". It was not: `.map()` STARTS every promise before
+          // allSettled ever sees them, so all N requests were already in flight. chat.history is
+          // synchronous work on a single-threaded gateway, so they serialise head-to-tail and
+          // every tab pays the full queue. Measured: one connection issued 6 concurrent
+          // chat.history calls that completed in a staircase (2972/3111/3828/4207/4210/4212 ms),
+          // making a 55-message tab wait 3,111 ms for work that takes 207 ms in isolation — a 15x
+          // tax, and it lands exactly while the user is trying to switch tabs.
+          //
+          // Now genuinely serialised: one at a time, so a background prefetch never queues ahead
+          // of the foreground tab the user is actually waiting for. Still fire-and-forget.
+          void (async () => {
+            const toHydrate = others.filter(
+              (t) => t.isAttached && t.sessionKey && t.id !== activeTabId,
+            );
+            for (const t of toHydrate) {
+              try {
+                await hydrateTab(t);
+              } catch {
+                /* one tab failing must not stop the rest — hydrateTab already fails soft */
+              }
+            }
+          })();
           req("forensic.setMode", { enabled: true })
             .then((res: unknown) => {
               _forensicMode = res?.enabled ?? true;
@@ -3249,12 +6648,27 @@ function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
           dataTimestamp: (e as HTMLElement).dataset.timestamp ?? null,
         };
       };
+      // FORK 2026-08-28 — the snapshot is the only window an agent has into what is ACTUALLY
+      // rendered, and it had no identity: HTML_PATH/META_PATH are fixed, so every tab showing any
+      // session wrote the same slot and last-writer-won. Measured live: an injected stamp was
+      // inside #messages at 12:52:49Z and gone at 12:53:06Z — which reads exactly like render-path
+      // content loss, but the file had simply been overwritten by a DIFFERENT session (injected
+      // into ...:mt4ata2g, file then held ...:mt79j0oy for 12 consecutive samples). The message was
+      // durable the whole time. Sending the identity lets the handler write a per-session pair, so
+      // a reader can ask for the session it cares about instead of racing for the global slot.
+      const snapTab = tabs.find((t) => t.id === activeTabId);
       void req("debug.dumpUiSnapshot", {
+        // The right-panels blob was 449 KB of a 632 KB payload AND echoed any grep string back,
+        // which is what made unscoped snapshot matches false-positive. The handler now strips it
+        // unless includePanels:true, so serialising it here only burned browser time on every
+        // 300ms re-render. Keep the marker shape byte-identical — readers split on <!--CHAT-AREA-->.
         html:
           "<!--SNAPVER:amy-panel-2026-06-07i-->" +
-          (document.querySelector(".right-panels")?.outerHTML ?? "<!--NO-RIGHT-PANELS-->") +
+          "<!--NO-RIGHT-PANELS-->" +
           "\n<!--CHAT-AREA-->\n" +
           messagesEl.outerHTML,
+        ...(snapTab?.sessionKey ? { sessionKey: snapTab.sessionKey } : {}),
+        ...(snapTab?.id ? { tabId: snapTab.id } : {}),
         url: location.href,
         viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
         computedStyles: {
@@ -3269,13 +6683,74 @@ function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
   }, 300);
 }
 
-function req<T = unknown>(method: string, params?: unknown): Promise<T> {
+// FORK 2026-07-28 — every request had NO timeout, so a response lost to a blocked gateway event
+// loop (or a socket that died without firing onclose) left its promise pending FOREVER: the entry
+// stayed in `pending`, the caller's await never settled, nothing repainted and nothing retried.
+// That is the "sometimes the wait is so long I have to hard refresh" case — the UI was not slow,
+// it was waiting on a promise that could never resolve. 60s is deliberately generous: chat.history
+// on a large session legitimately takes seconds (live p90 5,947 ms, max 20,283 ms), so a tight
+// timeout would abort real work; this is a stuck-forever guard, not a latency budget.
+const REQ_TIMEOUT_MS = 60_000;
+/**
+ * Budget for `sessions.suggestTitle`, which runs a model server-side. Sized from the measured
+ * distribution (max observed 118.1s on 2026-08-15) with headroom, NOT guessed. It is a
+ * background rename that nothing awaits, so a generous ceiling costs nothing; the old shared
+ * 60s ceiling sat below every observed sample and silently discarded every title.
+ */
+const TITLE_RPC_TIMEOUT_MS = 240_000;
+
+/**
+ * Budget for `sessions.usage`, which folds a week of per-model usage across every session.
+ *
+ * MEASURED, not guessed (2026-08-15, live gateway, 757 sessions, three consecutive calls):
+ *     300,009ms timeout · 300,096ms timeout · 251,487ms OK (93,811 bytes)
+ * against the shared 60s ceiling. So `su` was ALWAYS null and the panel's 7-day per-model token
+ * totals were permanently absent — silently, because the call site swallows the rejection with
+ * `.catch(() => null)`. `sessions.list`, for contrast, answers in 1.7-2.9s.
+ *
+ * 300s is sized just above the one observed success. It is deliberately UGLY: the handler
+ * (`server-methods/usage.ts`, the no-specific-key path) does a full directory scan and reads
+ * every session transcript in the window, with no cache — `usage.cost` immediately above it uses
+ * `loadCostUsageSummaryCached`, and this one does not. A quarter of a minute of synchronous work
+ * on the gateway's single event loop is also the best candidate for the delay measured in
+ * TINKER_UI_DESIGN_BIBLE/turn-latency.md.
+ *
+ * THIS CONSTANT IS A SYMPTOM, NOT A FIX. When the handler is cached, bring it back down — do not
+ * leave it standing as cover for a 250s call.
+ */
+const SESSIONS_USAGE_TIMEOUT_MS = 300_000;
+
+function req<T = unknown>(
+  method: string,
+  params?: unknown,
+  // FORK 2026-08-15 — per-call timeout override. REQ_TIMEOUT_MS is a stuck-forever guard
+  // sized for INTERACTIVE calls; a background call whose server side legitimately runs a
+  // model needs its own budget. Without this, `sessions.suggestTitle` was guaranteed to
+  // fail: measured 61.5s / 80.1s / 89.3s / 90.1s / 118.1s against a 60s ceiling — every
+  // sample over, so tab auto-rename never once completed.
+  opts?: { timeoutMs?: number },
+): Promise<T> {
+  const timeoutMs = opts?.timeoutMs ?? REQ_TIMEOUT_MS;
   return new Promise((resolve, reject) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       return reject("disconnected");
     }
     const id = uuid();
-    pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (pending.delete(id)) {
+        reject(new Error(`timeout: ${method} did not respond in ${timeoutMs}ms`));
+      }
+    }, timeoutMs);
+    pending.set(id, {
+      resolve: (value: unknown) => {
+        clearTimeout(timer);
+        resolve(value as T);
+      },
+      reject: (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    });
     ws.send(JSON.stringify({ type: "req", id, method, params }));
   });
 }
@@ -3380,19 +6855,13 @@ function mergeSentenceContinuations(msgs: unknown[]): void {
     }
 
     const text = textBlock.text as string;
-    const trimmed = text.trimStart();
-    const firstChar = trimmed.charAt(0);
-    // Detect mid-sentence start: lowercase letter or continuation punctuation
-    const isLower =
-      firstChar !== "" &&
-      firstChar === firstChar.toLowerCase() &&
-      firstChar !== firstChar.toUpperCase();
-    const isMidSentence = isLower || /^[\d,;:.!?)}\]"'…–—-]/.test(trimmed);
-    if (!isMidSentence) {
-      continue;
-    }
 
     // Find the previous temporary assistant text bubble
+    // FORK 2026-08-25 — it must belong to the SAME RUN. Interrupting a turn with
+    // a second prompt puts two runs' live bubbles side by side (the queued
+    // prompt is held out of messages[] until the turn ends), and without this
+    // guard the merge below ate one run's narration into the other's and
+    // spliced the bubble away. See sentence-continuation.ts.
     let prevTextBlock: unknown = null;
     for (let k = i - 1; k >= tempStart; k--) {
       const prev = msgs[k];
@@ -3405,11 +6874,20 @@ function mergeSentenceContinuations(msgs: unknown[]): void {
       const pc = Array.isArray(prev.content) ? prev.content : [];
       const pt = pc.find((b: unknown) => b.type === "text" && (b.text ?? "").trim());
       if (pt) {
-        prevTextBlock = pt;
+        if (sameRun(prev._runId, m._runId)) {
+          prevTextBlock = pt;
+        }
         break;
       }
     }
     if (!prevTextBlock) {
+      continue;
+    }
+
+    // FORK 2026-08-25 — the fragment test now reads the PREDECESSOR, not just the
+    // first character of the fragment. A bubble opening with a digit ("488 species
+    // researched — …") is a sentence, not a tail, and merging it DELETED it.
+    if (!isSentenceContinuation((prevTextBlock as { text: string }).text, text)) {
       continue;
     }
 
@@ -3453,6 +6931,14 @@ function bumpActiveRunActivity(payload: { runId?: unknown; sessionKey?: unknown 
       info.lastEventAt = now;
       return;
     }
+    // FORK 2026-08-16 — background runs age on the same clock. A turn in an unfocused tab that
+    // emits only text deltas carries no further model-bearing lifecycle event, so without this it
+    // would cross the 90s freshness bound and its tab would go dark MID-TURN.
+    const background = backgroundRuns.get(runId);
+    if (background) {
+      background.lastEventAt = now;
+      return;
+    }
   }
   const evtKey = typeof payload.sessionKey === "string" ? payload.sessionKey : null;
   if (evtKey) {
@@ -3461,19 +6947,130 @@ function bumpActiveRunActivity(payload: { runId?: unknown; sessionKey?: unknown 
         info.lastEventAt = now;
       }
     }
+    touchBackgroundRuns(backgroundRuns, evtKey, now, sessionKeyMatches);
   }
 }
 
 function onEvent(evt: unknown) {
   if (evt.event === "chat") {
     const p = evt.payload;
+    // FORK 2026-08-26 — HOISTED from the viewed-session gate below, which is where these two used
+    // to be computed. The session-scoped block directly beneath now needs the same answer, and
+    // deriving "is this the tab on screen" a second way is the exact failure design principle #18
+    // describes. ONE derivation, read by both the block below and the gate itself.
+    // Safe this high: sessionKeyMatches returns false on a falsy key and
+    // chatEventIsSubagentOfView returns false on any non-string.
+    const isViewedMain = p.sessionKey === sessionKey || sessionKeyMatches(p.sessionKey);
+    const isViewedSubagent = !isViewedMain && chatEventIsSubagentOfView(p.sessionKey);
+    // FORK 2026-07-29 — record "this session finished" for EVERY session, deliberately ABOVE the
+    // viewed-session gate below. This is the freshest evidence a client ever gets that a turn is
+    // over, and gating it would reproduce the original blindness one level down: a stale snapshot
+    // would keep a finished non-viewed tab glowing. Consumed by run-state.ts, never read directly.
+    // FORK 2026-07-29 (second pass) — the stamp MUST be cleared when the session speaks again.
+    // Leaving it set made it outlive the turn it referred to: it vetoed every later server claim
+    // until the next loadSessions(), so tabs and session rows went dark while the chat still lit.
+    // Any non-terminal event for a session is proof a turn is alive in it right now.
+    if (typeof p?.sessionKey === "string") {
+      // FORK 2026-08-17 — ANY chat event for a session closes its pre-model window: a terminal one
+      // because the turn is over, a delta because the model is already answering. Recorded here,
+      // above every viewed gate, so a background tab's window closes on the same evidence the
+      // viewed tab's does. Without this the glow would run to PRE_MODEL_MAX_MS on any tab that was
+      // not on screen when its model was named.
+      clearPreModelFor(p.sessionKey);
+      if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+        sessionEndedAt.set(p.sessionKey, Date.now());
+        // FORK 2026-08-16 — the second, independent removal path for a background run. Its own
+        // `lifecycle:end` is the precise signal, but that is exactly the event this codebase has
+        // repeatedly been observed to drop (the "STUCK-ON IN TWO CLICKS" note on
+        // sessionHasActiveRuns). This branch is recorded for EVERY session, above every viewed
+        // gate, so it is the one end-of-turn fact this browser can always see. Belt and braces
+        // beats a tab that shimmers until reload.
+        if (dropBackgroundRunsForSession(backgroundRuns, p.sessionKey, sessionKeyMatches)) {
+          repaintActivitySurfaces();
+        }
+        // FORK 2026-08-26 (the architect: a tab whose turn ended while it was OFF SCREEN spins
+        // forever, throws its own answer away, and silently QUEUES every later prompt).
+        //
+        // THE CLIENT LANE'S MISSING TERMINATOR. `activeRuns` is emptied in exactly two places —
+        // the chat-final block further down this handler, and the lifecycle:end debounce — and
+        // BOTH sit BELOW the viewed-session gate 20 lines from here. A run that STARTED while its
+        // tab was on screen (so it IS in `activeRuns`) and ENDED while it was not is therefore
+        // never removed by any path, and one orphaned entry is permanent:
+        //   • viewedSessionBusy() walks that map, so the tab reads BUSY the moment the user
+        //     switches back to it — for the life of the page;
+        //   • loadChat() refuses to merge under a busy session and latches pendingHistoryReload;
+        //   • the ONLY re-arm of that flag lives inside the handler this gate just skipped.
+        // Net: the answer arrives, chat.history fetches it, and it is thrown away — and
+        // shouldQueue() parks every later prompt instead of sending it.
+        //
+        // The VIEWED tab is deliberately EXCLUDED. Its own terminator below is narrower ON
+        // PURPOSE — it does not remove the run on `error`, so a fallback model can carry the turn
+        // on the same runId — and widening it from up here would change viewed behaviour while
+        // fixing a background one. Background `error` is already terminal on the sibling lane
+        // (dropBackgroundRunsForSession, directly above), so the two client lanes stay consistent.
+        //
+        // Nothing here splices into `messages[]`: the no-splice contract for background tabs
+        // documented at the gate below is untouched.
+        if (!isViewedMain && !isViewedSubagent && typeof p.runId === "string") {
+          const bgRunId = p.runId as string;
+          const bgPending = pendingRunDeletes.get(bgRunId);
+          if (bgPending) {
+            clearTimeout(bgPending);
+            pendingRunDeletes.delete(bgRunId);
+          }
+          if (activeRuns.delete(bgRunId)) {
+            saveActiveRuns();
+          }
+          // Unconditional: this is what stops a late/stale delta self-healing the run back into
+          // the map as a provider-less ghost if the user opens this tab a moment later.
+          rememberTerminated(bgRunId);
+          // The SECOND latch — see clearSavedStreamStateFor.
+          clearSavedStreamStateFor(p.sessionKey, bgRunId);
+          // CLEARS ONLY, never re-derives upward. A run of ANOTHER session can only ever leave the
+          // viewed tab's `sending` wrongly TRUE. Writing `sending = viewedSessionBusy()` here
+          // would also BLANK the pre-model window of a tab whose own prompt was accepted seconds
+          // ago and has no model call open yet — a 21-36s window on every turn (turn-latency.md).
+          // The sessionPending guard is what keeps that window intact.
+          if (sending && !viewedSessionBusy() && !sessionPending(sessionKey)) {
+            sending = false;
+            updateBtn();
+          }
+          repaintActivitySurfaces();
+        }
+      } else if (typeof p.runId === "string" && terminatedRuns.has(p.runId)) {
+        // FORK 2026-08-20 (the architect: Stop Grok, it spins again). A leftover delta
+        // from the run we just aborted used to DELETE the Stop stamp, so the
+        // next sessions.list snapshot claiming live re-lit the bar. A genuine
+        // new turn mints a new runId (or lifecycle:start clears the mark).
+      } else {
+        sessionEndedAt.delete(p.sessionKey);
+      }
+    }
     // FORK 2026-05-30: admit chat events from subagents OF the viewed session so a
     // subagent's thinking streams into the parent chat in real time. Before, the
     // strict guard below dropped every ":subagent:" delta (sessionKeyMatches=false
     // for descendants), so subagent progress was invisible and "looked stuck".
-    const isViewedMain = p.sessionKey === sessionKey || sessionKeyMatches(p.sessionKey);
-    const isViewedSubagent = !isViewedMain && chatEventIsSubagentOfView(p.sessionKey);
+    // (Both predicates are now computed ONCE at the top of this handler — the session-scoped
+    // block above needs the same answer, and a second derivation is the bug class itself.)
     if (!isViewedMain && !isViewedSubagent) {
+      // FORK 2026-08-04 (auto-retry x background tabs) -- the same shape of bug as the
+      // 2026-06-08 queued-prompt fix directly below, one lifecycle over. The
+      // recoverable-error retry ladder is PER-SESSION state, but every one of its calls
+      // sat past this gate and keyed off the GLOBAL `sessionKey`. Switch away from a
+      // rate-limited tab while you wait out a 7m/15m step (the normal thing to do) and:
+      //   (a) the next surfaced error never re-scheduled, so the ladder died after ONE
+      //       attempt and the turn the user was promised would resume never did;
+      //   (b) the eventual `final` never retired the orange "retry N/6, retrying in
+      //       7m..." bubble from localStorage, so loadChat() re-injected that dead
+      //       countdown into the transcript on EVERY later open, forever -- a lie, the
+      //       turn had already succeeded;
+      //   (c) the surviving retryState entry kept the 1 Hz tick alive for the life of
+      //       the page (it only stops at `activeRuns.size === 0 && retryState.size ===
+      //       0`), running updatePrefrontalTree() + querySelectorAll every second.
+      // The controller is keyed on the EVENT's session and guards every mutation of
+      // `messages` on "is this the viewed transcript", so a background session's bubble
+      // can never land in the wrong chat. Nothing else moves above this gate.
+      advanceRetryLifecycle(p);
       // FORK 2026-06-08 — bug "queued prompts stick forever": this chat event is for a session the
       // user is NOT currently viewing, so the handler below (including the queue flush) is skipped.
       // But if THIS event says that session's turn just ended, we must still drop any prompts queued
@@ -3537,6 +7134,12 @@ function onEvent(evt: unknown) {
           sessionKey: typeof p.sessionKey === "string" ? p.sessionKey : sessionKey || undefined,
           phase: "responding",
         };
+        // Text started arriving without a phase:start ever landing (cc-bridge can stream first).
+        // Answering IS the end of preparing, so close the window here too — idempotent, so
+        // whichever path arrives first wins and the other is a no-op.
+        if (sessionKeyMatches(p.sessionKey)) {
+          closePreModelWindow();
+        }
         activeRuns.set(p.runId, runInfo);
         sending = true;
         saveActiveRuns();
@@ -3552,6 +7155,18 @@ function onEvent(evt: unknown) {
           runInfo.phase = newPhase;
           runInfo.currentTool = undefined;
           updatePrefrontalTree();
+        }
+        // FORK 2026-08-24 — THIS is where a reflection first names itself, and it is LATER than
+        // its timing block was built: the pre-model stages fire while the prompt is being
+        // assembled, before any text exists to recognise. So the block cannot be classified when
+        // it is created, and position alone would file it under the main turn. Tag it here, by
+        // runId, so the render can put it inside the 🌿 section whichever order the two arrived in.
+        if (isFractal) {
+          for (const m of messages as Array<Record<string, unknown>>) {
+            if (m?._isPhaseTiming && m._phaseRunId === p.runId) {
+              m._fractalPass = true;
+            }
+          }
         }
       }
       // FORK: Un-queue any queued user messages — LLM absorbed them via steer
@@ -3591,52 +7206,67 @@ function onEvent(evt: unknown) {
         // no clobbering between concurrent freezes (tool + gap).
         const nowDelta = Date.now();
         const gapMs = lastDeltaAt > 0 ? nowDelta - lastDeltaAt : 0;
+        const gapCandidate = msgByUid(streamMsgUid);
         const currentBubbleHasContent =
-          streamMsgIdx >= 0 &&
-          !!messages[streamMsgIdx]?._temporary &&
+          !!gapCandidate?._temporary &&
           (() => {
-            const tb = (
-              messages[streamMsgIdx].content as Array<{ type: string; text?: string }>
-            )?.find?.((b) => b.type === "text");
+            const tb = (gapCandidate.content as Array<{ type: string; text?: string }>)?.find?.(
+              (b) => b.type === "text",
+            );
             return typeof tb?.text === "string" && tb.text.length > 0;
           })();
-        if (gapMs > 5000 && currentBubbleHasContent) {
-          // Stamp the gap-bubble's end time and detach it from streamMsgIdx so
-          // the next delta opens a new bubble. Bubble stays _temporary; the
-          // tail-recover at final time will re-slice its content from the
-          // authoritative finalText using its `_segmentStart`.
-          const gapBubble = messages[streamMsgIdx] as Record<string, unknown>;
-          gapBubble._bubbleEndedAt = lastDeltaAt;
-          streamMsgIdx = -1;
+        if (gapMs > 5000 && currentBubbleHasContent && gapCandidate) {
+          // Stamp the gap-bubble's end time and drop the cursor so the next delta opens a new
+          // bubble. Bubble stays _temporary; the tail-recover at final time re-slices its content
+          // from the authoritative finalText using its `_segmentStart`.
+          gapCandidate._bubbleEndedAt = lastDeltaAt;
+          streamMsgUid = null;
         }
         // Capture cumulative offset BEFORE updating lastDeltaLen so the new
         // bubble (if we create one) records where it begins.
         const segmentStart = lastDeltaLen;
         lastDeltaLen = deltaText.length;
         lastDeltaAt = nowDelta;
-        if (streamMsgIdx >= 0 && messages[streamMsgIdx]?._temporary) {
-          // Append to existing bubble. Slice from this bubble's _segmentStart.
-          const bubble = messages[streamMsgIdx] as Record<string, unknown>;
-          const start = (bubble._segmentStart as number | undefined) ?? 0;
-          const segmentText = deltaText.slice(start);
-          const content = messages[streamMsgIdx].content;
-          const textBlock = content.find((b: unknown) => b.type === "text");
+        // FORK 2026-08-05 — MONOTONE WRITE. `deltaText` is server-CUMULATIVE, so a bubble's slice of
+        // it can only ever GROW. When the new slice does NOT extend what is already on screen, the
+        // provider buffer was RESET (a fallback/retry restarted the stream) — overwriting would
+        // delete text the user has already read. Drop the cursor and open a NEW bubble instead:
+        // "carta a terra va a la guerra", the card that touched the table stays played.
+        const target = msgByUid(streamMsgUid);
+        let appended = false;
+        let bufferReset = false;
+        if (target && target._temporary === true) {
+          const blocks = target.content as Array<{ type: string; text?: string }> | undefined;
+          const textBlock = Array.isArray(blocks)
+            ? blocks.find((b) => b.type === "text")
+            : undefined;
           if (textBlock) {
-            textBlock.text = segmentText;
+            const start = (target._segmentStart as number | undefined) ?? 0;
+            const segmentText = deltaText.slice(start);
+            const cur = typeof textBlock.text === "string" ? textBlock.text : "";
+            if (segmentText.startsWith(cur)) {
+              textBlock.text = segmentText;
+              appended = true;
+            } else {
+              bufferReset = true;
+            }
           }
-        } else {
-          // Create a new bubble. Its _segmentStart is the cumulative offset
-          // captured before this delta updated lastDeltaLen — i.e. where the
-          // previous bubble (if any) ended in the cumulative stream.
-          const segmentText = deltaText.slice(segmentStart);
-          messages.push({
+        }
+        if (!appended) {
+          streamMsgUid = null;
+          // A new bubble's `_segmentStart` is the cumulative offset captured before this delta
+          // updated lastDeltaLen — where the previous bubble ended in the cumulative stream. On a
+          // RESET the cumulative stream itself restarted, so the whole of it is new content and the
+          // segment begins at 0 (a stale, larger offset would slice an EMPTY bubble).
+          const start = bufferReset ? 0 : segmentStart;
+          streamMsgUid = pushAndUid({
             role: "assistant",
-            content: [{ type: "text", text: segmentText }],
+            content: [{ type: "text", text: deltaText.slice(start) }],
             _temporary: true,
             _bubbleStartedAt: nowDelta,
-            _segmentStart: segmentStart,
+            _segmentStart: start,
+            _runId: p.runId,
           });
-          streamMsgIdx = messages.length - 1;
         }
       }
       updateChat();
@@ -3654,12 +7284,35 @@ function onEvent(evt: unknown) {
           delete m._queued;
         }
       }
-      // FORK 2026-06-11 — discard the live reasoning bubble for this run on turn
-      // end. The final answer (or its reconciled bubbles) supersedes the
-      // cumulative reasoning preview; leaving it would double-render the thinking.
-      messages = messages.filter(
-        (m) => !((m as any)._isReasoning && (m as any)._reasoningRunId === p.runId),
-      );
+      // FORK 2026-06-11 — the live reasoning bubble for this run used to be DELETED on turn end so
+      // the final answer would not double-render the thinking.
+      // FORK 2026-08-05 (the architect: "carta a terra va a la guerra") — text that reached the screen is
+      // never REMOVED; only its PRESENTATION may change. Freeze the bubble instead: drop
+      // `_temporary` (so no later purge can take it) and leave `_isReasoning` set, which routes it
+      // through updateChat's existing `_isReasoning` branch into the collapsed "▸ Reasoning" group.
+      // That is exactly the "change it to thinking appearance" the architect allowed, with the text still
+      // in the document. Dropping `_temporary` HERE also keeps it out of `ownsTempMsg` below, so
+      // the final re-slice cannot mistake a thinking bubble for a streamed answer segment.
+      for (const entry of messages) {
+        const m = entry as Record<string, unknown>;
+        if (m._isReasoning && m._reasoningRunId === p.runId) {
+          delete m._temporary;
+          m._reasoningFrozen = true;
+        }
+      }
+      // FORK 2026-07-22 (run-ownership — bug: cross-run final trashes live stream):
+      // a final for run B must only consume temp bubbles that BELONG to run B
+      // (proven 2026-07-22: run B's 321-char error envelope re-sliced run A's
+      // temps with B's short finalText → empty bubbles, B's message never shown).
+      // Temps are stamped `_runId` at creation (delta + tool handlers); legacy
+      // temps without a stamp (created pre-deploy mid-session) are owned only
+      // when the live stream IS this run — single-run behavior unchanged.
+      const ownsTempMsg = (mm: unknown): boolean => {
+        const r = mm as Record<string, unknown>;
+        if (!r._temporary) return false;
+        if (typeof r._runId === "string") return r._runId === p.runId;
+        return streamRunId === p.runId;
+      };
       if (p.state !== "error") {
         // ─── Continuation merge ───
         // Before promoting, merge sentence fragments: if an assistant text
@@ -3676,27 +7329,80 @@ function onEvent(evt: unknown) {
         // bubble structure across the truncation/divergence reconciliation
         // (the original logic dropped all temp text bubbles and pushed a
         // single new one, which would duplicate content with gap-splits).
-        const hadTemps = messages.some((m: unknown) => m._temporary);
+        const hadTemps = messages.some((m: unknown) => ownsTempMsg(m));
         const bubbleEndedAt = Date.now();
-        if (hadTemps && p.message) {
+        // FORK 2026-08-16 (the architect, on a live tab: "answering twice every turn") —
+        // the gateway broadcasts `state:"final"` TWICE for one agent-started run, and nothing here
+        // reconciled the second one.
+        //   #1 agent-runtime lifecycle (`emitChatFinal`, server-chat.ts): body = the STREAMED
+        //      display buffer.
+        //   #2 backstop (`broadcastChatFinal`, server-methods/chat.ts, FORK 2026-05-10): body =
+        //      the joined `deliveredReplies`.
+        // Measured live on one tool-using turn, same runId: `seq=16 textLen=105` then
+        // `seq=3 textLen=187`. chat.ts states the contract it depends on outright — "if the
+        // lifecycle event already fired the client de-dupes by runId+state" — but this client never
+        // did. #1 promoted the temps; #2 then arrived with `hadTemps === false` and was pushed
+        // WHOLE by `pushAssistantMsgDeduped`, whose guard compares the entire body against ONE
+        // bubble and so can never match a multi-bubble turn. The narration rendered twice.
+        // DROPPING #2 IS NOT AN OPTION: claude-cli emits no stream during tool work, so the
+        // post-tool answer exists ONLY in #2's body — suppressing it truncates every tool-using
+        // answer, which is why the obvious "ignore the second final" fix is wrong.
+        // Treat #2 as a SUPERSEDING final and run it through the same `resliceSegments` law the
+        // temp path uses: kept bubbles may only grow, and only the part of the new body that no
+        // bubble already shows is appended. Nothing rendered is ever deleted.
+        const supersedes =
+          !hadTemps &&
+          typeof p.runId === "string" &&
+          runTextBubbles(messages as Record<string, unknown>[], p.runId).length > 0;
+        // FORK 2026-08-30 — THE DECISION, ON THE RECORD. Which of the three routes a `final` takes
+        // is the whole question, and it was previously invisible. `supersedes:false` together with
+        // `runBubbles:0` on the SECOND final of a run means the run's `_runId` stamps are gone —
+        // the signature of a history reload having replaced `messages` between the two finals,
+        // which sends the body to the whole-body guard that cannot match a multi-bubble turn.
+        dupProv("final:decision", {
+          runId: typeof p.runId === "string" ? p.runId : "",
+          state: p.state,
+          hadTemps,
+          supersedes,
+          runBubbles:
+            typeof p.runId === "string"
+              ? runTextBubbles(messages as Record<string, unknown>[], p.runId).length
+              : 0,
+          hasMessage: Boolean(p.message),
+          total: messages.length,
+        });
+        if ((hadTemps || supersedes) && p.message) {
           const finalContent = Array.isArray(p.message.content) ? p.message.content : [];
           const finalText = finalContent
             .filter((b: unknown) => b.type === "text")
             .map((b: unknown) => b.text ?? "")
             .join("");
 
-          // Collect all temp text bubbles in order with their segment starts.
-          const tempTextBubbles: { idx: number; segStart: number }[] = [];
-          for (let i = 0; i < messages.length; i++) {
-            const m = messages[i] as Record<string, unknown>;
+          // Collect all temp text bubbles in order, with their segment starts AND their current
+          // text. FORK 2026-08-05: hold the bubble OBJECTS, not their array indices — an index is
+          // only valid until the next mutation, and the promotion loop below runs after this list
+          // is built.
+          const tempTextBubbles: {
+            msg: Record<string, unknown>;
+            text: string;
+            segStart: number;
+          }[] = [];
+          for (const entry of messages) {
+            const m = entry as Record<string, unknown>;
             if (
-              m._temporary &&
+              // On a superseding final there are no temps left to promote — the bubbles to
+              // reconcile against are the ones the FIRST final already promoted for this run.
+              (hadTemps ? ownsTempMsg(m) : m._runId === p.runId) &&
               m.role === "assistant" &&
               Array.isArray(m.content) &&
               (m.content as Array<{ type: string }>).some((b) => b.type === "text")
             ) {
+              const blk = (m.content as Array<{ type: string; text?: string }>).find(
+                (b) => b.type === "text",
+              );
               tempTextBubbles.push({
-                idx: i,
+                msg: m,
+                text: typeof blk?.text === "string" ? blk.text : "",
                 segStart: (m._segmentStart as number | undefined) ?? 0,
               });
             }
@@ -3706,21 +7412,44 @@ function onEvent(evt: unknown) {
             // No temp text bubbles — push the authoritative text as a single
             // new bubble (e.g. response is tool-only with no streamed text).
             if (finalText.trim()) {
+              dupProv("final:tool-only-push", {
+                ...dupProvBody({
+                  role: "assistant",
+                  content: [{ type: "text", text: finalText }],
+                  _runId: p.runId,
+                }),
+                supersedes,
+                hadTemps,
+              });
               messages.push({
                 role: "assistant",
                 content: [{ type: "text", text: finalText }],
                 _bubbleEndedAt: bubbleEndedAt,
+                // FORK 2026-08-16: stamp the run so a SUPERSEDING final (the gateway sends two —
+                // see the note at `priorRunBubbles`) can reconcile against this bubble instead of
+                // pushing the same answer again.
+                _runId: p.runId,
               });
             }
           } else {
-            // Re-slice each temp text bubble from its _segmentStart up to the
-            // next bubble's _segmentStart (or end-of-finalText for the last).
+            // FORK 2026-08-05 — the inline slice loop is GONE. It replaced every promoted bubble's
+            // text with `finalText.slice(segStart, segEnd)` unconditionally: `segStart` is measured
+            // against the CUMULATIVE delta stream while `finalText` is the server's final envelope,
+            // so whenever the two diverged `segStart` landed past `finalText.length`, `slice`
+            // returned "", and a bubble the user had just finished reading was BLANKED IN PLACE
+            // (proven 2026-07-22; grok/qwen hit it on every multi-message turn because their final
+            // envelope carries only the LAST assistant message). `resliceSegments` enforces THE LAW
+            // — a slice is accepted only when it EXTENDS the bubble, otherwise the streamed text is
+            // kept character for character — and hands back the part of finalText that no kept
+            // bubble shows as `appendTail`, which is PUSHED as a new bubble. Divergence becomes an
+            // APPEND, never an overwrite. See stream-reslice.ts.
+            const resliced = resliceSegments(
+              tempTextBubbles.map((b) => ({ text: b.text, segStart: b.segStart })),
+              finalText,
+            );
             for (let i = 0; i < tempTextBubbles.length; i++) {
-              const cur = tempTextBubbles[i];
-              const next = tempTextBubbles[i + 1];
-              const segEnd = next ? next.segStart : finalText.length;
-              const segText = finalText.slice(cur.segStart, segEnd);
-              const m = messages[cur.idx] as Record<string, unknown>;
+              const m = tempTextBubbles[i].msg;
+              const segText = resliced.texts[i] ?? tempTextBubbles[i].text;
               const blocks = m.content as Array<{ type: string; text?: string }>;
               for (const b of blocks) {
                 if (b.type === "text") {
@@ -3733,11 +7462,53 @@ function onEvent(evt: unknown) {
                 m._bubbleEndedAt = bubbleEndedAt;
               }
             }
+            // FORK 2026-08-30 — WHICH TAIL RULE, and why the answer depends on WHICH final this is.
+            // `resliced.appendTail` answers "what did the STREAM not show?", crediting the longest
+            // single bubble that is a PREFIX of the body. Correct for the temps path, where the
+            // bubbles are slices of this very string. On a SUPERSEDING final they are not: #1 is the
+            // streamed buffer and #2 is `deliveredReplies.map(t => t.trim()).join("\n\n")`, so the two
+            // bodies differ in exactly the whitespace those strict prefix tests key on. A leading
+            // newline on the stream, or parts streamed "\n"-joined and rebuilt "\n\n"-joined, dropped
+            // the credit to zero (or to bubble #0) and the whole answer was appended a second time —
+            // the architect's "the last two answers, twice", with `chat.history` holding one copy.
+            // `supersedingAppendTail` asks the question that final actually poses — "does this
+            // rebuild add anything THIS RUN has not already shown?" — against every bubble the run
+            // owns, whitespace-insensitively. Scoped to one runId's own bubbles, so it is not the
+            // whole-session `dedupeAssistantAnswers()` scan that was deleted 2026-08-05, and a body
+            // the run never showed (the post-tool answer that lives only in #2) still appends whole.
+            const appendTail = supersedes
+              ? supersedingAppendTail(resliced.texts, finalText)
+              : resliced.appendTail;
+            if (appendTail) {
+              // The append is the SANCTIONED way new content reaches the screen, so a duplicate
+              // riding in here shows up as `equivAnyRun > 0`: the tail rule credited nothing and
+              // re-appended a body the run already shows. `tailLen` vs `finalLen` says whether the
+              // WHOLE body came back (the geometry the whitespace fix was meant to close).
+              dupProv("final:append-tail", {
+                ...dupProvBody({
+                  role: "assistant",
+                  content: [{ type: "text", text: appendTail }],
+                  _runId: p.runId,
+                }),
+                supersedes,
+                hadTemps,
+                tailLen: appendTail.length,
+                finalLen: finalText.length,
+                shownBubbles: resliced.texts.length,
+              });
+              messages.push({
+                role: "assistant",
+                content: [{ type: "text", text: appendTail }],
+                _bubbleEndedAt: bubbleEndedAt,
+                _runId: p.runId,
+              });
+            }
           }
 
-          // Clean up remaining temp flags on tool messages etc.
+          // Clean up remaining temp flags on tool messages etc. — ONLY this
+          // run's temps; another run's live bubbles keep streaming untouched.
           for (const m of messages) {
-            if (m._temporary) {
+            if (ownsTempMsg(m)) {
               delete m._temporary;
             }
           }
@@ -3746,7 +7517,7 @@ function onEvent(evt: unknown) {
           // FORK 2026-05-09 (Feature B): stamp _bubbleEndedAt on the last
           // temp text message before promoting.
           for (const m of messages) {
-            if (m._temporary) {
+            if (ownsTempMsg(m)) {
               if (m.role === "assistant" && m._bubbleStartedAt) {
                 m._bubbleEndedAt = bubbleEndedAt;
               }
@@ -3754,13 +7525,47 @@ function onEvent(evt: unknown) {
             }
           }
         }
-        if (!hadTemps && p.message) {
-          pushAssistantMsgDeduped(p.message as Record<string, unknown>);
+        if (!hadTemps && !supersedes && p.message) {
+          // FORK 2026-08-16: a FIRST final with no temps (nothing streamed) still pushes whole —
+          // but stamp the run, so the second final the gateway always sends reconciles against
+          // this bubble via the `supersedes` path above instead of duplicating the answer.
+          pushAssistantMsgDeduped(
+            {
+              ...(p.message as Record<string, unknown>),
+              ...(typeof p.runId === "string" && p.runId ? { _runId: p.runId } : {}),
+            },
+            "final:no-temps-whole",
+          );
         }
       } else {
-        messages = messages.filter((m: unknown) => !m._temporary);
+        // FORK 2026-08-05 (the architect: "carta a terra va a la guerra") — was
+        // `messages = messages.filter((m) => !ownsTempMsg(m))`: an errored turn DELETED every
+        // partial it owned. `broadcastChatError` frequently carries no `message`, so a couple of
+        // thousand characters the user had already read were replaced by one line of red text.
+        // PROMOTE instead: a partial with visible content becomes a normal, permanent bubble marked
+        // `_truncatedByError`, and the error note pushed below it reads as its CONTINUATION rather
+        // than its replacement. Only EMPTY temps are dropped — an empty bubble was never written to
+        // the screen, so dropping it cannot violate the invariant.
+        const keptOnError: unknown[] = [];
+        for (const entry of messages) {
+          const m = entry as Record<string, unknown>;
+          if (!ownsTempMsg(m)) {
+            keptOnError.push(entry);
+            continue;
+          }
+          if (!msgHasVisibleContent(m)) {
+            continue;
+          }
+          delete m._temporary;
+          m._truncatedByError = true;
+          if (typeof m._bubbleStartedAt === "number" && !m._bubbleEndedAt) {
+            m._bubbleEndedAt = Date.now();
+          }
+          keptOnError.push(entry);
+        }
+        messages = keptOnError;
         if (p.message) {
-          pushAssistantMsgDeduped(p.message as Record<string, unknown>);
+          pushAssistantMsgDeduped(p.message as Record<string, unknown>, "final:error-whole");
         }
       }
       if (p.state === "error" && p.errorMessage) {
@@ -3775,12 +7580,16 @@ function onEvent(evt: unknown) {
         // keeps today's red _isError behavior unchanged.
         const cls = classifyRecoverable(p.reason as string | undefined, errText);
         if (cls.recoverable) {
-          scheduleRetry(
-            sessionKey,
-            cls.kind,
-            lastUserTextFor(messages),
-            typeof p.retryAfter === "number" ? (p.retryAfter as number) : undefined,
-          );
+          // FORK 2026-08-04: was `scheduleRetry(sessionKey, ...)` -- the GLOBAL viewed
+          // key. Now routed through the shared per-SESSION controller keyed on the
+          // EVENT's session, the same call the non-viewed branch makes at the top of
+          // this handler, so one session's ladder can never be advanced under another
+          // session's key. Stays HERE rather than being hoisted above the gate on
+          // purpose: the orange bubble must be pushed AFTER this turn's final/partial
+          // bubbles have been promoted and re-sliced above, or it sorts ahead of the
+          // very text it is warning about (and updateChat() would paint a
+          // half-reconciled transcript).
+          advanceRetryLifecycle(p);
         } else {
           const errMsg = {
             role: "assistant",
@@ -3794,8 +7603,16 @@ function onEvent(evt: unknown) {
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
         // FORK 2026-06-24 (recoverable-retry): a successful turn ends any pending
-        // auto-retry for this session. History warning bubbles are left in place.
-        retryState.delete(sessionKey);
+        // auto-retry for this session. The warning bubbles already in the on-screen
+        // `messages` array stay put (this turn's own history); only the PERSISTED
+        // copies are retired, and for the viewed key clearPersistedErrors above has
+        // already dropped them.
+        // FORK 2026-08-04: was `retryState.delete(sessionKey)` -- the GLOBAL viewed key,
+        // and a bare map-delete that left `st.cancelled` false, so a retry firing at
+        // that instant could re-schedule itself out of retryLastTurn's catch. Now the
+        // shared controller: cancel keyed on the EVENT's session + retire that
+        // session's persisted countdown bubbles.
+        advanceRetryLifecycle(p);
         // Clear provider error badges for the provider that just succeeded
         if (streamProvider || streamProfileId) {
           let cleared = false;
@@ -3840,11 +7657,17 @@ function onEvent(evt: unknown) {
         }
         pendingQueuedSends = settled.remaining;
       }
-      // Always reset streaming state — even on error (fallback will start fresh deltas)
-      streamMsgIdx = -1;
-      lastDeltaLen = 0;
-      lastDeltaAt = 0;
-      streamRunId = p.state !== "error" ? null : streamRunId;
+      // Always reset streaming state — even on error (fallback will start fresh deltas).
+      // FORK 2026-07-22 (run-ownership): reset ONLY when this terminal belongs to
+      // the live stream — a final for run B must not reset run A's in-flight
+      // delta cursors mid-turn. streamRunId===null → nothing streaming → the
+      // reset is a safe no-op default (e.g. tool-only turns with no deltas).
+      if (streamRunId === null || streamRunId === p.runId) {
+        streamMsgUid = null;
+        lastDeltaLen = 0;
+        lastDeltaAt = 0;
+        streamRunId = p.state !== "error" ? null : streamRunId;
+      }
       // FORK: Chat final/error is authoritative — if the lifecycle "end" agent event
       // was missed (dropped frame, JS error, session key mismatch), activeRuns would
       // keep a stale entry forever. Schedule a safety-net cleanup so the thinking
@@ -3875,16 +7698,60 @@ function onEvent(evt: unknown) {
       // sending reflects the VIEWED tab only — never the global map size, so a
       // different tab's live run can't pin this tab on "sending" forever.
       sending = viewedSessionBusy();
-      // FORK 2026-06-22: collapse any duplicate assistant answer left in messages[]
-      // by an in-flight reconnect/finalize race before this turn renders.
-      dedupeAssistantAnswers();
+      // FORK 2026-06-22: collapse any duplicate assistant answer left in messages[] by an in-flight
+      // reconnect/finalize race before this turn renders.
+      // FORK 2026-08-05 (the architect, explicit) — REMOVED, function and all. `dedupeAssistantAnswers()`
+      // scanned the WHOLE session and dropped any assistant text >= 40 chars that repeated, so
+      // asking the same question twice DELETED the second answer AFTER it had been rendered. A
+      // post-hoc delete can never be correct under "a message rendered to screen is never deleted";
+      // the duplicate is refused at the SOURCE instead (`pushAssistantMsgDeduped` declines to ADD
+      // one, which is legal precisely because nothing was on screen yet).
       updateChat();
       updateBtn();
+      // FORK 2026-08-05: a chat.history reload that arrived mid-turn was DEFERRED rather than
+      // allowed to demolish the live transcript (see loadChat). The turn is over — re-arm it.
+      if (pendingHistoryReload && !viewedSessionBusy() && streamRunId === null) {
+        pendingHistoryReload = false;
+        void loadChat();
+      }
       if (p.state !== "error") {
         loadBudget();
         loadSessions();
         refreshTreemap();
         updateResponseMap();
+      }
+    }
+  }
+  // FORK 2026-08-24 (the architect: "when a tinkerclaw tab/session is unfocused, it sometimes does
+  // not show its thinking indicator, and it also disappears from the SESSIONS panel").
+  //
+  // THE SERVER LANE, ARRIVING WHILE IT STILL MATTERS. `row.run` is authoritative and total, and the
+  // gateway pushes a fresh row on `reason:"start"` and `reason:"end"` for EVERY session — including
+  // the ones this client is not viewing. Until now nothing consumed it, so a tab that missed the one
+  // model-bearing `lifecycle` frame (page frozen, socket reconnected mid-turn, run began before this
+  // browser connected) had no second chance: `sessions[]` is not refetched during a turn.
+  //
+  // Nothing here decides liveness — run-state.ts remains the ONE PREDICATE. This only keeps the data
+  // that predicate reads current, and then repaints through the ONE TRIGGER like every other surface.
+  if (evt.event === "sessions.changed") {
+    const changed = extractChangedRow((evt.payload ?? evt.data) as Record<string, unknown>);
+    if (changed) {
+      const merged = mergeChangedRow({
+        rows: sessions as LiveSessionRow[],
+        key: changed.key,
+        row: changed.row,
+        matches: (candidate, ref) => sessionKeyMatches(candidate, ref),
+      });
+      sessions = merged.rows;
+      // `sessionsFetchedAt` is deliberately NOT bumped — see session-rows-live.ts. It means "when
+      // the WHOLE list was fetched", and moving it on a single-session push would tell the resolver
+      // that every other row is current too, retiring the client evidence that is the only thing
+      // lighting those tabs.
+      if (merged.changed) {
+        repaintActivitySurfaces();
+        // This lane is usually what fills the rail first on a live gateway, so it
+        // is also what must keep the first-paint snapshot warm.
+        scheduleSessionsSnapshot();
       }
     }
   }
@@ -3934,7 +7801,7 @@ function onEvent(evt: unknown) {
         // FORK 2026-05-09: with per-bubble `_segmentStart`, no global cursor
         // is needed. The next text delta will open a new bubble whose
         // `_segmentStart` captures the cumulative offset where it begins.
-        streamMsgIdx = -1;
+        streamMsgUid = null;
         // Add tool_use as a temporary message. FORK (2026-04-24): cc-bridge
         // attaches a `purpose` string to the event carrying the LLM's
         // purpose narration that preceded the tool call. Stash it on the
@@ -3953,8 +7820,9 @@ function onEvent(evt: unknown) {
             },
           ],
           _temporary: true,
+          _runId: p.runId,
         });
-        // FORK 2026-06-25 (the owner scope C): feed the EEG — every tool call becomes a
+        // FORK 2026-06-25 (the architect scope C): feed the EEG — every tool call becomes a
         // BRANCH off the trunk, colored + weighted by the provider it drives (so a
         // nano-banana→Gemini call peels off as a rainbow strand, a grep as a thin gray
         // one). Parent = the trunk run that fired the tool (p.runId). Feed must never
@@ -4012,6 +7880,7 @@ function onEvent(evt: unknown) {
             },
           ],
           _temporary: true,
+          _runId: p.runId,
         });
         // FORK 2026-06-25 (scope C): stamp the tool branch's end so it merges back into
         // the trunk at its real finish time (mirrors the subagent final-effort markEnded).
@@ -4035,20 +7904,28 @@ function onEvent(evt: unknown) {
       const d = p.data ?? {};
       const text = typeof d.text === "string" ? d.text : "";
       if (!text) return;
-      let idx = messages.findIndex(
-        (m) => (m as any)._reasoningRunId === p.runId && (m as any)._isReasoning,
+      const reasoningBubble = (messages as Record<string, unknown>[]).find(
+        (m) => m._reasoningRunId === p.runId && m._isReasoning,
       );
-      if (idx < 0) {
+      if (!reasoningBubble) {
         messages.push({
           role: "assistant",
           content: [{ type: "text", text }],
           _isReasoning: true,
           _reasoningRunId: p.runId,
+          // FORK 2026-08-05: also stamp the ordinary `_runId`. `ownsTempMsg` reads THAT name, and
+          // with only `_reasoningRunId` present it fell through to `streamRunId === p.runId`, so
+          // the NEXT run's terminal event claimed this bubble as one of its own temps.
+          _runId: p.runId,
           _temporary: true,
         } as any);
       } else {
-        const blk = (messages[idx].content as any[]).find((b) => b.type === "text");
-        if (blk) blk.text = text;
+        const blk = (reasoningBubble.content as any[]).find((b) => b.type === "text");
+        // MONOTONE: `d.text` is the CUMULATIVE reasoning text, so it may only GROW. A shorter or
+        // divergent value means the buffer restarted; never erase what is already on screen.
+        if (blk && (typeof blk.text !== "string" || text.startsWith(blk.text))) {
+          blk.text = text;
+        }
       }
       updateChat();
       return;
@@ -4077,7 +7954,7 @@ function onEvent(evt: unknown) {
         } as ActiveRunInfo);
       // FORK 2026-06-13 (eeg): the effort event now self-describes its model
       // (cc-bridge), so even an Auto run colours by the ACTUAL model running
-      // underneath instead of falling back to gray (the owner 2026-06-13). Keep any
+      // underneath instead of falling back to gray (the architect 2026-06-13). Keep any
       // existing non-empty model if the event omits it.
       if (typeof d.model === "string" && d.model) r.model = d.model;
       if (typeof d.provider === "string" && d.provider) r.provider = d.provider;
@@ -4100,7 +7977,7 @@ function onEvent(evt: unknown) {
       // FORK 2026-06-13 (eeg): feed the seismograph (bible §5.8h). Effort events
       // arrive incrementally per run; record() upserts by runId so every emit just
       // refreshes the run's sample. The store is keyed by the VIEWED sessionKey to
-      // match the render at updateBudgetPanel(). FORK 2026-06-14 (the owner): the gate
+      // match the render at updateBudgetPanel(). FORK 2026-06-14 (the architect): the gate
       // above now ALSO admits `:subagent:` descendants of the viewed session (via
       // chatEventIsSubagentOfView, same predicate the chat consumer uses), so a
       // subagent's effort event records into the PARENT's store (evtSk = the viewed
@@ -4174,6 +8051,227 @@ function onEvent(evt: unknown) {
         }
       }
     }
+    // FORK 2026-07-25 (the architect) — STREAM:"cache" consumer (💾 CONTEXT CACHE panel).
+    // PLACEMENT IS LOAD-BEARING: this MUST stay above the lifecycle chain. The
+    // `p.data?.model`-gated lifecycle branch further down hijacks and mutates ACTIVE
+    // RUN state for ANY lifecycle event carrying a model field, so a cache event that
+    // fell through to it would corrupt the running turn. Own branch + early return,
+    // gated on sessionKey exactly like the fractal/effort consumers.
+    if (p?.stream === "cache" && sessionKeyMatches(p.sessionKey)) {
+      const d = p.data ?? {};
+      const num = (v: unknown): number | undefined =>
+        typeof v === "number" && Number.isFinite(v) ? v : undefined;
+      // Usage numbers are a PER-CALL snapshot, so replace them wholesale — carrying a
+      // stale cacheRead from three calls ago would make the panel lie. model/provider
+      // are identity, not usage, so they stay sticky when an event omits them.
+      // Store against the EMITTING session, not the viewed one, so a background tab's
+      // numbers are waiting when the user switches to it.
+      const cs = cacheStateFor(p.sessionKey);
+      cs.promptTokens = num(d.promptTokens);
+      cs.input = num(d.input);
+      cs.cacheRead = num(d.cacheRead);
+      cs.cacheWrite = num(d.cacheWrite);
+      cs.output = num(d.output);
+      cs.lastEventMs = num(d.timestampMs) ?? Date.now();
+      if (typeof d.model === "string" && d.model) {
+        cs.model = d.model;
+      }
+      if (typeof d.provider === "string" && d.provider) {
+        cs.provider = d.provider;
+      }
+      // The per-call contextTokens is a WEAKER window source than the anatomy's
+      // declared maxTokens — never downgrade an existing "anatomy" reading.
+      const ctxTokens = num(d.contextTokens);
+      if (ctxTokens && ctxTokens > 0 && cs.windowSource !== "anatomy") {
+        cs.maxWindow = ctxTokens;
+        cs.windowSource = "session";
+      }
+      // FORK 2026-08-29 — THIS SESSION's turn counter. The cache stream fires once per model
+      // call, which is the unit that actually costs money and the one the other counters are
+      // compared against, so that is what "turns" counts here.
+      sessionStatsFor(p.sessionKey).turns += 1;
+      renderCachePanel();
+      // Flash off THIS event's numbers, not the accumulated state. A big cacheWrite is
+      // an expensive prefix rewrite (the thing worth noticing); a plain cacheRead is
+      // the cheap happy path.
+      const cw = num(d.cacheWrite) ?? 0;
+      const cr = num(d.cacheRead) ?? 0;
+      if (cw > 50000) {
+        flashCachePanel("write");
+      } else if (cr > 0) {
+        flashCachePanel("read");
+      }
+      return;
+    }
+    // FORK 2026-08-28 (the architect) — STREAM:"compaction" consumer (the CONTEXT WINDOW panel's pulse).
+    //
+    // The gateway has emitted this stream since long before the panel existed
+    // (embedded-agent-subscribe.handlers.compaction.ts emits {phase:"start"} / {phase:"end"} and
+    // emitAgentEvent stamps it with the run's session key) — nothing in the UI consumed it, so an
+    // AUTOMATIC compaction was completely invisible: the rail simply froze for however long pi
+    // took, then the numbers jumped. This is the "or automatically" half of the architect's ask.
+    //
+    // PLACEMENT IS LOAD-BEARING for exactly the same reason as the "cache" consumer directly
+    // above: the `p.data?.model`-gated lifecycle branch further down hijacks and mutates ACTIVE
+    // RUN state for ANY lifecycle event carrying a model field, so a compaction event that fell
+    // through to it would corrupt the running turn. Own branch + early return, gated on
+    // sessionKey so a background tab's compaction cannot pulse the viewed one.
+    if (p?.stream === "compaction" && sessionKeyMatches(p.sessionKey)) {
+      const d = (p.data ?? {}) as {
+        phase?: unknown;
+        completed?: unknown;
+        tokensBefore?: unknown;
+        tokensAfter?: unknown;
+      };
+      const phase = d.phase;
+      if (phase === "start") {
+        setCacheBusy(true);
+      } else if (phase === "end") {
+        // FORK 2026-08-29 — bank the win. The gateway now forwards pi's context size either
+        // side of the compaction (handlers.compaction.ts); the difference is the context this
+        // session will no longer resend on every subsequent call, which is the number that
+        // makes a compaction legible as a saving rather than as an unexplained pause.
+        // Only a COMPLETED compaction counts: a retry emits `end` too, and counting that would
+        // book the same saving twice.
+        if (d.completed) {
+          const st = sessionStatsFor(p.sessionKey);
+          st.compactions += 1;
+          const before = typeof d.tokensBefore === "number" ? d.tokensBefore : undefined;
+          const after = typeof d.tokensAfter === "number" ? d.tokensAfter : undefined;
+          if (before !== undefined && after !== undefined && before > after) {
+            const saved = before - after;
+            st.evictedTokens += saved;
+            cacheStateFor(p.sessionKey).lastEvictedTokens = saved;
+          }
+          renderCachePanel();
+        }
+        // An `end` whose `start` we never saw (the compaction began before this tab attached)
+        // is absorbed by the clamp inside setCacheBusy — it can only ever floor at 0.
+        setCacheBusy(false);
+      }
+      return;
+    }
+    // FORK 2026-08-13 (the architect) — STREAM:"turn-phase" consumer (the pending pill's text).
+    // The gateway narrates what it is doing during the 21-36s between `chat.send`
+    // resolving and the first lifecycle event naming a model. Gated on sessionKey exactly
+    // like the fractal/cache consumers above: these envelopes ride the MAIN session key,
+    // so an ungated handler would paint a background tab's phases onto the viewed tab.
+    // Own branch + early return, ABOVE the `p.data?.model` lifecycle branch, for the same
+    // reason the cache consumer is: that branch mutates active-run state for any event it
+    // can read a model off, and a phase event must never touch a run.
+    // FORK 2026-08-23 — one runner stage inside the current "preparing context" window.
+    // Buffered rather than rendered: a stage on its own is noise, and its meaning is its share
+    // of the window it sits in, which is not known until a model is named.
+    if (p?.stream === TURN_STAGE_STREAM && sessionKeyMatches(p.sessionKey)) {
+      const st = readTurnStageEvent(p);
+      // Only while a window is actually open. A stage arriving outside one belongs to a
+      // background run (a reflection, a subagent) whose session happens to match the viewed
+      // tab — attaching it would inflate the next turn's breakdown with another run's work.
+      if (st && preparingSince !== null && preparingStages.length < MAX_PREPARING_STAGES) {
+        // `plugin` decides WHICH row this stage lands under: an owned stage goes to its plugin's
+        // own promoted row, an unowned one to the "preparing context" bracket. Carried, never
+        // guessed here — the ownership rule lives in `stageOwner`.
+        preparingStages.push({
+          id: st.stage,
+          ms: st.ms,
+          ...(st.plugin ? { plugin: st.plugin } : {}),
+        });
+      }
+      return;
+    }
+    if (p?.stream === TURN_PHASE_STREAM && sessionKeyMatches(p.sessionKey)) {
+      const phase = readTurnPhaseEvent(p, Date.now());
+      // FORK 2026-08-24 — WHICH RUN these stages belong to. The fractal reflection is a separate
+      // run on the SAME session key, so without this its stages extended the main turn's block
+      // and surfaced under the answer, at the bottom of the chat.
+      const runIdOfEvent = typeof p.runId === "string" ? p.runId : "";
+      if (phase) {
+        turnPhase = phase;
+        turnPhaseTrail = appendTurnPhase(turnPhaseTrail, phase);
+        // FORK 2026-08-15 (the architect: "leave messages in the chat after each phase finishes with
+        // the amount of time it took, so we have a measurable way to see how much time we are
+        // investing in each phase"). The pill answers "what NOW" and is gone the moment the
+        // model starts; these rows persist in the transcript, so a slow turn can be read back
+        // afterwards instead of watched live.
+        //
+        // Client-only, like the retry/overload/warning rows above: pushed into `messages` for
+        // rendering and never sent anywhere. `chat.send` transmits only the user's text, so
+        // these cannot reach the model or the stored transcript.
+        if (isPhaseCompletion(phase)) {
+          // FORK 2026-08-23 (the architect: "Remove the tag 'recalling memories' and bring the rest
+          // up, turning the 'recalling memories' subtasks into tasks").
+          //
+          // That label was never a stage — it is the `before_prompt_build` HOOK CHAIN, and
+          // eight unrelated plugins run inside it: memory, persona, recipes, humour. Naming
+          // the chain after one participant is what made "why is computational humor part of
+          // recalling memories?" a reasonable question. There is no honest single name for a
+          // chain that heterogeneous, so the chain stops having a row and its members become
+          // rows in their own right.
+          //
+          // Falls back to the aggregate row when the gateway sent no breakdown (an older
+          // build): losing the row entirely would be worse than showing the old sum.
+          // FORK 2026-08-24 (the architect: "Make 'recalling memories', 'total recall' and 'preparing
+          // context' collapsable") — THE CHAIN GETS ITS ROW BACK, as a COLLAPSED CONTAINER.
+          //
+          // 2026-08-23 removed it and spliced its eight members into the top level, because an
+          // opaque row named after one participant could not answer "which of the eight spent the
+          // 12.7s". That objection was about VISIBILITY, not about the row existing — and a
+          // collapsible row answers it better than promotion did: the top level goes back to ~6
+          // readable stages, and one click shows all eight members in the order they ran.
+          //
+          // Promotion also cost something it could not give back: it flattened the tree, so Total
+          // Recall — a member that measures its own internals — had nowhere to put them. It is
+          // nested here, as a child that is itself a parent.
+          const chain = phase.phase === "before_prompt_build" && (phase.plugins?.length ?? 0) > 0;
+          if (chain) {
+            // The chain announced itself as a running row; complete THAT row rather than opening a
+            // second one — `upsertPhaseEntry` matches on the label, which is unchanged.
+            const members: PhaseChild[] = (phase.plugins as Array<{ id: string; ms: number }>).map(
+              (p) => {
+                // Read from the SAME buffer "preparing context" reads, filtered by owner so the
+                // two are disjoint. Safe at this moment: a plugin emits its stages inside its hook
+                // handler, and this completion event is sent after the handler loop ends.
+                const owned = preparingStages.filter((s) => stageOwner(s) === p.id);
+                return {
+                  id: p.id,
+                  ms: p.ms,
+                  kind: "plugin" as const,
+                  ...(owned.length > 0
+                    ? {
+                        children: owned.map((s) => ({
+                          id: s.id,
+                          ms: s.ms,
+                          kind: "stage" as const,
+                        })),
+                        childKind: "stage" as const,
+                      }
+                    : {}),
+                };
+              },
+            );
+            recordPhaseTiming(
+              finishedPhase(phase.label, phase.ms as number, "gateway", members, "plugin"),
+              runIdOfEvent,
+            );
+          } else {
+            recordPhaseTiming(
+              finishedPhase(phase.label, phase.ms as number, "gateway", phase.plugins),
+              runIdOfEvent,
+            );
+          }
+        } else {
+          // FORK 2026-08-24 (the architect: "They should show at the moment they are ongoing") — a stage
+          // STARTING. The old row-per-completion shape could only ever show work already over, so
+          // the one stage the architect was actually waiting on was the one the list omitted.
+          recordPhaseTiming(
+            { label: phase.label, ms: 0, done: false, startedAt: phase.at },
+            runIdOfEvent,
+          );
+        }
+        updateChat(true); // skipScroll: a pill relabel must not yank the viewport
+      }
+      return;
+    }
     // FORK 2026-06-11 (fractal v3, bible §5.67b) — STREAM:"fractal" consumer.
     // The fractal-reflection plugin emits its envelope under the MAIN session's
     // sessionKey (lane runIds ride inside data), so gate exactly like the effort
@@ -4217,15 +8315,31 @@ function onEvent(evt: unknown) {
         // in minutes later must not yank the viewport).
         updateChat(true);
       }
-      upsertFractalDock(d, (runForAnchor: string) => {
-        const container = $("messages");
-        if (!container) return null;
-        const escaped =
-          typeof CSS !== "undefined" && typeof CSS.escape === "function"
-            ? CSS.escape(runForAnchor)
-            : runForAnchor;
-        return container.querySelector<HTMLElement>(`[data-fractal-parent-run="${escaped}"]`);
-      });
+      // FORK 2026-08-11 (the architect) — ARITY BUG, dead since this consumer was written
+      // (617123adba7). upsertFractalDock's signature has ALWAYS been
+      // (container, row, lookupAnchor) — see fractal-dock.ts and its tests — but this
+      // call passed (row, lookupAnchor), so `row` bound to the anchor CALLBACK and
+      // renderFractalDock threw on `statusClass(undefined)` before appending anything.
+      // The triage verdict therefore never rendered in chat, which is exactly why the
+      // reflection lane appeared to "need its own tab": the dock was its only in-chat
+      // surface and it was dead on arrival. vite build does NOT typecheck (no tsconfig
+      // in tinker-ui/, `build: vite build`), so nothing ever caught the wrong arity.
+      const fractalContainer = $("messages");
+      if (!fractalContainer) return;
+      upsertFractalDock(
+        fractalContainer,
+        d as FractalDockRow,
+        (runForAnchor: string) => {
+          const escaped =
+            typeof CSS !== "undefined" && typeof CSS.escape === "function"
+              ? CSS.escape(runForAnchor)
+              : runForAnchor;
+          return fractalContainer.querySelector<HTMLElement>(
+            `[data-fractal-parent-run="${escaped}"]`,
+          );
+        },
+        loadFractalTranscript,
+      );
       return;
     }
     // FORK 2026-05-28 — cc-bridge text-block boundary. Anthropic's streaming
@@ -4243,7 +8357,7 @@ function onEvent(evt: unknown) {
       p.data?.phase === "text-block-break" &&
       sessionKeyMatches(p.sessionKey)
     ) {
-      streamMsgIdx = -1;
+      streamMsgUid = null;
       return;
     }
     // FORK 2026-06-11 — cc-bridge turn-incomplete phase event (sibling hook to
@@ -4287,14 +8401,74 @@ function onEvent(evt: unknown) {
     }
     // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
     if (p?.stream === "lifecycle" && p.data?.phase === "context-anatomy") {
-      if (p.data.anatomy && timelineCtrl) {
-        const anatomy = p.data.anatomy as unknown;
+      const anatomy = p.data.anatomy as unknown;
+      if (anatomy && timelineCtrl) {
         if (anatomy.roundNumber) {
           // Round-level anatomy: enrich existing round bar with full segment data
           timelineCtrl.pushEvent(anatomy, p.runId);
         } else {
           // Legacy turn-level anatomy (fallback for non-round-aware sessions)
           timelineCtrl.pushEvent(anatomy);
+        }
+      }
+      // FORK 2026-07-25 (the architect) — 💾 CONTEXT CACHE composition feed. The anatomy is the
+      // only event carrying BOTH the composition breakdown and the model's DECLARED
+      // window size, so it is the authoritative window source: "anatomy" outranks the
+      // per-call "session" reading and is never downgraded by it. Deliberately hoisted
+      // OUT of the timelineCtrl guard above — the cache panel must fill even before the
+      // timeline has mounted. DELIBERATELY NOT READ: contextWindow.usedTokens and
+      // utilizationPercent — turn-aggregate counters, not a fill ratio.
+      if (anatomy) {
+        // FORK 2026-07-26 — key by the EMITTING session. This block used to write the
+        // one global state object with NO session gate at all, so every tab's anatomy
+        // overwrote every other tab's panel (the architect: "no matter what tab I choose, the
+        // context cache does not change"). The envelope sessionKey is authoritative
+        // (emitAgentEvent backfills it from the run context when the emitter omits it);
+        // anatomy.sessionKey is the fallback for legacy rows.
+        const aKey =
+          (typeof p.sessionKey === "string" && p.sessionKey) ||
+          (typeof p.data?.sessionKey === "string" && p.data.sessionKey) ||
+          (typeof anatomy.sessionKey === "string" && anatomy.sessionKey) ||
+          undefined;
+        const as = cacheStateFor(aKey);
+        if (anatomy.contextSent) {
+          as.contextSent = anatomy.contextSent;
+        }
+        if (typeof anatomy.model === "string" && anatomy.model) {
+          as.model = anatomy.model;
+        }
+        if (typeof anatomy.provider === "string" && anatomy.provider) {
+          as.provider = anatomy.provider;
+        }
+        const maxTokens = anatomy.contextWindow?.maxTokens;
+        if (typeof maxTokens === "number" && maxTokens > 0) {
+          as.maxWindow = maxTokens;
+          as.windowSource = "anatomy";
+        }
+        // Cache columns now populate again (2026-07-25 round_number fix), and the emit
+        // carries them since the same commit — use them when no live cache event landed.
+        const acr = anatomy.cacheReadTokens;
+        const acw = anatomy.cacheCreationTokens;
+        if (as.promptTokens == null && (typeof acr === "number" || typeof acw === "number")) {
+          const cr = typeof acr === "number" ? acr : 0;
+          const cw = typeof acw === "number" ? acw : 0;
+          // FORK 2026-07-26 — PLAUSIBILITY GUARD. These two anatomy columns are TURN
+          // AGGREGATES (attempt-hooks assigns usageTotals.cacheRead/cacheWrite, summed over
+          // every tool-loop round), so they routinely exceed the window — measured 9,380,059
+          // against a 1,000,000 window, which rendered as "9.4M / 1.0M · 938%". Same shape as
+          // the 2026-07-24 cli-compaction plausibility filter: a snapshot bigger than the
+          // window is not a snapshot. The live stream:"cache" event is per-call and exact,
+          // so dropping this fallback only costs us the pre-first-event backfill.
+          const maxW = as.maxWindow ?? 0;
+          if ((cr > 0 || cw > 0) && (maxW <= 0 || cr + cw <= maxW)) {
+            as.cacheRead = cr;
+            as.cacheWrite = cw;
+            as.promptTokens = cr + cw;
+          }
+        }
+        // Only repaint when the event belongs to the tab actually on screen.
+        if (!aKey || sessionKeyMatches(aKey)) {
+          renderCachePanel();
         }
       }
     }
@@ -4676,6 +8850,30 @@ function onEvent(evt: unknown) {
           ...(d.payload ? { payload: d.payload } : {}),
         };
         pushTrail(entry);
+        // FORK 2026-08-28 (the architect: "Every time we use a broca recipe, I would like to see a
+        // particular message in the chat"). `matched`/`merged` IS the moment a recipe becomes
+        // active for this turn, and the producer (prefrontal/index.ts) now ships the recipe's title
+        // and the absolute path of its recipe.md alongside. Stamp both on the turn's own user
+        // message so renderMsg can draw the one-line reminder under that prompt.
+        if (kind === "matched" || kind === "merged") {
+          const rTitle = d.payload?.recipeTitle;
+          const rPath = d.payload?.recipePath;
+          if (typeof rTitle === "string" && rTitle && typeof rPath === "string" && rPath) {
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const m = messages[i] as {
+                role?: string;
+                _recipeTitle?: string;
+                _recipePath?: string;
+              };
+              if (m?.role === "user") {
+                m._recipeTitle = rTitle;
+                m._recipePath = rPath;
+                updateChat(true);
+                break;
+              }
+            }
+          }
+        }
         PF_DEBUG_STATE.lastTrailEvent = entry;
         PF_DEBUG_STATE.eventCounts.trail++;
         pfLog(
@@ -4717,10 +8915,92 @@ function onEvent(evt: unknown) {
       // set sending=true and disrupt the active tab's UI.
       // Allow subagent sessions through — they're child runs the user cares about.
       const evtSessionKey = p.data.sessionKey as string | undefined;
-      if (
-        !evtSessionKey ||
-        (!sessionKeyMatches(evtSessionKey) && !evtSessionKey.includes(":subagent:"))
-      ) {
+      // FORK 2026-08-17 — this event NAMES A MODEL, which is the definition of the pre-model window
+      // being over. Cleared for the event's own session BEFORE the viewed gate below, because a
+      // background tab's window must close on exactly the same proof as the viewed tab's.
+      clearPreModelFor(evtSessionKey);
+      const admitted =
+        Boolean(evtSessionKey) &&
+        (sessionKeyMatches(evtSessionKey as string) ||
+          (evtSessionKey as string).includes(":subagent:"));
+      if (!admitted) {
+        // FORK 2026-08-16 (the architect: "when a tab is out of focus, the progress indicator should still
+        // show"). THIS RETURN IS WHY A BACKGROUND TAB COULD NOT KNOW ITS OWN SESSION WAS WORKING.
+        // It sits above `activeRuns.set`, so the client lane was empty for every tab but the one on
+        // screen; the server row was meant to cover that, but `sessions[]` is not refetched while a
+        // turn runs, so it says idle for the whole turn. The event itself was always here — the
+        // gateway broadcasts agent events to every connection, not per session.
+        //
+        // So record the run's liveness on the way past, and ONLY that. The gate keeps its meaning:
+        // nothing below it runs, and none of the viewed-tab state it protects (`sending`,
+        // `streamProvider`, the pre-model window, the chat bubbles) is touched.
+        if (evtSessionKey && typeof p.runId === "string") {
+          const changed = noteBackgroundRunEvent(
+            backgroundRuns,
+            {
+              runId: p.runId,
+              sessionKey: evtSessionKey,
+              phase: p.data.phase,
+              model: p.data.model,
+              modelProvider: p.data.modelProvider,
+            },
+            Date.now(),
+            providerOf,
+          );
+          // Repaint on the same tick the fact changed, rather than waiting up to
+          // the next tick of the one clock — same reasoning as the repaint at loadSessions()' tail.
+          if (changed) {
+            repaintActivitySurfaces();
+          }
+        }
+        // FORK 2026-08-26 — THE OTHER ORPHANED TERMINATOR (companion to the chat one above).
+        // noteBackgroundRunEvent retires this run from the BACKGROUND lane only. A run that began
+        // while its tab was on screen ALSO holds an `activeRuns` entry minted in the phase:"start"
+        // branch below, and the only thing that ever removes THAT is the 3s debounce further down
+        // — below this return. So the two client maps disagree forever, and viewedSessionBusy()
+        // reads the one nothing ever cleaned.
+        //
+        // Mirror the viewed teardown, debounce included: the 3s window is what lets a provider
+        // fallback reusing the same runId cancel the delete. That cancel is only reachable once
+        // ADMITTED, so the phase:"start" arm here is its non-admitted twin — without it a
+        // background fallback would delete itself 3s into its own turn.
+        if (typeof p.runId === "string") {
+          const bgLifeRunId = p.runId as string;
+          if (p.data.phase === "start") {
+            const bgRestart = pendingRunDeletes.get(bgLifeRunId);
+            if (bgRestart) {
+              clearTimeout(bgRestart);
+              pendingRunDeletes.delete(bgLifeRunId);
+            }
+            // A genuine start re-activates this runId — same reason as the admitted path.
+            terminatedRuns.delete(bgLifeRunId);
+          } else if (p.data.phase === "end" && activeRuns.has(bgLifeRunId)) {
+            // The `has` guard matters: a run this browser only ever saw on the background lane
+            // has no activeRuns entry to retire, and scheduling a timer for it would be pure
+            // churn on a 256-entry terminatedRuns LRU whose marks protect the viewed session.
+            const bgPrior = pendingRunDeletes.get(bgLifeRunId);
+            if (bgPrior) {
+              clearTimeout(bgPrior);
+            }
+            const bgTimeout = setTimeout(() => {
+              pendingRunDeletes.delete(bgLifeRunId);
+              if (activeRuns.delete(bgLifeRunId)) {
+                saveActiveRuns();
+              }
+              rememberTerminated(bgLifeRunId);
+              clearSavedStreamStateFor(evtSessionKey, bgLifeRunId);
+              // Clears only — same reasoning as the chat terminator above. A background run
+              // ending can never legitimately make the VIEWED tab busy, and the pre-model guard
+              // stops it blanking a pill this tab opened seconds ago.
+              if (sending && !viewedSessionBusy() && !sessionPending(sessionKey)) {
+                sending = false;
+                updateBtn();
+              }
+              repaintActivitySurfaces();
+            }, 3000);
+            pendingRunDeletes.set(bgLifeRunId, bgTimeout);
+          }
+        }
         return;
       }
       // Any lifecycle event for a restored run confirms it's still active
@@ -4762,6 +9042,13 @@ function onEvent(evt: unknown) {
         // FORK 2026-06-14 (bug #3): a genuine phase:start re-activates this runId
         // (fallback models can reuse one) — clear any prior "terminated" mark.
         terminatedRuns.delete(p.runId);
+        // FORK 2026-08-16 — THE canonical end of "preparing context": this event is the first
+        // one that names a model. Gated on the viewed session because `preparingSince` is a
+        // property of the viewed tab (like `sending`), so a background run starting must not
+        // close, or mis-time, the window this tab is showing.
+        if (sessionKeyMatches(p.sessionKey)) {
+          closePreModelWindow();
+        }
         activeRuns.set(p.runId, {
           model: p.data.model,
           provider: startProvider,
@@ -4887,7 +9174,15 @@ function onEvent(evt: unknown) {
             const ts = tabStates.get(targetTab.id);
             const tabMsgs = targetTab.id === activeTabId ? messages : (ts?.messages ?? []);
             const tabTurns = tabMsgs.filter((m: unknown) => m.role === "user").length;
-            if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0) {
+            // FORK 2026-07-21 — a tab still wearing its default fortune-cookie name
+            // (deterministic fortuneForKey, never locked) retries on EVERY turn-end:
+            // a missed turn-1 window (stranded RPC, restart, dead gateway) used to
+            // leave the tab unnamed until turn 5 or forever.
+            const wearsDefaultName =
+              !targetTab.titleLocked &&
+              !!targetTab.sessionKey &&
+              targetTab.title === fortuneForKey(targetTab.sessionKey);
+            if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0 || wearsDefaultName) {
               console.log(
                 "[tabs] triggering title generation for turn",
                 tabTurns,
@@ -4969,7 +9264,7 @@ function onEvent(evt: unknown) {
                 ? p.data.sessionKey
                 : sessionKey;
             if (eegEvtSk && !eegEvtSk.includes(":subagent:")) {
-              // FORK 2026-06-22 (the owner): the blue boundary is now normally drawn at SEND
+              // FORK 2026-06-22 (the architect): the blue boundary is now normally drawn at SEND
               // time (immediate, while the turn runs). If it was, skip adding a 2nd line
               // here — just reuse the already-bumped turn number to stamp the answer bubble.
               // The fallback (queued sends, which don't draw at send) still records here.
@@ -5004,7 +9299,7 @@ function onEvent(evt: unknown) {
                   promptIndex,
                   promptText,
                 });
-                // persist the completed turn so a hard refresh restores it (the owner 2026-06-13)
+                // persist the completed turn so a hard refresh restores it (the architect 2026-06-13)
                 saveEegStore(eegEvtSk);
               }
               if (sessionKeyMatches(eegEvtSk)) {
@@ -5078,6 +9373,10 @@ function onEvent(evt: unknown) {
       "thinking",
       "effort",
       "fractal",
+      // FORK 2026-07-25 (the architect): MANDATORY — without this entry every cache event falls
+      // through to the unknown-stream fallback below and spams a raw system bubble into
+      // the chat transcript.
+      "cache",
     ]);
     if (
       p?.stream &&
@@ -5124,9 +9423,14 @@ function findTabByMatch(tabsByKey: Map<string, Tab>, sessionKey: string): Tab | 
 }
 
 // ─── API ───
-async function loadSessions(opts?: { loadChat?: boolean }) {
+async function loadSessions(opts?: { loadChat?: boolean; forceChat?: boolean }) {
   const res = await req("sessions.list", {}).catch(() => ({ sessions: [] }));
   sessions = res.sessions ?? [];
+  // Stamp the snapshot so a row can never outrank newer client-side evidence (see run-state.ts).
+  sessionsFetchedAt = Date.now();
+  // Remember it so the NEXT page load can paint this rail on its first frame
+  // instead of sitting on "Loading..." for a second. See paintRightRailFromSnapshots.
+  scheduleSessionsSnapshot();
   // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: tab.title
   // sync only. The server's `listSessionsFromStore` lazy-mint (now
   // restored, drawing from the shared FORTUNE_COOKIES pool) is the
@@ -5203,29 +9507,53 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   }
   updateSelect();
   updateSessionsPanel();
+  // FORK 2026-08-15 — `sessions[]` has exactly ONE writer (the assignment above), and the
+  // chat indicator's server lane reads it. Repaint on the same tick the snapshot is replaced,
+  // rather than waiting up to ACTIVITY_TICK_MS for the one clock to notice.
+  repaintThinkingIndicator();
   // FORK: If sessionKey was just resolved for the first time, load timeline
   if (!hadSessionKey && sessionKey) {
     refreshTimelineRespectingMode();
   }
   // FORK: Sync tabs with server-side sessions — suffix match for canonicalization
+  //
+  // FORK 2026-07-28 (the architect: "the rest are blank; hard refresh shows the same as main") — this was
+  // a ONE-WAY LATCH that permanently broke tabs.
+  //   * A tab whose session was missing from `sessions` got `isAttached = false`, and saveTabs()
+  //     below PERSISTS that to localStorage.
+  //   * The loop that could undo it was gated on `tab.isAttached`, so a detached tab was never
+  //     re-examined — the latch had no release.
+  //   * A detached tab then fails the `activeTab?.isAttached && activeTab.sessionKey` check on the
+  //     connect path, which leaves the module-global `sessionKey` on MAIN's key. That is why a
+  //     blank tab renders main's transcript after a refresh.
+  // The trigger is any transient miss: a `sessions.list` served while the store is still warming
+  // (e.g. right after a gateway restart) returns a list without those sessions and detaches every
+  // tab at once. Reverting UI code cannot repair it, because the damage lives in persisted state.
+  //
+  // Now self-healing: detached tabs are re-examined, a found session RE-ATTACHES, and an empty or
+  // failed session list is treated as "no information" rather than as proof of absence.
+  const sessionListIsTrustworthy = Array.isArray(sessions) && sessions.length > 0;
   for (const tab of tabs) {
-    if (tab.isAttached && tab.sessionKey && tab.id !== "tab-main") {
+    if (tab.sessionKey && tab.id !== "tab-main") {
       let sess = sessions.find((s: unknown) => s.key === tab.sessionKey);
       if (!sess) {
         // Try suffix match: tab has "tinker:xxx", server has "agent:main:tinker:xxx"
         sess = sessions.find((s: unknown) => s.key.endsWith(":" + tab.sessionKey));
       }
-      if (sess && tab.sessionKey !== sess.key) {
-        // Upgrade to canonical key
-        tab.sessionKey = sess.key;
-        if (activeTabId === tab.id) {
-          sessionKey = sess.key;
+      if (sess) {
+        if (tab.sessionKey !== sess.key) {
+          // Upgrade to canonical key
+          tab.sessionKey = sess.key;
+          if (activeTabId === tab.id) {
+            sessionKey = sess.key;
+          }
         }
-      } else if (!sess) {
-        // Session doesn't exist on server yet — keep tab (don't detach new tabs)
-        // Only detach if tab was previously canonicalized (key contains "agent:")
-        // FORK: Keep sessionKey for timeline/treemap lookups — only mark as unattached
-        // so new messages can't be sent, but historical data is still accessible.
+        // THE LATCH RELEASE: the session exists, so this tab is usable again. Without this a
+        // single transient miss stranded the tab forever.
+        tab.isAttached = true;
+      } else if (sessionListIsTrustworthy && tab.isAttached) {
+        // Session genuinely absent from a non-empty list — keep the sessionKey for
+        // timeline/treemap lookups, only mark unattached so new messages can't be sent.
         if (tab.sessionKey!.startsWith("agent:")) {
           tab.isAttached = false;
         }
@@ -5235,7 +9563,11 @@ async function loadSessions(opts?: { loadChat?: boolean }) {
   saveTabs();
   renderTabs();
   if (opts?.loadChat) {
-    loadChat();
+    // FORK 2026-08-28 — carry the reconnect's override through HERE rather than issuing a second
+    // loadChat at the call site. This runs AFTER the loop above has canonicalised the active tab's
+    // sessionKey from the freshly fetched list, so a forced re-read cannot fetch a key the list
+    // just replaced — and the tab still pays for exactly ONE chat.history.
+    loadChat(opts.forceChat ? { force: true } : undefined);
   }
 }
 
@@ -5260,12 +9592,29 @@ function normalizeHistoryRenderBlocks(msgs: unknown[]): void {
       continue;
     }
     for (const b of content) {
-      if (b && typeof b === "object" && (b as { type?: unknown }).type === "toolcall") {
-        const blk = b as Record<string, unknown>;
+      if (!b || typeof b !== "object") {
+        continue;
+      }
+      const blk = b as Record<string, unknown>;
+      // FORK 2026-07-26 (thinking/narration never collapsed, tool rows vanish on
+      // reload): the match below used to be an EXACT `=== "toolcall"`. But the
+      // canonical block type the agent store persists is camelCase `toolCall`
+      // (anthropic-transport-stream.ts); only the claude-cli import path writes
+      // lowercase `toolcall` (cli-session-history.claude.ts). Measured on the real
+      // store: 941/941 tool blocks are `toolCall`, 0 are `toolcall`. So this
+      // normalizer never fired, every tool block stayed unrecognized, `hasTool`
+      // read false for every message, and narrationIndices() therefore returned []
+      // — no "▸ Reasoning" group ever folded. The backend already matches these
+      // case-insensitively (chat-display-projection.ts isToolHistoryBlockType);
+      // the frontend has to agree. Alias set mirrors agents/tool-call-id.ts.
+      const blkType = typeof blk.type === "string" ? blk.type.trim().toLowerCase() : "";
+      if (blkType === "toolcall" || blkType === "tool_call" || blkType === "tooluse") {
         blk.type = "tool_use";
         if (blk.input === undefined && blk.arguments !== undefined) {
           blk.input = blk.arguments;
         }
+      } else if (blkType === "toolresult") {
+        blk.type = "tool_result";
       }
     }
     // A thinking-only history message → mark _isReasoning and surface its text so it
@@ -5292,14 +9641,253 @@ function normalizeHistoryRenderBlocks(msgs: unknown[]): void {
   }
 }
 
-async function loadChat() {
+// ─── FORK 2026-08-28: HISTORY-LOAD OBSERVABILITY + RETRY (R3) ─────────────────────────────────
+// The 2026-07-28 invariant below `loadChat` — "never overwrite good content with nothing" — is
+// right and it stays. But it has a blind spot a CLONED tab falls straight through: a FRESH tab has
+// no good content, so "keep what is on screen" resolves to "keep the BLANK, forever, and never ask
+// again". That is the whole of the blank-clone bug. Measured live on the clone's own key today:
+//   chat.history {sessionKey:"agent:main:dashboard:<clone>",limit:1000}
+//     → 428 messages / 976,527 bytes in 6.16s
+// and `copyAnatomyEventsToNewKey` had already landed 17 anatomy rows under that key. Nothing was
+// missing server-side; the ONE fetch that would have painted the tab was discarded by
+// `.catch(() => null)` and no second question was ever asked.
+//
+// So the invariant needed two things it never had: a RETRY (the failure is transient by
+// construction) and a VISIBLE SIGNAL (R3 — a failed load must never be indistinguishable from an
+// empty session). `req()` rejects in exactly two TRANSPORT shapes, and both are retryable:
+//   • the bare string "disconnected" (socket not OPEN, or every pending call rejected on close);
+//   • `Error("timeout: <method> did not respond in <ms>ms")` — the 60s stuck-forever guard.
+// A rejection that carries the gateway's own `error` payload (unknown method, unknown session) is
+// NOT retryable: the server answered, and asking again forever would spin without the answer ever
+// changing. Classify, don't blanket-retry.
+const HISTORY_RETRY_BACKOFF_MS = [400, 1_200, 3_000, 7_000, 15_000];
+const HISTORY_STRIP_ID = "history-strip";
+
+type HistoryLoadState =
+  | { kind: "ok" }
+  | { kind: "retrying"; attempt: number; reason: string }
+  | { kind: "failed"; reason: string };
+
+/** Per-session-key load state. Absent / "ok" ⇒ the strip is hidden. */
+const historyLoadState = new Map<string, HistoryLoadState>();
+/** Generation per key: a newer fetch SUPERSEDES an older one, so a ladder that happens to be
+ *  sleeping when the user retries (or when a reconnect fires its own load) wakes up, sees it is
+ *  stale, and returns without painting over the newer result. */
+const historyFetchGen = new Map<string, number>();
+
+function describeHistoryError(err: unknown): string {
+  if (typeof err === "string") {
+    return err;
+  }
+  if (err instanceof Error) {
+    return err.message;
+  }
+  const m = (err as { message?: unknown } | null)?.message;
+  return typeof m === "string" ? m : String(err ?? "unknown error");
+}
+
+/** TRANSPORT failures only — see the classification note above. */
+function historyErrorIsRetryable(err: unknown): boolean {
+  const msg = describeHistoryError(err).toLowerCase();
+  if (msg === "disconnected" || msg.startsWith("timeout:")) {
+    return true;
+  }
+  const transient =
+    /disconnect|timeout|timed out|socket|network|econn|epipe|closed|unavailable|overloaded/;
+  return transient.test(msg);
+}
+
+function setHistoryLoadState(sk: string, st: HistoryLoadState): void {
+  if (st.kind === "ok") {
+    historyLoadState.delete(sk);
+  } else {
+    historyLoadState.set(sk, st);
+  }
+  renderHistoryStrip();
+}
+
+/**
+ * Lazily mint the degraded strip directly ABOVE the ATTACHED ACTIVITY strip, so it sits over the
+ * composer in the same eyeline as every other "what is happening to this tab" row.
+ *
+ * Styling is INLINE on purpose. `styles/base.css` is outside this change's blast radius, and a
+ * class-based `display` would outrank a `hidden` attribute — the exact trap
+ * `styles-hidden-invariant.test.ts` exists to catch. Visibility here is `style.display` alone,
+ * which nothing can outrank, so the control can never be "correct state, dead pixels".
+ */
+function historyStripEl(): HTMLElement | null {
+  const existing = $(HISTORY_STRIP_ID);
+  if (existing) {
+    return existing;
+  }
+  const anchor = $("attach-strip");
+  const parent = anchor?.parentElement ?? $("messages")?.parentElement ?? null;
+  if (!parent) {
+    return null;
+  }
+  const el = document.createElement("div");
+  el.id = HISTORY_STRIP_ID;
+  el.style.cssText = [
+    "display:none",
+    "align-items:center",
+    "gap:8px",
+    "margin:0 8px 4px",
+    "padding:5px 9px",
+    "border-radius:6px",
+    "border:1px solid #7a5a1e",
+    "background:#2a2113",
+    "color:#e6c67a",
+    "font-size:11px",
+    "line-height:1.4",
+    "cursor:pointer",
+    "user-select:none",
+  ].join(";");
+  el.addEventListener("click", () => {
+    if (!sessionKey) {
+      return;
+    }
+    // Bump the generation first so a ladder still sleeping on its backoff cannot repaint over the
+    // fresh attempt when it wakes, then start over from the top of the backoff.
+    historyFetchGen.set(sessionKey, (historyFetchGen.get(sessionKey) ?? 0) + 1);
+    setHistoryLoadState(sessionKey, { kind: "retrying", attempt: 1, reason: "manual retry" });
+    void loadChat();
+  });
+  if (anchor && anchor.parentElement === parent) {
+    parent.insertBefore(el, anchor);
+  } else {
+    parent.appendChild(el);
+  }
+  return el;
+}
+
+/** Paint the VIEWED session's history-load state. Viewed-session-scoped, so it is a direct member
+ *  of refreshViewedSessionIndicators() by that helper's contract. */
+function renderHistoryStrip(): void {
+  const el = historyStripEl();
+  if (!el) {
+    return;
+  }
+  const st = sessionKey ? historyLoadState.get(sessionKey) : undefined;
+  if (!st || st.kind === "ok") {
+    el.style.display = "none";
+    el.textContent = "";
+    el.removeAttribute("data-state");
+    return;
+  }
+  const head =
+    st.kind === "retrying"
+      ? `⟳ history unavailable — retrying${st.attempt > 1 ? ` (attempt ${st.attempt})` : "…"}`
+      : "⚠ history could not be loaded";
+  el.textContent = `${head} · click to retry now`;
+  el.title = st.reason ? `${head}\n${st.reason}` : head;
+  // `data-state` is the machine-readable half: a snapshot/DOM gate can assert on it, which prose
+  // describing the strip could never do.
+  el.setAttribute("data-state", st.kind);
+  el.style.borderColor = st.kind === "failed" ? "#8c3b3b" : "#7a5a1e";
+  el.style.background = st.kind === "failed" ? "#2c1717" : "#2a2113";
+  el.style.color = st.kind === "failed" ? "#f0a6a6" : "#e6c67a";
+  el.style.display = "flex";
+}
+
+/**
+ * `chat.history` that survives a transport failure instead of erasing the tab.
+ *
+ * Returns the payload on success, or `null` when the caller must NOT write — either superseded by
+ * a newer fetch for the same key, or stopped on a non-transport rejection. The 2026-07-28
+ * invariant is therefore fully intact (a `null` still means "keep whatever is on screen"), but a
+ * `null` now also leaves a VISIBLE state behind, which is the half that was missing.
+ *
+ * `maxAttempts` bounds the RETRY, never the data: `limit` stays 1000 and nothing here trims,
+ * throttles or defers a payload. The FOREGROUND path (loadChat) passes no bound at all — it
+ * retries until it wins or is superseded, which is precisely what "self-heals when the gateway
+ * comes back" requires.
+ */
+async function fetchChatHistoryResilient(
+  sk: string,
+  opts?: { maxAttempts?: number },
+): Promise<{ messages?: unknown[] } | null> {
+  if (!sk) {
+    return null;
+  }
+  const gen = (historyFetchGen.get(sk) ?? 0) + 1;
+  historyFetchGen.set(sk, gen);
+  const maxAttempts = opts?.maxAttempts ?? Infinity;
+  let failures = 0;
+  for (;;) {
+    try {
+      const res = await req<{ messages?: unknown[] } | null>("chat.history", {
+        sessionKey: sk,
+        limit: 1000,
+      });
+      if (historyFetchGen.get(sk) !== gen) {
+        return null;
+      }
+      setHistoryLoadState(sk, { kind: "ok" });
+      return res ?? { messages: [] };
+    } catch (err) {
+      if (historyFetchGen.get(sk) !== gen) {
+        return null;
+      }
+      failures++;
+      const reason = describeHistoryError(err);
+      if (!historyErrorIsRetryable(err) || failures >= maxAttempts) {
+        setHistoryLoadState(sk, { kind: "failed", reason });
+        return null;
+      }
+      const delay =
+        HISTORY_RETRY_BACKOFF_MS[Math.min(failures - 1, HISTORY_RETRY_BACKOFF_MS.length - 1)] ??
+        15_000;
+      setHistoryLoadState(sk, { kind: "retrying", attempt: failures + 1, reason });
+      await new Promise((r) => setTimeout(r, delay));
+      if (historyFetchGen.get(sk) !== gen) {
+        return null;
+      }
+    }
+  }
+}
+
+/**
+ * Re-read the viewed session's transcript from the gateway and merge it into `messages`.
+ *
+ * FORK 2026-08-28 — `opts.force` relaxes ONE half of the deferral gate below (the client-side
+ * "is this session busy" half) and nothing else. Its only caller is the post-socket-death path: once
+ * the socket that would have narrated a turn is gone, refusing to merge is what left the answer it
+ * produced unpainted until the architect reloaded the tab by hand. Every hazard that a merge can
+ * actually destroy still vetoes a forced call — see the gate.
+ */
+async function loadChat(opts?: { force?: boolean }) {
   if (!sessionKey) {
     return;
   }
   const keyAtStart = sessionKey;
-  const res = await req("chat.history", { sessionKey, limit: 1000 }).catch(() => ({
-    messages: [],
-  }));
+  // FORK 2026-08-28 (R1: "a cloned tab carries an EXACT chat AND EEG copy of its parent") — the
+  // EEG/anatomy backfill used to be the TAIL of this function, downstream of all three of its
+  // silent early-returns, so one swallowed chat.history promise cost the tab BOTH halves of R1 at
+  // once. They are independent reads of independent stores (chat.history over the websocket vs
+  // /tinker/api/context-anatomy over HTTP); neither has any business cancelling the other. Kick it
+  // here, before anything below can return.
+  backfillEegFromAnatomy(keyAtStart);
+  // FORK 2026-07-28 (the architect: "sometimes the wait is so long I have to hard refresh") — this used to
+  // be `.catch(() => ({ messages: [] }))`, which made FAILURE INDISTINGUISHABLE FROM AN EMPTY
+  // SESSION. The empty array was then assigned to the live messages and rendered, so a rejected or
+  // dropped chat.history ERASED a transcript that was already painted — and the next
+  // saveCurrentTabState persisted the destruction into the tab cache, making the blank sticky
+  // until a hard refresh. chat.history is measurably slow on large sessions (live median 2,761 ms,
+  // p90 5,947 ms, max 20,283 ms), so this path is taken in normal use, not just on outage.
+  // Keep whatever is on screen when the fetch fails; never overwrite good content with nothing.
+  // FORK 2026-08-28 (R3: "a failed load must never be indistinguishable from an empty session") —
+  // this was `.catch(() => null)`, which honoured the invariant above and stopped there: it
+  // declined to write, said nothing, and never asked again. On a tab that already had content that
+  // is survivable; on a FRESH one it is the blank-clone bug, permanently.
+  // `fetchChatHistoryResilient` keeps the invariant exactly (a null still means "do not write")
+  // and adds the two missing halves: it RETRIES the transport failures that caused the null, and
+  // it leaves a visible degraded strip up while it does.
+  // `keyAtStart` rather than the live `sessionKey` global: everything below already reconciles
+  // against `keyAtStart`, and this fetch is now designed to outlive a tab switch.
+  const res = await fetchChatHistoryResilient(keyAtStart);
+  if (res === null) {
+    return;
+  }
   // FORK: If user switched tabs while loading, write to that tab's state, not globals
   if (!sessionKeyMatches(keyAtStart)) {
     const targetTab = tabs.find((t) => sessionKeyMatches(keyAtStart, t.sessionKey ?? ""));
@@ -5329,11 +9917,130 @@ async function loadChat() {
     }
     return;
   }
-  streamMsgIdx = -1;
+  // FORK 2026-08-05 (the architect: "others disappear") — `messages = res.messages ?? []` was a TOTAL
+  // REBUILD of a list the websocket is concurrently writing to. chat.history fires on tab switch
+  // AND on every ws reconnect (163 history serves against 20 sends in a single day) and takes a
+  // live median of 2.7s (max 20.3s) with NO generation token, so every bubble the stream pushed
+  // during the await was silently discarded. Two defences:
+  //   1. NEVER demolish under a live run. A reload while this session is streaming would drop the
+  //      partial being read and orphan the delta cursor. Defer it (the turn-final handler re-arms
+  //      `pendingHistoryReload`), do not drop it.
+  //   2. MERGE, don't replace. Client-only bubbles (errors, warnings, retry countdowns, prefrontal
+  //      notes, subagent bubbles, frozen thinking) exist NOWHERE on the server, so they are
+  //      snapshotted with the TURN they belong to and re-anchored into the fetched history — a
+  //      turn-3 warning goes back at turn 3, not on top of turn 30's answer.
+  // FORK 2026-08-28 — the gate, split into what a merge can DESTROY versus what it merely races.
+  //
+  // `messages = incoming` below cannot put back what it drops, so a FORCED call is still vetoed by
+  // all three things that own on-screen content:
+  //   1. `streamRunId !== null` — the live delta cursor. Merging under it orphans the partial being
+  //      read. This is the hazard the gate was built for and `force` never touches it.
+  //   2. `streamMsgUid !== null` — the bubble those deltas are being written INTO. It carries none
+  //      of msg-order's CLIENT_ONLY_FLAGS, so the preserve loop below would not save it.
+  //   3. a run this session holds as "restarting" — cc-bridge resumes it under the SAME runId
+  //      across a graceful gateway restart, so its answer is still coming and is not in history yet.
+  //
+  // What `force` DOES override is `viewedSessionBusy()`: a CLIENT-side run map repeatedly observed
+  // holding entries whose terminator never arrived (see its own header). After a socket death every
+  // run it still lists is one whose narrator is gone, and treating that as "a live writer to protect"
+  // is what wedged the tab.
+  const forced = opts?.force === true;
+  const liveWriter = forced
+    ? streamRunId !== null || streamMsgUid !== null || viewedSessionHasRestartingRun()
+    : streamRunId !== null || viewedSessionBusy();
+  if (liveWriter) {
+    pendingHistoryReload = true;
+    return;
+  }
+  // FORK 2026-08-28 — AND THE DEBT IS DISCHARGED HERE, by the call that actually performs the merge.
+  // The flag means "a merge is owed" but had no owner: it was set here and cleared only at two
+  // distant sites, so a merge that DID happen left it standing and a later turn-final fired a
+  // redundant chat.history against it. Clearing it at the single point where the deferral is spent
+  // makes those two sites belt-and-braces instead of load-bearing. Safe here and not earlier: the
+  // "user switched tabs during the await" case already returned above, so this line is only reached
+  // when the fetched transcript IS the viewed session's.
+  pendingHistoryReload = false;
+  streamMsgUid = null;
   lastDeltaLen = 0;
   lastDeltaAt = 0;
-  messages = res.messages ?? [];
+  const incoming = (res.messages ?? []) as unknown[];
+  const incomingText = new Set(
+    (incoming as Record<string, unknown>[])
+      .map((m) => assistantMsgText(m))
+      .filter((t) => t.length > 0),
+  );
+  // FORK 2026-08-16 — settle the durable outbox against what the server actually has. This is the
+  // only place delivery can be PROVEN for a prompt whose chat.send never returned an answer (the
+  // socket died mid-flight, or the page reloaded before the promise settled): if the transcript
+  // contains it, it was delivered and its client-side copy must NOT be preserved next to the
+  // server's own — that would show the prompt twice. Anything absent stays in the outbox.
+  const deliveredIds = reconcileOutboxAgainst(keyAtStart, incoming);
+  const preserved: AnchoredMsg[] = [];
+  for (const m of messages) {
+    if (!isClientOnlyBubble(m)) {
+      continue;
+    }
+    const rec = m as Record<string, unknown>;
+    if (
+      rec._undelivered &&
+      typeof rec._clientMsgId === "string" &&
+      deliveredIds.has(rec._clientMsgId)
+    ) {
+      continue;
+    }
+    // A bubble the SERVER also has is not client-only in practice (a frozen thinking block that
+    // history replays, a subagent answer folded into the transcript); preserving it too would
+    // double it on every reconnect, forever.
+    const t = assistantMsgText(m as Record<string, unknown>);
+    if (t.length > 0 && incomingText.has(t)) {
+      continue;
+    }
+    preserved.push({ m, turn: turnAnchorOf(messages, m) });
+  }
+  // FORK 2026-08-30 — THE HYPOTHESIS, MADE MEASURABLE. `_runId` is a client-only stamp that lives
+  // on no server row and is not in msg-order's CLIENT_ONLY_FLAGS, so this assignment destroys every
+  // one of them. That is harmless between turns and fatal BETWEEN THE TWO FINALS OF ONE RUN: the
+  // second final then finds no bubbles for its run, skips the supersede rule entirely, and is
+  // handed to the whole-body guard that cannot match a multi-bubble turn. If the next reproduction
+  // shows a `history:replace` line with `droppedRunStamps > 0` sitting between two `final:decision`
+  // lines carrying the SAME runId, that is the bug, named — and it explains why the long-lived tab
+  // duplicates while a freshly cloned one (which never had stamps to lose) does not.
+  const droppedStamps = (messages as Record<string, unknown>[]).filter(
+    (m) => typeof m._runId === "string" && m._runId,
+  );
+  dupProv("history:replace", {
+    droppedRunStamps: droppedStamps.length,
+    droppedRunIds: Array.from(new Set(droppedStamps.map((m) => m._runId as string))).slice(0, 4),
+    outgoing: messages.length,
+    incoming: incoming.length,
+    preserved: preserved.length,
+    streamRunId,
+    pendingHistoryReload,
+  });
+  messages = incoming;
+  if (preserved.length > 0) {
+    reinsertByTurnAnchor(messages, preserved);
+  }
+  // FORK 2026-08-16 — a prompt lost while the PAGE was closed has no bubble to preserve: the only
+  // record of it is the outbox on disk. Put it back on screen, or the recovery would be invisible —
+  // and an invisible recovery is indistinguishable from the bug being reported.
+  reinjectOutboxBubbles(keyAtStart);
+  // FORK 2026-08-23 — put back every client-only row this browser has ever written for this
+  // session. The loop above preserves what is IN MEMORY; after a reload there is no memory, and
+  // the server has no copy of a measurement it never stored. Idempotent by `_clientRowId`, so
+  // the reconnect case (rows already preserved above) adds nothing.
+  const restorable = missingClientRows(keyAtStart, messages);
+  if (restorable.length > 0) {
+    reinsertByTurnAnchor(
+      messages,
+      restorable.map((r) => ({ m: r.row, turn: r.turn })),
+    );
+  }
   normalizeHistoryRenderBlocks(messages);
+  // FORK 2026-08-11 — server history carries no runId for answer bubbles, so the
+  // fractal anchor has to be re-derived from the plugin's ledger. Fire-and-forget:
+  // it repaints itself when it lands, and a failure must never block the transcript.
+  void hydrateFractalAnchorsFromLedger(keyAtStart);
   // FORK 2026-05-09: Reconstruct _fullPrompt / _briefingPath for historical
   // user messages. The gateway persists the full injected prompt as the
   // message body; client-only metadata is lost on refresh. Split at the
@@ -5360,30 +10067,76 @@ async function loadChat() {
   // Restore persisted error messages (survive refresh)
   const storedErrors = loadPersistedErrors(sessionKey);
   if (storedErrors.length) {
-    // Insert errors before the last assistant message (natural position),
-    // or append at end if no assistant message follows.
-    const lastAssistantIdx = findLastIndex(messages, (m: unknown) => m.role === "assistant");
-    if (lastAssistantIdx >= 0) {
-      messages.splice(lastAssistantIdx, 0, ...storedErrors);
-    } else {
-      messages.push(...storedErrors);
+    // FORK 2026-08-05 — was `messages.splice(lastAssistantIdx, 0, ...storedErrors)`. A CLIENT-side
+    // note carries no position in server history, so inserting it before the LAST assistant message
+    // moved a turn-3 warning above turn-30's answer on EVERY reload, forever — and `⏹ Stopped.` is
+    // never retired, so it re-spliced for the life of the session. Append: the note is being written
+    // to the screen NOW, and the tail is the only position that cannot push it above something the
+    // user has already read.
+    // The live client-only bubbles are now PRESERVED across the reload (above), so push only the
+    // persisted copies the merged list does not already show, or every reconnect would double them.
+    const onScreenNotes = new Set(
+      (messages as Record<string, unknown>[])
+        .filter((m) => m._isError || m._isWarning || m._isOverloadRetry)
+        .map((m) => assistantMsgText(m)),
+    );
+    for (const se of storedErrors as Record<string, unknown>[]) {
+      if (!onScreenNotes.has(assistantMsgText(se))) {
+        messages.push(se);
+      }
     }
   }
   updateChat();
   scrollChat();
   updateResponseMap();
 
+  // Tab titles are persisted in localStorage — no regeneration on load.
+  // Title generation happens in send() on first prompt and every N prompts.
+}
+
+// ─── FORK 2026-08-28: the EEG backfill is no longer a passenger of the chat load (R1) ─────────
+// This block used to be the TAIL of `loadChat()`, i.e. downstream of THREE silent early returns:
+// the discarded `chat.history` rejection, the "user switched tabs mid-fetch" branch, and the
+// "defer under a live run" branch. So a single swallowed promise cost the tab its transcript AND
+// its seismograph together — the two halves of R1 failed as one. Lifting it into its own function
+// called at the TOP of loadChat means the clone's paper restores even when the chat path bails.
+//
+// Two guards come with the move, because loadChat's early returns were shielding this code by
+// accident:
+//   • LIVE-RUN: the rebuild does `store.clear()`. The busy early-return used to make that
+//     unreachable mid-turn; now that the shield is gone it has to be explicit, or a reconnect
+//     during a stream would wipe samples the effort feed is still writing.
+//   • IN-FLIGHT: loadChat fires on every tab switch and every ws reconnect, and this now runs
+//     earlier, so more often. The latch collapses concurrent duplicates of the SAME key's fetch.
+//     It is NOT a throughput cap — nothing is dropped, trimmed or deferred; an identical fetch
+//     that is already in the air is simply not started a second time.
+const eegBackfillInFlight = new Set<string>();
+
+function backfillEegFromAnatomy(eegSk: string): void {
+  if (!eegSk) {
+    return;
+  }
+  if (sessionKeyMatches(eegSk) && (viewedSessionBusy() || streamRunId !== null)) {
+    return;
+  }
+  if (eegBackfillInFlight.has(eegSk)) {
+    return;
+  }
+  // Release is guaranteed: past the guard above `eegSk` is non-empty, so the `if (eegSk)` below is
+  // always taken and the `.finally()` on its promise chain always runs; a synchronous throw before
+  // that lands in the `catch`, which releases too. A latch that leaks on one path would be worse
+  // than no latch — it would block this session's EEG from ever rebuilding again.
+  eegBackfillInFlight.add(eegSk);
   // FORK 2026-06-13 (eeg): backfill the seismograph from the context-anatomy API
   // on first load of a session (bible §5.8h q8), so a reload/restore shows the
   // session's history instead of an empty paper. BEST-EFFORT mapping — absent
   // fields simply omit the halo; failure must never break the panel or chat load.
   try {
-    const eegSk = sessionKey;
-    // FORK 2026-06-22 (the owner): fetch the anatomy on EVERY session load (not only when the
+    // FORK 2026-06-22 (the architect): fetch the anatomy on EVERY session load (not only when the
     // store is empty) so the EEG restores in lockstep with the chat history — the reconcile
     // decision (rebuild vs keep-local) is made AFTER the fetch, below.
     if (eegSk) {
-      // FORK 2026-06-26 (the owner "EEG history vanished after restart"): fetch the durable
+      // FORK 2026-06-26 (the architect "EEG history vanished after restart"): fetch the durable
       // anatomy SAME-ORIGIN (relative), like every other API call + like chat history.
       // The old `DEV ? :18789` hardcode bypassed the vite proxy and hit the gateway
       // cross-origin, which returns 0 events (auth/CORS) — so the reconcile silently
@@ -5393,31 +10146,106 @@ async function loadChat() {
       // to return the session's events) and to the gateway origin in prod.
       const base = "";
       const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
-      fetch(
+      // FORK 2026-08-17 (the architect: "EEG should also be cloned, not only context"): a cloned tab
+      // is a FORK — it inherits the parent's transcript but is minted a NEW session key, and
+      // anatomy is keyed by session key, so the clone's paper came up EMPTY beside a chat full
+      // of inherited history. Worse for fan-outs: subagent rows are time-bounded to the viewed
+      // session's own main-event window (below), and a fresh clone's window is "today", so the
+      // parent's parallel run was filtered out of the clone even after its duration was fixed.
+      // The store already records the lineage — `parentSessionKey`, written by sessions.fork —
+      // and nothing was ever asking for it. Walk it, fetch each ancestor, merge.
+      const eegLineage = (sk: string): string[] => {
+        const chain = [sk];
+        const rows = sessions as Array<{ key?: string; parentSessionKey?: string }>;
+        // Depth cap: a clone-of-a-clone is real, an unbounded walk over a cycle is not.
+        for (let hop = 0; hop < 4; hop++) {
+          const parent = rows.find((s) => s?.key === chain[chain.length - 1])?.parentSessionKey;
+          if (!parent || chain.includes(parent)) break;
+          chain.push(parent);
+        }
+        return chain;
+      };
+      const eegKeys = eegLineage(eegSk);
+      const anatomyUrl = (k: string) =>
         // limit=500: restore the WHOLE session on reload (permanent retention,
-        // the owner 2026-06-13) so all activity is scrollable, not just recent turns.
+        // the architect 2026-06-13) so all activity is scrollable, not just recent turns.
         // FORK 2026-07-16: tree=1 also pulls the subagent family (flat
         // `<root>:subagent:%` keys) so a fan-out's branches restore reload-proof —
         // the single-session anatomy fetch was why fan-outs never showed in the EEG.
-        `${base}/tinker/api/context-anatomy/${encodeURIComponent(eegSk)}?tree=1&limit=500`,
-        Object.keys(hdrs).length ? { headers: hdrs } : undefined,
+        `${base}/tinker/api/context-anatomy/${encodeURIComponent(k)}?tree=1&limit=500`;
+      Promise.all(
+        eegKeys.map((k) =>
+          fetch(anatomyUrl(k), Object.keys(hdrs).length ? { headers: hdrs } : undefined)
+            .then((r) => {
+              console.log("[eeg-dbg] fetch", {
+                key: k,
+                eegSk,
+                lineage: eegKeys.length,
+                status: r.status,
+                ok: r.ok,
+                hasToken: !!TOKEN,
+              });
+              return r.ok ? r.json() : null;
+            })
+            // One dead ancestor must not cost the tab its own trace.
+            .catch(() => null),
+        ),
       )
-        .then((r) => {
-          console.log("[eeg-dbg] fetch", {
-            eegSk,
-            sessionKey,
-            status: r.status,
-            ok: r.ok,
-            hasToken: !!TOKEN,
-          });
-          return r.ok ? r.json() : null;
-        })
-        .then((body) => {
-          if (!body) {
+        .then((bodies) => {
+          if (!bodies.some(Boolean)) {
             console.log("[eeg-dbg] body NULL (fetch non-200) — abort, no rebuild");
             return;
           }
-          const events: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+          // Every hop returns the same root-wide subagent family, so rows repeat across
+          // bodies — dedupe on identity, then re-sort: the turn-boundary loop below assumes
+          // `events` is chronological, which a concatenation of two sorted fetches is not.
+          //
+          // FORK 2026-08-28 (R1 EXACTNESS: a clone's EEG must show the parent's trace ONCE) — the
+          // identity used to be `sessionKey|runId|timestampMs|turn`, and a fork shares NEITHER of
+          // the first two fields with its origin. `copyAnatomyEventsToNewKey`
+          // (src/agents/context-anatomy-db.ts) duplicates every parent row under the clone key and
+          // deliberately rewrites both: `session_key` becomes the clone key, and `run_id` becomes
+          // `run_id || '#fork:<cloneKey>'` — the suffix exists so a late `updateAnatomyResponse` on
+          // the SOURCE run (which matches run_id with no session filter) cannot cross-write the
+          // copy. `timestamp_ms` and `turn` are copied verbatim. The lineage walk above then also
+          // fetches the parent's originals, so the same event arrived twice under two identities,
+          // hashed differently, and EVERY inherited turn was drawn twice on the clone's paper.
+          //
+          // We dedupe rather than skipping the lineage walk when a fork marker is present, because
+          // the copy is a point-in-time snapshot: a parent that keeps running after the fork keeps
+          // writing to the PARENT key only, so dropping the walk would trade a double-count for
+          // MISSING history — the worse failure of the two. Instead the identity becomes
+          // CONTENT-based: strip the `#fork:` suffix chain off runId, and replace the session key
+          // with the only thing about it the renderer actually consumes — which LANE the row
+          // belongs to (trunk vs `:subagent:` branch). Two rows agreeing on lane + base run +
+          // timestamp + turn ARE the same event whichever key served them, and a main row can
+          // still never collapse into a subagent row. Granularity is otherwise unchanged from the
+          // old tuple (it never included round_number either), so nothing new can merge.
+          //
+          // `eegKeys` is [self, parent, …] and Promise.all preserves that order, so the CLONE's
+          // own copy is the one kept — the row its durable store will still hold after the parent
+          // is deleted.
+          const seen = new Set<string>();
+          const events: any[] = [];
+          const baseRunIdOf = (rid: unknown): string =>
+            typeof rid === "string" ? (rid.split("#fork:")[0] ?? "") : "";
+          const laneOf = (ev: any): string =>
+            typeof ev?.sessionKey === "string" && ev.sessionKey.includes(":subagent:")
+              ? "sub"
+              : "main";
+          for (const body of bodies) {
+            if (!body) continue;
+            const rows: any[] = Array.isArray(body) ? body : (body?.events ?? []);
+            for (const ev of rows) {
+              const id = `${laneOf(ev)}|${baseRunIdOf(ev?.runId)}|${ev?.timestampMs ?? ev?.timestamp ?? ""}|${ev?.turn ?? ""}`;
+              if (seen.has(id)) continue;
+              seen.add(id);
+              events.push(ev);
+            }
+          }
+          events.sort(
+            (a, b) => (a?.timestampMs ?? a?.timestamp ?? 0) - (b?.timestampMs ?? b?.timestamp ?? 0),
+          );
           console.log(
             "[eeg-dbg] events",
             events.length,
@@ -5428,19 +10256,36 @@ async function loadChat() {
             console.log("[eeg-dbg] events EMPTY — abort, no rebuild");
             return;
           }
-          // FORK 2026-06-22 (the owner): EEG must restore hand-in-hand with chat on every
+          // FORK 2026-06-22 (the architect): EEG must restore hand-in-hand with chat on every
           // (re)load — not only when the local store happens to be empty. The old isEmpty
           // gate let a stale/partial localStorage snapshot permanently BLOCK the re-fetch,
           // so the EEG drifted from (or got wiped relative to) the chat. Rebuild whenever
           // the authoritative server-side anatomy carries MORE calls than the local store;
           // keep local only when it is already as rich or richer (a live in-progress run).
           const store = getEegStore(eegSk);
-          if (store.toSnapshot().samples.length >= events.length) {
-            console.log(
-              "[eeg-dbg] early-return: local >= events, NOT rebuilding",
-              store.toSnapshot().samples.length,
-              events.length,
-            );
+          // FORK 2026-08-17 (the architect: "I still cannot see the history nor the parallelism"):
+          // this guard used to compare the store's TOTAL sample count against the payload's
+          // event count — two different populations. The store also holds live per-call and
+          // per-TOOL samples and persists up to EEG_PERSIST_CAP (2000) of them, while the
+          // anatomy fetch is capped at 500. So any tab busy enough to bank 500 samples
+          // answered "local is richer" FOREVER and never rebuilt from anatomy again — and
+          // since branch samples are deliberately never persisted, that tab could never show
+          // a fan-out at all. Compare like with like, per population: keep local only when it
+          // is at least as rich in BOTH trunk and branches (the live-run case this protects).
+          const snap = store.toSnapshot();
+          const evIsSub = (ev: any): boolean =>
+            typeof ev?.sessionKey === "string" && ev.sessionKey.includes(":subagent:");
+          const localMain = snap.samples.filter((s) => !s.subagent && !s.tool).length;
+          const localBranches = snap.samples.filter((s) => s.subagent).length;
+          const evBranches = events.filter(evIsSub).length;
+          const evMain = events.length - evBranches;
+          if (localMain >= evMain && localBranches >= evBranches) {
+            console.log("[eeg-dbg] early-return: local >= events, NOT rebuilding", {
+              localMain,
+              evMain,
+              localBranches,
+              evBranches,
+            });
             return;
           }
           store.clear();
@@ -5469,7 +10314,7 @@ async function loadChat() {
           const SUB_WINDOW_SLACK_MS = 60 * 60 * 1000; // 1h past the last main turn
           const minMainTs = mainTs.length ? Math.min(...mainTs) : 0;
           const maxMainTs = mainTs.length ? Math.max(...mainTs) + SUB_WINDOW_SLACK_MS : Infinity;
-          // FORK 2026-06-22 (the owner): carry the prompt text + index onto restored boundaries
+          // FORK 2026-06-22 (the architect): carry the prompt text + index onto restored boundaries
           // (anatomy events include `userMessage`) so a reloaded/restored EEG line is just as
           // hoverable + clickable as a live one — history "hand in hand" with the chat.
           const mkEnd = (t: number, rid: string, endedAt: number, um: string): EegTurnEnd => {
@@ -5504,9 +10349,23 @@ async function loadChat() {
             if (isSubagent && (ts < minMainTs || ts > maxMainTs)) {
               continue;
             }
-            // A durable branch needs a real end so it renders as a closed out-and-back
-            // arch, not a still-running strand open to the top. Anatomy carries durationMs.
-            const durMs = typeof ev.durationMs === "number" ? ev.durationMs : 0;
+            // A durable branch needs a real INTERVAL, not just an end: the renderer decides
+            // parallelism by true temporal overlap (eeg-trace.ts — depth-shade stacks, lanes,
+            // "N× parallel here"), so a strand with startedAt === endedAt can never overlap a
+            // sibling and a fan-out restores as a SEQUENCE of instants. That is exactly what
+            // happened: this line used to read "Anatomy carries durationMs", and it did not —
+            // nothing ever wrote the column (38.5k rows, all NULL), so durMs was 0 on every row
+            // ever written. The writer side is attempt-hooks.ts `markRunStarted` /
+            // `takeRunDurationMs`; this is the reader that has to place what it records.
+            //
+            // `ts` is the anatomy row's timestampMs, stamped when the row is BUILT — inside the
+            // post-turn hook — so it marks the turn's END, not its start. The interval is
+            // therefore [ts - durationMs, ts], drawn backwards from the end.
+            //
+            // Rows written before that fix carry no duration; they stay pointlike rather than
+            // getting an invented one, so a historical fan-out reads as unknown-duration
+            // instants instead of a fabricated shape.
+            const durMs = typeof ev.durationMs === "number" ? Math.max(0, ev.durationMs) : 0;
             samples.push({
               runId,
               model,
@@ -5526,13 +10385,13 @@ async function loadChat() {
                   ...(typeof outTok === "number" ? { outputTokens: outTok } : {}),
                 };
               })(),
-              startedAt: ts,
-              endedAt: isSubagent ? ts + Math.max(0, durMs) : undefined,
+              startedAt: isSubagent ? ts - durMs : ts,
+              endedAt: isSubagent ? ts : undefined,
             });
             // Only MAIN-session events define prompt boundaries — a single-turn subagent
             // must never mint a spurious yellow prompt rule on the parent's timeline.
             const turn = isSubagent ? undefined : typeof ev.turn === "number" ? ev.turn : undefined;
-            // FORK 2026-06-22 (the owner): anchor each turn's boundary at the turn's START — just
+            // FORK 2026-06-22 (the architect): anchor each turn's boundary at the turn's START — just
             // before its first event (ts-1) — so the yellow line sits BELOW (chronologically
             // earlier than) that turn's calls. Newest-at-top ⇒ earlier = lower. The old code
             // anchored at the turn TRANSITION (≈ the turn's END), drawing the line ABOVE its call.
@@ -5572,14 +10431,16 @@ async function loadChat() {
         })
         .catch((err) => {
           console.log("[eeg-dbg] CATCH error in backfill", err);
+        })
+        .finally(() => {
+          // Release on EVERY outcome — resolve, reject, or a throw inside .then().
+          eegBackfillInFlight.delete(eegSk);
         });
     }
   } catch {
     /* eeg backfill must never break chat load */
+    eegBackfillInFlight.delete(eegSk);
   }
-
-  // Tab titles are persisted in localStorage — no regeneration on load.
-  // Title generation happens in send() on first prompt and every N prompts.
 }
 
 // FORK 2026-06-04 — bug task-mppceqsu-24yex (Tab context loads only on switching tabs).
@@ -5600,9 +10461,20 @@ async function hydrateTab(tab: Tab): Promise<void> {
   if (ts.messages.length > 0) {
     return;
   }
-  const res = await req("chat.history", { sessionKey: tab.sessionKey, limit: 1000 }).catch(() => ({
-    messages: [],
-  }));
+  // FORK 2026-07-28 — same fix as loadChat: a failed hydrate must not write an empty transcript
+  // into the tab cache. Doing so turned a transient RPC failure into a persistently blank tab,
+  // because the cache is what a later switch renders from.
+  // FORK 2026-08-28 (R3) — the note above still holds (a failed hydrate must never cache an empty
+  // transcript); what it lacked was a SECOND TRY, so one dropped frame left a background tab blank
+  // until the user clicked it. `maxAttempts` bounds the RETRY, never the payload: `limit` is still
+  // 1000 and nothing is trimmed or throttled. It is bounded here — unlike the foreground path,
+  // which retries until it wins — because nobody is looking at a background prefetch and the
+  // on-switch `loadChat()` is its real refresh path; an unbounded ladder per hidden tab would keep
+  // N tabs asking a dead gateway with no one to see the answer.
+  const res = await fetchChatHistoryResilient(tab.sessionKey, { maxAttempts: 4 });
+  if (res === null) {
+    return;
+  }
   // The user may have switched INTO this tab mid-fetch — if it's now active, let
   // loadChat() own the write (it sets globals + renders); don't double-write here.
   if (tab.id === activeTabId) {
@@ -5641,7 +10513,18 @@ async function spawnTitleViaBridge(
   sessionKey: string,
 ): Promise<string | null> {
   try {
-    const r = await req<{ title?: string | null }>("sessions.suggestTitle", { sessionKey, prompt });
+    // FORK 2026-08-15 (the architect: "the tab auto-rename does not work") — this RPC runs a model
+    // SERVER-side, so its latency is a model turn queued behind whatever else the gateway's
+    // single event loop is doing, not a round trip. Measured over the last two days:
+    // 61.5s / 80.1s / 89.3s / 90.1s / 118.1s — every single sample above the 60s default,
+    // so `req` rejected before the answer arrived and the title was discarded 100% of the
+    // time. Nothing waits on this (it renames a tab in the background), so it gets a budget
+    // that matches its real distribution rather than the interactive one.
+    const r = await req<{ title?: string | null }>(
+      "sessions.suggestTitle",
+      { sessionKey, prompt },
+      { timeoutMs: TITLE_RPC_TIMEOUT_MS },
+    );
     return r?.title ?? null;
   } catch (err) {
     console.log("[tabs] title rpc failed:", err);
@@ -5700,10 +10583,11 @@ async function generateTabTitle(tab: Tab) {
   // FORK 2026-06-24 — P2 shimmer: now that we are committed to an LLM call, mark the tab
   // in-flight on the Tab model and re-render so the shimmer shows on ANY tab (periodic OR menu
   // trigger), independent of focus. Dedup: if a generate is already running for this tab, bail.
-  if (titleInFlight.has(tab.id)) {
+  const inFlightAt = titleInFlight.get(tab.id);
+  if (inFlightAt !== undefined && Date.now() - inFlightAt < TITLE_INFLIGHT_STALE_MS) {
     return;
   }
-  titleInFlight.add(tab.id);
+  titleInFlight.set(tab.id, Date.now());
   tab.titleGenerating = true;
   renderTabs();
 
@@ -5814,6 +10698,54 @@ async function generateTabTitle(tab: Tab) {
   }
 }
 
+/**
+ * FORK 2026-08-05 — push a bubble and hand back its STABLE identity.
+ *
+ * `stampOrder` is idempotent and assigns both `_uid` (identity) and `_seq` (order of first render)
+ * in array order, so stamping EAGERLY at the creation site — rather than lazily at the next repaint
+ * — means the streaming cursor is never a number that a later mutation can shift out from under it.
+ * Returns null only when the message could not be stamped (frozen/sealed), in which case the caller
+ * simply has no cursor and the next delta opens a fresh bubble: degraded, never destructive.
+ */
+function pushAndUid(m: Record<string, unknown>): string | null {
+  messages.push(m);
+  stampOrder(messages);
+  const uid = m._uid;
+  return typeof uid === "string" && uid.length > 0 ? uid : null;
+}
+
+/** The live message carrying this `_uid` — the index-free way to point at one bubble. */
+function msgByUid(uid: string | null): Record<string, unknown> | undefined {
+  return findByUid(messages, uid) as Record<string, unknown> | undefined;
+}
+
+/**
+ * FORK 2026-08-05 — did this bubble show ANYTHING on screen? Text with non-whitespace, or a
+ * tool_use / tool_result block (both render as rows).
+ *
+ * This is the line between the two invariants. A bubble the user could READ is never dropped — the
+ * error and abort paths promote it instead. An EMPTY placeholder that was opened and never written
+ * to is not history and may be discarded, because discarding it removes nothing from the page.
+ */
+function msgHasVisibleContent(m: Record<string, unknown>): boolean {
+  const c = m.content;
+  if (typeof c === "string") {
+    return c.trim().length > 0;
+  }
+  if (!Array.isArray(c)) {
+    return false;
+  }
+  for (const b of c as Array<{ type?: unknown; text?: unknown }>) {
+    if (b?.type === "text" && typeof b.text === "string" && b.text.trim().length > 0) {
+      return true;
+    }
+    if (b?.type === "tool_use" || b?.type === "tool_result") {
+      return true;
+    }
+  }
+  return false;
+}
+
 // FORK 2026-06-14 (bug #4): the prompt echo can land in messages[] more than once
 // during the in-flight window (optimistic bubble + flushed queued copy), showing
 // the prompt 2-3x until a loadChat reconcile. Skip a push whose _clientMsgId is
@@ -5854,49 +10786,415 @@ function assistantMsgText(m: Record<string, unknown>): string {
   return raw.replace(/\s+/g, " ").trim();
 }
 
-function pushAssistantMsgDeduped(m: Record<string, unknown>): void {
+// ─── PROVENANCE (FORK 2026-08-30) ────────────────────────────────────────────────────────────
+// The architect, on the ORIGINAL long-lived tab, after the whitespace fix landed: the duplicates
+// are still there — while a freshly cloned tab of the SAME session is clean and `chat.history`
+// holds exactly one copy. Same page, same module, so the difference is per-tab STATE, not code, and
+// no amount of reading says WHICH insertion site fires. The previous round already patched the
+// site that looked guilty; patching a second one on the same evidence would be guessing twice.
+//
+// So: every path that can put an assistant bubble on screen says so, once, with the run it belongs
+// to and whether that exact body is ALREADY there. `_runId` is the tell — it is client-only, and a
+// history reload replaces `messages` wholesale with server rows that carry none, which is precisely
+// what would make the run-scoped supersede rule skip and hand the body to the whole-body guard that
+// cannot match a multi-bubble turn. `runBubbles: 0` on a `state:"final"` line is that fingerprint.
+//
+// NO MESSAGE TEXT IS LOGGED — only `fingerprintText`'s irreversible hash and a length, so a
+// duplicate shows up as two lines sharing `fp` and the transcript stays off the console.
+function dupProv(source: string, info: Record<string, unknown>): void {
+  try {
+    // eslint-disable-next-line no-console
+    console.info(`[dup-prov] ${source}`, JSON.stringify({ sessionKey, ...info }));
+  } catch {
+    /* instrumentation must never break the chat it is watching */
+  }
+}
+
+/** The provenance of ONE candidate assistant body, measured against what is on screen right now. */
+function dupProvBody(m: Record<string, unknown>): Record<string, unknown> {
+  const text = assistantMsgText(m);
+  const runId = typeof m._runId === "string" ? m._runId : "";
+  const onScreen = (messages as Record<string, unknown>[])
+    .filter((x) => x.role === "assistant")
+    .map((x) => assistantMsgText(x));
+  const sameRun = runId
+    ? (messages as Record<string, unknown>[])
+        .filter((x) => x.role === "assistant" && x._runId === runId)
+        .map((x) => assistantMsgText(x))
+    : [];
+  return {
+    runId,
+    fp: fingerprintText(text),
+    len: text.length,
+    // The two numbers that separate "a legitimate repeat answer" from "this run said it twice".
+    equivAnyRun: sameTextCount(onScreen, text),
+    equivSameRun: sameTextCount(sameRun, text),
+    runBubbles: runId ? runTextBubbles(messages as Record<string, unknown>[], runId).length : 0,
+    total: messages.length,
+  };
+}
+
+// FORK 2026-08-30 — `source` is REQUIRED. This function has several callers and the duplicate fires
+// on one of them; without the caller's name in the line, the next reproduction produces the same
+// ambiguity that made the last patch a guess (AGENTS.md, "Debugging discipline").
+function pushAssistantMsgDeduped(m: Record<string, unknown>, source: string): void {
   if (m.role === "assistant") {
     const text = assistantMsgText(m);
     if (
       text.length >= ASSISTANT_DEDUP_MIN_LEN &&
       messages.some((x) => x.role === "assistant" && assistantMsgText(x) === text)
     ) {
+      dupProv(`${source}:refused`, dupProvBody(m));
       return;
     }
   }
+  // THE SUSPECT LINE. A body reaching here is being ADDED whole; when the same run already shows
+  // parts of it in separate bubbles, the guard above could not see that (it compares against ONE
+  // bubble) and this push is the visible duplicate. `equivAnyRun: 0` with `runBubbles > 0` on a
+  // multi-part answer is exactly that shape.
+  dupProv(`${source}:pushed`, dupProvBody(m));
   messages.push(m);
 }
 
-// Deterministic net: collapse any assistant answer that appears more than once in
-// messages[] (exact visible-text match, length-guarded so legit short repeats like
-// "Done." survive). Keeps the first occurrence. Runs at finalize so a duplicate
-// introduced by ANY in-flight race — not just the push path — is removed before
-// render, without waiting for a loadChat reconcile that turn-end never triggers.
-function dedupeAssistantAnswers(): void {
-  const seen = new Set<string>();
-  let changed = false;
-  const kept: typeof messages = [];
-  for (const m of messages) {
-    if (m.role === "assistant") {
-      const text = assistantMsgText(m as Record<string, unknown>);
-      if (text.length >= ASSISTANT_DEDUP_MIN_LEN) {
-        if (seen.has(text)) {
-          changed = true;
-          continue;
-        }
-        seen.add(text);
-      }
-    }
-    kept.push(m);
+// FORK 2026-08-05 (the architect, explicit) — `dedupeAssistantAnswers()` IS DELETED, not disabled.
+//
+// It was a post-hoc net: at every finalize it scanned the WHOLE session and dropped any assistant
+// message whose visible text (>= 40 chars) had appeared before, keeping the first occurrence. Two
+// answers are identical for entirely legitimate reasons — asking the same question twice, a repeated
+// status line, a re-run of the same command — so it deleted a correct, freshly rendered answer and
+// left the user staring at the copy from twenty turns ago. Under "a message rendered to screen is
+// never deleted" no whole-session scan can be correct, because by the time it runs the message is
+// already on the page.
+//
+// The duplicate is prevented at the SOURCE instead: `pushAssistantMsgDeduped` above refuses to ADD
+// a copy that is already in `messages`, which is legal precisely because nothing has been drawn yet.
+// `loadChat` no longer wipes and re-pushes the transcript either, so the reconnect/finalize race
+// this net was patching over (bug "the answer appears twice, identical, even the fractal") cannot
+// manufacture the duplicate in the first place.
+
+// ─── Durable outbox (FORK 2026-08-16) ────────────────────────────────────────────────────────
+//
+// the architect: "when you are changing the UI while I send prompts to Jarvis, sometimes the prompt that I
+// wrote gets forgotten. It does not show in the UI history, Jarvis does not acknowledge it or
+// respond it, and I just wasted my time."
+//
+// See outbox.ts for the full anatomy. The contract enforced HERE is the ordering one: a prompt
+// reaches localStorage BEFORE the first await in send(), and leaves it only when the server
+// transcript proves the gateway has it.
+
+const outboxStore: OutboxStore = {
+  getItem: (k) => localStorage.getItem(k),
+  setItem: (k, v) => localStorage.setItem(k, v),
+};
+
+/** A transcript timestamp in whatever shape it arrived (ms number, seconds, or ISO string) as ms,
+ *  or undefined when it cannot be read. Used to time-bound outbox confirmation. */
+function toMillis(v: unknown): number | undefined {
+  if (typeof v === "number" && isFinite(v)) {
+    return v > 1e11 ? v : v * 1000;
   }
-  if (changed) {
-    messages = kept;
+  if (typeof v === "string") {
+    const p = Date.parse(v);
+    if (!isNaN(p)) {
+      return p;
+    }
+  }
+  return undefined;
+}
+
+/** The sessionKey a tab was last bound to, straight off disk. Used when the live `tabs` array has
+ *  not been built yet because the gateway was unreachable at boot. */
+function sessionKeyFromStoredTabs(tabId: string): string {
+  try {
+    const stored = JSON.parse(localStorage.getItem(TAB_STORAGE_KEY) || "[]") as Array<{
+      id?: string;
+      sessionKey?: string;
+    }>;
+    if (!Array.isArray(stored)) {
+      return "";
+    }
+    const hit = stored.find((t) => t?.id === tabId) ?? stored.find((t) => t?.sessionKey);
+    return typeof hit?.sessionKey === "string" ? hit.sessionKey : "";
+  } catch {
+    return "";
   }
 }
 
-async function send(text: string) {
+/** Put text back into the composer after a send that could not be accepted at all. The enter
+ *  handler blanks the textarea optimistically, so without this the prompt is simply gone. */
+function restoreComposerText(text: string): void {
+  try {
+    if (activeTabId) {
+      saveDraftFor(activeTabId, text);
+      const st = tabStates.get(activeTabId);
+      if (st) {
+        st.draft = text;
+      }
+    }
+    const ta = $("chat-textarea") as HTMLTextAreaElement | null;
+    if (ta && !ta.value.trim()) {
+      ta.value = text;
+      ta.dispatchEvent(new Event("input"));
+    }
+  } catch {
+    /* never let a recovery path throw on the send path */
+  }
+}
+
+/** Retire an outbox entry and clear the "not delivered" mark from its bubble. Delivery is PROVEN
+ *  here — either chat.send resolved, or the prompt was found in the server transcript. */
+function markPromptDelivered(id: string): void {
+  removeFromOutbox(outboxStore, id);
+  for (const m of messages as Record<string, unknown>[]) {
+    if (m._clientMsgId === id && m._undelivered) {
+      delete m._undelivered;
+    }
+  }
+}
+
+/**
+ * A `chat.send` was ACKed with `{ status: "ok" }`: the gateway's dedupe cache replaying the ack of a
+ * run that ALREADY FINISHED (chat.ts:2344, replaying the entry written at chat.ts:2984). That run
+ * broadcast its events once, while this tab could not hear them, and they are NEVER re-broadcast.
+ * So there is nothing to wait for — retire the provisional run and go and FETCH the answer.
+ *
+ * FORK 2026-08-28 (the architect: "stuck just after sending the prompt and 'sending' for 402 ms,
+ * nothing else after that"). 402 ms is a SUCCESSFULLY COMPLETED phase, not a stall: the send landed,
+ * and the client then opened a stream wait for a stream that had already ended. 14 of 25 prompts he
+ * sent that day were him chasing an answer that already existed.
+ *
+ * `status` IS THE ONLY DISCRIMINATOR ON THE WIRE. The gateway does pass `{ cached: true }` to
+ * `respond()`, but that 4th argument is LOG-ONLY — server/ws-connection/message-handler.ts sends
+ * `{ type, id, ok, payload, error }` and nothing else — so the `cached=true` visible in journald
+ * (`14:07:33 chat.send 105ms cached=true runId=8cf646b9-…`, the SAME runId issued at 14:07:05)
+ * never reaches the browser. `payload.status` does, and it is exact:
+ *   "started"   → a real dispatch; the events are coming.
+ *   "in_flight" → a controller already exists for this idempotencyKey (chat.ts:2352 / :2434 —
+ *                 chat-abort.ts only declines to register for a missing sessionKey or an id already
+ *                 registered, so a run IS live). Its events are broadcast session-scoped via
+ *                 `sendToSession`, not to the originating connection, so a reconnected tab still
+ *                 receives them. KEEP WAITING — i.e. do NOT call this.
+ *   "ok"        → this function.
+ *   "error"     → answered with ok:false, so `req` rejects into the existing catch path.
+ *
+ * The replay that produces "ok" is CORRECT and is not what changes here: the 2026-08-24 outbox fix
+ * replays with the ORIGINAL idempotencyKey precisely so a replay cannot double-run an accepted turn.
+ * The bug was only that the client never asked what the ack said. Outbox retirement is untouched.
+ */
+function settleAlreadyCompletedSend(runId: string, forSessionKey: string): void {
+  if (activeRuns.delete(runId)) {
+    saveActiveRuns();
+    updateBudgetPanel();
+    updateSessionsPanel();
+  }
+  // Unconditional, like every other terminator in this file: this is what stops a late or stale
+  // delta self-healing the entry back into the map as a provider-less ghost.
+  rememberTerminated(runId);
+  clearPreModelFor(forSessionKey);
+  if (sessionKeyMatches(forSessionKey)) {
+    // Discarded WITHOUT a timing row: "preparing context" never happened for this turn, and a
+    // duration for a stage that never ran would read as a measurement of that stage — the same
+    // rule the disconnect path states.
+    preparingSince = null;
+    preparingStages = [];
+    pendingSince = null;
+    turnPhase = null;
+    turnPhaseTrail = [];
+    sending = viewedSessionBusy();
+    // The answer EXISTS on the server. Nothing else is going to fetch it — that is the whole bug.
+    void loadChat({ force: true });
+    updateBtn();
+    updateChat();
+  }
+  repaintActivitySurfaces();
+}
+
+/**
+ * Re-send one unconfirmed prompt, reusing its ORIGINAL idempotencyKey.
+ *
+ * Deliberately NOT a call back into send(): send() also bumps the turn counter, draws an EEG
+ * prompt boundary, seeds activeRuns and pushes a bubble — all of which already happened when the
+ * user pressed enter. A replay must put the message on the wire and nothing else, or recovering a
+ * lost prompt would corrupt the very transcript it is repairing.
+ *
+ * The injected prompt is rebuilt from the RAW text, so a replay carries a current amygdala/fractal
+ * preamble rather than a stale one persisted hours ago.
+ */
+async function resendOutboxEntry(entry: OutboxEntry): Promise<boolean> {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return false;
+  }
+  markAttempted(outboxStore, entry.id, Date.now());
+  try {
+    const injected = await buildInjectedPrompt(entry.text);
+    const effortPin = effortPinBySession.get(entry.sessionKey);
+    const modelPin = modelPinBySession.get(entry.sessionKey);
+    const ack = (await req("chat.send", {
+      sessionKey: entry.sessionKey,
+      message: injected,
+      idempotencyKey: entry.id,
+      ...(effortPin ? { thinking: effortPin } : {}),
+      ...(modelPin ? { model: modelPin } : {}),
+    })) as { status?: unknown } | null | undefined;
+    markPromptDelivered(entry.id);
+    // FORK 2026-08-28 — READ THE ACK. THIS is the call site where it matters: a replay reuses the
+    // ORIGINAL idempotencyKey by design, so it is the one that lands on the gateway's dedupe cache
+    // and comes back `{ status: "ok" }` — an ack for a run that already finished and already
+    // broadcast its events. Without this the tab is told "delivered" and then waits forever for a
+    // stream that ended before it reconnected. See settleAlreadyCompletedSend for the full ack
+    // contract and why `cached: true` is not available to us.
+    if (ack?.status === "ok") {
+      settleAlreadyCompletedSend(entry.id, entry.sessionKey);
+    }
+    return true;
+  } catch (e) {
+    // Still unproven — it stays in the outbox and will be retried on the next connect/tick.
+    console.debug("[outbox] replay failed, prompt kept", entry.id, e);
+    return false;
+  }
+}
+
+/**
+ * Re-send every prompt this client cannot prove the gateway received. Runs on reconnect, on page
+ * load, and on a slow tick — i.e. exactly when a rebuild has just finished.
+ *
+ * ASK THE SERVER FIRST, ALWAYS. Each session with pending entries has its history fetched and
+ * reconciled before ANY replay for that session. This is not an optimisation, it is the thing that
+ * makes replay safe: the gateway's in-process dedup (`context.dedupe`) does NOT survive a restart,
+ * so re-sending a prompt it already ran would dispatch a SECOND real turn. The transcript is the
+ * only cross-restart record of what it received, so it is the only sound basis for the decision.
+ * Reconciling per-session here (rather than relying on loadChat) also covers background tabs, whose
+ * history is never re-fetched on reconnect.
+ */
+let outboxFlushInFlight = false;
+async function flushOutbox(reason: string): Promise<void> {
+  if (outboxFlushInFlight || !ws || ws.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  const pending = readOutbox(outboxStore);
+  if (pending.length === 0) {
+    return;
+  }
+  outboxFlushInFlight = true;
+  try {
+    const sessions = Array.from(new Set(pending.map((e) => e.sessionKey)));
+    for (const key of sessions) {
+      const res = (await req("chat.history", { sessionKey: key, limit: 1000 }).catch(
+        () => null,
+      )) as { messages?: unknown[] } | null;
+      if (!res) {
+        // No answer means no evidence. Skip this session rather than replay blind — a duplicate
+        // turn is a worse outcome than a prompt that waits for the next tick.
+        continue;
+      }
+      reconcileOutboxAgainst(key, res.messages ?? []);
+      const due = dueForReplay(
+        outboxForSession(readOutbox(outboxStore), key, sessionKeyMatches),
+        Date.now(),
+        OUTBOX_REPLAY_GRACE_MS,
+      );
+      if (due.length === 0) {
+        continue;
+      }
+      console.debug(
+        `[outbox] replaying ${due.length} unconfirmed prompt(s) for ${key} (${reason})`,
+      );
+      for (const entry of due) {
+        await resendOutboxEntry(entry);
+      }
+    }
+  } finally {
+    outboxFlushInFlight = false;
+    updateChat();
+  }
+}
+
+/**
+ * Reconcile the outbox against freshly fetched server history for one session.
+ *
+ * Returns the ids the transcript PROVES were delivered, so loadChat can drop their client-side
+ * copies instead of preserving them next to the server's own (which would double the prompt).
+ */
+function reconcileOutboxAgainst(sessionKeyForHistory: string, incoming: unknown[]): Set<string> {
+  const mine = outboxForSession(readOutbox(outboxStore), sessionKeyForHistory, sessionKeyMatches);
+  if (mine.length === 0) {
+    return new Set();
+  }
+  const historyUsers = (incoming as Record<string, unknown>[])
+    .filter((m) => String(m.role ?? "").toLowerCase() === "user")
+    .map((m) => ({
+      idempotencyKey: m.idempotencyKey,
+      text: assistantMsgText(m),
+      // FORK 2026-08-16 (2nd pass) — the transcript timestamp is what stops an OLD identical turn
+      // from confirming (and thereby deleting) a freshly typed prompt. Without it the text match
+      // is unbounded in time, which is precisely how the first version lost prompts.
+      ts: typeof m.createdAtMs === "number" ? m.createdAtMs : toMillis(m.timestamp),
+    }));
+  const { delivered } = reconcileWithHistory(mine, historyUsers);
+  for (const d of delivered) {
+    // Retires the entry AND clears the amber mark from its bubble — a prompt proven to be in the
+    // transcript must stop advertising itself as undelivered, on every path that discovers it.
+    markPromptDelivered(d.id);
+  }
+  return new Set(delivered.map((d) => d.id));
+}
+
+/**
+ * Put every still-unconfirmed prompt for this session back on screen, as an "undelivered" user
+ * bubble. Without this a prompt that was lost while the page was closed would be recoverable but
+ * invisible — and an invisible recovery is indistinguishable from the bug.
+ */
+function reinjectOutboxBubbles(sessionKeyForTab: string): void {
+  const mine = outboxForSession(readOutbox(outboxStore), sessionKeyForTab, sessionKeyMatches);
+  // FORK 2026-08-28 — A DEFERRED PROMPT IS ON SCREEN, JUST NOT IN messages[].
+  //
+  // This used to skip an entry only when `messages.some(m => m._clientMsgId === entry.id)`. But a
+  // deferred send is DELIBERATELY held out of messages[] — it lives in pendingQueuedSends until the
+  // running turn ends (lifecycles.md L-PROMPT) — while its outbox entry legitimately survives until
+  // proven in chat.history. So within 5 s of every deferred send this backstop pushed a SECOND copy
+  // of the same prompt, wearing `_undelivered: true`: a solid amber "not delivered · will retry"
+  // bubble sitting next to the dimmed grey deferred one, for a prompt the gateway had already
+  // acknowledged. One prompt, two bubbles, and a false lost-prompt alarm — a fourth queued-ness
+  // surface nobody designed.
+  //
+  // "On screen" is the union of BOTH stores. The membership test moved into outbox.ts
+  // (`outboxEntriesNeedingBubble`) so it is unit-testable; the two stores already agree on
+  // `_clientMsgId`, which is the same id the outbox and the gateway idempotencyKey use.
+  //
+  // THIS SUPPRESSES A BUBBLE, NOT AN ENTRY. The outbox record stays exactly where it is —
+  // ack is not durability, and it is retired only by `reconcileOutboxAgainst` proving the turn in
+  // chat.history. Two gateway restarts on 2026-08-24 destroyed prompts through precisely the
+  // "it's on screen, so it's safe to drop" shortcut.
+  const onScreen = new Set<string>();
+  for (const m of messages as Array<Record<string, unknown>>) {
+    if (typeof m._clientMsgId === "string") {
+      onScreen.add(m._clientMsgId);
+    }
+  }
+  for (const q of pendingQueuedSends) {
+    if (typeof q._clientMsgId === "string") {
+      onScreen.add(q._clientMsgId as string);
+    }
+  }
+  for (const entry of outboxEntriesNeedingBubble(mine, onScreen)) {
+    messages.push({
+      role: "user",
+      _clientMsgId: entry.id,
+      content: [{ type: "text", text: entry.text }],
+      _promptStartedAt: entry.ts,
+      _undelivered: true,
+    });
+  }
+}
+
+async function send(text: string, reuseClientMsgId?: string) {
   if (!text.trim()) {
     return;
+  }
+  // FORK 2026-08-20: a new user prompt is a new turn. Drop the Stop stamp so
+  // the thinking bar is allowed to light for THIS send.
+  if (sessionKey) {
+    sessionEndedAt.delete(sessionKey);
   }
 
   // FORK (2026-04-20, rewired 2026-04-27): /clear wipes the UI immediately
@@ -5919,7 +11217,8 @@ async function send(text: string) {
   // model.
   if (text.trim() === "/clear") {
     messages = [];
-    streamMsgIdx = -1;
+    streamMsgUid = null;
+    subagentStreamUid.clear();
     streamRunId = null;
     lastDeltaLen = 0;
     lastDeltaAt = 0;
@@ -5981,6 +11280,28 @@ async function send(text: string) {
       saveModelPin(oldSessionKey, "");
     }
 
+    // FORK 2026-08-04 (auto-retry x /clear) -- /clear MUST kill any pending auto-retry
+    // for the session it just archived. This branch RETURNS below, so it never reached
+    // the `retryState.delete(sessionKey)` the normal send path runs -- and the 1 Hz tick
+    // iterates `retryState`, not the DOM, so the countdown kept running in a wiped tab
+    // and re-sent the OLD user turn up to 15 minutes later (RETRY_LADDER_MS tops out at
+    // 900s) into a session the user had explicitly declared finished. That is verbatim
+    // the complaint already quoted ~10 lines below ("new messages appear all the time
+    // without me typing them ... tokens are being wasted") -- same user, same key,
+    // second independent cause. tab-main does NOT rotate its sessionKey on /clear (see
+    // the 2026-05-25 fork above), so the orphaned entry was keyed to the very session
+    // `sessions.reset` was archiving. `abort()` and the hover "stop retrying" link
+    // already cancel, so this was an omission, not a policy.
+    //
+    // pushBubble=false: the transcript was just wiped, a bubble would repopulate it.
+    // clearPersistedErrors too, because loadChat() re-injects persisted bubbles BY KEY
+    // -- on tab-main (key preserved) a reload would otherwise repaint the "cleared"
+    // chat with a live-looking countdown for a retry that no longer exists.
+    if (oldSessionKey) {
+      cancelRetry(oldSessionKey, false);
+      clearPersistedErrors(oldSessionKey);
+    }
+
     // Server-side cascade. Fire-and-forget; failures are non-fatal — worst
     // case the next chat.send auto-creates a fresh entry on the new key.
     if (oldSessionKey) {
@@ -6026,6 +11347,21 @@ async function send(text: string) {
   }
 
   if (!sessionKey) {
+    // FORK 2026-08-16 — a page can be fully usable while the gateway is unreachable: the composer
+    // renders and accepts text, but `tabs`/`sessionKey` are only initialised INSIDE the connect
+    // handler, so `sessionKey` is still "" and this early return used to DISCARD the prompt — after
+    // the enter handler had already blanked the composer. Reloading the UI while the gateway is
+    // down (i.e. precisely while it is being rebuilt) and typing is a completely ordinary thing to
+    // do, and it lost the text every time, with no bubble and no error.
+    //
+    // The tab's binding IS on disk — `activeTabId` is restored from ui-state at boot and the tab
+    // list is persisted under TAB_STORAGE_KEY. Recover the key from there so the prompt can be
+    // persisted and replayed like any other.
+    sessionKey = sessionKeyFromStoredTabs(activeTabId);
+  }
+  if (!sessionKey) {
+    // Genuinely nothing to address this to. Put the text back rather than swallow it.
+    restoreComposerText(text);
     return;
   }
 
@@ -6033,14 +11369,67 @@ async function send(text: string) {
   // over — cancel any pending auto-retry for this session before we send.
   retryState.delete(sessionKey);
 
+  // FORK 2026-08-16 — PERSIST BEFORE ANYTHING THAT CAN FAIL. This is the whole fix, and it is an
+  // ORDERING fix: every line below this one is either an await or depends on one, and until the
+  // prompt is on disk the ONLY copies of it are a JS local and a composer the enter handler has
+  // already blanked. The next statement (`await buildInjectedPrompt`) yields to the event loop, and
+  // a vite rebuild of any UI file HMR-reloads the page — so the loss window used to open here, with
+  // no bubble, no draft write and no catch block to notice.
+  //
+  // `clientMsgId` is hoisted for the same reason: the outbox id, the bubble id and the gateway's
+  // idempotencyKey MUST be one value decided before the first yield, or a replay could not be
+  // recognised as the same message.
+  const clientMsgId = uuid();
+  const typedAt = Date.now();
+  // The return value is NOT decorative: a full or disabled localStorage disarms the entire safety
+  // net, and this origin accumulates months of drafts/tab state/EEG stores. When the prompt could
+  // not be protected we keep the composer draft instead of clearing it on success (below), so the
+  // text still survives even though the outbox cannot.
+  const promptProtected = enqueueOutbox(outboxStore, {
+    id: clientMsgId,
+    sessionKey,
+    text,
+    ts: typedAt,
+  });
+  if (!promptProtected) {
+    console.warn("[outbox] could not persist prompt (storage full?) — keeping the composer draft");
+  }
+  // FORK 2026-08-16 (2nd pass) — and record it somewhere DELIVERY LOGIC CANNOT TOUCH. The outbox
+  // removes entries, every removal is a judgement, and the first version of that judgement deleted
+  // prompts outright. The journal is append-only: whatever the send path concludes, the text is
+  // still on disk. See outbox.ts.
+  appendJournal(outboxStore, { id: clientMsgId, sessionKey, text, ts: typedAt });
+
   const isFirstMessage = messages.length === 0;
   // FORK: Mark message as queued only if THIS session has an active run
-  const hasActiveRunForSession = Array.from(activeRuns.values()).some(
-    (r) => r.sessionKey && sessionKeyMatches(r.sessionKey),
-  );
-  const isQueued = shouldQueue({ hasActiveRunForSession, streamRunId, sending });
+  // FORK 2026-08-26 — the SAME shared predicate viewedSessionBusy() now uses. This value feeds
+  // shouldQueue(), so ONE orphaned activeRuns entry silently queued every prompt typed into that
+  // tab from then on — one of the three independent paths to "my prompts go nowhere". The BARE
+  // matcher is correct here, unlike in viewedSessionBusy(): a queued prompt belongs to the
+  // session it was typed into, and a subagent running under it is not a reason to hold the
+  // architect's next turn.
+  // FORK 2026-08-28 — SEND() MUST NEVER LOSE THE USER'S TEXT TO AN EXCEPTION, and it must reach the
+  // same verdict the composer button just PROMISED. Both live in `sendWouldDefer()` now (see its
+  // header): one predicate, two consumers, so the button cannot advertise a hold the send path will
+  // not perform. Its own history is the argument for the guard — this decision used to be computed
+  // inline here, and when `sessionHasFreshClientRun` threw a TypeError on the shape app.ts passes,
+  // it threw BEFORE the bubble push and BEFORE chat.send, while the keydown handler had already
+  // blanked the composer. Neither drawn nor delivered.
+  const isQueued = sendWouldDefer();
   if (!isQueued) {
     sending = true;
+    // Opens the "sending" window — the pill's first state, closed when chat.send resolves.
+    pendingSince = Date.now();
+    // FORK 2026-08-17 — the same window, recorded against the SESSION rather than the viewed tab,
+    // so switching away does not take the glow with it. `sending` above is this tab's copy; this
+    // map is the one every OTHER tab can read.
+    openPreModelWindow(preModelSince, sessionKey, Date.now());
+    // FORK 2026-08-15 — `sending` is half of the activity state (see viewedSessionPending), so
+    // the surfaces that display it must be repainted HERE, not left to the next 5s liveness
+    // tick. Measured before this call existed: chat lit at t+2s, tab and row still dark at
+    // t+4s, both catching up only at t+6s — a visible disagreement on every turn, and exactly
+    // the class of desync this whole change is about.
+    repaintActivitySurfaces();
   }
   currentTurnNumber++;
   // FORK 2026-04-18: Show the USER'S TEXT in the bubble, but stash the full
@@ -6066,10 +11455,17 @@ async function send(text: string) {
   // by assistant bubbles to compute elapsed seconds (Feature B).
   // FORK 2026-06-14 (bug #4): one stable client id shared by the bubble AND the
   // gateway idempotencyKey so the optimistic/queued/flushed copies dedup.
-  const clientMsgId = uuid();
+  // FORK 2026-08-05 (retryProvider): a retry re-sends the SAME prompt. `_clientMsgId` is the BUBBLE
+  // identity that `pushUserMsgDeduped` keys on, so reusing the original keeps the user's own bubble
+  // exactly where it already is instead of splicing it out and re-pushing it at the bottom — which
+  // made the prompt visibly JUMP down the transcript and lost its attachments and `_fullPrompt`.
+  // The gateway `idempotencyKey` below deliberately keeps the FRESH `clientMsgId`: reusing the
+  // original there would make the gateway dedup the retry into a silent no-op (the auto-retry path
+  // documents exactly this — "a FRESH idempotencyKey; reusing the original would").
+  const bubbleMsgId = reuseClientMsgId ?? clientMsgId;
   const outgoingUserMsg: Record<string, unknown> = {
     role: "user",
-    _clientMsgId: clientMsgId,
+    _clientMsgId: bubbleMsgId,
     content: [{ type: "text", text }],
     _promptStartedAt: Date.now(),
     ...(hasInjection ? { _fullPrompt: fullPromptForDebug } : {}),
@@ -6078,6 +11474,11 @@ async function send(text: string) {
     // ONLY in its own tab and can be settled when THAT session's turn ends (not just when the
     // session happens to be the one on screen). Fixes "stuck queued" + "queued in every tab".
     ...(isQueued ? { _queued: true, _queuedSession: sessionKey } : {}),
+    // FORK 2026-08-16 — undelivered until the gateway says otherwise. This flag is what stops
+    // `messages = incoming` in loadChat from deleting the bubble (it is in msg-order's
+    // CLIENT_ONLY_FLAGS, so the existing merge PRESERVES it), and it is cleared the instant
+    // chat.send resolves — so a delivered prompt is never preserved alongside the server's copy.
+    _undelivered: true,
   };
   if (isQueued) {
     // FORK 2026-06-04 — bug task-mpwfiot2: hold the queued bubble OUT of messages[] (see the
@@ -6094,7 +11495,7 @@ async function send(text: string) {
   }
   scrollChat();
 
-  // FORK 2026-06-22 (the owner): draw the blue prompt-boundary line the INSTANT the prompt
+  // FORK 2026-06-22 (the architect): draw the blue prompt-boundary line the INSTANT the prompt
   // is sent — not at turn end — so every turn is visibly delimited while it still runs.
   // The boundary carries this prompt's stable user-message index + text → hover overlay
   // + click-scroll. Only the live (non-queued) send draws here; a QUEUED send's turn is
@@ -6151,6 +11552,38 @@ async function send(text: string) {
   // the skill keeps control of the budget.
   const effortPin = effortPinBySession.get(sessionKey);
   const modelPin = modelPinBySession.get(sessionKey);
+  // FORK 2026-07-24 (the architect): seed activeRuns with the PINNED model the moment we
+  // send, keyed by the same clientMsgId that becomes the gateway runId. Without
+  // this the thinking indicator keeps showing a stale prior main run (e.g. Sol)
+  // until lifecycle:start arrives — and if that prior entry never got cleared,
+  // forever. lifecycle:start overwrites this provisional entry with the real
+  // provider/model; chat.final deletes it.
+  if (!isQueued && modelPin) {
+    activeRuns.set(clientMsgId, {
+      model: modelPin,
+      provider: providerOf(modelPin),
+      startedAt: Date.now(),
+      lastEventAt: Date.now(),
+      sessionKey,
+      phase: "thinking",
+    });
+    saveActiveRuns();
+    startThinkingTick();
+    updateBudgetPanel();
+    updateChat();
+  }
+  // Fresh turn: not "preparing" until the gateway has actually accepted the message, and
+  // no phase yet — the previous turn's last phase must never bleed into this one's pill.
+  preparingSince = null;
+  turnPhase = null;
+  turnPhaseTrail = [];
+  // FORK 2026-08-24 — and a new turn gets its OWN timing block. Without this the first stage of
+  // turn N+1 would extend turn N's block, which is on screen far above and already folded.
+  resetPhaseGroup();
+  // FORK 2026-08-28 — the session this turn was ADDRESSED TO, captured before the await. The
+  // handler below settles per-session state, and the module-level `sessionKey` can have moved to
+  // another tab by the time chat.send answers.
+  const sentSessionKey = sessionKey;
   await req("chat.send", {
     sessionKey,
     message: messageForGateway,
@@ -6158,17 +11591,106 @@ async function send(text: string) {
     ...(effortPin ? { thinking: effortPin } : {}),
     ...(modelPin ? { model: modelPin } : {}),
   })
-    .then(() => {
+    .then((ack: unknown) => {
       sendOk = true;
+      // FORK 2026-08-24 — ACK IS NOT DURABILITY. This used to call `removeFromOutbox` here, on the
+      // belief (stated in the old comment) that a resolved `chat.send` meant the gateway had
+      // already written the user turn to the transcript. It had not: chat.ts fires the eager
+      // `void emitUserTranscriptUpdate()` WITHOUT awaiting it and returns, so the RPC resolves
+      // while the transcript write is still in flight. Between those two moments the message
+      // existed in exactly one place — gateway memory — because this handler had just deleted the
+      // outbox entry AND the send path clears the composer draft on the same `sendOk`. A
+      // `gateway.restart_shutdown_timeout` in that window (two of them on 2026-08-24, at 11:17 and
+      // 11:34) destroyed the prompt with no copy anywhere. That is the reported symptom: the draft
+      // survives refreshes and restarts all day, and is then thrown away by its own send.
+      //
+      // The entry now stays on disk until `reconcileOutboxAgainst` PROVES it in `chat.history` —
+      // which is the retirement rule outbox.ts documents and `reconcileWithHistory` implements.
+      // If the gateway died before persisting, the turn is absent from history and the entry is
+      // replayed with its ORIGINAL idempotencyKey, so a replay cannot double-run an accepted turn.
+      //
+      // The `_undelivered` mark IS cleared here: the ack is good enough to stop warning the user,
+      // it is only not good enough to destroy the last copy. Cleared against `outgoingUserMsg`
+      // directly rather than by id lookup: on the retryProvider path the bubble deliberately keeps
+      // its ORIGINAL `_clientMsgId` while the gateway gets a fresh idempotencyKey, so the two ids
+      // differ and a lookup would miss.
+      delete outgoingUserMsg._undelivered;
+      // FORK 2026-08-13 — chat.send has RETURNED: the message is on the gateway and a
+      // runId exists. Everything after this point is the gateway assembling the prompt
+      // (engram retrieval, total-recall pack, prompt build) before it can name a model.
+      // Measured on live turns: chat.send answers in ~0.8s but the first lifecycle
+      // event lands 21-36s later, so the pill said "sending..." for half a minute about
+      // a message that had already been sent. Record the handoff so the pill can say
+      // what is actually happening. See updateChat's pending-pill branch.
+      // The handoff: "sending" is over (the gateway HAS the message and a runId exists), and
+      // "preparing context" begins. Both get a row; together they account for the whole wait
+      // between pressing send and a model being named — which is the span the architect is
+      // trying to see, and the span the gateway currently narrates 11ms of.
+      if (pendingSince !== null) {
+        recordPhaseTiming({
+          ...finishedPhase("sending", Date.now() - pendingSince, "client"),
+          startedAt: pendingSince,
+        });
+        pendingSince = null;
+      }
+      // FORK 2026-08-28 — READ THE ACK BEFORE OPENING A STREAM WAIT. A CONTRACT CHECK, not a fix
+      // for a case this call site can hit today: `clientMsgId` is a FRESH uuid on every send(), so
+      // the gateway cannot hold a cached entry for it and this branch is currently unreachable from
+      // here — the live path is resendOutboxEntry(), which replays the ORIGINAL key on purpose. It
+      // is kept because the three ack shapes are the gateway's contract, not a special case, and
+      // the failure mode of ignoring one is a tab that hangs forever (exactly what R2 forbids); the
+      // key here is one edit away from being reused, as it already is for the bubble id.
+      // `status: "in_flight"` deliberately falls through and keeps waiting: a controller exists, so
+      // that run IS live, and its events are broadcast session-scoped via `sendToSession`.
+      if ((ack as { status?: unknown } | null | undefined)?.status === "ok") {
+        settleAlreadyCompletedSend(clientMsgId, sentSessionKey);
+        return;
+      }
+      preparingSince = Date.now();
+      // Cleared on OPEN, not on close: a window that never reached a model (disconnect, failed
+      // send) must not donate its stages to the next turn's breakdown.
+      preparingStages = [];
+      updateChat();
     })
     .catch((e) => {
       console.error(e);
+      // FORK 2026-08-16 — the send did NOT land (the commonest cause is exactly the reported one:
+      // `req` rejects "disconnected" because the gateway is mid-restart, or the gateway's own close
+      // handler rejected everything in flight). `outgoingUserMsg._undelivered` therefore STAYS set
+      // and the outbox entry stays on disk, so the bubble survives the loadChat that the reconnect
+      // triggers and the prompt is replayed the moment the socket is back. Before this, the only
+      // handling was the console.error above — invisible to the user, and the bubble was deleted by
+      // the next history merge, which is why the prompt seemed to have never existed.
+      updateChat();
       sending = false;
+      // Same reasoning as the disconnect path: a send that failed did not finish "preparing",
+      // so it leaves no timing row.
+      preparingSince = null;
+      pendingSince = null;
+      turnPhase = null;
+      turnPhaseTrail = [];
+      // FORK 2026-07-28 — the provisional pin-seeded run above was NEVER removed on failure. With
+      // no successful send there is no lifecycle:start and no chat.final, so nothing else could
+      // ever delete it: the session row shimmered forever and the composer stayed stuck on
+      // "Queue". That happens precisely when the gateway is unhealthy — i.e. exactly when the user
+      // is retrying. Mark it terminated as well as deleting it, so a late delta cannot resurrect
+      // the entry through the self-heal path.
+      if (activeRuns.delete(clientMsgId)) {
+        rememberTerminated(clientMsgId);
+        saveActiveRuns();
+        updateBudgetPanel();
+        updateSessionsPanel();
+        updateChat();
+      }
       updateBtn();
     });
   if (draftTabId) {
-    if (sendOk) {
-      // confirmed → safe to drop the saved draft (clearDraftFor archives it into the ring first)
+    if (sendOk && promptProtected) {
+      // Confirmed AND the outbox holds a copy → safe to drop the saved draft (clearDraftFor
+      // archives it into the ring first).
+      // FORK 2026-08-16 (2nd pass): `promptProtected` gates this. If the outbox write failed
+      // (quota), clearing the draft here would leave the prompt with NO durable copy at all —
+      // the exact hole the outbox was added to close, reopened by its own failure path.
       clearDraftFor(draftTabId);
       const st = tabStates.get(draftTabId);
       if (st) st.draft = "";
@@ -6202,29 +11724,40 @@ function retryProvider(provider: string) {
   }
   persistProviderErrors();
   updateBudgetPanel();
-  // Remove error messages from this provider and re-render
-  streamMsgIdx = -1;
+  // FORK 2026-08-05 — was `messages = messages.filter(...)`, which DELETED the error and warning
+  // bubbles the user had already read the moment they pressed ↻. Mark them SUPERSEDED instead:
+  // dropping `_retryProvider` retires the retry button (renderMsg gates it on that field), and the
+  // record of what failed stays on the page where it was written.
+  streamMsgUid = null;
   lastDeltaLen = 0;
   lastDeltaAt = 0;
-  messages = messages.filter(
-    (m) => !((m._isError || m._isWarning) && m._retryProvider === provider),
-  );
+  for (const entry of messages) {
+    const m = entry as Record<string, unknown>;
+    if ((m._isError || m._isWarning) && m._retryProvider === provider) {
+      delete m._retryProvider;
+      m._superseded = true;
+    }
+  }
   clearPersistedErrors(sessionKey);
   // Find last user message and resend
   for (let i = messages.length - 1; i >= 0; i--) {
-    if ((messages[i].role ?? "").toLowerCase() === "user") {
-      const text = Array.isArray(messages[i].content)
-        ? messages[i].content
-            .filter((b: unknown) => b.type === "text")
-            .map((b: unknown) => b.text)
+    const um = messages[i] as Record<string, unknown>;
+    if (((um.role as string) ?? "").toLowerCase() === "user") {
+      const text = Array.isArray(um.content)
+        ? (um.content as Array<{ type?: string; text?: string }>)
+            .filter((b) => b.type === "text")
+            .map((b) => b.text)
             .join("\n")
-        : typeof messages[i].content === "string"
-          ? messages[i].content
+        : typeof um.content === "string"
+          ? um.content
           : "";
       if (text.trim()) {
-        // Remove the user message — send() will re-add it
-        messages.splice(i, 1);
-        send(text.trim());
+        // FORK 2026-08-05 — was `messages.splice(i, 1)` and letting send() re-add the prompt, so the
+        // user's own bubble was deleted from the middle of the transcript and reappeared at the
+        // bottom (taking every index after it with it, and losing its attachments + `_fullPrompt`).
+        // Leave it exactly where it is and hand send() the ORIGINAL `_clientMsgId`, so
+        // `pushUserMsgDeduped` recognises the echo and declines to add a second copy.
+        send(text.trim(), typeof um._clientMsgId === "string" ? um._clientMsgId : undefined);
         return;
       }
     }
@@ -6234,9 +11767,49 @@ function retryProvider(provider: string) {
 }
 
 async function abort() {
-  await req("chat.abort", { sessionKey }).catch(() => {});
-  messages = messages.filter((m: unknown) => !m._temporary);
-  streamMsgIdx = -1;
+  // FORK 2026-08-06 (the architect: Stop left qwen's thinking bar running, recurrence of the Grok
+  // report): the old `await req("chat.abort", …).catch(() => {})` swallowed a failed abort, so
+  // during the day's gateway flakiness the client believed it had stopped while the run kept
+  // burning server-side. Retry briefly — Stop must LAND, not just be pressed.
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await req("chat.abort", { sessionKey });
+      break;
+    } catch {
+      if (attempt < 3) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+  }
+  // FORK 2026-08-05 (the architect: "carta a terra va a la guerra") — was
+  // `messages = messages.filter((m) => !m._temporary)`, which is neither run- nor session-scoped:
+  // pressing Stop erased the partial answer you were reading AND every live bubble belonging to any
+  // OTHER run in this tab. The SERVER's abort path deliberately PRESERVES the partial, so the client
+  // was strictly more destructive than the contract it mirrors. Promote instead — a partial with
+  // visible content becomes a permanent bubble (marked `_truncatedByStop`), and the "⏹ Stopped."
+  // note pushed below it reads as its continuation. Only EMPTY temps (opened, never written to) are
+  // dropped. NOTE the mark is deliberately NOT `_stopped`: that name is in msg-order's
+  // CLIENT_ONLY_FLAGS, and the server keeps its own copy of this partial, so claiming it as
+  // client-only would make loadChat preserve it alongside the server's copy — a duplicate.
+  const keptOnStop: unknown[] = [];
+  for (const entry of messages) {
+    const m = entry as Record<string, unknown>;
+    if (!m._temporary) {
+      keptOnStop.push(entry);
+      continue;
+    }
+    if (!msgHasVisibleContent(m)) {
+      continue;
+    }
+    delete m._temporary;
+    m._truncatedByStop = true;
+    if (typeof m._bubbleStartedAt === "number" && !m._bubbleEndedAt) {
+      m._bubbleEndedAt = Date.now();
+    }
+    keptOnStop.push(entry);
+  }
+  messages = keptOnStop;
+  streamMsgUid = null;
   lastDeltaLen = 0;
   lastDeltaAt = 0;
   streamRunId = null;
@@ -6251,30 +11824,115 @@ async function abort() {
   };
   messages.push(stoppedMsg);
   persistErrorMsg(sessionKey, stoppedMsg);
+  // FORK 2026-08-05 (the architect: "stopping Grok thinking indicator keeps going"):
+  // manual Stop must leave the SAME end evidence that chat.final / chat.aborted
+  // leave. Previously abort() only deleted activeRuns rows. That is not enough:
+  // renderThinkingIndicator has a server-fallback branch that re-lights from
+  // sessions.list via sessionHasActiveRuns → resolveSessionRunState, and that
+  // path only goes dark when sessionEndedAt is newer than the snapshot. Without
+  // the stamp, Stop clears the local row, then the next tick / sessions refresh
+  // resurrects a "Grok working" indicator from a still-live (or still-stale)
+  // server claim. Also mark every deleted run terminated so a late delta can't
+  // re-create a ghost entry under the same runId.
+  if (sessionKey) {
+    sessionEndedAt.set(sessionKey, Date.now());
+  }
   // FORK 2026-05-16: chat.abort only aborts THIS session server-side, so only
   // drop THIS session's runs locally. The old `activeRuns.clear()` nuked every
   // other tab's live run from the indicator too (multi-tab regression).
   for (const [runId, info] of [...activeRuns]) {
     if (runBelongsToViewedSession(info)) {
       activeRuns.delete(runId);
+      rememberTerminated(runId);
     }
   }
   saveActiveRuns();
   sending = viewedSessionBusy();
   updateChat();
   updateBtn();
+  // FORK 2026-08-06: refresh the session snapshot so the run-set verdict catches up with the
+  // abort instead of the indicator living off a stale row until the next periodic fetch.
+  void loadSessions();
 }
 
 async function loadBudget() {
   const today = new Date().toISOString().slice(0, 10);
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-  const [s, mc, bu, su] = await Promise.all([
-    req("budget.status", {}).catch(() => null),
-    req("config.models", {}).catch(() => null),
-    req("budget.usage", {}).catch(() => null),
-    req("sessions.usage", { startDate: weekAgo, endDate: today }).catch(() => null),
+  // FORK 2026-08-15 (the architect: "the token panel is not showing").
+  //
+  // These six still leave together — this is not a serialization — but they are now AWAITED
+  // separately, because `Promise.all` made the panel's paint wait for its slowest sibling.
+  //
+  // Measured on the live gateway, 2026-08-15:
+  //   config.models      8,919ms   <- the ONLY thing updateBudgetPanel needs to render
+  //   budget.status      1,403ms
+  //   budget.usage      11,890ms
+  //   prefrontal.status  1,454ms
+  //   prefrontal.routes  1,368ms
+  //   sessions.usage    >60,000ms  <- times out, every time
+  //
+  // `updateBudgetPanel` returns the "Loading config..." placeholder while `modelConfigData`
+  // is null, and that field was assigned only after the whole batch settled. So the panel sat
+  // blank for ~65s on every load (measured: filled at t+65s, sessions panel at t+5s) waiting
+  // on data it does not read. Long enough that it reads as "not showing" — nobody waits.
+  //
+  // Each promise already had its own `.catch(() => null)`, so they were never actually
+  // interdependent; only the `await Promise.all` coupled them.
+  const pStatus = req("budget.status", {}).catch(() => null);
+  const pModels = req("config.models", {}).catch(() => null);
+  const pUsage = req("budget.usage", {}).catch(() => null);
+  const pSessionsUsage = req(
+    "sessions.usage",
+    { startDate: weekAgo, endDate: today },
+    { timeoutMs: SESSIONS_USAGE_TIMEOUT_MS },
+  ).catch(() => null);
+  // FORK 2026-07-25 (the architect): the fan-out cap the routing card quotes. Optional —
+  // an older gateway (or a disabled prefrontal plugin) just leaves the numbers off.
+  const pPrefrontal = req("prefrontal.status", {}).catch(() => null);
+  // ...and the routing calls ORCA made, for the ORCA card's FAN-OUT section.
+  const pRoutes = req("prefrontal.routes", {}).catch(() => null);
+
+  // FIRST PAINT — the instant the catalog lands, not when the batch does. Everything below
+  // repaints again with the fuller picture; this only removes the blank minute.
+  // Rendering with `budgetUsageData` still null is already a supported state (that is exactly
+  // what happens whenever `budget.usage` fails), so the early paint shows the model rows with
+  // usage numbers absent rather than nothing at all.
+  void pModels.then((mc) => {
+    if (mc) {
+      modelConfigData = mc;
+      // Same trick one step earlier than this first paint: remember the catalog so
+      // the NEXT load renders the model rows before the socket is even open.
+      writePanelSnapshot(MODEL_CONFIG_SNAPSHOT_KEY, mc);
+      updateBudgetPanel();
+    }
+  });
+
+  const [s, mc, bu, su, pf, pr] = await Promise.all([
+    pStatus,
+    pModels,
+    pUsage,
+    pSessionsUsage,
+    pPrefrontal,
+    pRoutes,
   ]);
   _budgetData = { budget: null, status: s };
+  if (pf) {
+    const p = pf as {
+      concurrencyCap?: number;
+      cores?: number;
+      policyPath?: string;
+    };
+    orchestrationCaps = {
+      concurrencyCap: typeof p.concurrencyCap === "number" ? p.concurrencyCap : undefined,
+      cores: typeof p.cores === "number" && p.cores > 0 ? p.cores : undefined,
+      policyPath: typeof p.policyPath === "string" ? p.policyPath : undefined,
+    };
+  }
+  const prRoutes = (pr as { routes?: unknown[] } | null)?.routes;
+  // A row with no model is unrenderable — drop it rather than print an empty job line.
+  orcaRoutes = Array.isArray(prRoutes)
+    ? (prRoutes as typeof orcaRoutes).filter((r) => typeof r?.model === "string" && r.model)
+    : [];
   if (mc) {
     modelConfigData = mc;
   }
@@ -6329,7 +11987,7 @@ function htmlRenderFrame(rawHtml: string): string {
   const doc =
     "<!doctype html><html><head><meta charset='utf-8'>" +
     "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
-    // FORK 2026-06-25 (the owner) — responsive base reset for EVERY html-render block:
+    // FORK 2026-06-25 (the architect) — responsive base reset for EVERY html-render block:
     // adapt to the chat's width and NEVER show a horizontal scrollbar. The frame is
     // width:100% of the bubble; this reset stops inner content (fixed-px widths, wide
     // tables, nowrap, long unbreakable strings, oversized media) from forcing overflow.
@@ -6337,7 +11995,7 @@ function htmlRenderFrame(rawHtml: string): string {
     "*,*::before,*::after{box-sizing:border-box}" +
     "html,body{margin:0;max-width:100%;overflow-x:hidden}" +
     "body{padding:8px;font-family:system-ui,-apple-system,sans-serif;color:#1a1a1a;overflow-wrap:anywhere;word-break:break-word}" +
-    // FORK 2026-06-25 (the owner) — fill the bubble: a top-level card with only `max-width`
+    // FORK 2026-06-25 (the architect) — fill the bubble: a top-level card with only `max-width`
     // would shrink-wrap to its content and leave a gap on the right. Force direct block
     // children to width:100%; a card that ALSO sets max-width then centers within the
     // full width instead of left-capping.
@@ -6361,7 +12019,7 @@ function htmlRenderFrame(rawHtml: string): string {
   );
 }
 
-// FORK 2026-06-25 (the owner — flicker/scroll-jump fix): a ```html-render block with
+// FORK 2026-06-25 (the architect — flicker/scroll-jump fix): a ```html-render block with
 // NO <script> is a static card (every closing summary is one). Render it INLINE as
 // DOMPurify-sanitized HTML — the same approach openclaw's own UI uses — instead of a
 // sandboxed iframe. An iframe reloads on every chat innerHTML rebuild (so it flashed
@@ -6418,6 +12076,130 @@ if (typeof window !== "undefined" && !(window as any).__tinkerHtmlFrameResizeWir
       }
     }
   });
+}
+
+// FORK 2026-08-06: live-iframe reuse across chat rebuilds (called from updateChat).
+// Identity = srcdoc content hash + length; a changed block gets a fresh iframe, an
+// unchanged one keeps its running page — no reload, no white flash, no reset bar.
+const htmlFrameCache = new Map<string, HTMLIFrameElement>();
+function srcdocKey(srcdoc: string): string {
+  let hsh = 0;
+  for (let i = 0; i < srcdoc.length; i++) {
+    hsh = (hsh * 31 + srcdoc.charCodeAt(i)) | 0;
+  }
+  return `${hsh}:${srcdoc.length}`;
+}
+function reuseHtmlFrames(root: HTMLElement): void {
+  const frames = root.querySelectorAll<HTMLIFrameElement>("iframe.chat-html-frame");
+  const alive = new Set<string>();
+  frames.forEach((f) => {
+    const key = srcdocKey(f.getAttribute("srcdoc") ?? "");
+    alive.add(key);
+    const prev = htmlFrameCache.get(key);
+    if (prev && prev !== f) {
+      f.replaceWith(prev);
+      htmlFrameCache.set(key, prev);
+    } else {
+      htmlFrameCache.set(key, f);
+    }
+  });
+  for (const k of [...htmlFrameCache.keys()]) {
+    if (!alive.has(k)) {
+      htmlFrameCache.delete(k);
+    }
+  }
+}
+
+/** FORK 2026-08-06 (the architect: the tab should SHOW that a detached longjob is working):
+ *  the longjob progress page posts {__tinkerLongjob:1,...} on every poll. While the
+ *  job runs, the active tab gets a pulsing golden dot and the window title a spinner
+ *  frame + percentage; both clear on the terminal post. A detached download burns zero
+ *  tokens by design, so the run lane (tab glow / thinking indicator) is correctly dark —
+ *  this message lane is its own surface. Stale guard: if posts stop for 15s (iframe
+ *  gone, page frozen) the surfaces clear rather than lying. */
+let longjobAnim: { pct: number | null; label: string; frame: number; lastAt: number } | null = null;
+const LONGJOB_FRAMES = ["◐", "◓", "◑", "◒"];
+const baseDocTitle = document.title;
+function applyLongjobSurfaces(): void {
+  if (longjobAnim && Date.now() - longjobAnim.lastAt > 15_000) {
+    longjobAnim = null;
+  }
+  document.title = longjobAnim
+    ? `${LONGJOB_FRAMES[longjobAnim.frame % LONGJOB_FRAMES.length]} ${
+        longjobAnim.pct == null ? "" : `${longjobAnim.pct}% `
+      }${longjobAnim.label} — ${baseDocTitle}`
+    : baseDocTitle;
+  const tab = document.querySelector(".tab-active");
+  if (!tab) return;
+  const dot = tab.querySelector(".tab-longjob-dot") as HTMLElement | null;
+  const pctEl = tab.querySelector(".tab-longjob-pct") as HTMLElement | null;
+  if (longjobAnim) {
+    if (!dot) {
+      const d = document.createElement("span");
+      d.className = "tab-longjob-dot";
+      tab.insertBefore(d, tab.firstChild);
+    }
+    // The percentage lives IN the tab element, not only in the OS window title —
+    // "tab title" is the tab the architect actually looks at (2026-08-06 clarification).
+    if (!pctEl) {
+      const p = document.createElement("span");
+      p.className = "tab-longjob-pct";
+      const title = tab.querySelector(".tab-title");
+      (title ?? tab).insertAdjacentElement("afterend", p);
+    }
+    const pctNow = tab.querySelector(".tab-longjob-pct") as HTMLElement;
+    pctNow.textContent = longjobAnim.pct == null ? "…" : `${longjobAnim.pct}%`;
+  } else if (dot) {
+    dot.remove();
+    pctEl?.remove();
+  } else if (pctEl) {
+    pctEl.remove();
+  }
+}
+if (typeof window !== "undefined" && !(window as any).__tinkerLongjobWired) {
+  (window as any).__tinkerLongjobWired = true;
+  const st = document.createElement("style");
+  st.textContent =
+    ".tab-longjob-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#c9a86a;margin-right:6px;vertical-align:middle;animation:longjobPulse 1.2s ease-in-out infinite}" +
+    ".tab-longjob-pct{color:#c9a86a;font-size:11px;margin-left:6px;font-variant-numeric:tabular-nums}" +
+    "@keyframes longjobPulse{0%,100%{opacity:.35;transform:scale(.8)}50%{opacity:1;transform:scale(1.1)}}";
+  document.head.appendChild(st);
+  window.addEventListener("message", (ev) => {
+    const d = ev.data;
+    if (!d || d.__tinkerLongjob !== 1) {
+      return;
+    }
+    if (d.status === "done" || d.status === "failed") {
+      longjobAnim = null;
+    } else {
+      longjobAnim = {
+        pct: typeof d.pct === "number" ? d.pct : null,
+        label: typeof d.label === "string" ? d.label : "working",
+        frame: (longjobAnim?.frame ?? 0) + 1,
+        lastAt: Date.now(),
+      };
+    }
+    applyLongjobSurfaces();
+  });
+  setInterval(applyLongjobSurfaces, 5_000); // stale guard + title frame cycling
+}
+
+/** FORK 2026-08-04: build the attribute string for a linkified <code>, keeping
+ *  whatever attributes the author already wrote (inline html-render summary
+ *  cards style their paths, e.g. `<code style="background:#332b23">`). A second
+ *  `class=` attribute would be ignored by the browser — the first one wins — so
+ *  when a class already exists we prepend into it rather than adding our own. */
+function mergeFsLinkClass(attrs: string | undefined, extra = ""): string {
+  const classes = extra ? `fs-link ${extra}` : "fs-link";
+  const a = attrs ?? "";
+  if (!a.trim()) {
+    return ` class="${classes}"`;
+  }
+  const m = /\bclass\s*=\s*(["'])/.exec(a);
+  if (m) {
+    return a.replace(m[0], `${m[0]}${classes} `);
+  }
+  return `${a} class="${classes}"`;
 }
 
 function md(text: string): string {
@@ -6485,9 +12267,19 @@ function md(text: string): string {
   // FORK 2026-07-15: '·' (U+00B7, Catalan punt volat as in "Sol·licitud") is
   // punctuation (Po), outside \p{L}\p{M}\p{N} — added literally to both
   // char classes here and in the bare-filename regex below.
+  // FORK 2026-08-04: match <code> WITH attributes, not just the bare tag. Inline
+  // ```html-render cards (every closing summary) are swapped into `h` above at
+  // line ~7359 and so DO reach this pass — but they style their paths as
+  // `<code style="…">~/foo.html</code>`, and the old bare-`<code>` regex skipped
+  // them silently, leaving the most prominent path in the answer as dead text.
+  // Attrs are preserved; `fs-link` is merged into an existing class= if present
+  // (a duplicate class attribute would be ignored by the browser, killing the
+  // click handler). Note the sandboxed-iframe path (scripted widgets) still
+  // can't linkify — cross-origin srcdoc is out of reach by design.
   h = h.replace(
-    /<code>(~\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]| (?![-\s]))*[\p{L}\p{M}\p{N}·/_()+,'@#~-]|\/(?:home|usr|tmp|var|opt|etc|mnt|media|data|srv)\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]| (?![-\s]))*[\p{L}\p{M}\p{N}·/_()+,'@#~-])<\/code>/gu,
-    '<code class="fs-link" data-path="$1" title="Click to open in system viewer">$1</code>',
+    /<code(\s[^>]*)?>(~\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]| (?![-\s]))*[\p{L}\p{M}\p{N}·/_()+,'@#~-]|\/(?:home|usr|tmp|var|opt|etc|mnt|media|data|srv)\/(?:[\p{L}\p{M}\p{N}·./_()+,'@#~-]| (?![-\s]))*[\p{L}\p{M}\p{N}·/_()+,'@#~-])<\/code>/gu,
+    (_full, attrs: string | undefined, p: string) =>
+      `<code${mergeFsLinkClass(attrs)} data-path="${p}" title="Click to open in system viewer">${p}</code>`,
   );
   // FORK 2026-05-10: ALSO wrap bare filenames (no slash, just `BRIEFING.md`)
   // as clickable. Resolution to an absolute path is deferred to click time
@@ -6500,16 +12292,17 @@ function md(text: string): string {
   // left `memòria_informe.html` (ò is not \w) and `3d_raw_data.html` (digit
   // first) as dead text. \p{L}\p{M}\p{N} (with /u) mirror the absolute-path
   // regex above.
+  // FORK 2026-08-04: attribute-tolerant, same reason as the absolute-path regex
+  // above — styled <code> inside inline html-render cards was being skipped.
   h = h.replace(
-    /<code>([\p{L}\p{N}][\p{L}\p{M}\p{N}·._-]*\.(?:md|txt|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|png|jpg|jpeg|gif|webp|svg|pdf|sh|py|css|html|htm|xml|toml|ini|csv|mp4|mp3|wav|go|rs|rb|php|sql|log))<\/code>/gu,
-    (full, name) => {
-      // If this <code> is already the start of an fs-link replacement (the
-      // earlier regex would have transformed it), skip. We can't easily look
-      // back through the string here, but the earlier regex always rewrites
-      // <code> → <code class="fs-link" so by the time we get here the bare
-      // <code> tag is guaranteed not to overlap with an absolute-path <code>.
+    /<code(\s[^>]*)?>([\p{L}\p{N}][\p{L}\p{M}\p{N}·._-]*\.(?:md|txt|ts|tsx|js|jsx|mjs|cjs|json|yaml|yml|png|jpg|jpeg|gif|webp|svg|pdf|sh|py|css|html|htm|xml|toml|ini|csv|mp4|mp3|wav|go|rs|rb|php|sql|log))<\/code>/gu,
+    (full, attrs: string | undefined, name: string) => {
+      // Already linkified by the absolute-path pass above → leave it alone.
+      if (attrs && /\bfs-link\b/.test(attrs)) {
+        return full;
+      }
       const safe = String(name).replace(/"/g, "&quot;");
-      return `<code class="fs-link fs-link-bare" data-name="${safe}" title="Click to find &amp; open ${safe}">${name}</code>`;
+      return `<code${mergeFsLinkClass(attrs, "fs-link-bare")} data-name="${safe}" title="Click to find &amp; open ${safe}">${name}</code>`;
     },
   );
   return h;
@@ -6805,27 +12598,23 @@ function extractFilePaths(text: string): string[] {
 // a 3-section structured response (🧠 AMYGDALA → 💬 ANSWER → 🌿 FRACTAL).
 // This replaces the two-turn sessions.steer dance the old fractal-reflection
 // plugin used, eliminating the lane-race entirely.
-const AMY_FRA_TOGGLES_KEY = "tinker-amy-fra-toggles";
 // FORK 2026-06-10 (amygdala retirement): the `amygdala` toggle is gone — the
 // per-turn amygdala injection was removed, so only the fractal toggle remains.
+// FORK 2026-08-02 (the architect): backed by the unified ui-state store (flag
+// "topbar:fractal", default ON). Type + function names kept so callers are
+// untouched; the dedicated JSON key is gone. The try/catches stay — this loads at
+// module init, where even accessing window.localStorage can throw (SecurityError).
 type InjectToggles = { fractal: boolean };
 function loadInjectToggles(): InjectToggles {
   try {
-    const raw = localStorage.getItem(AMY_FRA_TOGGLES_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        fractal: parsed.fractal !== false,
-      };
-    }
+    return { fractal: getFlag("topbar:fractal", true) };
   } catch {
-    /* fall through */
+    return { fractal: true };
   }
-  return { fractal: true };
 }
 function saveInjectToggles(t: InjectToggles): void {
   try {
-    localStorage.setItem(AMY_FRA_TOGGLES_KEY, JSON.stringify(t));
+    setFlag("topbar:fractal", t.fractal, true);
   } catch {
     /* ignore */
   }
@@ -6869,6 +12658,258 @@ function buildBriefingPrompt(briefingPath: string, content: string): string {
     content
   );
 }
+
+// FORK 2026-08-22: the FULL fractal doctrine now ships here, by the owner's explicit
+// decision ("I already expressed my decision, no matter the cost... the proper fractal
+// prompt will save me tons of work"). It replaces a ~1.4 KB summary that had quietly
+// become the only live copy while two authoritative-looking .md files sat orphaned:
+// extensions/tinkerclaw-fractal-reflection/fractal-prompt.md is read by NOTHING (the
+// plugin loads triage-prompt.md), and src/fork/fractal-prompt.md is read by a path that
+// no longer fires. The doctrine had eroded 24.7 KB -> 4.6 KB inside grab-bag commit
+// 66cbff91509, taking the RIPPLE / RECIPE / PREEMPT / SELF-HEAL faculties with it.
+// SOURCE OF TRUTH is the .md file above; scripts/check-fractal-prompt-sync.mjs fails if
+// this constant drifts from it. Edit the .md, then re-run that script.
+//
+// FORK 2026-08-22 (the owner): the user bubble links STRAIGHT to that .md — "no shortcuts,
+// no summaries, the real thing right away". `~/src/tinkerclaw` is one of the roots
+// config.openExternalFile allows, and check-fractal-prompt-sync.mjs asserts this constant
+// still points at the file it generates FRACTAL_DOCTRINE from, so the link cannot rot into
+// a pointer to a decoy copy — the exact failure this whole sync mechanism exists to prevent.
+const FRACTAL_PROMPT_PATH =
+  "~/src/tinkerclaw/extensions/tinkerclaw-fractal-reflection/fractal-prompt.md";
+const FRACTAL_DOCTRINE = String.raw`## Who Fractal is
+
+The main turn is the fast thinker: it does the work. Fractal is the slow thinker in the shadows:
+after the work is done, it asks what the work _meant_ — what it taught, what it broke, what should
+never happen again — and it leaves **durable change on disk**, not commentary. It interjects
+rarely. When it does, it nails it.
+
+## The reflex — one operation, every scale
+
+Observe → evaluate → adapt. Zoom vertically only as deep as the signal truly goes: the instance →
+the pattern it belongs to → the system producing the pattern → the assumption under the system.
+Then sweep horizontally: what did this turn touch or outdate — public surfaces, local docs and
+design notes, memory, recurring cost, people and promises, anything downstream that reads what just
+changed? Name only axes with real signal. Silence on the rest.
+
+## Hard rules
+
+1. **Attribution is sacred.** Report as Fractal's only what the reflection itself changed _after
+   the answer ended_. The main turn's work is already visible to the user; re-claiming it here is
+   fabrication — the exact failure that killed v1's credibility. Prefix \`🌿 FRACTAL ACTION:\` only
+   when the reflection itself wrote or edited something; otherwise plain \`🌿 FRACTAL:\`.
+   **The ambiguity that keeps leaking (2026-08-22): a "touched surfaces" list is not a loophole.**
+   Naming a file the MAIN turn wrote, inside the reflection, reads to the owner as a Fractal claim
+   — he said so about \`recipes/visual-answer/recipe.md\`. So mark every path with who wrote it:
+   \`(main turn)\` or \`(this reflection)\`. If every path in the line says \`main turn\`, the prefix is
+   plain \`🌿 FRACTAL:\` and the list is optional — prefer dropping it.
+
+2. **A claim about disk needs a tool call behind it.** Before writing "wrote X" / "filed Y" /
+   "indexed Z", the write must already have happened in this same turn. Do the write FIRST, then
+   describe it — never the reverse, never "I will". **This failed five turns running on
+   2026-08-21/22**: five consecutive \`FRACTAL ACTION\` lines claimed memory files that did not
+   exist, caught only because the owner asked "done?" and the paths were finally listed. If a
+   reflection names a path, that path must have appeared in a write result this turn. When in
+   doubt, \`ls\` your own claims — it costs nothing.
+
+3. **Observation beats stored claims.** When something directly observed this turn contradicts a
+   written note, doc, or config comment — an availability claim, a version, a "this doesn't work" —
+   the observation IS the trigger: update the written claim now, recording the new fact, the date,
+   and the evidence. "Maybe it's temporary" is handled by dating the entry, not by waiting for
+   permission. Corollary: a stored **negative** ("as of DATE, zero replies / none found / nobody
+   answered") is expired on read — re-query the live source before repeating it.
+
+4. **Act, don't describe.** A lesson reaches disk this turn or it didn't happen. "Should", "would",
+   "worth considering", "candidate for later" are bugs — either do it now or write a bookmark that
+   spells out exactly HOW, and say which you did.
+
+5. **Reversibility gates boldness.** Reversible (files, memory, docs, recipes, notes): act freely,
+   tell the user after. Irreversible or external (sending, deleting, publishing, restarting
+   services, spending) — and this reflection system's own prompts and wiring: propose the exact
+   change instead of applying it.
+
+6. **Recurrence escalates.** The second sighting of a failure class is not a new incident; it is
+   one unsolved systemic gap wearing a new mask. Stop patching the instance — change whatever
+   produces it (the habit, the rule, the doc, the check). Fix the column, not the cell.
+   When a correction arrives underdetermined ("that's wrong"), revise the narrowest thing that
+   satisfies it; demolishing a working frame over an instance-level correction is itself a
+   recurring failure. If genuinely ambiguous, ask one sharp question.
+   A "fix X" ask targets X **at the layer it actually breaks** — editing an adjacent or cosmetic
+   surface and reporting motion is the failure the owner names as "I didn't ask you to touch that,
+   I asked you to fix the thing."
+
+7. **Green is what the OWNER can observe.** No "fixed" / "wired" / "works" claim survives without
+   re-running the failing operation and watching it come back green. A build that compiles, a file
+   that saves, a test that passes — none of these is the change appearing where he is looking.
+   Climb only as far as the claim requires, but never claim above where you climbed:
+
+   | claim about…                                | valid green                                                     |
+   | ------------------------------------------- | --------------------------------------------------------------- |
+   | text / wiring / a value being present       | find the string in the SERVED output                            |
+   | how something LOOKS (colour, logo, spacing) | a render you actually LOOK at — screenshot or drive the browser |
+   | a control that appears only after an action | DRIVE the interaction first, then look in THAT state            |
+   | code you edited but did not deploy          | say **written, not running** — source ≠ built ≠ restarted       |
+
+   Each row was bought with a repeat failure: source-edited-but-stale-dist recurred three times on
+   2026-07-30; **presence is not appearance** — a correct hex colour sat in the served DOM and
+   rendered as nothing, three corrections in one session on 2026-08-04; **default state is not the
+   state** — a control behind an expander was "verified" twice in fourteen minutes on 2026-08-11
+   without ever expanding, and the owner's own words (_"once I expand"_) named the missing setup
+   both times. When the owner's report contains a precondition, that precondition IS the test
+   setup. If you cannot render it, say the appearance is UNVERIFIED rather than upgrading a string
+   match into a claim about what he will see.
+
+8. **No filler.** A turn with nothing worth keeping gets one line. A manufactured reflection costs
+   more than it earns: it buries the real ones. An honest "clean" is a valid, informative result.
+
+9. **Mid-task reflexes don't live here.** This section runs after the turn — too late to prevent
+   the mistake it just watched. A detector that must fire _before_ the next occurrence (a habit, a
+   check, a trigger) gets installed into working memory — identity, lessons, the governing skill or
+   recipe — where it loads at the start of future turns.
+
+10. **Learn from the world, not just the session.** When a turn reveals the world moved — a model
+    restored or retired, an API changed, a price shifted, a better tool appeared — record it where
+    the next decision will actually look, dated, with the evidence.
+
+11. **The delivery channel is in scope.** _Added 2026-08-26, at the owner's instruction, after he
+    received a completed 304-page build as a wall of thinking with no answer attached._ When the
+    owner reports that he did not SEE the work — "done?", "I don't see an answer", "just
+    thinking", bubbles fused together, a duplicated or missing reply — that is a defect report
+    about the channel, and this reflection owns it. Answering the original question again while
+    stepping over the delivery failure fixes nothing: the next turn is lost the same way.
+
+    The trap that produced this rule, and the check that would have caught it:
+    - A stored note saying _"fixed in commit \`abc123\`"_ is a claim about **source**, and the
+      symptom in front of you is evidence about the **running artifact**. They disagree far more
+      often than the note admits. Before trusting any "already fixed", establish all three:
+      is the commit an ancestor of HEAD, is the symbol present in the BUILT bundle, and is the
+      build newer than the commit? Here the fix landed 2026-08-25 16:11 and the bundle was built
+      2026-08-24 15:21 — committed, merged, never built, so the gateway had been serving the
+      buggy path for a day. \`stat\` the artifact against \`git log -1 --format=%ci <commit>\`; it is
+      two commands and it converts "should be fixed" into a fact.
+    - This is rule 7's stale-dist row wearing a new mask, so it escalates by rule 6: the fix is
+      not another note, it is that a "fixed" memory must record **where it is running**, not only
+      where it was committed. Update the note the moment observation contradicts it (rule 3).
+
+    **Run this ladder before theorising.** Three commands, in this order, and each one halves the
+    search space. It localised the 2026-08-26 case in three steps, and it is cheap enough that
+    guessing instead is never justified:
+    1. **Disk** — \`grep -rl "<a distinctive phrase from the reply>" ~/.openclaw ~/.claude/projects\`.
+       Present ⇒ the model produced it and it was persisted; the loss is downstream. Absent ⇒ the
+       turn died before persist, and nothing downstream can be at fault.
+    2. **Served** — \`openclaw gateway call chat.history --params '{"sessionKey":"…","limit":12}'\`.
+       Present ⇒ the gateway is serving the answer correctly; the defect is in the renderer.
+    3. **Rendered** — grep the phrase INSIDE the \`id="messages"\` region of
+       \`~/.openclaw/data/tinker-ui-snapshot.html\`. Grep the whole file and you will match the
+       amygdala panel echoing your own query back at you. Absent from \`#messages\` while present
+       in steps 1–2 is the signature of **persisted-but-not-painted**.
+
+    That signature has one immediate remedy and the owner can apply it himself: **reload the tab.**
+    The served history already holds the reply, so a reload repaints it. Say this FIRST, in one
+    line, before any root-cause narrative — he wants his answer back more than he wants the
+    autopsy. Fused thinking bubbles are the same event seen from the other side: when the stream
+    stops mid-turn the block breaks are never finalised, so the deltas coalesce into one tall block.
+
+    Do NOT reach for a stored culprit before running the ladder. On 2026-08-26 the two obvious
+    suspects both proved innocent under three commands: the per-message block-index fix
+    (\`caa186c1ca5\`) is an ancestor of HEAD **and** the bundle at \`tinker-ui/dist/assets/\` was built
+    after it, and the bug it fixed lives in tinker-bridge while the session was running on
+    cc-bridge — which has no index-keyed state at all. A named commit in a memory file is a
+    hypothesis, not a diagnosis.
+
+    Solving it is bounded by rule 5. Diagnosing, building, and writing the fix down are reversible
+    and belong here. **Restarting the gateway or rebuilding a bundle the live session is loading
+    from is not** — it can kill the very turn carrying the answer, which is the same harm the
+    owner just reported. Name the exact command, say plainly that it is one step and whose call it
+    is, and stop there.
+
+    **When the owner says he did not see an answer — and then "try again" — the FIRST
+    tokens of this turn are the answer, not more diagnosis.** _Added 2026-08-28, after two
+    consecutive retries drowned in file reads and never produced a user-visible reply._
+    The previous turn's work is usually already on disk. Lead with it. Diagnosis of the
+    delivery failure belongs in the FRACTAL section, after the answer, never instead of it.
+
+    Auto-detect, without the owner having to name the class:
+    - Symptom: a long thinking/tool loop with no answer bubble, then "I did not see any
+      answer" / "try again" / "done?". Treat as **persisted-or-on-disk, not painted**.
+      Reload-first one-liner, then the answer from the artifact, then the autopsy.
+    - Symptom: a mid-turn warning (gateway restart, provider error) that should be a
+      **centered orange envelope with extra info**, but shows only a collapsed headline
+      or a grey system chip. Class: recoverable \`__ERR_ENV__\` envelopes used to hide
+      \`explanation\` behind \`<details>\` collapse (\`openAttr\` only when \`fatal\`). Extra
+      info that tells the user what is happening belongs in the collapsed view; tech
+      kv/raw stays behind the expand. Source fix is in \`renderEnvelope\` in \`app.ts\`.
+      Do not rebuild the live bundle unasked (rule 5) — say **written, not running**.
+
+## The census — one instance is a sample, not an incident
+
+**Added 2026-08-22, because its absence was caught by the owner and not by this prompt.** When a
+defect is found in ONE instance of a class, the reflection's job is to ask **how many others are
+like it** — and then actually count. A fix applied to the single instance the owner happened to
+notice leaves the rest of the class broken and creates the illusion of repair.
+
+The trigger is any sentence of the form _"this one was in the wrong form / place / state."_ The
+response is three moves, in order:
+
+1. **Define the class.** What is the population this instance belongs to? (All recipes. All HTTP
+   routes that read a path. All outbound numbers. All memory files claimed but unverified.)
+2. **Enumerate it.** Cheap and mechanical — \`ls\`, \`grep\`, an RPC listing, a query. Do not estimate
+   from memory; memory is what produced the defect.
+3. **Report the count, the repairs made, and the ones left.** "1 fixed" is a status. "18 found, 1
+   fixed, 17 outstanding, here is why" is a finding.
+
+Worked instance: on 2026-08-22 a recipe was authored in the wrong form. The census showed the
+matcher's catalog held **29** entries while the library listed **73** — 44 recipes present but
+unmatchable, because the scanner only reads \`<dir>/<slug>/recipe.md\` one level deep. The owner had
+to ask for that count; it should have been the reflection's first instinct.
+
+## The four faculties v2 dropped
+
+Compact checks, not a questionnaire. Each resolves to one word when there is no signal.
+
+**MEMORY — did this turn produce something the next session needs?** A fact, preference, decision,
+correction, or hard-won gotcha. Write it NOW to the right file and name the path. A lesson the
+owner had to teach twice belongs at **high prominence** in the memory index, not buried in a
+category list — if he has corrected it before, promote it to the top and say you did.
+
+**RIPPLE — what did this make stale?** Sweep code, docs, memory, and the public surfaces you
+cannot edit from here (READMEs, sites, published posts, store listings). Staleness you merely
+NOTICED counts the same as staleness you caused — "I didn't break it" is not a pass. Some artifacts
+sit in fixed cascades where touching one node stales everything below it; follow the chain to its
+end rather than stopping at the node you edited. Fix under two minutes → do it now; larger → a
+tracker entry; external → a bookmark that records the surface, exactly what went stale, and HOW to
+update it.
+
+**RECIPE — does a recipe govern this task class?** Never conclude "no recipe" from memory: check
+the real inventory. Three outcomes — one fits (follow it), one nearly fits (use it AND improve it
+this turn), none fits a task you will plausibly repeat (create it now, in the canonical form the
+engine can actually match). If the turn produced a generalizable lesson about HOW to do a recurring
+task, install it into the governing recipe NOW as a step, a constraint, or a Failures-Overcome
+entry. A lesson parked as a "memory candidate" is the deferral this check exists to kill. Recipes
+are the compound interest of agent intelligence.
+
+**PREEMPT — have you done this twice?** Then encode the trigger so it fires without being asked:
+_"When [trigger], do [action]"_ for reversible actions, _"When [trigger], PROPOSE [action]"_ for
+irreversible ones. The test: could a future session, reading only the stored rules, do this
+automatically? Too vague won't fire; too specific won't generalise. Never auto-encode anything that
+deletes, sends, publishes, restarts, or spends.
+
+**SELF-HEAL — is the machinery itself intact?** Only when the turn touched it or symptoms suggest
+breakage; blanket probing every turn is its own failure mode. Four layers: is this reflection lane
+firing (once, not twice, not never); did an external sense fail this turn (auth expiry, dead relay,
+stale token); are memories readable; is the environment consistent (config says one thing and the
+runtime does another, source edited but the built artifact is stale). On damage: diagnose by
+reading, not guessing → classify reversible vs not → repair with tool calls → verify by re-running
+the probe → immunize by encoding it. **The bar: the owner should never have to tell you something
+is broken that you could have detected yourself.**
+
+## Output contract
+
+First line: \`🌿 FRACTAL:\` (or \`🌿 FRACTAL ACTION:\` per rule 1) followed by a one-line summary — the
+UI collapses the section on this prefix. Then at most ~6 further lines of plain prose: the zoom (as
+deep as it truly goes), the census if one was owed, the touched surfaces with **who wrote each**,
+and the durable artifacts written, each named with its path. No numbered liturgy, no empty sections,
+no restating what the turn already showed the user.`;
 
 async function buildInjectedPrompt(userText: string): Promise<string> {
   const trimmed = userText.trim();
@@ -6918,7 +12959,8 @@ async function buildInjectedPrompt(userText: string): Promise<string> {
   // section" (see reconstructInjectionFields).
   return (
     userText +
-    "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line (blank line before it). Fractal is the slow thinker: judge the finished turn, then leave DURABLE change — write the lesson or fix to disk NOW (memory, doc, recipe, note) instead of describing it; live evidence contradicting a stored note means update the note immediately, dated. If the turn's friction traced to a bug or limitation in our own code (tinkerclaw UI, gateway, a skill, a bridge prompt), NAME it as a bug and ATTEMPT the code fix in this reflection — or, if the fix is too large for the turn, file a one-line repro in `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/bug-log.md`. A workaround or memory note alone counts as a MISS when the root cause is our own code. Clean turn → exactly one line: `🌿 FRACTAL: clean — <one honest observation>`. Real signal only (a correction, a surprise, a recurrence, something made stale) → up to ~6 more lines: instance → pattern → producing system, touched surfaces, artifacts written (with paths). ATTRIBUTION IS STRICT: prefix `🌿 FRACTAL ACTION:` ONLY for changes the reflection itself made after the answer ended — never re-claim main-turn work. The UI renders it as a separate collapsed bubble. Do NOT add a 💬 ANSWER label or any other section marker."
+    "\n\n---\n\n**After your reply, append a 🌿 FRACTAL reflection section** on its own line (blank line before it). This is the doctrine that governs it:\n\n" +
+    FRACTAL_DOCTRINE
   );
 }
 
@@ -6980,35 +13022,41 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
   );
   const isBriefingShape = /^\s*\/(new|reset)\b/i.test(rawText);
   const isBriefing = isBriefingNew || isBriefingLegacy || isBriefingShape;
-  // FORK 2026-06-19: recognise BOTH the retired 💬 ANSWER/🌿 FRACTAL framing (historical messages)
-  // AND the new fractal-only injection, so the injected suffix is hidden from the bubble after refresh.
-  const isAmygdala =
-    rawText.includes("Structure this turn's reply as labelled sections") ||
-    rawText.includes("append a 🌿 FRACTAL reflection section");
-  if (!isBriefing && !isAmygdala) {
+  // FORK 2026-08-28 (the architect: "the whole text of the recipe was shown as if it was one of my
+  // prompts. This is a bug"). Detection used to be an ALLOWLIST — four hard-coded sentence
+  // fragments (briefing ×2, amygdala, fractal). Anything appended by an injector not on that list
+  // fell straight through the early return below and rendered in the architect's own voice, and a
+  // matched BROCA recipe was never on the list. Measured on the live transcripts for 2026-08:
+  // 697 user turns carry a large appended block matching no sentinel at all.
+  //
+  // `splitInjectedPrompt` replaces the allowlist with a STRUCTURAL split (see injected-prompt.ts):
+  // find the `---` rule that separates typed text from an appended block, then classify the block
+  // by what it is. It returns null for anything a human could have written, so the ordinary bubble
+  // path is untouched — folding a paragraph the architect actually typed would be a worse
+  // regression than the bug. The briefing branch keeps its own detection because it additionally
+  // drives `_briefingPath` and the synthetic "/new" display text.
+  const split = splitInjectedPrompt(rawText);
+  if (!isBriefing && !split) {
     return;
   }
   // Compute the visible user text. Three strategies, in order:
-  //   1. Strict separator found → split there.
-  //   2. Briefing detected without strict separator → synthetic "/new".
-  //   3. Amygdala detected without strict separator → take everything BEFORE
-  //      the "Structure this turn" sentinel as the user's typed text.
-  const sepIdx = rawText.indexOf(INJECTION_SEP);
+  //   1. Structural split found → the human's half of it.
+  //   2. Briefing detected without a split → synthetic "/new".
+  //   3. Strict separator present → split there (last-resort legacy path).
   let originalText: string;
-  if (sepIdx > 0) {
-    originalText = rawText.slice(0, sepIdx);
+  if (split && split.visible) {
+    originalText = split.visible;
   } else if (isBriefing) {
     originalText = "/new";
   } else {
-    // Amygdala fallback: split right before the directive marker. Tolerates
-    // collapsed whitespace and inline `---` separators.
-    const amygMatch = rawText.match(
-      /^([\s\S]*?)\s*(?:---\s*)?\*{0,2}\s*(?:Structure this turn|After your reply, append a 🌿 FRACTAL)/,
-    );
-    originalText = amygMatch ? amygMatch[1].trim() : rawText.slice(0, 200);
-    if (!originalText) {
-      originalText = rawText.slice(0, 200);
-    }
+    const sepIdx = rawText.indexOf(INJECTION_SEP);
+    originalText = sepIdx > 0 ? rawText.slice(0, sepIdx) : rawText.slice(0, 200);
+  }
+  // Label the fold by what was actually appended, so the toggle says "recipe instructions"
+  // rather than naming the one injector the code happened to know about.
+  if (split) {
+    msg._injectedKind = split.kind;
+    msg._injectedLabel = split.label;
   }
   msg._fullPrompt = rawText;
   // Rewrite the FIRST text block (regardless of strict text===rawText match)
@@ -7078,9 +13126,42 @@ const OVERSEER_MARKER = "⟦OVERSEER⟧";
 const AGENT_MARKER = "⟦AGENT⟧";
 const OVERSEER_COLOR = "#d97706";
 
+// FORK 2026-08-28 (the architect: "Every time we use a broca recipe, I would like to see a
+// particular message in the chat, just a short reminder that we are using it with a link to its md
+// in case the user wants to know more about it").
+//
+// One line, its own element in the transcript, anchored to the turn whose prompt matched. It is
+// deliberately NOT a synthetic entry in `messages`: the send/queue path dedups and orders that array
+// and a fabricated member would have to survive every merge. Anchoring to the turn's own user
+// message keeps the notice exactly where it belongs with none of that risk.
+//
+// The link uses the standard `.fs-link` → config.openExternalFile convention, pointed at the
+// recipe's own recipe.md — the same "link to the actual md, no summaries" move the owner asked for
+// on the ORCA card and the fractal prompt.
+function renderRecipeNotice(title: string, path: string): string {
+  const safeTitle = escapeHtml(title);
+  const safePath = escapeHtml(path);
+  return (
+    `<div class="msg-recipe-notice">` +
+    `<span class="msg-recipe-notice-icon">🍳</span>` +
+    `<span class="msg-recipe-notice-text">Using recipe <strong>${safeTitle}</strong></span>` +
+    `<code class="fs-link msg-recipe-notice-link" data-path="${safePath}" ` +
+    `title="Open ${safePath}">recipe.md ↗</code>` +
+    `</div>`
+  );
+}
+
 function renderUserBubbleWithPromptToggle(
   userText: string,
-  msg: { _fullPrompt?: string; _briefingPath?: string; _promptStartedAt?: number },
+  msg: {
+    _fullPrompt?: string;
+    _briefingPath?: string;
+    _promptStartedAt?: number;
+    // FORK 2026-08-28: what the system appended, and where its source of truth lives on disk.
+    _injectedKind?: InjectedKind;
+    _injectedLabel?: string;
+    _recipePath?: string;
+  },
   queuedClass: string,
   queuedBadge: string,
   idx: number,
@@ -7092,6 +13173,34 @@ function renderUserBubbleWithPromptToggle(
   if (userText.startsWith(AGENT_MARKER)) {
     const body = userText.slice(AGENT_MARKER.length).trim();
     return `<div class="msg user msg-agent" data-msg-idx="${idx}"><span class="msg-agent-badge">🤖 Agent</span>${md(body)}</div>`;
+  }
+  // FORK 2026-08-24 (the architect: the post-restart wake-up "should be clearly identified as coming
+  // from an automated system and be encased in blue"). The gateway's restart-recovery injects its
+  // resume prompt through the `agent` RPC, so the transcript stores it as a USER turn and it used to
+  // render as an ordinary right-hand bubble — the one message in the conversation the human
+  // definitively did NOT write, wearing their voice, with five numbered lines of
+  // instructions-to-the-model on top. Same treatment as the Overseer/Agent nudges above: the role
+  // stays (the model must still read it as input) and only the RENDERING changes.
+  // The protocol body is folded away: the headline is what a human needs, the numbered steps are
+  // addressed to the model.
+  const notice = detectSystemNotice(userText);
+  if (notice) {
+    const label =
+      notice.kind === "restart-resume"
+        ? "⚙️ Automated system message · gateway restart"
+        : "⚙️ Automated system message";
+    return (
+      `<div class="msg user msg-system-auto" data-msg-idx="${idx}">` +
+      `<span class="msg-system-auto-badge">${label}</span>` +
+      `<div class="msg-system-auto-headline">${md(notice.headline)}</div>` +
+      (notice.detail
+        ? `<details class="msg-system-auto-detail">` +
+          `<summary>what the system told the model to do</summary>` +
+          `<div class="msg-system-auto-body">${md(notice.detail)}</div>` +
+          `</details>`
+        : "") +
+      `</div>`
+    );
   }
   // FORK 2026-05-09 (Feature A, simplified): timestamp lives on the bubble
   // itself as a `data-timestamp` attribute. CSS uses a `::after` pseudo-
@@ -7124,11 +13233,50 @@ function renderUserBubbleWithPromptToggle(
       `</div>`
     );
   }
+  // FORK 2026-08-28 (the architect: the appended block "was shown as if it was one of my prompts").
+  // The fold is now labelled by WHAT was appended (`_injectedKind`/`_injectedLabel`, set by
+  // reconstructInjectionFields from the structural split). Before this, every non-briefing
+  // injection was assumed to be the fractal doctrine and got a link to fractal-prompt.md — so a
+  // recipe injection, once folded, would have pointed the architect at the wrong file. A recipe
+  // links to its own .md when the producer named one (`_recipePath`); anything else falls back to
+  // a plain labelled fold rather than a confidently wrong link.
+  const kind = (msg._injectedKind as InjectedKind | undefined) ?? "fractal";
+  const label = escapeHtml((msg._injectedLabel as string | undefined) ?? "fractal doctrine");
+  if (kind === "fractal") {
+    // FORK 2026-08-22 (the owner): "the 'view full prompt' should be swapped to a 'fractal
+    // prompt' link, which should open the corresponding md file on click, no shortcuts, no
+    // summaries, the real thing right away". The old <details> re-rendered the injected text
+    // through md() inside a 380px scroll box — a second, lossy rendering of a doctrine that
+    // already has a source of truth on disk. Same move the owner asked for on the ORCA card
+    // 2026-07-26 ("swap the button with a link to the actual md"), so this uses the same
+    // `.fs-link` convention → config.openExternalFile → system viewer.
+    const fractalPath = escapeHtml(FRACTAL_PROMPT_PATH);
+    return (
+      `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
+      `${md(userText)}` +
+      `<code class="fs-link user-prompt-link" data-path="${fractalPath}" ` +
+      `title="Open ${fractalPath}">🌿 fractal prompt ↗</code>` +
+      `${queuedBadge}` +
+      `</div>`
+    );
+  }
+  const recipePath = typeof msg._recipePath === "string" ? msg._recipePath : "";
+  if (kind === "recipe" && recipePath) {
+    const safe = escapeHtml(recipePath);
+    return (
+      `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
+      `${md(userText)}` +
+      `<code class="fs-link user-prompt-link" data-path="${safe}" ` +
+      `title="Open ${safe}">🍳 recipe ↗</code>` +
+      `${queuedBadge}` +
+      `</div>`
+    );
+  }
   return (
     `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
     `${md(userText)}` +
     `<details class="user-prompt-toggle">` +
-    `<summary class="user-prompt-summary">📜 view full prompt</summary>` +
+    `<summary class="user-prompt-summary">📎 ${label} (appended by the system)</summary>` +
     `<div class="user-prompt-full">${md(full)}</div>` +
     `</details>` +
     `${queuedBadge}` +
@@ -7280,26 +13428,36 @@ function renderEnvelope(env: Envelope): string {
   const explanation = env.explanation
     ? `<div class="env-explanation">${md(env.explanation)}</div>`
     : "";
-  // FORK 2026-05-30 (the owner directive): progressive disclosure. The COLLAPSED
-  // view is just the icon + headline — a small, plain-language warning the
-  // normal user can glance past ("Gateway restarted"). Everything else
-  // (explanation, actions, the technical kv/raw block) lives inside the
-  // expand, so an advanced user can open it and explore. Recoverable errors
-  // (fatal:false) collapse by default — I'm already handling them, so there's
-  // nothing to act on. Fatal errors render `open` because the user must act,
-  // so we never hide the call-to-action behind a click.
+  // FORK 2026-08-28 (the architect: the previous warning did not render in the middle
+  // in orange WITH extra info). Recoverable envelopes used to collapse to icon
+  // + headline only — so a gateway-restart card looked like a mute orange chip
+  // and the explanation ("interrupted, I'm resuming") never painted unless you
+  // clicked. Extra info that tells the user what is happening belongs in the
+  // collapsed view. Technical kv/raw stays behind the expand. Fatal errors still
+  // render `open` because the user must act.
   const openAttr = env.fatal ? " open" : "";
-  const body = explanation + actions + tech;
+  const body = actions + tech;
   return (
     `<details class="msg msg-envelope ${variantClass}"${openAttr} data-env-id="${esc(env.id)}" data-env-category="${esc(env.category)}">` +
     `<summary class="env-header"><span class="env-icon">${esc(env.icon ?? "⚠️")}</span><span class="env-headline">${esc(env.headline)}</span></summary>` +
+    `${explanation}` +
     (body ? `<div class="env-body">${body}</div>` : "") +
     `</details>`
   );
 }
 
-function renderSystemMsg(text: string, idx: number): string {
-  const sid = `s${idx}`;
+// FORK 2026-08-05: takes the caller's STABLE message key (see `msgKey` in renderMsg), not an array
+// ordinal, so the expanded/collapsed state of a system block survives a reshape of `messages`.
+// FORK 2026-08-17: `variant` carries PROVENANCE, which the text alone cannot supply. Until now the
+// class was decided ONLY by the warning-emoji test, so a message the architect never wrote was
+// indistinguishable from one he did. Callers that already know the message was injected
+// (SYSTEM_INJECTED_RE / AGENT_INJECTED_RE) pass "inject"; everything else keeps the grey default.
+function renderSystemMsg(
+  text: string,
+  msgKey: string,
+  variant: "system" | "inject" = "system",
+): string {
+  const sid = `s${msgKey}`;
   const sysExp = expandedTools.has(sid);
   const flat = text.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
   const isAlert = /⚠️|⚠/.test(flat);
@@ -7324,7 +13482,11 @@ function renderSystemMsg(text: string, idx: number): string {
     }
   }
 
-  const cssClass = isAlert ? "msg system-alert" : "msg system";
+  // FORK 2026-08-17: an alert still wins (a warning must look like a warning); below that,
+  // provenance decides. An injected message gets the blue `.msg.system-inject` rather than the
+  // near-invisible grey `.msg.system`, which read as absent from the transcript.
+  const provenanceClass = variant === "inject" ? "msg system-inject" : "msg system";
+  const cssClass = isAlert ? "msg system-alert" : provenanceClass;
   let h = `<div class="${cssClass}" data-tid="${sid}">${sysExp ? "▾" : "▸"} ${preview}</div>`;
   if (sysExp) {
     h += `<div class="tool-detail system-expanded">${md(text)}</div>`;
@@ -7397,14 +13559,40 @@ function renderMsg(
   isThinking = false,
   globalResults?: Map<string, { content: string; isError: boolean }>,
   globalToolNames?: Map<string, { name: string; input: unknown }>,
+  // FORK 2026-08-09 (the architect: "Jarvis compacted all its answers, so I constantly have to expand it").
+  // TRUE when this run already emitted a structural "▸ Reasoning (N steps, M tool calls)" group, so
+  // the intermediates are folded and this bubble is a REAL answer. See the guard at the narration
+  // split below: with structure present, re-splitting the answer on a text heuristic buries the
+  // opening of Jarvis's reply behind "▸ Commentary".
+  hasStructuredReasoning = false,
 ): string {
   const role = (msg.role ?? "").toLowerCase();
+  // FORK 2026-08-05 — every `expandedTools` key emitted below (`s…` system blocks, `t…` tool calls,
+  // `r…` tool results) used to be prefixed with `idx`, this message's ORDINAL. That made the user's
+  // open/closed state positional: one bubble added above and every key downstream was RENAMED, so
+  // the row that sprang open was not the row they had opened. Key on the message's stable `_uid`
+  // instead — same rule the `rg-` reasoning group and the fractal <details> now follow. `idx` is
+  // kept as the fallback so an unstampable message degrades to today's behaviour rather than
+  // colliding with its neighbours on a shared constant.
+  const msgKey =
+    typeof (msg as Record<string, unknown>)?._uid === "string" &&
+    ((msg as Record<string, unknown>)._uid as string).length > 0
+      ? ((msg as Record<string, unknown>)._uid as string)
+      : `i${idx}`;
   const content = Array.isArray(msg.content) ? msg.content : [];
   const resultMap = globalResults ?? new Map();
   const toolNameMap = globalToolNames ?? new Map();
   // FORK: Queued message styling
-  const queuedClass = msg._queued ? " msg-queued" : "";
-  const queuedBadge = msg._queued ? `<span class="queued-badge">queued</span>` : "";
+  // FORK 2026-08-16 — the undelivered state reuses these two slots so all FOUR user-bubble render
+  // sites below pick it up from one place. A prompt the gateway has not provably received must LOOK
+  // different from one it has: the reported harm was not only losing the text, it was believing a
+  // lost prompt had been sent and waiting for an answer that was never coming.
+  const queuedClass = msg._queued ? " msg-queued" : msg._undelivered ? " msg-undelivered" : "";
+  const queuedBadge = msg._queued
+    ? `<span class="queued-badge">queued</span>`
+    : msg._undelivered
+      ? `<span class="undelivered-badge" title="Not yet delivered to the gateway — saved on this device and retried automatically until it lands.">not delivered · will retry</span>`
+      : "";
   let h = "";
 
   // FORK: Hide fractal reflection prompts regardless of role (user/assistant/toolResult)
@@ -7493,7 +13681,7 @@ function renderMsg(
       for (const line of sysLines) {
         const sysText = line.replace(/^System:\s*/, "").trim();
         if (sysText) {
-          h += renderSystemMsg(sysText, idx);
+          h += renderSystemMsg(sysText, msgKey);
         }
       }
       const userText = userLines.join("\n").trim();
@@ -7510,9 +13698,30 @@ function renderMsg(
           h += `<div class="msg-overload-bubble">${md(userText)}</div>`;
         } else if (SYSTEM_INJECTED_RE.test(userText)) {
           // System-injected messages (runtime context, subagent results) → system style
-          h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
+          // FORK 2026-08-17: pass the "inject" variant so this paints blue, not grey.
+          h += renderSystemMsg(
+            userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText,
+            msgKey,
+            "inject",
+          );
+        } else if (AGENT_INJECTED_RE.test(userText)) {
+          // FORK 2026-08-17: explicitly-marked agent injection (`[injected: claude-code] …`).
+          // Tested AFTER SYSTEM_INJECTED_RE on purpose: a runtime-context payload can carry BOTH
+          // markers (SYSTEM_INJECTED_RE's leading `\[.*?\]` swallows an `[injected: …]` prefix),
+          // and only SYSTEM_INJECTED_RE also strips the "OpenClaw runtime context" preamble.
+          h += renderSystemMsg(
+            userText.replace(AGENT_INJECTED_RE, "").trim() || userText,
+            msgKey,
+            "inject",
+          );
         } else {
           h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
+          // FORK 2026-08-28: the recipe reminder rides directly under the prompt that matched it.
+          const rTitle = (msg as { _recipeTitle?: unknown })._recipeTitle;
+          const rPath = (msg as { _recipePath?: unknown })._recipePath;
+          if (typeof rTitle === "string" && rTitle && typeof rPath === "string" && rPath) {
+            h += renderRecipeNotice(rTitle, rPath);
+          }
         }
       }
     } else if (role === "assistant") {
@@ -7541,7 +13750,19 @@ function renderMsg(
       {
         const sectioned = splitSectionedReply(text);
         if (sectioned && (sectioned.answer || sectioned.fractal)) {
-          h += renderSectionedReply(sectioned, elapsedChip(msg, idx), md, esc);
+          // FORK 2026-08-11 (the architect) — thread the fractal anchor through. This branch
+          // returns early, so it never reached the fractalAnchorAttr code below; every
+          // sectioned reply was therefore untagged, orphaning the dock and blocking the
+          // level-3 graft. See the note on renderSectionedReply.
+          h += renderSectionedReply(
+            sectioned,
+            elapsedChip(msg, idx),
+            md,
+            esc,
+            (msg as any)._fractalParentRunId
+              ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
+              : "",
+          );
           return h;
         }
       }
@@ -7566,6 +13787,14 @@ function renderMsg(
         h += `<div class="msg-overload-bubble retrying" data-retry-warning="${esc(rsk)}">⚠️ ${esc(labelFor((msg as any)._retryKind ?? null))} — retry ${rAtt + 1}/${RETRY_LADDER_MS.length}, retrying in <span class="retry-countdown">${esc(formatWait(remainMs))}</span>… <a class="retry-stop-link" data-retry-stop="${esc(rsk)}">stop retrying</a></div>`;
         return h;
       }
+      // FORK 2026-08-15 — per-phase timing row. One slim line per FINISHED pre-model stage,
+      // carrying the duration the gateway measured around that stage's own work (not a gap
+      // between arrival times). Rendered as a subdued single line so a 5-stage turn reads as a
+      // small block rather than five messages.
+      if (msg._isPhaseTiming) {
+        h += renderPhaseGroup(msg as Record<string, unknown>);
+        return h;
+      }
       // FORK: Overload retry messages — orange centered bubble
       if (msg._isOverloadRetry) {
         h += `<div class="msg-overload-bubble${msg._isExhausted ? " exhausted" : ""}">${md(text)}</div>`;
@@ -7576,26 +13805,19 @@ function renderMsg(
         h += `<div class="msg-overload-bubble">${md(text)}</div>`;
         return h;
       }
-      // FORK: Error messages — centered red bubble (not left-aligned assistant)
+      // FORK: Error messages — centered bubble (not left-aligned assistant).
       // Detect by flag OR by content (history-loaded messages lack _isError flag).
       // The isError flag on reply payloads doesn't propagate through the broadcast
       // layer (server-chat.ts constructs messages from the text buffer, not the
-      // payload), so we pattern-match on known error prefixes here.
-      if (
-        msg._isError ||
-        text.startsWith("⚠️ Agent failed") ||
-        text.startsWith("⚠ Agent failed") ||
-        text.includes("Previous run is still shutting down") ||
-        text.includes("All models failed") ||
-        // FORK 2026-07-08: raw SDK transport errors surfaced as assistant text —
-        // compaction spawns a second CC process on the live session and cuts the
-        // in-flight API stream ("socket connection was closed"). Compact bubble,
-        // not a full assistant reply. Length guard keeps real answers that merely
-        // QUOTE an API error out of this branch.
-        (text.startsWith("API Error:") && text.length < 400) ||
-        (text.includes("socket connection was closed unexpectedly") && text.length < 400)
-      ) {
-        h += `<div class="msg-overload-bubble exhausted">${md(text)}${retryBtn}</div>`;
+      // payload), so we pattern-match on known error markers.
+      // FORK 2026-08-24: the marker list used to be inlined HERE and again in the
+      // block-array twin below, and the two drifted — the `API Error:` clause existed
+      // only on this side, while every real provider error arrives as a block array.
+      // One shared predicate now, and it also grades the failure: recoverable → the
+      // ORANGE bubble the auto-retry ladder is counting down under; terminal → red.
+      const errBubble = classifyErrorBubble(text, { isError: !!msg._isError });
+      if (errBubble) {
+        h += `<div class="msg-overload-bubble${errBubble.recoverable ? "" : " exhausted"}">${md(text)}${retryBtn}</div>`;
         return h;
       }
       // FORK: Detect fractal reflection responses — collapsible green block
@@ -7619,7 +13841,10 @@ function renderMsg(
           (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
         );
         const openAttr = hasAction ? " open" : "";
-        h += `<details class="fractal-details"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
+        // FORK 2026-08-05: emit the message's stable `_uid` so updateChat can restore the user's
+        // open/closed state by IDENTITY. It used to be restored by ordinal position among the
+        // rendered <details>, so any bubble added above transferred "open" to a different fractal.
+        h += `<details class="fractal-details" data-fractal-uid="${esc(String((msg as any)?._uid ?? ""))}"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-kind">Fractal Response</span> <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
       } else {
         // FORK 2026-05-29: colored subagent sub-bubble. When a message is tagged
         // with a subagent origin (_subagentId), render it with that subagent's
@@ -7649,7 +13874,16 @@ function renderMsg(
           // Empty narration (the default) => byte-identical output to before.
           let answerText = text;
           let commentaryHtml = "";
-          if (!isThinking) {
+          // FORK 2026-08-09: the splitter is a FALLBACK for turns that never had step
+          // boundaries (legacy coalesced blobs), NOT a second pass over a run the structural
+          // classifier already folded. It guesses where the answer starts by finding the earliest
+          // "confident anchor" past the midpoint; when Jarvis opens with substance and only reaches
+          // a heading or numbered list later, that anchor lands late and ~half the reply — prose
+          // addressed to the architect, not narration — ends up inside "▸ Commentary". Measured on a live
+          // turn: 2002 chars hidden vs 1681 shown, the hidden part opening "the architect — you're right,
+          // and the sharpest evidence is from tonight's own wind-down". With a structural group
+          // present the intermediates are ALREADY folded, so there is nothing left to peel.
+          if (!isThinking && !hasStructuredReasoning) {
             const sln = splitReasoningFromAnswer(text);
             if (sln.reasoning) {
               commentaryHtml = `<details class="reasoning-group narration-details"><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"><span class="thinking-label">Commentary:</span> ${md(sln.reasoning)}</div></div></details>`;
@@ -7675,7 +13909,7 @@ function renderMsg(
         }
       }
     } else {
-      h += renderSystemMsg(text, idx);
+      h += renderSystemMsg(text, msgKey);
     }
     return h;
   }
@@ -7719,7 +13953,7 @@ function renderMsg(
         for (const line of sysLines) {
           const sysText = line.replace(/^System:\s*/, "").trim();
           if (sysText) {
-            h += renderSystemMsg(sysText, idx);
+            h += renderSystemMsg(sysText, msgKey);
           }
         }
         // Render remaining user text
@@ -7733,7 +13967,20 @@ function renderMsg(
             h += `<div class="msg-overload-bubble">${md(userText)}</div>`;
             // System-injected messages (runtime context, subagent results) → system style
           } else if (SYSTEM_INJECTED_RE.test(userText)) {
-            h += renderSystemMsg(userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText, idx);
+            // FORK 2026-08-17: "inject" variant → blue bubble (twin of the string-content path).
+            h += renderSystemMsg(
+              userText.replace(SYSTEM_INJECTED_RE, "").trim() || userText,
+              msgKey,
+              "inject",
+            );
+          } else if (AGENT_INJECTED_RE.test(userText)) {
+            // FORK 2026-08-17: explicitly-marked agent injection (`[injected: claude-code] …`).
+            // Ordered after SYSTEM_INJECTED_RE for the same reason as the string-content path.
+            h += renderSystemMsg(
+              userText.replace(AGENT_INJECTED_RE, "").trim() || userText,
+              msgKey,
+              "inject",
+            );
           } else {
             h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
           }
@@ -7751,7 +13998,17 @@ function renderMsg(
         {
           const sectioned2 = splitSectionedReply(text);
           if (sectioned2 && (sectioned2.answer || sectioned2.fractal)) {
-            h += renderSectionedReply(sectioned2, elapsedChip(msg, idx), md, esc);
+            // FORK 2026-08-11 (the architect) — twin of the string-content path: thread the
+            // fractal anchor so this early return does not produce an untagged bubble.
+            h += renderSectionedReply(
+              sectioned2,
+              elapsedChip(msg, idx),
+              md,
+              esc,
+              (msg as any)._fractalParentRunId
+                ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
+                : "",
+            );
             return h;
           }
         }
@@ -7793,15 +14050,14 @@ function renderMsg(
           h += `<div class="msg-overload-bubble">${md(text)}</div>`;
           return h;
         }
-        // FORK: Error messages — centered red bubble (not left-aligned assistant)
-        if (
-          msg._isError ||
-          text.startsWith("⚠️ Agent failed") ||
-          text.startsWith("⚠ Agent failed") ||
-          text.includes("Previous run is still shutting down") ||
-          text.includes("All models failed")
-        ) {
-          h += `<div class="msg-overload-bubble exhausted">${md(text)}${retryBtn}</div>`;
+        // FORK: Error messages — centered bubble (not left-aligned assistant).
+        // FORK 2026-08-24: THIS is the path a live provider error actually takes — the
+        // gateway sends `content: [{type:"text"}]`, never a bare string — and it was the
+        // path missing the `API Error:` clause, so "API Error: 529 Overloaded" rendered as
+        // an ordinary answer from Jarvis. Same shared predicate as the string twin above.
+        const errBubble2 = classifyErrorBubble(text, { isError: !!msg._isError });
+        if (errBubble2) {
+          h += `<div class="msg-overload-bubble${errBubble2.recoverable ? "" : " exhausted"}">${md(text)}${retryBtn}</div>`;
           return h;
         }
         // FORK: Detect fractal reflection responses — collapsible green block
@@ -7823,7 +14079,8 @@ function renderMsg(
             (b: unknown) => b.type === "tool_use" || b.type === "tool_result",
           );
           const openAttr2 = hasAction2 ? " open" : "";
-          h += `<details class="fractal-details"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
+          // FORK 2026-08-05: twin of the anchor above — identity, not ordinal position.
+          h += `<details class="fractal-details" data-fractal-uid="${esc(String((msg as any)?._uid ?? ""))}"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-kind">Fractal Response</span> <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
         } else {
           // FORK: Add recipe step tag below assistant messages when a recipe is active
           const stepTag =
@@ -7836,7 +14093,16 @@ function renderMsg(
           // Empty narration (the default) => byte-identical output to before.
           let answerText = text;
           let commentaryHtml = "";
-          if (!isThinking) {
+          // FORK 2026-08-09: the splitter is a FALLBACK for turns that never had step
+          // boundaries (legacy coalesced blobs), NOT a second pass over a run the structural
+          // classifier already folded. It guesses where the answer starts by finding the earliest
+          // "confident anchor" past the midpoint; when Jarvis opens with substance and only reaches
+          // a heading or numbered list later, that anchor lands late and ~half the reply — prose
+          // addressed to the architect, not narration — ends up inside "▸ Commentary". Measured on a live
+          // turn: 2002 chars hidden vs 1681 shown, the hidden part opening "the architect — you're right,
+          // and the sharpest evidence is from tonight's own wind-down". With a structural group
+          // present the intermediates are ALREADY folded, so there is nothing left to peel.
+          if (!isThinking && !hasStructuredReasoning) {
             const sln = splitReasoningFromAnswer(text);
             if (sln.reasoning) {
               commentaryHtml = `<details class="reasoning-group narration-details"><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"><span class="thinking-label">Commentary:</span> ${md(sln.reasoning)}</div></div></details>`;
@@ -7858,12 +14124,12 @@ function renderMsg(
           h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       } else {
-        h += renderSystemMsg(text, idx);
+        h += renderSystemMsg(text, msgKey);
       }
     } else if (block.type === "tool_use") {
       const a = block.input ?? {};
       const mechanicalSummary = toolSummary(block.name, a);
-      const tid = `t${idx}-${block.id ?? block.name}-${blockIdx++}`;
+      const tid = `t${msgKey}-${block.id ?? block.name}-${blockIdx++}`;
       const exp = expandedTools.has(tid);
       // Look up result from global map (tool_result may be in a different message)
       const paired = resultMap.get(block.id ?? "");
@@ -7916,7 +14182,7 @@ function renderMsg(
       const rt =
         typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
       const err = block.is_error === true;
-      const tid = `r${idx}-${uid || "r"}-${blockIdx++}`;
+      const tid = `r${msgKey}-${uid || "r"}-${blockIdx++}`;
       const exp = expandedTools.has(tid);
       const preview = rt.replace(/\n/g, " ").replace(/\s+/g, " ").trim();
       const summary = preview.length > 120 ? preview.slice(0, 117) + "…" : preview;
@@ -7930,14 +14196,42 @@ function renderMsg(
 }
 
 // ─── Thinking Indicator ───
-let thinkingTickInterval: ReturnType<typeof setInterval> | null = null;
+// FORK 2026-08-17 — `thinkingTickInterval` is gone with the second clock; the one clock's handle is
+// `activityClockInterval`, declared beside ACTIVITY_TICK_MS.
 
 function renderThinkingIndicator(): string {
-  if (activeRuns.size > 0) {
+  // ─── THE ONE VERDICT ────────────────────────────────────────────────────────────────────────
+  // FORK 2026-08-15 (the architect: "the chat one is showing but the rest are mute ... they need to be
+  // synchronized"). Asked ONCE, here, of the same resolver, with the same row and the same key
+  // that the tab glow (tabsRunningNow), the session row (renderSessionRow) and the models count
+  // (liveRunCountsByModel) use. Every branch below only DECORATES this verdict. None re-decides it.
+  //
+  // This closes the LAST surface that still decided for itself. The 2026-07-29 unification put
+  // three surfaces behind run-state.ts and left the chat's rich-row branch reading `activeRuns`
+  // directly, so the chat answered a different question: "does this client hold a fresh entry?"
+  // rather than "does the gateway say this session is running?". Those disagree in BOTH
+  // directions, and both were reported:
+  //   - client entry, oracle idle  -> chat lights alone (an orphaned entry inside its 90s
+  //     freshness window, or a Stop the snapshot has not caught up with). the architect, 2026-08-15.
+  //   - no client entry, oracle live -> the server lane, which the removed `activeRuns.size > 0`
+  //     gate made unreachable. the architect, 2026-08-15 (earlier the same day).
+  // Fixing one direction at a time is what produced the second report; the fix is to stop having
+  // a second opinion at all.
+  const liveRows = Array.isArray(sessions) ? (sessions as Array<Record<string, unknown>>) : [];
+  const viewedLiveRow = sessionKey
+    ? (liveRows.find(
+        (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, sessionKey),
+      ) as SessionRowForLiveness | undefined)
+    : undefined;
+  const verdict: { live: boolean; provider?: string; model?: string } = sessionKey
+    ? sessionHasActiveRuns(sessionKey, viewedLiveRow)
+    : { live: false };
+
+  if (verdict.live && activeRuns.size > 0) {
     // FORK 2026-06-04 — bug task-mpzgsvbo (Thinking indicators): the CHAT indicator is now
     // BINARY — it shows ONLY whether the viewed session has a live LLM call, as ONE row.
     // It used to render one row PER active run (main + each subagent), which is what produced
-    // the "multiple indicators at once" the owner reported. The per-run / per-subagent breakdown
+    // the "multiple indicators at once" the architect reported. The per-run / per-subagent breakdown
     // now lives ONLY in the RECIPES panel (+ the collapsible subagent chat bubbles). The Stop
     // button has always called the session-level abort() (see the delegated #messages handler),
     // so one Stop is the correct semantics. runBelongsToViewedSession stays the ONE shared
@@ -7949,13 +14243,16 @@ function renderThinkingIndicator(): string {
       if (!runBelongsToViewedSession(info)) {
         continue;
       }
+      // FORK 2026-07-29 — same freshness bound every other surface now applies (run-state.ts).
+      // Without it this list could hold a run whose lifecycle:end was dropped, and the chat would
+      // disagree with the tab/row/count in the other direction.
+      if (!clientRunIsFresh(info, Date.now())) {
+        continue;
+      }
       viewed.push([runId, info]);
-      const sk = info.sessionKey ?? "";
-      if (
-        sk.includes(":subagent:") &&
-        !!sessionKey &&
-        sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
-      ) {
+      // FORK 2026-07-28: was a third inlined copy of the subagent predicate, with the same wrong
+      // prefix arithmetic that made this badge read 0 on every non-main tab.
+      if (isSubagentOfViewedSession(info)) {
         subagentCount++;
       }
       if (info.state === "restarting") {
@@ -7963,21 +14260,37 @@ function renderThinkingIndicator(): string {
       }
     }
     if (viewed.length > 0) {
-      // Primary = the main (non-subagent) run if present, else the earliest-started run.
-      const isSub = (i: ActiveRunInfo) => {
-        const sk = i.sessionKey ?? "";
-        return (
-          sk.includes(":subagent:") &&
-          !!sessionKey &&
-          sk.startsWith(sessionKey.replace(/:main$/, "") + ":subagent:")
-        );
-      };
-      const [primaryRunId, primary] =
-        viewed.find(([, i]) => !isSub(i)) ??
-        viewed.reduce((a, b) => (a[1].startedAt <= b[1].startedAt ? a : b));
-      const color = PROVIDER_COLORS[primary.provider] || "#6b7280";
+      // Primary = the NEWEST main (non-subagent) run if present, else the newest
+      // viewed run. Preferring oldest/first-found left a stale Sol entry masking
+      // a live Grok pin (the architect 2026-07-24: "thinking indicator showing sol").
+      // FORK 2026-07-28: fourth copy, now routed through the one canonical predicate. This one
+      // decides which run is "primary" in the thinking indicator, so the old wrong arithmetic made
+      // every subagent look like a main run on non-main tabs.
+      const isSub = (i: ActiveRunInfo) => isSubagentOfViewedSession(i);
+      const recency = (i: ActiveRunInfo) => Math.max(i.lastEventAt || 0, i.startedAt || 0);
+      const pickNewest = (list: Array<[string, ActiveRunInfo]>) =>
+        list.reduce((a, b) => (recency(a[1]) >= recency(b[1]) ? a : b));
+      const mains = viewed.filter(([, i]) => !isSub(i));
+      const [primaryRunId, primary] = mains.length > 0 ? pickNewest(mains) : pickNewest(viewed);
+      // shortModelLabel carries the nicknames (Grok/Sol/Terra/Luna/3.1P);
+      // modelName alone leaves "grok-4.5" / "gpt-5.6-sol" raw.
+      // FORK 2026-07-29 — an activeRuns entry is created with model:"" and only filled when a
+      // lifecycle event carries d.model, so the rich row could show a bare "working" for the first
+      // seconds of every turn. The session row already knows the model; use it before giving up.
+      const rowModel = viewedSessionRowModel();
+      // FORK 2026-07-31 — a gateway-injected sentinel must never masquerade as the
+      // answering model (see isTranscriptOnlyModel); fall back to the row's real pair.
+      const synthetic = isTranscriptOnlyModel(primary.model);
+      const runProvider = (synthetic ? viewedSessionRowProvider() : primary.provider) || "";
+      const runModel = (synthetic ? rowModel : primary.model) || "";
+      // FORK 2026-08-06: glow = the model's EEG trace color, resolved centrally.
+      const color = resolveEegGlowColor({ model: runModel, provider: runProvider });
       const elapsed = Math.floor((Date.now() - primary.startedAt) / 1000);
-      const name = modelName(primary.model) || "working";
+      const name =
+        (runModel ? shortModelLabel(runModel) : "") ||
+        modelName(runModel) ||
+        (rowModel ? shortModelLabel(rowModel) || modelName(rowModel) : "") ||
+        "working";
       const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
       // One small badge for "+N subagents running" — detail is in the RECIPES panel.
       const subBadge =
@@ -7985,251 +14298,220 @@ function renderThinkingIndicator(): string {
           ? ` <span class="thinking-subagent-tag" title="${subagentCount} subagent${subagentCount > 1 ? "s" : ""} running — see RECIPES panel">▸${subagentCount}</span>`
           : "";
       const badge = restarting ? `<span class="restart-badge">RESTARTING</span>` : "";
-      const row = `<div class="thinking-run" data-run-id="${esc(primaryRunId)}" data-provider="${esc(primary.provider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
+      const row = `<div class="thinking-run" data-run-id="${esc(primaryRunId)}" data-provider="${esc(runProvider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
-  <span class="thinking-model">${providerIcon(primary.provider)} ${esc(name)}${recipeLabel}${subBadge}</span>
+  <span class="thinking-model">${modelIcon(runModel, runProvider)} ${esc(name)}${recipeLabel}${subBadge}</span>
   ${badge}<span class="thinking-elapsed">${elapsed}s</span>
   <span class="thinking-stop">Stop</span>
 </div>`;
       return `<div class="thinking-indicator">${row}</div>`;
     }
   }
+  // FORK 2026-07-29 — the OTHER direction of the architect's report. `activeRuns` writes are viewed-gated,
+  // so a tab that has been running while you were elsewhere has no client entry: you would open a
+  // glowing tab and find an idle chat. Ask the ONE resolver (the same call the tab glow, the row
+  // glow and the model count make) and render a minimal row when the server says this session is
+  // live. No client run exists here, so there is no runId, model or elapsed to show — the detail
+  // arrives with the first lifecycle event, which upgrades this to the rich row above.
+  {
+    // The SAME verdict resolved at the top — not a second call, so this branch cannot answer
+    // differently from the rich row above it.
+    const state = verdict;
+    if (state.live) {
+      // FORK 2026-07-31 — same sentinel guard as the rich row above. This is the
+      // branch that actually fired after the 2026-07-31 restart: the tab had no
+      // client run left, so the indicator took the server-resolved state, which
+      // carried the gateway's own injected message (openclaw/gateway-injected).
+      const syntheticState = isTranscriptOnlyModel(state.model);
+      const stateProvider = (syntheticState ? viewedSessionRowProvider() : state.provider) || "";
+      const stateModel = (syntheticState ? viewedSessionRowModel() : state.model) || "";
+      // FORK 2026-08-06: same central glow resolution as the rich row.
+      const color = resolveEegGlowColor({ model: stateModel, provider: stateProvider });
+      return `<div class="thinking-indicator" data-state="server"><div class="thinking-run" data-provider="${esc(stateProvider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
+  <div class="thinking-dots"><span></span><span></span><span></span></div>
+  <span class="thinking-model">${modelIcon(stateModel, stateProvider)} ${esc(
+    (stateModel ? shortModelLabel(stateModel) : "") || modelName(stateModel) || "working",
+  )}</span>
+  <span class="thinking-stop">Stop</span>
+</div></div>`;
+    }
+  }
+
   // The "sending..." pending pill is ONLY the brief window between chat.send
   // and the first lifecycle event for THIS tab. If the viewed session already
   // has a live run we rendered it above; if it doesn't and `sending` is still
   // true that's the genuine pre-first-event gap. It must NOT stay up because a
   // DIFFERENT tab still has a run (that was the multi-tab "sending forever"
   // bug — fixed by clearing `sending` via viewedSessionBusy() at turn end).
-  if (sending && !viewedSessionBusy()) {
+  if (viewedSessionPending()) {
+    // FORK 2026-08-13 — this pill used to read "sending..." for the WHOLE gap, and the
+    // comment above called that gap brief. Measured, it is 21-36s, and `chat.send`
+    // itself answers in ~0.8s of it. So for ~97% of the wait the pill was reporting the
+    // one thing that had already finished, which reads as a hang and — because a PINNED
+    // model paints its name immediately from the provisional run seeded in send() —
+    // made Auto look like it was doing extra routing work. It is not: model selection
+    // is a pure local function. What the gateway is actually doing is assembling the
+    // prompt (engram retrieval + total-recall pack) before it can name a model.
+    //
+    // Two honest states, plus an elapsed counter so a long wait never looks frozen.
+    //
+    // FORK 2026-08-13 (the architect, follow-up) — "preparing context" is still a GUESS about a
+    // half-minute of silence. When the gateway narrates that silence over
+    // stream:"turn-phase" the pill says what it is ACTUALLY doing instead. It says
+    // nothing else: the label is only ever a string the gateway sent for THIS session
+    // (turnPhaseLabelFor re-checks the key, so switching tabs mid-wait cannot inherit
+    // another tab's phase), never anything inferred from `waited`. Against a gateway
+    // that has not been rebuilt no envelope arrives, phaseLabel is null, and this branch
+    // renders byte-for-byte what it rendered before.
+    const preparing = preparingSince !== null;
+    const waited = preparing ? Math.floor((Date.now() - (preparingSince as number)) / 1000) : 0;
+    const phaseLabel = turnPhaseLabelFor(turnPhase, sessionKey, sessionKeyMatches);
+    const label = escapeHtml(pendingPillLabel({ preparing, phaseLabel }));
+    const secs = preparing ? `<span class="thinking-elapsed">${waited}s</span>` : "";
+    // FORK 2026-08-15 (the architect: "itemized as much as possible") — the breadcrumb of stages
+    // ALREADY finished, each with the seconds it actually held. The live stage is the pill
+    // label itself, so only completed steps go here; without that split the last chip would
+    // duplicate the label and its timer would disagree with the elapsed counter beside it.
+    // Empty against an un-rebuilt gateway, which is the same fallback contract as the label.
+    const steps = turnPhaseSteps(turnPhaseTrail, sessionKey, sessionKeyMatches, Date.now());
+    const doneSteps = steps.filter((s) => s.done);
+    const trail = doneSteps.length
+      ? `<span class="thinking-phase-trail">${doneSteps
+          .map(
+            // FORK 2026-08-16 — formatted from `s.ms`, not `${s.seconds}s`. `seconds` is a
+            // rounded integer, so every sub-second stage printed "0s" — and a warm cache makes
+            // sub-second the common case, so the chips were reporting "did not happen" for
+            // precisely the stages that worked. Same formatter as the chat rows, so a stage and
+            // its row can never disagree about its own duration.
+            (s) =>
+              `<span class="thinking-phase-step">${escapeHtml(s.label)} ${escapeHtml(phaseDurationText(s.ms))}</span>`,
+          )
+          .join('<span class="thinking-phase-sep">›</span>')}</span>`
+      : "";
     return `<div class="thinking-indicator" data-state="pending"><div class="thinking-run thinking-pending" style="--thinking-dot-color:#D97757;--thinking-glow:#D9775740;--thinking-glow-bg:#D9775720;--thinking-glow-bg2:#D9775730">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
-  <span class="thinking-model">sending...</span>
-  <span class="thinking-stop">Stop</span>
+  <span class="thinking-model">${label}...</span>
+  ${trail}${secs}<span class="thinking-stop">Stop</span>
 </div></div>`;
   }
   return "";
 }
 
-function startThinkingTick() {
-  // FORK 2026-05-14: this tick used to host a "stale-run watchdog" that
-  // force-cleared activeRuns at startedAt + 5min (later: lastEventAt + 5min).
-  // Both shapes were wrong. The watchdog was compensating for a presumed
-  // unreliability in lifecycle:end emission — but Claude Code itself doesn't
-  // need one, and neither do we once lifecycle:end is hardened in attempt.ts
-  // (try/finally on every run-termination branch). A UI-side timer that
-  // disagrees with the server's authoritative lifecycle is a code smell:
-  // either the server is wrong (fix the server) or the UI is lying about
-  // server state (don't ship a UI that lies).
-  //
-  // What this tick still does: update the displayed elapsed seconds on each
-  // active thinking-indicator row, and call updatePrefrontalTree() so the
-  // panel's age and status reflect the latest WS events. It does NOT touch
-  // activeRuns — entries are added by lifecycle:start and removed by
-  // lifecycle:end / chat.final / chat.error. Period.
-  if (thinkingTickInterval) {
+/**
+ * Repaint ONLY the thinking indicator, in place.
+ *
+ * FORK 2026-08-15. The indicator is emitted inside updateChat()'s innerHTML, so the only way
+ * to refresh it used to be to rebuild the entire message list. That is far too heavy for a
+ * 5-second clock: it drops text selection, collapses nothing but re-runs every post-render
+ * pass (fractal decoration over ~100 replies), and fights the scroll anchor.
+ *
+ * Safe to swap the node: the Stop affordance is handled by a DELEGATED listener on #messages
+ * (see the click handler that does `target.closest(".thinking-stop")`), not by a listener
+ * bound to this element, so replacing it keeps Stop working.
+ */
+function repaintThinkingIndicator(): void {
+  const container = $("messages");
+  if (!container) {
     return;
   }
-  thinkingTickInterval = setInterval(() => {
-    if (activeRuns.size === 0 && retryState.size === 0) {
-      // No active runs AND no pending auto-retry left. Stop the tick. (sending is
-      // cleared by the lifecycle:end / chat.final / chat.error handler that
-      // emptied activeRuns; no longer cleared here.) FORK 2026-06-24: the tick
-      // also drives the recoverable-retry countdown, so it must keep ticking
-      // while a retry is pending even with zero active runs.
-      clearInterval(thinkingTickInterval!);
-      thinkingTickInterval = null;
-      return;
-    }
-    document.querySelectorAll(".thinking-run[data-run-id]").forEach((el) => {
-      const runId = el.getAttribute("data-run-id");
-      if (!runId) {
-        return;
-      }
-      const info = activeRuns.get(runId);
-      if (!info) {
-        return;
-      }
-      const elapsed = Math.floor((Date.now() - info.startedAt) / 1000);
-      const span = el.querySelector(".thinking-elapsed");
-      if (span) {
-        span.textContent = `${elapsed}s`;
-      }
-    });
-    // FORK 2026-06-24 (recoverable-retry): live countdown. Rewrite each active
-    // retry-warning's "retrying in {remaining}" from its session's nextRetryAt;
-    // when the wait elapses (and the track isn't cancelled / already firing),
-    // FIRE the retry. Iterate state (not DOM) so a backgrounded tab still fires.
-    for (const [sk, st] of retryState) {
-      if (st.cancelled) continue;
-      const remainMs = st.nextRetryAt - Date.now();
-      const skSel =
-        typeof CSS !== "undefined" && typeof CSS.escape === "function" ? CSS.escape(sk) : sk;
-      document
-        .querySelectorAll<HTMLElement>(`[data-retry-warning="${skSel}"] .retry-countdown`)
-        .forEach((span) => {
-          span.textContent = formatWait(Math.max(0, remainMs));
-        });
-      if (remainMs <= 0 && !st.firing) {
-        void retryLastTurn(sk);
-      }
-    }
-    updatePrefrontalTree();
-  }, 1000);
+  const html = renderThinkingIndicator();
+  const existing = container.querySelector(".thinking-indicator");
+  if (!html) {
+    existing?.remove();
+    return;
+  }
+  const holder = document.createElement("div");
+  holder.innerHTML = html;
+  const next = holder.firstElementChild;
+  if (!next) {
+    return;
+  }
+  if (existing) {
+    existing.replaceWith(next);
+    return;
+  }
+  // Nothing on screen yet. updateChat() places the indicator ABOVE any queued bubbles; when
+  // queued bubbles exist `sending` is true and updateChat owns the paint anyway, so appending
+  // is only ever reached in the no-queue case where the end IS the right position.
+  container.appendChild(next);
 }
+
+// FORK 2026-08-17 — the 1s thinking tick lived here and is GONE; its work moved into the one clock
+// (see THE ONE CLOCK near the top of this file). Its body is now refreshElapsedCounters() +
+// driveRetryCountdowns(), and startThinkingTick() is a thin alias that starts the same clock.
+//
+// The 2026-05-14 note this tick carried is preserved because it is still binding: this tick once
+// hosted a "stale-run watchdog" that force-cleared activeRuns at startedAt + 5min. That shape was
+// wrong and must not come back. A UI-side timer that DISAGREES with the server's authoritative
+// lifecycle is a code smell: either the server is wrong (fix the server) or the UI is lying about
+// server state (don't ship a UI that lies). The one clock inherits that prohibition in full — it
+// re-reads and repaints, and it never removes a run. See done-signals.md R2, which now states the
+// distinction explicitly: a timer that CLEARS is forbidden; a timer that only RE-READS is required.
 
 // ─── Usage Tracker Helpers ───
-function fmtCost(n: number): string {
-  if (n >= 1) {
-    return n % 1 === 0 ? n.toString() : n.toFixed(1);
-  }
-  if (n >= 0.1) {
-    return n.toFixed(2);
-  }
-  return n.toFixed(3);
-}
 
-// Subscription effective $/MTok: $200/mo, ~6M tok/day = ~180M/mo → ~$1.1/MTok blended
-const SUB_COST_LABEL = "~$1.1";
-
-function getModelCost(modelId: string, keyId?: string): string {
-  // Subscription profiles get effective flat rate
-  if (keyId && (keyId.includes(":cli-") || keyId.includes(":oauth"))) {
-    const provider = modelId.split("/")[0];
-    if (provider === "anthropic") {
-      return SUB_COST_LABEL;
-    }
-  }
-  const name = modelId.split("/").slice(1).join("/") || modelId;
-  const cost = MODEL_COST[name];
-  if (!cost) {
-    return "";
-  }
-  if (cost[0] === cost[1]) {
-    return `$${fmtCost(cost[0])}`;
-  }
-  return `$${fmtCost(cost[0])}/${fmtCost(cost[1])}`;
-}
-
-function fmtReset(iso: string): string {
-  try {
-    const d = new Date(iso);
-    const now = Date.now();
-    const diffMs = d.getTime() - now;
-    if (diffMs <= 0) {
-      return "";
-    }
-    const h = Math.floor(diffMs / 3600000);
-    const m = Math.floor((diffMs % 3600000) / 60000);
-    if (h < 24) {
-      return `${h}h ${m}m`;
-    }
-    const day = d.toLocaleDateString(undefined, { weekday: "short" });
-    const time = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-    return `${day} ${time}`;
-  } catch {
-    return iso;
-  }
-}
-
-interface ModelUsageInfo {
-  topPct: number;
-  bottomPct: number;
-  tooltip: string;
-  disconnected?: boolean;
-}
-
+// FORK 2026-07-31: this used to carry a SECOND, hand-rolled copy of the per-provider
+// usage logic, while tinker-ui/src/model-usage.ts carried a unit-tested one that
+// nothing rendered. That split already cost a real bug — the gpt-5.6 trio drew empty
+// columns because the branch that would have fixed it existed only in the copy this
+// panel never called. There is now ONE implementation: the tested module owns the
+// logic, and this is the thin binding that hands it the panel's live state.
 function getModelUsage(provider: string, modelId: string, keyId?: string): ModelUsageInfo | null {
-  if (!budgetUsageData || provider === "ollama") {
-    return null;
-  }
-  const name = modelId.split("/").slice(1).join("/") || modelId;
+  return sharedGetModelUsage(provider, modelId, keyId, budgetUsageData, modelConfigData);
+}
+// FORK 2026-08-28 (the architect: "the message about reset time should be ... refreshed every
+// minute") — set by init() once the global hint element exists, so the tick can redraw a
+// tooltip that is OPEN at the moment it re-stamps. Without this the countdown only
+// changed on the next mouseover, which is never while you sit watching an exhausted row.
+let repaintOpenHint: (() => void) | null = null;
 
-  // FORK 2026-05-09: claude-code is just a wrapper around the Anthropic API
-  // (uses the same cli-gm OAuth credentials and the same usage limits). Treat
-  // the two providers identically for the purposes of usage-bar rendering so
-  // models like `claude-code/claude-opus-4-7` show their 5h/7d utilization bars.
-  if (provider === "anthropic" || provider === "claude-code") {
-    // Check if profile is disabled (billing cap, cooldown, etc.)
-    const prof = keyId ? modelConfigData?.authProfiles?.[keyId] : null;
-    if (prof?.disabled) {
-      const reason = prof.disabledReason || "cooldown";
-      const label = keyId?.split(":").slice(1).join(":") || keyId || "api";
-      return { topPct: 100, bottomPct: 100, tooltip: `${label}: ${reason}`, disconnected: true };
+/**
+ * Re-stamp every usage hover's `reset:` row against the current clock.
+ *
+ * Deliberately NOT `updateBudgetPanel()`: that is one `innerHTML` swap of the whole
+ * MODELS panel, which every minute would drop hover, scroll and any open sub-view. The
+ * numbers behind the bars still come from the 5-minute `budget.usage` poll — this only
+ * keeps the countdown, which is pure arithmetic on an instant we already hold, honest.
+ */
+function tickUsageResets(): void {
+  const now = Date.now();
+  let changed = false;
+  for (const el of document.querySelectorAll<HTMLElement>("[data-reset-at]")) {
+    const iso = el.dataset.resetAt;
+    const hint = el.dataset.hint;
+    if (!iso || !hint) {
+      continue;
     }
-    // Use per-profile data if available (e.g. "anthropic:cli-sv" → "cli-sv")
-    const profileKey = keyId?.split(":").slice(1).join(":") || "";
-    const profiles = budgetUsageData.claudeProfiles || {};
-    const matched = profileKey ? profiles[profileKey] : null;
-    const c = matched || budgetUsageData.claude;
-    if (!c?.limits) {
-      // Profile exists but no usage data — show disconnected state
-      if (profileKey) {
-        return {
-          topPct: 0,
-          bottomPct: 0,
-          tooltip: `${profileKey}: disconnected`,
-          disconnected: true,
-        };
+    const next = refreshTooltipReset(hint, iso, now);
+    if (next !== hint) {
+      el.dataset.hint = next;
+      changed = true;
+    }
+  }
+  // FORK 2026-08-29 (the architect): "the mark should disappear when the window has been
+  // reset" — the SAME minute tick retires the model picker's red X in place, so the
+  // mark and the hover countdowns can never drift apart on two timers. Only marks
+  // whose server-published reset instant has PASSED are touched (the server's own
+  // schedule, not a UI guess — the R2 "no clearing timers" rule is about
+  // disagreeing with the server); repaints re-derive live state from getModelUsage.
+  // Exhausted buttons carry data-reset-at but no data-hint, so the countdown loop
+  // above skips them and this loop owns them.
+  for (const el of document.querySelectorAll<HTMLElement>(".model-btn-exhausted[data-reset-at]")) {
+    const at = Date.parse(el.dataset.resetAt ?? "");
+    if (Number.isFinite(at) && at <= now) {
+      el.classList.remove("model-btn-exhausted");
+      el.removeAttribute("aria-disabled");
+      const plain = el.dataset.modelId;
+      if (plain) {
+        el.title = plain;
       }
-      return null;
+      delete el.dataset.resetAt;
+      delete el.dataset.modelId;
     }
-    const src = matched ? profileKey : "shared";
-    const h5 = c.limits.five_hour?.utilization ?? 0;
-    const isSonnet = name.includes("sonnet");
-    const sonnet7 = c.limits.seven_day_sonnet?.utilization;
-    const d7 = c.limits.seven_day?.utilization ?? 0;
-    const bottomPct = isSonnet && sonnet7 != null ? sonnet7 : d7;
-    let tip = `${src}: 5h ${h5}%`;
-    if (isSonnet && sonnet7 != null) {
-      const rs = c.limits.seven_day_sonnet?.resets_at;
-      const rsfmt = rs ? fmtReset(rs) : "";
-      tip += `\n7d sonnet: ${sonnet7}%`;
-      if (rsfmt) {
-        tip += ` \u2014 resets ${rsfmt}`;
-      }
-    } else {
-      const r7 = c.limits.seven_day?.resets_at;
-      const r7fmt = r7 ? fmtReset(r7) : "";
-      tip += `\n7d: ${d7}%`;
-      if (r7fmt) {
-        tip += ` \u2014 resets ${r7fmt}`;
-      }
-    }
-    return { topPct: h5, bottomPct, tooltip: tip };
   }
-
-  if (provider === "google") {
-    const g = budgetUsageData?.gemini;
-    if (!g || !g.rpd_limit) {
-      return null;
-    }
-    // Top bar: RPM (requests per minute — short-term pressure)
-    const rpmPct = g.rpm_limit > 0 ? Math.min((g.rpm_used / g.rpm_limit) * 100, 100) : 0;
-    // Bottom bar: RPD (requests per day — daily hard cap)
-    const rpdPct = g.rpd_limit > 0 ? Math.min((g.rpd_used / g.rpd_limit) * 100, 100) : 0;
-    let tip = `RPM: ${g.rpm_used}/${g.rpm_limit} (${rpmPct.toFixed(0)}%)`;
-    tip += `\nRPD: ${g.rpd_used}/${g.rpd_limit} (${rpdPct.toFixed(0)}%)`;
-    return { topPct: rpmPct, bottomPct: rpdPct, tooltip: tip };
+  if (changed) {
+    repaintOpenHint?.();
   }
-
-  if (provider === "openai") {
-    const oc = budgetUsageData?.openaiCosts;
-    if (!oc || oc.monthSpend == null) {
-      return null;
-    }
-    const cap = 50;
-    const monthPct = Math.min((oc.monthSpend / cap) * 100, 100);
-    // Today's spend as fraction of total cap
-    const today = new Date().toISOString().slice(0, 10);
-    const todayEntry = (oc.dailyBreakdown || []).find((d: unknown) => d.date === today);
-    const todaySpend = todayEntry?.amount ?? 0;
-    const todayPct = Math.min((todaySpend / cap) * 100, 100);
-    let tip = `Today: $${todaySpend.toFixed(2)}/$${cap} (${todayPct.toFixed(0)}%)`;
-    tip += `\nMonth: $${oc.monthSpend.toFixed(2)}/$${cap} (${monthPct.toFixed(0)}%)`;
-    return { topPct: todayPct, bottomPct: monthPct, tooltip: tip };
-  }
-
-  return null;
 }
 
 function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
@@ -8251,23 +14533,151 @@ function renderUsageBarsOnly(usage: ModelUsageInfo | null): string {
   const bottomColor = "#f59e0b";
   const topW = Math.min(usage.topPct, 100);
   const bottomW = Math.min(usage.bottomPct, 100);
+  // FORK 2026-08-28 (the architect) — the reset instant rides on the element so the minute
+  // tick below can re-stamp the hover's countdown without a panel repaint.
+  const resetAttr = usage.resetIso ? ` data-reset-at="${esc(usage.resetIso)}"` : "";
   let h = '<span class="usage-bars-col">';
-  h += `<span class="usage-bars-wrap" data-hint="${esc(usage.tooltip)}">`;
+  h += `<span class="usage-bars-wrap" data-hint="${esc(usage.tooltip)}"${resetAttr}>`;
   h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${topW}%;background:${topColor}"></span></span>`;
   h += `<span class="usage-bar"><span class="usage-bar-fill" style="width:${bottomW}%;background:${bottomColor}"></span></span>`;
   h += `</span>`;
-  // FORK 2026-07-10: numeric % next to the bars — at real-world low utilization
-  // (e.g. 3%) the bars alone read as "0/broken" (three user reports).
-  h += `<span style="font-size:8px;color:var(--muted);font-family:'SF Mono',monospace;margin-left:3px;white-space:nowrap">${Math.round(usage.topPct)}·${Math.round(usage.bottomPct)}%</span>`;
+  // FORK 2026-07-27 (the architect): the trailing "3·0%" readout is gone — the same numbers
+  // are already in the wrap's hover, so it was duplicate ink stealing width from the
+  // bars. (Supersedes the 2026-07-10 fork that added it to prove low utilization
+  // wasn't "0/broken"; the hover carries that job now.)
   h += `</span>`;
   return h;
 }
 
-function renderCostCol(costLabel: string): string {
-  if (!costLabel) {
+// FORK 2026-07-27 (the architect): the right-most column was a text price pulled from the
+// stale MODEL_COST table (no opus-5 / fable-5 / sol-terra-luna / grok — most rows
+// rendered blank). Replaced by the SAME stroke identity the model slider uses:
+// provider color + thickness linear in the architect's real €/Mtok (google = rainbow), so
+// the panel and the slider read as one language. Hover gives the number itself.
+//
+// Thickness is eegCostWidthPx scaled by COST_STROKE_SCALE: a table row cannot be
+// the slider's 36px tall, and the scale is UNIFORM, so relative thickness (the
+// whole point — "cost by its thickness") stays truthful. Fable stays unclipped.
+// FORK 2026-07-27 (the architect round 2): the stroke must match the model slider EXACTLY —
+// no scaling — "even though Fable's line will make this row taller". So the SVG box
+// grows to the model's own thickness instead of squashing it into a fixed 14px, and
+// caps are SQUARE ("sharp, with 90 degree edges"), not round.
+const COST_STROKE_W = 26;
+
+// Published API sticker price per Mtok as [input, output]. Input is null where the
+// price is not published for our access path (the gpt-5.6 trio + grok come through
+// subscriptions and only their OUTPUT price is documented in eeg-trace.ts's approved
+// cost note). RULES, not a bare map: the flat MODEL_COST table this replaces went
+// stale and silently blanked the column — see the same lesson in SHORT_NAMES.
+const MODEL_PRICE_RULES: { match: RegExp; io: [number | null, number] }[] = [
+  // Anthropic (platform.claude.com pricing)
+  { match: /opus-4-6/i, io: [5, 25] },
+  { match: /sonnet-4-6/i, io: [3, 15] },
+  { match: /haiku-4-5/i, io: [1, 5] },
+  // OpenAI (developers.openai.com/api/docs/pricing)
+  { match: /gpt-5\.4-pro/i, io: [30, 180] },
+  { match: /gpt-5\.2-pro/i, io: [21, 168] },
+  { match: /gpt-5\.4$/i, io: [2.5, 15] },
+  { match: /gpt-5\.4-mini/i, io: [0.75, 4.5] },
+  { match: /gpt-5\.2$/i, io: [1.75, 14] },
+  { match: /gpt-5\.1$/i, io: [1.25, 10] },
+  // GPT-5.5 — GitHub Copilot models-and-pricing 2026-07-30 ($5 in / $30 out).
+  // Must beat the generic gpt-5.5 fallback near the bottom of this list.
+  { match: /gpt-5\.5/i, io: [5, 30] },
+  { match: /gpt-5-mini/i, io: [0.25, 2] },
+  // Anthropic via Copilot sticker (same rates as GitHub AI Credits table).
+  { match: /fable/i, io: [10, 50] },
+  { match: /opus-5|opus-4/i, io: [5, 25] },
+  { match: /sonnet-5(?!\.)/i, io: [2, 10] },
+  { match: /sonnet/i, io: [3, 15] },
+  { match: /gpt-4\.1/i, io: [2, 8] },
+  { match: /gpt-4o/i, io: [2.5, 10] },
+  { match: /o4-mini/i, io: [1.1, 4.4] },
+  { match: /(^|[^a-z])o3/i, io: [2, 8] },
+  // gpt-5.6 trio — output prices per eeg-trace.ts cost note (Sol/Terra/Luna).
+  { match: /5\.6-sol/i, io: [null, 30] },
+  { match: /5\.6-terra/i, io: [null, 15] },
+  { match: /5\.6-luna/i, io: [null, 6] },
+  // Google (ai.google.dev/pricing); generic gemini rows last so ids like
+  // gemini-3.6-flash still resolve instead of falling through to the default.
+  { match: /gemini-2\.0-flash-lite/i, io: [0.075, 0.3] },
+  { match: /gemini-2\.0-flash/i, io: [0.1, 0.4] },
+  { match: /gemini-2\.5-flash/i, io: [0.3, 2.5] },
+  { match: /gemini-2\.5-pro/i, io: [1.25, 10] },
+  { match: /gemini.*pro/i, io: [null, 12] },
+  { match: /gemini.*flash/i, io: [null, 9] },
+  // xAI SuperGrok — output price per the same cost note.
+  { match: /grok/i, io: [null, 6] },
+];
+
+function modelPrice(name: string): [number | null, number] | null {
+  for (const row of MODEL_PRICE_RULES) {
+    if (row.match.test(name)) {
+      return row.io;
+    }
+  }
+  return null;
+}
+
+// Thickness is NOT computed here — eegCostWidthPx (eeg-trace.ts) is the single
+// source for MODELS panel · model slider · EEG paper (the architect 2026-07-30).
+// Human comparison unit = Luna (€1.29); pixel anchor remains haiku (€0.53→1px).
+
+function renderCostCol(modelId: string): string {
+  const provider = providerOf(modelId);
+  if (!modelId || provider === "ollama") {
     return '<span class="usage-cost-col"></span>';
   }
-  return `<span class="usage-cost-col">${esc(costLabel)}</span>`;
+  const name = modelId.split("/").slice(1).join("/") || modelId;
+  // Full ref + provider so Copilot Pro+ rows and native rows match the Luna table.
+  const costKey = modelId.includes("/") ? modelId : name;
+  const rel = eegRelCost(costKey, provider);
+  // FORK 2026-08-06: central resolution — same entry point as the EEG paper.
+  const paint = resolveEegPaint({ model: costKey, provider, effort: "medium" });
+  const w = paint.width;
+  const H = Math.max(Math.ceil(w) + 4, 10);
+  const y = H / 2;
+  let defs = "";
+  let stroke = paint.stroke;
+  if (paint.isRainbow) {
+    // Horizontal rainbow needs userSpaceOnUse — a horizontal line has a
+    // zero-height bbox, so an objectBoundingBox gradient degenerates (same
+    // trap documented on the slider chip).
+    const gid = `cost-stroke-${modelId.replace(/[^a-z0-9]+/gi, "-")}`;
+    defs =
+      `<defs><linearGradient id="${gid}" gradientUnits="userSpaceOnUse"` +
+      ` x1="3" y1="0" x2="${COST_STROKE_W - 3}" y2="0">` +
+      `<stop offset="0%" stop-color="#4285F4"/><stop offset="33%" stop-color="#EA4335"/>` +
+      `<stop offset="66%" stop-color="#FBBC05"/><stop offset="100%" stop-color="#34A853"/>` +
+      `</linearGradient></defs>`;
+    stroke = `url(#${gid})`;
+  }
+  // Hover: sticker + ×sonnet (table unit) + BOTH absolute px figures. Until 2026-08-28
+  // one number reconciled all three surfaces; now the panel draws LINEAR and the
+  // selector + EEG draw LOG, so the hover carries both — otherwise a reader measuring a
+  // chip against this row would conclude one of them is broken.
+  const price = modelPrice(name);
+  const lunaMult = eegCostLunaMult(costKey, provider);
+  const parts: string[] = [];
+  if (provider === "github-copilot") {
+    parts.push("Copilot Pro+");
+  }
+  if (price) {
+    parts.push(price[0] != null ? `in $${price[0]}` : "in n/a");
+    parts.push(`out $${price[1]}/Mtok`);
+  }
+  parts.push(
+    `${lunaMult < 10 ? lunaMult.toFixed(2) : Math.round(lunaMult)}× ${EEG_COST_COMPARE_LABEL}`,
+  );
+  parts.push(`${w.toFixed(1)}px · EEG ${paint.logWidth.toFixed(1)}px`);
+  parts.push(`€${rel.toFixed(2)}/M`);
+  const hint = parts.join(" · ");
+  return (
+    `<span class="usage-cost-col" data-hint="${esc(hint)}">` +
+    `<svg class="cost-stroke" width="${COST_STROKE_W}" height="${H}" viewBox="0 0 ${COST_STROKE_W} ${H}">` +
+    `${defs}<line x1="3" y1="${y}" x2="${COST_STROKE_W - 3}" y2="${y}" stroke="${stroke}"` +
+    ` stroke-width="${w.toFixed(1)}" stroke-linecap="butt"/></svg></span>`
+  );
 }
 
 // ─── Budget Helpers ───
@@ -8303,6 +14713,25 @@ function formatNum(n: number) {
 // bubbles, and should NOT create run boundaries.
 const SYSTEM_INJECTED_RE =
   /^\[.*?\]\s*OpenClaw runtime context \(internal\):|^OpenClaw runtime context \(internal\):/;
+
+// ─── Agent-injected prompt detection ───
+// FORK 2026-08-17: an external operator or agent — Claude Code, a cron, a subagent — can push a
+// prompt into the architect's session. Those words are NOT his, and rendering them as a normal user
+// bubble makes the transcript lie about who spoke. A prompt that opens with an explicit marker
+// (`[injected] …`, `[inject] …`, `[injected: claude-code] …`) has the marker stripped and renders
+// with the blue `.msg.system-inject` variant, so provenance is VISIBLE rather than inferred from
+// the wording. Unlike SYSTEM_INJECTED_RE this is opt-in: the injector must mark its own message.
+// Deliberately NOT consulted by extractUserText — an agent injection is a real prompt that opens a
+// real run, so it must still create a run boundary (runtime context, which is plumbing, must not).
+//
+// The leading `(?:\[[^\]]*\]\s*)?` is load-bearing, and was found by testing against the STORED
+// text rather than the text as typed. The gateway stamps every inbound turn with a delivery
+// timestamp, so `openclaw agent --message "[injected: claude-code] …"` is persisted as
+// `[Mon 2026-08-17 22:42 GMT+2] [injected: claude-code] …`. Anchored at `^` without that optional
+// bracket, this regex matched a hand-written marker in a unit test and NEVER matched a single real
+// injection — the feature would have looked correct and done nothing. SYSTEM_INJECTED_RE already
+// carries the same `^\[.*?\]\s*` allowance for exactly this reason.
+const AGENT_INJECTED_RE = /^(?:\[[^\]]*\]\s*)?\[(?:injected|inject)(?::\s*[^\]]*)?\]\s*/i;
 
 /** Extract the actual user text from a user message, stripping System: prefixes.
  *  Returns null if the message is entirely system-injected (no real user text). */
@@ -8351,6 +14780,15 @@ function updateChat(skipScroll = false) {
   if (!el) {
     return;
   }
+  // FORK 2026-08-05 (the architect: "messages appear out of chronological order") — THE RENDER ORDER IS NO
+  // LONGER THE RAW ARRAY ORDER. `messages` is appended to by ~20 push sites, inserted into
+  // mid-array, and removed from by six paths, so "index 7" named a different message before and
+  // after any of them. `stampOrder` gives every message a `_uid` (identity) and a `_seq` (the Nth
+  // message this client ever put on SCREEN) exactly once and IDEMPOTENTLY — so a message that has
+  // been drawn can never move again — and `renderOrder` hands back a SORTED COPY. Everything below
+  // reads `view`; nothing below may read `messages` positionally again.
+  stampOrder(messages);
+  const view: unknown[] = renderSortedEnabled() ? renderOrder(messages) : messages.slice();
   let h = "";
   // Identify intermediate "thinking" assistant messages: in each run
   // (bounded by user messages), all assistant text messages except the last
@@ -8364,7 +14802,10 @@ function updateChat(skipScroll = false) {
     const firstText =
       mc.find((b: unknown) => b.type === "text" && b.text)?.text ??
       (typeof m.content === "string" ? m.content : "");
-    if ((firstText as string).trimStart().startsWith("🌿 FRACTAL:")) {
+    // FORK 2026-08-15 — shared predicate, so `🌿 FRACTAL ACTION:` (the prefix a reflection that
+    // actually changed something must use) becomes a boundary exactly like the clean `🌿 FRACTAL:`.
+    // Before this the two variants produced two different run shapes and two different bugs.
+    if (isFractalSectionText(firstText as string)) {
       return true;
     }
 
@@ -8385,14 +14826,14 @@ function updateChat(skipScroll = false) {
   const thinkingSet = new Set<number>();
   {
     let runStart = 0;
-    for (let i = 0; i <= messages.length; i++) {
-      const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
+    for (let i = 0; i <= view.length; i++) {
+      const isUserOrEnd = i === view.length || isRunBoundary(view[i]);
       if (!isUserOrEnd) {
         continue;
       }
       const assistantTextIndices: number[] = [];
       for (let j = runStart; j < i; j++) {
-        const m = messages[j];
+        const m = view[j];
         if ((m.role ?? "").toLowerCase() !== "assistant") {
           continue;
         }
@@ -8405,9 +14846,15 @@ function updateChat(skipScroll = false) {
         // FORK: Fractal responses are NOT real assistant text — they render as
         // their own collapsed block. Exclude them so the real answer before
         // a fractal isn't demoted to "thinking".
+        // FORK 2026-08-15 — the test used to be a literal `startsWith("🌿 FRACTAL:")`, which missed
+        // `🌿 FRACTAL ACTION:` (the prefix the injection mandates whenever the reflection actually
+        // changed something). Shared predicate now, so this and sectioned-reply's splitter cannot
+        // drift. This exclusion is load-bearing for reply-grouping's cutoff: a 🌿 bubble counted as
+        // answer text would push the cutoff past the reflection's own tool calls and demote the
+        // real answer all over again.
         const firstTextBlock =
           c.find((b: unknown) => b.type === "text" && b.text)?.text ?? (plainText || "");
-        if ((firstTextBlock as string).trimStart().startsWith("🌿 FRACTAL:")) {
+        if (isFractalSectionText(firstTextBlock as string)) {
           continue;
         }
         // FORK: Fractal prompts are hidden entirely — don't count them
@@ -8416,11 +14863,16 @@ function updateChat(skipScroll = false) {
         }
         // FORK: System messages (warnings, errors, retries, prefrontal) must NEVER
         // collapse into reasoning groups — they are user-facing status updates.
+        // FORK 2026-08-24 — the timing block joins that list. It is an assistant message with
+        // non-empty text, so it counted as an answer bubble here: it inflated `textLen` for the
+        // dominant-answer guard and could be classified as narration, and downstream it made the
+        // run look like it already had an answer. It is chrome about the turn, not the turn.
         if (
           m._isWarning ||
           m._isError ||
           m._isOverloadRetry ||
           m._isPrefrontal ||
+          (m as any)._isPhaseTiming ||
           (m as any)._isReasoning
         ) {
           continue;
@@ -8435,20 +14887,55 @@ function updateChat(skipScroll = false) {
       // the marker — the actual Bug A. With NO tools in the run, nothing collapses (genuine
       // chain-of-thought already lives in the separate thinking channel). Decision is the pure,
       // unit-tested narrationIndices(); see reply-grouping.ts + bible §5.8h.
-      // DO NOT re-add an `isCurrentRun`/`streamMsgIdx`-style guard here: it makes ALL prior bubbles
+      // DO NOT re-add an `isCurrentRun`/`streamMsgUid`-style guard here: it makes ALL prior bubbles
       // flash to final-answer style on each delta and snap back on each tool call (the "blinking chat
       // text" bug). Removed 2026-03-26 in 69693d3f61, again 2026-05-29. See bible §5.8.
       const textIdxSet = new Set(assistantTextIndices);
       const runKinds: RunMsgKind[] = [];
       for (let j = runStart; j < i; j++) {
-        const c = Array.isArray(messages[j].content) ? messages[j].content : [];
+        const c = Array.isArray(view[j].content) ? view[j].content : [];
         runKinds.push({
           isAssistantText: textIdxSet.has(j),
           hasTool: c.some((b: unknown) => b.type === "tool_use" || b.type === "tool_result"),
+          // FORK 2026-08-16 — feeds the dominant-answer guard: the run's largest text bubble is
+          // never collapsed. Measured necessity: a 4,898-char answer was being hidden behind the
+          // reflection's 58-char "Memory written and indexed" receipt. See reply-grouping.ts.
+          textLen: c
+            .filter((b: unknown) => b.type === "text")
+            .reduce((n: number, b: unknown) => n + String(b.text ?? "").trim().length, 0),
         });
       }
-      for (const rel of narrationIndices(runKinds)) {
-        thinkingSet.add(runStart + rel);
+      // FORK 2026-08-05 (the architect: "old messages get rewritten") — FREEZE THE CLASSIFICATION. It used
+      // to be recomputed from scratch on EVERY repaint, and `narrationIndices` demotes an assistant
+      // text bubble as soon as a tool appears LATER in the run — so as `lastToolIdx` grew, text the
+      // user was already reading as the ANSWER was retro-demoted into the collapsed group under
+      // their eyes, and a bubble appended to the run later (an `appendTail`, a flushed queued
+      // prompt) could re-shuffle a run that had been settled for an hour. Classify ONCE, at the
+      // first repaint after the run has no `_temporary` members left, stamp `_narration` on every
+      // member, and read the stamp from then on. What was shown as an answer stays an answer.
+      // (The LIVE path below is unchanged on purpose: adding an `isCurrentRun` guard here is the
+      // "blinking chat text" bug, removed twice already — see bible §5.8.)
+      // FORK 2026-08-16 — an earlier cut of this fix looked at the run's BOUNDARY message to decide
+      // whether a 🌿 reflection followed. That could never work: the stamp below is frozen at
+      // main-turn end, when this run is still the LAST one in the view and the reflection has not
+      // been appended yet. narrationIndices now decides from the run alone, with no lookahead.
+      const runMsgs = view.slice(runStart, i) as Record<string, unknown>[];
+      if (!runMsgs.some((m) => m._narration !== undefined) && !runMsgs.some((m) => m._temporary)) {
+        const narration = new Set(narrationIndices(runKinds));
+        for (let k = 0; k < runMsgs.length; k++) {
+          runMsgs[k]._narration = narration.has(k);
+        }
+      }
+      if (runMsgs.some((m) => m._narration !== undefined)) {
+        for (let k = 0; k < runMsgs.length; k++) {
+          if (runMsgs[k]._narration === true) {
+            thinkingSet.add(runStart + k);
+          }
+        }
+      } else {
+        for (const rel of narrationIndices(runKinds)) {
+          thinkingSet.add(runStart + rel);
+        }
       }
       runStart = i + 1;
     }
@@ -8457,7 +14944,7 @@ function updateChat(skipScroll = false) {
   // so tool_use blocks can find their paired results even across messages.
   const globalResultMap = new Map<string, { content: string; isError: boolean }>();
   const globalToolNames = new Map<string, { name: string; input: unknown }>();
-  for (const m of messages) {
+  for (const m of view) {
     const c = Array.isArray(m.content) ? m.content : [];
     for (const b of c) {
       if (b.type === "tool_result") {
@@ -8473,8 +14960,8 @@ function updateChat(skipScroll = false) {
   // (thinking + tool calls + system) collapse into an expandable reasoning group.
   {
     let runStart = 0;
-    for (let i = 0; i <= messages.length; i++) {
-      const isUserOrEnd = i === messages.length || isRunBoundary(messages[i]);
+    for (let i = 0; i <= view.length; i++) {
+      const isUserOrEnd = i === view.length || isRunBoundary(view[i]);
       if (!isUserOrEnd) {
         continue;
       }
@@ -8489,8 +14976,30 @@ function updateChat(skipScroll = false) {
       const answerIndices: number[] = [];
 
       for (let j = runStart; j < runEnd; j++) {
-        const m = messages[j];
+        const m = view[j];
         if (thinkingSet.has(j)) {
+          intermediateIndices.push(j);
+          continue;
+        }
+        // FORK 2026-07-26 (thinking never collapsed): reasoning bubbles are BY
+        // DEFINITION intermediate. They are force-excluded from thinkingSet (the
+        // narration classifier) to keep them out of the §5.8 flicker path — but
+        // that exclusion left them falling through to the hasText test below, and
+        // normalizeHistoryRenderBlocks rewrites a persisted `thinking` block into a
+        // `text` block, so every reloaded thinking message classified as ANSWER and
+        // rendered as a full visible bubble that no "▸ Reasoning" group ever folded.
+        // Classify here (NOT via thinkingSet) so the flicker guard stays intact.
+        if ((m as any)._isReasoning) {
+          intermediateIndices.push(j);
+          continue;
+        }
+        // FORK 2026-08-24 (the architect: "The timing list should also fold into the reasoning whenever
+        // the turn ends, same as the tool calls and intermediate thinking/reasoning"). The block
+        // is an assistant message with text, so it classified as ANSWER and stayed permanently
+        // expanded in the transcript. Classified HERE rather than via thinkingSet, for the same
+        // reason `_isReasoning` is: thinkingSet feeds the §5.8 flicker guard, and this is not a
+        // narration judgement — a timing block is intermediate by definition.
+        if ((m as any)._isPhaseTiming) {
           intermediateIndices.push(j);
           continue;
         }
@@ -8514,7 +15023,7 @@ function updateChat(skipScroll = false) {
       // Count tool_use blocks only in intermediates (not the final answer)
       let toolCount = 0;
       for (const j of intermediateIndices) {
-        const tc = Array.isArray(messages[j].content) ? messages[j].content : [];
+        const tc = Array.isArray(view[j].content) ? view[j].content : [];
         for (const b of tc) {
           if (b.type === "tool_use") {
             toolCount++;
@@ -8523,47 +15032,120 @@ function updateChat(skipScroll = false) {
       }
 
       // Determine if this run is still streaming (has temporary messages)
-      const hasTemporaries = intermediateIndices.some((j) => messages[j]._temporary);
-      const isStreaming = hasTemporaries || (i === messages.length && streamMsgIdx >= 0);
+      const hasTemporaries = intermediateIndices.some((j) => view[j]._temporary);
+      const isStreaming = hasTemporaries || (i === view.length && streamMsgUid !== null);
+
+      // FORK 2026-08-24 (the architect: "The timings of the fractal pass should show only when expanding
+      // Fractal") — IS THIS RUN THE REFLECTION PASS?
+      //
+      // The reflection is a separate run on the SAME session key, and `isRunBoundary` makes its
+      // 🌿 bubble the boundary that closes this run. So a run whose boundary is a fractal section
+      // IS the reflection, and everything in it — in practice, only its timing block — belongs to
+      // the reflection rather than to the conversation. Before this it rendered as loose rows at
+      // the very bottom of the chat, under the answer, which is the "crawl to the end" report.
+      //
+      // Structural, not a runId join: answer bubbles carry no runId in the DOM (see the fractal
+      // anchor note), so position is the only signal that survives a reload.
+      const boundaryMsg = i < view.length ? (view[i] as Record<string, unknown>) : null;
+      const boundaryContent = Array.isArray(boundaryMsg?.content)
+        ? (boundaryMsg?.content as Array<Record<string, unknown>>)
+        : [];
+      const boundaryText = String(
+        boundaryContent.find((b) => b?.type === "text" && b?.text)?.text ??
+          (typeof boundaryMsg?.content === "string" ? boundaryMsg.content : ""),
+      );
+      const fractalGraftUid =
+        boundaryMsg && isFractalSectionText(boundaryText) ? String(boundaryMsg._uid ?? "") : "";
+      // Renders one message, wrapping a REFLECTION's timing block in a marker the post-render
+      // pass moves into the 🌿 section's body. A wrapper rather than a render-time nesting
+      // because the section is emitted AFTER this run, as its boundary — there is no string to
+      // nest into yet. Same graft discipline as the level-3 expander.
+      const renderRunMsg = (j: number, thinking: boolean, structured = false): string => {
+        const out = renderMsg(view[j], j, thinking, globalResultMap, globalToolNames, structured);
+        const m = view[j] as Record<string, unknown>;
+        if (!m?._isPhaseTiming) {
+          return out;
+        }
+        // Two independent ways to know this block is a reflection's, because the two events
+        // arrive in either order: `_fractalPass` is stamped by runId the moment the lane's text
+        // identifies it (which can be AFTER the block was built, and can put the block in the
+        // main run), and the boundary test catches the case where the 🌿 section is already the
+        // run's terminator. An empty uid means "the next section, wherever it is".
+        if (m._fractalPass === true) {
+          return `<div class="mpg-graft" data-phase-graft-into="${esc(fractalGraftUid)}">${out}</div>`;
+        }
+        return fractalGraftUid
+          ? `<div class="mpg-graft" data-phase-graft-into="${esc(fractalGraftUid)}">${out}</div>`
+          : out;
+      };
 
       // Render the run
       if (intermediateIndices.length > 0 && answerIndices.length > 0 && !isStreaming) {
         // Completed run with intermediates — wrap in collapsible group
-        const groupId = `rg-${intermediateIndices[0]}`;
+        // FORK 2026-08-05 — the group id used to be the ARRAY ORDINAL of its first intermediate
+        // (`rg-${index}`), so any push, splice or removal RENAMED the group and silently handed the
+        // user's open/closed state to a DIFFERENT group. Key it on the anchor's stable `_uid`.
+        const groupAnchor = view[intermediateIndices[0]] as Record<string, unknown>;
+        const groupId = `rg-${(groupAnchor._uid as string | undefined) ?? intermediateIndices[0]}`;
         const expanded = expandedTools.has(groupId);
-        const stepCount = intermediateIndices.filter((j) => thinkingSet.has(j)).length;
+        // FORK 2026-07-26: count reasoning bubbles too — they are intermediates via
+        // the _isReasoning branch above, not via thinkingSet, so a thinking-only run
+        // used to render a bare, countless "▸ Reasoning" header.
+        const stepCount = intermediateIndices.filter(
+          (j) => thinkingSet.has(j) || (view[j] as any)._isReasoning,
+        ).length;
         const chevron = expanded ? "▾" : "▸";
         const stepLabel = stepCount > 0 ? `${stepCount} step${stepCount !== 1 ? "s" : ""}` : "";
         const toolLabel =
           toolCount > 0 ? `${toolCount} tool call${toolCount !== 1 ? "s" : ""}` : "";
-        const parts = [stepLabel, toolLabel].filter(Boolean).join(", ");
+        // FORK 2026-08-24 — surface the turn's span ON the collapsed header. Folding the timing
+        // block would otherwise hide the one number the block exists to report, and a header that
+        // reads "Reasoning" with nothing after it (the shape a timing-only run produces) says
+        // less than the rows it replaced.
+        const timingMsg = intermediateIndices
+          .map((j) => view[j] as Record<string, unknown>)
+          .find((m) => m?._isPhaseTiming);
+        const timingLabel = timingMsg
+          ? `⏱ ${phaseDurationText(phaseGroupSpanMs(phaseEntriesOf(timingMsg), Date.now()))}`
+          : "";
+        const parts = [stepLabel, toolLabel, timingLabel].filter(Boolean).join(", ");
         const summary = parts ? `Reasoning (${parts})` : "Reasoning";
 
         h += `<div class="reasoning-group">`;
         h += `<div class="reasoning-header" data-tid="${groupId}">${chevron} ${summary}</div>`;
-        if (expanded) {
-          h += `<div class="reasoning-content">`;
-          for (const j of intermediateIndices) {
-            h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
-          }
-          h += `</div>`;
+        // FORK 2026-08-05 — THE SINGLE MOST IMPORTANT LINE OF THIS FIX. The collapsed branch used to
+        // emit its intermediates ONLY when the group was expanded (`if (expanded)`), so the instant
+        // a turn ended, every narration bubble and every tool row the user had already read was
+        // GENUINELY GONE FROM THE DOCUMENT: Ctrl-F could not find it, a screen reader could not
+        // reach it, "select all + copy" did not copy it. That is a DELETION, not a compaction, and
+        // it is the mechanism behind "others disappear". Emit them ALWAYS and hide the container
+        // with the `hidden` attribute (see `.reasoning-content[hidden]` in base.css) — the change of
+        // APPEARANCE the architect explicitly allowed, with nothing removed from the page.
+        h += `<div class="reasoning-content"${expanded ? "" : " hidden"}>`;
+        for (const j of intermediateIndices) {
+          h += renderRunMsg(j, thinkingSet.has(j));
         }
+        h += `</div>`;
         h += `</div>`;
         // FORK 2026-06-19 (bug A): render EVERY answer bubble (all visible text after the last tool),
         // in order — not just a single final bubble.
+        // FORK 2026-08-09: this run just emitted a structural "▸ Reasoning" group above, so its
+        // intermediates are already folded and these bubbles are the answer itself. Pass
+        // hasStructuredReasoning=true so the text-heuristic splitter does NOT re-cut them —
+        // compaction happens once, at turn end, over CLASSIFIED steps, never over the reply.
         for (const j of answerIndices) {
-          h += renderMsg(messages[j], j, false, globalResultMap, globalToolNames);
+          h += renderRunMsg(j, false, true);
         }
       } else {
         // Streaming run or no intermediates — render flat
         for (let j = runStart; j < runEnd; j++) {
-          h += renderMsg(messages[j], j, thinkingSet.has(j), globalResultMap, globalToolNames);
+          h += renderRunMsg(j, thinkingSet.has(j));
         }
       }
 
       // Render the user message that ends this run (if not end-of-array)
-      if (i < messages.length) {
-        h += renderMsg(messages[i], i, false, globalResultMap, globalToolNames);
+      if (i < view.length) {
+        h += renderMsg(view[i], i, false, globalResultMap, globalToolNames);
       }
       runStart = i + 1;
     }
@@ -8577,23 +15159,34 @@ function updateChat(skipScroll = false) {
   // Queued prompts are deliberately NOT in messages[] (see send()); they are flushed into
   // messages[] at turn-final, which splices them into their correct chronological position (in the
   // middle, within the thinking/tool stream) once the turn that was reading them completes.
-  if (activeRuns.size > 0 || sending) {
-    h += renderThinkingIndicator();
-  }
+  // FORK 2026-08-15 — the gate here used to be `activeRuns.size > 0 || sending`, which made
+  // the SERVER lane of renderThinkingIndicator() unreachable. That branch exists precisely
+  // for the case where this browser holds NO client run and is not sending — a turn started
+  // from another tab, a cron, WhatsApp, or an orchestrator leg — so the one condition it was
+  // written for was the one condition that skipped the call entirely. (Companion defect to
+  // the missing repaint trigger analysed in docs/2026-08-15-chat-thinking-indicator-missing-
+  // while-tab-glows.md, which found the trigger gap but not this gate.)
+  //
+  // renderThinkingIndicator() already owns the whole decision and returns "" when no branch
+  // applies, so the gate was duplicated — and drifted, as duplicated predicates do.
+  h += renderThinkingIndicator();
   // FORK 2026-06-08: render ONLY the queued prompts that belong to the tab on screen. The queue is
   // one global array shared by all tabs; without this filter a prompt queued in one tab showed as a
   // "queued" bubble in EVERY tab.
   const visibleQueued = queuedForSession(pendingQueuedSends, sessionKey, sessionKeyMatches);
   for (let k = 0; k < visibleQueued.length; k++) {
-    h += renderMsg(visibleQueued[k], messages.length + k, false, globalResultMap, globalToolNames);
+    h += renderMsg(visibleQueued[k], view.length + k, false, globalResultMap, globalToolNames);
   }
   // FORK: Preserve manually-opened fractal <details> across DOM rebuilds.
   // Without this, every streaming update collapses fractals the user expanded.
-  const openFractals = new Set<number>();
+  // FORK 2026-08-05 — was keyed on the fractal's ORDINAL POSITION among the rendered <details>, so
+  // a bubble added or removed above it transferred the user's open state to a DIFFERENT fractal.
+  // Key on the message's stable `_uid`, emitted by renderMsg as `data-fractal-uid`.
+  const openFractals = new Set<string>();
   el.querySelectorAll("details.fractal-details[open]").forEach((det) => {
-    const idx = Array.prototype.indexOf.call(el.querySelectorAll("details.fractal-details"), det);
-    if (idx >= 0) {
-      openFractals.add(idx);
+    const uid = det.getAttribute("data-fractal-uid");
+    if (uid) {
+      openFractals.add(uid);
     }
   });
 
@@ -8602,6 +15195,14 @@ function updateChat(skipScroll = false) {
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   const prevScrollTop = el.scrollTop;
   el.innerHTML = h;
+  // FORK 2026-08-06 (the architect: the progress-bar frame "flashes white" and "fills up
+  // from zero for a second" when the chat re-renders): innerHTML rebuilds recreate
+  // EVERY <iframe>, and a recreated srcdoc iframe reloads from scratch — white flash
+  // (the element's own background) plus a re-initialised page. The static-card path
+  // dodged this by going inline; scripted widgets can't. So: cache live iframe nodes
+  // by their srcdoc and swap the cached node back in whenever the SAME block is
+  // re-rendered. The page keeps running, the height style survives, nothing reloads.
+  reuseHtmlFrames(el);
   // FORK 2026-05-09: mirror chat HTML to a file via gateway RPC so the
   // architect-side Claude Code session can introspect the rendered DOM
   // without a screen share. Debounced 300ms to avoid spam during streaming.
@@ -8609,8 +15210,9 @@ function updateChat(skipScroll = false) {
 
   // Restore fractal open state
   if (openFractals.size > 0) {
-    el.querySelectorAll("details.fractal-details").forEach((det, idx) => {
-      if (openFractals.has(idx)) {
+    el.querySelectorAll("details.fractal-details").forEach((det) => {
+      const uid = det.getAttribute("data-fractal-uid");
+      if (uid && openFractals.has(uid)) {
         (det as HTMLDetailsElement).open = true;
       }
     });
@@ -8638,6 +15240,13 @@ function updateChat(skipScroll = false) {
   }
   el.querySelectorAll("[data-tid]").forEach((r) =>
     r.addEventListener("click", (ev) => {
+      // FORK 2026-08-24 — the ⓘ on a timing row lives INSIDE a `[data-tid]` element, so without
+      // this the one gesture would both open the explanation and collapse the thing it explains.
+      // Guarded here rather than in the delegated #messages handler: this listener is bound to the
+      // row and therefore runs FIRST, so a stopPropagation over there is already too late.
+      if ((ev.target as HTMLElement).closest(".mpt-info")) {
+        return;
+      }
       const fileLink = (ev.target as HTMLElement).closest(".sys-file-link") as HTMLElement | null;
       if (fileLink) {
         ev.stopPropagation();
@@ -8726,6 +15335,14 @@ function updateChat(skipScroll = false) {
       }
     }),
   );
+  // FORK 2026-08-11 (the architect) — graft level 3 onto the 🌿 FRACTAL reply bubble. MUST run
+  // after `el.innerHTML = h` above, because that rebuild destroys any previously grafted
+  // node; the mounted-latch lives on the DOM, so it is rebuilt-and-remounted each pass
+  // rather than leaking. Cheap: one querySelectorAll over already-tagged bubbles.
+  decorateFractalReplyBubbles();
+  // Must run AFTER the level-3 graft: both move nodes into the same section body, and the
+  // reading order the architect asked for is verdict → reasoning → timing.
+  graftReflectionTimingBlocks();
   if (!skipScroll) {
     scrollChat();
   }
@@ -8745,12 +15362,84 @@ function updateSelect() {
   // Session dropdown removed — tabs handle session switching now. Kept as no-op for callers.
 }
 
+/**
+ * Which tabs are running an LLM turn right now, and in which provider's colour.
+ *
+ * FORK 2026-07-29 (the architect: "make the activity glow extend also to the title of the tab, so I know
+ * which tabs are thinking in real time"). Resolved through `sessionHasActiveRuns` against the
+ * SERVER's session rows — the same call and the same rows the sessions panel uses — so the tab bar
+ * and the panel can never disagree about who is thinking. Deriving it from `activeRuns` instead
+ * would light only the tab already on screen, which is precisely the tab you do not need told.
+ */
+// FORK 2026-08-06: the value is the RUN OBJECT {provider, model}, not a bare
+// provider string — glow identity needs the model id (openrouter vendors all
+// report provider "openrouter"), and the architect's rule is that "which model at which
+// effort is running" travels as one object.
+function tabsRunningNow(): Map<string, { provider?: string; model?: string; pending?: boolean }> {
+  const live = new Map<string, { provider?: string; model?: string; pending?: boolean }>();
+  const rows = Array.isArray(sessions) ? (sessions as Array<Record<string, unknown>>) : [];
+  for (const tab of tabs) {
+    const key = tab.sessionKey;
+    if (!key) {
+      continue;
+    }
+    const row = rows.find(
+      (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, key),
+    );
+    const info = sessionHasActiveRuns(key, row as SessionRowForLiveness);
+    if (info.live) {
+      live.set(tab.id, { provider: info.provider, model: info.model });
+      continue;
+    }
+    // FORK 2026-08-15 — the PRE-MODEL window counts as activity here too. The chat has shown a
+    // pill for it since 2026-08-13, and turn-latency.md measured that window at 21-36s: more
+    // than long enough for "the chat is working but the tab is dark" to read as a bug, which is
+    // exactly how the architect reported it. The gateway is assembling the prompt; the session IS busy.
+    // No model has been chosen yet, so the tab glows in the pill's own colour rather than a
+    // model's — see renderTabs.
+    // FORK 2026-08-17 (the architect: "when I switch tabs, the progress indicator on the tab titles that
+    // are not focused should not go away"). This used to be `tab.id === activeTabId && ...`, so the
+    // pre-model glow was a property of whichever tab was on screen: send, switch away, and the tab
+    // you left went dark for the whole 21-36s window even though its turn was running. `pending` is
+    // now recorded per SESSION (preModelSince), so every tab can answer for itself. The viewed tab
+    // still routes through viewedSessionPending() because it additionally holds `sending`, this
+    // tab's own copy of the same window.
+    const pending = tab.id === activeTabId ? viewedSessionPending() : sessionPending(key as string);
+    if (pending) {
+      live.set(tab.id, { pending: true });
+    }
+  }
+  return live;
+}
+
+/** Signature of the current thinking set, so updateSessionsPanel can re-render the tab bar only
+ *  when it actually changed — renderTabs rewrites innerHTML and scrolls the active tab into view,
+ *  which must not happen on every unrelated session-panel refresh. */
+let lastTabRunSig = "";
+function syncTabActivityGlow() {
+  const sig = Array.from(tabsRunningNow().entries())
+    // `pending` is part of the signature: entering and leaving the pre-model window changes what
+    // the tab must paint, and without it here the glow would not appear until some OTHER field
+    // happened to change.
+    .map(
+      ([id, run]) =>
+        `${id}:${run.pending ? "pending" : ""}:${run.provider ?? ""}:${run.model ?? ""}`,
+    )
+    .sort()
+    .join(",");
+  if (sig !== lastTabRunSig) {
+    lastTabRunSig = sig;
+    renderTabs();
+  }
+}
+
 function renderTabs() {
   const container = $("tab-bar-scroll");
   if (!container) {
     return;
   }
 
+  const running = tabsRunningNow();
   let html = "";
   for (const tab of tabs) {
     const isActive = tab.id === activeTabId;
@@ -8761,6 +15450,28 @@ function renderTabs() {
     if (!tab.isAttached) {
       classes.push("tab-unattached");
     }
+    // FORK 2026-07-29 — real-time "this tab is thinking" glow. Model-driven like .tab-renaming,
+    // so switchToTab -> renderTabs cannot drop it. These are the SAME three custom properties
+    // renderModelRow sets on a live model row, at the same alphas, feeding the same shared CSS
+    // rule — so the tab and the models panel glow identically rather than merely similarly.
+    const run = running.get(tab.id);
+    const isRunning = running.has(tab.id);
+    if (isRunning) {
+      classes.push("tab-thinking");
+    }
+    // FORK 2026-08-06: glow = the running model's EEG trace color, resolved
+    // centrally from the run object (model id carries the openrouter vendor).
+    // FORK 2026-08-15: except in the pre-model window, where there is no model to take a colour
+    // from. Use the pending pill's own #D97757 so the tab and the chat read as the same event.
+    const runColor = run?.pending
+      ? "#D97757"
+      : resolveEegGlowColor({
+          model: run?.model ?? "",
+          provider: run?.provider ?? "",
+        });
+    const glowStyle = isRunning
+      ? ` style="--glow-color:${runColor}80;--glow-bg:${runColor}18;--glow-bg2:${runColor}30"`
+      : "";
     // FORK 2026-06-24 — P2 shimmer: re-apply the auto-name pulse on every rebuild, driven by the
     // Tab model (not imperative DOM toggling), so switchToTab→renderTabs can't drop it and it
     // pulses on ANY tab regardless of focus.
@@ -8775,12 +15486,14 @@ function renderTabs() {
 
     // FORK 2026-06-24 — Clone tab: the doubled leading icon now lives IN tab.title (see cloneTab),
     // so no separate badge span is rendered. (Retired the `.tab-clone-badge` overlap approach.)
-    html += `<div class="${classes.join(" ")}" data-tab-id="${tab.id}" data-hint="${escapeHtml(tab.title)}">
+    html += `<div class="${classes.join(" ")}"${glowStyle} data-tab-id="${tab.id}" data-hint="${escapeHtml(tab.title)}">
       <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
     </div>`;
   }
   container.innerHTML = html;
   checkTabOverflow();
+  // FORK 2026-08-06: tab re-renders wipe the longjob dot; re-apply from state.
+  applyLongjobSurfaces();
 
   const activeEl = container.querySelector(".tab-active") as HTMLElement | null;
   if (activeEl) {
@@ -8942,6 +15655,305 @@ function refreshViewedSessionIndicators() {
   updateSessionsPanel();
   updateBudgetPanel();
   updatePrefrontalTree();
+  // FORK 2026-07-26 — the 💾 CONTEXT CACHE panel is viewed-session-scoped too, so it
+  // belongs in this helper (that is the whole point of the helper). Omitting it was why
+  // the panel never changed when switching tabs. backfill is a no-op after the first
+  // call per session.
+  renderCachePanel();
+  backfillCachePanel();
+  // FORK 2026-07-26 (the architect: "this right panel is mostly dependent on which tab we are
+  // selecting") — four more viewed-session surfaces were missing from this funnel, which is
+  // why they kept showing the PREVIOUS tab's content:
+  //   • EEG was only a TAIL CALL of updateBudgetPanel, behind its early return — so on any
+  //     tab switch before config.models resolved it kept the old session's paper;
+  //   • AMYGDALA was never repainted here at all (only by setBudgetScope);
+  //   • the context treemap was CLEARED by switchToTab and never reloaded, so it went blank
+  //     and stayed blank;
+  //   • the response treemap had no clear/reload path at all and kept the old session's map.
+  // The helper's contract is "every viewed-session-scoped surface re-derives here", so each
+  // belongs as a DIRECT member — never as a tail call behind another panel's early return.
+  renderEegPanel();
+  renderAmygdalaPanel();
+  refreshTreemap();
+  updateResponseMap();
+  // FORK 2026-08-18 — the ATTACHED ACTIVITY strip is viewed-session-scoped too, so it belongs in
+  // this funnel by the helper's own contract: "every viewed-session-scoped surface re-derives
+  // here". Omitting it would leave the previous tab's rows (and their Stop buttons) standing over
+  // the new tab's composer, which is the exact class of bug this helper was created to end.
+  void refreshAttachments("view-change");
+  // FORK 2026-08-28 (R3) — the HISTORY-LOAD strip is viewed-session-scoped, so it belongs in this
+  // funnel by the helper's own contract: "every viewed-session-scoped surface re-derives here".
+  // Without it, switching INTO a tab whose history failed would show a blank transcript with no
+  // strip until the next retry tick fired — the exact ambiguity R3 forbids, reintroduced by
+  // omission.
+  renderHistoryStrip();
+}
+
+// ─── FORK 2026-08-18: ATTACHED ACTIVITY strip ──────────────────────────────────────────────────
+// the architect: "If a process is attached to a tab and it prevents me to send more prompts, instead of
+// setting up timers and watchdogs I would prefer if it was shown as a progress indicator with a
+// stop button, so I can kill it or understand it better. The more background activity we bring to
+// the ui, with controls, the better it is going to be flowing."
+//
+// The strip renders directly above the composer and lists what the GATEWAY says is attached to the
+// viewed session — the running turn, queued prompts, and child processes (cli agents) — each with a
+// live age and a control that ends it. It replaces the watchdog/timeout instinct with a visible
+// object the user can act on.
+//
+// SESSION SCOPING — design principle #18, no second derivation. `viewedSessionBusy()` remains the
+// ONE owner of "is this tab busy" (it drives `sending` and the composer button) and this strip does
+// not re-answer that question anywhere. It asks the gateway about exactly ONE sessionKey, and then
+// uses `sessionKeyMatches()` — the same predicate every other surface uses — to discard a reply
+// that landed after the user switched tabs. Nothing here re-implements ownership.
+//
+// The pure rules (age text, row order, button verb, success-vs-refused) live in attachments.ts so
+// they are unit-tested; this block is only the poll, the markup and the click.
+
+const ATTACH_POLL_MS = 5_000;
+/** How long a stop outcome stays pinned. Long enough to read, short enough that a stale
+ *  "terminated" can never be mistaken for the live state. */
+const ATTACH_OUTCOME_MS = 6_000;
+
+type AttachOutcome = { text: string; tone: "ok" | "warn"; at: number };
+
+let attachRows: Attachment[] = [];
+/** Client clock when `attachRows` was fetched — the anchor for every live age. See liveAgeMs():
+ *  the gateway's `startedAt` is deliberately NOT used, because the two clocks can disagree. */
+let attachFetchedAt = 0;
+let attachPollTimer: ReturnType<typeof setInterval> | null = null;
+let attachTickTimer: ReturnType<typeof setInterval> | null = null;
+let attachInFlight = false;
+let attachStripBound = false;
+const attachStopping = new Set<string>();
+const attachOutcomes = new Map<string, AttachOutcome>();
+
+function attachStripEl(): HTMLElement | null {
+  return $("attach-strip");
+}
+
+/** Sweep outcomes past their display window and hand back what is still live. */
+function liveAttachOutcomes(now: number): Map<string, AttachOutcome> {
+  for (const [id, oc] of Array.from(attachOutcomes)) {
+    if (now - oc.at > ATTACH_OUTCOME_MS) {
+      attachOutcomes.delete(id);
+    }
+  }
+  return attachOutcomes;
+}
+
+function renderAttachStrip(): void {
+  const el = attachStripEl();
+  if (!el) {
+    return;
+  }
+  const now = Date.now();
+  const outcomes = liveAttachOutcomes(now);
+  const rows = sortAttachments(attachRows);
+  // An outcome whose row the gateway has already reaped still has to be READ. A "refused" that
+  // vanishes together with its row is precisely the silent failure this feature exists to remove,
+  // so orphaned outcomes keep the strip open on their own.
+  const orphans = Array.from(outcomes.entries()).filter(([id]) => !rows.some((r) => r.id === id));
+  if (rows.length === 0 && orphans.length === 0) {
+    el.hidden = true;
+    el.innerHTML = "";
+    return;
+  }
+  el.hidden = false;
+  // esc() escapes < > & only. ATTRIBUTE values additionally need the double quote neutralised, so
+  // every title=/data-* value goes through escapeHtml() — a label containing a quote would
+  // otherwise break out of the attribute and swallow the rest of the row.
+  const rowHtml = rows.map((a) => {
+    const live = liveAgeMs(a.ageMs, attachFetchedAt, now);
+    const busy = attachStopping.has(a.id);
+    const oc = outcomes.get(a.id);
+    const pid =
+      typeof a.pid === "number" && Number.isFinite(a.pid)
+        ? `<span class="attach-pid">(pid ${esc(String(a.pid))})</span>`
+        : "";
+    const note = oc
+      ? `<span class="attach-outcome attach-outcome--${oc.tone}">${esc(oc.text)}</span>`
+      : "";
+    return (
+      `<div class="attach-row" title="${escapeHtml(a.detail ?? a.label)}">` +
+      `<span class="attach-dot${attachmentDotFilled(a) ? " attach-dot--live" : ""}"></span>` +
+      `<span class="attach-label">${esc(a.label)}</span>` +
+      pid +
+      note +
+      `<span class="attach-age" data-age-ms="${escapeHtml(String(a.ageMs))}">` +
+      `${esc(formatAttachmentAge(live))}</span>` +
+      `<button class="attach-stop" type="button" data-attach-id="${escapeHtml(a.id)}"` +
+      `${busy || !a.stoppable ? " disabled" : ""} title="${escapeHtml(stopButtonTitle(a))}">` +
+      `${busy ? "stopping…" : esc(attachmentButtonLabel(a))}</button>` +
+      `</div>`
+    );
+  });
+  const orphanHtml = orphans.map(
+    ([, oc]) => `<div class="attach-note attach-note--${oc.tone}">${esc(oc.text)}</div>`,
+  );
+  el.innerHTML = rowHtml.concat(orphanHtml).join("");
+}
+
+/** Repaint ONLY the age text, once a second. A full innerHTML rebuild every second would destroy
+ *  the disabled/"stopping…" button under the user's pointer mid-click, and would fight the poll for
+ *  ownership of the DOM. */
+function tickAttachAges(): void {
+  const el = attachStripEl();
+  if (!el || el.hidden) {
+    return;
+  }
+  const now = Date.now();
+  for (const node of Array.from(el.querySelectorAll<HTMLElement>(".attach-age"))) {
+    const base = Number(node.dataset.ageMs ?? "0");
+    node.textContent = formatAttachmentAge(liveAgeMs(base, attachFetchedAt, now));
+  }
+  // An outcome that has just aged out has to leave the DOM, and only a rebuild does that.
+  const before = attachOutcomes.size;
+  liveAttachOutcomes(now);
+  if (attachOutcomes.size !== before) {
+    renderAttachStrip();
+  }
+}
+
+async function refreshAttachments(reason: string): Promise<void> {
+  if (attachInFlight) {
+    return;
+  }
+  const key = sessionKey;
+  if (!key || !connected) {
+    if (attachRows.length > 0) {
+      attachRows = [];
+      renderAttachStrip();
+    }
+    return;
+  }
+  attachInFlight = true;
+  try {
+    const res = await req<{ attachments?: Attachment[]; now?: number }>("sessions.attachments", {
+      sessionKey: key,
+    });
+    // The user may have switched tabs while this was in flight. ONE ownership predicate — the same
+    // one every other surface uses — decides whether this answer still describes the view.
+    if (!sessionKeyMatches(key)) {
+      return;
+    }
+    attachRows = Array.isArray(res?.attachments) ? res.attachments : [];
+    attachFetchedAt = Date.now();
+    for (const id of Array.from(attachStopping)) {
+      if (!attachRows.some((a) => a.id === id)) {
+        attachStopping.delete(id);
+      }
+    }
+    renderAttachStrip();
+  } catch (e) {
+    // The strip ASSERTS live state, so "cannot ask" must read as "nothing known" — never as a frozen
+    // row that keeps ticking a stale age. A gateway that has not shipped the method yet, a restart
+    // and a dropped socket all land here, and all three mean the same thing to the user.
+    if (attachRows.length > 0) {
+      attachRows = [];
+      renderAttachStrip();
+    }
+    console.debug(`[attach] ${reason}: sessions.attachments unavailable`, e);
+  } finally {
+    attachInFlight = false;
+  }
+}
+
+async function stopAttachment(attachmentId: string): Promise<void> {
+  if (!attachmentId || attachStopping.has(attachmentId)) {
+    return;
+  }
+  const key = sessionKey;
+  if (!key) {
+    return;
+  }
+  attachStopping.add(attachmentId);
+  attachOutcomes.delete(attachmentId);
+  renderAttachStrip();
+  let outcome: AttachOutcome;
+  try {
+    const res = await req<AttachmentStopResult>("sessions.attachmentStop", {
+      sessionKey: key,
+      attachmentId,
+    });
+    const verdict = classifyStopOutcome(res);
+    outcome = { text: verdict.text, tone: verdict.tone, at: Date.now() };
+  } catch (e) {
+    // A stop that never reached the gateway is the same failure as a refusal from the user's side:
+    // they pressed the button and nothing happened. It gets the same visible warning lane.
+    outcome = {
+      text: `stop failed — ${e instanceof Error ? e.message : String(e)}`,
+      tone: "warn",
+      at: Date.now(),
+    };
+  }
+  attachStopping.delete(attachmentId);
+  attachOutcomes.set(attachmentId, outcome);
+  renderAttachStrip();
+  await refreshAttachments("after-stop");
+}
+
+/** Poll only while the page is VISIBLE. Focus gates the network call but NOT the 1s age tick: a
+ *  strip that froze the instant the window went behind another app would read as broken, and the
+ *  age is computed locally anyway. Regaining focus re-polls immediately, so the first thing the
+ *  user sees on coming back is fresh. */
+function attachPollAllowed(): boolean {
+  return document.visibilityState === "visible" && document.hasFocus();
+}
+
+function startAttachPolling(): void {
+  if (!attachPollTimer) {
+    attachPollTimer = setInterval(() => {
+      if (attachPollAllowed()) {
+        void refreshAttachments("poll");
+      }
+    }, ATTACH_POLL_MS);
+  }
+  if (!attachTickTimer) {
+    attachTickTimer = setInterval(tickAttachAges, 1_000);
+  }
+}
+
+function stopAttachPolling(): void {
+  if (attachPollTimer) {
+    clearInterval(attachPollTimer);
+    attachPollTimer = null;
+  }
+  if (attachTickTimer) {
+    clearInterval(attachTickTimer);
+    attachTickTimer = null;
+  }
+}
+
+function initAttachStrip(): void {
+  const el = attachStripEl();
+  if (el && !attachStripBound) {
+    attachStripBound = true;
+    // Delegated on the STATIC host: the strip's innerHTML is rebuilt on every poll, so a listener
+    // bound to a button would be destroyed with the row it was bound to and the control would go
+    // dead silently — the #budget-panel slider precedent, documented at the init() markup.
+    el.addEventListener("click", (ev) => {
+      const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>("button.attach-stop");
+      if (!btn || btn.disabled) {
+        return;
+      }
+      void stopAttachment(btn.dataset.attachId ?? "");
+    });
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      startAttachPolling();
+      void refreshAttachments("visible");
+    } else {
+      stopAttachPolling();
+    }
+  });
+  window.addEventListener("focus", () => {
+    if (document.visibilityState === "visible") {
+      void refreshAttachments("focus");
+    }
+  });
+  startAttachPolling();
+  void refreshAttachments("boot");
 }
 
 function switchToTab(tabId: string) {
@@ -8966,6 +15978,18 @@ function switchToTab(tabId: string) {
       (tmCanvas as unknown).__treemapClear?.();
     }
     refreshTimelineRespectingMode();
+    // FORK 2026-08-26 — THE SECOND RE-ARM. loadChat defers a history merge under a live run and
+    // latches `pendingHistoryReload`; the ONLY place that ever cleared it sits below the
+    // viewed-session gate in onEvent, so a turn that ended off screen left the flag set for the
+    // life of the page and every later loadChat re-deferred instead of merging. A tab coming back
+    // on screen with nothing running is the same proof that the deferral is spent.
+    // Ordering matters: this runs AFTER `sessionKey = tab.sessionKey` and loadTabState(), so both
+    // viewedSessionBusy() and `streamRunId` already describe the tab being switched TO — and the
+    // loadChat() directly below is then a real re-read of the authoritative transcript rather
+    // than a no-op that re-arms the same flag.
+    if (pendingHistoryReload && !viewedSessionBusy() && streamRunId === null) {
+      pendingHistoryReload = false;
+    }
     // Background refresh from server — only if still attached (server has the session)
     if (tab.isAttached) {
       loadChat();
@@ -9186,15 +16210,34 @@ function updateBtn() {
   if (!btn) {
     return;
   }
-  if (sending || streamRunId || activeRuns.size > 0) {
-    btn.className = "queue";
-    btn.textContent = "Queue";
-    btn.disabled = !connected;
-  } else {
-    btn.className = "";
-    btn.textContent = "Send";
-    btn.disabled = !connected;
-  }
+  // FORK 2026-07-28 (the architect: "the right panel should refer to only the selected tab") — this tested
+  // the GLOBAL `activeRuns.size`, so ANY run anywhere turned the viewed tab's composer into
+  // "Queue": another tab's turn, and in particular another tab's subagent, which is admitted to
+  // the map globally by the lifecycle gate's ":subagent:" escape hatch. Working in several tabs
+  // therefore made every idle tab look busy. `viewedSessionBusy()` has existed for exactly this
+  // since 2026-05-16 and is already used by two other call sites — this one was simply missed.
+  //
+  // FORK 2026-08-28 — ASK THE QUESTION THE SEND PATH ANSWERS. The line above still read
+  // `sending || streamRunId || viewedSessionBusy()`, which is a DIFFERENT predicate from the one
+  // send() acts on: viewedSessionBusy() carries the subagent-INCLUSIVE matcher (correct for "is
+  // this tab busy?"), while the send gate uses the BARE one, because a subagent running under the
+  // session is not a reason to hold the architect's next turn. With only a subagent live, the
+  // button therefore said "Queue" and send() pushed the prompt straight into the transcript. One
+  // predicate now: `sendWouldDefer()`, the same call send() makes.
+  const willDefer = sendWouldDefer();
+  btn.disabled = !connected;
+  btn.className = willDefer ? "queue" : "";
+  btn.textContent = willDefer ? "Queue" : "Send";
+  // FORK 2026-08-28 — SAY WHAT THE PRESS ACTUALLY DOES. The whole state was text-plus-colour with
+  // no title and no aria-label, and the word "Queue" reads as "this will be held back" — which is
+  // why "it says queued when it is obviously the one being processed" was a fair report. It is not
+  // held back: `chat.send` fires on every send, deferred or not (lifecycles.md L-PROMPT). The only
+  // thing deferred is WHERE THE BUBBLE IS DRAWN, so that the running turn's own replies cannot land
+  // above a prompt that came after them.
+  btn.title = willDefer
+    ? "Sends now. Your message is delivered immediately — only its bubble waits below the reply that is still being written."
+    : "Sends now.";
+  btn.setAttribute("aria-label", btn.title);
 }
 
 // ─── Error Description ───
@@ -9289,34 +16332,68 @@ function describeError(reason: string, errMsg: string): string {
 
 const SHORT_NAMES: Record<string, string> = {
   "qwen3:14b-q4_K_M": "qwen3-14b",
-  "gemini-3.5-flash-preview": "gem-3.5-fl",
-  "gemini-3.1-pro-preview": "gem-3.1-pro",
-  "gemini-3-flash-preview": "gem-3-fl",
-  "gemini-2.5-pro": "gem-2.5-pro",
-  "gemini-2.5-flash": "gem-2.5-fl",
-  "gemini-2.0-flash": "gem-2.0-fl",
-  "gemini-2.0-flash-lite": "gem-2.0-fl-lt",
+  // FORK 2026-07-30 (the architect: "gem-3.5-fl → 3.5-flash"): the gemini entries are GONE
+  // from this table on purpose. They ran before the rules below and would have
+  // pinned those rows to the old gem-/-fl spelling, producing a panel where
+  // "3.5-flash" sat next to "gem-2.5-fl". Rules now own the whole family.
   "gpt-5.4-pro": "gpt-5.4p",
   "gpt-5.2-pro": "gpt-5.2p",
 };
 
 function modelName(id: string): string {
-  const name = id.split("/").slice(1).join("/") || id;
+  // FORK 2026-08-04 (the architect: "the model names of the chinese models are too long,
+  // drop the company and just keep the model name"). OpenRouter ids carry THREE
+  // segments — openrouter/moonshotai/kimi-k3 — so the old slice(1) left the vendor
+  // in and the panel rendered "moonshotai/kimi-k3". Keep only the last segment when
+  // a vendor segment is present.
+  const segs = id.split("/");
+  const name = (segs.length >= 3 ? segs[segs.length - 1] : segs.slice(1).join("/")) || id;
   const clean = name.replace(/^claude-/, "");
   let short = SHORT_NAMES[name] || SHORT_NAMES[clean] || clean;
   // Anthropic model names: opus-4-6 → opus4.6, sonnet-4-6 → sonnet4.6, haiku-4-5 → haiku4.5
   short = short.replace(/^(opus|sonnet|haiku)-(\d+)-(\d+).*$/, "$1$2.$3");
   // FORK 2026-07-10: single-version anthropic ids (fable-5, sonnet-5) + trim
-  // noise suffixes so rows stay compact (the owner: "names should be shortened").
+  // noise suffixes so rows stay compact (the architect: "names should be shortened").
   short = short.replace(/^(opus|sonnet|haiku|fable)-(\d+)$/, "$1$2");
   short = short.replace(/-(preview|latest)$/, "");
+  // Trailing release stamps (deepseek-v4-flash-0731) are noise in a 14px row.
+  short = short.replace(/-\d{4}$/, "");
+  // FORK 2026-07-27 (the architect: "shorten the long names a bit"): apply the SHORT_NAMES
+  // convention (gemini-x.y-flash → gem-x.y-fl) as RULES rather than only as a
+  // lookup table. The table had gone stale exactly like MODEL_COST — it lacked
+  // gemini-3.6-flash / 3.5-flash / 3.5-flash-lite / 3-pro, so those rows rendered
+  // at full length and were the widest labels in the panel. Rules cover new
+  // models for free; SHORT_NAMES stays for genuine exceptions.
+  // FORK 2026-07-30 (the architect: "gem-3.5-fl → 3.5-flash", "gpt-5.5 → 5.5"): the FAMILY
+  // prefix is redundant — every row already carries its provider logo — while the
+  // variant word is what you actually scan for. So drop "gemini-"/"gpt-" entirely
+  // and spell "flash" out again. Net width is a wash; legibility is not.
+  short = short.replace(/^gemini-/, "");
+  // Codex codenames ARE the identity (gpt-5.6-sol → sol). Kept as a rule, not a
+  // SHORT_NAMES row, so a 5.7-sol bump needs no edit. Alternation is explicit so
+  // gpt-5.4-mini / gpt-5.3-codex keep their version and never collapse to "mini".
+  short = short.replace(/^gpt-\d[\d.]*-(sol|terra|luna)$/, "$1");
+  short = short.replace(/^gpt-/, "");
+  short = short.replace(/-mini$/, "-mi").replace(/-nano$/, "-nn");
+  // FORK 2026-07-31 (the architect: "remove the ·cp suffix, it is redundant given the logo.
+  // Remove the ·cx suffix also, it does not add any new information"). Both were
+  // added on 2026-07-30 to separate three same-named gpt-5.5 rows, and the reason
+  // has since expired: the metered openai/* models were deleted from the panel the
+  // same day, so ·cx no longer distinguishes anything at all, and the one remaining
+  // collision (openai-codex vs github-copilot gpt-5.5) is carried by the provider
+  // logo. Suffixes that survive their own justification are just noise.
   return short;
 }
 
 function simplifyProfileLabel(label: string, mode: string): string {
   // FORK 2026-07-10: "default" api-key profiles carry no signal — drop the
-  // " · api" suffix entirely (the owner: redundant).
-  if (label === "default") {
+  // " · api" suffix entirely (the architect: redundant).
+  // FORK 2026-07-31 (the architect: "remove the 'github' suffix also"): same rule, same
+  // reason. The only profile named "github" belongs to github-copilot, whose rows
+  // already say so twice — provider logo and model group — so the suffix spends
+  // width restating the column it sits in. This follows the ·cp/·cx removal
+  // earlier today: a label that repeats its own provider is not disambiguation.
+  if (label === "default" || label === "github") {
     return "";
   }
   // cli-gm / oauth-gm → oauth (GM is primary, no suffix needed)
@@ -9386,6 +16463,273 @@ function modelPerfRank(id: string): number {
   return 5;
 }
 
+type ModelIntelligenceMeta = {
+  rank?: number;
+  intelligenceIndex?: number;
+};
+
+// FORK 2026-07-30 (the architect): Artificial Analysis Intelligence Index fallback.
+// agents.defaults.models is gateway-protected (config.patch rejects
+// intelligenceIndex writes), so scores live here + memory/aa-intelligence-index.json.
+// Source: https://artificialanalysis.ai/leaderboards/models — max-effort variant.
+// Higher = smarter. Powers Models panel column 3 + sort.
+// FORK 2026-08-04 (the architect: "bump deepseek into the smart models"). deepseek-v4-flash
+// scores 49.9 — it misses the AA >= 50 cut by 0.1, inside the index's own noise
+// floor. Pinning by id rather than editing the score keeps the reported number
+// truthful; a fudged 50.1 would be a lie told to a sort function.
+//
+// FORK 2026-08-05: hoisted to MODULE scope. It was function-local to
+// updateBudgetPanel, so the MODEL selector could not see it and dropped deepseek
+// while the MODELS panel listed it — the same class of divergence that hid qwen3.8.
+// One constant, both readers.
+// FORK 2026-08-22 (the architect: "I want the cut to be at the smartest deepseek"). The pin is
+// now EMPTY, and deleting its one entry is part of honouring that sentence rather than
+// a cleanup done in passing. deepseek-v4-flash was pinned because it scored 49.9 and
+// missed a 50 cut by 0.1; both halves of that premise are dead — it now scores 51.7666
+// in config, so it no longer needs help to clear 50, and under the new 53 cut it is no
+// longer the smartest deepseek. deepseek-v4-pro-0813 (53.1977) is, and it passes on
+// merit. Leaving the pin in place would have kept the SLOWER deepseek in SMART MODELS,
+// putting the boundary somewhere the architect did not ask for while the constant claimed
+// otherwise — a pin outranks the threshold silently, which is exactly how a gate stops
+// meaning what it says. The Set survives as the mechanism for future pins.
+export const PANEL_PINNED_SMART = new Set<string>([]);
+
+// FORK 2026-08-06 #3 (the architect): hoisted from updateBudgetPanel's closure. The
+// SMART × COST chart and the dossier need the SAME smartness gate as the SMART
+// MODELS list — a third and fourth reader of one predicate is exactly how the
+// slider/panel divergence happened, so the predicate lives here now.
+// FORK 2026-08-22 (the architect: "the 'smart models' now cap at a particular smartness, but
+// new models have appeared since we set this up and there are a lot of models that I
+// am not using anyway. I want the cut to be at the smartest deepseek, leaving out glm
+// 5.2 and into the 'more models' list"). 50 → 53.
+//
+// The cut is stated as a NUMBER but was chosen from two named neighbours: the smartest
+// deepseek (openrouter/deepseek/deepseek-v4-pro-0813, 53.1977) is the last model IN,
+// and z-ai/glm-5.2 (52.6410) is the first model OUT. 53 sits in the 0.557 gap between
+// them, so the boundary survives the AA rescoring noise that moves scores by ~0.1 — a
+// value like 53.19 would flip the panel on a rounding change.
+//
+// Why the cut drifted in the first place: the threshold is absolute while the catalog
+// is not. At 50 this listed 22 models; the 2026-08 arrivals (glm-5.3, qwen3.8 ×3,
+// kimi-k3, the gemini flash trio) all landed ABOVE it, so "smart" silently came to
+// mean "most of the catalog" without anyone changing the rule. Expect to re-cut when
+// the list stops being scannable at a glance — that, not the number, is the criterion.
+export const AA_PANEL_MIN = 53;
+export function modelPassesPanelMin(
+  id: string,
+  primary: string | null | undefined,
+  modelsMeta: Record<string, ModelIntelligenceMeta> | undefined,
+): boolean {
+  if (id === primary) return true;
+  if (PANEL_PINNED_SMART.has(id)) return true;
+  const score = configuredIntelligenceIndex(modelsMeta, id);
+  // Unscored ids only pass if they are in config models (already culled) AND
+  // not known-low from the baked AA map. Prefer explicit score when present.
+  if (score === undefined) {
+    const baked = AA_INTELLIGENCE_INDEX[id];
+    if (typeof baked === "number") return baked >= AA_PANEL_MIN;
+    return Boolean(modelsMeta?.[id]);
+  }
+  return score >= AA_PANEL_MIN;
+}
+
+// FORK 2026-08-15 (the architect: "copilot/github is not a cost we want, so let's just remove
+// them from the MODELS panel (but not from the 'smart x cost' graph)").
+//
+// SCOPE IS THE WHOLE POINT: this hides Copilot from the MODELS panel ONLY — both the
+// SMART MODELS list and the MORE MODELS tail. The SMART × COST chart keeps plotting
+// them, because that chart is the procurement argument: it is where you SEE that a
+// Copilot re-sell sits at the same intelligence as its vendor for far more money.
+// Deliberately NOT folded into `modelPassesPanelMin` — that predicate is shared by the
+// chart and the dossier, so putting the rule there would delete the very evidence the
+// chart exists to show. Two surfaces, two questions, two predicates, said out loud.
+//
+// We do not hold a Copilot Pro+ subscription (2026-08-15), so these rows were never
+// live spend; they were a procurement hypothetical cluttering a panel about real burn.
+export function modelIsHiddenFromModelsPanel(id: string): boolean {
+  return id.startsWith("github-copilot/");
+}
+
+const AA_INTELLIGENCE_INDEX: Record<string, number> = {
+  // Refreshed against the live Artificial Analysis leaderboard 2026-08-30 08:53 UTC
+  // (624 rows) and the live OpenRouter catalog in the same pass (http=200, 396
+  // models, 655,423 bytes). FOUR models added — see the block at the end.
+  //
+  // A model needs BOTH HALVES to be plottable and neither may be inferred: a
+  // measured AA index (y) and a live provider id + price (x). Two named gaps this
+  // pass, each missing a different half, both left OUT on purpose:
+  //
+  //  · Qwen3.8-Flash-Next — AA 55.8140, which would rank it ~22nd, but there is NO
+  //    route. The tempting map is `qwen/qwen3.8-flash`, added to OpenRouter
+  //    2026-08-26 at $0.150/$0.470. It is a DIFFERENT model: OpenRouter names it
+  //    "Qwen3.8 Flash" and AA carries no plain `qwen3-8-flash` row, so pairing them
+  //    would invent both an index and a price. "-Next" is Qwen's own architecture
+  //    suffix, not a decoration. This is the 2026-07-21 dead-slider incident in
+  //    miniature — auto-added ids that resolved nowhere killed every non-Anthropic
+  //    pin. Re-check when either side publishes the missing half; do NOT guess it.
+  //  · Agnes 2.5 Pro Beta (AA 49.0952) and Motif 3 (AA 47.3602) — scored by AA,
+  //    reachable through no provider we hold. No x value exists at any price.
+  //
+  // Also verified-and-skipped: 22 models new to OpenRouter since July carry a live
+  // price but NO AA score yet (tencent/hy4-preview, bytedance-seed/seed-2-1-turbo,
+  // kwaipilot/kat-coder-*, poolside/laguna-*, aion-labs/aion-3.0, sakana-namazu,
+  // meta/muse-glimmer-30b, meta/muse-spark-1.2-contributor, qwen/qwen3.7-flash,
+  // openai/gpt-5.6-{sol,terra,luna}-pro …). They are priced but unplottable —
+  // a dot at an invented height is the one thing this chart must never draw.
+  //
+  // Entries marked "frozen" are genuinely ABSENT from AA (verified, not assumed),
+  // which is why they keep their last measured value.
+  "claude-code/claude-opus-5": 63.0532,
+  "claude-code/claude-fable-5": 62.0727,
+  "codex/gpt-5.6-sol": 60.9299, // legacy alias — correct IDs below
+  "openai/gpt-5.6-sol": 60.9299,
+  "openai-codex/gpt-5.6-sol": 60.9299,
+  "xai/grok-4.6": 60.923,
+  "claude-code/claude-opus-4-8": 57.3304,
+  "codex/gpt-5.6-terra": 56.5756, // legacy alias
+  "openai/gpt-5.6-terra": 56.5756,
+  "openai/gpt-5.5": 56.3067,
+  "openai-codex/gpt-5.5": 56.3067,
+  "github-copilot/gpt-5.5": 56.3067,
+  "xai/grok-4.5": 55.7589,
+  "claude-code/claude-sonnet-5": 55.2612,
+  "claude-code/claude-opus-4-7": 54.9641,
+  "github-copilot/claude-opus-4.7": 54.9641,
+  "openai/gpt-5.4": 53.1231,
+  "github-copilot/gpt-5.4": 53.1231,
+  "codex/gpt-5.6-luna": 52.3181, // legacy alias
+  "openai/gpt-5.6-luna": 52.3181,
+  "google/gemini-3.5-flash": 51.9636,
+  "google/gemini-3.6-flash": 51.5819,
+  "claude-code/claude-sonnet-4-6": 48.3663,
+  "github-copilot/claude-sonnet-4.6": 48.3663,
+  "google/gemini-3.1-pro-preview": 47.7383,
+  "github-copilot/gemini-3.1-pro-preview": 47.7383,
+  "openai/gpt-5.3-codex": 45.5117,
+  "github-copilot/gpt-5.3-codex": 45.5117,
+  "openai/gpt-5.2": 43.3436,
+  "github-copilot/gpt-5.2": 43.3436,
+  "github-copilot/gpt-5.2-codex": 41.2154,
+  "openai/gpt-5.4-mini": 40.9386,
+  "github-copilot/gpt-5.4-mini": 40.9386,
+  "google/gemini-3-pro-preview": 40.6068, // AA slug renamed gemini-3-pro-preview → gemini-3-pro
+  "github-copilot/gemini-3-pro-preview": 40.6068,
+  "openai/gpt-5.4-nano": 39.7139,
+  "github-copilot/claude-opus-4.6": 38.7724,
+  "google/gemini-3-flash-preview": 38.742, // AA slug renamed → gemini-3-flash-reasoning
+  "github-copilot/gemini-3-flash-preview": 38.742,
+  "openai/gpt-5.1": 37.4661,
+  "github-copilot/gpt-5.1": 37.4661,
+  "google/gemini-3.5-flash-lite": 37.4387,
+  "github-copilot/claude-sonnet-4": 35.9, // AA no longer scores this — value frozen
+  "github-copilot/gpt-5.1-codex": 35.5957,
+  "github-copilot/claude-opus-4.5": 35.573,
+  "github-copilot/gpt-5": 35.3127,
+  "openai/gpt-5.4-pro": 34.7, // AA no longer scores this — value frozen
+  "openai/gpt-5.2-pro": 34.7, // AA no longer scores this — value frozen
+  "github-copilot/gpt-5.1-codex-max": 34.7, // AA no longer scores this — value frozen
+  "github-copilot/gpt-5.1-codex-mini": 31.334,
+  "openai/o3": 31.0956,
+  "claude-code/claude-haiku-4-5": 29.8919, // AA slug claude-4-5-haiku-reasoning
+  "github-copilot/claude-haiku-4.5": 29.8919,
+  "github-copilot/claude-sonnet-4.5": 29.3, // AA no longer scores this — value frozen
+  "google/gemini-2.5-pro": 25.911,
+  "github-copilot/gemini-2.5-pro": 25.911,
+  "github-copilot/gpt-5-mini": 25.7971,
+  "github-copilot/grok-code-fast-1": 21.9546,
+  "openai/gpt-4.1": 19.6117,
+  "github-copilot/gpt-4.1": 19.6117,
+  "google/gemini-2.5-flash": 14.1888,
+  "google/gemini-2.0-flash": 12.2404,
+  "openai/gpt-4o": 11.1129,
+  "github-copilot/gpt-4o": 11.1129,
+
+  // ── Catalog tail: models we do NOT run, kept so the chart can answer the
+  //    question it exists for — "is something out there cheaper or smarter
+  //    than what we can use?" (the architect 2026-08-15). All reachable via the
+  //    configured OpenRouter key; every one has a verified cost row in
+  //    EEG_COST_TABLE, so none of them plots at a made-up price.
+  "openrouter/moonshotai/kimi-k3": 59.6995,
+  "openrouter/qwen/qwen3.8-max": 58.0774,
+  "openrouter/qwen/qwen3.8-2.4t-a95b": 57.7043,
+  "openrouter/meta/muse-spark-1.2": 56.7616,
+  "google/gemini-3.7-flash": 56.0301, // panel model — native google provider
+  "openrouter/google/gemini-3.7-flash": 56.0301, // openrouter alias
+  "openrouter/meta/muse-spark-1.1": 53.199,
+  "openrouter/deepseek/deepseek-v4-pro": 53.1977, // undated slug
+  "openrouter/deepseek/deepseek-v4-pro-0813": 53.1977, // dated alias (panel model)
+  "openrouter/z-ai/glm-5.3": 59.5134,
+  "openrouter/z-ai/glm-5.3-flash": 57.4592, // added 2026-08-27 ($0.075/$0.250 OR, ctx 1.31M)
+  "openrouter/z-ai/glm-5.2": 52.641,
+  "openrouter/qwen/qwen3.8-27b": 52.0247,
+  "openrouter/deepseek/deepseek-v4-flash": 51.7666, // undated slug
+  "openrouter/deepseek/deepseek-v4-flash-0731": 51.7666, // dated alias (panel model)
+  "openrouter/deepseek/deepseek-v4-flash-vision-exp": 51.4736, // panel model added 2026-08-25 ($0.44/$1.32/M, ctx 1M)
+  "openrouter/qwen/qwen3.7-max": 46.7122,
+  "openrouter/minimax/minimax-m3": 45.3969,
+  "openrouter/moonshotai/kimi-k2.6": 45.1382, // panel model added 2026-08-21
+  "openrouter/openai/gpt-5.3-codex": 45.5117, // panel model added 2026-08-23 via OpenRouter ($1.75/$14.00)
+  "openrouter/moonshotai/kimi-k2.7-code": 43.0245,
+  "openrouter/xiaomi/mimo-v2.5-pro": 42.8797,
+  "openrouter/thinkingmachines/inkling": 42.2948,
+  "openrouter/tencent/hy3": 42.2135,
+  "openrouter/nex-agi/nex-n2-pro": 41.7432,
+  "openrouter/upstage/solar-pro4": 41.6373,
+  "openrouter/thinkingmachines/inkling-small": 41.1807,
+  "openrouter/qwen/qwen3.6-max-preview": 41.074, // panel model added 2026-08-22
+  "openrouter/z-ai/glm-5.1": 40.9675,
+  "openrouter/z-ai/glm-5": 40.5541,
+  "openrouter/qwen/qwen3.6-plus": 40.4881,
+
+  // ── 2026-08-30 arrivals (the architect: "update it with the newest models in the
+  //    market"). Each one needs BOTH halves or it is not plotted: a measured AA
+  //    index for y, and a live OpenRouter id+price for x. Scores are AA's raw
+  //    floats read from the leaderboard at 08:53 UTC today; ids, prices and
+  //    context windows come from /api/v1/models in the same pass.
+  "openrouter/inclusionai/ling-3.0-flash": 37.8208, // $0.021/$0.063, ctx 262k
+  "openrouter/meituan/longcat-2.0": 33.9693, // $0.300/$1.200, ctx 1.05M
+  "openrouter/nvidia/nemotron-3.5-lightning": 23.6062, // $0.080/$0.200, ctx 262k
+
+  // ROUTE TWIN, not a new brain. Anthropic's fast mode is Opus 5 served faster —
+  // "identical capabilities ... at 2x pricing" in Anthropic's own words — so it
+  // takes Opus 5's measured index, exactly as the github-copilot twins take their
+  // vendor's. What differs is the BILL: $10/$50 metered cash against €0.2232 on
+  // the Max 20x plan. The twin connector draws that gap, which is the point of
+  // plotting it at all — /fast is one keystroke away in Claude Code.
+  "openrouter/anthropic/claude-opus-5-fast": 63.0532, // = claude-code/claude-opus-5
+};
+
+function configuredIntelligenceIndex(
+  models: Record<string, ModelIntelligenceMeta> | undefined,
+  modelId: string,
+): number | undefined {
+  // Prefer live config when present; fall back to baked AA map (gateway protects
+  // agents.defaults.models writes, so config usually only has rank).
+  const fromConfig = models?.[modelId]?.intelligenceIndex;
+  if (typeof fromConfig === "number" && Number.isFinite(fromConfig)) {
+    return fromConfig;
+  }
+  const fromAa = AA_INTELLIGENCE_INDEX[modelId];
+  return typeof fromAa === "number" && Number.isFinite(fromAa) ? fromAa : undefined;
+}
+
+function compareModelIntelligence(
+  a: string,
+  b: string,
+  models: Record<string, ModelIntelligenceMeta> | undefined,
+): number {
+  const scoreA = configuredIntelligenceIndex(models, a);
+  const scoreB = configuredIntelligenceIndex(models, b);
+  if (scoreA !== undefined || scoreB !== undefined) {
+    if (scoreA === undefined) return 1;
+    if (scoreB === undefined) return -1;
+    if (scoreA !== scoreB) return scoreB - scoreA;
+  }
+  const rankA = models?.[a]?.rank ?? 999;
+  const rankB = models?.[b]?.rank ?? 999;
+  return rankA !== rankB ? rankA - rankB : modelPerfRank(a) - modelPerfRank(b);
+}
+
 function updateBudgetPanel() {
   const el = $("budget-panel");
   if (!el) {
@@ -9408,15 +16752,51 @@ function updateBudgetPanel() {
   const liveRun = scopedActiveRuns().find(([, i]) => i.model);
   if (liveRun) {
     lastComputedModel = liveRun[1].model;
+    // FORK 2026-08-04: remember WHICH PROVIDER computed, not just the tail. Without this half
+    // `lastComputedProvider` stays null, `modelMatchesCatalogRow` degrades to the unqualified
+    // fallback, and the provider-aware predicate above is a no-op. This is what arms it.
+    lastComputedProvider = panelProviderSegment(liveRun[1].model, liveRun[1].provider) ?? null;
   }
+
+  // FORK 2026-07-29 (the architect: "Sol is thinking in 3 different tabs, yet its model row does
+  // not show how many llm calls are running in parallel"). The live count is now derived
+  // from the SERVER's session rows, which describe every session — other tabs, crons,
+  // WhatsApp — not just the viewed one. `activeRuns` cannot answer this: its writes are
+  // viewed-gated (see the admission guard in onEvent), so it can only ever see the tab on
+  // screen. Same fix that `sessionHasActiveRuns` got on 2026-07-28.
+  //
+  // Deliberately NOT passed through `scopedActiveRuns()`: the count is always global, while
+  // the session/all toggle keeps governing the token and cost columns only. A concurrency
+  // badge that hides concurrency is worse than no badge.
+  const globalLiveCounts = liveModelCounts();
 
   // Helper: render auth key rows for a model's provider
   function renderAuthKeyRows(modelId: string, badge: string) {
     const provider = providerOf(modelId);
     const name = modelName(modelId);
     const keys: string[] = authOrder?.[provider] || [];
-    // Get counts filtered to THIS model only (prevents cross-model glow)
+    // Client map filtered to THIS model only (provider-aware — see getAuthKeyCounts). It may
+    // only SPLIT the resolver's total across auth profiles: never create one, never exceed it.
     const counts = getAuthKeyCounts(modelId);
+    // Server truth for "how many runs of this model are live anywhere".
+    // FORK 2026-08-04 — the "client map stays as a floor" this comment used to claim is real,
+    // but it lives INSIDE this number, not outside it: `liveRunCountsByModel` (run-state.ts)
+    // ends with a loop that counts every FRESH activeRuns entry whose session no server row
+    // describes yet, precisely so a just-started run still lights its row. Consulting the
+    // client map AGAIN out here therefore adds no floor — only ghosts.
+    const globalCount = liveCountForModel(globalLiveCounts, modelId);
+    // FORK 2026-08-04 (the architect: the twin row glows) — CLOSE THE `||` CHAIN. `globalCount === 0`
+    // is an ANSWER ("no run of this model is live anywhere"), not "no data", but `||` read it
+    // as absence and fell through to `counts`, where ONE orphaned activeRuns entry resurrected
+    // the phantom — and, matched on the provider-erasing bare tail, resurrected it on the WRONG
+    // provider's row. The 2026-07-29 fork already stated the rule ("`counts` now only splits
+    // that total across auth profiles"); this is the half of it that was never applied.
+    const splitCount = (perKey: number | undefined): number => {
+      if (globalCount <= 0) {
+        return 0;
+      }
+      return typeof perKey === "number" && perKey > 0 ? Math.min(perKey, globalCount) : globalCount;
+    };
     if (keys.length <= 1) {
       // Single key or no keys — show one row with model name
       const keyId = keys[0];
@@ -9426,9 +16806,16 @@ function updateBudgetPanel() {
       const shortProfileLabel = simplifyProfileLabel(keyLabel, mode);
       const showSuffix = shortProfileLabel.length > 0;
       const suffix = showSuffix ? ` \u00b7 ${shortProfileLabel}` : "";
-      // FORK: Lifecycle events may lack authProfileId, so count is stored under
-      // modelId instead of keyId. Fall back to model-level count.
-      const singleKeyCount = counts.get(keyId || modelId) || counts.get(modelId) || 0;
+      // FORK 2026-07-29 — was Math.max(server, clientMap), a THIRD way of combining the lanes that
+      // let one orphaned activeRuns entry pin a model at 1 forever. The resolver already merges
+      // both lanes; `counts` now only splits that total across auth profiles.
+      // FORK 2026-08-04 — there is exactly ONE row on this path, so there is nothing to split:
+      // the resolver's total IS this row's count. The old `|| counts.get(...)` tail could only
+      // ever restate a number the resolver already owned or, when the resolver said 0,
+      // contradict it with a ghost. Deliberately NOT flipped to prefer the per-key count: the
+      // badge is a GLOBAL concurrency figure (see the note above `globalLiveCounts`), and a
+      // concurrency badge that hides concurrency is worse than no badge.
+      const singleKeyCount = splitCount(undefined);
       html += renderModelRow(
         modelId,
         provider,
@@ -9443,7 +16830,9 @@ function updateBudgetPanel() {
       // Multiple keys — one compact row per key with model name inline
       // Lifecycle events may lack authProfileId, so count is stored under modelId.
       // Fall back to model-level count so all rows glow when the model is active.
-      const modelCount = counts.get(modelId) || 0;
+      // FORK 2026-08-04 — that fallback now lives INSIDE splitCount (an absent per-key entry
+      // yields the model total), so the separate `modelCount` variable is gone. One expression,
+      // one rule, and no second `||` for the idle case to leak through.
       for (let ki = 0; ki < keys.length; ki++) {
         const keyId = keys[ki];
         const prof = authProfiles?.[keyId] || {};
@@ -9456,7 +16845,7 @@ function updateBudgetPanel() {
           modelId,
           name,
           badge,
-          counts.get(keyId) || modelCount,
+          splitCount(counts.get(keyId)),
           providerErrors.get(keyId) || providerErrors.get(modelId),
         );
       }
@@ -9479,27 +16868,113 @@ function updateBudgetPanel() {
   const _badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467"];
   // FORK 2026-07-10: ONE list ordered purely by rank (smartness). The old
   // chain-first layout pinned the primary (opus-4.8) above smarter models
-  // (fable, gpt-5.6-sol) \u2014 the owner: "models should be in order of smartness".
+  // (fable, gpt-5.6-sol) \u2014 the architect: "models should be in order of smartness".
   // Chain membership keeps its circled badge, but position = rank.
   const chainBadge = new Map<string, string>();
   for (let i = 0; i < chain.length; i++) {
     chainBadge.set(chain[i], _badges[i] ?? "");
   }
-  const allIds = [...new Set([...chain, ...Object.keys(models || {})])];
-  allIds.sort((a, b) => {
-    const ra = (models?.[a] as { rank?: number } | undefined)?.rank ?? 999;
-    const rb = (models?.[b] as { rank?: number } | undefined)?.rank ?? 999;
-    if (ra !== rb) {
-      return ra - rb;
+  // FORK 2026-07-30 (the architect: "remove those models that have less than an
+  // intelligence score of 50"). Panel allowlist = AA ≥ 50. Config is already
+  // culled, but config.models can lag a gateway reload — filter here too so the
+  // MODELS list never re-shows the long tail. Chain primary always kept.
+  // FORK 2026-08-04 (the architect: "bump deepseek into the smart models"). deepseek-v4-flash
+  // scores 49.9 — it misses the cut by 0.1, which is inside the AA index's own noise
+  // floor. Pinning by id rather than editing the score keeps the reported number
+  // truthful; a fudged 50.1 would be a lie told to a sort function.
+  const modelsMeta = models as Record<string, ModelIntelligenceMeta> | undefined;
+  // FORK 2026-07-30 (the architect: "a collapsable MORE MODELS ... with the ones we removed
+  // earlier, the ones below 50 smart"). The cut is now a PREDICATE used twice — once
+  // to keep, once to complement — so the two lists can never drift into overlapping
+  // or, worse, silently dropping a model from BOTH.
+  // FORK 2026-08-06 #3: hoisted to module scope (modelPassesPanelMin) — the chart
+  // and the dossier read the same gate, so four readers can't drift.
+  const passesPanelMin = (id: string): boolean => modelPassesPanelMin(id, primary, modelsMeta);
+  // FORK 2026-08-15: Copilot is dropped HERE, at the panel's source list, so it leaves
+  // both SMART MODELS and the MORE MODELS tail in one move. The SMART × COST chart
+  // builds its own array from AA_INTELLIGENCE_INDEX and is untouched — see
+  // modelIsHiddenFromModelsPanel for why the rule deliberately does not live in
+  // modelPassesPanelMin (which the chart and dossier share).
+  const candidateIds = [...new Set([...chain, ...Object.keys(models || {})])].filter(
+    (id) => !modelIsHiddenFromModelsPanel(id),
+  );
+  const allIds = candidateIds.filter(passesPanelMin);
+  const byPanelOrder = (a: string, b: string): number => {
+    const intelligenceOrder = compareModelIntelligence(a, b, modelsMeta);
+    if (intelligenceOrder !== 0) {
+      return intelligenceOrder;
     }
-    return modelPerfRank(a) - modelPerfRank(b);
-  });
+    // FORK 2026-07-30 (the architect): if OpenAI/Claude/Gemini and Copilot both offer the
+    // same base model, list them together — native provider first, Copilot next.
+    const base = (id: string) =>
+      id
+        .replace(/^[^/]+\//, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "");
+    const ba = base(a);
+    const bb = base(b);
+    if (ba === bb) {
+      const ap = a.startsWith("github-copilot/") ? 1 : 0;
+      const bp = b.startsWith("github-copilot/") ? 1 : 0;
+      if (ap !== bp) return ap - bp;
+    }
+    return a.localeCompare(b);
+  };
+  allIds.sort(byPanelOrder);
+  // FORK 2026-07-30 (the architect): the sub-50 tail, tucked into its own collapsed group.
+  // The 19 models culled from openclaw.json this morning survive ONLY in the baked
+  // AA map, so that map — not config — is the catalog here; config alone would make
+  // this section render empty, which is the whole reason it exists.
+  //
+  // Gated on providers we can actually reach (configured models + auth order) so the
+  // tail never advertises a model behind a provider that was never set up.
+  const knownProviders = new Set<string>([
+    ...Object.keys(models || {}).map((id) => providerOf(id)),
+    ...Object.keys(authOrder || {}),
+  ]);
+  const shown = new Set(allIds);
+  // The MORE MODELS tail pulls from AA_INTELLIGENCE_INDEX as well as candidateIds, so
+  // filtering candidateIds alone would let Copilot ids back in through the baked map.
+  const moreIds = [...new Set([...candidateIds, ...Object.keys(AA_INTELLIGENCE_INDEX)])]
+    .filter(
+      (id) =>
+        !modelIsHiddenFromModelsPanel(id) &&
+        !shown.has(id) &&
+        !passesPanelMin(id) &&
+        knownProviders.has(providerOf(id)),
+    )
+    .sort(byPanelOrder);
   if (allIds.length) {
-    const open = !collapsedModelSections.has("models");
+    const open = !isCollapsed("model:models", MODEL_SECTION_DEFAULT_COLLAPSED["models"]);
     html += `<div class="model-group${open ? " open" : ""}" data-section="models">`;
-    html += '<div class="model-group-label">MODELS</div>';
+    // FORK 2026-08-06 (the architect): buttons live INSIDE the label — the
+    // collapse-toggle guard above already ignores clicks on <button>, so they can
+    // never fold the group shut by accident.
+    // FORK 2026-08-06 #3 (the architect): the chart button moved UP to the MODELS panel
+    // header (prominent, whole-catalog chart); this one now opens the dossier —
+    // what each smart model is best at, and what it is trained not to answer.
+    html +=
+      '<div class="model-group-label">SMART MODELS ' +
+      '<button class="sd-open-btn" title="Smart models dossier" data-hint="Which model is best at what subject — and what each is trained not to answer">⚖ DOSSIER</button>' +
+      "</div>";
     html += '<div class="model-group-body">';
     for (const id of allIds) {
+      renderAuthKeyRows(id, chainBadge.get(id) ?? "");
+    }
+    html += "</div></div>";
+  }
+
+  // FORK 2026-07-30 (the architect): MORE MODELS — the AA < 50 tail, between MODELS and
+  // EFFORT. Same .model-group markup as its neighbours, so the one collapse-toggle
+  // binding below picks it up with no extra wiring. Default-collapsed (stated in
+  // MODEL_SECTION_DEFAULT_COLLAPSED) — the point is that the long tail stays
+  // reachable, not that it comes back into view.
+  if (moreIds.length) {
+    const open = !isCollapsed("model:more-models", MODEL_SECTION_DEFAULT_COLLAPSED["more-models"]);
+    html += `<div class="model-group${open ? " open" : ""}" data-section="more-models">`;
+    html += `<div class="model-group-label">MORE MODELS <span class="model-group-count">${moreIds.length}</span></div>`;
+    html += '<div class="model-group-body">';
+    for (const id of moreIds) {
       renderAuthKeyRows(id, chainBadge.get(id) ?? "");
     }
     html += "</div></div>";
@@ -9513,26 +16988,86 @@ function updateBudgetPanel() {
   // effort events and tab switches (refreshViewedSessionIndicators) repaint the
   // right session's trace because the store is keyed by the viewed sessionKey.
   {
-    const open = !collapsedModelSections.has("eeg");
-    html += `<div class="model-group${open ? " open" : ""}" data-section="eeg">`;
-    html += '<div class="model-group-label">EFFORT</div>';
+    // FORK 2026-08-02 (the architect): section renamed 'eeg' → 'thinking'. This card holds the
+    // thinking + model-force sliders and has done since the seismograph left it; the old
+    // id was a leftover. 'eeg' is now the seismograph group in #models-panel — see the
+    // MODEL_SECTION_DEFAULT_COLLAPSED note (~L2240) for why the persisted-id swap is safe.
+    const open = !isCollapsed("model:thinking", MODEL_SECTION_DEFAULT_COLLAPSED["thinking"]);
+    html += `<div class="model-group${open ? " open" : ""}" data-section="thinking">`;
+    html += '<div class="model-group-label">THINKING</div>';
     html += '<div class="model-group-body">';
     html += renderThinkingSlider();
     html += renderModelForceSlider();
     html += "</div></div>";
   }
 
+  // FORK 2026-07-25 (the architect): the routing card — its OWN collapsible group directly under the
+  // model slider, with three very short sections (MODEL / EFFORT / FAN-OUT). A fixed model
+  // or effort is stated flatly; FAN-OUT lists the routing calls made during the turn.
+  //
+  // RENAMED ORCA → THALAMUS, 2026-07-29 (the architect: "the ORCA panel should instead be the
+  // THALAMUS model, which will inform me about the routing strategies").
+  //
+  // The label was the ONLY thing here that said ORCA. Everything this card renders is
+  // allocation, not parallel editing: routingSignals() computes the model in force, its rank
+  // within the routable pool, the effort level and the rate-limit reset window; and
+  // describeRoute() narrates each job's DOMAIN + supplier + critic/panel. There is not one
+  // lease, edit-unit, file or commit in it — those are ORCA's. Even the module is already
+  // called panels/routing-rationale.ts, and the bias control it hosts talks to
+  // `prefrontal.orcaBias`, not to the ORCA plugin.
+  //
+  // The division the two names encode: ORCA decomposes work into edit-units and applies
+  // patches under file leases; THALAMUS decides which supplier serves each unit. `unit`/`task`
+  // is the join key between them — ORCA says WHAT the jobs are, THALAMUS says WHO runs them.
+  // FORK 2026-08-29 (the architect: "move the context window up over thalamus, under thinking").
+  // THALAMUS used to be generated here, as the last group inside #budget-panel — which put it
+  // ABOVE the two static groups (CONTEXT WINDOW, EEG) that are siblings of #budget-panel, and
+  // there is no way to interleave a grandchild with a sibling by ordering alone.
+  //
+  // Rather than move the CONTEXT WINDOW node into this generated block — its whole reason for
+  // being static is that innerHTML here destroys and recreates every node while its bind-once
+  // latches stay true — THALAMUS moved OUT to a static host of its own, directly below the
+  // cache panel. It is the cheapest node to move: a label plus one pure render call, with no
+  // listeners of its own, so nothing can be orphaned by the relocation. The boot fold binding
+  // (~L19608) already selects every direct .model-group child of #models-panel, so it picks up
+  // the new host for free — exactly what its own comment promised the next static subtitle.
+  //
+  // It is still PAINTED from here, on the same triggers as everything else in this panel.
+
   html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
   el.innerHTML = html;
 
-  // FORK 2026-06-19 (bible §5.8h): the EEG is its OWN panel now — paint it (binds
-  // once on #eeg-panel-body). It repaints on the same triggers as the budget panel
-  // (effort events, tab switch) via this tail call.
+  // FORK 2026-08-29 (the architect: "the thalamus panel slider should then become usable") —
+  // ONE signals value per repaint, shared by the routing card's own paint and by the BIAS
+  // dial's gate below (~L16862). Deriving Auto-ness twice is exactly how a card and a dial
+  // painted from the same repaint end up disagreeing about whether THALAMUS is in control.
+  const thalamusBody = document.getElementById("thalamus-panel-body");
+  const thalamusSignals = routingSignals(chain[0]);
+  if (thalamusBody) {
+    thalamusBody.innerHTML = renderRoutingRationale(thalamusSignals);
+  }
+
+  // FORK 2026-06-19 (bible §5.8h): the EEG host lives OUTSIDE this panel's innerHTML —
+  // paint it (binds once on the static #eeg-panel-body). It repaints on the same triggers
+  // as the budget panel (effort events, tab switch) via this tail call.
+  // FORK 2026-08-02 (the architect): "outside" now means a sibling .model-group inside
+  // #models-panel, immediately under this #budget-panel div — visually one more subtitle
+  // of the Models panel, structurally NOT part of the `html` built above. That separation
+  // is deliberate and load-bearing: see the eegPanelBound note (~L2424).
   renderEegPanel();
 
   // Bind collapse toggles
   el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
-    label.addEventListener("click", () => {
+    label.addEventListener("click", (event) => {
+      // FORK 2026-08-02 (the architect): defensive twin of the right-rail header guard (~L12390).
+      // A group label can HOST live controls — the new EEG label carries the Session/All
+      // .ct-switch — and a click on one of those must not ALSO fold the group shut. No
+      // label rendered here has such a control today, so this costs nothing now and stops
+      // the next control someone drops into a label from causing exactly that bug.
+      const target = event.target as HTMLElement | null;
+      if (!target || target.closest(".ct-switch, button, a, input, select")) {
+        return;
+      }
       const group = label.parentElement;
       if (!group) {
         return;
@@ -9542,16 +17077,61 @@ function updateBudgetPanel() {
         return;
       }
       group.classList.toggle("open");
-      if (group.classList.contains("open")) {
-        collapsedModelSections.delete(section);
-      } else {
-        collapsedModelSections.add(section);
+      // FORK 2026-08-02 (the architect): single write-through to the unified store, stating the
+      // section's default so agreeing with it deletes the entry (absent = default).
+      setCollapsed(
+        "model:" + section,
+        !group.classList.contains("open"),
+        MODEL_SECTION_DEFAULT_COLLAPSED[section] ?? false,
+      );
+    });
+  });
+
+  // FORK 2026-07-26 (the architect): the ORCA fast↔smart dial. Same two-event pattern as the EFFORT
+  // slider — `input` moves the tick highlight live, `change` (drag RELEASE) persists and
+  // repaints. Repainting on `input` would replace the panel's innerHTML mid-drag and kill
+  // the <input type=range> under the user's finger.
+  //
+  // FORK 2026-08-29 (the architect: "the thalamus panel slider should then become usable") —
+  // two defects, one line apart:
+  // (a) SCOPE — THALAMUS moved to its own static host OUTSIDE #budget-panel (see the note at
+  //     the innerHTML assignment above). `el` is #budget-panel, so `el.querySelectorAll` has
+  //     matched NOTHING since that move: dragging the dial persisted nothing and repainted
+  //     nothing. Query the host that actually contains it — its innerHTML is rebuilt on every
+  //     repaint just above, so this bind must re-run on the same cadence, not once at boot,
+  //     and it never doubles up because the <input> it binds is a brand-new node each time.
+  // (b) GATE — the dial biases THALAMUS's OWN allocation, so it is inert once a model is
+  //     pinned. This guard is the listener's own stated opinion of whether it should act: it
+  //     refuses to persist a bias while the rail says a model is pinned, independently of
+  //     whether the markup happens to render the <input> `disabled` (renderBiasSlider in
+  //     routing-rationale.ts draws off the SAME `modelPinned` fact). Reads
+  //     `thalamusSignals.modelPinned` — the exact value the routing card was just painted
+  //     from above, the SAME predicate the rail's own stop index uses — never a second
+  //     computation the rail and the dial could disagree over.
+  const biasLive = !thalamusSignals.modelPinned;
+  thalamusBody?.querySelectorAll<HTMLInputElement>(".orca-bias-slider").forEach((sl) => {
+    sl.addEventListener("input", (e) => {
+      e.stopPropagation();
+      if (!biasLive) {
+        return;
+      }
+      highlightSliderStop(e, ".orca-bias-row");
+    });
+    sl.addEventListener("change", (e) => {
+      e.stopPropagation();
+      if (!biasLive) {
+        return;
+      }
+      highlightSliderStop(e, ".orca-bias-row");
+      if (sessionKey) {
+        saveOrcaBias(sessionKey, Number(sl.value) || 0);
+        updateBudgetPanel();
       }
     });
   });
 
   // FORK 2026-06-13 (eeg): SECONDARY (horizontal/tilt) wheel = vertical SCALE zoom
-  // of the length axis (the owner 2026-06-13). the owner's secondary wheel emits a
+  // of the length axis (the architect 2026-06-13). the architect's secondary wheel emits a
   // HORIZONTAL delta (deltaX) — which was sliding the panel sideways; we capture
   // that (and Ctrl+wheel as a no-tilt-wheel fallback) for zoom instead. The
   // VERTICAL wheel (deltaY) still scrolls history normally.
@@ -9573,7 +17153,8 @@ function updateBudgetPanel() {
   );
 
   // FORK 2026-06-19: the EEG marker-click handler moved to bindEegPanelOnce (the EEG
-  // is its own #eeg-panel now). The old #eeg-paper-inside-#budget-panel binding here
+  // paper lives outside #budget-panel — since 2026-08-02 in its own STATIC .model-group
+  // under #models-panel). The old #eeg-paper-inside-#budget-panel binding here
   // was DEAD — that element no longer exists, so this never fired (it was the reason
   // the click "did nothing"). Removed to kill the phantom handler.
 }
@@ -9718,18 +17299,768 @@ function showPasteModal(sessionId: string, fallbackAuthUrl: string, profileId: s
   });
 }
 
+// ─── SMARTNESS × COST chart (the architect 2026-08-06) ───
+// Button in the SMART MODELS label → full-screen overlay with the constellation
+// chart. Data: configured provider models (config.get → context windows) joined
+// with the intelligence index (panel column 3 source) and eegRelCost (the SAME
+// effective €/Mtok the EEG thickness draws). Identity colour = resolveEegPaint,
+// rainbow resolved to a solid exactly like the glows.
+let scConfigPromise: Promise<
+  Record<string, { id?: string; name?: string; contextWindow?: number }>[]
+> | null = null;
+function fetchScProviderModels() {
+  if (!scConfigPromise) {
+    scConfigPromise = req("config.get", {})
+      .then((res: unknown) => {
+        const cfg = (
+          res as { config?: { models?: { providers?: Record<string, { models?: unknown[] }> } } }
+        )?.config;
+        const provs = cfg?.models?.providers || {};
+        const out: Record<string, { id?: string; name?: string; contextWindow?: number }[]> = {};
+        for (const [pid, pv] of Object.entries(provs)) {
+          out[pid] = Array.isArray(pv?.models)
+            ? (pv.models as { id?: string; name?: string; contextWindow?: number }[])
+            : [];
+        }
+        return out;
+      })
+      .catch(() => {
+        scConfigPromise = null; // a failed fetch must not poison the next open
+        return {};
+      });
+  }
+  return scConfigPromise;
+}
+
+async function openSmartCostChart(): Promise<void> {
+  // FORK 2026-08-06 #4 (the architect: "The graph got corrupted"): fetch our OWN copy
+  // of config.models instead of trusting the panel's global — the chart used to
+  // render nearly empty whenever modelConfigData hadn't landed yet (or was
+  // mid-refresh), leaving a single stray catalog model on screen.
+  type ScCfg = {
+    primary?: string;
+    models?: Record<string, ModelIntelligenceMeta>;
+    authOrder?: Record<string, unknown>;
+  };
+  let cfgData = modelConfigData as ScCfg | null;
+  try {
+    const fresh = (await req("config.models", {})) as ScCfg | null;
+    if (fresh && typeof fresh === "object" && fresh.models) cfgData = fresh;
+  } catch {
+    /* keep the panel's copy */
+  }
+  const meta = cfgData?.models;
+  const providers = await fetchScProviderModels();
+  const models: ScModel[] = [];
+  const excluded: string[] = [];
+  const seen = new Set<string>();
+  // FORK 2026-08-06 #3 (the architect: "add the rest of the models to the graph"):
+  // three concentric circles — configured providers (real ctx), the known
+  // models meta (family ctx), then the whole reachable AA catalog. All three
+  // are LABELLED since #11; the tiers now differ only in where their context
+  // window comes from.
+  const push = (
+    id: string,
+    name: string,
+    provider: string,
+    index: number,
+    ctx: number,
+    labeled: boolean,
+    relCostOverride?: number,
+  ) => {
+    const paint = resolveEegPaint({ model: id, provider });
+    models.push({
+      id,
+      name,
+      provider,
+      index,
+      relCost: relCostOverride ?? eegRelCost(id, provider),
+      ctx,
+      color: paint.isRainbow ? EEG_GOOGLE_GLOW : paint.stroke,
+      // The legend groups by the SAME key the dot COLOUR is chosen by. Keying on
+      // `provider` instead would file Kimi, GLM, Qwen, DeepSeek and 7 more —
+      // five distinct colours on the chart — under one grey "openrouter" chip,
+      // and clicking that chip would light up models that share no identity.
+      vendorKey: vendorOfModel(`${provider} ${id}`) ?? provider,
+      labeled,
+    });
+    seen.add(id);
+  };
+  // 1. Configured models (openclaw.json providers) — labelled, real ctx.
+  for (const [pid, ms] of Object.entries(providers)) {
+    for (const m of ms) {
+      if (!m?.id) continue;
+      const fullId = `${pid}/${m.id}`;
+      const name = m.name || m.id.split("/").pop() || m.id;
+      if (pid === "ollama") {
+        excluded.push(`${name} (local, no token price)`);
+        continue;
+      }
+      const index = configuredIntelligenceIndex(meta, fullId);
+      if (index === undefined) {
+        excluded.push(`${name} (no intelligence index)`);
+        continue;
+      }
+      push(
+        fullId,
+        name,
+        pid,
+        index,
+        typeof m.contextWindow === "number" && m.contextWindow > 0 ? m.contextWindow : 200_000,
+        true,
+      );
+    }
+  }
+  // 2. Known models (agents.defaults.models) not offered by a configured
+  //    provider — labelled (models the architect actually runs), family-default ctx.
+  for (const id of Object.keys(meta || {})) {
+    if (seen.has(id)) continue;
+    const provider = providerOf(id);
+    if (provider === "ollama") continue;
+    const index = configuredIntelligenceIndex(meta, id);
+    if (index === undefined) continue;
+    push(id, id.split("/").pop() || id, provider, index, scDefaultCtx(id), true);
+  }
+  // 3. Catalog tail: every reachable AA model — the "rest of the models".
+  //    FORK 2026-08-06 #11 (the architect: "there are a lot of model names missing"):
+  //    these used to be pushed UNLABELLED on the theory that 40+ names would
+  //    collide into noise. That theory was written before the chart could zoom.
+  //    It can now, and the names counter-scale, so crowding is something the architect
+  //    resolves with the wheel — while a nameless dot is unreadable at ANY zoom.
+  //    Every plotted model gets its name.
+  //    FORK 2026-08-15 (the architect: "add all of them ... if we see that there is a new
+  //    LLM appearing to be cheaper or smarter than the ones we currently can use,
+  //    we should investigate how to switch to it"). The tail used to be filtered to
+  //    providers we ALREADY had configured, which quietly defeated the chart's whole
+  //    purpose: a genuinely new competitor is BY DEFINITION on a provider we do not
+  //    run yet, so the one dot worth seeing was the one dot guaranteed to be dropped.
+  //    The gate is gone. What replaces it is a PRICE requirement, not a provider one —
+  //    every id in AA_INTELLIGENCE_INDEX has a verified row in EEG_COST_TABLE, so a
+  //    plotted dot never sits at an invented x. Ollama stays out (local, no token price).
+  for (const id of Object.keys(AA_INTELLIGENCE_INDEX)) {
+    if (seen.has(id)) continue;
+    const provider = providerOf(id);
+    if (provider === "ollama") continue;
+    push(
+      id,
+      id.split("/").pop() || id,
+      provider,
+      AA_INTELLIGENCE_INDEX[id],
+      scDefaultCtx(id),
+      true,
+    );
+  }
+  // 4. CHINESE MODELS HAVE MANY SUPPLIERS (the architect 2026-08-24: "there should be
+  //    all represented, and connected by dashed lines like the copilot ones ...
+  //    it would be useful to know who provides them at the cheapest price").
+  //    The catalog only ever carried ONE route per Chinese model — the
+  //    OpenRouter routed price — so the chart drew one dot and hid a range that
+  //    reaches 16x (DeepSeek V4 Flash: $0.08 at Relace, $1.32 at Cloudflare).
+  //    CN_PROVIDER_PRICES is the per-endpoint table the model-rank-refresh cron
+  //    refreshes daily off OpenRouter's /endpoints API — the same source the
+  //    dossier's provider matrix ranks on, so the two panels cannot disagree.
+  //
+  //    WHY NOT ALL 30 ENDPOINTS: 15 models x up to 30 suppliers is ~200 extra
+  //    dots, which buries the frontier this chart exists to show. We plot the
+  //    two that carry a DECISION — the cheapest supplier, and the lab's own
+  //    first-party price — and the dashed connector between them IS the range.
+  //    The full per-provider matrix stays one click away in the dossier.
+  const cnSurveyed: { name: string; n: number }[] = [];
+  for (const [cnKey, row] of Object.entries(CN_PROVIDER_PRICES.models)) {
+    const base = models.find((m) => m.id === `openrouter/${cnKey}`);
+    if (!base) continue;
+    const supplierCount = Object.keys(row.providers).length;
+    if (supplierCount < 2) continue;
+    cnSurveyed.push({ name: base.name, n: supplierCount });
+    const addRoute = (label: string, out: number) => {
+      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      const id = `${slug}/${cnKey}`;
+      // Skip a route that costs exactly what the plotted one does — it would be
+      // a dot hidden under another dot, and scAssignTwins would then correctly
+      // refuse to connect them, leaving an invisible member in the group.
+      if (seen.has(id) || out === base.relCost) return;
+      push(id, base.name, slug, base.index, base.ctx, true, out);
+    };
+    addRoute(row.cheapest.provider, row.cheapest.out);
+    const lab = row.lab;
+    if (lab && row.providers[lab]) addRoute(lab, row.providers[lab].out);
+  }
+
+  // FORK 2026-08-24 (the architect): every ROUTE now keeps its own dot at its own price.
+  // The 2026-08-06 fold hid the dearer route and answered "what does this model
+  // cost?" with a price the architect could not pay on the route he was looking at.
+  // scAssignTwins drops nothing — it only tags which dots are the same brain, so
+  // the renderer can tie them with a dashed connector and the panel can light
+  // them together on hover. Pure + unit-tested in smart-cost-chart.ts.
+  const plotted: (ScModel & ScTwinInfo)[] = scSyncTwinContext(scAssignTwins(models));
+  plotted.sort((a, b) => a.index - b.index);
+  const twinGroups = new Set(plotted.filter((m) => m.twinSpread).map((m) => m.twinKey));
+  const cnNote = cnSurveyed.length
+    ? ` · ${cnSurveyed.length} Chinese models priced across ${Math.max(...cnSurveyed.map((c) => c.n))} suppliers (cheapest + lab plotted)`
+    : "";
+  // FORK 2026-08-27 (the architect): say HOW MANY models carry an API triangle and how wide
+  // the widest gap is. Without the count the absence of a triangle on every Chinese
+  // dot reads as missing data rather than as the finding it actually is — those
+  // routes are already at list price, which is the whole reconciliation.
+  const apiPlotted = plotted.filter((m) => scApiPointsFor(m).length > 0);
+  const apiMults = apiPlotted
+    .map((m) => scApiMultiple(m))
+    .filter((v): v is number => typeof v === "number");
+  const apiNote = apiPlotted.length
+    ? ` · ${apiPlotted.length} of ${plotted.length} models are discounted by a plan we hold` +
+      (apiMults.length ? ` · widest gap ${Math.max(...apiMults).toFixed(0)}×` : "")
+    : "";
+  const exNote =
+    (excluded.length ? ` · not plotted: ${excluded.map(esc).join(", ")}` : "") +
+    // say it out loud rather than let the chart quietly show a number the user
+    // cannot buy (bible §5.8h: the chart never hides what it dropped)
+    (twinGroups.size
+      ? ` · ${twinGroups.size} models sold by several vendors at different prices — dashed line joins the routes`
+      : "") +
+    cnNote;
+  // ─── PROVIDER LEGEND (the architect 2026-08-24) ───
+  // "At the top of the graph, OUTSIDE of it, a list of the different providers,
+  // on their color, with their logo, and surrounded by an oval line same as
+  // their models in the graph."
+  //
+  // Grouped by vendorKey, NOT by provider — see the note in push(). The chip
+  // takes its colour from the first member's RESOLVED chart colour (rainbow
+  // already collapsed to EEG_GOOGLE_GLOW), so a chip can never disagree with the
+  // dots it controls.
+  //
+  // The logo resolves the way the dossier already does it — getModelLogoSvg
+  // first, PROVIDER_ICONS second. NOT getProviderLogoSvg, which falls back to
+  // the Anthropic sparkle for any unknown key and would put a Claude mark on the
+  // OpenRouter tail. A vendor with neither logo gets a colour dot instead.
+  // These chips live in the overlay's HTML, not inside the <svg>, so the Copilot
+  // <img> mark is safe here (the foreign-content breakout only bites inside svg).
+  //
+  // ORDER (the architect 2026-08-24): by the INTELLIGENCE of each vendor's best model,
+  // smartest first — not by how many models they happen to have on the chart.
+  // Model count is inventory, not capability: it put OpenRouter's long tail of
+  // re-sells ahead of Anthropic. `index` is the same AA score the x-axis plots,
+  // and every plotted model has a real one (push() drops the unscored), so the
+  // chip row reads left-to-right as the frontier ranking. Ties (one brain
+  // re-sold by a second route) fall back to count, then name, so the order is
+  // total and the row never reshuffles between renders.
+  const legendGroups = new Map<string, { color: string; ids: string[]; best: number }>();
+  for (const m of plotted) {
+    const key = m.vendorKey ?? m.provider;
+    const g = legendGroups.get(key);
+    if (g) {
+      g.ids.push(m.id);
+      if (m.index > g.best) g.best = m.index;
+    } else legendGroups.set(key, { color: m.color, ids: [m.id], best: m.index });
+  }
+  const legendChips = [...legendGroups.entries()]
+    .sort(
+      (a, b) =>
+        b[1].best - a[1].best || b[1].ids.length - a[1].ids.length || a[0].localeCompare(b[0]),
+    )
+    .map(([key, g]) => {
+      const sample = g.ids[0];
+      const logo = getModelLogoSvg(sample) ?? PROVIDER_ICONS[providerOf(sample)] ?? "";
+      const label = vendorMarkFor(sample)?.label ?? key;
+      return (
+        `<button class="sc-chip" data-vendor="${esc(key)}" style="--sc-chip:${esc(g.color)}"` +
+        ` data-hint="${esc(`${label} — ${g.ids.length} model${g.ids.length > 1 ? "s" : ""} on the chart. Hover to pick them out; click to keep them lit and compare vendors.`)}">` +
+        `<span class="sc-chip-logo">${logo || `<span class="sc-chip-dot"></span>`}</span>` +
+        `<span class="sc-chip-name">${esc(label)}</span>` +
+        `<span class="sc-chip-n">${g.ids.length}</span>` +
+        `</button>`
+      );
+    })
+    .join("");
+
+  const overlay = document.createElement("div");
+  overlay.className = "sc-overlay";
+  overlay.innerHTML = `
+    <div class="sc-card">
+      <div class="sc-head">
+        <div>
+          <div class="sc-title">SMARTNESS × COST</div>
+          <div class="sc-sub">AA intelligence index · effective cost · a stop is plotted only when the vendor documents it AND AA published a number for it</div>
+        </div>
+        <label class="sc-switch" data-hint="Per-token price ↔ average cost to complete ONE task (tokens-per-task research: OckBench-anchored, estimates labelled). Opus 5 @ high (Anthropic's default) is the fixed reference.">
+          <span class="sc-switch-opt">€/MTOK</span>
+          <input type="checkbox" class="sc-switch-input" />
+          <span class="sc-switch-track"><span class="sc-switch-knob"></span></span>
+          <span class="sc-switch-opt">€/TASK</span>
+        </label>
+        <button class="sc-close" title="Close">✕</button>
+      </div>
+      <div class="sc-legend" role="group" aria-label="Providers">${legendChips}</div>
+      <div class="sc-body"></div>
+      <div class="sc-axisbar">
+        <label class="sc-switch" data-hint="Bottom axis: logarithmic ↔ linear cost scale">
+          <span class="sc-switch-opt">LOG</span>
+          <input type="checkbox" class="sc-switch-input sc-scale-input" />
+          <span class="sc-switch-track"><span class="sc-switch-knob"></span></span>
+          <span class="sc-switch-opt">LINEAR</span>
+        </label>
+      </div>
+      <div class="sc-foot">
+        <span>◎ outline + logo = model · size ∝ context window (see the three sample rings, bottom-left of the plot)</span>
+        <span>— a circle per <b>vendor-documented</b> effort that AA actually scored · missing AA number = the stop is omitted, never guessed · a model AA has not split stays one headline-index dot</span>
+        <span>△ shaded triangle = the <b>official API list price</b> of the same model · - - - dashed bridge = the gap between what this plan pays and sticker · hover either to light both${apiNote}</span>
+        <span>prepaid circles (Claude, Grok, ChatGPT) sit at <b>${Math.round(0.75 * 100)}% of the quota ceiling</b> — drag one toward its triangle to read other utilisation; it snaps back on drop</span>
+        <span><b>Read the two marks as different questions.</b> A circle answers "what does this token cost ME" (Anthropic Max 20x amortises Opus 5's $25 sticker to €0.2232 — <b>112×</b>); a triangle answers "what does this model cost". Metered routes — every Chinese lab, Google, the OpenRouter tail — have <b>no triangle because their circle already IS list price</b>. Comparing a circle to a circle across those two bases is the one thing this chart must never be used for.</span>
+        <span>€/task: tokens-per-task <b>OckBench-anchored</b> (Opus 5, Kimi K3), rest estimated · reference = Opus 5 @ high, Anthropic's documented default (fixed)</span>
+        <span>- - - dashed = one model, several vendors · <b>Copilot is not a markup</b>: GitHub charges each model's own list price (13 of 14 triples verified 2026-08-15) — its dots sit right because our Anthropic plan is the deeper discount, and Copilot rows are <b>prospective</b> (we hold no Pro+ seat)</span>
+        <span>Auto not plotted (uncapped)${exNote}</span>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  // FORK 2026-08-06 #4 (the architect: linear ↔ log bottom-axis toggle): the two
+  // toggles compose. €/MTOK ↔ €/TASK flips a class (CSS glide, reversible for
+  // free). LOG ↔ LINEAR re-renders the SVG — linear positions are not a
+  // transform of log ones — and the re-render re-applies the task state, so
+  // any combination of the two switches is always coherent.
+  const body = overlay.querySelector(".sc-body")!;
+  // FORK 2026-08-06 #8: the scale toggle now also carries .sc-switch-input (that is
+  // the class which hides the native checkbox), so selecting the task toggle by
+  // that class alone would depend on DOM ORDER — and would silently swap the two
+  // switches the day the markup is reordered. Exclude the scale one explicitly.
+  const taskInput = overlay.querySelector(
+    ".sc-switch-input:not(.sc-scale-input)",
+  ) as HTMLInputElement;
+  const scaleInput = overlay.querySelector(".sc-scale-input") as HTMLInputElement;
+  // FORK 2026-08-06 #8 (the architect: "make it so that I can pan dynamically around the
+  // graph with the drag action and zoom with the mouse wheel. Don't let the graph
+  // zoom out more when all the models are already visible").
+  //
+  // Pan/zoom drives the SVG's own viewBox rather than a CSS transform: the viewBox
+  // is what preserveAspectRatio already maps to the container, so zooming this way
+  // needs no coordinate bookkeeping and cannot fight the responsive sizing. Screen
+  // px → chart units goes through getScreenCTM().inverse(), the only conversion
+  // that stays correct when the card is resized.
+  //
+  // The FULL drawing is 0 0 900 600. clamp() forbids a viewBox wider than that, so
+  // "everything visible" is the hard zoom-out floor the architect asked for, and pins the
+  // pan inside the drawing so you can never drag the constellations off-screen.
+  const VB_W = SC_VIEW_FULL.w;
+  let view: ScView = { ...SC_VIEW_FULL };
+  // The bounds live in smart-cost-chart.ts (scClampView) so they are unit-tested
+  // rather than trusted — see the "zoom-out floor" tests.
+  const clampView = () => {
+    view = scClampView(view);
+  };
+  // One rAF-coalesced write per frame. A trackpad emits wheel events far faster
+  // than the compositor paints; without this the handler ran the whole viewBox +
+  // custom-property update several times between frames, all but the last of them
+  // discarded. Same reason the class toggles are conditional — a no-op class write
+  // still invalidates style for the whole subtree.
+  let rafId = 0;
+  const applyView = (svg: SVGSVGElement) => {
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = 0;
+      svg.setAttribute("viewBox", `${view.x} ${view.y} ${view.w} ${view.h}`);
+      // --sc-k = inverse zoom. CSS counter-scales the markers by it so rings and
+      // logos keep their on-screen size while their POSITIONS spread (the architect).
+      svg.style.setProperty("--sc-k", String(view.w / VB_W));
+      const zoomed = view.w < VB_W - 0.5;
+      if (svg.classList.contains("sc-zoomed") !== zoomed) {
+        svg.classList.toggle("sc-zoomed", zoomed);
+      }
+    });
+  };
+  let zoomSettle = 0;
+  const wirePanZoom = (svg: SVGSVGElement) => {
+    const toChart = (ev: { clientX: number; clientY: number }) => {
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return null;
+      const pt = svg.createSVGPoint();
+      pt.x = ev.clientX;
+      pt.y = ev.clientY;
+      return pt.matrixTransform(ctm.inverse());
+    };
+    svg.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        const before = toChart(e);
+        if (!before) return;
+        svg.classList.add("sc-zooming");
+        window.clearTimeout(zoomSettle);
+        zoomSettle = window.setTimeout(() => svg.classList.remove("sc-zooming"), 180);
+        const prevW = view.w;
+        view.w *= e.deltaY > 0 ? 1.15 : 1 / 1.15;
+        clampView();
+        if (view.w === prevW) return; // already at a limit — nothing to redraw
+        // keep the point under the cursor pinned while the scale changes
+        const k = view.w / prevW;
+        view.x = before.x - (before.x - view.x) * k;
+        view.y = before.y - (before.y - view.y) * k;
+        clampView();
+        applyView(svg);
+      },
+      { passive: false },
+    );
+    // FORK 2026-08-06 #12 (the architect: "when I drag the graph I accidentally select
+    // some axis titles and model names"). The selection itself is killed by
+    // user-select:none on .sc-svg; this stops the OTHER native gesture a drag can
+    // start — dragging a logo out of the chart as an image. Bound to dragstart
+    // rather than preventDefault()ing pointerdown, because that would also risk
+    // the double-click-to-reset-view below (preventing pointerdown suppresses the
+    // compatibility mouse events the click pair is built from).
+    svg.addEventListener("dragstart", (e) => e.preventDefault());
+    let drag: { x: number; y: number } | null = null;
+    svg.addEventListener("pointerdown", (e) => {
+      if ((e.target as Element | null)?.closest?.("[data-util-drag]")) return;
+      const p = toChart(e);
+      if (!p) return;
+      drag = { x: p.x, y: p.y };
+      svg.setPointerCapture(e.pointerId);
+      svg.classList.add("sc-dragging", "sc-zooming");
+    });
+    svg.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const p = toChart(e);
+      if (!p) return;
+      // Drag moves the CONTENT with the cursor, so the grab point stays put.
+      view.x -= p.x - drag.x;
+      view.y -= p.y - drag.y;
+      clampView();
+      applyView(svg);
+    });
+    const endDrag = (e: PointerEvent) => {
+      if (!drag) return;
+      drag = null;
+      try {
+        svg.releasePointerCapture(e.pointerId);
+      } catch {
+        /* pointer already gone */
+      }
+      svg.classList.remove("sc-dragging", "sc-zooming");
+    };
+    svg.addEventListener("pointerup", endDrag);
+    svg.addEventListener("pointercancel", endDrag);
+    // Double-click returns to the full view — the way out of a deep zoom.
+    svg.addEventListener("dblclick", () => {
+      view.x = 0;
+      view.y = 0;
+      view.w = VB_W;
+      clampView();
+      applyView(svg);
+    });
+  };
+  const wireUtilDrag = (svg: SVGSVGElement) => {
+    const toChart = (ev: { clientX: number; clientY: number }) => {
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return null;
+      const pt = svg.createSVGPoint();
+      pt.x = ev.clientX;
+      pt.y = ev.clientY;
+      return pt.matrixTransform(ctm.inverse());
+    };
+    let slide: {
+      g: SVGGElement;
+      homeX: number;
+      listX: number;
+      fullX: number;
+      homeCost: number;
+      y: number;
+    } | null = null;
+    const put = (g: SVGGElement, x: number, y: number) => {
+      g.setAttribute("transform", `translate(${x}, ${y})`);
+    };
+    const labelOf = (g: SVGGElement) => g.querySelector(".sc-util-pct") as SVGTextElement | null;
+    const showHud = (g: SVGGElement, util: number, cost: number) => {
+      const el = labelOf(g);
+      if (!el) return;
+      const pct = Math.round(util * 100);
+      const euros = cost >= 10 ? cost.toFixed(0) : cost >= 1 ? cost.toFixed(2) : cost.toFixed(3);
+      el.textContent = `${pct}% · €${euros}`;
+    };
+    svg.addEventListener("pointerdown", (e) => {
+      const g = (e.target as Element | null)?.closest?.(
+        ".sc-dotpos[data-util-drag]",
+      ) as SVGGElement | null;
+      if (!g) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const homeX = Number(g.dataset.homeX);
+      const listX = Number(g.dataset.listX);
+      const homeCost = Number(g.dataset.homeCost);
+      const y = Number(g.dataset.homeY);
+      const s = scComputeScales(plotted, scaleInput.checked ? "linear" : "log");
+      slide = {
+        g,
+        homeX,
+        listX,
+        fullX: scCostX(scCostAtUtil(homeCost, 1), s),
+        homeCost,
+        y,
+      };
+      g.classList.add("sc-util-sliding");
+      g.classList.remove("sc-util-snap");
+      svg.classList.add("sc-util-dragging");
+      showHud(g, SC_PLAN_UTIL, homeCost);
+      g.setPointerCapture(e.pointerId);
+    });
+    svg.addEventListener("pointermove", (e) => {
+      if (!slide) return;
+      const p = toChart(e);
+      if (!p) return;
+      const lo = Math.min(slide.fullX, slide.listX);
+      const hi = Math.max(slide.fullX, slide.listX);
+      const x = Math.max(lo, Math.min(hi, p.x));
+      put(slide.g, x, slide.y);
+      const s = scComputeScales(plotted, scaleInput.checked ? "linear" : "log");
+      showHud(slide.g, scUtilAtCost(slide.homeCost, scCostFromX(x, s)), scCostFromX(x, s));
+    });
+    const endSlide = (e: PointerEvent) => {
+      if (!slide) return;
+      const g = slide.g;
+      put(g, slide.homeX, slide.y);
+      g.classList.remove("sc-util-sliding");
+      g.classList.add("sc-util-snap");
+      svg.classList.remove("sc-util-dragging");
+      const el = labelOf(g);
+      if (el) el.textContent = `${Math.round(SC_PLAN_UTIL * 100)}%`;
+      try {
+        g.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already gone */
+      }
+      slide = null;
+    };
+    svg.addEventListener("pointerup", endSlide);
+    svg.addEventListener("pointercancel", endSlide);
+  };
+  // ─── HIGHLIGHT: hover a twin, hover/latch a provider (the architect 2026-08-24) ───
+  // Two independent sources of focus resolving to one state:
+  //   · hovering any dot lights every ROUTE to that same brain (data-twin), so
+  //     "who else sells this, and for how much" is one gesture
+  //   · hovering a provider chip lights that provider's models (data-vendor)
+  //   · CLICKING a chip LATCHES it — the "button with memory" — and latching a
+  //     second keeps both lit, which is the vendor comparison the architect asked for.
+  // Latch state lives OUT here on purpose: paint() throws the whole SVG away on
+  // every log↔linear switch, and state held inside it would silently vanish
+  // mid-comparison.
+  // FORK 2026-08-27 (the architect: "Both groupings should light up on mouseover
+  // synchronously, where I can see the difference in prices between 20x and API").
+  // hoverModel is a THIRD, independent focus source keyed on data-model (one route),
+  // so touching either the circles or the triangles lights the model's whole row —
+  // both constellations plus the dashed bridges between them. Kept separate from
+  // hoverTwin because that one means "other sellers of the same brain": folding them
+  // would light every route on the chart whenever you brushed one triangle.
+  const latched = new Set<string>();
+  let hoverVendor = "";
+  let hoverTwin = "";
+  let hoverModel = "";
+  const applyFocus = () => {
+    // Chips carry their own latch styling even when the plot is empty.
+    overlay.querySelectorAll(".sc-chip").forEach((c) => {
+      c.classList.toggle("active", latched.has((c as HTMLElement).dataset.vendor ?? ""));
+    });
+    const svgNow = body.querySelector(".sc-svg");
+    if (!svgNow) return;
+    const focused = latched.size > 0 || !!hoverVendor || !!hoverTwin || !!hoverModel;
+    svgNow.classList.toggle("sc-focus", focused);
+    if (!focused) {
+      svgNow.querySelectorAll(".sc-hl").forEach((n) => n.classList.remove("sc-hl"));
+      return;
+    }
+    svgNow.querySelectorAll("[data-vendor],[data-twin],[data-model]").forEach((n) => {
+      const v = n.getAttribute("data-vendor") ?? "";
+      const t = n.getAttribute("data-twin") ?? "";
+      const mk = n.getAttribute("data-model") ?? "";
+      const on =
+        (!!v && (latched.has(v) || v === hoverVendor)) ||
+        (!!t && t === hoverTwin) ||
+        (!!mk && mk === hoverModel);
+      n.classList.toggle("sc-hl", on);
+    });
+  };
+  // Delegated, because paint() replaces every node under .sc-body.
+  body.addEventListener("mouseover", (e) => {
+    const el = (e.target as Element | null) ?? null;
+    const t = el?.closest?.("[data-twin]")?.getAttribute("data-twin") ?? "";
+    const mk = el?.closest?.("[data-model]")?.getAttribute("data-model") ?? "";
+    if (t !== hoverTwin || mk !== hoverModel) {
+      hoverTwin = t;
+      hoverModel = mk;
+      applyFocus();
+    }
+  });
+  body.addEventListener("mouseleave", () => {
+    if (hoverTwin || hoverModel) {
+      hoverTwin = "";
+      hoverModel = "";
+      applyFocus();
+    }
+  });
+  overlay.querySelectorAll(".sc-chip").forEach((chip) => {
+    const v = (chip as HTMLElement).dataset.vendor ?? "";
+    chip.addEventListener("mouseenter", () => {
+      hoverVendor = v;
+      applyFocus();
+    });
+    chip.addEventListener("mouseleave", () => {
+      if (hoverVendor === v) {
+        hoverVendor = "";
+        applyFocus();
+      }
+    });
+    chip.addEventListener("click", () => {
+      if (!latched.delete(v)) latched.add(v);
+      applyFocus();
+    });
+  });
+
+  const paint = () => {
+    body.innerHTML = plotted.length
+      ? renderSmartCostChart(plotted, { xScale: scaleInput.checked ? "linear" : "log" })
+      : '<div class="sc-empty">No plottable models.</div>';
+    const svgNow = body.querySelector(".sc-svg") as SVGSVGElement | null;
+    if (svgNow && taskInput.checked) svgNow.classList.add("sc-taskmode");
+    if (svgNow) {
+      // A repaint replaces the SVG element, so the view resets and the handlers
+      // are re-bound to the new node. Switching log↔linear changes what the
+      // coordinates MEAN, so carrying a zoom across it would frame nothing.
+      view.x = 0;
+      view.y = 0;
+      view.w = VB_W;
+      clampView();
+      applyView(svgNow);
+      wirePanZoom(svgNow);
+      wireUtilDrag(svgNow);
+    }
+    // Re-assert hover/latch on the fresh nodes — a repaint must not drop the
+    // comparison the user is in the middle of.
+    applyFocus();
+  };
+  paint();
+  taskInput.addEventListener("change", (e) => {
+    body
+      .querySelector(".sc-svg")
+      ?.classList.toggle("sc-taskmode", (e.target as HTMLInputElement).checked);
+  });
+  scaleInput.addEventListener("change", () => paint());
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKey);
+  overlay.querySelector(".sc-close")!.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+}
+
+// The MODELS panel rebuilds its innerHTML on every render, so the chart button
+// is bound once at document level instead of per-render.
+document.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement | null)?.closest(".sc-open-btn");
+  if (btn) {
+    e.stopPropagation();
+    void openSmartCostChart();
+  }
+});
+
+// FORK 2026-08-06 #3 (the architect): the SMART MODELS dossier — best-at + trained
+// refusals for every smart model, with the US/China common ground called out.
+// Same overlay mechanics as the chart; the rows are the SMART MODELS set
+// computed by the ONE shared predicate (modelPassesPanelMin).
+async function openDossier(): Promise<void> {
+  const cfgData = modelConfigData as {
+    primary?: string;
+    models?: Record<string, ModelIntelligenceMeta>;
+  } | null;
+  const meta = cfgData?.models;
+  const configured = await fetchScProviderModels();
+  const names = new Map<string, string>();
+  for (const [pid, ms] of Object.entries(configured)) {
+    for (const m of ms) {
+      if (m?.id && m.name) names.set(`${pid}/${m.id}`, m.name);
+    }
+  }
+  // FORK 2026-08-15 (the architect: "in the smart x cost and dossier graphs you should add
+  // all of them ... it all goes together"). The dossier used to apply the SMART
+  // MODELS gate (AA_PANEL_MIN = 50), so three models the architect actually runs —
+  // minimax-m3 (45.4), qwen3.7-max (46.7), haiku (29.9) — were configured, billable
+  // and invisible here. The panel gate answers "what should I pick by default"; the
+  // dossier answers "what am I running and what is it like", and those are not the
+  // same question. Every configured model gets a row.
+  //
+  // NOT extended to the chart's catalog tail on purpose: dossier rows are WRITTEN
+  // knowledge (refusal benchmarks, best-at claims), and SC_DOSSIER_RULES has no
+  // entry for most of the tail. A blank row is honest; a fabricated one is not.
+  const ids = Object.keys(meta || {});
+  const rows: DossierRow[] = [];
+  for (const id of ids) {
+    const index = configuredIntelligenceIndex(meta, id);
+    if (index === undefined) continue;
+    const paint = resolveEegPaint({ model: id, provider: providerOf(id) });
+    rows.push({
+      id,
+      name: names.get(id) || id.split("/").pop() || id,
+      color: paint.isRainbow ? EEG_GOOGLE_GLOW : paint.stroke,
+      index,
+      // Model id first: every OpenRouter model reports provider "openrouter", so
+      // the provider table would paint a Claude sparkle on Kimi. Same precedence
+      // as modelIcon() uses for the panel rows.
+      logo: getModelLogoSvg(id) ?? PROVIDER_ICONS[providerOf(id)],
+    });
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "sc-overlay sd-overlay";
+  overlay.innerHTML = `
+    <div class="sc-card sd-card">
+      <div class="sc-head">
+        <div>
+          <div class="sc-title">SMART MODELS · DOSSIER</div>
+          <div class="sc-sub">what each is best at · a column per censored topic · hover a cell for the evidence</div>
+        </div>
+        <button class="sc-close" title="Close">✕</button>
+      </div>
+      <div class="sd-body">${renderDossierTable(rows)}${renderCnProviderMatrix(CN_PROVIDER_PRICES)}</div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKey);
+  overlay.querySelector(".sc-close")!.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  attachDossierTooltips(overlay);
+  attachDossierSort(overlay);
+}
+
+// The SMART MODELS label also rebuilds on every render — document-level binding.
+document.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement | null)?.closest(".sd-open-btn");
+  if (btn) {
+    e.stopPropagation();
+    void openDossier();
+  }
+});
 // ─── Model Panel Rows ───
 
-// FORK 2026-07-09: visible per-model token count (7d, Session/All aware) — the
-// panel previously showed only rate-limit % bars, which read as "zero usage".
-function modelTokenLabel(modelId: string): string {
-  const src = budgetScope === "session" ? (modelTokensBySession[sessionKey] ?? {}) : modelTokensAll;
-  const t = src[modelId] ?? 0;
-  if (t <= 0) {
-    return '<span class="model-tokens-col" style="min-width:40px"></span>';
+// FORK 2026-07-30 (the architect): column 3 was session token totals — low signal next
+// to the budget bars. Show the raw Artificial Analysis Intelligence Index used
+// by the panel sort instead. Higher is smarter; missing/unscored models show —.
+function modelIntelligenceIndex(modelId: string): string {
+  const cfg = modelConfigData as {
+    models?: Record<string, ModelIntelligenceMeta>;
+  } | null;
+  const score = configuredIntelligenceIndex(cfg?.models, modelId);
+  if (score === undefined) {
+    return `<span class="model-index-col" data-hint="No Artificial Analysis Intelligence Index available" style="min-width:28px;text-align:right;font-size:9px;color:var(--muted);font-family:'SF Mono',monospace">—</span>`;
   }
-  const scopeTip = budgetScope === "session" ? "this session" : "all sessions, 7d";
-  return `<span class="model-tokens-col" data-hint="${fmtTokCount(t)} tokens (${scopeTip})" style="min-width:40px;text-align:right;font-size:9px;color:var(--muted);font-family:'SF Mono',monospace">${fmtTokCount(t)}</span>`;
+  const label = Number.isInteger(score) ? String(score) : score.toFixed(1);
+  return `<span class="model-index-col" data-hint="Artificial Analysis Intelligence Index: ${label} (higher = smarter; panel sort key)" style="min-width:28px;text-align:right;font-size:9px;color:var(--accent);font-family:'SF Mono',monospace;font-weight:700">${label}</span>`;
 }
 
 function renderModelRow(
@@ -9742,7 +18073,11 @@ function renderModelRow(
   errorInfo?: { error: string; reason: string },
   keyId?: string,
 ): string {
-  const color = PROVIDER_COLORS[provider] || "#6b7280";
+  // FORK 2026-08-06: unified glow — the model's EEG trace color via the central
+  // resolver. getModelAccentColor was the vendor-only half of this; resolveEegGlowColor
+  // covers vendors AND every provider in one palette (the EEG palette), so a row
+  // glows exactly the color its trace draws.
+  const color = resolveEegGlowColor({ model: id, provider });
   const liveClass = count > 0 ? " model-live" : "";
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
@@ -9759,17 +18094,16 @@ function renderModelRow(
     ? `<span class="model-error-badge"${actionAttr} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, id, keyId);
-  const costLabel = getModelCost(id, keyId);
   const barsHtml = renderUsageBarsOnly(usage);
-  const costHtml = renderCostCol(costLabel);
+  const costHtml = renderCostCol(id);
   const nameParts =
     esc(name) + (suffix ? ` <span class="model-auth-suffix">${esc(suffix)}</span>` : "");
   // FORK 2026-06-14 (bug #1): keep the last-computed model pinned when idle+collapsed.
   const recentClass = count === 0 && rowIsRecentModel(id) ? " model-recent" : "";
 
   return `<div class="model-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
-    <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
-    ${modelTokenLabel(id)}
+    <span class="model-name-col">${modelIcon(id, provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    ${modelIntelligenceIndex(id)}
     ${barsHtml}
     ${costHtml}
     ${countBadge}
@@ -9786,7 +18120,8 @@ function renderAuthKeyRow(
   count: number,
   errorInfo?: { error: string; reason: string },
 ): string {
-  const color = PROVIDER_COLORS[provider] || "#6b7280";
+  // FORK 2026-08-06: unified glow — same central resolver as every other surface.
+  const color = resolveEegGlowColor({ model: modelId, provider });
   const liveClass = count > 0 ? " model-live" : "";
   const errorClass = errorInfo ? " model-errored" : "";
   const glowStyle =
@@ -9803,15 +18138,14 @@ function renderAuthKeyRow(
     ? `<span class="model-error-badge"${actionAttr} data-hint="${esc(errorInfo.error)}">${shortErrorLabel(errorInfo.reason)}</span>`
     : "";
   const usage = getModelUsage(provider, modelId, keyId);
-  const costLabel = getModelCost(modelId, keyId);
   const barsHtml = renderUsageBarsOnly(usage);
-  const costHtml = renderCostCol(costLabel);
+  const costHtml = renderCostCol(modelId);
   // FORK 2026-06-14 (bug #1): keep the last-computed model pinned when idle+collapsed.
   const recentClass = count === 0 && rowIsRecentModel(modelId) ? " model-recent" : "";
 
   return `<div class="model-row auth-key-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
-    <span class="model-name-col">${providerIcon(provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
-    ${modelTokenLabel(modelId)}
+    <span class="model-name-col">${modelIcon(modelId, provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
+    ${modelIntelligenceIndex(modelId)}
     ${barsHtml}
     ${costHtml}
     ${countBadge}
@@ -9856,7 +18190,14 @@ function timeAgo(ts: number): string {
 }
 
 // Track which session groups are collapsed (all collapsed by default)
-const collapsedGroups = new Set<string>(["cron", "subagent", "whatsapp", "other"]);
+const collapsedGroups = new Set<string>([
+  "cron",
+  "subagent",
+  "whatsapp",
+  "other",
+  "recovered",
+  "fractal",
+]);
 
 function classifySession(key: string): { group: string; shortLabel: string } {
   // agent:main:cron:<uuid>
@@ -9882,6 +18223,16 @@ function classifySession(key: string): { group: string; shortLabel: string } {
   if (key.endsWith(":main")) {
     return { group: "pinned", shortLabel: "main" };
   }
+  // FORK 2026-08-11 (the architect) — sessions re-registered by the session-recover
+  // procedure. It mints readable slug keys (`agent:main:tinker:<title-slug>`),
+  // always longer than the 8-char nanoid a live Tinker tab uses, so the length
+  // test cleanly separates "a chat I recovered for you" from "a tab you actually
+  // opened". MUST sit ABOVE the tinker branch below — that one matches every
+  // `:tinker:` key and would swallow these into `pinned`, swamping the real tab
+  // list, which is the complaint that started this one layer up.
+  if (key.includes(":tinker:") && (key.split(":tinker:")[1] ?? "").length > 12) {
+    return { group: "recovered", shortLabel: (key.split(":tinker:")[1] ?? "").slice(0, 24) };
+  }
   // FORK: tinker tab sessions — canonical "agent:main:tinker:xxx" or short "tinker:xxx"
   if (/:tinker:/.test(key) || key.startsWith("tinker:")) {
     const tab = tabs.find((t) => t.sessionKey === key);
@@ -9889,7 +18240,7 @@ function classifySession(key: string): { group: string; shortLabel: string } {
     const label = tab?.title || tinkerSuffix?.slice(0, 8) || "tab";
     return { group: "pinned", shortLabel: label };
   }
-  // FORK 2026-06-25 (the owner) — dashboard:* keys are real user chat sessions (e.g. a
+  // FORK 2026-06-25 (the architect) — dashboard:* keys are real user chat sessions (e.g. a
   // cloned tab). Without this branch they fell through to "other", which is COLLAPSED
   // by default — so a closed clone-tab vanished from the panel entirely. Group them with
   // the pinned tabs (labelled by their cookiePhrase via renderSessionRow) so they stay
@@ -9899,6 +18250,15 @@ function classifySession(key: string): { group: string; shortLabel: string } {
     const uuid = key.split(":dashboard:")[1] ?? "";
     return { group: "pinned", shortLabel: tab?.title || uuid.slice(0, 8) };
   }
+  // FORK 2026-08-11 (the architect) — the reflection lane is BACKGROUND, not a peer of
+  // real conversations. It mints one permanent session per parent turn (~70/day)
+  // under `fractal-reflection:`, plus the announce/title-suggest sub-families
+  // that bill into the same namespace. With no branch here all of them fell
+  // through to "other" and rendered beside the architect's own chats — 454 rows
+  // of fortune-cookie cookiePhrases burying 11 named tabs. Own folder, collapsed.
+  if (/:fractal|:announce:|:title-suggest/.test(key)) {
+    return { group: "fractal", shortLabel: key.slice(0, 24) };
+  }
   return { group: "other", shortLabel: key.slice(0, 24) };
 }
 
@@ -9907,10 +18267,12 @@ const GROUP_LABELS: Record<string, string> = {
   cron: "Cron Jobs",
   subagent: "Subagents",
   whatsapp: "WhatsApp",
+  recovered: "Recovered chats",
+  fractal: "Reflections",
   other: "Other",
 };
 
-const GROUP_ORDER = ["pinned", "whatsapp", "cron", "subagent", "other"];
+const GROUP_ORDER = ["pinned", "whatsapp", "recovered", "cron", "subagent", "other", "fractal"];
 
 // FORK 2026-06-11 — tinkerui-slider: per-tab model badge + 7-stop thinking slider.
 // (2026-06-14: the 'adaptive' stop was removed — 8 stops -> 7.)
@@ -9932,8 +18294,75 @@ const THINK_STOPS: { lvl: string; label: string; short: string }[] = [
   { lvl: "max", label: "Max", short: "Max" },
 ];
 
+// FORK 2026-07-21 (the architect): the EFFORT scale is PER-MODEL. Different providers /
+// families expose different reasoning-effort sets, so the effort slider must show
+// ONLY the levels the SELECTED model actually supports. This mirrors the backend
+// truth: OpenAI families in src/agents/openai-reasoning-effort.ts (with "none"
+// folded into "" = Auto) and the Anthropic ladder in src/agents/effort-allocator
+// (minimal→max). Levels are THINK_STOPS `lvl` strings; "" = Auto (model/router
+// decides). When the MODEL slider moves, the effort slider re-renders from this
+// set and any pinned effort outside it is cleared back to Auto.
+const EFFORT_ALL = ["", "minimal", "low", "medium", "high", "xhigh", "max"];
+function allowedEffortLevels(modelId: string | null | undefined): string[] {
+  const lo = (modelId || "").toLowerCase();
+  if (!lo) return EFFORT_ALL; // Auto model → full scale
+  // Anthropic effort.md 2026-08-27: Opus 5 / Fable 5 / Sonnet 5 / Opus 4.8 / 4.7
+  // = low→max (no minimal). Sonnet 4.6 / Opus 4.6 = low/medium/high/max (no xhigh).
+  if (/claude|opus|sonnet|haiku|fable/.test(lo)) {
+    if (/(?:opus-5|fable-5|sonnet-5|opus-4[.-]8|opus-4[.-]7)(?![.\d])/.test(lo)) {
+      return ["", "low", "medium", "high", "xhigh", "max"];
+    }
+    if (/(?:sonnet-4[.-]6|opus-4[.-]6)(?![.\d])/.test(lo)) {
+      return ["", "low", "medium", "high", "max"];
+    }
+    return ["", "minimal", "low", "medium", "high"];
+  }
+  // xAI docs 2026-08-27: grok-4.6 = low/medium/high/xhigh; grok-4.5 = low/medium/high.
+  if (/grok|xai/.test(lo)) {
+    if (/grok-4\.6|grok-4-6/.test(lo)) return ["", "low", "medium", "high", "xhigh"];
+    if (/grok-4\.5|grok-4-5/.test(lo)) return ["", "low", "medium", "high"];
+    return ["", "low", "high"];
+  }
+  // Google Gemini: a dynamic thinking BUDGET, not a named-effort enum — expose
+  // Auto + coarse budget buckets (estimate; no discrete effort levels upstream).
+  if (/gemini|(?:^|\/)gem|gemma/.test(lo)) return ["", "low", "medium", "high"];
+  // OpenAI families (mirror openai-reasoning-effort.ts; "none" → "" Auto).
+  if (/gpt-?5/.test(lo)) {
+    if (/codex-mini/.test(lo)) return ["", "medium"];
+    if (/codex-max/.test(lo)) return ["", "medium", "high", "xhigh"];
+    if (/codex/.test(lo)) return ["", "low", "medium", "high", "xhigh"];
+    if (/-pro\b/.test(lo)) {
+      return /gpt-?5-pro/.test(lo) ? ["", "high"] : ["", "medium", "high", "xhigh"];
+    }
+    if (/gpt-?5\.1\b/.test(lo)) return ["", "low", "medium", "high"];
+    // GPT-5.6 vendor page 2026-08-27: none/low/medium/high/xhigh/max.
+    if (/gpt-?5\.6/.test(lo)) return ["", "low", "medium", "high", "xhigh", "max"];
+    // gpt-5.2…5.5 → none/low/medium/high/xhigh.
+    if (/gpt-?5\.[2-9]/.test(lo)) return ["", "low", "medium", "high", "xhigh"];
+    return ["", "minimal", "low", "medium", "high"]; // gpt-5 base
+  }
+  return EFFORT_ALL;
+}
+// The model whose effort set the slider should reflect: the client-side model pin
+// wins (webchat can't persist server-side), else the viewed session's model.
+function activeModelIdForEffort(): string | null {
+  // FORK 2026-07-26 (the architect: "when model is set to auto, effort has only auto-low-high") —
+  // gate on the PIN ONLY. This used to fall back to the viewed session's `model`, which is
+  // NEVER empty (it is the override's model, else the last-run model, else DEFAULT_MODEL), so
+  // allowedEffortLevels' documented Auto branch — `if (!lo) return EFFORT_ALL` — was dead
+  // code. A session that last ran on grok collapsed the ladder to ["", "low", "high"] even
+  // though the model axis was on Auto. With no pin the model is genuinely undecided until the
+  // router picks, so the honest control is the FULL ladder.
+  const pinned = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
+  return pinned || null;
+}
+function activeEffortStops(): { lvl: string; label: string; short: string }[] {
+  const allowed = new Set(allowedEffortLevels(activeModelIdForEffort()));
+  return THINK_STOPS.filter((s) => allowed.has(s.lvl));
+}
+
 // FORK 2026-06-13 (eeg): shared tick-label layer printed UNDER a force slider so
-// EVERY stop is visible (the owner's "every option written in the slider") and each
+// EVERY stop is visible (the architect's "every option written in the slider") and each
 // label centers on the SAME x as its seismograph column (eegStopLeftCss → bible
 // §5.8h invariant 2 alignment). The active stop is bolded via .active.
 function renderSliderStops(labels: string[], activeIdx: number): string {
@@ -9966,22 +18395,141 @@ function highlightSliderStop(e: Event, rowSelector: string): void {
 // FORK 2026-06-13 (eeg): the model-force slider's tick row — each stop shows a
 // short horizontal line "chip" in that model's EEG IDENTITY (provider color +
 // cost-thickness, google = rainbow), so the slider previews how each model will
-// appear on the seismograph (the owner 2026-06-13). Auto = a thin gray dashed chip
-// (router's choice). Thickness uses the model's cost at a fixed MEDIUM reference
-// effort so the chips are comparable across models.
-function renderModelChip(id: string | null, idx: number): string {
-  const W = 30;
-  const H = 13; // tall enough for fable's 10px line (the owner's linear scale)
+// appear on the seismograph (the architect 2026-06-13). Auto = a thin gray dashed chip.
+// Thickness = paint.logWidth — the LOG scale, shared with the EEG paper.
+// FORK 2026-08-28 (the architect: "in the model selector, the big spenders are capped and the
+// cheap ones are very thin. Turn those last ones only into log-scale thickness, which
+// will be also used in turn by the EEG"). The chip box is a fixed 26px SVG, so the
+// linear scale was clipping everything past ~26px into one identical slab AND floating
+// the whole prepaid block on the 0.35px hairline — flat at BOTH ends of the range. The
+// MODELS panel keeps LINEAR (its row height grows to the stroke, so it has the room).
+// Rationale + the machine-checked log ladder live in eeg-trace.ts.
+// FORK 2026-08-28 #2 (the architect: "are the trace thickness in the model selector truncated
+// in height? they should not be" — and, when told they were not: "it was truncated
+// before and, if you did not change anything in this context, it still is". He was
+// right and the first answer measured the wrong thing).
+//
+// The chip's height was the literal constant 26 and an SVG root clips at its own
+// viewport (`overflow:hidden` is the UA style, not something in base.css) — so 26 was
+// a CAP with no name, invisible to a grep for EEG_COST_PX_CAP. Moving the strokes to
+// the log scale stopped them exceeding 26, but it did not remove the cap: it left the
+// top of the range SATURATING it instead. Measured on the live DOM 2026-08-28:
+// DSeek 17.0 · gemini-3.7F 17.3 · muse 17.6 · GLM-5.3 17.7 · Qwen3.8 18.5 · K3 20.9 —
+// six models filling a 26px box, each drawn 20px long and up to 21px thick, i.e.
+// THICKER THAN IT IS LONG. They stopped reading as lines at all and became six
+// near-identical solid squares. Same defect the architect reported originally, one step along:
+// clipped → saturated. A fixed box caps a quantitative channel however the numbers
+// reach it.
+//
+// So the box is DERIVED, never fixed. This is the MODELS panel's own rule
+// (renderCostCol: H = max(ceil(w)+4, 10)) generalised to a ROW of chips: one shared
+// height, because side-by-side chips with per-model heights would put every line on a
+// different baseline — but that shared height is computed FROM the widest stroke the
+// selector will actually draw, so it can never cap. A reprice that widens a model
+// widens the box instead of quietly flattening the top of the ladder.
+const CHIP_PAD_PX = 10; // background left above+below the widest stroke (5px each side)
+
+/** Shared chip height for a set of selector stops — ceil(widest stroke) + padding.
+ *  Never a constant, never a cap: it is a function of what is being drawn. */
+function modelChipBoxHeight(stops: { id: string | null }[]): number {
+  let widest = 0;
+  for (const s of stops) {
+    if (s.id === null) {
+      continue; // Auto is a 1.5px dashed hairline, never the constraint
+    }
+    const paint = resolveEegPaint({ model: s.id, provider: providerOf(s.id), effort: "medium" });
+    widest = Math.max(widest, paint.logWidth);
+  }
+  // The 26 floor keeps a short/cheap model list from collapsing the row to a sliver;
+  // it is a MINIMUM, and minimums only ever add background. It is not a maximum.
+  return Math.max(Math.ceil(widest) + CHIP_PAD_PX, 26);
+}
+
+// FORK 2026-08-30 (the architect: "add their cost in the mouseover message"). The chips
+// deliberately CANNOT separate models that cost within ~10% of each other - six of the
+// selector models sit inside a 4.25/3.75 = 1.13x price band, which the log scale draws
+// as a 0.2px difference, so they read as one height. That is the thickness channel
+// being honest, not a rendering fault (eeg-trace.ts, FORK 2026-08-28 #2), and
+// steepening the slope was measured and REJECTED: it makes the dear models bigger
+// blocks that read MORE alike, for +42px of panel height.
+//
+// So the NUMBER carries what the pixels cannot. Same vocabulary as the MODELS panel
+// cost hover (renderCostCol) so the two surfaces still read as one language, and it
+// names the drawn width explicitly - a hover that explains the bar it is attached to
+// is the whole point when two bars are the same height.
+//
+// Precision is 3 decimals below EUR 1: the panel toFixed(2) collapses the prepaid
+// block (grok 0.054, sonnet 0.089, opus 0.223) and rounds luna, the cheapest routable
+// model, to a flat 0.01.
+// FORK 2026-08-30 #3 (the architect: "keep the message simple in the model picker, first line
+// as always, then just a 5x Grok, which we will use as a reference in the model picker
+// since it is in the screen and is the thinnest").
+//
+// SUPERSEDES the price+cost hover of a0fbf99d3b1 and the cost hover before it. Both
+// were right about the problem - the bars cannot separate models priced within ~10% of
+// each other - and wrong about the dose: four figures per button (list price, cheapest
+// supplier, EUR/Mtok, x sonnet, bar px) is a spreadsheet in a tooltip.
+//
+// ONE number, and it is chosen to be CHECKABLE. Grok is the reference because it is on
+// the screen, in this very control, drawn as the thinnest bar - so "5x Grok" can be
+// verified against a bar three buttons away instead of against a number the reader has
+// to already know. That is the property x-sonnet lacked: Sonnet is a real model but it
+// is not necessarily rendered in the picker, so its multiple was unanchored.
+//
+// UNIFIED 2026-08-30: the MODELS panel now uses this same unit (the architect: "make the whole
+// models panel onhover references change now to grok"), so the picker no longer keeps a
+// local reference constant — EEG_COST_COMPARE_* in eeg-trace.ts is the single owner and
+// a multiple means the same thing on both surfaces. What stays picker-specific is the
+// ROUNDING: one decimal below 10×, whole numbers above, so Opus 4.2× and GLM-5.3-flash
+// 4.7× stay apart while Sol prints the "5× Grok" that was asked for instead of 4.96×.
+// The panel keeps its own toFixed(2) — a dense table hover can afford the extra digit.
+function modelCostHint(id: string): string {
+  const mult = eegCostLunaMult(id, providerOf(id));
+  if (!Number.isFinite(mult) || mult <= 0) {
+    return "";
+  }
+  // Three bands, and the sub-1x one exists to stop a cheap model reading as FREE:
+  // one decimal alone rounds anything under 0.05x to a flat "0x". tool:local (0.02x)
+  // is not routable so it cannot reach this control today, but the picker's model list
+  // comes from config and the next cheap model added would have printed 0x.
+  const shown =
+    mult < 1
+      ? Math.round(mult * 100) / 100
+      : mult < 10
+        ? Math.round(mult * 10) / 10
+        : Math.round(mult);
+  return `${String(shown)}× ${EEG_COST_COMPARE_LABEL}`;
+}
+
+function renderModelChip(id: string | null, idx: number, H: number): string {
+  // FORK 2026-08-05 (the architect: "the thickness of the trace cannot be arbitrarily
+  // changed, it needs to be exactly the thickness depicted in the models panel").
+  // The stroke-width is the number resolveEegPaint returns, drawn 1:1 in Y — that
+  // invariant is what the 2026-08-05 CSS broke by scaling the whole SVG down to
+  // 17x12 (overriding width/height on a viewBox SVG rescales the stroke too, so the
+  // chip was reporting a thickness no surface used).
+  //
+  // The chip now stretches to fill its grid column via CSS `width:100%` +
+  // `preserveAspectRatio="none"`. That is SAFE for the one quantity that must not
+  // move: with the viewBox height equal to the rendered height, scaleY is exactly 1,
+  // and a horizontal line's stroke extends in Y only — so the thickness stays
+  // pixel-exact while the LENGTH grows to the column. Length is what stops a thick
+  // stroke reading as a block; it carries no meaning here, so stretching it is free.
+  const W = COST_STROKE_W; // viewBox units only — the rendered width comes from CSS
   const y = H / 2;
   if (id === null) {
     return (
-      `<svg class="eeg-model-chip" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
+      `<svg class="eeg-model-chip" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"` +
+      ` preserveAspectRatio="none">` +
       `<line x1="3" y1="${y}" x2="${W - 3}" y2="${y}" stroke="#8A8F98" stroke-width="1.5"` +
-      ` stroke-dasharray="3 3" stroke-linecap="round"/></svg>`
+      ` stroke-dasharray="3 3" stroke-linecap="butt"/></svg>`
     );
   }
-  const paint = eegProviderPaint(providerOf(id));
-  const w = eegCostWidthPx(id, "medium");
+  const provider = providerOf(id);
+  // FORK 2026-08-06: central resolution — one run object in, one paint out.
+  // Same entry point as the EEG paper + MODELS cost column.
+  const paint = resolveEegPaint({ model: id, provider, effort: "medium" });
+  const w = paint.logWidth; // LOG scale (FORK 2026-08-28) — see the note above
   let defs = "";
   let stroke = paint.stroke;
   if (paint.isRainbow) {
@@ -9999,30 +18547,11 @@ function renderModelChip(id: string | null, idx: number): string {
     stroke = `url(#${gid})`;
   }
   return (
-    `<svg class="eeg-model-chip" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">` +
+    `<svg class="eeg-model-chip" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"` +
+    ` preserveAspectRatio="none">` +
     `${defs}<line x1="3" y1="${y}" x2="${W - 3}" y2="${y}" stroke="${stroke}"` +
-    ` stroke-width="${w.toFixed(1)}" stroke-linecap="round"/></svg>`
+    ` stroke-width="${w.toFixed(1)}" stroke-linecap="butt"/></svg>`
   );
-}
-
-// FORK 2026-06-13 (eeg): tick row for the MODEL slider — chip (EEG identity)
-// stacked over a short label, each centered on its stop's x (eegStopLeftCss).
-function renderModelSliderStops(
-  stops: { id: string | null; label: string }[],
-  activeIdx: number,
-): string {
-  let out = '<div class="model-slider-stops with-chips">';
-  for (let i = 0; i < stops.length; i++) {
-    const cls = i === activeIdx ? "model-slider-stop active" : "model-slider-stop";
-    const label = stops[i].id === null ? "Auto" : shortModelLabel(stops[i].id as string);
-    out +=
-      `<span class="${cls}" style="left:${eegStopLeftCss(i, stops.length)}">` +
-      renderModelChip(stops[i].id, i) +
-      `<span class="model-slider-stop-text">${esc(label)}</span>` +
-      "</span>";
-  }
-  out += "</div>";
-  return out;
 }
 
 // FORK 2026-06-13 (eeg): compact, DISTINCT label for the force-slider ticks —
@@ -10031,6 +18560,10 @@ function renderModelSliderStops(
 // version/variant so two opus or two gemini stops never collide.
 function shortModelLabel(id: string): string {
   const lo = id.toLowerCase();
+  // FORK 2026-07-31 (the architect: "remove the ·cp suffix, it is redundant given the
+  // logo"). The slider draws each stop behind its provider logo — the same reason
+  // the Gemini stops already dropped their "Gem" prefix below — so the marker was
+  // spending width to repeat what the icon says.
   if (/fable/.test(lo)) {
     return "Fable";
   }
@@ -10045,14 +18578,29 @@ function shortModelLabel(id: string): string {
     return "Haiku";
   }
   if (/gemini|(?:^|\/)gem/.test(lo)) {
+    // FORK 2026-07-22 (the architect): "under the gemini lines just put their version" —
+    // the provider LOGO already precedes the tick, so drop the "Gem" prefix and
+    // show the bare version + variant: 3.1P · 3.5F · 3.6F (FL = flash-lite).
     const v = (lo.match(/(\d+(?:\.\d+)?)/) || [])[1] || "";
-    const kind = /flash/.test(lo) ? "F" : /pro/.test(lo) ? "P" : "";
-    return `Gem${v}${kind}`.slice(0, 7);
+    const kind = /flash-?lite/.test(lo) ? "FL" : /flash/.test(lo) ? "F" : /pro/.test(lo) ? "P" : "";
+    return `${v}${kind}`.slice(0, 7);
+  }
+  // FORK 2026-07-21 (the architect): the gpt-5.6 family ships under nicknames — surface
+  // Sol/Luna/Terra directly (the generic gpt rule would collapse all three to
+  // "GPT5.6"). Match BEFORE the generic gpt branch below.
+  if (/sol\b/.test(lo) && /gpt-?5/.test(lo)) {
+    return "Sol";
+  }
+  if (/luna\b/.test(lo)) {
+    return "Luna";
+  }
+  if (/terra\b/.test(lo)) {
+    return "Terra";
   }
   if (/gpt-?[\d.]+/.test(lo)) {
     const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
     const k = /pro/.test(lo) ? "p" : /mini/.test(lo) ? "m" : /nano/.test(lo) ? "n" : "";
-    // "GPT" prefix (the owner 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
+    // "GPT" prefix (the architect 2026-06-13): 5.3cx → GPT5.3, 5.5 → GPT5.5. The codex
     // suffix is dropped — only gpt-5.3-codex carries it and there is no plain 5.3.
     return `GPT${v}${k}`;
   }
@@ -10062,10 +18610,29 @@ function shortModelLabel(id: string): string {
   if (/deepseek/.test(lo)) {
     return "DSeek";
   }
+  // FORK 2026-08-05 (the architect: "the names of the models will not overlap"). The
+  // OpenRouter vendors fell through to compactUnknownModelLabel and came out as
+  // "qwen3.8-max" / "kimi-k3" / "glm-5.2" — 3-4x the width of "Sol" or "Opus",
+  // which is what forced the selector onto extra rows. Same treatment every other
+  // family already gets: family + the disambiguating version, nothing else.
+  if (/kimi/.test(lo)) {
+    return "K" + ((lo.match(/k(\d+(?:\.\d+)?)/) || [])[1] || "3");
+  }
+  if (/qwen/.test(lo)) {
+    return "Qwen" + ((lo.match(/qwen(\d+(?:\.\d+)?)/) || [])[1] || "");
+  }
+  if (/glm/.test(lo)) {
+    return "GLM" + ((lo.match(/glm-?(\d+(?:\.\d+)?)/) || [])[1] || "");
+  }
   if (/gemma/.test(lo)) {
     return "Gemma";
   }
-  return (modelName(id) || id).slice(0, 6);
+  // FORK 2026-07-31 (the architect: "'gatewa' is not clear enough") — the fallback used to be
+  // a blind `.slice(0, 6)`, which turns any unrecognised id into a meaningless stub
+  // ("gateway-injected" → "gatewa"). compactUnknownModelLabel cuts on a separator so
+  // an unknown model still reads as a word, and marks the cut. Tested in
+  // ./transcript-only-models.test.ts.
+  return compactUnknownModelLabel(modelName(id) || id);
 }
 
 function thinkStopIndexForLevel(level: unknown): number {
@@ -10091,20 +18658,34 @@ function renderThinkingSlider(): string {
   // the EFFORT slider (webchat can't persist server-side). Fall back to the session's
   // stored level only when no pin exists for this session.
   const pinned = sessionKey ? effortPinBySession.get(sessionKey) : undefined;
-  const idx = thinkStopIndexForLevel(pinned ?? active?.thinkingLevel);
-  const stop = THINK_STOPS[idx] ?? THINK_STOPS[0];
+  // FORK 2026-07-21 (the architect): stops are PER-MODEL (activeEffortStops), so the scale
+  // matches the selected model/provider. Clamp the requested level into this set —
+  // a level the current model can't do (e.g. "max" on a GPT model) falls back to
+  // Auto rather than pointing at a stop that doesn't exist.
+  const stops = activeEffortStops();
+  // FORK 2026-07-26 (the architect: "when I move the effort level it magically hops to high") — read
+  // the CLIENT PIN ONLY. Falling back to `active.thinkingLevel` painted the SERVER's stored
+  // level, which webchat can never clear (chat.send omits `thinking` when unpinned;
+  // agent-command only assigns when truthy; sessions.patch is blocked for webchat). So
+  // selecting Auto, or moving the MODEL slider (which clears the pin then repaints), snapped
+  // the control back to whatever the session was last pinned to. Measured in the live store:
+  // 78 of 363 session rows carry a stored thinkingLevel — this was rail-wide, not Main-only.
+  const wantLvl = (pinned ?? "") as string;
+  let idx = stops.findIndex((s) => s.lvl === wantLvl);
+  if (idx < 0) idx = 0;
+  const stop = stops[idx] ?? stops[0];
   return (
     '<div class="model-think-slider-row">' +
     '<span class="model-slider-caption">EFFORT</span>' +
     '<input type="range" class="model-think-slider" min="0" max="' +
-    String(THINK_STOPS.length - 1) +
+    String(stops.length - 1) +
     '" step="1" value="' +
     String(idx) +
     '" aria-label="Thinking level: ' +
     esc(stop.label) +
     '">' +
     renderSliderStops(
-      THINK_STOPS.map((s) => s.short),
+      stops.map((s) => s.short),
       idx,
     ) +
     "</div>"
@@ -10113,68 +18694,199 @@ function renderThinkingSlider(): string {
 
 // FORK 2026-06-13 (eeg): stops for the model-force slider (bible §5.8h q2) —
 // stop 0 = Auto (router controls the model axis), then the configured models
-// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (the owner 2026-06-13), so
-// the model axis reads low→high left→right exactly like the effort slider. Rank
-// (Artificial-Analysis Intelligence Index in openclaw.json; lower = smarter) is
-// the sort key, modelPerfRank breaks ties. Capped at 7 (keeping the 7 smartest)
+// sorted by INTELLIGENCE with the SMARTEST on the RIGHT (the architect 2026-06-13), so
+// the model axis reads low→high left→right exactly like the effort slider. The
+// Artificial Analysis Intelligence Index (higher = smarter) is the sort key;
+// configured rank and modelPerfRank are fallbacks for unscored models.
 // so the row stays a discrete slider. Rebuilt per render/read from
 // modelConfigData; shared by the markup and the delegated listeners.
 function modelForceStops(): { id: string | null; label: string }[] {
   const stops: { id: string | null; label: string }[] = [{ id: null, label: "Auto" }];
   const cfg = modelConfigData as {
-    models?: Record<string, { rank?: number }>;
+    models?: Record<string, ModelIntelligenceMeta>;
   } | null;
   if (!cfg) {
     return stops;
   }
-  // FORK 2026-06-13 (eeg): drop the older claude-opus-4-7 (keep only opus-4-8) and
-  // gpt-5.3-codex (the owner: "never makes sense to use it"). From Anthropic the slider
-  // keeps Sonnet, Opus and Fable.
-  const EEG_SLIDER_EXCLUDE = /opus-4-7|gpt-5\.3/i;
+  // FORK 2026-06-13 (eeg) / 2026-07-25: drop older opus gens (keep only opus-5) and
+  // gpt-5.3-codex (the architect: "never makes sense to use it").
+  // FORK 2026-07-30: also drop long-tail Copilot twins (older 5.1/codex/4o) — they
+  // bloat the slider without adding a smartness tier the architect actually pins.
+  // FORK 2026-08-15: the whole `github-copilot/(…)` alternation is DELETED — every arm
+  // of it was prefixed `github-copilot/`, so all of them are now subsumed by
+  // modelIsHiddenFromModelsPanel above. Leaving dead alternatives here is how a regex
+  // becomes a second, silently-diverging eligibility rule. Note it also explains what
+  // the architect saw: this list named SOME Copilot ids (gpt-5.1, gpt-4, opus-4.5/4.6, haiku…)
+  // but not gpt-5.5, gpt-5.6-sol or claude-opus-4.7, so those still reached the slider.
+  // The non-Copilot cuts stay: they are the architect's by-name exclusions on other providers.
+  const EEG_SLIDER_EXCLUDE = /opus-4-[678]|gpt-5\.3/i;
   const rankOf = (id: string): number => cfg.models?.[id]?.rank ?? 999;
-  // FORK 2026-06-13 (eeg): only show models AT LEAST as smart as sonnet (the owner:
-  // "remove 5.4m, no need if it is not as smart as sonnet"). Sonnet's rank is the
-  // intelligence floor; anything ranked below it (mini/nano/haiku/older) is cut.
+  // "Above sonnet" = at least as smart as the SMARTEST sonnet (the intelligence
+  // floor). Anything ranked below it (mini/nano/haiku/older) is cut.
   let sonnetRank = 999;
   for (const id of Object.keys(cfg.models || {})) {
     if (/sonnet/i.test(id)) {
-      sonnetRank = rankOf(id);
-      break;
+      sonnetRank = Math.min(sonnetRank, rankOf(id));
     }
   }
-  // FORK 2026-06-24: Fable is the owner's flagship but export-controlled today, so a
-  // model-rank-refresh scores it at the BOTTOM (rank ~25). Always whitelist it past
-  // the sonnet-rank intelligence gate so it stays visible on the slider for when it
-  // returns — the owner wants to see it even while it can't yet be selected for real.
-  const FORCE_INCLUDE = /fable/i;
-  const ids = Object.keys(cfg.models || {}).filter(
-    (id) => !EEG_SLIDER_EXCLUDE.test(id) && (rankOf(id) <= sonnetRank || FORCE_INCLUDE.test(id)),
-  );
-  // smartest FIRST (lower rank = smarter)
-  ids.sort((a, b) => {
-    const ra = cfg.models?.[a]?.rank ?? 999;
-    const rb = cfg.models?.[b]?.rank ?? 999;
-    if (ra !== rb) {
-      return ra - rb;
+  // FORK 2026-07-21 (the architect, evening root-cause): ALWAYS surface — Fable (pinned
+  // right), Grok (visible placeholder until the SuperGrok oauth bridge lands), and
+  // gemini-3.1-pro (the ONLY non-Anthropic model that answers today, via the
+  // gemini CLI oauth — live-probed). The 15:49 cut of 3.1P is REVERSED: the
+  // "gemini-3.5-flash-preview" that displaced it was a PHANTOM id (absent from
+  // the provider catalog — every pin died as Unknown model) and was pruned from
+  // agents.defaults.models along with the equally-phantom gpt-5.6 sol/luna/terra
+  // (real at OpenAI but unusable: metered key has no quota, Team oauth grants no
+  // REST-API quota — OpenAI answers only via the native /codex runtime). The
+  // slider must list only models that can actually produce text when pinned.
+  // FORK 2026-07-22: always-show flagships that dip below the sonnet-rank gate.
+  //  · gpt-5.6 trio — LIVE via the `codex` provider (dynamic resolution, ChatGPT
+  //    sub oauth; proven via chat.send → "SOL-UI-OK"). NEVER pin openai/* (metered,
+  //    zero quota) or openai-codex/gpt-5.6* (absent from that catalog) — only codex/*.
+  //  · Gemini: the three current flagships the architect wants — 3.1-pro, 3.5-flash,
+  //    3.6-flash (equal-intelligence to 3.5 but faster/cheaper). The negative
+  //    lookahead drops gemini-3.5-flash-LITE (a weaker/cheaper variant, off-slider).
+  // FORK 2026-07-30 (the architect): keep a few Copilot flagships next to their peers —
+  // gpt-5.5, opus-4.7, sonnet-4.6, gemini-3.1-pro — so the Windows logo shows up.
+  const FORCE_INCLUDE =
+    /fable|grok|gpt-5\.6|gemini-3\.1-pro|gemini-3\.[56]-flash(?!-lite)|github-copilot\/(?:gpt-5\.5|claude-opus-4\.7|claude-sonnet-4\.6|gemini-3\.1-pro)(?:$|\/)/i;
+  const baseKey = (id: string): string =>
+    id
+      .replace(/^[^/]+\//, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "");
+  const byRank = (a: string, b: string): number => {
+    const intelligenceOrder = compareModelIntelligence(a, b, cfg.models);
+    if (intelligenceOrder !== 0) return intelligenceOrder;
+    // FORK 2026-07-30 (the architect): same-base OpenAI/Claude/Gemini + Copilot twins stay
+    // adjacent. Native provider first, Copilot immediately after.
+    const ba = baseKey(a);
+    const bb = baseKey(b);
+    if (ba === bb) {
+      const ap = a.startsWith("github-copilot/") ? 1 : 0;
+      const bp = b.startsWith("github-copilot/") ? 1 : 0;
+      if (ap !== bp) return ap - bp;
     }
-    return modelPerfRank(a) - modelPerfRank(b);
+    return a.localeCompare(b);
+  };
+  // FORK 2026-07-30: AA ≥ 50 gate (same as MODELS list). Drop long-tail even if
+  // FORCE_INCLUDE / rank gate would have kept them (e.g. gemini-3.1-pro 46.5).
+  // FORK 2026-08-06 #3: local AA_PANEL_MIN twin deleted — the module constant
+  // (shared with the panel gate, the chart and the dossier) is the one reader.
+  const eligible = Object.keys(cfg.models || {}).filter((id) => {
+    // FORK 2026-08-15 (the architect: "I can still see copilot models in the model selector
+    // panel"). Hiding Copilot from the MODELS panel earlier today filtered only
+    // `candidateIds`/`moreIds` in updateBudgetPanel — the SELECTOR builds its own
+    // `eligible` set from cfg.models and never saw it. Exactly the divergence the
+    // 2026-08-05 comment below describes, committed again by me the same way: I fixed
+    // the list I was looking at instead of the predicate both lists should share.
+    // Reading the SAME module-scope predicate makes selector and panel agree BY
+    // CONSTRUCTION rather than by two rules kept in sync by hand.
+    if (modelIsHiddenFromModelsPanel(id)) return false;
+    if (EEG_SLIDER_EXCLUDE.test(id)) return false;
+    // Same pin the MODELS panel honours, read from the same module constant, so a
+    // model pinned into SMART cannot be missing from the control that selects it.
+    if (PANEL_PINNED_SMART.has(id)) return true;
+    const score = configuredIntelligenceIndex(cfg.models, id);
+    if (typeof score === "number" && score < AA_PANEL_MIN) return false;
+    if (score === undefined) {
+      const baked = AA_INTELLIGENCE_INDEX[id];
+      if (typeof baked === "number" && baked < AA_PANEL_MIN) return false;
+    }
+    // FORK 2026-08-05 (the architect: "the model slider now differs from the smart models
+    // list in that qwen 3.8 is not listed"). The gate WAS
+    // `rankOf(id) <= sonnetRank || FORCE_INCLUDE.test(id)` — a SECOND eligibility
+    // rule for what is conceptually the same set the MODELS panel already computes
+    // with `passesPanelMin` (AA >= 50). Two predicates over one set drift the
+    // moment a model's rank and its score disagree: qwen3.8-max scores 56.5 (5th
+    // smartest, comfortably in SMART MODELS) but carries rank 21 against Sonnet's
+    // 12, so the rank arm rejected it and no FORCE_INCLUDE pattern claimed it.
+    // The AA >= 50 cut above is now the ONLY gate, which makes the selector agree
+    // with the panel BY CONSTRUCTION rather than by two lists being kept in sync
+    // by hand. `rankOf`/`sonnetRank`/`FORCE_INCLUDE` survive only as the sort key
+    // and the explicit EEG_SLIDER_EXCLUDE cuts the architect asked for by name.
+    void sonnetRank;
+    void FORCE_INCLUDE;
+    return true;
   });
-  // keep the 8 SMARTEST (8 so claude-sonnet-4-6 at rank 7 / 8th-smartest makes
-  // the cut — the owner 2026-06-13), then flip so the smartest sits on the RIGHT.
-  // Fable sorts LAST by rank (it's unavailable), so reserve its slot explicitly —
-  // otherwise slice(0,8) would evict it again the next time the ranks refresh.
-  const fableId = ids.find((id) => FORCE_INCLUDE.test(id));
-  const top = ids.filter((id) => !FORCE_INCLUDE.test(id)).slice(0, fableId ? 7 : 8);
-  top.reverse();
-  // FORK 2026-06-13: the owner pins FABLE to the far right (his flagship sits at the
-  // end of the intelligence axis, ahead of the rank-1 opus).
-  if (fableId) {
-    top.push(fableId);
+  // FORK 2026-08-05: the CAP of 14 existed because a <input type=range> is a ONE-LINE
+  // control — stops beyond ~14 overlapped into unreadable mush. The selector wraps to
+  // as many rows as it needs now, so the cap has no reason to exist and silently
+  // hiding a model the panel lists would recreate exactly the divergence above.
+  let keep = [...eligible].sort(byRank);
+  // FORK 2026-08-04 (the architect: "only I should be the one moving sliders"). The axis
+  // MUST be able to represent the state it is reporting. Every gate above can
+  // legitimately drop a model the user has already pinned — CAP=14, the AA>=50
+  // cut, EEG_SLIDER_EXCLUDE, or the sonnet-rank floor — and when that happened
+  // renderModelForceSlider's `findIndex` returned -1, `idx` stayed 0, and the row
+  // rendered "Auto". The pin was still set and still applied on the next send, so
+  // the slider was reporting router control over a turn the user had pinned, and
+  // his next drag started from the wrong place. Whatever is pinned is by
+  // definition routable, so it belongs on the axis regardless of the display
+  // heuristics. Deliberately keyed off the same module state every caller sees, so
+  // the render path and the `change` listener's readModelStop() always compute the
+  // IDENTICAL list — if they ever disagreed, the slider index would map to a
+  // different model than the one drawn under the thumb.
+  const pinnedNow = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
+  if (pinnedNow && !keep.includes(pinnedNow)) {
+    keep.push(pinnedNow);
   }
-  for (const id of top) {
+  // smartest FIRST, then flip so the SMARTEST sits on the RIGHT (low→high L→R).
+  keep.sort(byRank);
+  keep.reverse();
+  // the architect pins FABLE to the far right (his flagship sits at the end of the axis).
+  const fableId = keep.find((id) => /fable/i.test(id));
+  if (fableId) {
+    keep = keep.filter((id) => id !== fableId);
+    keep.push(fableId);
+  }
+  for (const id of keep) {
     stops.push({ id, label: modelName(id) });
   }
   return stops;
+}
+
+// FORK 2026-08-28 (bible I4 — the rail must not lie about the live model). `stops[].id`
+// is a CATALOG id and therefore provider-PREFIXED ("xai/grok-4.6"); the session row
+// publishes `model` BARE with the provider in a SEPARATE `modelProvider` field
+// (src/gateway/session-utils.ts). So a raw `s.id === active.model` could never be true on
+// the server-row path — not "rarely", never — and a live durable pin painted stop 0,
+// "Auto". Shared by BOTH comparison sites (renderModelForceSlider and routingSignals); do
+// not inline a second copy — one convention, two consumers, same doctrine as
+// modelMatchesCatalogRow.
+//
+// Matching rule mirrors modelMatchesCatalogRow: when the row CARRIES a provider, only the
+// qualified id may match — a bare tail is NOT a model identity ("openai/gpt-5.5" and
+// "github-copilot/gpt-5.5" share one, and lighting the wrong twin is the same lie in a
+// different place). Only a provider-LESS row falls back to the bare tail, because it has
+// nothing to disqualify a twin with. The CLIENT pin never comes through here:
+// modelPinBySession already holds a catalog id and keeps winning outright at the callers.
+function serverModelStopIndex(
+  stops: { id: string | null }[],
+  model: string,
+  provider?: string,
+): number {
+  if (typeof provider === "string" && provider.length > 0) {
+    const qualified = model.includes("/") ? model : `${provider}/${model}`;
+    return stops.findIndex((s) => s.id === qualified);
+  }
+  const tail = bareModelTail(model);
+  if (!tail) {
+    return -1;
+  }
+  return stops.findIndex((s) => s.id !== null && bareModelTail(s.id) === tail);
+}
+
+// FORK 2026-08-29 (the architect: "when selecting 'auto' on mouseover it should mention
+// thalamus"). Auto is not "no model" and it is not "the router" in the abstract — it is
+// THALAMUS choosing a model per task, and the tooltip is the one place that says so.
+// The served-model suffix is an ANNOTATION, never a selection — bible invariant I5 requires
+// the rail to state what DID serve rather than what config would pick, so this can only ADD
+// to the Auto label; nothing it returns feeds the stop-index computation above or below.
+function autoStopTitle(active?: { model?: string; modelProvider?: string }): string {
+  const served = servedLabelIdOf(active);
+  const suffix = served ? ` (last turn served by ${served})` : "";
+  return "Auto — thalamus picks the model for each task" + suffix;
 }
 
 // FORK 2026-06-13 (eeg): the model-force slider (bible §5.8h q2). Mirrors the
@@ -10185,35 +18897,201 @@ function modelForceStops(): { id: string | null; label: string }[] {
 function renderModelForceSlider(): string {
   const stops = modelForceStops();
   const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
-    | { model?: string }
+    | { model?: string; modelProvider?: string; modelOverride?: string; providerOverride?: string }
     | undefined;
   // FORK 2026-06-14 (bible §5.84 Drop 3): the client-side model pin wins (webchat can't persist).
+  // FORK 2026-08-28 (I4): the server row is BARE `model` + separate `modelProvider` —
+  // qualify it before matching the provider-prefixed stops (serverModelStopIndex above).
+  // The client-pin branch is byte-identical to the old comparison and still wins outright.
+  //
+  // FORK 2026-08-29 (the architect: the rail lit a model while the picker said Auto). Selection
+  // must key off the PIN, never off what SERVED: `active.model` is the model that answered the
+  // LAST turn, and under Auto that is whatever THALAMUS happened to route to — comparing the
+  // stops against it made the rail report a pin nobody set, and made Auto unreachable in the
+  // UI. serverPinOf returns the row's DECLARED override ("" === Auto, net of an in-flight Auto
+  // assertion — see autoAssertedSessions above); the served model survives only as the
+  // tooltip annotation in autoStopTitle. routingSignals below derives `cur`/`idx` through the
+  // identical two calls — one convention, two consumers, or the card and the rail disagree.
   const pinnedModel = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
-  const cur = pinnedModel ?? (typeof active?.model === "string" ? active.model : "");
+  const srv = serverPinOf(active, sessionKey ? autoAssertedSessions.has(sessionKey) : false);
+  // Self-retiring: the marker exists only to outlive the fire-and-forget sessions.patch, so the
+  // first row that comes back WITHOUT an override is proof the server agreed — spend it here.
+  if (sessionKey && autoAssertedSessions.has(sessionKey) && !active?.modelOverride) {
+    autoAssertedSessions.delete(sessionKey);
+  }
+  const cur = pinnedModel ?? srv.id;
   let idx = 0;
   if (cur) {
-    const found = stops.findIndex((s) => s.id === cur);
+    const found = pinnedModel
+      ? stops.findIndex((s) => s.id === cur)
+      : serverModelStopIndex(stops, cur, srv.provider);
     if (found > 0) {
       idx = found;
     }
   }
   const stop = stops[idx] ?? stops[0];
-  return (
-    '<div class="model-force-slider-row">' +
+  void stop;
+  // FORK 2026-08-05 (the architect): "Instead of a slider, let's make it a button for every
+  // model, these kind of buttons that are grouped together and, when you press one,
+  // it unpresses the others." A segmented radio group, not a range input.
+  //
+  // Why this is the right control and the slider never was: a range input encodes a
+  // CONTINUUM, and these models are not one — they are unordered alternatives that
+  // merely happen to sort by intelligence. The slider also forced a one-line layout,
+  // which is what produced both defects the architect hit: labels overlapping at ~14 stops,
+  // and a CAP that silently dropped models the MODELS panel was listing.
+  // role=radiogroup + aria-checked gives keyboard and screen-reader semantics the
+  // slider only faked.
+  // FORK 2026-08-05 (the architect: "should only have two rows"). Columns are COMPUTED, not
+  // guessed: ceil(n/2) columns over n buttons is exactly two rows for ANY model
+  // count, so adding or removing a model can never silently become a third row the
+  // way flex-wrap would. Grid also makes every button the same width, which is what
+  // lets the labels sit under the chips without ragged columns.
+  const cols = Math.max(1, Math.ceil(stops.length / 2));
+  // ONE height for every chip in this row, derived from the widest stroke the row
+  // will draw (FORK 2026-08-28 #2). Computed here, not inside renderModelChip, so
+  // every chip shares a baseline AND no chip is ever clipped by a constant.
+  const chipH = modelChipBoxHeight(stops);
+  let out =
+    '<div class="model-force-slider-row model-selector-row">' +
     '<span class="model-slider-caption">MODEL</span>' +
-    '<input type="range" class="model-force-slider" min="0" max="' +
-    String(Math.max(0, stops.length - 1)) +
-    '" step="1" value="' +
-    String(idx) +
-    '" aria-label="Model override: ' +
-    esc(stop.label) +
-    '">' +
-    renderModelSliderStops(stops, idx) +
-    "</div>"
-  );
+    `<div class="model-btn-group" role="radiogroup" aria-label="Model override"` +
+    ` style="grid-template-columns:repeat(${cols},minmax(0,1fr))">`;
+  for (let i = 0; i < stops.length; i++) {
+    const s = stops[i];
+    const on = i === idx;
+    const label = s.id === null ? "Auto" : shortModelLabel(s.id);
+    // FORK 2026-08-29 (the architect): "a red thin cross (both diagonals of the button) on the
+    // models that are unavailable. The button should remain clickable in case I am
+    // stubborn or want to try something. The mark should disappear when the window has
+    // been reset." A WARNING, not a lock: the class only draws the X (base.css
+    // ::before/::after, pointer-events:none), the click handler and radio semantics
+    // stay untouched, and aria-disabled DESCRIBES the state without blocking input.
+    // data-reset-at rides on the button so tickUsageResets — the one minute tick —
+    // retires the mark in place at the server-published reset instant; every
+    // updateBudgetPanel repaint re-derives it from getModelUsage (the same binding
+    // the MODELS panel rows use).
+    const usage = s.id === null ? null : getModelUsage(s.id.split("/")[0], s.id, undefined);
+    const exhausted = usage?.exhausted === true;
+    let exhaustedAttrs = "";
+    let title = s.id === null ? autoStopTitle(active) : `${s.id}\n${modelCostHint(s.id)}`;
+    if (exhausted && usage && s.id) {
+      const resetAt =
+        usage.resetIso ??
+        (typeof usage.resetAtMs === "number" ? new Date(usage.resetAtMs).toISOString() : null);
+      exhaustedAttrs =
+        ` aria-disabled="true" data-model-id="${esc(s.id)}"` +
+        (resetAt ? ` data-reset-at="${esc(resetAt)}"` : "");
+      title =
+        `${s.id} — token window exhausted (click to try anyway)\n` +
+        `${modelCostHint(s.id)}\n${usage.tooltip}`;
+    }
+    const btnClass = `model-btn${on ? " active" : ""}${exhausted ? " model-btn-exhausted" : ""}`;
+    out +=
+      `<button type="button" class="${btnClass}" role="radio"` +
+      ` aria-checked="${on ? "true" : "false"}" data-model-idx="${i}"${exhaustedAttrs}` +
+      ` title="${esc(title)}">` +
+      renderModelChip(s.id, i, chipH) +
+      `<span class="model-btn-text">${esc(label)}</span>` +
+      "</button>";
+  }
+  out += "</div></div>";
+  return out;
+}
+
+// FORK 2026-07-25 (the architect): gather the live inputs the routing card explains. Reads the
+// SAME pin state as the two sliders above (modelPinBySession / effortPinBySession), the
+// SAME quota numbers the budget bars draw, and the orchestration cap the gateway reports.
+// `chainPrimary` is the model Auto resolves to (chain[0] in updateBudgetPanel).
+function routingSignals(chainPrimary: string | undefined): RoutingSignals {
+  const stops = modelForceStops();
+  const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
+    | {
+        model?: string;
+        modelProvider?: string;
+        thinkingLevel?: string;
+        modelOverride?: string;
+        providerOverride?: string;
+      }
+    | undefined;
+  // FORK 2026-08-29: byte-identical derivation to renderModelForceSlider above (see its
+  // comment) — key off the PIN via serverPinOf, never off `active.model`, and retire the
+  // same self-retiring Auto-assert marker. `modelPinned` below is what the BIAS dial's gate
+  // (~L16862) and the routing card's own CSS state class both key off, so if these two blocks
+  // ever diverge the card, the rail and the dial start disagreeing about whether Auto is live.
+  const pinnedModel = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
+  const srv = serverPinOf(active, sessionKey ? autoAssertedSessions.has(sessionKey) : false);
+  if (sessionKey && autoAssertedSessions.has(sessionKey) && !active?.modelOverride) {
+    autoAssertedSessions.delete(sessionKey);
+  }
+  const curModel = pinnedModel ?? srv.id;
+  // FORK 2026-08-28 (I4): the SAME crossing as renderModelForceSlider — the server row is
+  // bare and must go through serverModelStopIndex; the client pin keeps the exact `===`.
+  const curIdx = curModel
+    ? pinnedModel
+      ? stops.findIndex((s) => s.id === curModel)
+      : serverModelStopIndex(stops, curModel, srv.provider)
+    : -1;
+  const modelPinned = curIdx > 0;
+  // Resolve to the matched STOP's id, not the raw row value: `shownModel` is ranked against
+  // `poolIds` (catalog ids) below and labelled via modelName(), so handing a bare id through
+  // would report "pinned" with rank -1 — the identical namespace bug one expression later.
+  const shownModel = modelPinned ? (stops[curIdx]?.id ?? curModel) : (chainPrimary ?? "");
+
+  // Rank WITHIN the routable pool (the slider's own set), so "rank 1 of 11" is honest.
+  const cfg = modelConfigData as {
+    models?: Record<string, ModelIntelligenceMeta>;
+  } | null;
+  const poolIds = stops.slice(1).map((s) => s.id as string);
+  const rankIdx = [...poolIds]
+    .sort((a, b) => compareModelIntelligence(a, b, cfg?.models))
+    .indexOf(shownModel);
+
+  const effortPin = sessionKey ? effortPinBySession.get(sessionKey) : undefined;
+  const effortLvl = (effortPin ?? active?.thinkingLevel ?? "") as string;
+
+  const claude = (budgetUsageData as { claude?: { limits?: Record<string, unknown> } } | null)
+    ?.claude;
+  const d7 = claude?.limits?.seven_day as
+    | { utilization?: number; resets_at?: string | null }
+    | undefined;
+  const resetIso = d7?.resets_at;
+  const resetMs = resetIso ? new Date(resetIso).getTime() : Number.NaN;
+
+  return {
+    modelLabel: shownModel ? modelName(shownModel) : "the default chain",
+    modelPinned,
+    effortLabel: effortLvl || "Auto",
+    effortPinned: Boolean(effortPin),
+    util7d: typeof d7?.utilization === "number" ? d7.utilization / 100 : undefined,
+    weeklyResetAt: Number.isFinite(resetMs) ? resetMs : undefined,
+    nowMs: Date.now(),
+    parallelCap: orchestrationCaps.concurrencyCap,
+    cores: orchestrationCaps.cores,
+    modelRank: rankIdx >= 0 ? rankIdx + 1 : undefined,
+    poolSize: poolIds.length || undefined,
+    policyPath: orchestrationCaps.policyPath,
+    biasIdx: sessionKey ? loadOrcaBias(sessionKey) : BIAS_DEFAULT_IDX,
+    // Map raw ids → the same friendly names the sliders and model rows show.
+    routes: orcaRoutes.map((r) => ({
+      unit: r.unit ?? "",
+      task: r.task,
+      mode: r.mode ?? "solo",
+      model: r.model ? modelName(r.model) : "",
+      critic: r.critic ? modelName(r.critic) : undefined,
+      panel: Array.isArray(r.panel) ? r.panel.map((m) => modelName(m)) : undefined,
+      domain: r.domain,
+      why: r.why,
+    })),
+  };
 }
 
 function updateSessionsPanel() {
+  // FORK 2026-07-29 — the tab bar's thinking sweep is driven from the SAME refresh as the
+  // sessions panel's row glow, so a tab and its row can never contradict each other. Called
+  // before the early return below: the tab bar is not inside #sessions-list, so it must stay
+  // in sync even when that element is absent (collapsed panel).
+  syncTabActivityGlow();
   const el = $("sessions-list");
   if (!el) {
     return;
@@ -10221,14 +19099,19 @@ function updateSessionsPanel() {
   // FORK 2026-06-11 — tinkerui-slider: the thinking slider now lives in the Models
   // side panel (#budget-panel); it re-paints via refreshViewedSessionIndicators()
   // -> updateBudgetPanel(), so there is no per-tab strip to repaint here.
+  // FORK 2026-08-23 — hide rows whose delete is still in flight (see pendingSessionDeletes).
+  // The server keeps reporting them until the teardown lands; the panel must not.
+  const visibleSessions = pendingSessionDeletes.size
+    ? sessions.filter((s: unknown) => !isPendingSessionDelete(s.key))
+    : sessions;
   const countEl = $("sessions-count");
   if (countEl) {
-    countEl.textContent = `(${sessions.length})`;
+    countEl.textContent = `(${visibleSessions.length})`;
   }
 
   // Group sessions
   const groups = new Map<string, Array<{ session: unknown; shortLabel: string }>>();
-  for (const s of sessions) {
+  for (const s of visibleSessions) {
     const { group, shortLabel } = classifySession(s.key);
     if (!groups.has(group)) {
       groups.set(group, []);
@@ -10237,10 +19120,10 @@ function updateSessionsPanel() {
   }
   // FORK: Inject tab sessions not yet on the server
   for (const tab of tabs) {
-    if (tab.id === "tab-main" || !tab.sessionKey) {
+    if (tab.id === "tab-main" || !tab.sessionKey || isPendingSessionDelete(tab.sessionKey)) {
       continue;
     }
-    const serverKeys = sessions.map((s: unknown) => s.key);
+    const serverKeys = visibleSessions.map((s: unknown) => s.key);
     const hasServer =
       serverKeys.includes(tab.sessionKey) ||
       serverKeys.some((k: string) => k.endsWith(":" + tab.sessionKey));
@@ -10328,25 +19211,31 @@ function updateSessionsPanel() {
         if (!key) {
           return;
         }
-        const row = delBtn.closest(".session-row") as HTMLElement | null;
-        // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: in-flight delete
-        // feedback. Sessions with active claude-cli workers can take
-        // seconds to delete (server-side cleanupSessionBeforeMutation
-        // waits for the worker to drain). Without visible progress, the
-        // user clicks again, second click hits a re-rendered row that's
-        // a different state, looks like "delete didn't work". Now:
-        //   - lock the button (pointer-events: none) to swallow rapid
-        //     repeat clicks
-        //   - drop opacity to 0.3 (existing behaviour, kept)
-        //   - add a small ⌛ overlay so the user sees something is
-        //     happening even with no console open
-        // On error, restore everything. On success, the next loadSessions
-        // re-renders and the row is gone (or restored if server rejected).
-        if (row) {
-          row.style.opacity = "0.3";
-          row.style.pointerEvents = "none";
-          row.setAttribute("data-deleting", "1");
+        // FORK 2026-08-23 — OPTIMISTIC. Everything the user can see happens on THIS click;
+        // the RPC is not awaited. Replaces the 2026-05-24 in-flight affordance (dim to 0.3 +
+        // pointer-events lock + ⌛ overlay), which existed only because the row sat there for
+        // the whole server teardown — a row that leaves immediately needs no progress hint and
+        // cannot receive the double-click that affordance was guarding against.
+        //
+        // Order matters: mark pending BEFORE closing the tab, because closeTab() fires its own
+        // loadSessions() repaint, and updateSessionsPanel would re-inject the still-open tab's
+        // key as a "pinned" fake row (bug task-mpjhzu3j-ma9ts) unless it is already suppressed.
+        pendingSessionDeletes.add(key);
+        // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: tab-match was using exact `===` which
+        // missed the canonicalisation gap. The delete button's data-delete-key is the server's
+        // canonical key ("agent:main:tinker:abc") while tab.sessionKey is the unprefixed form
+        // ("tinker:abc"); exact equality always failed and the tab stayed open.
+        // sessionKeyMatches handles the prefix variance (same helper renderSessionRow uses).
+        const affectedTab = tabs.find((t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey));
+        if (affectedTab && affectedTab.id !== "tab-main") {
+          closeTab(affectedTab.id);
+        } else if (affectedTab?.id === "tab-main") {
+          // Main tab can't be closed — just clear its state
+          sessionKey = "";
+          messages = [];
+          updateChat();
         }
+        updateSessionsPanel();
         try {
           // FORK (2026-04-24): soft delete — archive transcript on disk
           // instead of wiping it. The UI still treats the session as gone
@@ -10355,36 +19244,16 @@ function updateSessionsPanel() {
           // can recover if the click was a misfire or if an in-flight turn
           // was still writing its answer.
           await req("sessions.delete", { key, deleteTranscript: false });
-          // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: tab-match was using
-          // exact `===` which missed the canonicalisation gap. The delete
-          // button's data-delete-key is the server's canonical key
-          // ("agent:main:tinker:abc") while tab.sessionKey is the
-          // unprefixed form ("tinker:abc"); exact equality always
-          // failed and the tab stayed open. updateSessionsPanel then
-          // re-injected the still-open tab as a "pinned" fake row, so
-          // the user saw the deleted session reappear immediately.
-          // sessionKeyMatches handles the prefix variance (same helper
-          // renderSessionRow uses for the same drift).
-          const affectedTab = tabs.find(
-            (t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey),
-          );
-          if (affectedTab && affectedTab.id !== "tab-main") {
-            closeTab(affectedTab.id);
-          } else if (affectedTab?.id === "tab-main") {
-            // Main tab can't be closed — just clear its state
-            sessionKey = "";
-            messages = [];
-            updateChat();
-          }
-          await loadSessions();
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error("Failed to delete session:", err);
-          if (row) {
-            row.style.opacity = "1";
-            row.style.pointerEvents = "";
-            row.removeAttribute("data-deleting");
-          }
+          // The server refused (typically UNAVAILABLE "still active"). Clearing the pending
+          // mark below lets the reload put the row back, so say why it returned — otherwise a
+          // row reappearing on its own reads as a bug rather than a rejected delete.
+          showToast(`Delete failed: ${err instanceof Error ? err.message : String(err)}`, true);
+        } finally {
+          pendingSessionDeletes.delete(key);
+          await loadSessions();
         }
         return;
       }
@@ -10533,10 +19402,26 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
   // FORK: Session glow — shimmer when an LLM run is active for this session
-  const liveInfo = sessionHasActiveRuns(s.key);
-  const liveClass = liveInfo.live ? " session-live" : "";
-  const liveColor = liveInfo.provider ? PROVIDER_COLORS[liveInfo.provider] || "#D97757" : "#D97757";
-  const liveStyle = liveInfo.live
+  // FORK 2026-07-28: pass the server row so its authoritative `status` / `hasActiveSubagentRun`
+  // win over the viewed-gated client map — see sessionHasActiveRuns.
+  const liveInfo = sessionHasActiveRuns(s.key, s as SessionRowForLiveness);
+  // FORK 2026-08-15 — the row honours the SAME two states as the tab and the chat: `live` (the
+  // oracle sees a model computing) or `pending` (this client's turn is accepted, no model yet).
+  // Before this the row knew only `live`, so during the 21-36s pre-model window it stayed dark
+  // while the chat showed a pill — one of the desyncs the architect reported on 2026-08-15.
+  const rowPending = !liveInfo.live && isActive && viewedSessionPending();
+  const rowActive = liveInfo.live || rowPending;
+  const liveClass = rowActive ? " session-live" : "";
+  // FORK 2026-08-06: unified glow — the running model's EEG trace color. The
+  // resolver carries the model id, so openrouter vendors glow by vendor.
+  // Pending has no model yet, so it takes the pending pill's colour (see renderTabs).
+  const liveColor = rowPending
+    ? "#D97757"
+    : resolveEegGlowColor({
+        model: liveInfo.model ?? "",
+        provider: liveInfo.provider ?? "",
+      });
+  const liveStyle = rowActive
     ? ` style="--session-glow:${liveColor}40;--session-glow-bg:${liveColor}20"`
     : "";
   // FORK 2026-05-25 — for protected (main + heartbeat) sessions, render
@@ -10576,6 +19461,49 @@ function scrollChat() {
 }
 
 // ─── Init Layout ───
+// FORK 2026-08-24 — paint the right rail from the last known-good payloads,
+// before the socket is even open. Both panels re-render from the wire a few
+// hundred ms later. Wrapped: a first-paint optimisation must never be the thing
+// that takes the page down, and these renderers run here earlier in the boot
+// than they were ever written for (no tabs restored yet, sessionKey still "").
+function paintRightRailFromSnapshots(): void {
+  try {
+    // SESSIONS — only ever fills a BLANK rail; a live list must never be clobbered.
+    if (sessions.length === 0) {
+      const snap = readPanelSnapshot<unknown[]>(SESSIONS_SNAPSHOT_KEY, PANEL_SNAPSHOT_MAX_AGE_MS);
+      if (snap && Array.isArray(snap.data)) {
+        sessions = snap.data;
+        // Stamp with the ORIGINAL fetch time, NEVER `now`. run-state.ts resolves a
+        // row's running/idle state by comparing this stamp against what this client
+        // has watched happen; a stale snapshot claiming to be fresh would let a
+        // finished row outrank live evidence and keep glowing.
+        sessionsFetchedAt = snap.at;
+        updateSessionsPanel();
+      }
+    }
+  } catch (err) {
+    // Swallowed for the user (the rail just shows Loading… a moment longer), but
+    // never swallowed for us — a silent catch here hid a real defect once already.
+    // eslint-disable-next-line no-console
+    console.error("[rail] sessions snapshot paint failed", err);
+  }
+  try {
+    // MODELS — modelConfigData is the catalog + auth profiles, i.e. configuration.
+    // The live parts of the panel (concurrency badges, glow) are derived at render
+    // time from run state, so a cached catalog paints an idle-but-correct panel.
+    if (!modelConfigData) {
+      const snap = readPanelSnapshot<unknown>(MODEL_CONFIG_SNAPSHOT_KEY, PANEL_SNAPSHOT_MAX_AGE_MS);
+      if (snap && snap.data) {
+        modelConfigData = snap.data;
+        updateBudgetPanel();
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[rail] model-config snapshot paint failed", err);
+  }
+}
+
 function init() {
   if (initialized) {
     return;
@@ -10658,6 +19586,21 @@ function init() {
            RELOCATED from this chat-area strip into the Models side panel
            (#budget-panel), rendered directly under the active tab's model row by
            renderThinkingSlider()/updateBudgetPanel(). No chat-area control here. -->
+      <!-- FORK 2026-08-18 (the architect: "if a process is attached to a tab and it prevents me to send
+           more prompts ... I would prefer if it was shown as a progress indicator with a stop
+           button, so I can kill it or understand it better"). ATTACHED ACTIVITY strip: what is
+           holding this tab, one row per attachment, each with its own control.
+
+           STATIC HOST, populated by renderAttachStrip(). It must stay a static node because the
+           Stop/Clear listener is delegated onto it once at boot while its contents are re-rendered
+           on every 5s poll.
+
+           It ships with the hidden attribute set, and returns to hidden whenever the list is
+           empty, so an idle tab reserves ZERO height and the composer never jumps under the
+           cursor.
+           (No backticks in this comment - the enclosing innerHTML is a template literal; an inner
+            backtick terminates it early and crashes the page to black on load.) -->
+      <div class="attach-strip" id="attach-strip" hidden></div>
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
         <button id="action-btn" disabled>Send</button>
@@ -10665,11 +19608,12 @@ function init() {
     </div>
     <div class="right-panels">
       <div class="rpanel" id="sessions-panel">
-        <div class="rpanel-header">📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
+        <div class="rpanel-header rpanel-header--toggle" id="sessions-header" title="Collapse / expand sessions"><span class="rpanel-caret">▾</span> 📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
-      <div class="rpanel budget-panel-wrapper">
-        <div class="rpanel-header">🕸️ Models ${zoneDoc("slider")}
+      <div class="rpanel budget-panel-wrapper" id="models-panel">
+        <div class="rpanel-header rpanel-header--toggle" title="Collapse / expand models"><span class="rpanel-caret">▾</span> 🕸️ Models ${zoneDoc("slider")}
+          <button class="sc-open-btn sc-head-btn" data-hint="Smartness × cost map — every model, effort curves, per-task toggle">◉ SMART × COST</button>
           <span class="ct-switch" id="budget-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -10678,19 +19622,84 @@ function init() {
           <button id="budget-refresh" class="budget-refresh-btn" data-hint="Refresh">↻</button>
         </div>
         <div id="budget-panel" class="rpanel-body">Loading...</div>
-      </div>
-      <div class="rpanel" id="eeg-panel">
-        <div class="rpanel-header">📈 EEG ${zoneDoc("eeg")}
-          <span class="ct-switch" id="eeg-scope-toggle">
-            <span class="ct-switch-label ct-switch-label--active" data-eeg-scope="session">Session</span>
-            <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
-            <span class="ct-switch-label" data-eeg-scope="all">All</span>
-          </span>
+        <!-- FORK 2026-08-02 (the architect: "make the EEG a subtitle of the MODELS panel, it makes
+             more sense this way"). The seismograph stopped being its own .rpanel
+             (#eeg-panel, peer to Models, 2026-06-19) and is now one more fold of the
+             Models panel, reading alongside SMART MODELS / MORE MODELS / THINKING /
+             THALAMUS.
+
+             NOTE — this whole block lives INSIDE a JS template literal, so it must never
+             contain a backtick, nor a dollar-brace sequence that is not meant to
+             interpolate. Both silently break the app shell at PARSE time.
+
+             READ THIS BEFORE YOU "TIDY" IT. This markup is STATIC and deliberately
+             sits OUTSIDE #budget-panel, even though every other .model-group is generated
+             inside it. updateBudgetPanel() assigns el.innerHTML on #budget-panel on
+             every repaint, while bindEegPanelOnce() is a bind-ONCE latch (eegPanelBound,
+             ~L2424) on #eeg-panel-body and #eeg-scope-toggle is bound by id ONCE at boot.
+             Fold this block into that generated HTML and the bound nodes are destroyed
+             and recreated on every repaint while the latch stays true: wheel-zoom, marker
+             clicks and the Session/All switch go dead, silently and forever. Static host
+             is the whole reason it works.
+
+             The rpanel-body class on the WRAPPER is not decoration: the CSS rule
+             ".rpanel.collapsed > .rpanel-body" is what folds a panel's contents away, and
+             it only matches DIRECT children — without it, collapsing Models would leave
+             the seismograph
+             hanging under a shut header. It also reproduces exactly the inherited type
+             context the EEG group had while it lived inside #budget-panel.
+
+             The inline grid-column spans #eeg-panel-body across .model-group-body's
+             5-column grid; .eeg-paper carries its own "grid-column: 1 / -1", but that is
+             inert now that the paper is one level deeper and no longer a grid item. -->
+        <!-- FORK 2026-08-06 (the architect: "move the context window panel on top of the EEG, inside
+             MODELS"). Was its own .rpanel at the bottom of the rail (below AMYGDALA); it is
+             now one more fold of the Models panel, sitting between the generated groups and
+             the seismograph. Everything in the EEG note below applies verbatim: the block is
+             STATIC and OUTSIDE #budget-panel because renderCachePanel() writes
+             #cache-panel-body by id and the fold binding is a bind-ONCE latch at boot.
+
+             FORK 2026-08-28 (the architect: "change the name from 'context cache' to 'context
+             window'") — the LABEL changed; every identifier deliberately did NOT. The id
+             stays "cache-panel" on the WRAPPER because the read/write flash
+             (flashCachePanel), the busy pulse (setCacheBusy) and their CSS rules all target
+             #cache-panel by id, the body is written by id as #cache-panel-body, and the fold
+             state is persisted under the key "model:cache" — renaming the section would
+             silently re-collapse the panel for anyone who had it open. The .rpanel-body class
+             keeps the terminal-green type context the panel markup re-states its own colours
+             against (base.css, constraint 2). -->
+        <div class="model-group rpanel-body${!isCollapsed("model:cache", MODEL_SECTION_DEFAULT_COLLAPSED["cache"]) ? " open" : ""}" data-section="cache" id="cache-panel">
+          <div class="model-group-label">💾 CONTEXT WINDOW <span id="cache-count" class="model-group-count"></span><span class="cache-actions"><button type="button" class="cache-act" data-cache-act="evict" title="Drop the oldest turns from this session transcript. No model call; the previous transcript is archived as a .bak first.">evict</button><button type="button" class="cache-act" data-cache-act="compact" title="Summarise the conversation into a shorter prefix. Costs a model call.">compact</button></span></div>
+          <div class="model-group-body"><div id="cache-panel-body" style="grid-column:1/-1"></div></div>
         </div>
-        <div id="eeg-panel-body" class="rpanel-body"></div>
+        <!-- FORK 2026-08-29 (the architect: "move the context window up over thalamus, under thinking").
+             THALAMUS was the last group generated INSIDE #budget-panel, which forced it above
+             every static sibling. Moving CONTEXT WINDOW into that generated block was not an
+             option — see its note above: innerHTML there recreates nodes on every repaint while
+             the bind-once latches stay true. So THALAMUS became a static host instead. It is the
+             cheap one to move: a label plus one pure render call and no listeners of its own.
+
+             It keeps its data-section and its "model:thalamus" fold key, so the boot
+             binding (~L19608, which selects every direct .model-group child of #models-panel)
+             wires it with no extra code and the persisted fold state carries over untouched.
+             updateBudgetPanel() fills #thalamus-panel-body on every repaint. -->
+        <div class="model-group rpanel-body${!isCollapsed("model:thalamus", MODEL_SECTION_DEFAULT_COLLAPSED["thalamus"]) ? " open" : ""}" data-section="thalamus" id="thalamus-panel">
+          <div class="model-group-label">THALAMUS</div>
+          <div class="model-group-body"><div id="thalamus-panel-body" style="grid-column:1/-1"></div></div>
+        </div>
+        <div class="model-group rpanel-body${!isCollapsed("model:eeg", MODEL_SECTION_DEFAULT_COLLAPSED["eeg"]) ? " open" : ""}" data-section="eeg">
+          <div class="model-group-label">📈 EEG ${zoneDoc("eeg")}
+            <span class="ct-switch" id="eeg-scope-toggle">
+              <span class="ct-switch-label ct-switch-label--active" data-eeg-scope="session">Session</span>
+              <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
+              <span class="ct-switch-label" data-eeg-scope="all">All</span>
+            </span>
+          </div>
+          <div class="model-group-body"><div id="eeg-panel-body" style="grid-column:1/-1"></div></div>
+        </div>
       </div>
       <div class="rpanel" id="prefrontal-panel">
-        <div class="rpanel-header"><button id="recipes-book-btn" class="rpanel-header-btn" title="Open the recipe book">🌳 RECIPES</button> <span id="prefrontal-count" class="sessions-count"></span> ${zoneDoc("recipes")}${zoneDoc("prefrontal")}
+        <div class="rpanel-header rpanel-header--toggle" title="Collapse / expand recipes"><span class="rpanel-caret">▾</span> <button id="recipes-book-btn" class="rpanel-header-btn" title="Open the recipe book">🌳 RECIPES</button> <span id="prefrontal-count" class="sessions-count"></span> ${zoneDoc("recipes")}${zoneDoc("prefrontal")}
           <span class="ct-switch" id="prefrontal-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -10701,7 +19710,7 @@ function init() {
         <div id="recipe-progress" class="recipe-progress-container" style="display:none"></div>
       </div>
       <div class="rpanel" id="amygdala-panel">
-        <div class="rpanel-header">🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span> ${zoneDoc("amygdala")}
+        <div class="rpanel-header rpanel-header--toggle" title="Collapse / expand amygdala"><span class="rpanel-caret">▾</span> 🧠 AMYGDALA <span id="amygdala-count" class="sessions-count"></span> ${zoneDoc("amygdala")}
           <span class="ct-switch" id="amygdala-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -10726,6 +19735,10 @@ function init() {
       <div id="treemap-footer" class="treemap-footer"><span id="brp-footer-text"></span><span id="brp-meta" class="brp-meta"></span></div>
     </div>
   `;
+
+  // FORK 2026-08-24 — the rail's DOM exists as of the assignment above, and the
+  // socket will not be authed for another ~400ms. Fill it from the last visit now.
+  paintRightRailFromSnapshots();
 
   // ─── Global tooltip system (viewport-clamped) ───
   const hintEl = document.createElement("div");
@@ -10772,6 +19785,15 @@ function init() {
     hintEl.style.left = `${left}px`;
     hintEl.style.top = `${top}px`;
   }
+
+  // A hover held open across a minute boundary must show the NEW countdown, not the
+  // one minted when the pointer arrived — positionHint re-reads dataset.hint, so
+  // re-running it against the same target is the whole refresh.
+  repaintOpenHint = () => {
+    if (hintTarget) {
+      positionHint(hintTarget);
+    }
+  };
 
   document.addEventListener("mouseover", (e) => {
     const target = (e.target as HTMLElement).closest<HTMLElement>("[data-hint]");
@@ -10877,8 +19899,23 @@ function init() {
       if (!slider) {
         return null;
       }
-      const idx = Math.max(0, Math.min(THINK_STOPS.length - 1, Number(slider.value) || 0));
-      return THINK_STOPS[idx] ?? THINK_STOPS[0];
+      // FORK 2026-07-26: the ORCA bias dial deliberately shares `.model-think-slider` to
+      // inherit its appearance. It must NOT be read as an effort stop, or dragging the dial
+      // would silently repin the model's thinking level.
+      // FORK 2026-08-29: this is the second of the dial's two coupled listener sites (the first
+      // is the direct bind on the THALAMUS host, gated on Auto-ness). This one stays
+      // UNCONDITIONAL on purpose — whether the dial is live or inert is decided in exactly one
+      // place, off the rail's own predicate; here the answer never depends on that, because the
+      // bias dial is not an effort stop in either state. Two sites "agree" precisely by this one
+      // having nothing left to gate.
+      if (slider.classList.contains("orca-bias-slider")) {
+        return null;
+      }
+      // FORK 2026-07-21 (the architect): read from the SAME per-model stop set the slider
+      // was rendered from (activeEffortStops), or the index maps to the wrong level.
+      const stops = activeEffortStops();
+      const idx = Math.max(0, Math.min(stops.length - 1, Number(slider.value) || 0));
+      return stops[idx] ?? stops[0];
     };
     budgetPanelEl.addEventListener("input", (e) => {
       const stop = readThinkStop(e);
@@ -10896,10 +19933,24 @@ function init() {
       // FORK 2026-06-14 (bible §5.84-C): persist CLIENT-SIDE per session (sessions.update
       // does not exist + webchat can't patch metadata). The pin reaches the model on the
       // next chat.send (Task 6). "" (Auto) clears the pin → the skill decides again.
-      if (sessionKey) {
+      // FORK 2026-08-04: was `if (sessionKey)`, which silently discarded the pin on a
+      // tab that had not sent yet — same defect as the MODEL handler below, same
+      // symptom (the thumb moves, nothing is stored, the first send mints a key and
+      // the slider repaints at Auto). Mint the key here so the pin lands under the
+      // key the imminent send will use. `ensureActiveSessionKey()` assigns the
+      // module-level `sessionKey`, so the rest of this block is unchanged.
+      if (ensureActiveSessionKey()) {
         if (stop.lvl) effortPinBySession.set(sessionKey, stop.lvl);
         else effortPinBySession.delete(sessionKey);
         saveEffortPin(sessionKey, stop.lvl);
+        // FORK 2026-07-26 (the architect: "ORCA changes its model when I shift the model slider, but
+        // it does not change the effort right away when I move the effort slider") — the
+        // MODEL handler ends in updateBudgetPanel(); this one ended at saveEffortPin, so
+        // every effort-derived readout (the routing card's EFFORT row, the tick highlight,
+        // the EEG scale) stayed stale until some unrelated event repainted the panel.
+        // Deliberately on `change` (drag RELEASE) only — updateBudgetPanel replaces the
+        // panel's innerHTML, which would destroy the <input type=range> mid-drag.
+        updateBudgetPanel();
       }
     });
     // FORK 2026-06-13 (eeg): delegated listeners for the model-force slider
@@ -10908,41 +19959,140 @@ function init() {
     // patch is ONLY { model } — bundling it with thinkingLevel would trip
     // rejectWebchatSessionMutation (§5.8f invariant 1). Index 0 -> null (Auto =
     // router controls the model axis again).
+    // FORK 2026-08-05 (the architect): the range input became a segmented button group, so
+    // the pin commits on CLICK. Index still comes from the same modelForceStops()
+    // the render path used — the 2026-08-04 invariant that both sides must compute
+    // the IDENTICAL list still holds, it is just keyed off data-model-idx now
+    // instead of slider.value. No `input` phase: a button press has no drag, so
+    // preview-then-persist collapses into one event.
     const readModelStop = (e: Event) => {
-      const slider = (e.target as HTMLElement).closest(
-        ".model-force-slider",
-      ) as HTMLInputElement | null;
-      if (!slider) {
+      const btn = (e.target as HTMLElement).closest(".model-btn") as HTMLElement | null;
+      if (!btn) {
         return null;
       }
       const stops = modelForceStops();
-      const idx = Math.max(0, Math.min(stops.length - 1, Number(slider.value) || 0));
+      const idx = Math.max(0, Math.min(stops.length - 1, Number(btn.dataset.modelIdx) || 0));
       return stops[idx] ?? stops[0];
     };
-    budgetPanelEl.addEventListener("input", (e) => {
+    budgetPanelEl.addEventListener("click", (e) => {
       const stop = readModelStop(e);
       if (!stop) {
         return;
       }
-      highlightSliderStop(e, ".model-force-slider-row");
-    });
-    budgetPanelEl.addEventListener("change", (e) => {
-      const stop = readModelStop(e);
-      if (!stop) {
-        return;
-      }
-      highlightSliderStop(e, ".model-force-slider-row");
-      // FORK 2026-06-14 (bible §5.84 Drop 3): persist CLIENT-SIDE (sessions.update is not a real
-      // method + webchat can't patch metadata). Re-applied on the next chat.send via the `model`
-      // param. Auto (no id) clears the pin → router/allocator picks the model again.
-      if (sessionKey) {
+      // Press this one, unpress the rest — the whole point of the group.
+      const group = (e.target as HTMLElement).closest(".model-btn-group");
+      const pressed = (e.target as HTMLElement).closest(".model-btn");
+      group?.querySelectorAll<HTMLElement>(".model-btn").forEach((b) => {
+        const on = b === pressed;
+        b.classList.toggle("active", on);
+        b.setAttribute("aria-checked", on ? "true" : "false");
+      });
+      // FORK 2026-06-14 (bible §5.84 Drop 3): persist CLIENT-SIDE. Re-applied on the next
+      // chat.send via the `model` param. Auto (no id) clears the pin.
+      //
+      // FORK 2026-08-04: was `if (sessionKey)`, which silently dropped the pin on a
+      // tab that had not sent yet (sessionKey === ""). Mint the key here instead, so
+      // the pin lands under exactly the key the imminent send will use.
+      // `ensureActiveSessionKey()` assigns the module-level `sessionKey`, so the
+      // rest of this block reads the freshly-minted key without shadowing it.
+      if (ensureActiveSessionKey()) {
+        // FORK 2026-08-29 (the architect: pressing Auto instantly re-lit the stale pin) — mark
+        // this session as having just asserted Auto so the derivation sites above
+        // (renderModelForceSlider, routingSignals) ignore the row's modelOverride until a
+        // sessions.list row confirms the sessions.patch{model:null} below has actually landed.
+        // A real pick needs no such grace — the pin itself takes over instantly — so it clears
+        // the assertion outright rather than leaving it to self-retire.
+        if (stop.id) autoAssertedSessions.delete(sessionKey);
+        else autoAssertedSessions.add(sessionKey);
         if (stop.id) modelPinBySession.set(sessionKey, stop.id);
         else modelPinBySession.delete(sessionKey);
         saveModelPin(sessionKey, stop.id || "");
+        // FORK 2026-08-06 (architect: "the model picker has been built for exactly that") — the
+        // client pin alone was HALF a switch, and the half it was missing is the half that
+        // routes. `chat.send`'s `model` param makes the gateway persist a DURABLE
+        // modelOverride on the session entry (modelOverrideSource:"user"); Auto omits that
+        // param, so pressing Auto dropped the client pin and left the server override
+        // untouched. Every subsequent "Auto" turn kept resolving to the last model pinned in
+        // this tab while the picker read Auto — observed live on a tab stuck at
+        // openrouter/qwen, and reported again 2026-08-28 ("when the model is set to auto, it
+        // uses either opus or the last one chosed for that chat").
+        //
+        // The old comment here claimed webchat "can't patch metadata" and that
+        // `sessions.update` is not a real method. The second half was true and the first no
+        // longer is: the method is `sessions.patch`, and it now takes a model-only patch from
+        // webchat (isModelOnlyPatch in gateway/server-methods/sessions.ts). `model: null`
+        // is the documented reset — it deletes modelOverride/providerOverride so the default
+        // chain resolves again.
+        //
+        // Fire-and-forget by design: a tab that has never sent has no server entry yet, so
+        // there is nothing to clear and the imminent chat.send establishes any pin anyway.
+        req("sessions.patch", { key: sessionKey, model: stop.id || null }).catch(() => {});
+        // FORK 2026-07-21 (the architect): the new model may not support the pinned effort
+        // (e.g. "max"/"minimal" on a GPT model, or "xhigh" on Grok). Clamp the
+        // effort pin into the new model's allowed set — clear to Auto if it no
+        // longer fits — then re-render both sliders so the EFFORT scale reflects
+        // the selected model/provider.
+        const allowed = new Set(allowedEffortLevels(stop.id || null));
+        const curEffort = effortPinBySession.get(sessionKey) ?? "";
+        if (curEffort && !allowed.has(curEffort)) {
+          effortPinBySession.delete(sessionKey);
+          saveEffortPin(sessionKey, "");
+        }
+        updateBudgetPanel();
+        // FORK 2026-08-29 (the architect: "when I switch from opus to grok in the model selector the
+        // context window does not shrink nor changes color"). The CONTEXT WINDOW panel draws the
+        // pinned model's window as its outline, so the pin is one of its inputs — but the panel
+        // was only ever repainted from a cache/anatomy event, i.e. from the NEXT model call. So
+        // the picker moved, the outline did not, and it stayed wrong until you sent something.
+        // The whole point of drawing the pinned window is to see the headroom BEFORE you send.
+        renderCachePanel();
       }
     });
   }
   // Session-select dropdown removed — tabs handle session switching now
+  // FORK 2026-07-25 (the architect): EVERY right-rail panel collapses, not just Sessions.
+  // Generalised from the 2026-07-21 sessions-only block: ONE delegated listener on
+  // .right-panels replaces the per-panel header wiring, and the per-panel flags live in
+  // one localStorage map (panels/ui-state.ts — the unified UI-state store) instead of
+  // one key each. migrateLegacyUiState() folds every pre-unification key in (idempotent;
+  // module init already ran it once) so existing state survives the upgrade. Rpanel ids
+  // keep their default-expanded contract: the omitted default below means `false`.
+  {
+    migrateLegacyUiState();
+    const collapsedById: Record<string, boolean> = loadCollapsed();
+    const rightPanels = document.querySelector<HTMLElement>(".right-panels");
+    for (const panel of Array.from(rightPanels?.querySelectorAll<HTMLElement>(".rpanel") ?? [])) {
+      if (panel.id && collapsedById[panel.id]) {
+        panel.classList.add("collapsed");
+      }
+    }
+    // The headers host LIVE controls that do NOT stop propagation — the Session/All
+    // .ct-switch scope switches, the ↻ budget-refresh button, the 🌳 RECIPES button —
+    // so a click on any of those must not fold the panel it lives in. Exclude them
+    // before the header lookup. (The ⓘ zoneDoc links already stopPropagation, but the
+    // `a` selector covers them belt-and-braces.)
+    rightPanels?.addEventListener("click", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!target || target.closest(".ct-switch, button, a, input, select")) {
+        return;
+      }
+      const header = target.closest<HTMLElement>(".rpanel-header--toggle");
+      if (!header) {
+        return;
+      }
+      const panel = header.closest<HTMLElement>(".rpanel");
+      if (!panel?.id) {
+        return;
+      }
+      const collapsed = panel.classList.toggle("collapsed");
+      setCollapsed(panel.id, collapsed);
+    });
+  }
+  // FORK 2026-07-26 — paint the cache panel ONCE at boot. Before this it was only ever
+  // drawn from an event handler, so a freshly loaded page showed an EMPTY box (not even
+  // the idle placeholder) until the session's next turn. Verified against a headless
+  // load: #cache-panel-body was literally `></div>`.
+  renderCachePanel();
   $("budget-refresh")!.addEventListener("click", () => {
     loadBudget();
   });
@@ -10981,9 +20131,50 @@ function init() {
     });
   }
 
-  // FORK 2026-06-19 (bible §5.8h): the EEG panel's OWN session/all toggle — its own
-  // eegScope state (separate from budgetScope), uses data-eeg-scope so the loop
-  // above ignores it. "all" overlays other sessions' concurrent traces, faint.
+  // FORK 2026-08-02 (the architect: EEG as a Models subtitle): fold/unfold for the EEG
+  // .model-group. The generic .model-group-label collapse binding in updateBudgetPanel()
+  // (~L10690) is scoped to `el` = #budget-panel and re-attached on every repaint, so it
+  // NEVER reaches this label — the group is a static sibling of #budget-panel, not a child
+  // of it. Bind it here ONCE at boot, next to #eeg-scope-toggle (same reason: static node,
+  // bound once), honouring the identical contract: toggle .open, then write through to
+  // "model:eeg" with its default (expanded).
+  //
+  // The .ct-switch/button/a/input/select exclusion is the same one the right-rail header
+  // handler uses (~L12390) and it is REQUIRED here, not defensive: this label HOSTS the
+  // live Session/All switch and the ⓘ zone-doc link, so without it every scope flip would
+  // also fold the seismograph shut under the user's own click.
+  //
+  // FORK 2026-08-06 (the architect: cache above the EEG): there are now TWO static groups here, so
+  // this binds every direct .model-group child of #models-panel rather than the EEG by name
+  // — the next static subtitle someone adds is wired for free, and the default comes from
+  // the one MODEL_SECTION_DEFAULT_COLLAPSED map instead of a second hardcoded literal.
+  for (const group of Array.from(
+    document.querySelectorAll<HTMLElement>("#models-panel > .model-group[data-section]"),
+  )) {
+    const label = group.querySelector<HTMLElement>(".model-group-label");
+    const section = group.dataset.section;
+    if (!label || !section) {
+      continue;
+    }
+    label.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (!target || target.closest(".ct-switch, button, a, input, select")) {
+        return;
+      }
+      group.classList.toggle("open");
+      setCollapsed(
+        "model:" + section,
+        !group.classList.contains("open"),
+        MODEL_SECTION_DEFAULT_COLLAPSED[section] ?? false,
+      );
+    });
+  }
+
+  // FORK 2026-06-19 (bible §5.8h): the EEG's OWN session/all toggle — its own eegScope
+  // state (separate from budgetScope), uses data-eeg-scope so the loop above ignores it.
+  // "all" overlays other sessions' concurrent traces, faint. Bound by id ONCE: the node is
+  // static markup inside #models-panel (2026-08-02) and is never re-rendered — see the
+  // eegPanelBound note (~L2424) before moving it.
   $("eeg-scope-toggle")?.addEventListener("click", (e) => {
     const el = e.target as HTMLElement;
     const label = el.closest("[data-eeg-scope]") as HTMLElement | null;
@@ -11148,33 +20339,36 @@ function init() {
   });
 
   // ─── Timeline toggle (bottom panels expand/collapse) ───
-  // FORK 2026-05-12: persist collapsed state across hard refresh, mirroring
-  // the `tinker.execMode` pattern at line ~7460. Without this, the panel
-  // visibility silently reset to "visible" on every reload even though the
+  // FORK 2026-05-12: persist collapsed state across hard refresh. Without this, the
+  // panel visibility silently reset to "visible" on every reload even though the
   // topbar button is a toggle the user expects to remember its position.
+  // FORK 2026-08-02 (the architect): moved to the unified ui-state store. NOTE the inversion:
+  // the "topbar:timeline" flag means BUTTON ACTIVE (panel visible, default true); the
+  // legacy key meant COLLAPSED.
   const tlBtn = $("tb-timeline")!;
-  if (localStorage.getItem("tinker.bottomCollapsed") === "1") {
+  if (!getFlag("topbar:timeline", true)) {
     app.classList.add("bottom-collapsed");
     tlBtn.classList.remove("tb-active");
   }
   tlBtn.addEventListener("click", () => {
     const collapsed = app.classList.toggle("bottom-collapsed");
     tlBtn.classList.toggle("tb-active", !collapsed);
-    localStorage.setItem("tinker.bottomCollapsed", collapsed ? "1" : "0");
+    setFlag("topbar:timeline", !collapsed, true);
   });
 
   // ─── Models toggle (right panels expand/collapse) ───
   // FORK 2026-05-12: persist collapsed state — same rationale as the timeline
-  // toggle directly above. See `tinker.execMode` for the canonical pattern.
+  // toggle directly above (same inversion too: "topbar:models" means BUTTON
+  // ACTIVE / panel visible, default true).
   const mdBtn = $("tb-models")!;
-  if (localStorage.getItem("tinker.rightCollapsed") === "1") {
+  if (!getFlag("topbar:models", true)) {
     app.classList.add("right-collapsed");
     mdBtn.classList.remove("tb-active");
   }
   mdBtn.addEventListener("click", () => {
     const collapsed = app.classList.toggle("right-collapsed");
     mdBtn.classList.toggle("tb-active", !collapsed);
-    localStorage.setItem("tinker.rightCollapsed", collapsed ? "1" : "0");
+    setFlag("topbar:models", !collapsed, true);
   });
 
   // ─── Exec mode toggle (Control Panel HUD: graphs + calendar + tasks) ───
@@ -11190,17 +20384,69 @@ function init() {
     const el = document.createElement("aside");
     el.id = "exec-panel";
     el.className = "exec-panel";
-    // FORK 2026-05-13 — exec-panel split into two tabs per user request: the
-    // Pulse tab holds graphs + KPIs (read sparingly, periodic glance), the
-    // Today tab holds calendar + tasks (the daily-driver flow). Active tab
-    // persists in `tinker.execTab`. CSS hides the inactive group via
-    // body-level classes on .exec-panel.
-    el.innerHTML = `
-      <div class="exec-tabs" role="tablist">
-        <button class="exec-tab" data-tab="pulse" role="tab">📈 Pulse</button>
-        <button class="exec-tab" data-tab="today" role="tab">📅 Today</button>
-      </div>
-      <div class="exec-tab-body exec-tab-body-pulse">
+    // FORK 2026-07-24 — exec-panel split into independently installable
+    // plugins. The tab strip is built AFTER probing each panel plugin's
+    // `<ns>.ping` RPC (see initExecTabs); only plugins that answer get a tab
+    // button. Tab BODIES are rendered eagerly here so existing load functions
+    // (loadExecTasks/loadExecKpis) always find their DOM anchors regardless
+    // of probe timing. Active tab persists as ui-state choice "exec:tab". CSS hides the
+    // inactive group via `exec-tab-active-<id>` classes on .exec-panel.
+    el.innerHTML = `<div class="exec-tabs" role="tablist"></div>`;
+    for (const def of EXEC_PANELS) {
+      const body = document.createElement("div");
+      body.className = `exec-tab-body exec-tab-body-${def.id}`;
+      def.render(body);
+      el.appendChild(body);
+    }
+    app.appendChild(el);
+    execPanelEl = el;
+    attachExecPointerDragHandlers(el);
+    attachExecGroupPointerDragHandlers(el);
+    attachExecFocusDragHandlers(el);
+    renderExecFilterBar();
+    // FORK 2026-05-23 (F2) — bottom + Add task form replaced by per-group
+    // affordance. attachExecTaskAddHandlers + repopulateExecAddAxisOptions
+    // were deleted; openInlineAddTaskForm (mirrors openInlineSubgroupForm)
+    // takes over.
+    attachExecAddGroupHandlers(el);
+    attachExecTabHandlers(el);
+    // Global handlers: click-outside closes context menu; Escape closes too.
+    document.addEventListener("click", (ev) => {
+      if (execContextMenuEl && !execContextMenuEl.contains(ev.target as Node)) {
+        closeExecContextMenu();
+      }
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeExecContextMenu();
+    });
+    return el;
+  }
+
+  // ─────────────────────────────────── exec tabs (probe-driven registry)
+  // FORK 2026-07-24 — the exec-panel monolith split into three plugins
+  // (tinkerclaw-pulse-panel / tinkerclaw-task-panel / tinkerclaw-cron-panel).
+  // Each entry here maps a tab to its backend plugin's liveness probe; on
+  // exec-mode open the probes run once in parallel (~1s timeout) and only
+  // plugins that answered get a tab button. Bodies are pre-rendered by
+  // ensureExecPanel so the existing pulse/today internals stay untouched.
+  type ExecTab = string;
+  type ExecPanelDef = {
+    id: ExecTab;
+    title: string;
+    probe: string;
+    render: (body: HTMLElement) => void;
+  };
+  const EXEC_PANELS: ExecPanelDef[] = [
+    { id: "pulse", title: "📈 Pulse", probe: "pulsepanel.ping", render: renderPulsePanel },
+    { id: "today", title: "📅 Today", probe: "taskpanel.ping", render: renderTodayPanel },
+    { id: "crons", title: "⏰ Crons", probe: "cronpanel.ping", render: renderCronPanel },
+  ];
+  let execActiveTab: ExecTab = getChoice("exec:tab", "today") || "today";
+  let execAlivePanels: ExecPanelDef[] | null = null;
+
+  // Markup moved verbatim from the old two-tab innerHTML block (2026-05-13).
+  function renderPulsePanel(body: HTMLElement): void {
+    body.innerHTML = `
         <div class="exec-section exec-kpis">
           <div class="exec-section-title">
             <span>📊 KPIs</span>
@@ -11215,8 +20461,18 @@ function init() {
           </div>
           <div class="exec-graphs-body" id="exec-graphs-body">Loading…</div>
         </div>
-      </div>
-      <div class="exec-tab-body exec-tab-body-today">
+    `;
+  }
+
+  function renderTodayPanel(body: HTMLElement): void {
+    body.innerHTML = `
+        <div class="exec-section exec-focus">
+          <div class="exec-section-title">
+            <span>📌 Pinned</span>
+            <span class="exec-focus-count" id="exec-focus-count"></span>
+          </div>
+          <div class="exec-focus-body" id="exec-focus-body"></div>
+        </div>
         <div class="exec-section exec-calendar">
           <div class="exec-section-title">📅 Calendar (7d)</div>
           <div class="exec-calendar-body">Calendar sync lands in Phase E.</div>
@@ -11245,65 +20501,233 @@ function init() {
                that header. The task lands in the group it was added from,
                so the axis dropdown is no longer needed. -->
         </div>
-      </div>
     `;
-    app.appendChild(el);
-    execPanelEl = el;
-    attachExecPointerDragHandlers(el);
-    attachExecGroupPointerDragHandlers(el);
-    renderExecFilterBar();
-    // FORK 2026-05-23 (F2) — bottom + Add task form replaced by per-group
-    // affordance. attachExecTaskAddHandlers + repopulateExecAddAxisOptions
-    // were deleted; openInlineAddTaskForm (mirrors openInlineSubgroupForm)
-    // takes over.
-    attachExecAddGroupHandlers(el);
-    attachExecTabHandlers(el);
-    // Global handlers: click-outside closes context menu; Escape closes too.
-    document.addEventListener("click", (ev) => {
-      if (execContextMenuEl && !execContextMenuEl.contains(ev.target as Node)) {
-        closeExecContextMenu();
-      }
-    });
-    document.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") closeExecContextMenu();
-    });
-    return el;
   }
 
-  // ───────────────────────────────────────────────── exec tabs (Pulse/Today)
-  // FORK 2026-05-13 — two-tab split: Pulse (graphs + KPIs) vs. Today
-  // (calendar + tasks). Per-tab visibility is via a body class on the
-  // .exec-panel (`.exec-tab-active-pulse` / `.exec-tab-active-today`); CSS
-  // hides the inactive tab's body. Switching the Pulse tab triggers a KPI
-  // load if no observations are in memory yet.
-  type ExecTab = "pulse" | "today";
-  let execActiveTab: ExecTab = (localStorage.getItem("tinker.execTab") as ExecTab) || "today";
-
-  function applyExecTab(panel: HTMLElement, tab: ExecTab): void {
-    execActiveTab = tab;
-    localStorage.setItem("tinker.execTab", tab);
-    panel.classList.toggle("exec-tab-active-pulse", tab === "pulse");
-    panel.classList.toggle("exec-tab-active-today", tab === "today");
+  // FORK 2026-08-24 — `remember: false` shows a tab WITHOUT adopting it as the
+  // architect's choice. Used only for the boot fallback taken when the
+  // remembered panel's plugin did not answer: a ping that failed once (a busy
+  // or restarting gateway) must not silently rewrite the tab they left open —
+  // and it did, permanently, because the rewritten value then hydrated as the
+  // new "remembered" tab on the next load and re-mirrored itself. In-memory
+  // execActiveTab is left alone too, so a later re-probe still aims at the
+  // real choice.
+  function applyExecTab(panel: HTMLElement, tab: ExecTab, remember = true): void {
+    if (remember) {
+      execActiveTab = tab;
+      setChoice("exec:tab", tab, "today");
+    }
+    for (const def of EXEC_PANELS) {
+      panel.classList.toggle(`exec-tab-active-${def.id}`, tab === def.id);
+    }
     panel.querySelectorAll<HTMLElement>(".exec-tab").forEach((btn) => {
       btn.classList.toggle("exec-tab-on", btn.dataset.tab === tab);
     });
     if (tab === "pulse") {
       void loadExecKpis();
     }
+    if (tab === "crons") {
+      void loadExecCrons();
+    }
+  }
+
+  // Bounded ping with retries. A hard refresh races the connect handshake:
+  // req() sends as soon as the socket is OPEN, but the gateway only serves
+  // requests after the challenge→connect exchange sets `connected`. A single
+  // 1s-bounded probe therefore failed all three panels on fresh page loads
+  // ("no exec panels installed" 2026-07-24). Retry with growing timeouts so a
+  // transient race can't permanently blank the strip.
+  async function probeExecPanel(method: string): Promise<boolean> {
+    for (const timeoutMs of [1000, 2000, 4000]) {
+      try {
+        await Promise.race([
+          req(method, {}),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("probe timeout")), timeoutMs),
+          ),
+        ]);
+        return true;
+      } catch {
+        // retry — pre-auth sends and gateway boot both resolve within seconds
+      }
+    }
+    return false;
+  }
+
+  // Wait for the AUTHED connection (`connected` flips after the connect
+  // handshake completes), not just WebSocket.OPEN — pre-auth requests fail.
+  // FORK 2026-08-24 — was a 300ms polling loop, so on a hard refresh the panel
+  // slept up to a third of a second AFTER the gateway had started answering,
+  // and that sleep sat in front of everything else the panel had to do. Wake on
+  // the handshake edge instead; `maxMs` stays as the ceiling.
+  async function waitForWsOpen(maxMs: number): Promise<boolean> {
+    const isUp = (): boolean => connected && !!ws && ws.readyState === WebSocket.OPEN;
+    if (isUp()) return true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      whenConnected(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, maxMs);
+      }),
+    ]);
+    if (timer !== undefined) clearTimeout(timer);
+    return isUp();
+  }
+
+  // FORK 2026-08-24 — NOTHING in this panel may issue an RPC before the connect
+  // handshake. req() writes as soon as the socket is OPEN, but the gateway
+  // answers a pre-handshake request with `invalid handshake: first request must
+  // be connect` and then DROPS the connection — so firing early does not merely
+  // fail that one call, it costs the whole page a reconnect (measured: a refresh
+  // that tripped this took 5.2s to show its tasks against 2.8s for one that did
+  // not). Painting the tab strip from cache made this trivially easy to hit,
+  // because the active tab's loaders now start on the first frame.
+  // Bounded, so a gateway that never comes up still falls through to each
+  // loader's own error/retry path rather than hanging forever.
+  async function execAwaitGateway(): Promise<void> {
+    if (connected) return;
+    await waitForWsOpen(15_000);
+  }
+
+  // FORK 2026-08-24 — the installed panel set, remembered across refreshes.
+  // Which plugins are installed changes maybe once a month; re-deriving it from
+  // three network pings on EVERY page load is what kept the whole left panel
+  // blank for ~2s, because no tab body is visible until a tab is made active.
+  const EXEC_ALIVE_IDS_KEY = "exec:alivePanels";
+
+  // Buttons, plus at most ONE activation. Two rules make this safe to call
+  // repeatedly as probes trickle in:
+  //   - `desired` is captured ONCE per init and passed in, never re-read from
+  //     execActiveTab. applyExecTab PERSISTS the tab it activates, so a paint
+  //     that fell back would rewrite the remembered choice and the next paint
+  //     would then "find" that fallback and latch onto it forever.
+  //   - `allowFallback` is false while probes are still arriving. Activating
+  //     the first panel that happens to answer would otherwise hijack the tab
+  //     the architect actually left open, purely on ping-order luck.
+  function paintExecTabStrip(
+    panel: HTMLElement,
+    defs: ExecPanelDef[],
+    desired: ExecTab,
+    allowFallback: boolean,
+  ): void {
+    const strip = panel.querySelector<HTMLElement>(".exec-tabs");
+    if (!strip) return;
+    strip.innerHTML = "";
+    for (const def of defs) {
+      const btn = document.createElement("button");
+      btn.className = "exec-tab";
+      btn.dataset.tab = def.id;
+      btn.setAttribute("role", "tab");
+      btn.textContent = def.title;
+      btn.addEventListener("click", () => applyExecTab(panel, def.id));
+      strip.appendChild(btn);
+    }
+    // A live tab already on screen IS the answer — it may be one the architect
+    // clicked while probes were still landing, and a repaint must never yank
+    // them off it. Re-applying would also pointlessly re-fire that tab's loads.
+    const showing = defs.find((d) => panel.classList.contains(`exec-tab-active-${d.id}`));
+    if (showing) {
+      strip.querySelectorAll<HTMLElement>(".exec-tab").forEach((btn) => {
+        btn.classList.toggle("exec-tab-on", btn.dataset.tab === showing.id);
+      });
+      return;
+    }
+    const remembered = defs.find((d) => d.id === desired);
+    if (remembered) {
+      applyExecTab(panel, remembered.id);
+      return;
+    }
+    if (!allowFallback) return; // still probing — absent is not the same as dead
+    // The remembered panel did not answer. Show something rather than nothing,
+    // but do NOT adopt it: the plugin may simply be slow to come back.
+    applyExecTab(panel, defs[0].id, false);
+  }
+
+  // Paint from the remembered set immediately, then reconcile against the
+  // gateway. Runs once per page load — ensureExecPanel creates the panel
+  // exactly once and calls this from attachExecTabHandlers.
+  async function initExecTabs(panel: HTMLElement): Promise<void> {
+    const idsOf = (defs: ExecPanelDef[]): string => defs.map((d) => d.id).join(",");
+    // Read ONCE. applyExecTab writes execActiveTab, so re-reading it mid-init
+    // would let an intermediate paint redefine what "the tab I left open" means.
+    const desired = execActiveTab;
+
+    // 1) Optimistic paint — costs nothing and is right ~every time.
+    const cachedIds = getOrderedIds(EXEC_ALIVE_IDS_KEY);
+    const cached = EXEC_PANELS.filter((d) => cachedIds.includes(d.id));
+    if (cached.length) {
+      execAlivePanels = cached;
+      paintExecTabStrip(panel, cached, desired, true);
+    }
+
+    // 2) Reconcile. Without a connection we know NOTHING about what is
+    //    installed, so this must never fall through to the empty state —
+    //    that is exactly how "no exec panels installed" appeared on a
+    //    gateway that was merely still booting.
+    const up = await waitForWsOpen(15_000);
+    if (!up) {
+      if (!cached.length) {
+        const strip = panel.querySelector<HTMLElement>(".exec-tabs");
+        if (strip) {
+          strip.innerHTML = `<div class="exec-tabs-empty">connecting to gateway…</div>`;
+        }
+      }
+      setTimeout(() => void initExecTabs(panel), 2_000);
+      return;
+    }
+
+    // 3) Probe in parallel AND paint each survivor as it answers. A plugin that
+    //    is genuinely absent burns 1s+2s+4s of retries; the old Promise.all
+    //    made every healthy panel wait behind that slowest sibling.
+    const alive: boolean[] = EXEC_PANELS.map(() => false);
+    let painted = idsOf(cached);
+    await Promise.all(
+      EXEC_PANELS.map(async (def, i) => {
+        alive[i] = await probeExecPanel(def.probe);
+        const soFar = EXEC_PANELS.filter((_, j) => alive[j]);
+        if (soFar.length && idsOf(soFar) !== painted) {
+          painted = idsOf(soFar);
+          execAlivePanels = soFar;
+          // No fallback mid-flight: the panels that have not answered YET are
+          // not dead, and only the final tally may retire the remembered tab.
+          paintExecTabStrip(panel, soFar, desired, false);
+        }
+      }),
+    );
+
+    const finalAlive = EXEC_PANELS.filter((_, i) => alive[i]);
+    execAlivePanels = finalAlive;
+    if (finalAlive.length === 0) {
+      const strip = panel.querySelector<HTMLElement>(".exec-tabs");
+      if (strip) {
+        strip.innerHTML = `<div class="exec-tabs-empty">no exec panels installed</div>`;
+      }
+      setOrderedIds(EXEC_ALIVE_IDS_KEY, []);
+      // Self-heal: a gateway mid-restart (or a lost probe race) must not blank
+      // the HUD until the next hard refresh — re-probe until panels appear.
+      setTimeout(() => void initExecTabs(panel), 10_000);
+      return;
+    }
+    // Final tally: now a dead remembered tab may legitimately fall back.
+    paintExecTabStrip(panel, finalAlive, desired, true);
+    setOrderedIds(
+      EXEC_ALIVE_IDS_KEY,
+      finalAlive.map((d) => d.id),
+    );
   }
 
   function attachExecTabHandlers(panel: HTMLElement): void {
-    panel.querySelectorAll<HTMLElement>(".exec-tab").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const tab = btn.dataset.tab as ExecTab | undefined;
-        if (tab) applyExecTab(panel, tab);
-      });
-    });
-    // Section-level refresh: re-poll every metric in that section, then re-render.
+    // Section-level refresh: re-poll every metric in that section (or reload
+    // the cron board), then re-render. Buttons live inside pre-rendered
+    // bodies, so a direct query at attach time finds them all.
     panel.querySelectorAll<HTMLButtonElement>(".exec-section-refresh").forEach((btn) => {
       btn.addEventListener("click", () => {
-        const section = btn.dataset.section as "kpis" | "graphs" | undefined;
+        const section = btn.dataset.section as "kpis" | "graphs" | "crons" | undefined;
         if (!section) return;
+        if (section === "crons") {
+          void loadExecCrons();
+          return;
+        }
         void refreshExecSection(section);
       });
     });
@@ -11319,7 +20743,1453 @@ function init() {
     };
     panel.querySelector("#exec-kpis-body")?.addEventListener("click", onRowRefresh);
     panel.querySelector("#exec-graphs-body")?.addEventListener("click", onRowRefresh);
-    applyExecTab(panel, execActiveTab);
+    void initExecTabs(panel);
+  }
+
+  // ───────────────────────────────────────────────── Crons tab (2026-07-24)
+  // FORK 2026-08-18 — the flat read-only list became per-job CARDS.
+  //
+  // the architect: "Every cron should publish in its corresponding card instead of
+  // here, in the main tab. Since I don't see the results hardly ever, it
+  // should be organized in a way that I should have controls to dismiss some
+  // issues, even with a text input so I could explain the reasoning... It
+  // would look a little like tasks cards that I can rearrange, remove and so
+  // on. If I don't click on the 'read' checkbox, the cron should understand
+  // that I have not read it yet."
+  //
+  // WHY THE OLD LIST COULD NOT DO THIS: it painted the newest immutable report
+  // file per job, so no finding had identity across nights — there was nothing
+  // to dismiss, pin, reorder or mark read, and any dismissal would have been
+  // undone by the next report. cronpanel.board.* supplies that identity
+  // (stableItemId); this tab is now a view over the BOARD, not over the report.
+  //
+  // INVARIANT: each ISSUE has its own read checkbox. An unticked issue
+  // compounds on the next nightly ingest; a ticked one that stops recurring
+  // is archived. Expanding a card must never mark anything read.
+  type CronPanelJob = {
+    id: string;
+    name: string;
+    description?: string;
+    briefPath?: string;
+    enabled: boolean;
+    schedule?: CronScheduleInput;
+    scheduleHuman: string;
+    state: { lastRunStatus?: string; lastError?: string; nextRunAtMs?: number };
+    report: { status?: string; headline?: string; deltas: string[] } | null;
+    silent: boolean;
+    daysSinceLastDelta: number | null;
+  };
+
+  // Mirror of extensions/tinkerclaw-cron-panel/src/board-types.ts. The UI
+  // bundle cannot import from an extension, so these shapes are hand-synced —
+  // a field added there and not here silently reads as `undefined`.
+  type BoardItemKind =
+    | "ask"
+    | "act"
+    | "watch"
+    | "broke"
+    | "found"
+    | "fyi"
+    | "flag"
+    | "changed"
+    | "realized"
+    | "dead"
+    | "failed"
+    | "note";
+  type BoardItem = {
+    id: string;
+    kind: BoardItemKind;
+    text: string;
+    firstSeen: string;
+    lastSeen: string;
+    runs: number;
+    order: number;
+    pinned: boolean;
+    status: "open" | "dismissed" | "resolved";
+    dismissedAt?: string;
+    dismissReason?: string;
+    recurrencesSinceDismissal?: number;
+    resolvedAt?: string;
+    acknowledged?: boolean;
+  };
+  type CronBoard = {
+    jobId: string;
+    readAt: string | null;
+    lastIngestedDate: string | null;
+    items: BoardItem[];
+    archived: BoardItem[];
+  };
+  type CronBoardSummary = {
+    jobId: string;
+    unread: boolean;
+    openCount: number;
+    flagCount: number;
+    ackedCount?: number;
+    oldestOpenDate: string | null;
+    dismissedCount: number;
+    lastIngestedDate: string | null;
+  };
+
+  // Crons-tab state. #exec-crons-body is re-rendered wholesale and each
+  // mutation replaces a whole card, so everything the user has "done" to the
+  // DOM — which dismiss form is showing, what they have typed into it — lives
+  // here or it evaporates on the next repaint.
+  //
+  // FORK 2026-08-18 (the architect: "when I turn off the computer and restart the
+  // browser, the cron cards should show exactly as I left them... if they were
+  // compacted, they should remain so"). The two FOLDS used to be in-memory
+  // `Set`s alongside these maps, which bought exactly one repaint of survival:
+  // a card the architect collapsed came back open on the next reload, and his Chrome
+  // clears site data on exit, so every cold start reopened all of them. They
+  // now go through ui-state, whose durable half is a server-side file precisely
+  // because localStorage is empty on that cold start.
+  //
+  // The DISMISS FORM stays in memory on purpose. A half-typed reason is an
+  // unfinished action, not a layout choice; restoring it days later would
+  // resurrect a thought the architect already walked away from. Folds are how he left
+  // the room, drafts are what he was mid-sentence on — only the first is state
+  // worth carrying across a power cycle.
+  const cronPanelBoards = new Map<string, CronBoard>();
+  const cronPanelBoardErrors = new Map<string, string>();
+  const cronPanelSummaries = new Map<string, CronBoardSummary>();
+  /** Cards start OPEN, so ui-state's stated default here is "not collapsed". */
+  const cronCardFoldKey = (jobId: string): string => `cron:card:${jobId}`;
+  /** The per-card `dismissed (n)` <details>, which starts CLOSED — hence the `true`. */
+  const cronDismissedFoldKey = (jobId: string): string => `cron:dismissed:${jobId}`;
+  const CRON_DISMISSED_DEFAULT_COLLAPSED = true;
+
+  // FORK 2026-08-19 (the architect: "I should be able to drag-and-drop the cron cards and
+  // subitems to change their order, and it should also keep the order upon browser
+  // restart"). Half of that already shipped: the SUBITEMS were draggable and their
+  // order was already durable, written server-side by `cronpanel.board.reorder` into
+  // each board's own JSON. Only the CARD level was missing — so what got added here
+  // is card drag, plus the `cursor: grabbing` that finally advertises BOTH scales.
+  // An undiscoverable feature is indistinguishable from an absent one, which is why
+  // he asked for something that already worked.
+  //
+  // Card order goes to ui-state, NOT to the board store, and the split is the reason:
+  // the board store owns what a cron FOUND — items, their order, dismissals, all of it
+  // meaningful to the next nightly run. ui-state owns how the architect ARRANGED THE ROOM, which
+  // no cron ever reads. And ui-state's durable half is a server-side file, which is the
+  // only reason any of this survives a Chrome that clears site data on exit.
+  /** ONE key holds the whole card order, not one key per card. */
+  const CRON_CARD_ORDER_KEY = "cron:cardOrder";
+
+  /** Cards the architect has arranged come first; anything newly registered lands at the bottom. */
+  function cronOrderJobs(jobs: CronPanelJob[]): CronPanelJob[] {
+    return applyStoredOrder(jobs, getOrderedIds(CRON_CARD_ORDER_KEY), (job) => job.id);
+  }
+
+  /**
+   * Visible cards are the source of truth for THEIR relative order. Cards a
+   * collapsed group or an active filter has taken out of the DOM keep the
+   * place the stored list already gave them — rewriting from querySelectorAll
+   * would drop them, and the next expand would dump them at the bottom.
+   */
+  function cronPersistCardOrder(host: HTMLElement): void {
+    const visible = Array.from(host.querySelectorAll<HTMLElement>(".cron-card"))
+      .map((el) => el.dataset.job)
+      .filter((x): x is string => !!x);
+    setOrderedIds(
+      CRON_CARD_ORDER_KEY,
+      mergeVisibleOrder(getOrderedIds(CRON_CARD_ORDER_KEY), visible),
+    );
+    // Paint reads cronPanelJobs, not the store. If we write the store and leave
+    // this array alone, the next paint snaps every card back to load order —
+    // which is exactly "I dropped it and it jumped home".
+    cronPanelJobs = cronOrderJobs(cronPanelJobs);
+  }
+
+  // FORK 2026-08-19 (the architect: filter + classify crons in groups/subgroups, like Tasks).
+  // Taxonomy is chrome, not findings — same store as card order, not the board.
+  function loadCronTaxonomy(): CronTaxonomy {
+    return parseCronTaxonomy(
+      getChoice(CRON_TAXONOMY_KEY, serializeCronTaxonomy(EMPTY_CRON_TAXONOMY)),
+    );
+  }
+  function saveCronTaxonomy(tax: CronTaxonomy): void {
+    setChoice(
+      CRON_TAXONOMY_KEY,
+      serializeCronTaxonomy(tax),
+      serializeCronTaxonomy(EMPTY_CRON_TAXONOMY),
+    );
+  }
+  let cronTaxonomy: CronTaxonomy = loadCronTaxonomy();
+  let cronFilter: CronFilter = parseCronFilter(getChoice(CRON_FILTER_KEY, CRON_FILTER_DEFAULT));
+
+  function cronJobFilterView(job: CronPanelJob): {
+    enabled: boolean;
+    silent: boolean;
+    failed: boolean;
+    unreadCount: number;
+    ackedCount: number;
+    flagCount: number;
+    openCount: number;
+  } {
+    const summary = cronPanelSummaries.get(job.id);
+    const board = cronPanelBoards.get(job.id);
+    const failed = job.state.lastRunStatus === "error" || job.report?.status === "failed";
+    const open = board?.items.filter((i) => i.status === "open") ?? [];
+    const unreadCount = board
+      ? open.filter((i) => i.acknowledged !== true).length
+      : summary?.unread
+        ? (summary.openCount ?? 0)
+        : 0;
+    const ackedCount = board
+      ? open.filter((i) => i.acknowledged === true).length
+      : (summary?.ackedCount ??
+        (!summary?.unread && (summary?.openCount ?? 0) > 0 ? (summary?.openCount ?? 0) : 0));
+    return {
+      enabled: job.enabled,
+      silent: job.silent,
+      failed,
+      unreadCount,
+      ackedCount,
+      flagCount: summary?.flagCount ?? 0,
+      openCount: summary?.openCount ?? (board ? open.length : 0),
+    };
+  }
+
+  function cronVisibleJobs(): CronPanelJob[] {
+    return cronPanelJobs.filter((job) => cronFilterAccepts(cronJobFilterView(job), cronFilter));
+  }
+  /** jobId → the itemId whose dismiss form is showing (one at a time per card). */
+  const cronPanelDismissTarget = new Map<string, string>();
+  /** `${jobId}::${itemId}` → the reason typed so far, kept across re-renders. */
+  const cronPanelDismissDrafts = new Map<string, string>();
+  let cronPanelJobs: CronPanelJob[] = [];
+  /** The card that OWNS an in-flight ITEM drag. */
+  let cronPanelDragJob: string | null = null;
+
+  const CRON_READ_TITLE =
+    "Tick when you have read it. It leaves All and waits in Acknowledged. The next night archives it if it did not come back.";
+
+  function cronKindTagHtml(kind: string): string {
+    const tag = cronSkimTag(kind);
+    const meta = CRON_SKIM[tag];
+    return `<span class="cron-item-tag cron-item-tag-${tag}" title="${escapeHtml(meta.hint)}">${escapeHtml(meta.label)}</span>`;
+  }
+
+  function cronItemLetterHtml(text: string): string {
+    const { title, body } = parseCronItemText(text);
+    const titleHtml = title ? `<div class="cron-item-title">${escapeHtml(title)}</div>` : "";
+    const bodyHtml = body ? `<div class="cron-item-body">${md(body)}</div>` : "";
+    return `${titleHtml}${bodyHtml}`;
+  }
+
+  function cronReferInChat(jobId: string, item: BoardItem): void {
+    const { title, body } = parseCronItemText(item.text);
+    const job = cronPanelJobs.find((j) => j.id === jobId);
+    const jobName = job?.name ?? jobId;
+    const giveaway = body || title;
+    const textarea = document.getElementById("chat-textarea") as HTMLTextAreaElement | null;
+    if (!textarea) return;
+    textarea.value = `Re: [${jobName}] ${title}${giveaway && giveaway !== title ? `\n${giveaway}` : ""}`;
+    textarea.focus();
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  /**
+   * Open-item ordering: pinned first, then the user's own `order` (what a drag
+   * writes via cronpanel.board.reorder), then flags, then age.
+   *
+   * FLAGS-FIRST IS THE TIE-BREAK, NOT AN OVERRIDE. A hard "every flag above
+   * everything" sort would snap a dragged note back the instant the architect moved it
+   * above a flag — "I can rearrange them" and "flags first" are in tension and
+   * the arrangement the user physically performed wins. Ingest owns the
+   * flags-first default by handing flags the lower `order`.
+   */
+  function cronSortOpenItems(items: BoardItem[]): BoardItem[] {
+    const rank = (i: BoardItem) => {
+      const tag = cronSkimTag(i.kind);
+      return tag === "ask" || tag === "act" ? 0 : tag === "broke" || tag === "watch" ? 1 : 2;
+    };
+    return items.slice().sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      if (a.order !== b.order) return a.order - b.order;
+      const byKind = rank(a) - rank(b);
+      if (byKind !== 0) return byKind;
+      return a.firstSeen.localeCompare(b.firstSeen);
+    });
+  }
+
+  /**
+   * Derive the header summary from a board we already hold. Every board.*
+   * mutation returns the whole board, so the unread pill and the dismissed
+   * count stay honest without a second round-trip to cronpanel.board.list.
+   */
+  function cronBoardSummaryFrom(board: CronBoard): CronBoardSummary {
+    const open = board.items.filter((i) => i.status === "open");
+    const oldest = open.reduce<string | null>(
+      (acc, i) => (acc === null || i.firstSeen < acc ? i.firstSeen : acc),
+      null,
+    );
+    return {
+      jobId: board.jobId,
+      unread: open.some((i) => i.acknowledged !== true),
+      openCount: open.length,
+      flagCount: open.filter((i) => {
+        const tag = cronSkimTag(i.kind);
+        return tag === "ask" || tag === "act";
+      }).length,
+      ackedCount: open.filter((i) => i.acknowledged === true).length,
+      oldestOpenDate: oldest,
+      dismissedCount: board.items.filter((i) => i.status === "dismissed").length,
+      lastIngestedDate: board.lastIngestedDate,
+    };
+  }
+
+  function cronItemHtml(jobId: string, item: BoardItem): string {
+    const id = escapeHtml(item.id);
+    const drafting = cronPanelDismissTarget.get(jobId) === item.id;
+    const draft = cronPanelDismissDrafts.get(`${jobId}::${item.id}`) ?? "";
+    // A draggable ancestor eats text selection inside a textarea, so the item
+    // stops being draggable while its reason is being written.
+    const form = drafting
+      ? `<div class="cron-dismiss-form">
+              <textarea class="cron-dismiss-reason" data-item="${id}" placeholder="why is this settled? the cron reads this">${escapeHtml(draft)}</textarea>
+              <button class="cron-dismiss-confirm" data-item="${id}"${draft.trim() ? "" : " disabled"}>Confirm</button>
+              <button class="cron-dismiss-cancel" data-item="${id}">Cancel</button>
+            </div>`
+      : "";
+    const acked = item.acknowledged === true;
+    return `<div class="cron-item${acked ? " cron-item-acked" : ""}" data-item="${id}" draggable="${drafting ? "false" : "true"}">
+            <div class="cron-item-chrome">
+              <button type="button" class="exec-task-check cron-item-check${acked ? " exec-task-check-checked" : ""}" data-item="${id}" title="${escapeHtml(CRON_READ_TITLE)}" aria-pressed="${acked ? "true" : "false"}" aria-label="${acked ? "Mark unread" : "Mark read"}"></button>
+              ${cronKindTagHtml(item.kind)}
+              <span class="cron-item-age" title="first seen ${escapeHtml(item.firstSeen)} · last ${escapeHtml(item.lastSeen)}">${item.runs}× nights</span>
+              <span class="cron-item-actions">
+                <button class="cron-item-refer" data-item="${id}" title="Talk about this in chat">💬</button>
+                <button class="cron-item-pin" data-item="${id}" aria-pressed="${item.pinned ? "true" : "false"}" title="${item.pinned ? "Unpin" : "Pin to the top"}">📌</button>
+                <button class="cron-item-dismiss" data-item="${id}" title="Dismiss with a reason">✕</button>
+              </span>
+            </div>
+            <div class="cron-item-letter">${cronItemLetterHtml(item.text)}</div>
+            ${form}
+          </div>`;
+  }
+
+  function cronDismissedHtml(jobId: string, dismissed: BoardItem[]): string {
+    if (dismissed.length === 0) return "";
+    const rows = dismissed
+      .map((item) => {
+        const id = escapeHtml(item.id);
+        const recurred = item.recurrencesSinceDismissal ?? 0;
+        return `<div class="cron-dismissed-row" data-item="${id}">
+                <div class="cron-item-letter">${cronItemLetterHtml(item.text)}</div>
+                <span class="cron-dismissed-reason">“${escapeHtml(item.dismissReason ?? "")}”</span>
+                ${recurred > 0 ? `<span class="cron-item-age" title="it came back after you dismissed it">recurred ${recurred}× since</span>` : ""}
+                <button class="cron-item-restore" data-item="${id}" title="Put it back on the board">Restore</button>
+              </div>`;
+      })
+      .join("");
+    const dismissedOpen = !isCollapsed(
+      cronDismissedFoldKey(jobId),
+      CRON_DISMISSED_DEFAULT_COLLAPSED,
+    );
+    return `<details class="cron-dismissed"${dismissedOpen ? " open" : ""}>
+              <summary>dismissed (${dismissed.length})</summary>${rows}
+            </details>`;
+  }
+
+  function cronFallbackItemsHtml(job: CronPanelJob): string {
+    const deltas = job.report?.deltas ?? [];
+    if (deltas.length === 0) {
+      if (job.silent) return `<div class="cron-card-clear">silent — no report ever</div>`;
+      if (job.report?.headline) {
+        return `<div class="cron-item cron-item-static"><div class="cron-item-letter">${cronItemLetterHtml(job.report.headline)}</div></div>`;
+      }
+      return `<div class="cron-card-clear">no open items in the latest report</div>`;
+    }
+    return deltas
+      .map((raw) => {
+        const m = /^\s*([A-Za-z]+)\s*:\s*([\s\S]*)$/.exec(raw.trim());
+        const kind = (m?.[1] ?? "fyi").toLowerCase();
+        return `<div class="cron-item cron-item-static"><div class="cron-item-chrome">${cronKindTagHtml(kind)}</div><div class="cron-item-letter">${cronItemLetterHtml(raw)}</div></div>`;
+      })
+      .join("");
+  }
+
+  function cronSetupHtml(job: CronPanelJob): string {
+    const view = parseSchedule(job.schedule);
+    const weekdayOpts = WEEKDAYS.map(
+      (label, i) =>
+        `<option value="${i}"${view.weekday === i ? " selected" : ""}>${label}</option>`,
+    ).join("");
+    const next =
+      typeof job.state.nextRunAtMs === "number" && Number.isFinite(job.state.nextRunAtMs)
+        ? `<span class="cron-setup-next">next ${escapeHtml(new Date(job.state.nextRunAtMs).toLocaleString())}</span>`
+        : "";
+    const simple = view.repeat === "daily" || view.repeat === "weekly";
+    const formRepeat = simple ? view.repeat : "daily";
+    const current = simple
+      ? ""
+      : `<div class="cron-setup-current">Currently ${escapeHtml(humanizeSchedule(job.schedule))} — pick Daily or Weekly to change it.</div>`;
+    return `<form class="cron-setup" data-repeat="${escapeHtml(formRepeat)}" data-job="${escapeHtml(job.id)}">
+      ${next}
+      ${current}
+      <div class="cron-setup-row">
+        <label>Repeat
+          <select class="cron-setup-repeat">
+            <option value="daily"${formRepeat === "daily" ? " selected" : ""}>Daily</option>
+            <option value="weekly"${formRepeat === "weekly" ? " selected" : ""}>Weekly</option>
+          </select>
+        </label>
+        <label class="cron-setup-time-wrap">Time
+          <input type="time" class="cron-setup-time" value="${escapeHtml(view.time === "00:00" && !simple ? "06:00" : view.time)}">
+        </label>
+        <label class="cron-setup-dow-wrap">Day
+          <select class="cron-setup-dow">${weekdayOpts}</select>
+        </label>
+        <label class="cron-setup-enable">
+          <input type="checkbox" class="cron-setup-enabled"${job.enabled ? " checked" : ""}>
+          Enabled
+        </label>
+      </div>
+      <div class="cron-setup-actions">
+        <button type="submit" class="cron-setup-save">Save schedule</button>
+        <span class="cron-setup-status"></span>
+      </div>
+    </form>`;
+  }
+
+  function cronReadSetupView(form: HTMLElement): CronScheduleView {
+    const repeat = ((form.querySelector(".cron-setup-repeat") as HTMLSelectElement | null)?.value ??
+      "daily") as CronRepeat;
+    return {
+      repeat,
+      time: (form.querySelector(".cron-setup-time") as HTMLInputElement | null)?.value ?? "06:00",
+      weekday: Number(
+        (form.querySelector(".cron-setup-dow") as HTMLSelectElement | null)?.value ?? "0",
+      ),
+      intervalMin: Number(
+        (form.querySelector(".cron-setup-interval") as HTMLInputElement | null)?.value ?? "15",
+      ),
+      expr: (form.querySelector(".cron-setup-expr") as HTMLInputElement | null)?.value ?? "",
+      tz: DEFAULT_TZ,
+    };
+  }
+
+  async function cronApplyJobUpdate(
+    jobId: string,
+    patch: Record<string, unknown>,
+  ): Promise<string | null> {
+    try {
+      const updated = await req<{
+        id?: string;
+        enabled?: boolean;
+        schedule?: CronScheduleInput;
+      }>("cron.update", { id: jobId, patch });
+      const idx = cronPanelJobs.findIndex((j) => j.id === jobId);
+      if (idx >= 0) {
+        const prev = cronPanelJobs[idx];
+        const schedule = updated?.schedule ?? prev.schedule;
+        cronPanelJobs[idx] = {
+          ...prev,
+          enabled: typeof updated?.enabled === "boolean" ? updated.enabled : prev.enabled,
+          schedule,
+          scheduleHuman: humanizeSchedule(schedule) || prev.scheduleHuman,
+        };
+      }
+      rerenderCronCard(jobId);
+      return null;
+    } catch (err) {
+      return String(err);
+    }
+  }
+
+  function cronResolvedBriefPath(job: CronPanelJob): string | undefined {
+    if (job.briefPath) return job.briefPath;
+    // Gateway without briefPath yet: slug jobs still live under cron-payloads/.
+    if (/^[a-z][a-z0-9-]+$/.test(job.id)) return `~/.openclaw/cron-payloads/${job.id}.md`;
+    return undefined;
+  }
+
+  function cronBriefLeadHtml(job: CronPanelJob | undefined): string {
+    if (!job) return "";
+    // Expanded: name already sits in the head. The lead is what the PROMPT
+    // asks this cron to do — stable, not tonight's findings. Findings are items.
+    const briefPath = cronResolvedBriefPath(job);
+    const purpose = (job.description ?? "").trim();
+    const summary = purpose ? `<div class="cron-brief-summary">${escapeHtml(purpose)}</div>` : "";
+    const link = briefPath
+      ? `<code class="fs-link cron-brief-link" data-path="${escapeHtml(briefPath)}" title="Open the file that defines this cron">${escapeHtml(briefPath.split("/").pop() ?? briefPath)}</code>`
+      : "";
+    if (!summary && !link) return "";
+    return `<div class="cron-brief">${summary}${link}</div>`;
+  }
+
+  function cronCardBodyHtml(jobId: string): string {
+    const jobEsc = escapeHtml(jobId);
+    const job = cronPanelJobs.find((j) => j.id === jobId);
+    const lead = cronBriefLeadHtml(job);
+    const setup = job ? cronSetupHtml(job) : "";
+    const err = cronPanelBoardErrors.get(jobId);
+    if (err) {
+      const fallback = job ? cronFallbackItemsHtml(job) : "";
+      return `<div class="cron-card-body" data-job="${jobEsc}">${lead}${setup}${fallback}<div class="exec-crons-error">board unavailable (${escapeHtml(err)})</div></div>`;
+    }
+    const board = cronPanelBoards.get(jobId);
+    if (!board) {
+      if (job) {
+        return `<div class="cron-card-body" data-job="${jobEsc}">${lead}${setup}${cronFallbackItemsHtml(job)}</div>`;
+      }
+      return `<div class="cron-card-body" data-job="${jobEsc}">${lead}${setup}Loading…</div>`;
+    }
+    const open = cronSortOpenItems(board.items.filter((i) => i.status === "open"));
+    const dismissed = board.items.filter((i) => i.status === "dismissed");
+    // All / Unread hide ticked items (they live in Acknowledged). Acknowledged
+    // shows only the ticked ones. Other chips keep the whole open list.
+    const shown =
+      cronFilter === "acked"
+        ? open.filter((i) => i.acknowledged === true)
+        : cronFilter === "all" || cronFilter === "unread"
+          ? open.filter((i) => i.acknowledged !== true)
+          : open;
+    const items = shown.length
+      ? shown.map((item) => cronItemHtml(jobId, item)).join("")
+      : cronFilter === "acked"
+        ? `<div class="cron-card-clear">nothing acknowledged</div>`
+        : open.some((i) => i.acknowledged === true)
+          ? `<div class="cron-card-clear">all read — see Acknowledged</div>`
+          : `<div class="cron-card-clear">clear — nothing open</div>`;
+    return `<div class="cron-card-body" data-job="${jobEsc}">${lead}${setup}${items}${cronDismissedHtml(jobId, dismissed)}</div>`;
+  }
+
+  function cronCardHtml(job: CronPanelJob): string {
+    const summary = cronPanelSummaries.get(job.id);
+    const board = cronPanelBoards.get(job.id);
+    const expanded = !isCollapsed(cronCardFoldKey(job.id));
+    const failed = job.state.lastRunStatus === "error" || job.report?.status === "failed";
+    const dotClass = job.silent ? "silent" : failed ? "err" : "ok";
+    const dotTitle = job.silent ? "silent — no report ever" : failed ? "last run failed" : "ok";
+    const openCount = summary?.openCount ?? 0;
+    // No summary at all = the board RPCs are not deployed; show no pill rather
+    // than inventing an unread state.
+    const unread = summary?.unread ?? false;
+    const unreadCount = board
+      ? board.items.filter((i) => i.status === "open" && i.acknowledged !== true).length
+      : unread
+        ? openCount
+        : 0;
+    const pill =
+      unreadCount > 0
+        ? `<span class="cron-card-unread" title="${unreadCount} open item(s) you have not read">${unreadCount}</span>`
+        : "";
+    // The HEAD carries `draggable`, not `.cron-card`. Two reasons, both load-bearing:
+    // a drag then never starts from the card BODY, where the items live and own the
+    // gesture; and there is no nesting question to reason about, because a card drag
+    // and an item drag can only ever begin on disjoint elements.
+    // Collapsed: name LEFT (loud), prompt-skim RIGHT (quiet). Never tonight's
+    // findings — those are items. Schedule lives in the expanded setup form.
+    const { name: cardName, promptSkim } = cronCardChrome(job);
+    const hoverBits = [cardName, job.description?.trim(), job.scheduleHuman].filter(Boolean);
+    const taskSummary = escapeHtml(hoverBits.join(" — "));
+    const right = promptSkim || job.scheduleHuman;
+    return `<div class="cron-card${expanded ? " cron-card-open" : ""}${job.enabled ? "" : " exec-cron-disabled"}" data-job="${escapeHtml(job.id)}">
+          <div class="cron-card-head" title="${taskSummary}">
+            <span class="exec-cron-dot exec-cron-dot-${dotClass}" title="${dotTitle}"></span>
+            <span class="exec-cron-name">${escapeHtml(cardName)}</span>
+            <span class="exec-cron-sched">${escapeHtml(right)}</span>
+            ${pill}
+          </div>
+          ${expanded ? cronCardBodyHtml(job.id) : ""}
+        </div>`;
+  }
+
+  function cronCardElement(jobId: string): HTMLElement | null {
+    const host = ensureExecPanel().querySelector<HTMLElement>("#exec-crons-body");
+    if (!host) return null;
+    // jobIds are free text, so scan instead of interpolating one into a CSS
+    // selector — a `"` in an id would otherwise throw at query time.
+    return (
+      Array.from(host.querySelectorAll<HTMLElement>(".cron-card")).find(
+        (el) => el.dataset.job === jobId,
+      ) ?? null
+    );
+  }
+
+  function rerenderCronCard(jobId: string): void {
+    const el = cronCardElement(jobId);
+    const job = cronPanelJobs.find((j) => j.id === jobId);
+    if (!el || !job) return;
+    el.outerHTML = cronCardHtml(job);
+  }
+
+  /** Lazy board fetch: one round-trip the first time a card is expanded. */
+  async function ensureCronBoard(jobId: string): Promise<void> {
+    if (cronPanelBoards.has(jobId)) return;
+    try {
+      const res = await req<{ board: CronBoard }>("cronpanel.board.get", { jobId });
+      cronPanelBoards.set(jobId, res.board);
+      cronPanelSummaries.set(jobId, cronBoardSummaryFrom(res.board));
+      cronPanelBoardErrors.delete(jobId);
+    } catch (err) {
+      cronPanelBoardErrors.set(jobId, String(err));
+    }
+    rerenderCronCard(jobId);
+  }
+
+  /**
+   * Every board.* mutation returns the new board — cache it, re-derive the
+   * summary, repaint that one card. A failure does NOT blank the card: the
+   * cached board keeps showing, so a dropped RPC looks like "nothing moved"
+   * rather than "your items are gone".
+   */
+  async function cronBoardMutate(
+    method: string,
+    params: Record<string, unknown>,
+    jobId: string,
+  ): Promise<void> {
+    try {
+      const res = await req<{ board: CronBoard }>(method, params);
+      if (res?.board) {
+        cronPanelBoards.set(jobId, res.board);
+        cronPanelSummaries.set(jobId, cronBoardSummaryFrom(res.board));
+        cronPanelBoardErrors.delete(jobId);
+      }
+    } catch (err) {
+      console.error("[exec-panel] " + method + " failed", jobId, err);
+    }
+    rerenderCronCard(jobId);
+  }
+
+  function renderCronFilterBar(scope?: HTMLElement): void {
+    const bar = (scope ?? execPanelEl)?.querySelector<HTMLElement>("#exec-cron-filter-bar");
+    if (!bar) return;
+    bar.innerHTML = CRON_FILTERS.map(
+      (f) =>
+        `<button class="exec-filter-chip${cronFilter === f.key ? " exec-filter-chip-active" : ""}" data-cron-filter="${f.key}">${f.label}</button>`,
+    ).join("");
+    bar.querySelectorAll<HTMLElement>("[data-cron-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        cronFilter = parseCronFilter(btn.dataset.cronFilter);
+        setChoice(CRON_FILTER_KEY, cronFilter, CRON_FILTER_DEFAULT);
+        renderCronFilterBar();
+        paintCronBoard();
+      });
+    });
+  }
+
+  function attachCronAddGroupHandlers(scope: HTMLElement): void {
+    const toggle = scope.querySelector("#exec-cron-add-group-toggle") as HTMLButtonElement | null;
+    const form = scope.querySelector("#exec-cron-add-group-form") as HTMLFormElement | null;
+    const label = scope.querySelector("#exec-cron-add-group-label") as HTMLInputElement | null;
+    const cancel = scope.querySelector("#exec-cron-add-group-cancel") as HTMLButtonElement | null;
+    if (!toggle || !form || !label || !cancel) return;
+    const open = () => {
+      form.style.display = "";
+      toggle.style.display = "none";
+      label.focus();
+    };
+    const close = () => {
+      form.style.display = "none";
+      toggle.style.display = "";
+      label.value = "";
+    };
+    toggle.addEventListener("click", open);
+    cancel.addEventListener("click", close);
+    label.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        close();
+      }
+    });
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const result = addCronGroup(cronTaxonomy, label.value, null);
+      if (!result.ok) {
+        label.classList.add("exec-add-text-error");
+        setTimeout(() => label.classList.remove("exec-add-text-error"), 1500);
+        label.focus();
+        return;
+      }
+      cronTaxonomy = result.tax;
+      saveCronTaxonomy(cronTaxonomy);
+      close();
+      paintCronBoard();
+    });
+  }
+
+  function cronGroupCount(groupId: string, visible: CronPanelJob[]): number {
+    const own = jobsInGroup(cronTaxonomy, groupId, visible, (j) => j.id).length;
+    const children = cronTaxonomy.groups.filter((g) => g.parentId === groupId);
+    return own + children.reduce((acc, child) => acc + cronGroupCount(child.id, visible), 0);
+  }
+
+  function renderCronGroupBlock(
+    group: CronGroupNode,
+    visible: CronPanelJob[],
+    isSub: boolean,
+  ): string {
+    const own = jobsInGroup(cronTaxonomy, group.id, visible, (j) => j.id);
+    const count = cronGroupCount(group.id, visible);
+    const collapsed = isCollapsed(cronGroupFoldKey(group.id));
+    const cards = own.map((job) => cronCardHtml(job)).join("");
+    const children = group.children
+      .map((child) => renderCronGroupBlock(child, visible, true))
+      .join("");
+    const wrapClass = isSub ? "exec-subgroup" : "exec-group";
+    const headerClass = isSub ? "exec-subgroup-header" : "exec-group-header";
+    const labelClass = isSub ? "exec-subgroup-label" : "exec-group-label";
+    const parentAttr =
+      isSub && group.parentId ? ` data-axis-parent="${escapeHtml(group.parentId)}"` : "";
+    const empty =
+      own.length === 0 && group.children.length === 0
+        ? `<div class="exec-group-empty">(empty — drag cron cards here)</div>`
+        : "";
+    const addSub = isSub
+      ? ""
+      : `<button class="exec-group-add-sub" data-cron-add-sub="${escapeHtml(group.id)}" title="Add sub-group under ${escapeHtml(group.label)}">⤵</button>`;
+    const del =
+      count === 0
+        ? `<button class="exec-group-delete" data-cron-del-group="${escapeHtml(group.id)}" title="Delete empty group">🗑</button>`
+        : "";
+    return (
+      `<div class="${wrapClass}${collapsed ? " exec-group-collapsed" : ""}" data-cron-group="${escapeHtml(group.id)}" data-axis="${escapeHtml(group.id)}"${parentAttr}>` +
+      `<div class="${headerClass}" data-cron-group-id="${escapeHtml(group.id)}">` +
+      `<span class="exec-group-grip" aria-hidden="true">⋮⋮</span>` +
+      `<span class="exec-group-disclosure">${collapsed ? "▶" : "▼"}</span>` +
+      `<span class="${labelClass}" data-cron-group-label="${escapeHtml(group.label)}">${escapeHtml(group.label)}</span>` +
+      `<button class="exec-group-pencil" data-cron-rename-group="${escapeHtml(group.id)}" title="Rename group">✏️</button>` +
+      `<span class="exec-group-count">${count}</span>` +
+      addSub +
+      del +
+      `</div>` +
+      (collapsed ? "" : `${cards}${children}${empty}`) +
+      `</div>`
+    );
+  }
+
+  function renderCronGroupedHtml(visible: CronPanelJob[]): string {
+    const tree = buildCronGroupTree(cronTaxonomy.groups);
+    if (tree.length === 0) {
+      return visible.map((job) => cronCardHtml(job)).join("");
+    }
+    const html: string[] = [];
+    for (const group of tree) html.push(renderCronGroupBlock(group, visible, false));
+    const unsorted = jobsInGroup(cronTaxonomy, CRON_UNSORTED_ID, visible, (j) => j.id);
+    const collapsed = isCollapsed(cronGroupFoldKey(CRON_UNSORTED_ID));
+    const cards = unsorted.map((job) => cronCardHtml(job)).join("");
+    // Always render Unsorted once any group exists — otherwise a fully-classified
+    // board has nowhere to drop a card back out to.
+    html.push(
+      `<div class="exec-group${collapsed ? " exec-group-collapsed" : ""}" data-cron-group="${CRON_UNSORTED_ID}" data-axis="${CRON_UNSORTED_ID}">` +
+        `<div class="exec-group-header" data-cron-group-id="${CRON_UNSORTED_ID}">` +
+        `<span class="exec-group-disclosure">${collapsed ? "▶" : "▼"}</span>` +
+        `<span class="exec-group-label">Unsorted</span>` +
+        `<span class="exec-group-count">${unsorted.length}</span>` +
+        `</div>${collapsed ? "" : cards || `<div class="exec-group-empty">(empty — drag cron cards here)</div>`}</div>`,
+    );
+    return html.join("");
+  }
+
+  function paintCronBoard(): void {
+    cronPanelJobs = cronOrderJobs(cronPanelJobs);
+    const bodyEl = ensureExecPanel().querySelector<HTMLElement>("#exec-crons-body");
+    if (!bodyEl) return;
+    if (cronPanelJobs.length === 0) {
+      bodyEl.innerHTML = `<div class="exec-crons-empty">no cron jobs registered</div>`;
+      return;
+    }
+    const visible = cronVisibleJobs();
+    if (visible.length === 0) {
+      bodyEl.innerHTML = `<div class="exec-crons-empty">Nothing matches the <b>${escapeHtml(cronFilter)}</b> filter.</div>`;
+      return;
+    }
+    bodyEl.innerHTML = renderCronGroupedHtml(visible);
+    for (const job of visible) {
+      if (!isCollapsed(cronCardFoldKey(job.id))) void ensureCronBoard(job.id);
+    }
+  }
+
+  function openCronSubgroupForm(anchor: HTMLElement, parentId: string): void {
+    document.querySelectorAll(".exec-cron-add-subgroup-form").forEach((f) => f.remove());
+    const form = document.createElement("form");
+    form.className = "exec-add-subgroup-form exec-cron-add-subgroup-form";
+    form.innerHTML =
+      `<input type="text" placeholder="Sub-group label…" maxlength="32" required />` +
+      `<button type="submit">Add</button>` +
+      `<button type="button" data-cancel="1">×</button>`;
+    const header =
+      (anchor.closest(".exec-group-header") as HTMLElement | null) ||
+      (anchor.closest(".exec-subgroup-header") as HTMLElement | null);
+    if (!header) return;
+    header.insertAdjacentElement("afterend", form);
+    const input = form.querySelector("input") as HTMLInputElement;
+    input.focus();
+    const close = () => form.remove();
+    (form.querySelector("button[data-cancel]") as HTMLButtonElement).addEventListener(
+      "click",
+      close,
+    );
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        close();
+      }
+    });
+    form.addEventListener("submit", (ev) => {
+      ev.preventDefault();
+      const result = addCronGroup(cronTaxonomy, input.value, parentId);
+      if (!result.ok) {
+        input.classList.add("exec-add-text-error");
+        setTimeout(() => input.classList.remove("exec-add-text-error"), 1500);
+        input.focus();
+        return;
+      }
+      cronTaxonomy = result.tax;
+      saveCronTaxonomy(cronTaxonomy);
+      close();
+      paintCronBoard();
+    });
+  }
+
+  function startCronGroupRename(anchor: HTMLElement, groupId: string): void {
+    const header =
+      (anchor.closest(".exec-group-header") as HTMLElement | null) ||
+      (anchor.closest(".exec-subgroup-header") as HTMLElement | null);
+    if (!header || header.querySelector(".exec-group-label-edit")) return;
+    const span = header.querySelector(
+      ".exec-group-label, .exec-subgroup-label",
+    ) as HTMLElement | null;
+    if (!span) return;
+    const was = span.textContent ?? "";
+    const input = document.createElement("input");
+    input.className = "exec-group-label-edit";
+    input.value = was;
+    input.maxLength = 32;
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+    const finish = (commit: boolean) => {
+      if (commit) {
+        cronTaxonomy = renameCronGroup(cronTaxonomy, groupId, input.value);
+        saveCronTaxonomy(cronTaxonomy);
+      }
+      paintCronBoard();
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        finish(true);
+      }
+      if (ev.key === "Escape") {
+        ev.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener("blur", () => finish(true));
+  }
+
+  function renderCronPanel(body: HTMLElement): void {
+    body.innerHTML = `
+        <div class="exec-section exec-crons">
+          <div class="exec-section-title">
+            <span>⏰ Crons</span>
+            <button class="exec-section-refresh" data-section="crons" title="Reload the cron board">↻</button>
+          </div>
+          <div class="exec-filter-bar" id="exec-cron-filter-bar"></div>
+          <div class="exec-add-group-wrap">
+            <button id="exec-cron-add-group-toggle" class="exec-add-group-toggle">+ Add group</button>
+            <form id="exec-cron-add-group-form" class="exec-add-group-form" style="display:none">
+              <input id="exec-cron-add-group-label" type="text" placeholder="Group label (max 32 chars)" maxlength="32" required />
+              <button type="submit" class="exec-add-group-submit">Add</button>
+              <button type="button" id="exec-cron-add-group-cancel" class="exec-add-group-cancel">Cancel</button>
+            </form>
+          </div>
+          <div class="exec-crons-body" id="exec-crons-body">Loading…</div>
+        </div>
+    `;
+    renderCronFilterBar(body);
+    attachCronAddGroupHandlers(body);
+    const host = body.querySelector<HTMLElement>("#exec-crons-body");
+    if (!host) return;
+
+    // Everything below is DELEGATED on #exec-crons-body. loadExecCrons()
+    // replaces its innerHTML wholesale and every mutation replaces a whole
+    // card, so a listener bound to a card or a button would not survive.
+    host.addEventListener("click", (ev) => {
+      const target = ev.target as HTMLElement | null;
+      if (!target) return;
+      if (Date.now() - execLastDragEndAt < EXEC_POST_DRAG_CLICK_SUPPRESS_MS) return;
+
+      const addSub = target.closest<HTMLElement>("[data-cron-add-sub]");
+      if (addSub) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const parentId = addSub.dataset.cronAddSub;
+        if (parentId) openCronSubgroupForm(addSub, parentId);
+        return;
+      }
+      const delGroup = target.closest<HTMLElement>("[data-cron-del-group]");
+      if (delGroup) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const id = delGroup.dataset.cronDelGroup;
+        if (!id) return;
+        const next = deleteCronGroup(cronTaxonomy, id);
+        if (!next) return;
+        cronTaxonomy = next;
+        saveCronTaxonomy(cronTaxonomy);
+        paintCronBoard();
+        return;
+      }
+      const rename = target.closest<HTMLElement>("[data-cron-rename-group]");
+      if (rename) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const id = rename.dataset.cronRenameGroup;
+        if (id) startCronGroupRename(rename, id);
+        return;
+      }
+      const jobId = target.closest<HTMLElement>(".cron-card")?.dataset.job;
+      if (!jobId) return;
+
+      const check = target.closest<HTMLElement>(".cron-item-check");
+      if (check) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const itemId = check.dataset.item;
+        if (!itemId) return;
+        const acked =
+          cronPanelBoards.get(jobId)?.items.find((i) => i.id === itemId)?.acknowledged === true;
+        void cronBoardMutate(
+          "cronpanel.board.acknowledge",
+          { jobId, itemId, acknowledged: !acked },
+          jobId,
+        );
+        return;
+      }
+
+      const refer = target.closest<HTMLElement>(".cron-item-refer");
+      if (refer) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const itemId = refer.dataset.item;
+        const item = itemId
+          ? cronPanelBoards.get(jobId)?.items.find((i) => i.id === itemId)
+          : undefined;
+        if (item) cronReferInChat(jobId, item);
+        return;
+      }
+
+      const pin = target.closest<HTMLElement>(".cron-item-pin");
+      if (pin) {
+        const itemId = pin.dataset.item;
+        if (!itemId) return;
+        const pinned = cronPanelBoards.get(jobId)?.items.find((i) => i.id === itemId)?.pinned;
+        void cronBoardMutate("cronpanel.board.pin", { jobId, itemId, pinned: !pinned }, jobId);
+        return;
+      }
+
+      const dismiss = target.closest<HTMLElement>(".cron-item-dismiss");
+      if (dismiss) {
+        const itemId = dismiss.dataset.item;
+        if (!itemId) return;
+        cronPanelDismissTarget.set(jobId, itemId);
+        rerenderCronCard(jobId);
+        cronCardElement(jobId)?.querySelector<HTMLTextAreaElement>(".cron-dismiss-reason")?.focus();
+        return;
+      }
+
+      const cancel = target.closest<HTMLElement>(".cron-dismiss-cancel");
+      if (cancel) {
+        const itemId = cancel.dataset.item;
+        cronPanelDismissTarget.delete(jobId);
+        if (itemId) cronPanelDismissDrafts.delete(`${jobId}::${itemId}`);
+        rerenderCronCard(jobId);
+        return;
+      }
+
+      const confirmBtn = target.closest<HTMLElement>(".cron-dismiss-confirm");
+      if (confirmBtn) {
+        const itemId = confirmBtn.dataset.item;
+        if (!itemId) return;
+        const reason = (cronPanelDismissDrafts.get(`${jobId}::${itemId}`) ?? "").trim();
+        // The reason is the instruction channel back to the cron, not a
+        // courtesy field — an empty one is refused, never defaulted.
+        if (!reason) return;
+        cronPanelDismissTarget.delete(jobId);
+        cronPanelDismissDrafts.delete(`${jobId}::${itemId}`);
+        void cronBoardMutate("cronpanel.board.dismiss", { jobId, itemId, reason }, jobId);
+        return;
+      }
+
+      const restore = target.closest<HTMLElement>(".cron-item-restore");
+      if (restore) {
+        const itemId = restore.dataset.item;
+        if (itemId) void cronBoardMutate("cronpanel.board.restore", { jobId, itemId }, jobId);
+        return;
+      }
+
+      // Fold lives on the pointer-up path now (same as Tasks): pointerdown on
+      // the head preventDefault()s, so a click never arrives. Leaving this
+      // branch would be a silent no-op, or a double-toggle if a browser still
+      // synthesizes the click after a sub-threshold press.
+      if (target.closest(".cron-item-check")) return;
+    });
+
+    host.addEventListener("submit", (ev) => {
+      const form = (ev.target as HTMLElement | null)?.closest<HTMLFormElement>(".cron-setup");
+      if (!form) return;
+      ev.preventDefault();
+      const jobId = form.dataset.job;
+      if (!jobId) return;
+      const status = form.querySelector<HTMLElement>(".cron-setup-status");
+      const built = buildSchedule(cronReadSetupView(form));
+      if ("error" in built) {
+        if (status) status.textContent = built.error;
+        return;
+      }
+      if (status) status.textContent = "saving…";
+      void cronApplyJobUpdate(jobId, { schedule: built }).then((err) => {
+        const again = cronCardElement(jobId)?.querySelector<HTMLElement>(".cron-setup-status");
+        if (again) again.textContent = err ? err : "saved";
+      });
+    });
+
+    // Per-issue read checkbox — the UI writer of item.acknowledged.
+    host.addEventListener("change", (ev) => {
+      const target = ev.target;
+      if (!(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
+      const form = target.closest<HTMLElement>(".cron-setup");
+      if (form && target.classList.contains("cron-setup-enabled")) {
+        const jobId = form.dataset.job;
+        if (!jobId || !(target instanceof HTMLInputElement)) return;
+        const status = form.querySelector<HTMLElement>(".cron-setup-status");
+        if (status) status.textContent = "saving…";
+        void cronApplyJobUpdate(jobId, { enabled: target.checked }).then((err) => {
+          const again = cronCardElement(jobId)?.querySelector<HTMLElement>(".cron-setup-status");
+          if (again) again.textContent = err ? err : target.checked ? "enabled" : "disabled";
+        });
+        return;
+      }
+      if (form && target.classList.contains("cron-setup-repeat")) {
+        form.dataset.repeat = (target as HTMLSelectElement).value;
+        return;
+      }
+    });
+
+    // Reason drafts: keep the text, toggle Confirm IN PLACE. Re-rendering the
+    // card on every keystroke would steal focus mid-word.
+    host.addEventListener("input", (ev) => {
+      const area = ev.target;
+      if (!(area instanceof HTMLTextAreaElement)) return;
+      if (!area.classList.contains("cron-dismiss-reason")) return;
+      const jobId = area.closest<HTMLElement>(".cron-card")?.dataset.job;
+      const itemId = area.dataset.item;
+      if (!jobId || !itemId) return;
+      cronPanelDismissDrafts.set(`${jobId}::${itemId}`, area.value);
+      const confirmBtn =
+        area.parentElement?.querySelector<HTMLButtonElement>(".cron-dismiss-confirm");
+      if (confirmBtn) confirmBtn.disabled = area.value.trim().length === 0;
+    });
+
+    // `toggle` does not bubble — capture is the only way to delegate it.
+    host.addEventListener(
+      "toggle",
+      (ev) => {
+        const details = ev.target;
+        if (!(details instanceof HTMLDetailsElement)) return;
+        if (!details.classList.contains("cron-dismissed")) return;
+        const jobId = details.closest<HTMLElement>(".cron-card")?.dataset.job;
+        if (!jobId) return;
+        setCollapsed(cronDismissedFoldKey(jobId), !details.open, CRON_DISMISSED_DEFAULT_COLLAPSED);
+      },
+      true,
+    );
+
+    // Item reorder stays on HTML5 DnD — those live inside an OPEN card, so
+    // there is no fold-vs-drag fight. CARD move is pointer-event, same idiom
+    // as Tasks: a 4px threshold, so a click still folds and a drag still
+    // works on a collapsed header.
+    type CronCardPointerDrag = {
+      jobId: string;
+      card: HTMLElement;
+      ghost: HTMLElement;
+      indicator: HTMLElement;
+      pointerId: number;
+      startY: number;
+      passedThreshold: boolean;
+    };
+    let cronCardPtr: CronCardPointerDrag | null = null;
+
+    function endCronCardPtr(commit: boolean): void {
+      const d = cronCardPtr;
+      if (!d) return;
+      cronCardPtr = null;
+      d.ghost.remove();
+      d.card.classList.remove("cron-card-dragging");
+      if (!d.passedThreshold) {
+        d.indicator.remove();
+        if (commit) {
+          if (isCollapsed(cronCardFoldKey(d.jobId))) {
+            setCollapsed(cronCardFoldKey(d.jobId), false);
+            rerenderCronCard(d.jobId);
+            void ensureCronBoard(d.jobId);
+          } else {
+            setCollapsed(cronCardFoldKey(d.jobId), true);
+            rerenderCronCard(d.jobId);
+          }
+        }
+        return;
+      }
+      if (!commit) {
+        d.indicator.remove();
+        return;
+      }
+      execLastDragEndAt = Date.now();
+      const over =
+        d.indicator.parentElement?.closest<HTMLElement>("[data-cron-group]") ??
+        (d.indicator.previousElementSibling as HTMLElement | null)?.closest<HTMLElement>(
+          "[data-cron-group]",
+        ) ??
+        (d.indicator.nextElementSibling as HTMLElement | null)?.closest<HTMLElement>(
+          "[data-cron-group]",
+        );
+      const targetGroup = over?.dataset.cronGroup ?? CRON_UNSORTED_ID;
+      const fromGroup = groupIdForJob(cronTaxonomy, d.jobId);
+      if (targetGroup !== fromGroup) {
+        cronTaxonomy = assignJob(cronTaxonomy, d.jobId, targetGroup);
+        saveCronTaxonomy(cronTaxonomy);
+      }
+      const parent = d.indicator.parentElement;
+      if (parent) {
+        parent.insertBefore(d.card, d.indicator);
+      }
+      cronPersistCardOrder(host);
+      d.indicator.remove();
+      paintCronBoard();
+    }
+
+    host.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const target = ev.target as HTMLElement;
+      if (target.closest("button, input, textarea, select, .cron-item, .cron-setup, .fs-link"))
+        return;
+      const head = target.closest(".cron-card-head") as HTMLElement | null;
+      if (!head) return;
+      const card = head.closest(".cron-card") as HTMLElement | null;
+      const jobId = card?.dataset.job;
+      if (!card || !jobId) return;
+      ev.preventDefault();
+      card.setPointerCapture?.(ev.pointerId);
+      const rect = card.getBoundingClientRect();
+      const ghost = card.cloneNode(true) as HTMLElement;
+      ghost.classList.add("exec-drag-ghost");
+      ghost.style.position = "fixed";
+      ghost.style.pointerEvents = "none";
+      ghost.style.zIndex = "10000";
+      ghost.style.left = `${rect.left}px`;
+      ghost.style.top = `${rect.top}px`;
+      ghost.style.width = `${rect.width}px`;
+      ghost.style.opacity = "0";
+      document.body.appendChild(ghost);
+      const indicator = document.createElement("div");
+      indicator.className = "exec-drop-indicator";
+      cronCardPtr = {
+        jobId,
+        card,
+        ghost,
+        indicator,
+        pointerId: ev.pointerId,
+        startY: ev.clientY,
+        passedThreshold: false,
+      };
+    });
+
+    host.addEventListener("pointermove", (ev) => {
+      const d = cronCardPtr;
+      if (!d || ev.pointerId !== d.pointerId) return;
+      if (!d.passedThreshold) {
+        if (Math.abs(ev.clientY - d.startY) < DRAG_START_THRESHOLD_PX) return;
+        d.passedThreshold = true;
+        d.card.classList.add("cron-card-dragging");
+        d.ghost.style.opacity = "0.85";
+      }
+      d.ghost.style.left = `${ev.clientX - 24}px`;
+      d.ghost.style.top = `${ev.clientY - 12}px`;
+      const bodyRect = host.getBoundingClientRect();
+      const fromTop = ev.clientY - bodyRect.top;
+      const fromBottom = bodyRect.bottom - ev.clientY;
+      if (fromTop < AUTOSCROLL_EDGE_PX) {
+        host.scrollTop -=
+          ((AUTOSCROLL_EDGE_PX - fromTop) / AUTOSCROLL_EDGE_PX) * AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
+      } else if (fromBottom < AUTOSCROLL_EDGE_PX) {
+        host.scrollTop +=
+          ((AUTOSCROLL_EDGE_PX - fromBottom) / AUTOSCROLL_EDGE_PX) *
+          AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
+      }
+      d.ghost.style.visibility = "hidden";
+      const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      d.ghost.style.visibility = "";
+      if (!under) return;
+      const overCard = under.closest(".cron-card") as HTMLElement | null;
+      if (overCard && overCard !== d.card) {
+        const rect = overCard.getBoundingClientRect();
+        overCard.parentElement?.insertBefore(
+          d.indicator,
+          ev.clientY < rect.top + rect.height / 2 ? overCard : overCard.nextSibling,
+        );
+        return;
+      }
+      const overGroup = under.closest("[data-cron-group]") as HTMLElement | null;
+      if (overGroup) {
+        const cards = Array.from(overGroup.querySelectorAll<HTMLElement>(":scope > .cron-card"));
+        const last = cards[cards.length - 1];
+        if (last) overGroup.insertBefore(d.indicator, last.nextSibling);
+        else {
+          const firstChild = overGroup.querySelector(
+            ":scope > .exec-subgroup, :scope > .exec-group-empty",
+          );
+          overGroup.insertBefore(d.indicator, firstChild);
+        }
+        return;
+      }
+      d.indicator.remove();
+    });
+
+    host.addEventListener("pointerup", (ev) => {
+      if (cronCardPtr && ev.pointerId === cronCardPtr.pointerId) endCronCardPtr(true);
+    });
+    host.addEventListener("pointercancel", (ev) => {
+      if (cronCardPtr && ev.pointerId === cronCardPtr.pointerId) endCronCardPtr(false);
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && cronCardPtr) endCronCardPtr(false);
+    });
+
+    host.addEventListener("dragstart", (ev) => {
+      const item = (ev.target as HTMLElement | null)?.closest<HTMLElement>(".cron-item");
+      if (!item) return;
+      cronPanelDragJob = item.closest<HTMLElement>(".cron-card")?.dataset.job ?? null;
+      item.classList.add("cron-item-dragging");
+      const dt = ev.dataTransfer;
+      if (dt) {
+        dt.setData("text/plain", item.dataset.item ?? "");
+        dt.effectAllowed = "move";
+      }
+    });
+
+    host.addEventListener("dragover", (ev) => {
+      if (!cronPanelDragJob) return;
+      const list = (ev.target as HTMLElement | null)?.closest<HTMLElement>(".cron-card-body");
+      if (!list || list.dataset.job !== cronPanelDragJob) return;
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = "move";
+      const dragging = list.querySelector<HTMLElement>(".cron-item-dragging");
+      const over = (ev.target as HTMLElement | null)?.closest<HTMLElement>(".cron-item");
+      if (!dragging || !over || over === dragging || !list.contains(over)) return;
+      const rect = over.getBoundingClientRect();
+      list.insertBefore(
+        dragging,
+        ev.clientY < rect.top + rect.height / 2 ? over : over.nextSibling,
+      );
+    });
+
+    host.addEventListener("drop", (ev) => {
+      const jobId = cronPanelDragJob;
+      if (!jobId) return;
+      const list = (ev.target as HTMLElement | null)?.closest<HTMLElement>(".cron-card-body");
+      if (!list || list.dataset.job !== jobId) return;
+      ev.preventDefault();
+      const itemIds = Array.from(list.querySelectorAll<HTMLElement>(".cron-item"))
+        .map((el) => el.dataset.item)
+        .filter((x): x is string => !!x);
+      void cronBoardMutate("cronpanel.board.reorder", { jobId, itemIds }, jobId);
+    });
+
+    host.addEventListener("dragend", () => {
+      cronPanelDragJob = null;
+      host
+        .querySelectorAll<HTMLElement>(".cron-item-dragging")
+        .forEach((el) => el.classList.remove("cron-item-dragging"));
+    });
+
+    type CronGroupPtr = {
+      id: string;
+      isTopLevel: boolean;
+      wrap: HTMLElement;
+      ghost: HTMLElement;
+      indicator: HTMLElement;
+      pointerId: number;
+      startY: number;
+      passedThreshold: boolean;
+    };
+    let cronGroupPtr: CronGroupPtr | null = null;
+
+    function endCronGroupPtr(commit: boolean): void {
+      const d = cronGroupPtr;
+      if (!d) return;
+      cronGroupPtr = null;
+      d.ghost.remove();
+      d.wrap.classList.remove("exec-group-source");
+      if (!d.passedThreshold) {
+        d.indicator.remove();
+        if (commit) {
+          setCollapsed(cronGroupFoldKey(d.id), !isCollapsed(cronGroupFoldKey(d.id)));
+          paintCronBoard();
+        }
+        return;
+      }
+      if (!commit || !d.indicator.parentElement || d.id === CRON_UNSORTED_ID) {
+        d.indicator.remove();
+        return;
+      }
+      execLastDragEndAt = Date.now();
+      const parent = d.indicator.parentElement;
+      const peerSel = d.isTopLevel ? ":scope > .exec-group" : ":scope > .exec-subgroup";
+      const peers = Array.from(parent.querySelectorAll<HTMLElement>(peerSel)).filter(
+        (el) => el !== d.wrap && el.dataset.cronGroup !== CRON_UNSORTED_ID,
+      );
+      const insertAt = Array.from(parent.children).indexOf(d.indicator);
+      const before = peers.filter((el) => Array.from(parent.children).indexOf(el) < insertAt);
+      const after = peers.filter((el) => Array.from(parent.children).indexOf(el) >= insertAt);
+      const ordered = [...before, d.wrap, ...after]
+        .map((el) => el.dataset.cronGroup)
+        .filter((x): x is string => !!x && x !== CRON_UNSORTED_ID);
+      const unique = Array.from(new Set(ordered));
+      if (d.isTopLevel) {
+        cronTaxonomy = reorderCronGroups(cronTaxonomy, null, unique);
+      } else {
+        const targetParent = parent.closest<HTMLElement>(".exec-group")?.dataset.cronGroup ?? null;
+        const next = reparentCronGroup(cronTaxonomy, d.id, targetParent, unique);
+        if (next) cronTaxonomy = next;
+        else cronTaxonomy = reorderCronGroups(cronTaxonomy, targetParent, unique);
+      }
+      saveCronTaxonomy(cronTaxonomy);
+      d.indicator.remove();
+      paintCronBoard();
+    }
+
+    host.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0 || cronCardPtr) return;
+      const target = ev.target as HTMLElement;
+      if (target.closest("button, input, textarea, select, .cron-card")) return;
+      const header =
+        (target.closest(".exec-group-header") as HTMLElement | null) ||
+        (target.closest(".exec-subgroup-header") as HTMLElement | null);
+      if (!header) return;
+      const wrap =
+        (header.closest(".exec-subgroup") as HTMLElement | null) ||
+        (header.closest(".exec-group") as HTMLElement | null);
+      const id = wrap?.dataset.cronGroup;
+      if (!wrap || !id) return;
+      ev.preventDefault();
+      wrap.setPointerCapture?.(ev.pointerId);
+      const rect = header.getBoundingClientRect();
+      const ghost = header.cloneNode(true) as HTMLElement;
+      ghost.classList.add("exec-drag-ghost", "exec-group-drag-ghost");
+      ghost.style.position = "fixed";
+      ghost.style.pointerEvents = "none";
+      ghost.style.zIndex = "10000";
+      ghost.style.left = `${rect.left}px`;
+      ghost.style.top = `${rect.top}px`;
+      ghost.style.width = `${rect.width}px`;
+      ghost.style.opacity = "0";
+      document.body.appendChild(ghost);
+      const indicator = document.createElement("div");
+      indicator.className = "exec-drop-indicator exec-group-drop-indicator";
+      cronGroupPtr = {
+        id,
+        isTopLevel: !wrap.classList.contains("exec-subgroup"),
+        wrap,
+        ghost,
+        indicator,
+        pointerId: ev.pointerId,
+        startY: ev.clientY,
+        passedThreshold: false,
+      };
+    });
+
+    host.addEventListener("pointermove", (ev) => {
+      const d = cronGroupPtr;
+      if (!d || ev.pointerId !== d.pointerId) return;
+      if (!d.passedThreshold) {
+        if (Math.abs(ev.clientY - d.startY) < DRAG_START_THRESHOLD_PX) return;
+        d.passedThreshold = true;
+        d.wrap.classList.add("exec-group-source");
+        d.ghost.style.opacity = "0.85";
+      }
+      d.ghost.style.left = `${ev.clientX - 24}px`;
+      d.ghost.style.top = `${ev.clientY - 12}px`;
+      d.ghost.style.visibility = "hidden";
+      const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      d.ghost.style.visibility = "";
+      if (!under) return;
+      if (d.isTopLevel) {
+        const over = under.closest(".exec-group:not(.exec-group-source)") as HTMLElement | null;
+        if (!over || over.dataset.cronGroup === CRON_UNSORTED_ID) {
+          d.indicator.remove();
+          return;
+        }
+        const rect = over.getBoundingClientRect();
+        over.parentElement?.insertBefore(
+          d.indicator,
+          ev.clientY < rect.top + rect.height / 2 ? over : over.nextSibling,
+        );
+        return;
+      }
+      const overSub = under.closest(".exec-subgroup:not(.exec-group-source)") as HTMLElement | null;
+      if (overSub) {
+        const rect = overSub.getBoundingClientRect();
+        overSub.parentElement?.insertBefore(
+          d.indicator,
+          ev.clientY < rect.top + rect.height / 2 ? overSub : overSub.nextSibling,
+        );
+        return;
+      }
+      const overTop = under.closest(".exec-group:not(.exec-group-source)") as HTMLElement | null;
+      if (overTop && overTop.dataset.cronGroup !== CRON_UNSORTED_ID) {
+        overTop.appendChild(d.indicator);
+        return;
+      }
+      d.indicator.remove();
+    });
+
+    host.addEventListener("pointerup", (ev) => {
+      if (cronGroupPtr && ev.pointerId === cronGroupPtr.pointerId) endCronGroupPtr(true);
+    });
+    host.addEventListener("pointercancel", (ev) => {
+      if (cronGroupPtr && ev.pointerId === cronGroupPtr.pointerId) endCronGroupPtr(false);
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && cronGroupPtr) endCronGroupPtr(false);
+    });
+  }
+
+  async function loadExecCrons(): Promise<void> {
+    const bodyEl = ensureExecPanel().querySelector<HTMLElement>("#exec-crons-body");
+    if (!bodyEl) return;
+    await execAwaitGateway();
+    let jobs: CronPanelJob[];
+    let summaries: CronBoardSummary[];
+    try {
+      // Both in flight at once. The board RPCs are newer than this tab, so a
+      // gateway without them degrades to headers-only rather than a red error.
+      const [listRes, boardRes] = await Promise.all([
+        req<{ jobs: CronPanelJob[] }>("cronpanel.list", {}),
+        req<{ summaries: CronBoardSummary[] }>("cronpanel.board.list", {}).catch(() => ({
+          summaries: [] as CronBoardSummary[],
+        })),
+      ]);
+      jobs = listRes.jobs ?? [];
+      summaries = boardRes.summaries ?? [];
+    } catch (err) {
+      bodyEl.innerHTML = `<div class="exec-crons-error">cron panel unavailable (${escapeHtml(String(err))})</div>`;
+      return;
+    }
+    // Arranged order becomes the ONE order of record: the render, the board prefetch
+    // and every later `.find()` all read the same list, so nothing can disagree.
+    cronPanelJobs = cronOrderJobs(jobs);
+    cronPanelSummaries.clear();
+    for (const summary of summaries) cronPanelSummaries.set(summary.jobId, summary);
+    // ↻ means "show me what is true now": drop the lazily-fetched boards so an
+    // expanded card refetches instead of repainting last night's items.
+    cronPanelBoards.clear();
+    cronPanelBoardErrors.clear();
+    paintCronBoard();
   }
 
   // FORK 2026-05-13 — on-demand poll for a single metric. Calls the new
@@ -11445,13 +22315,14 @@ function init() {
       return;
     }
     if (attempt === 1) execKpiLastLoad = now;
+    await execAwaitGateway(); // after the loading paint, before the first RPC
     try {
       const metricsRes = (await req("control-panel.list", {})) as { metrics: KpiMetric[] };
       const visible = (metricsRes.metrics ?? []).filter(
         (m) => (m.id.startsWith("kpi.") || m.id.startsWith("graph.")) && m.class === "SNAPSHOT",
       );
       // FORK 2026-06-05 — load ALL recorded history (no time window). The 30d
-      // cap was hiding months of already-collected data; the owner wants the full
+      // cap was hiding months of already-collected data; the architect wants the full
       // record. No from_ts → every observation since the metric's first point;
       // the chart's fullRange auto-fits the span and zoom/pan covers it all.
       const obsLists = await Promise.all(
@@ -11937,7 +22808,7 @@ function init() {
     bar.querySelectorAll<HTMLElement>(".exec-filter-chip").forEach((btn) => {
       btn.addEventListener("click", () => {
         execFilter = btn.dataset.filter as ExecFilter;
-        localStorage.setItem("tinker.execFilter", execFilter);
+        setChoice("exec:filter", execFilter, "unfinished");
         renderExecFilterBar();
         void loadExecTasks();
       });
@@ -12035,7 +22906,7 @@ function init() {
   type ExecFilter = "unfinished" | "all_today" | "resolved" | "snoozed" | "all";
   // FORK 2026-05-13 — `dismissed` filter renamed → `deleted`. Migrate any
   // persisted value so the chip highlight matches after the rename.
-  const rawExecFilter = localStorage.getItem("tinker.execFilter");
+  const rawExecFilter = getChoice("exec:filter", "unfinished");
   // FORK 2026-05-14 — the "Deleted" chip was removed (delete is now a hard
   // remove). Any persisted "deleted" or legacy "dismissed" value falls back
   // to the default "unfinished" chip.
@@ -12081,12 +22952,12 @@ function init() {
   // dropped/dismissed) that the checkbox does NOT communicate.
   const EXEC_STATUS_ICON: Record<string, string> = {
     open: "",
-    // FORK 2026-05-29 — the 🟡 "in-progress" signal moved from this status-icon
-    // to a 🟡 prefix on the task NAME, toggled by the pin button (data-action=
-    // toggle-pin). Kept empty here so in-progress tasks don't show 🟡 TWICE
-    // (status icon + name prefix). The name prefix is now the single source of
-    // truth for the yellow marker. A one-time migration carried existing
-    // in_progress task names over to the prefix. See feedback_bug_upgrade_task_lifecycle_protocol.
+    // FORK 2026-08-04 (the architect: "the pin icon appears fixed permanently, this is
+    // enough. Remove the yellow circles") — STILL empty, but for the opposite
+    // reason to 2026-05-29. Back then the 🟡 moved OUT of this map and onto a
+    // prefix on the task name; now the name is clean again and `in_progress`
+    // is signalled solely by the lit 📌 in the row (.exec-task-pin-on). Do not
+    // reintroduce a glyph here — that is the yellow circle he asked us to drop.
     in_progress: "",
     // FORK 2026-05-23 — dropped "✅" (was redundant with the head
     // checkbox which already turns accent-green with a ✓ when
@@ -12130,15 +23001,13 @@ function init() {
         const groupOpenCount =
           ownTasks.length +
           group.children.reduce((acc, sub) => acc + (tasksByAxis.get(sub.id)?.length ?? 0), 0);
-        const groupCollapsed =
-          localStorage.getItem(`tinker.execGroupCollapsed.${group.id}`) === "1";
+        const groupCollapsed = isCollapsed("exec:" + group.id);
         const groupTasks = ownTasks.map((t) => renderExecTaskRow(t, group.id)).join("");
         const subgroupsHtml = group.children
           .map((sub) => {
             const subList = tasksByAxis.get(sub.id) ?? [];
             const subCount = subList.length;
-            const subCollapsed =
-              localStorage.getItem(`tinker.execGroupCollapsed.${sub.id}`) === "1";
+            const subCollapsed = isCollapsed("exec:" + sub.id);
             const subTasks = subList.map((t) => renderExecTaskRow(t, sub.id)).join("");
             return (
               `<div class="exec-subgroup${subCollapsed ? " exec-group-collapsed" : ""}" data-axis="${escapeExecAttr(sub.id)}" data-axis-parent="${escapeExecAttr(group.id)}" data-axis-position="${sub.position}">` +
@@ -12282,10 +23151,11 @@ function init() {
           }
           const id = h.dataset.axisId;
           if (!id) return;
-          const key = `tinker.execGroupCollapsed.${id}`;
-          const cur = localStorage.getItem(key) === "1";
-          if (cur) localStorage.removeItem(key);
-          else localStorage.setItem(key, "1");
+          // FORK 2026-08-02 (the architect): write-through the unified ui-state store (default
+          // expanded), so this path and the drag-handler click-restoration cannot
+          // drift apart.
+          const next = !isCollapsed("exec:" + id);
+          setCollapsed("exec:" + id, next);
           void loadExecTasks();
         });
         // FORK 2026-05-23 (F1) — dblclick on the label opens the inline
@@ -12899,6 +23769,17 @@ function init() {
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
     const progressEl = panel.querySelector("#exec-progress-inline") as HTMLElement;
     const progressBar = panel.querySelector("#exec-progress-bar") as HTMLElement;
+    await execAwaitGateway();
+    // FORK 2026-08-24 — the axis list does NOT depend on the task list, but it
+    // used to be requested only once the tasks had already come back, so the
+    // panel paid two full gateway round-trips BACK TO BACK (~800ms each on this
+    // box) before it could paint anything. Start it here, alongside the task
+    // fetch, and await it further down where it is actually needed. The .catch
+    // preserves the FRESH_DB_FALLBACK path below and stops an axes failure from
+    // rejecting on its own while nothing is awaiting it yet.
+    const axesInFlight = req<{ axes: AxisRow[] }>("control-panel.axes.list", {})
+      .then((r) => r.axes ?? [])
+      .catch(() => [] as AxisRow[]);
     try {
       const res = (await req("control-panel.tasks.list", {
         // v3.3 — back_burner included in the fetch so the 💤 Snoozed chip has
@@ -12937,6 +23818,60 @@ function init() {
         void req("control-panel.tasks.update", { id: t.id, status: "open", metadata: meta });
       }
 
+      // FORK 2026-08-04 — one-time migration of the legacy 🟡 name prefix (the
+      // 2026-05-29 pin) back into the `in_progress` status. Same in-place shape
+      // as the wake pass above: mutate so THIS render is already clean, then
+      // fire-and-forget the persist. Typically a handful of rows, once ever.
+      // A 🟡 task that is already resolved or snoozed only loses the glyph —
+      // re-opening it as in_progress would resurrect finished work.
+      for (const t of execLastTasks) {
+        if (!t.text.startsWith("🟡")) continue;
+        const stripped = t.text.replace(/^🟡\s*/u, "");
+        const repin = t.status === "open";
+        t.text = stripped;
+        if (repin) t.status = "in_progress";
+        void req("control-panel.tasks.update", {
+          id: t.id,
+          text: stripped,
+          ...(repin ? { status: "in_progress" } : {}),
+        });
+      }
+
+      // FORK 2026-08-04 — the axis list is fetched HERE, above the render, not
+      // inside the `else` branch below where it used to live. FOCUS now paints
+      // each row's category/sub-category icons from it, and the old placement
+      // ran AFTER renderExecFocus() and only when the filter matched something
+      // — so the first paint had a stale (on a cold load, empty) axis list and
+      // the icons popped in one refresh late.
+      // Started next to the task fetch above, awaited only now — see the note there.
+      let axesFlat: AxisRow[] = await axesInFlight;
+      // FRESH_DB_FALLBACK — if axes table is empty (fresh DB or RPC failure),
+      // synthesize a flat list of 5 default top-level groups so the panel
+      // still renders sensibly. parent_id is null for every fallback axis.
+      // Task 18 (2026-05-22) inlined this literal after deleting the
+      // EXEC_AXIS_ORDER / EXEC_AXIS_LABEL constants — the labels match the
+      // seeds in extensions/tinkerclaw-task-panel/src/store/db.ts which
+      // is what gets written on first-boot in the normal path.
+      if (axesFlat.length === 0) {
+        axesFlat = [
+          { id: "ventures", label: "🚀 Ventures", position: 0, parent_id: null },
+          { id: "online", label: "💰 Online", position: 1, parent_id: null },
+          { id: "family", label: "👨‍👩‍👧 Family", position: 2, parent_id: null },
+          { id: "me", label: "🏃 Me", position: 3, parent_id: null },
+          { id: "serra", label: "🏭 SERRA", position: 4, parent_id: null },
+          { id: "meta", label: "⚙️ Meta", position: 5, parent_id: null },
+        ];
+      }
+      // Cache the resolved list for non-render readers (the right-click
+      // Reassign-axis submenu + the per-group + Add task affordance, which
+      // reads the parent axis id from the clicked header).
+      execAxesList = axesFlat;
+
+      // FORK 2026-08-04 — FOCUS renders off this same fetch (and BEFORE the
+      // filter below, which it deliberately ignores: a pinned task stays in
+      // Focus whatever chip the TASKS list is showing).
+      renderExecFocus();
+
       const visible = execLastTasks.filter(execFilterAccepts);
       if (visible.length === 0) {
         body.innerHTML = `<div class="exec-empty">Nothing matches the <b>${execFilter}</b> filter.</div>`;
@@ -12956,36 +23891,7 @@ function init() {
         for (const arr of tasksByAxis.values()) {
           arr.sort((a, b) => a.priority_rank - b.priority_rank);
         }
-        let axesFlat: AxisRow[] = [];
-        try {
-          const axesRes = (await req("control-panel.axes.list", {})) as { axes: AxisRow[] };
-          axesFlat = axesRes.axes ?? [];
-        } catch {
-          axesFlat = [];
-        }
-        // FRESH_DB_FALLBACK — if axes table is empty (fresh DB or RPC failure),
-        // synthesize a flat list of 5 default top-level groups so the panel
-        // still renders sensibly. parent_id is null for every fallback axis.
-        // Task 18 (2026-05-22) inlined this literal after deleting the
-        // EXEC_AXIS_ORDER / EXEC_AXIS_LABEL constants — the labels match the
-        // seeds in extensions/tinkerclaw-control-panel/src/store/db.ts which
-        // is what gets written on first-boot in the normal path.
-        if (axesFlat.length === 0) {
-          axesFlat = [
-            { id: "ventures", label: "🚀 Ventures", position: 0, parent_id: null },
-            { id: "online", label: "💰 Online", position: 1, parent_id: null },
-            { id: "family", label: "👨‍👩‍👧 Family", position: 2, parent_id: null },
-            { id: "me", label: "🏃 Me", position: 3, parent_id: null },
-            { id: "serra", label: "🏭 SERRA", position: 4, parent_id: null },
-            { id: "meta", label: "⚙️ Meta", position: 5, parent_id: null },
-          ];
-        }
-        // Cache the resolved list for non-render readers (the right-click
-        // Reassign-axis submenu + the new per-group + Add task affordance,
-        // which reads the parent axis id from the clicked header). The +
-        // Add task dropdown was removed in F2 (2026-05-23) since each task
-        // is now added directly under the group whose + button was clicked.
-        execAxesList = axesFlat;
+        // axesFlat / execAxesList are resolved above, before renderExecFocus().
         const tree = buildAxisTree(axesFlat);
         // Collect every id reachable through the tree so we can detect
         // orphan tasks (priority_axis set but not in the tree).
@@ -13005,8 +23911,7 @@ function init() {
         }
         if (orphanTasks.length > 0) {
           orphanTasks.sort((a, b) => a.priority_rank - b.priority_rank);
-          const orphanCollapsed =
-            localStorage.getItem("tinker.execGroupCollapsed.__unsorted__") === "1";
+          const orphanCollapsed = isCollapsed("exec:__unsorted__");
           const rows = orphanTasks.map((t) => renderExecTaskRow(t, "meta")).join("");
           html.push(
             `<div class="exec-group${orphanCollapsed ? " exec-group-collapsed" : ""}" data-axis="__unsorted__">` +
@@ -13082,13 +23987,273 @@ function init() {
       const msg = rawMsg || "unknown error";
       if (msg === "disconnected" || msg.includes("disconnected")) {
         body.innerHTML = `<div class="exec-loading">⏳ Loading tasks — connecting to gateway…</div>`;
-        setTimeout(() => {
+        // FORK 2026-08-24 — was a flat 1500ms timer. On a hard refresh this fires
+        // before the handshake, so the list sat idle for most of a second after
+        // the gateway was already serving — the single biggest slice of the ~3s
+        // the task list took to appear. Retry on the connection edge instead,
+        // keeping 1500ms as the ceiling. The `connected` guard matters: if we are
+        // already connected and STILL getting "disconnected", the edge has passed
+        // and racing it would spin hot, so that case keeps the old backoff.
+        const wake = connected
+          ? new Promise<void>((r) => setTimeout(r, 1500))
+          : Promise.race([whenConnected(), new Promise<void>((r) => setTimeout(r, 1500))]);
+        void wake.then(() => {
           void loadExecTasks();
-        }, 1500);
+        });
       } else {
         body.innerHTML = `<div class="exec-error">Failed to load tasks: ${escapeHtml(msg)} <span style="opacity:.6;font-size:11px">(devtools console has full error)</span></div>`;
       }
     }
+  }
+
+  // ─── FOCUS strip ───────────────────────────────────────────────────────────
+  // FORK 2026-08-04 (the architect): "listing every task I want to achieve in this life
+  // is useful, but without focus it gets overwhelming." FOCUS sits at the top of
+  // the Today tab and mirrors the tasks pinned with the 🟡 marker — the same pin
+  // the 📌 button already toggled on every task row, so no new task state was
+  // invented for this. The rows are COPIES: the original stays in its group in
+  // TASKS below, and resolving from either surface hits the same task, so a
+  // completed focus item leaves both lists at once.
+  //
+  // Order is the architect's, not the priority_rank the list below sorts by: dragging in
+  // FOCUS must not silently re-rank a task inside its group. So the order is a
+  // plain id list in the ui-state choice `exec:focus-order`, which the ui-state
+  // module mirrors to ~/.openclaw/data/tinker-ui-state.json — localStorage alone
+  // would not survive a Chrome exit on this profile. Ids missing from the list
+  // (a task pinned since the last drag) sort last, in task-list order.
+  const EXEC_FOCUS_ORDER_CHOICE = "exec:focus-order";
+
+  function readExecFocusOrder(): string[] {
+    try {
+      const parsed: unknown = JSON.parse(getChoice(EXEC_FOCUS_ORDER_CHOICE, "[]"));
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+
+  // Writes the CURRENT focus ids only, so unpinned/resolved tasks fall out of
+  // the stored order instead of accumulating forever.
+  function writeExecFocusOrder(ids: string[]): void {
+    setChoice(EXEC_FOCUS_ORDER_CHOICE, JSON.stringify(ids), "[]");
+  }
+
+  function execFocusTasks(): ExecTask[] {
+    // Pinned IS `in_progress` (see the pin button in renderExecTaskRow), so
+    // resolving or snoozing a task drops it out of FOCUS by construction —
+    // which is the whole point of the strip.
+    const pinned = execLastTasks.filter((t) => t.status === "in_progress");
+    const rank = new Map(readExecFocusOrder().map((id, i) => [id, i] as const));
+    // Array.prototype.sort is stable, so unranked ids keep their fetch order.
+    return pinned.sort(
+      (a, b) =>
+        (rank.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }
+
+  // FORK 2026-08-04 (the architect) — a FOCUS row leads with its category and
+  // sub-category icons, outermost first, and names them on hover. FOCUS is a
+  // flat list lifted out of the grouped TASKS tree, so the row otherwise loses
+  // every trace of where the task actually lives.
+  //
+  // The icon is simply whatever emoji the axis LABEL starts with ("🚀 Ventures"
+  // → 🚀). Labels are free text the user types (the + Add group form caps them
+  // at 32 chars and asks for nothing else), so a label with no emoji is normal:
+  // that level then contributes its name to the tooltip and no glyph.
+  // The class escape covers ZWJ sequences and skin-tone modifiers, so
+  // "👨‍👩‍👧 Family" yields the whole family glyph rather than a lone 👨.
+  const EXEC_AXIS_ICON_RE =
+    /^\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|️|⃣)*(?:‍\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|️|⃣)*)*/u;
+
+  function splitExecAxisLabel(label: string): { icon: string; name: string } {
+    const m = EXEC_AXIS_ICON_RE.exec(label);
+    const icon = m ? m[0] : "";
+    // An icon-only label ("🏭") keeps the glyph as its own name so the tooltip
+    // is never blank.
+    return { icon, name: label.slice(icon.length).trim() || label };
+  }
+
+  // Root → leaf. The schema tops out at two levels (group → sub-group), but the
+  // walk is guarded regardless: a parent_id cycle would otherwise spin forever
+  // inside a render pass.
+  function execAxisChain(axisId: string | null): AxisRow[] {
+    if (!axisId) return [];
+    const byId = new Map(execAxesList.map((a) => [a.id, a] as const));
+    const chain: AxisRow[] = [];
+    const seen = new Set<string>();
+    let cur = byId.get(axisId);
+    while (cur && !seen.has(cur.id)) {
+      seen.add(cur.id);
+      chain.unshift(cur);
+      cur = cur.parent_id ? byId.get(cur.parent_id) : undefined;
+    }
+    return chain;
+  }
+
+  function renderExecFocusAxisIcons(t: ExecTask): string {
+    // Not `.map(splitExecAxisLabel)` — Array.map hands the callback the whole
+    // AxisRow, so the point-free form passed an object where a string was
+    // declared and blew up with "label.slice is not a function", taking the
+    // entire task panel down with it (esbuild strips types without checking
+    // them, so nothing caught the mismatch at build time).
+    const parts = execAxisChain(t.priority_axis ?? null).map((a) => splitExecAxisLabel(a.label));
+    if (parts.length === 0) return "";
+    const icons = parts.map((p) => p.icon).join("");
+    // No emoji anywhere in the chain — render nothing rather than an empty
+    // element that would still eat the row's gap.
+    if (!icons) return "";
+    const tip = parts.map((p) => p.name).join(" › ");
+    return `<span class="exec-focus-axis" title="${escapeExecAttr(tip)}">${escapeHtml(icons)}</span>`;
+  }
+
+  function renderExecFocus(): void {
+    const panel = execPanelEl;
+    if (!panel) return;
+    const body = panel.querySelector("#exec-focus-body") as HTMLElement | null;
+    if (!body) return;
+    const countEl = panel.querySelector("#exec-focus-count") as HTMLElement | null;
+    const focus = execFocusTasks();
+    if (countEl) countEl.textContent = focus.length > 0 ? `${focus.length}` : "";
+    if (focus.length === 0) {
+      body.innerHTML = `<div class="exec-focus-empty">Nothing pinned. Hit 📌 on a task below to pull it up here.</div>`;
+      return;
+    }
+    body.innerHTML = focus
+      .map(
+        (t) =>
+          `<div class="exec-focus-row" data-task-id="${escapeExecAttr(t.id)}">` +
+          `<span class="exec-focus-grip" aria-hidden="true">⋮⋮</span>` +
+          `<button class="exec-task-check" data-action="toggle-resolve" title="Mark resolved — drops it from Pinned and from Tasks" aria-label="Mark resolved"></button>` +
+          renderExecFocusAxisIcons(t) +
+          `<span class="exec-focus-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>` +
+          `<button class="exec-focus-unpin" data-action="toggle-pin" title="Unpin — drop from Pinned, keep the task">📌</button>` +
+          `</div>`,
+      )
+      .join("");
+    // Both actions route through the same handler the TASKS rows use, and it
+    // ends in loadExecTasks() → renderExecFocus(); the two lists cannot drift.
+    body.querySelectorAll<HTMLElement>("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const row = btn.closest(".exec-focus-row") as HTMLElement | null;
+        if (row) void handleExecTaskAction(row.dataset.taskId!, btn.dataset.action!);
+      });
+    });
+  }
+
+  // Pointer-event reorder, same idiom as the TASKS drag below (ghost + drop
+  // indicator, 4px threshold) but flattened: FOCUS is one vertical list with no
+  // axes, so a midpoint test against each sibling is all the geometry needed.
+  // Delegated to the container so it survives every renderExecFocus() rerender.
+  function attachExecFocusDragHandlers(panel: HTMLElement): void {
+    const body = panel.querySelector("#exec-focus-body") as HTMLElement | null;
+    if (!body) return;
+    type FocusDrag = {
+      row: HTMLElement;
+      ghost: HTMLElement;
+      indicator: HTMLElement;
+      pointerId: number;
+      startY: number;
+      passedThreshold: boolean;
+    };
+    let drag: FocusDrag | null = null;
+
+    function endFocusDrag(commit: boolean): void {
+      const d = drag;
+      if (!d) return;
+      drag = null;
+      // Let the 10s auto-refresh resume; it is suppressed for the whole
+      // gesture below so a tick mid-drag can't wipe the row out of the DOM.
+      execDragRefreshSuppressed = false;
+      d.ghost.remove();
+      d.row.classList.remove("exec-task-source");
+      const dropped = commit && d.passedThreshold && d.indicator.parentElement === body;
+      if (dropped) {
+        // Read the new order straight off the DOM: every row in place except
+        // the dragged one, with the indicator marking where it lands.
+        const order: string[] = [];
+        let insertAt = -1;
+        for (const node of Array.from(body!.children) as HTMLElement[]) {
+          if (node === d.indicator) insertAt = order.length;
+          else if (node.classList.contains("exec-focus-row") && node !== d.row)
+            order.push(node.dataset.taskId!);
+        }
+        if (insertAt >= 0) {
+          order.splice(insertAt, 0, d.row.dataset.taskId!);
+          writeExecFocusOrder(order);
+        }
+      }
+      d.indicator.remove();
+      if (dropped) renderExecFocus();
+    }
+
+    body.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const target = ev.target as HTMLElement;
+      if (target.closest("button")) return;
+      const row = target.closest(".exec-focus-row") as HTMLElement | null;
+      if (!row) return;
+      ev.preventDefault();
+      row.setPointerCapture(ev.pointerId);
+      const rect = row.getBoundingClientRect();
+      const ghost = row.cloneNode(true) as HTMLElement;
+      ghost.classList.add("exec-drag-ghost");
+      ghost.style.position = "fixed";
+      ghost.style.pointerEvents = "none";
+      ghost.style.zIndex = "10000";
+      ghost.style.left = `${rect.left}px`;
+      ghost.style.top = `${rect.top}px`;
+      ghost.style.width = `${rect.width}px`;
+      ghost.style.opacity = "0";
+      document.body.appendChild(ghost);
+      const indicator = document.createElement("div");
+      indicator.className = "exec-drop-indicator";
+      drag = {
+        row,
+        ghost,
+        indicator,
+        pointerId: ev.pointerId,
+        startY: ev.clientY,
+        passedThreshold: false,
+      };
+      // Same guard the TASKS drag uses: renderExecFocus() replaces the whole
+      // body, so a periodic loadExecTasks() mid-gesture would delete the row
+      // being dragged and the drop would silently do nothing.
+      execDragRefreshSuppressed = true;
+    });
+
+    body.addEventListener("pointermove", (ev) => {
+      const d = drag;
+      if (!d || ev.pointerId !== d.pointerId) return;
+      if (!d.passedThreshold) {
+        // Below the threshold a plain click still reaches the buttons above.
+        if (Math.abs(ev.clientY - d.startY) < DRAG_START_THRESHOLD_PX) return;
+        d.passedThreshold = true;
+        d.row.classList.add("exec-task-source");
+        d.ghost.style.opacity = "0.85";
+      }
+      d.ghost.style.left = `${ev.clientX - 24}px`;
+      d.ghost.style.top = `${ev.clientY - 12}px`;
+      const siblings = Array.from(body!.querySelectorAll<HTMLElement>(".exec-focus-row")).filter(
+        (r) => r !== d.row,
+      );
+      const before = siblings.find((r) => {
+        const rect = r.getBoundingClientRect();
+        return ev.clientY < rect.top + rect.height / 2;
+      });
+      if (before) body!.insertBefore(d.indicator, before);
+      else body!.appendChild(d.indicator);
+    });
+
+    body.addEventListener("pointerup", (ev) => {
+      if (drag && ev.pointerId === drag.pointerId) endFocusDrag(true);
+    });
+    body.addEventListener("pointercancel", (ev) => {
+      if (drag && ev.pointerId === drag.pointerId) endFocusDrag(false);
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && drag) endFocusDrag(false);
+    });
   }
 
   // ─── Drag & drop: reorder tasks AND move them across axes ───
@@ -13127,6 +24292,20 @@ function init() {
   const DRAG_START_THRESHOLD_PX = 4;
   const AUTOSCROLL_EDGE_PX = 60;
   const AUTOSCROLL_MAX_SPEED_PX_PER_FRAME = 18;
+
+  // FORK 2026-08-24 — the Today tab now scrolls as one column, so
+  // `#exec-tasks-body` is no longer the box that owns the scrollbar. Setting
+  // `scrollTop` on a non-scrolling element is a SILENT no-op — the drag would
+  // still look alive (ghost following the cursor) while refusing to advance
+  // past the visible edge of a long list. Resolve the ancestor that actually
+  // scrolls, so edge auto-scroll keeps working wherever the frame lives.
+  function execScrollHost(el: HTMLElement): HTMLElement {
+    for (let node: HTMLElement | null = el; node; node = node.parentElement) {
+      const oy = getComputedStyle(node).overflowY;
+      if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight) return node;
+    }
+    return el;
+  }
 
   function attachExecPointerDragHandlers(panel: HTMLElement): void {
     const body = panel.querySelector("#exec-tasks-body") as HTMLElement;
@@ -13215,18 +24394,23 @@ function init() {
       // this BEFORE them guarantees auto-scroll fires regardless of which
       // drop-target branch the cursor lands in. Pointermove is already
       // browser-throttled to ~60fps, so no manual throttle needed.
-      const bodyRect = body.getBoundingClientRect();
+      // FORK 2026-08-24 — measure and scroll the box that actually scrolls
+      // (the Today tab body), not `body` (#exec-tasks-body), which no longer
+      // does. Its rect is also the wrong edge to test against now: it is as
+      // tall as the whole list, so `fromBottom` would never go small.
+      const scroller = execScrollHost(body);
+      const bodyRect = scroller.getBoundingClientRect();
       const fromTop = ev.clientY - bodyRect.top;
       const fromBottom = bodyRect.bottom - ev.clientY;
       if (fromTop < AUTOSCROLL_EDGE_PX) {
         const speed =
           ((AUTOSCROLL_EDGE_PX - fromTop) / AUTOSCROLL_EDGE_PX) * AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
-        body.scrollTop -= speed;
+        scroller.scrollTop -= speed;
       } else if (fromBottom < AUTOSCROLL_EDGE_PX) {
         const speed =
           ((AUTOSCROLL_EDGE_PX - fromBottom) / AUTOSCROLL_EDGE_PX) *
           AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
-        body.scrollTop += speed;
+        scroller.scrollTop += speed;
       }
 
       // Find drop target via elementFromPoint, ignoring the ghost.
@@ -13609,19 +24793,20 @@ function init() {
       drag.ghost.style.left = `${ev.clientX - 24}px`;
       drag.ghost.style.top = `${ev.clientY - 12}px`;
 
-      // Edge auto-scroll mirrors the task DnD.
-      const bodyRect = body.getBoundingClientRect();
+      // Edge auto-scroll mirrors the task DnD, including its scroll host.
+      const scroller = execScrollHost(body);
+      const bodyRect = scroller.getBoundingClientRect();
       const fromTop = ev.clientY - bodyRect.top;
       const fromBottom = bodyRect.bottom - ev.clientY;
       if (fromTop < AUTOSCROLL_EDGE_PX) {
         const speed =
           ((AUTOSCROLL_EDGE_PX - fromTop) / AUTOSCROLL_EDGE_PX) * AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
-        body.scrollTop -= speed;
+        scroller.scrollTop -= speed;
       } else if (fromBottom < AUTOSCROLL_EDGE_PX) {
         const speed =
           ((AUTOSCROLL_EDGE_PX - fromBottom) / AUTOSCROLL_EDGE_PX) *
           AUTOSCROLL_MAX_SPEED_PX_PER_FRAME;
-        body.scrollTop += speed;
+        scroller.scrollTop += speed;
       }
 
       drag.ghost.style.visibility = "hidden";
@@ -13682,8 +24867,8 @@ function init() {
       // when the gesture is a plain click (no drag movement), fire the
       // group/sub-group collapse-toggle ourselves since the click event
       // was suppressed by ev.preventDefault() in pointerdown. Mirrors the
-      // logic in attachExecGroupCollapseHandlers (localStorage key flip +
-      // loadExecTasks).
+      // logic in attachExecGroupCollapseHandlers (setCollapsed write-through
+      // + loadExecTasks — both paths MUST go through the unified store).
       if (!drag.passedThreshold) {
         drag.source.classList.remove("exec-group-source");
         drag.indicator.remove();
@@ -13691,12 +24876,8 @@ function init() {
         execGroupDrag = null;
         execDragRefreshSuppressed = false;
         if (axisId) {
-          const key = `tinker.execGroupCollapsed.${axisId}`;
-          if (localStorage.getItem(key) === "1") {
-            localStorage.removeItem(key);
-          } else {
-            localStorage.setItem(key, "1");
-          }
+          const next = !isCollapsed("exec:" + axisId);
+          setCollapsed("exec:" + axisId, next);
           void loadExecTasks();
         }
         return;
@@ -13923,12 +25104,24 @@ function init() {
     // the grip and the status icon. Click toggles status open↔resolved via
     // the toggle-resolve action (handled by handleExecTaskAction). This
     // replaces the drawer's "Resolve" button per the Today card redesign.
+    // FORK 2026-08-04 (the architect) — the ✓ glyph moved out of the markup into a CSS
+    // ::after on .exec-task-check, so the box can show a faded green tick on
+    // hover and a solid one when resolved without the renderer knowing. It
+    // also means the FOCUS rows get the identical control for free.
     const isResolved = t.status === "resolved";
+    // FORK 2026-08-04 (the architect: "the pin icon appears fixed permanently, this is
+    // enough. Remove the yellow circles") — pinned state is the `in_progress`
+    // STATUS again, not a 🟡 prefix glued onto the task name. The 2026-05-29
+    // arrangement stored the marker inside the text, so the yellow circle
+    // followed the title everywhere it travelled: the rename box, "Refer in
+    // chat", briefings, WhatsApp. Hiding it in one renderer would not have
+    // removed it, only moved where it surprises him. See migrateLegacyPinMarkers.
+    const isPinned = t.status === "in_progress";
     const checkbox = `<button
               class="exec-task-check${isResolved ? " exec-task-check-checked" : ""}"
               data-action="toggle-resolve"
               title="${isResolved ? "Mark open" : "Mark resolved"}"
-              aria-label="${isResolved ? "Mark open" : "Mark resolved"}">${isResolved ? "✓" : ""}</button>`;
+              aria-label="${isResolved ? "Mark open" : "Mark resolved"}"></button>`;
     return `<div class="exec-task${isExpanded ? " exec-task-expanded" : ""}"
               data-task-id="${escapeExecAttr(t.id)}"
               data-status="${t.status}"
@@ -13940,7 +25133,7 @@ function init() {
           ${icon ? `<span class="exec-task-icon">${icon}</span>` : ""}
           <span class="exec-task-text" title="${escapeExecAttr(t.text)}">${escapeHtml(t.text)}</span>
           <button class="exec-task-pencil" data-action="edit-title" title="Edit title">✏️</button>
-          <button class="exec-task-pin${t.text.startsWith("🟡") ? " exec-task-pin-on" : ""}" data-action="toggle-pin" title="${t.text.startsWith("🟡") ? "Unpin (remove yellow marker)" : "Pin (mark as in-progress)"}" aria-pressed="${t.text.startsWith("🟡") ? "true" : "false"}">📌</button>
+          <button class="exec-task-pin${isPinned ? " exec-task-pin-on" : ""}" data-action="toggle-pin" title="${isPinned ? "Unpin (back to open)" : "Pin (mark as in-progress)"}" aria-pressed="${isPinned ? "true" : "false"}">📌</button>
           <span class="exec-task-chips">
             ${dueChip}
             ${estChip}
@@ -14870,14 +26063,18 @@ function init() {
         }
         return;
       } else if (action === "toggle-pin") {
-        // FORK 2026-05-29 — pin toggles the 🟡 "in-progress" marker on the task
-        // NAME (the convention: 🟡 prefix = Jarvis is actively on this; user
-        // deleting the task = tested & done). Pure text edit via tasks.update;
-        // strip a leading 🟡 (+ optional space) if present, else prepend "🟡 ".
+        // FORK 2026-08-04 (the architect) — the pin flips the STATUS, which is what the
+        // button's own tooltip has promised since 2026-05-29 ("Pin (mark as
+        // in-progress)") even while the implementation was prepending a 🟡 to
+        // the task name instead. Status is the right home: `in_progress` is
+        // already the documented "under treatment" signal, the backend sorts it
+        // first, and every filter that accepts `open` accepts it too — so a
+        // pinned task cannot vanish from the list it was pinned in.
         if (!t) return;
-        const stripped = t.text.replace(/^🟡\s*/u, "");
-        const next = t.text.startsWith("🟡") ? stripped : `🟡 ${stripped}`;
-        await req("control-panel.tasks.update", { id: taskId, text: next });
+        await req("control-panel.tasks.update", {
+          id: taskId,
+          status: t.status === "in_progress" ? "open" : "in_progress",
+        });
       } else {
         return;
       }
@@ -14960,7 +26157,9 @@ function init() {
     }
   }
 
-  const execPersisted = localStorage.getItem("tinker.execMode") === "exec";
+  // FORK 2026-08-02 (the architect): "topbar:exec" flag (default off) replaces the legacy
+  // "exec"/"dev" string key — one store, stated defaults.
+  const execPersisted = getFlag("topbar:exec", false);
   if (execPersisted) {
     app.classList.add("exec-mode");
     execBtn.classList.add("tb-active");
@@ -14971,7 +26170,7 @@ function init() {
   execBtn.addEventListener("click", () => {
     const isExec = app.classList.toggle("exec-mode");
     execBtn.classList.toggle("tb-active", isExec);
-    localStorage.setItem("tinker.execMode", isExec ? "exec" : "dev");
+    setFlag("topbar:exec", isExec, false);
     if (isExec) {
       void loadExecTasks();
       startExecPolling();
@@ -16903,7 +28102,13 @@ function init() {
     const tab = tabs.find((t) => t.id === activeTabId);
 
     messages.length = 0;
-    streamMsgIdx = -1;
+    // FORK 2026-08-05: the cursor is a `_uid`, not an array index (see `streamMsgUid`). This site
+    // was NOT in the prepared patch — found by sweeping the file for the old symbol after the
+    // rename. Clearing the subagent map here too: `messages` was just emptied, so every uid it held
+    // now resolves to nothing, and a late subagent delta would otherwise open its bubble against a
+    // dangling key.
+    streamMsgUid = null;
+    subagentStreamUid.clear();
     lastDeltaLen = 0;
     lastDeltaAt = 0;
     streamRunId = null;
@@ -17695,7 +28900,7 @@ function init() {
     renderTabs();
     switchToTab(tab.id);
     updateSessionsPanel();
-    // FORK 2026-06-24 (the owner): on a NEW tab, put the cursor straight in the
+    // FORK 2026-06-24 (the architect): on a NEW tab, put the cursor straight in the
     // prompt composer so you can start typing immediately. rAF so it wins any
     // focus/render that switchToTab's async loadChat might do.
     requestAnimationFrame(() => ($("chat-textarea") as HTMLTextAreaElement | null)?.focus());
@@ -17746,6 +28951,44 @@ function init() {
     if (stop && run) {
       abort();
     }
+    // FORK 2026-08-16 (the architect: "whenever I click on any of those elapsed time messages, I want it
+    // to show a popup with the explanation of what it really means"). Delegated on #messages
+    // like every other row affordance, so the 5s indicator repaint cannot detach it.
+    //
+    // FORK 2026-08-24 (the architect: "At the end add an (i) icon to open the popup explanation") — the
+    // popup moved OFF the row body and onto the ⓘ. The row body now toggles the breakdown, so one
+    // gesture no longer has to mean two things; and a click anywhere on a collapsible row must not
+    // put a modal in front of the breakdown the click was trying to open.
+    //
+    // `stopPropagation` because the row is also the `[data-tid]` toggler: without it, opening the
+    // explanation would silently collapse the thing being explained.
+    const info = target.closest(".mpt-info") as HTMLElement | null;
+    if (info) {
+      e.stopPropagation();
+      // Three doc tables, chosen by what the row IS. A plugin row's label is a display name the
+      // phase table does not contain, so routing it to openPhaseDoc would render the generic
+      // fallback for every one of them.
+      const ms = Number(info.getAttribute("data-phase-ms") ?? 0);
+      const docPlugin = info.getAttribute("data-doc-plugin-id");
+      const docStage = info.getAttribute("data-doc-stage-id");
+      if (docPlugin) {
+        openPluginDoc(docPlugin, ms);
+      } else if (docStage) {
+        openStageDoc(docStage, ms);
+      } else {
+        openPhaseDoc(
+          info.getAttribute("data-phase-label") ?? "",
+          ms,
+          info.getAttribute("data-phase-client") === "1",
+        );
+      }
+      return;
+    }
+    // FORK 2026-08-24 — NO POPUP ON A SUBDIVISION (the architect, same message). Every child line
+    // used to be clickable. At depth 2 that is a doc about a doc: the parent's ⓘ already says what
+    // the stage is for, and a child's only honest content is its own number. The handler is gone
+    // rather than made conditional, so there is no path back to it by accident. A child that is
+    // ITSELF a parent renders as a `.msg-phase-timing` row and carries its own ⓘ, above.
   });
 
   // Mount context treemap into bottom-right panel
@@ -18007,11 +29250,20 @@ if (prefrontalContainer) {
   updatePrefrontalTree(); // Show empty state on boot
 }
 gwConnect();
+// FORK 2026-08-18 — start the ATTACHED ACTIVITY poll AFTER init() has built the DOM: the strip's
+// host node (#attach-strip) is created there, and the delegated Stop/Clear listener has to bind to
+// a node that already exists or the buttons are inert with nothing reporting it.
+initAttachStrip();
 setInterval(() => {
   if (connected) {
     loadBudget();
   }
 }, 300_000);
+// FORK 2026-08-28 (the architect) — the reset countdown in the usage hovers is arithmetic on an
+// instant we already hold, so it ticks on its own clock rather than waiting out the
+// 5-minute budget poll above. Unconditional: a disconnected socket does not stop time,
+// and a stale-but-correct countdown beats a frozen one.
+setInterval(tickUsageResets, 60_000);
 
 // Prefrontal tree is now updated reactively via updatePrefrontalTree()
 // at the same call sites as updateBudgetPanel/updateChat (no polling needed).

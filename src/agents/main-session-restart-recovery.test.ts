@@ -125,7 +125,7 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
   });
 
-  // FLAGGED to the owner 2026-05-31: pre-2026-05-10 this FAILED a stale
+  // FLAGGED to the architect 2026-05-31: pre-2026-05-10 this FAILED a stale
   // approval-pending tail; the 2026-05-10 "resume every recovered session"
   // directive made it resume instead. A toolResult tail is NOT idle (the
   // 2026-05-31 idle fix leaves it untouched), so it still resumes. Whether a
@@ -183,24 +183,30 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
   });
 
-  // FORK 2026-05-31 (the owner directive: "fix the resume on idle"). An idle
+  // FORK 2026-05-31 (the architect directive: "fix the resume on idle"). An idle
   // session whose last turn already COMPLETED (assistant text tail) must NOT be
   // resumed — doing so fires a phantom [System] continue at a turn with nothing
   // to resume (the "talked with no prompt" loop). It is settled to done so the
   // recovery gate stops re-matching it on every restart.
   it("skips and settles an idle session whose last turn already completed", async () => {
     const sessionsDir = await makeSessionsDir();
+    const startedAt = Date.now() - 10_000;
     await writeStore(sessionsDir, {
       "agent:main:main": {
         sessionId: "main-session",
-        updatedAt: Date.now() - 10_000,
+        updatedAt: startedAt,
+        startedAt,
         status: "running",
         abortedLastRun: true,
       },
     });
     await writeTranscript(sessionsDir, "main-session", [
-      { role: "user", content: "hello" },
-      { role: "assistant", content: [{ type: "text", text: "complete answer" }] },
+      { role: "user", content: "hello", timestamp: startedAt },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "complete answer" }],
+        timestamp: startedAt + 1_000,
+      },
     ]);
 
     const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
@@ -209,6 +215,35 @@ describe("main-session-restart-recovery", () => {
     expect(callGateway).not.toHaveBeenCalled();
     const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.status).toBe("done");
+    expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+  });
+
+  it("resumes when the assistant tail predates the interrupted run", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const previousTurnAt = Date.now() - 60_000;
+    const interruptedRunStartedAt = Date.now() - 10_000;
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: interruptedRunStartedAt,
+        startedAt: interruptedRunStartedAt,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "previous prompt", timestamp: previousTurnAt },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "previous complete answer" }],
+        timestamp: previousTurnAt + 1_000,
+      },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
   });
 

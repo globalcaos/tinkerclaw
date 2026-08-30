@@ -1,5 +1,6 @@
 import { importFreshModule } from "openclaw/plugin-sdk/test-fixtures";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { diagnosticLogger } from "../../logging/diagnostic.js";
 import { registerInflightSteerHook } from "./inflight-steer-hook.js";
 import {
   __testing,
@@ -7,6 +8,7 @@ import {
   clearActiveEmbeddedRun,
   consumeEmbeddedRunModelSwitch,
   getActiveEmbeddedRunSnapshot,
+  isEmbeddedPiRunActive,
   queueEmbeddedPiMessage,
   requestEmbeddedRunModelSwitch,
   setActiveEmbeddedRun,
@@ -97,6 +99,184 @@ describe("queueEmbeddedPiMessage in-flight steer (P4)", () => {
       await vi.advanceTimersByTimeAsync(350);
 
       expect(steered).toEqual(["one\n\ntwo"]); // 300ms debounce coalesced both
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("steer buffer delivery contract (FORK 2026-08-28)", () => {
+  afterEach(() => {
+    __testing.resetActiveEmbeddedRuns();
+    registerInflightSteerHook(null);
+    vi.restoreAllMocks();
+  });
+
+  it("delivers a buffered follow-up as a NEW turn when the run ends inside the debounce window", async () => {
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      const handle = {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+      };
+      setActiveEmbeddedRun("sess-ending", handle);
+      const steered: string[] = [];
+      registerInflightSteerHook((_sid, text) => {
+        steered.push(text);
+        return true; // would happily accept — must NOT be reached
+      });
+      const followups: Array<{ texts: string[]; combined: string }> = [];
+
+      queueEmbeddedPiMessage("sess-ending", "wait, also check the logs", {
+        onDeliveryLost: (texts, combined) => followups.push({ texts, combined }),
+      });
+      // the run finishes BEFORE the 300 ms debounce fires
+      clearActiveEmbeddedRun("sess-ending", handle);
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(followups).toEqual([
+        { texts: ["wait, also check the logs"], combined: "wait, also check the logs" },
+      ]);
+      // mutual exclusion: exactly ONE delivery path, never two
+      expect(steered).toEqual([]);
+      expect(queueMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("CONTROL: without a fallback the run-ending flush still lands on the dying run's queue", async () => {
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      const handle = {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+      };
+      setActiveEmbeddedRun("sess-ending-control", handle);
+
+      queueEmbeddedPiMessage("sess-ending-control", "wait, also check the logs");
+      clearActiveEmbeddedRun("sess-ending-control", handle);
+      await vi.advanceTimersByTimeAsync(350);
+
+      // Pre-fix shape: handed to a run that is deleted on the very next line.
+      expect(queueMessage).toHaveBeenCalledWith("wait, also check the logs");
+      expect(isEmbeddedPiRunActive("sess-ending-control")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("delivers via the fallback when the run vanished before the flush timer fired", async () => {
+    // The run registry is a global singleton but the steer buffer is
+    // module-local, so a second module instance can end the run while this
+    // one's debounce timer is still pending — the exact "no_active_run at
+    // flush time" race that used to drop the message behind a debug line.
+    const runsA = await importFreshModule<typeof import("./runs.js")>(
+      import.meta.url,
+      "./runs.js?scope=steer-lost-a",
+    );
+    const runsB = await importFreshModule<typeof import("./runs.js")>(
+      import.meta.url,
+      "./runs.js?scope=steer-lost-b",
+    );
+    runsA.__testing.resetActiveEmbeddedRuns();
+    runsB.__testing.resetActiveEmbeddedRuns();
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      const handle = {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+      };
+      runsA.setActiveEmbeddedRun("sess-lost", handle);
+      const delivered: string[] = [];
+
+      runsA.queueEmbeddedPiMessage("sess-lost", "please also check the logs", {
+        onDeliveryLost: (_texts, combined) => delivered.push(combined),
+      });
+      runsB.clearActiveEmbeddedRun("sess-lost", handle);
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(delivered).toEqual(["please also check the logs"]);
+      expect(queueMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      runsA.__testing.resetActiveEmbeddedRuns();
+      runsB.__testing.resetActiveEmbeddedRuns();
+    }
+  });
+
+  it("CONTROL: the same vanished-run flush with no fallback delivers nowhere and logs loudly", async () => {
+    const runsA = await importFreshModule<typeof import("./runs.js")>(
+      import.meta.url,
+      "./runs.js?scope=steer-lost-control-a",
+    );
+    const runsB = await importFreshModule<typeof import("./runs.js")>(
+      import.meta.url,
+      "./runs.js?scope=steer-lost-control-b",
+    );
+    runsA.__testing.resetActiveEmbeddedRuns();
+    runsB.__testing.resetActiveEmbeddedRuns();
+    const errorSpy = vi.spyOn(diagnosticLogger, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      const handle = {
+        queueMessage,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+      };
+      runsA.setActiveEmbeddedRun("sess-lost-control", handle);
+
+      runsA.queueEmbeddedPiMessage("sess-lost-control", "the follow-up nobody registered for");
+      runsB.clearActiveEmbeddedRun("sess-lost-control", handle);
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(queueMessage).not.toHaveBeenCalled();
+      const dropLines = errorSpy.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes("DROPPED a buffered user message"));
+      expect(dropLines).toHaveLength(1);
+      expect(dropLines[0]).toContain("the follow-up nobody registered for");
+    } finally {
+      vi.useRealTimers();
+      errorSpy.mockRestore();
+      runsA.__testing.resetActiveEmbeddedRuns();
+      runsB.__testing.resetActiveEmbeddedRuns();
+    }
+  });
+
+  it("caps the total buffering wait so a fast typist cannot postpone injection forever", async () => {
+    vi.useFakeTimers();
+    try {
+      setActiveEmbeddedRun("sess-cap", createRunHandle());
+      const steered: Array<{ text: string; atMs: number }> = [];
+      const startedAt = Date.now();
+      registerInflightSteerHook((_sid, text) => {
+        steered.push({ text, atMs: Date.now() - startedAt });
+        return true;
+      });
+
+      // A message every 250 ms — always inside the 300 ms debounce, so the
+      // reset-on-every-message timer alone would NEVER fire.
+      for (let i = 0; i < 6; i += 1) {
+        queueEmbeddedPiMessage("sess-cap", `msg-${i}`);
+        expect(steered).toHaveLength(0); // still nothing injected while typing
+        await vi.advanceTimersByTimeAsync(250);
+      }
+
+      expect(steered).toHaveLength(1);
+      expect(steered[0]?.atMs).toBe(1_500); // STEER_MAX_WAIT_MS from the FIRST message
+      expect(steered[0]?.text).toBe("msg-0\n\nmsg-1\n\nmsg-2\n\nmsg-3\n\nmsg-4\n\nmsg-5");
     } finally {
       vi.useRealTimers();
     }

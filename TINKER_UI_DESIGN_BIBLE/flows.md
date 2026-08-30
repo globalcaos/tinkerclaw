@@ -71,7 +71,9 @@ sequenceDiagram
 - `runId` returned by `chat.send` is the same `runId` carried in every subsequent `chat` broadcast for that run.
 - `dispatchAgent:false` short-circuits after the synchronous ack — caller still receives `{runId, status:"started"}`, but no transcript write, no `dispatchInboundMessage`, no `chat` broadcasts. F1's invariant probe uses this so the bible merge gate does not surface "FLOWS-F1-VERIFY" + an agent reply in the user's Tinker UI session. `deliver` only governs OUTBOUND channel routing (WA etc.); the in-app `broadcast("chat", …)` fan-out is keyed by sessionKey and ignores `deliver`. Added `chat.ts:2068` (FORK 2026-05-12).
 
-**Last verified:** 2026-05-12 — F1 runs with `dispatchAgent:false` (zero broadcasts, zero claude-cli spawns).
+**Addendum (2026-07-22) — concurrent second send:** a second `chat.send` issued while a turn is already running on the same session neither fails nor interleaves. The new run is PARKED on the session's command lane behind the busy task; the dispatch returns a `queued_behind_turn` envelope as its ack (names the busy turn — replaces the old misleading `lane_busy` "clears within a few seconds" text). The parked run starts when the busy task ends — on success OR error — and its answer is delivered via the normal lifecycle `emitChatFinal` path. See `bug-log.md` [lane-busy-ack-misleading-and-block-acks-invisible] and its two FOLLOW-UPs (in-memory queue lost on full process restart; detached-run terminal banner).
+
+**Last verified:** 2026-07-22 (concurrent-second-send addendum added; the `dispatchAgent:false` probe evidence dates from 2026-05-12 — zero broadcasts, zero claude-cli spawns).
 
 ---
 

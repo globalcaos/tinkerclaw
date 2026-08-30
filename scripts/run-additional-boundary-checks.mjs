@@ -33,6 +33,16 @@ export const BOUNDARY_CHECKS = [
     "pnpm",
     ["run", "lint:plugins:plugin-sdk-subpaths-exported"],
   ],
+  // Companion to the line above, and NOT a duplicate of it. That one asks whether a subpath
+  // exports the NAME; this one asks whether it exports the VALUE. A subpath can do the first and
+  // not the second — `export type` erases at compile time — and the resulting import is undefined
+  // at runtime while both the source and the exports map read correctly. See the header of
+  // check-plugin-sdk-value-exports.mjs for the incident that produced it.
+  [
+    "lint:plugins:plugin-sdk-value-exports",
+    "pnpm",
+    ["run", "lint:plugins:plugin-sdk-value-exports"],
+  ],
   ["deps:root-ownership:check", "pnpm", ["deps:root-ownership:check"]],
   ["web-search-provider-boundary", "pnpm", ["run", "lint:web-search-provider-boundaries"]],
   ["web-fetch-provider-boundary", "pnpm", ["run", "lint:web-fetch-provider-boundaries"]],

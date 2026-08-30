@@ -128,10 +128,85 @@ function renderAttribution(label: string, files: string[]): HTMLElement {
   return wrap;
 }
 
+// FORK 2026-08-11 (the architect) — LEVEL 3: the triage lane's OWN transcript, nested.
+// Rationale (now FOUNDATION law, "Background lanes nest, they do not colonise"):
+// the reflection's full reasoning previously existed ONLY as its own session, so
+// reading it meant opening a separate tab and the lane's sessions accumulated in
+// the session list purely to be readable. Nesting it here removes that reason.
+//
+// LAZY BY CONSTRUCTION: the fetch fires on the FIRST open, never at render. A dock
+// is created on every judged turn and almost never opened, so eager loading would
+// pull a full transcript per turn into the DOM for nothing. `loaded` latches so a
+// close/reopen does not refetch, and an in-flight open cannot double-fetch.
+//
+// The loader is INJECTED, exactly like `lookupAnchor` — this module stays free of
+// RPC/transport knowledge (the sectioned-reply.ts precedent); app.ts owns the wire.
+// EXPORTED 2026-08-11 (the architect: "I cannot see the extra expansion button once I expand
+// the fractal once") — there are TWO surfaces in chat whose name contains "fractal",
+// and they are unrelated DOM:
+//   1. `details.fractal-details` (sectioned-reply.ts) — the 🌿 FRACTAL section of the
+//      assistant's OWN reply text. This is the one the architect expands; it has
+//      existed for months.
+//   2. `details.fractal-dock` (this module) — the COLD triage lane's verdict, which
+//      was dead on arrival until the arity fix earlier today.
+// Level 3 was added to (2) only, so expanding (1) showed no button. Exporting the
+// section lets app.ts graft the SAME element onto (1) — one implementation, two
+// mounts, rather than a second copy that can drift (canonical-derivations discipline).
+export function renderTranscriptSection(
+  parentRunId: string,
+  loadTranscript: (parentRunId: string) => Promise<string>,
+): HTMLElement {
+  const wrap = document.createElement("details");
+  wrap.className = "reasoning-group narration-details fractal-dock-transcript";
+
+  const summary = document.createElement("summary");
+  summary.className = "reasoning-header fractal-transcript-summary";
+  summary.textContent = "🧠 Full reasoning of this reflection";
+  wrap.appendChild(summary);
+
+  const body = document.createElement("div");
+  body.className = "reasoning-content fractal-transcript-body";
+  body.textContent = "…";
+  wrap.appendChild(body);
+
+  let loaded = false;
+  wrap.addEventListener("toggle", () => {
+    if (!wrap.open || loaded) {
+      return;
+    }
+    loaded = true;
+    body.textContent = "loading…";
+    loadTranscript(parentRunId).then(
+      (text) => {
+        body.textContent = "";
+        const trimmed = (text ?? "").trim();
+        if (!trimmed) {
+          // An empty transcript is a REAL state, not an error: the triage session is
+          // pruned/absent, or the run never produced readable messages. Say which,
+          // rather than rendering a blank box that reads as a broken widget.
+          body.textContent = "no transcript found for this reflection run";
+          return;
+        }
+        body.appendChild(textWithLineBreaks(trimmed));
+      },
+      (err: unknown) => {
+        // Never leave "loading…" on screen forever; and un-latch so the next open retries.
+        loaded = false;
+        body.textContent = `could not load transcript: ${err instanceof Error ? err.message : String(err)}`;
+      },
+    );
+  });
+
+  return wrap;
+}
+
 // Render one verdict dock. Collapsed by default — this function never sets
 // the `open` attribute (upsertFractalDock carries the user's open state
 // across the pending→final morph instead).
-export function renderFractalDock(row: FractalDockRow): HTMLElement {
+export function renderFractalDock(
+  row: FractalDockRow,
+  loadTranscript?: (parentRunId: string) => Promise<string>,
+): HTMLElement {
   const dock = document.createElement("details");
   dock.className = `reasoning-group narration-details fractal-dock ${statusClass(row.status)}`;
   dock.dataset.fractalParent = row.parentRunId;
@@ -140,7 +215,26 @@ export function renderFractalDock(row: FractalDockRow): HTMLElement {
   const summary = document.createElement("summary");
   summary.className = "reasoning-header fractal-dock-summary";
   summary.textContent =
-    `🌿 Fractal · ${statusWord(row)}` +
+    // FORK 2026-08-11 (the architect: "You should only have one thing called fractal, the other
+    // one is wrong and should be renamed") — this dock is the COLD lane's verdict on a
+    // finished turn, and it was renamed to "Triage" so that 🌿 FRACTAL would mean only the
+    // reflection the assistant writes into its own reply (sectioned-reply.ts).
+    //
+    // FORK 2026-08-23 (the architect: "Triage should be renamed Fractal instead") — REVERSED. Both
+    // decisions are kept in view because they contradict each other and the later one wins;
+    // deleting the first would hide that this name has been argued twice.
+    //
+    // FORK 2026-08-23, second pass (the architect: "we use adjectives to nouns to disambiguate ... the
+    // fractal response and the fractal reasoning turn"). Both surfaces may share the word; what
+    // they may not share is a BARE word. So each carries its own noun:
+    //
+    //   🔍 Fractal Reasoning — this dock: the cold pass over a FINISHED turn.
+    //   🌿 Fractal Response  — sectioned-reply.ts: the reflection inside the assistant's answer.
+    //
+    // The glyphs are retained on top of the nouns, so the two are separable at a glance and by
+    // name. That is what the 2026-08-11 rename was reaching for and could not express while one
+    // of them had to give the word up entirely.
+    `🔍 Fractal Reasoning · ${statusWord(row)}` +
     (findings.length > 0 ? ` · ${findings.length} finding${findings.length === 1 ? "" : "s"}` : "");
   // FORK 2026-06-24 (bible §5.8k) — ⓘ link to the FRACTAL paper (post 198, stable
   // ?p= form). Lives on the summary so it is visible wherever a reflection renders;
@@ -151,7 +245,7 @@ export function renderFractalDock(row: FractalDockRow): HTMLElement {
   fractalDoc.target = "_blank";
   fractalDoc.rel = "noopener";
   fractalDoc.textContent = "ⓘ";
-  fractalDoc.title = "FRACTAL reasoning — read on The Tinker Zone";
+  fractalDoc.title = "Fractal Reasoning verdict — the FRACTAL reasoning paper on The Tinker Zone";
   fractalDoc.addEventListener("click", (e) => e.stopPropagation());
   summary.appendChild(document.createTextNode(" "));
   summary.appendChild(fractalDoc);
@@ -219,6 +313,16 @@ export function renderFractalDock(row: FractalDockRow): HTMLElement {
     body.appendChild(renderAttribution("Main turn changed", row.mainChanges ?? []));
   }
 
+  // LEVEL 3 goes LAST, under the explanation, so the reading order is
+  // one-line verdict → explanation → (on demand) the whole run. Rendered only
+  // when a loader is supplied AND the row is terminal: a `pending` stub has no
+  // transcript to show yet, and offering the button there invites a click that
+  // can only disappoint. The pending→final morph in upsertFractalDock re-renders,
+  // so the section appears by itself the moment the verdict lands.
+  if (loadTranscript && row.status !== "pending") {
+    body.appendChild(renderTranscriptSection(row.parentRunId, loadTranscript));
+  }
+
   dock.appendChild(body);
   return dock;
 }
@@ -263,8 +367,9 @@ export function upsertFractalDock(
   container: HTMLElement,
   row: FractalDockRow,
   lookupAnchor?: (parentRunId: string) => HTMLElement | null,
+  loadTranscript?: (parentRunId: string) => Promise<string>,
 ): HTMLElement {
-  const fresh = renderFractalDock(row);
+  const fresh = renderFractalDock(row, loadTranscript);
   const existing = findExistingDock(container, row.parentRunId);
   if (existing) {
     if (

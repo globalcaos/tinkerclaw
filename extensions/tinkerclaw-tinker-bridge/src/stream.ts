@@ -14,10 +14,10 @@ import {
   type Usage,
   createAssistantMessageEventStream,
 } from "@mariozechner/pi-ai";
+import { emitAgentEvent } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { buildErrorEnvelope } from "openclaw/plugin-sdk/fork-error-envelope";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
-import { buildErrorEnvelope } from "../../../src/fork/error-envelope.js";
-import { emitAgentEvent } from "../../../src/infra/agent-events.js";
 import {
   DEFAULT_CWD,
   DEFAULT_DISALLOWED_TOOLS,
@@ -163,6 +163,53 @@ export function dedupStreamingOverlap(acc: string, delta: string, minLen = 60): 
 // state — `getResumeSessionId` will never look it up again because no
 // future request will derive that same key. Cheap; no explicit cleanup
 // needed for now.
+// FORK 2026-07-29: key on the STABLE PREFIX of the system prompt, not the whole
+// thing.
+//
+// `src/agents/system-prompt.ts` deliberately splits the prompt at
+// SYSTEM_PROMPT_CACHE_BOUNDARY, and its own comment says why: "Keep large stable
+// prompt context above this seam so Anthropic-family transports can reuse it
+// across labs and turns. Dynamic group/session additions and volatile project
+// context below it are the primary cache invalidators." Everything below the
+// seam — Dynamic Project Context, Group Chat Context, the provider dynamic
+// suffix, the heartbeat block, and the `## Runtime` line — is per-turn volatile
+// BY DESIGN.
+//
+// Hashing the whole prompt fed all of that into the worker-pool key, so the pool
+// missed constantly and spawned a cold claude-cli per turn. Measured over 142
+// captured turns of agent:main:main (~/.openclaw/forensic-dumps): the `runtime`
+// section alone had 55 distinct values, and 2026-07-28 shows 109 "spawning
+// claude" events against ~101 turn-starts.
+//
+// The marker is duplicated as a literal rather than imported. This file DOES cross
+// into core — see the `openclaw/plugin-sdk/*` imports at the top — but only through
+// DECLARED SDK subpaths, which is the sanctioned route under FOUNDATION #9: this
+// extension is `publishToClawHub: true`, so its tarball ships only its own directory
+// and a relative `../../../src/**` reach could not resolve on a user's disk at all.
+// (A FORK_EXTENSION_ALLOWLIST entry in scripts/check-no-extension-src-imports.ts
+// would only silence the lint; the tarball would still fail to resolve.)
+//
+// The constant is nonetheless NOT imported, for two reasons: nothing publishes it
+// through a plugin-sdk subpath, and `SYSTEM_PROMPT_CACHE_BOUNDARY`
+// (src/agents/system-prompt-cache-boundary.ts) is newline-wrapped — "\n<!-- ... -->\n"
+// — so it is not a drop-in for the bare marker matched here.
+// `extensions/anthropic-vertex/stream-runtime.test.ts` duplicates it for the same
+// reason. It is a stable protocol string, and if it ever changed the failure is
+// benign: `stableSystemPromptPrefix` finds no marker and returns the whole prompt —
+// a colder pool, never a mis-keyed one.
+const SYSTEM_PROMPT_CACHE_BOUNDARY_MARKER = "<!-- OPENCLAW_CACHE_BOUNDARY -->";
+
+/**
+ * The part of the system prompt that identifies the WORKER, not the TURN.
+ * Falls back to the whole prompt when the marker is absent (subagents and
+ * minimal-mode prompts do not always emit it) — never silently key on "".
+ */
+export function stableSystemPromptPrefix(systemPrompt: string | undefined): string {
+  const full = systemPrompt ?? "";
+  const idx = full.indexOf(SYSTEM_PROMPT_CACHE_BOUNDARY_MARKER);
+  return idx === -1 ? full : full.slice(0, idx);
+}
+
 function deriveSessionKey(
   explicit: string | undefined,
   systemPrompt: string | undefined,
@@ -171,7 +218,7 @@ function deriveSessionKey(
   if (explicit && explicit.trim()) {
     return explicit.trim();
   }
-  const promptPart = systemPrompt ?? "";
+  const promptPart = stableSystemPromptPrefix(systemPrompt);
   const idPart = openclawSessionId ?? "";
   if (!promptPart && !idPart) {
     return "agent:main:main";
@@ -179,6 +226,8 @@ function deriveSessionKey(
   // djb2 hash over `${systemPrompt}\u0001${sessionId}` — the SOH separator
   // keeps a 32KB persona prompt with a colliding hash from being mistaken
   // for a 32KB persona prompt with a different sessionId.
+  // NOTE: promptPart is the STABLE PREFIX (see the 2026-07-29 block above), not
+  // the whole system prompt — the volatile suffix is deliberately excluded.
   let h = 5381;
   const combined = `${promptPart}\u0001${idPart}`;
   for (let i = 0; i < combined.length; i++) {
@@ -188,6 +237,131 @@ function deriveSessionKey(
 }
 
 // FORK 2026-06-23 (BRIDGE FIX 2/3 — fast-fail init-only stall): pure decision
+// FORK 2026-08-25 (the architect: "the original chat just swallowed intermediate
+// thinking text") — content-block identity for a whole turn.
+//
+// An Anthropic content-block `index` is unique only WITHIN one assistant
+// message, and claude-cli emits every step of its tool loop as a separate
+// message whose indices restart at 0. Measured on a live opus-5 run:
+//   msg1 = [thinking(0), text(1), tool_use(2)]
+//   msg2 = [text(0), tool_use(1)]
+//   msg3 = [text(0)]
+// Keyed on the bare index, msg2's and msg3's prose collide on key 0 — two
+// unrelated narrations treated as ONE growing block. That is what swallowed the
+// intermediate text: the streaming paths either glued them into a single bubble
+// with no separator, or dropped the second outright because it does not prefix
+// the first. Pairing the index with the owning message id keeps every step's
+// prose its own block, which is also what makes the UI's bubble break fire.
+//
+// Exported (pure, no side effects) so the boundary rule is unit-tested without
+// spawning a real claude-cli worker.
+//
+// FORK 2026-08-28 (the architect: "There seems to be a disconnect between what Jarvis
+// answers and what is visible in the chat") — the message id was necessary but
+// NOT sufficient, because the two ingest paths NUMBERED the same block
+// differently:
+//   • content_block_delta keys on Anthropic's ABSOLUTE block index (`ev.index`);
+//     with extended thinking on, thinking is block 0 and the prose is block 1.
+//   • the cumulative `assistant` line keys on the LOOP POSITION in
+//     `message.content[]`, and an in-progress cumulative message OMITS the
+//     thinking block — so the very same prose sits at position 0.
+// One block, two keys (`msg:1` and `msg:0`), which broke BOTH mechanisms that
+// hang off the key: `emitTextBlockBreak` fired a SPURIOUS bubble split, and
+// `blockTextSeen` missed so the whole block was re-emitted (then blocked).
+// Measured over a 5h journald window (35,186 lines): 1,423 text_block_break
+// events, 727 of them same-message, and the same-message index-transition set
+// was EXACTLY {("1","0"): 727} — zero other patterns — against 716 `[duprep]
+// WARN BLOCKED duplicate assistant_cumulative emit` lines. Rendered-DOM receipt
+// (snapshot 12:40:52Z, inside #messages): one bubble ends "…the classic
+// stale-dist trap - I'll" and the next opens "confirm which copy the live UI
+// actually loads." One sentence, two bubbles, mid-clause.
+//
+// Fix: a TYPE-SCOPED ORDINAL. Both paths key on `${messageId}:text:${nth}` /
+// `${messageId}:thinking:${nth}`, counting only WITHIN a type. That is invariant
+// to whether the cumulative message carries the thinking block (or any tool_use
+// block) at all — which the absolute-index-vs-position pair never was. The
+// alternative (reconstructing an absolute index by offsetting `bi` by the number
+// of thinking blocks seen for that message) was rejected: it needs the delta
+// path's thinking-block count to be complete and correctly attributed BEFORE the
+// first cumulative frame lands, so one dropped or reordered content_block_start
+// silently shifts every later key. Type-scoped ordinals have no such coupling.
+//
+// The delta path learns each block's type from `content_block_start`; when that
+// event is absent it falls back to the type implied by the delta itself, which
+// is always known at the call site. `keyFor` (message-scoped ABSOLUTE index) is
+// retained: no ingest path uses it any more, but it is the property pinned by
+// stream.block-key.test.ts and it remains the honest answer to "which raw index
+// did this message use?" for diagnostics.
+export type BlockKind = "text" | "thinking";
+
+/**
+ * The ordinal bucket a content block counts against, or null for blocks that
+ * carry no accumulated prose (tool_use, server_tool_use, tool_result, …).
+ * `redacted_thinking` counts as a thinking block so both paths agree on the
+ * ordinal of any LATER real thinking block in the same message.
+ */
+export function blockKindOf(type: unknown): BlockKind | null {
+  if (type === "text") {
+    return "text";
+  }
+  if (type === "thinking" || type === "redacted_thinking") {
+    return "thinking";
+  }
+  return null;
+}
+
+export function createBlockKeyTracker(): {
+  noteMessage: (id: unknown) => void;
+  noteBlockStart: (index: unknown, type: unknown) => void;
+  keyFor: (index: number) => string;
+  keyForStreamIndex: (index: number, kind: BlockKind) => string;
+  keyForContentOrdinal: (kind: BlockKind, ordinal: number) => string;
+} {
+  let currentMessageId = "m0";
+  // Absolute block index -> the "<kind>:<ordinal>" it was assigned, for the
+  // CURRENT message only. Cleared when the message id changes, because Anthropic
+  // restarts block indices at 0 in every new assistant message.
+  const assignedByIndex = new Map<number, string>();
+  const nextOrdinal: Record<BlockKind, number> = { text: 0, thinking: 0 };
+
+  // Idempotent: an index announced by content_block_start and then streamed by
+  // content_block_delta must resolve to the SAME ordinal, not consume two.
+  const assign = (index: number, kind: BlockKind): string => {
+    const existing = assignedByIndex.get(index);
+    if (existing !== undefined && existing.startsWith(`${kind}:`)) {
+      return existing;
+    }
+    const assigned = `${kind}:${nextOrdinal[kind]++}`;
+    assignedByIndex.set(index, assigned);
+    return assigned;
+  };
+
+  return {
+    noteMessage: (id: unknown): void => {
+      const next = typeof id === "string" && id ? id : "";
+      if (!next || next === currentMessageId) {
+        return;
+      }
+      currentMessageId = next;
+      assignedByIndex.clear();
+      nextOrdinal.text = 0;
+      nextOrdinal.thinking = 0;
+    },
+    noteBlockStart: (index: unknown, type: unknown): void => {
+      const kind = blockKindOf(type);
+      if (kind === null || typeof index !== "number") {
+        return;
+      }
+      assign(index, kind);
+    },
+    keyFor: (index: number): string => `${currentMessageId}:${index}`,
+    keyForStreamIndex: (index: number, kind: BlockKind): string =>
+      `${currentMessageId}:${assign(index, kind)}`,
+    keyForContentOrdinal: (kind: BlockKind, ordinal: number): string =>
+      `${currentMessageId}:${kind}:${ordinal}`,
+  };
+}
+
 // predicate for the stream watchdog. Returns true when a turn has clearly
 // wedged during init — it has produced NO visible text and NO thinking and
 // only a tiny handful of init stream lines, yet has been alive longer than the
@@ -214,6 +388,78 @@ export function shouldFastFailInitStall(args: {
     args.thinkingLen === 0 &&
     args.linesSeen <= maxInitLines
   );
+}
+
+// FORK 2026-08-28 (R3 — "what the gateway answers must be exactly what the chat
+// shows"): the tail-recover decision, made explicit and total.
+//
+// After a turn ends the bridge reconciles its own `accumulatedText` against
+// claude-cli's authoritative `result.result`. Until today it recovered in
+// exactly two shapes — `result.result.startsWith(accumulatedText)` (append the
+// tail) and `result.result.length > streamedLen * 2 + 50` (treat the stream as a
+// preamble and replace). In a TOOL-LOOP turn NEITHER holds: `accumulatedText` is
+// every step's narration concatenated and is normally LONGER than
+// `result.result`, which is the final answer alone. Control fell off the end of
+// the `if` with no else, no log line and no recovery.
+//
+// Measured over the same 5h window: 130 completed turns, `grep -c 'tail-recover'`
+// = 0 — neither arm fired ONCE. Cross-check: turn tinker-sp-c2e8f69c ended
+// final_text_len=5992 with result_text="Blocked too. So here's where it stands."
+// (the accumulator is longer than the result ⇒ both arms false). Same shape on
+// 114 of the 130 turns. A net that never fires and never logs is
+// indistinguishable from a net that is not there.
+//
+// So: a third arm (CONTAINMENT) plus an explicit verdict for every turn.
+//   prefix          — the result extends what we streamed; append the tail.
+//   diverged        — the result dwarfs the stream; the stream was a preamble.
+//   missing         — the result's head is NOWHERE in the stream, i.e. the final
+//                     answer never streamed. Append it. This is the arm that was
+//                     absent, and the only one that can make an invisible answer
+//                     visible.
+//   already-present — the result's head is in the stream; nothing to do.
+//   no-result       — claude-cli sent no result text at all.
+// (The caller also logs a sixth verdict, `error-envelope`, from the is_error
+// early-return, which replaces the accumulator wholesale and cannot recover.)
+//
+// This function only ever APPENDS or does nothing — it has no arm that drops or
+// caps content. Pure and exported so every verdict is exercised without spawning
+// a worker.
+export type TailRecoverVerdict =
+  | "prefix"
+  | "diverged"
+  | "missing"
+  | "already-present"
+  | "no-result";
+
+/**
+ * Head length for the containment probe — the same 60-char "long enough to be
+ * unique by content" threshold the [duprep] guards in this file already use.
+ */
+export const TAIL_RECOVER_HEAD_LEN = 60;
+
+export function classifyTailRecover(args: { streamed: string; result: string; headLen?: number }): {
+  verdict: TailRecoverVerdict;
+  append: string;
+} {
+  const { streamed, result } = args;
+  if (!result) {
+    return { verdict: "no-result", append: "" };
+  }
+  const streamedLen = streamed.length;
+  if (result.length > streamedLen && result.startsWith(streamed)) {
+    return { verdict: "prefix", append: result.slice(streamedLen) };
+  }
+  if (result.length > streamedLen * 2 + 50) {
+    return { verdict: "diverged", append: streamedLen > 0 ? `\n\n${result}` : result };
+  }
+  // CONTAINMENT. `head` is the WHOLE result when the result is shorter than the
+  // probe, which makes the test exact for the short finals that dominate the
+  // tool-loop shape (the 39-char "Blocked too. So here's where it stands.").
+  const head = result.slice(0, args.headLen ?? TAIL_RECOVER_HEAD_LEN);
+  if (streamed.includes(head)) {
+    return { verdict: "already-present", append: "" };
+  }
+  return { verdict: "missing", append: streamedLen > 0 ? `\n\n${result}` : result };
 }
 
 export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): StreamFn {
@@ -267,7 +513,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         lastEffortEmitAt = now;
-        // FORK 2026-06-26 (eeg effort-truth, the owner): the EEG debugs the automatic
+        // FORK 2026-06-26 (eeg effort-truth, the architect): the EEG debugs the automatic
         // effort allocator (AUEFALAL) — it MUST graph the level actually REQUESTED,
         // not a guess re-derived from how much the model reasoned. The per-call
         // option is the first-choice source (an explicit /think pin — incl. "off" —
@@ -289,7 +535,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           data: {
             phase: final ? "final" : "live",
             // FORK 2026-06-13 (eeg): self-describe the ACTUAL model running so the
-            // seismograph colours by the real model even in Auto (the owner 2026-06-13).
+            // seismograph colours by the real model even in Auto (the architect 2026-06-13).
             model: model.id,
             thinkLevel: effectiveThinkLevel ?? "off",
             configuredBudget: configuredBudget ?? 0,
@@ -308,20 +554,54 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // thinking block in `assistant.message.content` accumulates
       // independently. Without this, a post-tool text block would be
       // dropped because its content does not prefix the preamble's text.
-      const blockTextSeen = new Map<number, string>();
-      const blockThinkingSeen = new Map<number, string>();
+      //
+      // FORK 2026-08-25 (the architect: "the original chat just swallowed intermediate
+      // thinking text") — THE KEY IS NOW PER-MESSAGE, NOT PER-TURN. A content
+      // block index is only unique WITHIN one assistant message, and claude-cli
+      // emits every step of the tool loop as its OWN message whose indices
+      // restart at 0. Measured on a live opus-5 run: msg1 = [thinking(0),
+      // text(1), tool_use(2)], msg2 = [text(0), tool_use(1)], msg3 = [text(0)].
+      // Keyed on the raw index, msg2's and msg3's narration collided on key 0,
+      // which broke BOTH paths at once:
+      //   • partial deltas appended msg3's prose onto msg2's under the same key,
+      //     so two separate narrations fused into ONE bubble with no separator
+      //     ("…before merging.488 species researched…" — observed verbatim in
+      //     the rendered DOM);
+      //   • the cumulative `assistant` path gates on
+      //     `cumulative.startsWith(prev)`, and msg3's text does not start with
+      //     msg2's, so the whole block was silently DROPPED — never emitted at all.
+      // Both are "swallowed intermediate text".
+      //
+      // FORK 2026-08-28 — message identity alone was still not enough: the two
+      // paths NUMBERED the same block differently (absolute `ev.index` vs the
+      // loop position in a cumulative message that omits thinking), so one text
+      // block answered to both `msg:1` and `msg:0` — 727 spurious same-message
+      // bubble splits and ~716 whole-block re-emits in a single 5h window. The
+      // key is now message identity + a TYPE-SCOPED ORDINAL; the derivation and
+      // its evidence live on createBlockKeyTracker above.
+      const blockTextSeen = new Map<string, string>();
+      const blockThinkingSeen = new Map<string, string>();
+      // Identity of the assistant message currently streaming. `message_start`
+      // (partial mode) and the cumulative `assistant` line carry the SAME
+      // `message.id`, so both paths derive the same key without double-counting.
+      const blockKeys = createBlockKeyTracker();
+      const noteAssistantMessage = blockKeys.noteMessage;
+      // Both ingest paths key through these three and never through a raw index
+      // again — that identity is what makes a same-message text_block_break
+      // impossible unless the text block genuinely changed.
+      const noteBlockStart = blockKeys.noteBlockStart;
+      const streamBlockKey = blockKeys.keyForStreamIndex;
+      const contentBlockKey = blockKeys.keyForContentOrdinal;
 
-      // FORK 2026-05-28 — per-turn text-block index tracker. Anthropic's
-      // streaming API guarantees `content_block_delta.index` and every text
-      // block in `assistant.message.content` carries an array position.
-      // When the index advances between text deltas (typically a tool_use
-      // block fired between two pieces of prose), emit a lifecycle event so
-      // Tinker UI splits the streaming bubble. Same mechanism as the
-      // tool_use trigger at app.ts:2396, but earlier on the timeline (the
+      // FORK 2026-05-28 — per-turn text-block tracker. When the active text
+      // block changes between deltas (a tool_use fired between two pieces of
+      // prose, or — since 2026-08-25 — a new assistant message began), emit a
+      // lifecycle event so Tinker UI splits the streaming bubble. Same mechanism
+      // as the tool_use trigger at app.ts:2396, but earlier on the timeline (the
       // pre-tool narration becomes its own bubble instead of piling into
       // one with all subsequent narrations).
-      let activeTextBlockIndex: number | null = null;
-      const emitTextBlockBreak = (fromIndex: number | null, toIndex: number) => {
+      let activeTextBlockIndex: string | null = null;
+      const emitTextBlockBreak = (fromIndex: string | null, toIndex: string) => {
         if (!runId) {
           return;
         }
@@ -668,14 +948,20 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         return `${flat.slice(0, 60)} … ${flat.slice(-60)}`;
       };
 
+      // Per-delta [duprep] traces are firehose-level (one line every ~2s per live
+      // stream, delta.len=0 included — 2026-07-20 they drowned the journal). Gate
+      // them behind TINKER_DUPREP_TRACE=1; the WARN-level duprep tripwires below
+      // stay unconditional.
+      const duprepTrace = process.env.TINKER_DUPREP_TRACE === "1";
       const pushThinkingDelta = (delta: string) => {
         pushStart();
         pushThinkingStart();
         accumulatedThinking += delta;
         emitEffort(false);
-        log.info(
-          `[duprep] thinking_delta sessionKey=${sessionKey} delta.len=${delta.length} accumulated.len=${accumulatedThinking.length} preview=${JSON.stringify(previewDelta(delta))}`,
-        );
+        if (duprepTrace)
+          log.info(
+            `[duprep] thinking_delta sessionKey=${sessionKey} delta.len=${delta.length} accumulated.len=${accumulatedThinking.length} preview=${JSON.stringify(previewDelta(delta))}`,
+          );
         stream.push({ type: "thinking_delta", contentIndex: 0, delta, partial: buildPartial() });
         recordPush();
       };
@@ -734,9 +1020,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           return;
         }
         accumulatedText += deduped;
-        log.info(
-          `[duprep] text_delta source=${source} sessionKey=${sessionKey} contentIndex=${textIndex()} delta.len=${deduped.length} accumulated.len=${accumulatedText.length} preview=${JSON.stringify(previewDelta(deduped))}`,
-        );
+        if (duprepTrace)
+          log.info(
+            `[duprep] text_delta source=${source} sessionKey=${sessionKey} contentIndex=${textIndex()} delta.len=${deduped.length} accumulated.len=${accumulatedText.length} preview=${JSON.stringify(previewDelta(deduped))}`,
+          );
         stream.push({
           type: "text_delta",
           contentIndex: textIndex(),
@@ -882,6 +1169,23 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           if (!ev) {
             return;
           }
+          // FORK 2026-08-25 — a new assistant message restarts content-block
+          // indices at 0, so its identity has to be recorded BEFORE any of its
+          // block events are keyed. See the blockTextSeen note above.
+          if ((ev as { type?: string }).type === "message_start") {
+            noteAssistantMessage((ev as { message?: { id?: unknown } }).message?.id);
+          }
+          // FORK 2026-08-28 — record the TYPE each absolute block index carries.
+          // This is the only place the delta path can learn that index 1 is prose
+          // and index 0 was thinking; without it the type-scoped ordinal has to be
+          // inferred from the first delta, which is a strictly weaker signal (a
+          // block whose start we saw but whose deltas have not arrived yet would
+          // take the wrong ordinal). protocol.ts types `event` as an open map, so
+          // the two fields are read through a widened view, as elsewhere here.
+          if ((ev as { type?: string }).type === "content_block_start") {
+            const started = ev as { index?: unknown; content_block?: { type?: unknown } };
+            noteBlockStart(started.index, started.content_block?.type);
+          }
           if (ev.type === "content_block_delta" && ev.delta) {
             // FORK 2026-05-24 — the Anthropic API event includes `index`
             // (content block index). We MUST keep block{Text,Thinking}Seen
@@ -898,21 +1202,29 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               typeof (ev as { index?: unknown }).index === "number"
                 ? ((ev as { index?: number }).index as number)
                 : 0;
+            // FORK 2026-08-28 — `blockIndex` stays the handle Anthropic streams
+            // under, but the KEY is now its type-scoped ordinal, resolved per
+            // arm because only the arm knows the block's type when
+            // content_block_start was missed. `msg:text:0` here is the SAME key
+            // the cumulative path derives for position 0 of a message that omits
+            // the thinking block — which is the whole point.
             if (ev.delta.type === "text_delta" && typeof ev.delta.text === "string") {
-              if (activeTextBlockIndex !== null && activeTextBlockIndex !== blockIndex) {
-                emitTextBlockBreak(activeTextBlockIndex, blockIndex);
+              const key = streamBlockKey(blockIndex, "text");
+              if (activeTextBlockIndex !== null && activeTextBlockIndex !== key) {
+                emitTextBlockBreak(activeTextBlockIndex, key);
               }
-              activeTextBlockIndex = blockIndex;
+              activeTextBlockIndex = key;
               pushTextDelta(ev.delta.text, "content_block_delta");
-              const prev = blockTextSeen.get(blockIndex) ?? "";
-              blockTextSeen.set(blockIndex, prev + ev.delta.text);
+              const prev = blockTextSeen.get(key) ?? "";
+              blockTextSeen.set(key, prev + ev.delta.text);
             } else if (
               ev.delta.type === "thinking_delta" &&
               typeof ev.delta.thinking === "string"
             ) {
+              const key = streamBlockKey(blockIndex, "thinking");
               pushThinkingDelta(ev.delta.thinking);
-              const prev = blockThinkingSeen.get(blockIndex) ?? "";
-              blockThinkingSeen.set(blockIndex, prev + ev.delta.thinking);
+              const prev = blockThinkingSeen.get(key) ?? "";
+              blockThinkingSeen.set(key, prev + ev.delta.thinking);
             } else if (
               ev.delta.type === "signature_delta" &&
               typeof ev.delta.signature === "string" &&
@@ -947,12 +1259,39 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           // bubbles + tiny opener with no answer. Track per-block-index
           // cumulative state so each block's deltas append independently
           // to the global `accumulatedText`.
+          // FORK 2026-08-25 — same per-message keying as the delta path. In
+          // partial mode `message_start` already recorded this id; re-noting it
+          // is a no-op. Without partial events this is the ONLY place the new
+          // message is seen, and it is what stops a fresh block's text from
+          // being measured against the PREVIOUS message's block-0 text (which
+          // it does not prefix, so the whole block was dropped).
+          noteAssistantMessage((line as CcStreamStdoutAssistantMessage).message?.id);
           const blocks = (line as CcStreamStdoutAssistantMessage).message?.content ?? [];
+          // FORK 2026-08-28 — count text and thinking blocks SEPARATELY and key on
+          // the type-scoped ordinal, never on `bi`. The counters are local to this
+          // one cumulative frame, so they restart at 0 on every re-emit of the same
+          // message and a given block always resolves to the same key. That is what
+          // makes `msg:text:0` here mean the SAME block as `msg:text:0` on the delta
+          // path, even though the delta path saw it at absolute index 1 behind a
+          // thinking block this frame omits. Keyed on `bi`, those two were `msg:0`
+          // and `msg:1`: 727 spurious breaks, ~716 whole-block re-emits.
+          let nthText = 0;
+          let nthThinking = 0;
           for (let bi = 0; bi < blocks.length; bi++) {
             const typed = blocks[bi] as CcContentBlock;
+            // The ordinal is consumed by TYPE, up front, before the arms below
+            // narrow on the payload — a malformed block must not desync the
+            // ordinals of the blocks after it.
+            const kind = blockKindOf(typed.type);
+            const key =
+              kind === "text"
+                ? contentBlockKey("text", nthText++)
+                : kind === "thinking"
+                  ? contentBlockKey("thinking", nthThinking++)
+                  : "";
             if (typed.type === "text" && typeof typed.text === "string") {
               const cumulative = typed.text;
-              const prev = blockTextSeen.get(bi) ?? "";
+              const prev = blockTextSeen.get(key) ?? "";
               if (cumulative.length > prev.length && cumulative.startsWith(prev)) {
                 const delta = cumulative.slice(prev.length);
                 // FORK 2026-05-26 (task-mpkw1a0b-9jsfy "Response rendering"):
@@ -978,36 +1317,44 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
                   log.warn(
                     `[duprep] WARN dropping duplicate assistant emit sessionKey=${sessionKey} bi=${bi} prev.len=${prev.length} delta.len=${delta.length} sample=${JSON.stringify(delta.slice(0, 60).replace(/\n/g, "↵"))}`,
                   );
-                  blockTextSeen.set(bi, cumulative);
+                  blockTextSeen.set(key, cumulative);
                   continue;
                 }
-                // First-ever delta of a NEW non-zero block index means the
-                // model has just resumed emitting text after a tool_use
-                // chain — clear pending narration so the post-tool prose
-                // doesn't get attributed to a stale upcoming tool.
-                if (bi > 0 && prev === "") {
+                // First-ever delta of a text block the turn has not streamed
+                // before means the model has just resumed emitting prose (after
+                // a tool_use chain, or in a brand-new assistant message) — clear
+                // pending narration so it isn't attributed to a stale tool.
+                //
+                // FORK 2026-08-25 — the guard used to read `bi > 0 && prev === ""`.
+                // The `bi > 0` half silently excluded exactly the case that broke:
+                // a new assistant message puts its text at index 0 (measured:
+                // msg2 = [text(0)], msg3 = [text(0)]), so no break was emitted
+                // between two consecutive narrations and they rendered glued
+                // together in one bubble. The block KEY changing is the real
+                // boundary; the raw index is not.
+                if (prev === "") {
                   pendingToolNarration = "";
                   // FORK 2026-05-28 — same boundary, also fire the bubble
                   // break for the UI. Covers the path where claude-cli's
                   // cumulative `assistant` message arrives without prior
                   // fine-grained content_block_delta events (block index
                   // advances only via this loop iteration).
-                  if (activeTextBlockIndex !== null && activeTextBlockIndex !== bi) {
-                    emitTextBlockBreak(activeTextBlockIndex, bi);
+                  if (activeTextBlockIndex !== null && activeTextBlockIndex !== key) {
+                    emitTextBlockBreak(activeTextBlockIndex, key);
                   }
-                  activeTextBlockIndex = bi;
+                  activeTextBlockIndex = key;
                 }
                 pushTextDelta(delta, "assistant_cumulative");
                 pendingToolNarration += delta;
-                blockTextSeen.set(bi, cumulative);
+                blockTextSeen.set(key, cumulative);
               }
             } else if (typed.type === "thinking" && typeof typed.thinking === "string") {
               const cumulative = typed.thinking;
-              const prev = blockThinkingSeen.get(bi) ?? "";
+              const prev = blockThinkingSeen.get(key) ?? "";
               if (cumulative.length > prev.length && cumulative.startsWith(prev)) {
                 const delta = cumulative.slice(prev.length);
                 pushThinkingDelta(delta);
-                blockThinkingSeen.set(bi, cumulative);
+                blockThinkingSeen.set(key, cumulative);
               }
               // FORK 2026-06-25: the complete cumulative thinking block carries the
               // final `signature` (CcContentBlock.thinking already declares the slot).
@@ -1025,10 +1372,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               // isn't silently empty. Gate on blockThinkingSeen so cumulative
               // re-emits of the same assistant message push it only ONCE per
               // block index — same dedupe contract as the `thinking` arm.
-              if (!blockThinkingSeen.has(bi)) {
+              if (!blockThinkingSeen.has(key)) {
                 sawRedactedThinking = true;
                 pushThinkingDelta("[redacted reasoning]");
-                blockThinkingSeen.set(bi, "[redacted reasoning]");
+                blockThinkingSeen.set(key, "[redacted reasoning]");
               }
             } else if (typed.type === "tool_use" && typeof typed.id === "string") {
               // FORK (2026-04-24): emit a live `stream: "tool"` agent event so
@@ -1225,6 +1572,16 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // Now we RESET accumulated text and emit a clean final message.
         if (result.is_error && typeof result.result === "string" && result.result.trim()) {
           const rawErr = result.result.trim();
+          // FORK 2026-08-28 — this path returns BEFORE the tail-recover
+          // reconciliation below and deliberately REPLACES accumulatedText with
+          // the envelope, so no recovery is possible or wanted here. Log the
+          // verdict anyway: "one [tail-recover] line per turn that reached a
+          // result" is what makes `grep -c '[tail-recover]'` a real denominator
+          // instead of a count silently missing every error turn. Logged before
+          // the reset below, so `streamed` is the real streamed length.
+          log.info(
+            `[tail-recover] verdict=error-envelope streamed=${accumulatedText.length} result=${rawErr.length} append=0 sessionKey=${sessionKey}`,
+          );
           const envelope = buildErrorEnvelope({
             raw: rawErr,
             sessionKey,
@@ -1262,38 +1619,35 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // appears as a separate `assistant.content` text block — so the
         // streamed `accumulatedText` ends at the preamble (~120 chars)
         // while `result.result` carries the actual answer (1KB+ or more).
-        // Reconcile against `result.result`:
-        //   - If `result.result.startsWith(accumulatedText)` → emit the tail
-        //     as deltas so live UIs catch up. Common case: stream missed the
-        //     post-tool block but the result line includes everything.
-        //   - Else if streamed length is much shorter (< 50% of result),
-        //     the streams diverged; trust `result.result` as the truth and
-        //     replace. Live UI sees a corrective delta.
-        //   - Else leave the streamed accumulation alone (likely matches).
-        if (typeof result.result === "string" && result.result.length > 0) {
-          const resTxt = result.result;
-          const streamedLen = accumulatedText.length;
-          if (resTxt.length > streamedLen && resTxt.startsWith(accumulatedText)) {
-            const tail = resTxt.slice(streamedLen);
-            log.info(
-              `tail-recover: streamed ${streamedLen}B, result_text ${resTxt.length}B, recovering ${tail.length}B (prefix-match)`,
-            );
-            pushTextDelta(tail, "tail_recover_prefix");
-          } else if (resTxt.length > streamedLen * 2 + 50) {
-            // Streams diverged enough to suggest the streamed accumulation
-            // is just the preamble; replace with the result line.
-            log.info(
-              `tail-recover: streamed ${streamedLen}B, result_text ${resTxt.length}B, replacing (diverged)`,
-            );
-            // Compute "what to push so accumulated == result_text". Simplest:
-            // push the difference as a fresh delta after a separator, but if
-            // accumulated text was just an opener it's cleaner to overwrite.
-            // pi-agent-core consumers honor whatever `accumulatedText` we
-            // pass into buildContent + the final `done` message, so reset
-            // the stored value directly here.
-            const overwriteDelta = streamedLen > 0 ? `\n\n${resTxt}` : resTxt;
-            pushTextDelta(overwriteDelta, "tail_recover_diverged");
-          }
+        //
+        // FORK 2026-08-28 — the decision now lives in `classifyTailRecover`
+        // (pure, unit-tested, append-only) and the verdict is ALWAYS logged. The
+        // old inline version had two arms and NO else, so on a tool-loop turn —
+        // where `accumulatedText` is every step's narration concatenated and is
+        // LONGER than the final answer — it fell through in silence: 130
+        // completed turns in a 5h window, `grep -c 'tail-recover'` = 0. The added
+        // `missing` arm is the one that matters: it appends `result.result` when
+        // the answer's head appears NOWHERE in what we streamed. `result.result`
+        // is claude-cli's own final text, independent of every accumulator bug
+        // upstream of it, which is why this is the right place for the net.
+        // Nothing is ever dropped or capped here — the only actions are "append"
+        // and "do nothing".
+        const resTxt = typeof result.result === "string" ? result.result : "";
+        const tailRecover = classifyTailRecover({ streamed: accumulatedText, result: resTxt });
+        // UNCONDITIONAL: one line per turn that reached a result, so "it did
+        // nothing" is a RECORDED verdict rather than an absence of evidence.
+        // Do not put this behind an `if` — that is exactly how the old net
+        // managed to be inert for 130 turns without anyone noticing.
+        log.info(
+          `[tail-recover] verdict=${tailRecover.verdict} streamed=${accumulatedText.length} result=${resTxt.length} append=${tailRecover.append.length} sessionKey=${sessionKey}`,
+        );
+        if (tailRecover.verdict === "missing") {
+          log.warn(
+            `[tail-recover] WARN final answer absent from the stream — appending result.result sessionKey=${sessionKey} streamed=${accumulatedText.length} result=${resTxt.length} head.sample=${JSON.stringify(resTxt.slice(0, 60).replace(/\n/g, "↵"))}`,
+          );
+        }
+        if (tailRecover.append) {
+          pushTextDelta(tailRecover.append, `tail_recover_${tailRecover.verdict}`);
         }
 
         const finalMessage: AssistantMessage = {

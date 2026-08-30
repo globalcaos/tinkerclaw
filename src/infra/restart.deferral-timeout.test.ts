@@ -16,7 +16,7 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     process.removeAllListeners("SIGUSR1");
   });
 
-  it("waits indefinitely when maxWaitMs is not specified", () => {
+  it("falls back to the default 15-minute cap when maxWaitMs is not specified", () => {
     const hooks: RestartDeferralHooks = {
       onTimeout: vi.fn(),
       onReady: vi.fn(),
@@ -29,11 +29,32 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
       hooks,
     });
 
-    vi.advanceTimersByTime(300_000);
+    // Just before the 15-minute default cap
+    vi.advanceTimersByTime(899_999);
     expect(hooks.onTimeout).not.toHaveBeenCalled();
     expect(hooks.onStillPending).toHaveBeenCalled();
 
-    vi.advanceTimersByTime(300_000);
+    // Crossing the cap forces the restart
+    vi.advanceTimersByTime(1);
+    expect(hooks.onTimeout).toHaveBeenCalledOnce();
+  });
+
+  it("explicit maxWaitMs <= 0 disables the cap", () => {
+    const hooks: RestartDeferralHooks = {
+      onTimeout: vi.fn(),
+      onReady: vi.fn(),
+    };
+
+    // Always return 1 pending item to prevent draining
+    deferGatewayRestartUntilIdle({
+      getPendingCount: () => 1,
+      maxWaitMs: 0,
+      hooks,
+    });
+
+    // Twice the default 15-minute cap — explicit opt-out waits forever
+    vi.advanceTimersByTime(900_000);
+    vi.advanceTimersByTime(900_000);
     expect(hooks.onTimeout).not.toHaveBeenCalled();
     expect(hooks.onReady).not.toHaveBeenCalled();
   });

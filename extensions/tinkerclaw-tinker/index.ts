@@ -15,6 +15,29 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 const PREFIX = "/tinker";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// ── FORK 2026-08-22: single file-access boundary for the /tinker/api/* readers ──
+// Mirrors the openExternalFile allowlist. Both the media route and the generic
+// reader below resolve symlinks FIRST and then test against these roots, so a
+// link planted inside an allowed root cannot reach outside it.
+const TINKER_FILE_ROOTS = (() => {
+  const HOME = process.env.HOME ?? "/home/user";
+  return [
+    ".openclaw",
+    "src/tinkerclaw",
+    "src/jarvis-icu",
+    "Documents",
+    "Downloads",
+    "Desktop",
+    "Pictures",
+  ].map((rel) => path.resolve(HOME, rel));
+})();
+
+function isInsideAllowedRoots(resolvedPath: string): boolean {
+  return TINKER_FILE_ROOTS.some(
+    (root) => resolvedPath === root || resolvedPath.startsWith(root + path.sep),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Direct SQLite fallback for anatomy queries — used when the gateway's
 // __anatomyDb global bridge isn't available yet (before first LLM call).
@@ -149,8 +172,25 @@ function getAnatomyDb() {
   return directDb;
 }
 
-// tinker-ui/dist is at the repo root, two levels up from extensions/tinker/
-const TINKER_DIST = path.resolve(__dirname, "../../tinker-ui/dist");
+// tinker-ui/dist is at the repo root. Resolve from this plugin file whether we
+// load as source (`extensions/tinkerclaw-tinker`) or compiled
+// (`dist/extensions/...` / `dist-runtime/extensions/...`). Walk up until we
+// find a sibling `tinker-ui/dist/index.html` so a deploy layout never 503s.
+function resolveTinkerDist(): string {
+  let dir = __dirname;
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.resolve(dir, "tinker-ui/dist");
+    if (fs.existsSync(path.join(candidate, "index.html"))) {
+      return candidate;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback: historical relative path from extensions/tinkerclaw-tinker
+  return path.resolve(__dirname, "../../tinker-ui/dist");
+}
+const TINKER_DIST = resolveTinkerDist();
 
 const CONTENT_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -194,18 +234,26 @@ const plugin = {
     const disableAuth =
       (api.config as any).gateway?.controlUi?.dangerouslyDisableDeviceAuth === true;
 
-    let indexHtmlCache: string | null = null;
+    // FORK 2026-07-30: re-read index.html when mtime changes. The previous
+    // forever-cache kept pointing at a deleted vite asset hash after
+    // `npm run build`, so the architect saw no UI changes (or a blank shell) until a
+    // full gateway restart. Hashed assets still get long-cache; only the HTML
+    // entry is mtime-busted.
+    let indexHtmlCache: { html: string; mtimeMs: number } | null = null;
 
     function getIndexHtml(): string {
-      if (indexHtmlCache) {
-        return indexHtmlCache;
+      const indexPath = path.join(TINKER_DIST, "index.html");
+      const mtimeMs = fs.statSync(indexPath).mtimeMs;
+      if (indexHtmlCache && indexHtmlCache.mtimeMs === mtimeMs) {
+        return indexHtmlCache.html;
       }
-      const raw = fs.readFileSync(path.join(TINKER_DIST, "index.html"), "utf-8");
+      const raw = fs.readFileSync(indexPath, "utf-8");
       // Inject runtime config before </head> so the client can read it
       const config = JSON.stringify({ token: authToken });
       const tag = `<script>window.__TINKER_CONFIG=${config}</script>`;
-      indexHtmlCache = raw.replace("</head>", `${tag}\n</head>`);
-      return indexHtmlCache;
+      const html = raw.replace("</head>", `${tag}\n</head>`);
+      indexHtmlCache = { html, mtimeMs };
+      return html;
     }
 
     // Use registerHttpRoute (the correct plugin API) with prefix matching
@@ -361,6 +409,67 @@ const plugin = {
           return true;
         }
 
+        // ── FORK 2026-08-22: Local media serve endpoint ──
+        // GET /tinker/api/media?path=<absolute path to an image>
+        // Serves the image bytes so a ```html-render chat block can show a LOCAL
+        // file. Motivation: `file://` and relative srcs never resolve from the chat
+        // document (it is served over HTTP), which previously left `data:` URIs as
+        // the only route — ~3.5k output tokens per thumbnail, and not clickable,
+        // because browsers block top-level navigation to data: URLs. With this route
+        // a local image behaves exactly like a remote one: cheap thumbnail plus
+        // click-through to full size. Roots mirror the openExternalFile allowlist.
+        if (pathname === `${PREFIX}/api/media` && req.method === "GET") {
+          const MEDIA_TYPES: Record<string, string> = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".gif": "image/gif",
+            ".webp": "image/webp",
+            ".avif": "image/avif",
+            ".bmp": "image/bmp",
+            ".svg": "image/svg+xml",
+          };
+          const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+          const rawPath = url.searchParams.get("path") ?? "";
+          const fail = (code: number, error: string) => {
+            res.statusCode = code;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error }));
+            return true;
+          };
+          if (!rawPath) return fail(400, "path param required");
+          // realpath first: resolves symlinks BEFORE the prefix check, so a link
+          // inside an allowed root cannot point at /etc/shadow.
+          let resolved: string;
+          try {
+            resolved = fs.realpathSync(path.resolve(rawPath));
+          } catch {
+            return fail(404, "File not found");
+          }
+          if (!isInsideAllowedRoots(resolved)) return fail(403, "Path outside allowed media roots");
+          const type = MEDIA_TYPES[path.extname(resolved).toLowerCase()];
+          if (!type) return fail(415, "Not an allowed image type");
+          try {
+            const stat = fs.statSync(resolved);
+            if (!stat.isFile()) return fail(404, "Not a file");
+            if (stat.size > MAX_MEDIA_BYTES) return fail(413, "File too large");
+            res.statusCode = 200;
+            res.setHeader("Content-Type", type);
+            res.setHeader("Content-Length", String(stat.size));
+            res.setHeader("Cache-Control", "private, max-age=300");
+            res.setHeader("X-Content-Type-Options", "nosniff");
+            // svg is served as a download rather than inline: an inline SVG from a
+            // local path would execute script in the page origin.
+            if (type === "image/svg+xml") {
+              res.setHeader("Content-Disposition", "attachment");
+            }
+            fs.createReadStream(resolved).pipe(res);
+          } catch (err: any) {
+            return fail(404, err?.message ?? "File not found");
+          }
+          return true;
+        }
+
         // ── FORK 2026-05-14: Kit content read endpoint ──
         // GET /tinker/api/kit-content?path=<relative-or-absolute>
         // Returns { path: string, content: string, isDownloaded: boolean }
@@ -506,6 +615,27 @@ const plugin = {
             res.statusCode = 404;
             res.setHeader("Content-Type", "application/json");
             res.end(JSON.stringify({ error: `File not found: ${rawPath}` }));
+            return true;
+          }
+          // ── FORK 2026-08-22 SECURITY: confine the generic reader ──
+          // This catch-all matched ANY /tinker/api/* pathname and returned the
+          // contents of ANY absolute path under 512KB — `?path=/etc/passwd`
+          // returned /etc/passwd, and ~/.ssh/id_rsa was equally reachable. The
+          // sibling kit-content route has always been allowlisted; this one was
+          // not. Same roots as the media route and openExternalFile. realpath
+          // first so a symlink inside an allowed root cannot escape it.
+          try {
+            resolved = fs.realpathSync(resolved);
+          } catch {
+            res.statusCode = 404;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "File not found" }));
+            return true;
+          }
+          if (!isInsideAllowedRoots(resolved)) {
+            res.statusCode = 403;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "Path outside allowed roots" }));
             return true;
           }
           try {

@@ -8,6 +8,7 @@ import {
 import { splitTrailingDirective } from "../auto-reply/reply/streaming-directives.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { emitCacheTelemetry } from "../infra/cache-telemetry.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import { coerceChatContentText } from "../shared/chat-content.js";
 import {
@@ -37,6 +38,7 @@ import {
   formatReasoningMessage,
   promoteThinkingTagsToBlocks,
 } from "./embedded-agent-utils.js";
+import { derivePromptTokens, normalizeUsage, type UsageLike } from "./usage.js";
 
 function shouldSuppressAssistantVisibleOutput(message: AgentMessage | undefined): boolean {
   return resolveAssistantMessagePhase(message) === "commentary";
@@ -660,6 +662,45 @@ export function handleMessageEnd(
   ctx.noteLastAssistant(assistantMessage);
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
   ctx.commitAssistantUsage();
+  // FORK 2026-07-25 (the architect, cache-telemetry deep-layer feed): the EMBEDDED pipe's
+  // `stream:"cache"` producer — covers openai / google / xai / anthropic-api AND, since it is
+  // a provider-runtime plugin rather than a cliBackend, `claude-code` (the cc-bridge).
+  //
+  // ⚠️ CORRECTION 2026-07-28: this comment used to assert "`assistantMessage.usage` is ONE
+  // call's usage, never a turn aggregate". That is FALSE on the cc-bridge lane, which is the
+  // live primary: extensions/tinkerclaw-tinker-bridge/src/stream.ts builds the final message's
+  // usage from the CLI's terminal `result` line, summed across every internal API call of the
+  // turn. Measured live 2026-07-28: 6,448,106 and 1,029,656 emitted here against 1,000,000-token
+  // windows whose real context was 52,116, which the Context Cache panel rendered as "645%".
+  // The panel now rejects a promptTokens larger than the window and falls back to the anatomy
+  // composition (tinker-ui/src/panels/context-cache.ts + app.ts cacheUsedTokens); the split
+  // bar is unaffected because cacheRead/cacheWrite come from the same aggregate, so those
+  // ratios stay consistent. A per-call figure IS available on this lane — the per-`assistant`
+  // stream line's `message.usage` (protocol.ts:55), currently discarded, measured genuinely
+  // per-call — so the real fix is to carry it here rather than to keep guarding downstream.
+  //
+  // For the other providers this remains the per-API-CALL observation point
+  // (ctx.commitAssistantUsage() above is what folds it into the turn total). normalizeUsage() collapses the provider aliases (cache_read_input_tokens
+  // / cached_tokens / prompt_tokens_details.cached_tokens) and de-double-counts the
+  // OpenAI-style prompt totals. Model/provider come off the message that ACTUALLY
+  // executed with run params as fallback — same rule as the effort producer in
+  // embedded-agent-subscribe.handlers.lifecycle.ts, which is what keeps failover honest.
+  const cacheUsage = normalizeUsage((assistantMessage as { usage?: UsageLike }).usage);
+  const cachePromptTokens = derivePromptTokens(cacheUsage);
+  if (cacheUsage && cachePromptTokens !== undefined && cachePromptTokens > 0) {
+    emitCacheTelemetry({
+      runId: ctx.params.runId,
+      sessionKey: ctx.params.sessionKey,
+      model: normalizeOptionalString(assistantMessage.model) ?? ctx.params.modelId ?? "",
+      provider: normalizeOptionalString(assistantMessage.provider) ?? ctx.params.modelProvider,
+      input: cacheUsage.input ?? 0,
+      output: cacheUsage.output ?? 0,
+      cacheRead: cacheUsage.cacheRead ?? 0,
+      cacheWrite: cacheUsage.cacheWrite ?? 0,
+      promptTokens: cachePromptTokens,
+      timestampMs: Date.now(),
+    });
+  }
   if (suppressVisibleAssistantOutput) {
     return;
   }

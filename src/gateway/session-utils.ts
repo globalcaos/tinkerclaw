@@ -55,6 +55,7 @@ import {
   updateSessionStore,
 } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { getSessionRunLiveness } from "../infra/agent-events.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
 import { projectPluginSessionExtensionsSync } from "../plugins/host-hook-state.js";
 import {
@@ -1532,6 +1533,11 @@ export function buildGatewaySessionRow(params: {
     totalTokensFresh,
     estimatedCostUsd,
     status: subagentRun ? subagentStatus : entry?.status,
+    // FORK 2026-07-29 — publish THE RUN SET alongside the persisted status. `status` above is a
+    // verbatim passthrough of the archive and can latch at "running" (measured live) or be absent
+    // (measured on 61 of 348 rows); this is what the PROCESS is actually holding open right now.
+    // Additive: stage 2 publishes, no surface reads it yet.
+    run: getSessionRunLiveness(key, now),
     subagentRunState,
     hasActiveSubagentRun: subagentRun ? liveSubagentRunActive : undefined,
     startedAt: subagentRun ? subagentStartedAt : entry?.startedAt,
@@ -1542,6 +1548,14 @@ export function buildGatewaySessionRow(params: {
     responseUsage: entry?.responseUsage,
     modelProvider: rowModelProvider,
     model: rowModel,
+    // FORK 2026-08-29 — publish the DURABLE PIN alongside the runtime pair above. The pair is
+    // `pin ?? last-served`, so it cannot answer "is this session on Auto?"; these three fields
+    // can, by presence. `selectedModel` (computed above, non-null only when entry.modelOverride
+    // is set) is already exactly the resolved pin — no new computation — and lines 1469-1470
+    // are untouched, so the pair keeps meaning "what served" for every existing consumer.
+    modelOverride: selectedModel?.model,
+    providerOverride: selectedModel?.provider,
+    modelOverrideSource: entry?.modelOverrideSource,
     contextTokens,
     deliveryContext: deliveryFields.deliveryContext,
     lastChannel: deliveryFields.lastChannel ?? entry?.lastChannel,

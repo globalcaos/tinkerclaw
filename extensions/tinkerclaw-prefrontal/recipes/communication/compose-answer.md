@@ -3,7 +3,7 @@ schema: recipe/1.0
 id: compose-answer
 title: Compose Answer (register-matched)
 category: communication
-summary: Read the owner's register, mirror it in the reply, ask on genuine ambiguity, close with the dark decision-summary card
+summary: Read the architect's register, mirror it in the reply, ask on genuine ambiguity, close with the dark decision-summary card
 triggers:
   [
     answer,
@@ -21,7 +21,7 @@ children: []
 
 ## Goal
 
-Produce a substantive reply that (1) speaks at the same register the owner used, (2)
+Produce a substantive reply that (1) speaks at the same register the architect used, (2)
 asks instead of guessing when his intent is genuinely ambiguous, and (3) ends with
 the mandatory dark `html-render` decision-summary card. This is the per-turn
 playbook behind the always-loaded `closing_html_summary` principle in `IDENTITY.md`
@@ -30,14 +30,14 @@ spec is the source of truth for the card; this recipe is the surrounding playboo
 
 ## When to Use
 
-- Every substantive reply to the owner (the default shape of an answer).
+- Every substantive reply to the architect (the default shape of an answer).
 - Skip only for trivial pure acknowledgements ("ok", "got it").
 
 ## Steps
 
 ### 1. Read his register
 
-**Done when:** I can name the register the owner pitched his prompt at.
+**Done when:** I can name the register the architect pitched his prompt at.
 
 Before writing anything, read his message for three signals:
 
@@ -99,6 +99,6 @@ Per `memory/knowledge/html-summary-spec.md` — minimalist, a schematic glance:
 
 ## Failures Overcome
 
-- Answering hard-technical when the owner spoke plain English (over-register).
+- Answering hard-technical when the architect spoke plain English (over-register).
 - Dumping file paths / line numbers he didn't care about (nitty-gritty leak).
 - Guessing between two readings and running with the wrong one instead of asking.

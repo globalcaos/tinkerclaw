@@ -52,6 +52,7 @@ const hoisted = vi.hoisted(() => {
   const totalPendingReplies = { value: 0 };
   const totalQueueSize = { value: 0 };
   const activeTaskCount = { value: 0 };
+  const staleTaskCount = { value: 0 };
 
   const startGmailWatcher = vi.fn(async () => ({ started: true }));
   const stopGmailWatcher = vi.fn(async () => {});
@@ -155,6 +156,7 @@ const hoisted = vi.hoisted(() => {
     totalPendingReplies,
     totalQueueSize,
     activeTaskCount,
+    staleTaskCount,
     startGmailWatcher,
     stopGmailWatcher,
     resetModelCatalogCache,
@@ -258,6 +260,10 @@ vi.mock("../tasks/task-registry.maintenance.js", async () => {
       completed: 0,
       failed: 0,
     }),
+    getRestartBlockingTaskSummary: () => ({
+      blocking: hoisted.activeTaskCount.value,
+      staleIgnored: hoisted.staleTaskCount.value,
+    }),
   };
 });
 
@@ -306,6 +312,7 @@ describe("gateway hot reload", () => {
     hoisted.totalPendingReplies.value = 0;
     hoisted.totalQueueSize.value = 0;
     hoisted.activeTaskCount.value = 0;
+    hoisted.staleTaskCount.value = 0;
     embeddedRunMock.activeIds.clear();
     hoisted.resetModelCatalogCache.mockReset();
     hoisted.disposeAllSessionMcpRuntimes.mockReset();
@@ -533,7 +540,7 @@ describe("gateway hot reload", () => {
     });
   });
 
-  it("waits indefinitely for channel hot reload when deferral timeout is 0 or omitted", async () => {
+  it("waits forever only for explicit 0 deferral timeout and applies the default cap when omitted", async () => {
     await withNonMinimalGatewayServer(async () => {
       const onHotReload = hoisted.getOnHotReload();
       expect(onHotReload).toBeTypeOf("function");
@@ -610,9 +617,9 @@ describe("gateway hot reload", () => {
         expect(hoisted.providerManager.stopChannel).not.toHaveBeenCalled();
         expect(hoisted.providerManager.startChannel).not.toHaveBeenCalled();
 
-        hoisted.activeEmbeddedRunCount.value = 0;
-        embeddedRunMock.activeIds.clear();
-        await vi.advanceTimersByTimeAsync(500);
+        // Active work never drains: the default 15-minute cap fires and the
+        // channels reload anyway instead of waiting forever.
+        await vi.advanceTimersByTimeAsync(5 * 60_000 + 500);
         await omittedPromise;
       } finally {
         hoisted.activeEmbeddedRunCount.value = 0;
@@ -624,6 +631,41 @@ describe("gateway hot reload", () => {
 
       expect(hoisted.providerManager.stopChannel).toHaveBeenCalledWith("telegram");
       expect(hoisted.providerManager.startChannel).toHaveBeenCalledWith("telegram");
+    });
+  });
+
+  it("does not defer channel reload when only stale task runs remain", async () => {
+    await withNonMinimalGatewayServer(async () => {
+      const onHotReload = hoisted.getOnHotReload();
+      expect(onHotReload).toBeTypeOf("function");
+
+      hoisted.providerManager.stopChannel.mockClear();
+      hoisted.providerManager.startChannel.mockClear();
+      hoisted.staleTaskCount.value = 2;
+      try {
+        await onHotReload?.(
+          {
+            changedPaths: ["channels.discord.token"],
+            restartGateway: false,
+            restartReasons: [],
+            hotReasons: ["channels.discord.token"],
+            reloadHooks: false,
+            restartGmailWatcher: false,
+            restartCron: false,
+            restartHeartbeat: false,
+            restartChannels: new Set(["discord"]),
+            noopPaths: [],
+          },
+          {
+            channels: { discord: { token: "token" } },
+          },
+        );
+      } finally {
+        hoisted.staleTaskCount.value = 0;
+      }
+
+      expect(hoisted.providerManager.stopChannel).toHaveBeenCalledWith("discord");
+      expect(hoisted.providerManager.startChannel).toHaveBeenCalledWith("discord");
     });
   });
 

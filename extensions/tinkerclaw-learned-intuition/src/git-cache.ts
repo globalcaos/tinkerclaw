@@ -8,11 +8,17 @@
  * Gracefully handles missing chokidar (TTL-only mode).
  */
 
-import { exec as execCb } from "node:child_process";
+import { execFile as execFileCb } from "node:child_process";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-const execAsync = promisify(execCb);
+/**
+ * execFile, NOT exec: arguments are passed as an argv array with no shell in
+ * between. A filePath containing backticks or $(...) would otherwise be command
+ * substitution — on 2026-08-05 that launched the GNOME Orca screen reader and
+ * the machine started reading the user's screen aloud.
+ */
+const execFileAsync = promisify(execFileCb);
 
 export interface GitCacheConfig {
   /** Enable filesystem watchers */
@@ -134,23 +140,20 @@ export class GitCache {
     try {
       const dir = path.dirname(filePath);
       const file = path.basename(filePath);
-      const escapedDir = dir.replace(/"/g, '\\"');
-      const escapedFile = file.replace(/"/g, '\\"');
+      const since = `--since=${hours} hours ago`;
+      const opts = { encoding: "utf-8" as const, timeout: 5000 };
 
       const [commitResult, authorResult] = await Promise.all([
-        execAsync(
-          `git -C "${escapedDir}" log --since="${hours} hours ago" --oneline -- "${escapedFile}" 2>/dev/null | wc -l`,
-          { encoding: "utf-8", timeout: 5000 },
-        ),
-        execAsync(
-          `git -C "${escapedDir}" log --since="${hours} hours ago" --format="%an" -- "${escapedFile}" 2>/dev/null | sort -u | wc -l`,
-          { encoding: "utf-8", timeout: 5000 },
-        ),
+        execFileAsync("git", ["-C", dir, "log", since, "--oneline", "--", file], opts),
+        execFileAsync("git", ["-C", dir, "log", since, "--format=%an", "--", file], opts),
       ]);
 
+      const lines = (out: string): string[] =>
+        out.split("\n").filter((line) => line.trim().length > 0);
+
       return {
-        recent_commits: parseInt(commitResult.stdout.trim(), 10) || 0,
-        recent_authors: parseInt(authorResult.stdout.trim(), 10) || 0,
+        recent_commits: lines(commitResult.stdout).length,
+        recent_authors: new Set(lines(authorResult.stdout)).size,
         updated_at: Date.now(),
       };
     } catch {

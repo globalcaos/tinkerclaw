@@ -4,6 +4,8 @@ import type {
   AgentToolUpdateCallback,
 } from "@mariozechner/pi-agent-core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { recordAlgorithmOutcome } from "../infra/algorithm-metrics.js";
+import { declareInstrument, noteInstrumentFired } from "../infra/instrument-liveness.js";
 import { logDebug, logError } from "../logger.js";
 import { redactToolDetail } from "../logging/redact.js";
 import { isPlainObject } from "../utils.js";
@@ -18,6 +20,31 @@ import {
 } from "./pi-tools.before-tool-call.js";
 import { normalizeToolName } from "./tool-policy.js";
 import { jsonResult, payloadTextResult } from "./tools/common.js";
+
+// FORK 2026-07-28 — TOOL-OUTPUT instrument. Tool results are the largest uninstrumented
+// consumer of context on this deployment: 20,916,377 bytes of Bash output across 890 sessions,
+// addressed by nothing. Every compaction post-mortem so far argued about prompt size while the
+// real pressure arrived through THIS seam, unmeasured. Declared at module scope, separately
+// from the firing below, so a seam that stops being the path tools take shows up as
+// `neverFired` rather than as silence. NOTE the scope: this covers the EMBEDDED tool seam
+// (`toToolDefinitions`); the client-tool adapter in this same file delegates execution to the
+// client and produces no result bytes here, so it is deliberately not counted.
+declareInstrument({
+  id: "tools:result-bytes",
+  kind: "producer",
+  description: "per-tool-call result bytes at the embedded tool seam",
+});
+
+// Declared and deliberately NEVER fired. An undeclared zero is indistinguishable from success —
+// precisely the defect class this registry exists to catch — so the unbuilt automatic path is
+// registered as a known, explained silence instead of an absence nobody notices.
+declareInstrument({
+  id: "compression:headroom-mcp",
+  kind: "integration",
+  description: "headroom MCP compression of oversized tool results at the tail seam",
+  conditional:
+    "no consumer wired yet — headroom is registered as an MCP server for on-demand model use only; the automatic path is a separate, unbuilt piece of work",
+});
 
 type AnyAgentTool = AgentTool;
 
@@ -136,6 +163,67 @@ function normalizeToolExecutionResult(params: {
   return payloadTextResult(safeDetails);
 }
 
+/**
+ * Bytes this tool result contributes to the model's context. MEASURED, never estimated.
+ *
+ * Computed from the ALREADY-NORMALIZED result rather than by serializing the raw one a second
+ * time. `normalizeToolExecutionResult` has just produced the exact `content[]` that goes to the
+ * model — either the tool's own text, or the single `JSON.stringify` inside `payloadTextResult`
+ * — so reading those lengths walks strings we already hold instead of re-stringifying a result
+ * that can be megabytes of Bash output. `details` is deliberately NOT counted: it feeds logs
+ * and the UI, not the context window.
+ *
+ * Text is counted in UTF-8 bytes; `ImageContent.data` is already base64, where one character is
+ * one wire byte. An unrecognized shape returns 0 rather than a guess.
+ */
+export function measureToolResultBytes(result: AgentToolResult<unknown> | undefined): number {
+  const content: unknown = result?.content;
+  if (!Array.isArray(content)) {
+    return 0;
+  }
+  let bytes = 0;
+  for (const part of content as unknown[]) {
+    if (!part || typeof part !== "object") {
+      continue;
+    }
+    const record = part as { text?: unknown; data?: unknown };
+    if (typeof record.text === "string") {
+      bytes += Buffer.byteLength(record.text, "utf8");
+    } else if (typeof record.data === "string") {
+      bytes += record.data.length;
+    }
+  }
+  return bytes;
+}
+
+/**
+ * Fire the TOOL-OUTPUT instrument for one completed tool call.
+ *
+ * Swallows everything. `noteInstrumentFired` and `recordAlgorithmOutcome` already swallow their
+ * own errors, but the measurement above touches a foreign object, so the whole block is guarded:
+ * telemetry must never disturb the path it observes, and must never turn a successful tool call
+ * into a tool error.
+ */
+function noteToolResultBytes(params: {
+  toolName: string;
+  result: AgentToolResult<unknown>;
+  durationMs: number;
+}): void {
+  try {
+    const bytesOut = measureToolResultBytes(params.result);
+    noteInstrumentFired("tools:result-bytes", `${params.toolName} ${bytesOut}B`);
+    recordAlgorithmOutcome({
+      algorithm: "tool-output",
+      variant: params.toolName,
+      outcome: "observed",
+      metrics: { bytesOut, durationMs: params.durationMs },
+      provenance: { bytesOut: "local-measured", durationMs: "local-measured" },
+    });
+  } catch {
+    /* telemetry must never disturb the path it observes */
+  }
+}
+
 function buildToolExecutionErrorResult(params: {
   toolName: string;
   message: string;
@@ -246,10 +334,22 @@ export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
             }
             executeParams = hookOutcome.params;
           }
+          const toolStartedAtMs = Date.now();
           const rawResult = await tool.execute(toolCallId, executeParams, signal, onUpdate);
+          const durationMs = Date.now() - toolStartedAtMs;
           const result = normalizeToolExecutionResult({
             toolName: normalizedName,
             result: rawResult,
+          });
+          // Fired HERE — on the path where the work actually happened, with the result in hand,
+          // so the size is a FACT rather than an estimate, and never behind the same condition
+          // that decided whether anything was registered. Every embedded tool call passes
+          // through this site. The error path below is deliberately NOT counted: it emits a
+          // small JSON envelope, not tool output, and mixing the two would blur the number.
+          noteToolResultBytes({
+            toolName: normalizedName,
+            result,
+            durationMs,
           });
           return result;
         } catch (err) {

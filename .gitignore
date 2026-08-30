@@ -285,3 +285,13 @@ extensions/**/.openclaw-runtime-deps-stamp.json
 # FORK 2026-05-30: regeneratable build artifact (~90MB, all-MiniLM-L6-v2).
 # Regenerate: python3 scripts (export_encoder.py) — see TRAINING.md. Not in git.
 models/amygdala/encoder.onnx
+
+# Build backups produced by scripts/deploy-worktree.sh on every deploy.
+# They are the rollback path (dist.bak-<stamp>/ and dist-runtime.bak-<stamp>/ are
+# FULL builds), but they are local artifacts and must never be tracked — 45 of them
+# had accumulated to 66 GB and 312,058 untracked paths, which made `git status`
+# unreadable and hid real work.
+dist.bak-*/
+dist-runtime.bak-*/
+dist.prev-*/
+dist.broken-*/

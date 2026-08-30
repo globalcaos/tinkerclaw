@@ -1,8 +1,10 @@
 import type { HealthSummary } from "../commands/health.js";
 import { sweepStaleRunContexts } from "../infra/agent-events.js";
+import { logInstrumentLivenessSummary } from "../infra/instrument-liveness.js";
 import { cleanOldMedia } from "../media/store.js";
 import { abortChatRunById, type ChatAbortControllerEntry } from "./chat-abort.js";
 import { pruneStaleControlPlaneBuckets } from "./control-plane-rate-limit.js";
+import { formatRpcObservabilitySummaryIfChanged } from "./rpc-observability.js";
 import type { ChatRunEntry } from "./server-chat.js";
 import {
   DEDUPE_MAX,
@@ -30,7 +32,14 @@ export function startGatewayMaintenanceTimers(params: {
     probe?: boolean;
     includeSensitive?: boolean;
   }) => Promise<HealthSummary>;
-  logHealth: { error: (msg: string) => void };
+  // `info` added 2026-08-04 for the RPC observability line below, and REQUIRED rather than
+  // optional on purpose. The first attempt declared `debug?:` and called `logHealth.debug?.(…)`
+  // — but log.child() exposes only info/warn/error (LogMethod, src/logger.ts:18), so the guarded
+  // call silently did nothing and the line never appeared, through a green build and a green
+  // deploy. An optional call to a method that does not exist is indistinguishable from a working
+  // one with nothing to say. Required means the compiler catches it instead of the journal
+  // staying quiet for a week.
+  logHealth: { error: (msg: string) => void; info: (msg: string) => void };
   dedupe: Map<string, DedupeEntry>;
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
   chatRunState: { abortedRuns: Map<string, number> };
@@ -73,6 +82,25 @@ export function startGatewayMaintenanceTimers(params: {
     void params
       .refreshGatewayHealthSnapshot({ probe: true })
       .catch((err) => params.logHealth.error(`refresh failed: ${formatError(err)}`));
+    // FORK 2026-07-28 — SCHEDULE THE LIVENESS REPORT.
+    //
+    // The instrument-liveness registry was written to catch components that are registered but
+    // never run, and then shipped with NO caller for its own report: it recorded into memory
+    // and nothing ever read it. That made the liveness detector instance #7 of the exact shape
+    // it exists to catch — a counter nobody reads is not an alarm.
+    //
+    // It rides the existing health tick rather than a timer of its own, so there is one fewer
+    // thing that can itself stop running. It logs WARN only when something is unexpectedly
+    // silent; a healthy fleet is a DEBUG line.
+    logInstrumentLivenessSummary();
+    // FORK 2026-08-04 — the RPC surface's only report, deliberately emitted on the SAME tick and
+    // next to the same summary. capability-coverage.mjs measured the 185-method gateway RPC
+    // surface at zero observability; the fix would have been worthless parked anywhere else,
+    // because the failure this whole file exists to prevent is a perfectly good record written
+    // somewhere nobody looks (fractal wrote 2,466 of them). One more line in the report that IS
+    // read beats a new surface that is not.
+    const rpcSummary = formatRpcObservabilitySummaryIfChanged();
+    if (rpcSummary) params.logHealth.info(rpcSummary);
   }, HEALTH_REFRESH_INTERVAL_MS);
 
   // Prime cache so first client gets a snapshot without waiting.

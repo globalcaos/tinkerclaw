@@ -9,6 +9,7 @@ import { resolveNpmRunner } from "./npm-runner.mjs";
 const TRANSIENT_TEMP_REMOVE_ERROR_CODES = new Set(["EBUSY", "ENOTEMPTY", "EPERM"]);
 const TEMP_REMOVE_RETRY_DELAYS_MS = [10, 25, 50];
 const TEMP_OWNER_FILE = "owner.json";
+const RUNTIME_DEPS_CACHE_DIR_NAME = "bundled-plugin-runtime-deps";
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -82,6 +83,42 @@ function assertPathIsNotSymlink(targetPath, label) {
     }
     throw error;
   }
+}
+
+// The gateway repairs missing plugin runtime deps at runtime by pointing
+// dist/extensions/<id>/node_modules at its own
+// <repoRoot>/.local/bundled-plugin-runtime-deps/<id>-<key>/node_modules cache
+// (see resolveSourceCheckoutRuntimeDepsCacheDir in src/plugins/bundled-runtime-deps.ts).
+// Staging refuses to write through a symlinked node_modules, so a single runtime
+// self-heal used to brick every later build the moment a dependency bump forced
+// that plugin to re-stage. Reclaim the path by dropping the link itself — never
+// following it, so the runtime cache it points at survives untouched — and only
+// when it resolves inside that repo-owned cache. Any other symlink still trips
+// the guard below.
+function reclaimRuntimeOwnedRuntimeDepsLink(nodeModulesDir, repoRoot) {
+  let linkStat;
+  try {
+    linkStat = fs.lstatSync(nodeModulesDir);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  if (!linkStat.isSymbolicLink()) {
+    return;
+  }
+  const cacheRoot = path.resolve(repoRoot, ".local", RUNTIME_DEPS_CACHE_DIR_NAME);
+  const linkTarget = path.resolve(path.dirname(nodeModulesDir), fs.readlinkSync(nodeModulesDir));
+  const relativeToCache = path.relative(cacheRoot, linkTarget);
+  if (
+    relativeToCache === "" ||
+    relativeToCache.startsWith("..") ||
+    path.isAbsolute(relativeToCache)
+  ) {
+    return;
+  }
+  fs.unlinkSync(nodeModulesDir);
 }
 
 function replaceDirAtomically(targetPath, sourcePath) {
@@ -1230,6 +1267,7 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
       : null;
     const packageJson = sanitizeBundledManifestForRuntimeInstall(pluginDir);
     const nodeModulesDir = path.join(pluginDir, "node_modules");
+    reclaimRuntimeOwnedRuntimeDepsLink(nodeModulesDir, repoRoot);
     const stampPath = resolveRuntimeDepsStampPath(repoRoot, pluginId);
     const legacyStampPath = resolveLegacyRuntimeDepsStampPath(pluginDir);
     removePathIfExists(legacyStampPath);

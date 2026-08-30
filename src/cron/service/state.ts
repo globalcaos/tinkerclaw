@@ -77,6 +77,25 @@ export type CronServiceDeps = {
     heartbeat?: { target?: string };
   }) => Promise<HeartbeatRunResult>;
   /**
+   * CRON LANE (see src/infra/heartbeat-wake.ts). Delivers a cron payload without consulting
+   * whether the periodic self-poll is switched on.
+   *
+   * These MUST be injected rather than imported directly by the timer, and the injector MUST
+   * resolve the wake target with the same helper the enqueue path uses. A cron job that targets
+   * the main session carries NO explicit `job.sessionKey`, so the raw value is `undefined`; the
+   * gateway's `resolveCronWakeTarget` is what turns that into the agent's concrete main session
+   * key. Calling the wake functions directly bypasses that resolution, the wake lands on the
+   * generic configured heartbeat session, and the payload sits unread on the main queue — the
+   * 2026-07-25 bug, re-introduced on 2026-08-03 by routing around this layer and fixed again here.
+   */
+  requestCronWakeNow?: (opts?: HeartbeatWakeRequest) => void;
+  runCronWakeOnce?: (opts?: {
+    reason?: string;
+    agentId?: string;
+    sessionKey?: string;
+    heartbeat?: { target?: string };
+  }) => Promise<HeartbeatRunResult>;
+  /**
    * WakeMode=now: max time to wait for runHeartbeatOnce to stop returning
    * { status:"skipped", reason:"requests-in-flight" } before falling back to
    * requestHeartbeatNow.

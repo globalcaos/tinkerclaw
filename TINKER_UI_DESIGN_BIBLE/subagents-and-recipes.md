@@ -179,6 +179,12 @@ verify:
     cmd: grep -Fq 'askIfMissing' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-rpcs.ts && grep -Fq 'export function makeAskResolver' ~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-ask-resolver.ts
   - name: bible-currency-gate exists and is mandated by the always-read doctrine
     cmd: python3 -c 'import os; r=os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/bible-currency-gate/recipe.md"); d=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/prompts/orchestration-disposition.md")).read(); assert os.path.exists(r), "bible-currency-gate recipe missing"; assert "bible-currency-gate" in d, "orchestration-disposition.md does not mandate the gate"'
+  # Enforced by a SCRIPT (FOUNDATION.md, "Three different jobs, three different homes"). The inline
+  # version asserted `"agent:main:main" not in source` and went RED on 2026-08-04 against a tree
+  # where the invariant HELD — both CLIs mention the literal inside a COMMENT that documents its
+  # removal. The script strips comments before matching; see its header.
+  - name: announce-misdelivery fix pinned (2026-08-04) — headless sink, no default main-tab parent in CLI code, RPC-boundary substitution wired
+    cmd: cd ~/src/tinkerclaw && node scripts/bible/subagents-announce-sink.mjs
 ---
 
 # Subagents, kits, plans, and Prefrontal observability
@@ -200,12 +206,26 @@ node ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs \
      [--model claude-code/claude-opus-4-7] \
      [--thinking medium] \
      [--timeout 600] \
+     [--parent <requester-session-key>] \
      --json
 ```
 
 Stdout (with `--json`) returns `{childSessionKey, runId}`.
 
+`--parent <sessionKey>` names the REQUESTER session — the lane the child's completion announcement is delivered back to (see the requester-session contract below). A caller WITH a UI tab passes its own tab key. Omitted, the requester resolves to the headless sink `agent:<agentId>:orchestrator` (substituted at the RPC boundary) — never `agent:main:main`. Until 2026-08-04 this flag defaulted to the `agent:main:main` literal; that documented default was one half of the announce-misdelivery defect below.
+
 When the active provider is a regular LLM (anthropic, openai, google, ollama), the **native `sessions_spawn` tool** takes over automatically — no orchestration code rewrite required. The helper is the fallback for the claude-cli mode where the native tool isn't exposed.
+
+## The requester-session contract — where completion announcements land (FIXED 2026-08-04)
+
+A subagent run records a `requesterSessionKey`; when the child settles, its completion announcement is INJECTED into that session — and the injection mints a real model turn on the requester's lane. The contract:
+
+- **Callers WITH a UI tab** (a Tinker webchat turn, a WhatsApp lane) supply their own session key; the announcement lands back on the tab that asked.
+- **Callers WITHOUT a tab** (the spawn/orchestrate CLIs, ORCA, Claude Code sessions) resolve to the **headless sink** `agent:<agentId>:orchestrator`. The key shape has a single owner — `src/agents/headless-requester-session-key.ts` — and every tab-less caller derives it from there; nobody re-hardcodes the string.
+
+**`agent:main:main` is NOT a headless lane.** It is the live Tinker UI webchat tab — `sessions.json` records `origin.label: "Tinker UI"`, `provider: "webchat"` for it (verified 2026-08-04). It is the session the human is actually typing on, which is exactly why the old default was harmful.
+
+**The defect this replaces (2026-08-04):** TWO INDEPENDENT defaults both landed tab-less callers on the human Main tab — (1) the CLI literals: `openclaw-spawn-subagent.mjs` `--parent` and `openclaw-orchestrate.mjs` `--session` each defaulted to the `agent:main:main` string; (2) the server-side fallback: `subagent-spawn.ts` resolved a missing `ctx.agentSessionKey` to the main-session `alias`. Because the defaults were independent, fixing either one alone still routed announcements onto Main through the other. Measured cost: **64 announce injections in one 6-day `agent:main:main` session** — each injection minted a model turn on a single serialized lane, so completion bursts queued behind the human's own turns and starved the announce deadline. The fix removes the literal from BOTH CLIs and substitutes the headless key at the RPC boundary, so a tab-less spawn cannot reach the human lane by default. The verify block in this file's frontmatter pins all three surfaces.
 
 ## Kits
 
@@ -701,6 +721,17 @@ files**, instead of editing them serially.
   so a parallel session's WIP is never swept in. Enforces a commit-message ruleset (subject
   `<type>(<scope>): summary` ≤72; body = what+why from the unit task; quote task IDs; co-author
   trailer; no `--no-verify`/`--force`). `commit:false` to skip; `commitScope`/`coAuthor` to tune.
+- **UI quiescence (2026-08-16) — why this optic cares:** the Tinker UI is served by a vite dev
+  server that WATCHES its source, so every write to a watched file rebuilds and reloads whatever
+  page the architect has open. Applying a patch hunk-by-hunk therefore perturbed the live UI once
+  per HUNK, each intermediate state a half-applied file. ORCA now never edits a watched file in
+  place: the finished content is assembled where the watcher cannot see it (the per-agent worktree,
+  or `/tmp/orca-ui-stage-<unitId>` in `worktreePerAgent:false` mode), verified there, and every
+  file of the unit is copied back in ONE burst — one transition, old coherent state → new. In the
+  default worktree mode the Phase-C merge-back IS that single write, and it must not interleave a
+  build with landing the commit. Content copy only — `mv`/rename/symlink swaps the inode and can
+  make the watcher drop the file and stop reloading entirely. Watched roots come from `hmrPaths`
+  (default the `tinker-ui` vite roots; `false` disables).
 - **Surfaces:** Claude Code skill `orca` (the workflow `meta` IS the skill — no SKILL.md) and
   the runtime skill `~/.openclaw/workspace/skills/orca/SKILL.md`.
 - **Invoke:** Workflow tool, `scriptPath:
@@ -728,6 +759,7 @@ units:[{id,task,writes:[paths]}], wrapPath?, verifyHint?}`. Spec:
 - **`clearsPromotionBar` is a LIVE-MARGIN J16 bar** (`mean + 1 std` of the CURRENT `successRate` distribution), never a frozen N — and lineage lands in the snapshot FRONTMATTER, never a sidecar.
 - **ORCA (parallel multi-agent CODING) is the default for any 2+ independent-file edit** — its lease-based Phase-A-parallel / Phase-B-per-file-serialized design is what keeps concurrent writes from clobbering (esp. `tinker-ui/src/app.ts` between parallel sessions). Don't regress to serial hand-edits when files are disjoint. The canonical workflow `meta.name` is `orca`; the file keeps the `parallel-implement` name. Surfaces as Claude Code skill `orca` + runtime skill `~/.openclaw/workspace/skills/orca/`.
 - **`prefrontal.recipe.read` is the single parsed-recipe source for the UI (BROCA visibility).** It returns a `BrocaRecipe` (steps with `skillId`/`ins`/`out`/`when`/`returns`/`prose`) via `recipe-parse.ts` `parseRecipeMd` — the SAME parser the runner uses, so the recipe page + composition panel render what actually executes. Keep `parseRecipeMd` single-source (do NOT fork a second client-side parser). The `prefrontal-recipe-state` event carries optional `turnId` (stable per prompt) + per-step `skillId` so the UI can scope composition to the current turn and color the exact skill — both OPTIONAL/back-compat; old clients ignore them. `TreeNode.skill` is wired end-to-end but stays `undefined` until the subagent-spawn lifecycle event carries `skill` (a gateway/`src/agents` follow-up); until then the UI joins recipe-state `{inFlightLabels, skillId}` to a node by label. See `tinker-ui.md` §5.75. (Server half landed test-only on develop; goes live at the next safe build — develop is currently build-gated.)
+- **A tab-less spawn must NEVER default its `requesterSessionKey` to `agent:main:main`.** That key is the live human webchat tab, not a headless lane. The only legal default is the headless sink `agent:<agentId>:orchestrator`, single-owned by `src/agents/headless-requester-session-key.ts` and substituted at the RPC boundary. Re-hardcoding the Main literal in a spawn CLI — or restoring `subagent-spawn.ts`'s bare-`alias` fallback — re-creates the announce-starvation defect (64 injections in one 6-day session). The verify block pins both CLIs and the substitution.
 
 ## External knowledge imports — the vendor layer (FORK 2026-06-12, decision in bible §5.83a)
 

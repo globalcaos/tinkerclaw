@@ -1240,6 +1240,58 @@
       "types": "./dist/plugin-sdk/text-utility-runtime.d.ts",
       "default": "./dist/plugin-sdk/text-utility-runtime.js"
     },
+    "./plugin-sdk/memory-engram": {
+      "types": "./dist/plugin-sdk/memory-engram.d.ts",
+      "default": "./dist/plugin-sdk/memory-engram.js"
+    },
+    "./plugin-sdk/fork-instrumentation": {
+      "types": "./dist/plugin-sdk/fork-instrumentation.d.ts",
+      "default": "./dist/plugin-sdk/fork-instrumentation.js"
+    },
+    "./plugin-sdk/fork-error-envelope": {
+      "types": "./dist/plugin-sdk/fork-error-envelope.d.ts",
+      "default": "./dist/plugin-sdk/fork-error-envelope.js"
+    },
+    "./plugin-sdk/fork-message-hooks": {
+      "types": "./dist/plugin-sdk/fork-message-hooks.d.ts",
+      "default": "./dist/plugin-sdk/fork-message-hooks.js"
+    },
+    "./plugin-sdk/fork-inflight-steer": {
+      "types": "./dist/plugin-sdk/fork-inflight-steer.d.ts",
+      "default": "./dist/plugin-sdk/fork-inflight-steer.js"
+    },
+    "./plugin-sdk/fork-prefrontal-schema": {
+      "types": "./dist/plugin-sdk/fork-prefrontal-schema.d.ts",
+      "default": "./dist/plugin-sdk/fork-prefrontal-schema.js"
+    },
+    "./plugin-sdk/fork-recipe-engine": {
+      "types": "./dist/plugin-sdk/fork-recipe-engine.d.ts",
+      "default": "./dist/plugin-sdk/fork-recipe-engine.js"
+    },
+    "./plugin-sdk/fork-usage-metrics": {
+      "types": "./dist/plugin-sdk/fork-usage-metrics.d.ts",
+      "default": "./dist/plugin-sdk/fork-usage-metrics.js"
+    },
+    "./plugin-sdk/fork-auth-admin": {
+      "types": "./dist/plugin-sdk/fork-auth-admin.d.ts",
+      "default": "./dist/plugin-sdk/fork-auth-admin.js"
+    },
+    "./plugin-sdk/fork-secret-refs": {
+      "types": "./dist/plugin-sdk/fork-secret-refs.d.ts",
+      "default": "./dist/plugin-sdk/fork-secret-refs.js"
+    },
+    "./plugin-sdk/fork-gateway-broadcast": {
+      "types": "./dist/plugin-sdk/fork-gateway-broadcast.d.ts",
+      "default": "./dist/plugin-sdk/fork-gateway-broadcast.js"
+    },
+    "./plugin-sdk/fork-browser-relay": {
+      "types": "./dist/plugin-sdk/fork-browser-relay.d.ts",
+      "default": "./dist/plugin-sdk/fork-browser-relay.js"
+    },
+    "./plugin-sdk/fork-overseer-budget": {
+      "types": "./dist/plugin-sdk/fork-overseer-budget.d.ts",
+      "default": "./dist/plugin-sdk/fork-overseer-budget.js"
+    },
     "./extension-api": "./dist/extensionAPI.js",
     "./cli-entry": "./openclaw.mjs"
   },
@@ -1271,7 +1323,7 @@
     "canvas:a2ui:bundle": "node scripts/bundle-a2ui.mjs",
     "changed:lanes": "node scripts/changed-lanes.mjs",
     "check": "node scripts/check.mjs",
-    "check:architecture": "pnpm check:import-cycles && pnpm check:madge-import-cycles && pnpm check:deprecated-internal-config-api",
+    "check:architecture": "pnpm check:import-cycles && pnpm check:madge-import-cycles && pnpm check:deprecated-internal-config-api && pnpm lint:no-broken-relative-imports && pnpm lint:no-shell-interpolation",
     "check:base-config-schema": "node --import tsx scripts/generate-base-config-schema.ts --check",
     "check:bundled-channel-config-metadata": "node --import tsx scripts/generate-bundled-channel-config-metadata.ts --check",
     "check:changed": "node scripts/check-changed.mjs",
@@ -1369,12 +1421,15 @@
     "lint:extensions:no-relative-outside-package": "node scripts/check-extension-plugin-sdk-boundary.mjs --mode=relative-outside-package",
     "lint:extensions:no-src-outside-plugin-sdk": "node scripts/check-extension-plugin-sdk-boundary.mjs --mode=src-outside-plugin-sdk",
     "lint:fix": "node scripts/run-oxlint.mjs --fix && pnpm format",
+    "lint:no-broken-relative-imports": "node scripts/check-broken-relative-imports.mjs",
+    "lint:no-shell-interpolation": "node scripts/check-shell-interpolation.mjs",
     "lint:plugins:no-extension-imports": "node scripts/check-plugin-extension-import-boundary.mjs",
     "lint:plugins:no-extension-src-imports": "node --import tsx scripts/check-no-extension-src-imports.ts",
     "lint:plugins:no-extension-test-core-imports": "node --import tsx scripts/check-no-extension-test-core-imports.ts",
     "lint:plugins:no-monolithic-plugin-sdk-entry-imports": "node --import tsx scripts/check-no-monolithic-plugin-sdk-entry-imports.ts",
     "lint:plugins:no-register-http-handler": "node scripts/check-no-register-http-handler.mjs",
     "lint:plugins:plugin-sdk-subpaths-exported": "node scripts/check-plugin-sdk-subpath-exports.mjs",
+    "lint:plugins:plugin-sdk-value-exports": "node scripts/check-plugin-sdk-value-exports.mjs",
     "lint:scripts": "pnpm lint:docker-e2e && node scripts/run-oxlint.mjs --tsconfig tsconfig.oxlint.scripts.json scripts",
     "lint:swift": "swiftlint lint --config .swiftlint.yml && (cd apps/ios && swiftlint lint --config .swiftlint.yml)",
     "lint:tmp:channel-agnostic-boundaries": "node scripts/check-channel-agnostic-boundaries.mjs",
@@ -1562,6 +1617,7 @@
     "test:startup:bench:update": "node scripts/test-update-cli-startup-bench.mjs",
     "test:startup:gateway": "node --import tsx scripts/bench-gateway-startup.ts",
     "test:startup:memory": "node scripts/check-cli-startup-memory.mjs",
+    "test:tinker-ui": "node scripts/run-vitest.mjs run --config test/vitest/vitest.tinker-ui.config.ts",
     "test:ui": "pnpm ui:i18n:check && pnpm lint:ui:no-raw-window-open && pnpm --dir ui test",
     "test:unit": "pnpm test:unit:fast && node scripts/run-vitest.mjs run --config test/vitest/vitest.unit.config.ts",
     "test:unit:fast": "node scripts/run-vitest.mjs run --config test/vitest/vitest.unit-fast.config.ts",

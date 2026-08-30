@@ -82,12 +82,14 @@ export function resolveLlmIdleTimeoutMs(params?: {
  * @param baseFn - The base stream function to wrap
  * @param timeoutMs - Idle timeout in milliseconds
  * @param onIdleTimeout - Optional callback invoked when idle timeout triggers
+ * @param onEvent - Optional callback invoked on every stream event (wherever the idle timer resets)
  * @returns A wrapped stream function with idle timeout detection
  */
 export function streamWithIdleTimeout(
   baseFn: StreamFn,
   timeoutMs: number,
   onIdleTimeout?: (error: Error) => void,
+  onEvent?: () => void,
 ): StreamFn {
   return (model, context, options) => {
     const maybeStream = baseFn(model, context, options);
@@ -129,10 +131,12 @@ export function streamWithIdleTimeout(
 
                 if (result.done) {
                   clearTimer();
+                  onEvent?.();
                   return result;
                 }
 
                 clearTimer();
+                onEvent?.();
                 return result;
               } catch (error) {
                 clearTimer();

@@ -47,6 +47,10 @@ function runHeartbeatOnce(...args: unknown[]) {
 
 vi.mock("../infra/system-events.js", () => ({
   enqueueSystemEvent,
+  // The cron delivery boundary now peeks the queue (phantom-run guard +
+  // "[cron-diag] payload enqueued/wake target" tracing), so the mock has to
+  // expose it or every main-target job in this suite throws.
+  peekSystemEventEntries: () => [],
 }));
 
 vi.mock("../infra/heartbeat-wake.js", async () => {

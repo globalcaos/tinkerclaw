@@ -16,6 +16,14 @@ export type CliOutput = {
   rawText?: string;
   sessionId?: string;
   usage?: CliUsage;
+  /**
+   * Usage of the LAST assistant step in the turn. Unlike `usage` (the CLI's
+   * turn-aggregate, which sums input+cache across every internal step and can
+   * exceed the context window many times over), the final step's prompt-side
+   * tokens approximate the real context size — the only number safe to persist
+   * as a session token snapshot for compaction triggering.
+   */
+  lastStepUsage?: CliUsage;
   finalPromptText?: string;
 };
 
@@ -144,6 +152,13 @@ function toCliUsage(raw: Record<string, unknown>): CliUsage | undefined {
     return undefined;
   }
   return { input, output, cacheRead, cacheWrite, total };
+}
+
+function readAssistantStepUsage(parsed: Record<string, unknown>): CliUsage | undefined {
+  if (parsed.type !== "assistant" || !isRecord(parsed.message) || !isRecord(parsed.message.usage)) {
+    return undefined;
+  }
+  return toCliUsage(parsed.message.usage);
 }
 
 function readCliUsage(parsed: Record<string, unknown>): CliUsage | undefined {
@@ -288,11 +303,13 @@ export function parseCliJson(
 
   let sessionId: string | undefined;
   let usage: CliUsage | undefined;
+  let lastStepUsage: CliUsage | undefined;
   let text = "";
   let sawStructuredOutput = false;
   for (const parsed of parsedRecords) {
     sessionId = pickCliSessionId(parsed, backend) ?? sessionId;
     usage = readCliUsage(parsed) ?? usage;
+    lastStepUsage = readAssistantStepUsage(parsed) ?? lastStepUsage;
     const nextText =
       collectCliText(parsed.message) ||
       collectCliText(parsed.content) ||
@@ -317,7 +334,7 @@ export function parseCliJson(
   if (!text && !sawStructuredOutput) {
     return null;
   }
-  return { text, sessionId, usage };
+  return { text, sessionId, usage, lastStepUsage };
 }
 
 function parseClaudeCliJsonlResult(params: {
@@ -326,6 +343,7 @@ function parseClaudeCliJsonlResult(params: {
   parsed: Record<string, unknown>;
   sessionId?: string;
   usage?: CliUsage;
+  lastStepUsage?: CliUsage;
 }): CliOutput | null {
   if (!usesClaudeStreamJsonDialect(params)) {
     return null;
@@ -337,11 +355,21 @@ function parseClaudeCliJsonlResult(params: {
   ) {
     const resultText = unwrapNestedCliResultText(params.parsed.result).trim();
     if (resultText) {
-      return { text: resultText, sessionId: params.sessionId, usage: params.usage };
+      return {
+        text: resultText,
+        sessionId: params.sessionId,
+        usage: params.usage,
+        lastStepUsage: params.lastStepUsage,
+      };
     }
     // Claude may finish with an empty result after tool-only work. Keep the
     // resolved session handle and usage instead of dropping them.
-    return { text: "", sessionId: params.sessionId, usage: params.usage };
+    return {
+      text: "",
+      sessionId: params.sessionId,
+      usage: params.usage,
+      lastStepUsage: params.lastStepUsage,
+    };
   }
   return null;
 }
@@ -469,6 +497,7 @@ export function parseCliJsonl(
   }
   let sessionId: string | undefined;
   let usage: CliUsage | undefined;
+  let lastStepUsage: CliUsage | undefined;
   const texts: string[] = [];
   for (const line of lines) {
     for (const parsed of parseJsonRecordCandidates(line)) {
@@ -479,6 +508,7 @@ export function parseCliJsonl(
         sessionId = parsed.thread_id.trim();
       }
       usage = readCliUsage(parsed) ?? usage;
+      lastStepUsage = readAssistantStepUsage(parsed) ?? lastStepUsage;
 
       const claudeResult = parseClaudeCliJsonlResult({
         backend,
@@ -486,6 +516,7 @@ export function parseCliJsonl(
         parsed,
         sessionId,
         usage,
+        lastStepUsage,
       });
       if (claudeResult) {
         return claudeResult;
@@ -504,7 +535,7 @@ export function parseCliJsonl(
   if (!text) {
     return null;
   }
-  return { text, sessionId, usage };
+  return { text, sessionId, usage, lastStepUsage };
 }
 
 export function parseCliOutput(params: {

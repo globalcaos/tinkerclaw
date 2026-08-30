@@ -33,27 +33,41 @@ export interface AssembleOptions {
 }
 
 /**
- * Word-level Jaccard similarity between two strings.
- * Used for MMR redundancy estimation (faster than embedding cosine for this scale).
+ * The comparable word set of a piece of content: lowercased, whitespace-split,
+ * words of 3+ characters.
+ *
+ * FORK 2026-08-19 — SPLIT OUT OF `wordJaccard` SO IT CAN BE BUILT ONCE PER CANDIDATE.
+ * This used to live inside `wordJaccard`, which meant both operands were re-tokenised
+ * on every single comparison. MMR over the default 50 candidates makes
+ * Sum_{k=0..49} (50-k)*k = 20,825 comparisons, i.e. **41,650 set constructions from
+ * full event text, for 50 distinct events**. Measured at 99.3% of the entire retrieval
+ * pack build, which is itself the largest stage of a turn's pre-prompt wait.
  */
-function wordJaccard(a: string, b: string): number {
-  const words = (s: string): Set<string> =>
-    new Set(
-      s
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((w) => w.length > 2),
-    );
+function contentWords(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2),
+  );
+}
 
-  const setA = words(a);
-  const setB = words(b);
+/**
+ * Word-level Jaccard similarity between two pre-built word sets.
+ * Used for MMR redundancy estimation (faster than embedding cosine for this scale).
+ *
+ * Iterates the SMALLER set: the intersection count is symmetric, so this is the same
+ * number with fewer hash probes.
+ */
+function jaccardOfSets(setA: Set<string>, setB: Set<string>): number {
   if (setA.size === 0 || setB.size === 0) {
     return 0;
   }
 
+  const [small, large] = setA.size <= setB.size ? [setA, setB] : [setB, setA];
   let intersection = 0;
-  for (const w of setA) {
-    if (setB.has(w)) {
+  for (const w of small) {
+    if (large.has(w)) {
       intersection++;
     }
   }
@@ -61,7 +75,7 @@ function wordJaccard(a: string, b: string): number {
   return union === 0 ? 0 : intersection / union;
 }
 
-interface ScoredEvent {
+export interface ScoredEvent {
   event: MemoryEvent;
   score: number;
 }
@@ -72,8 +86,13 @@ interface ScoredEvent {
  * redundancy with already-selected items.
  *
  * MMR(i) = λ · relevance(i) - (1-λ) · max_j∈S similarity(i, j)
+ *
+ * EXPORTED FOR TESTING ONLY (FORK 2026-08-19). `retrieval-integration.test.ts` pins it
+ * against a naive reference implementation of the original algorithm — the optimisation
+ * inside is an exact-equivalence claim, and an exact-equivalence claim needs a test that
+ * can fail. Nothing in production imports it.
  */
-function mmrRerank(
+export function mmrRerank(
   candidates: ScoredEvent[],
   lambda: number = MMR_LAMBDA,
   maxItems: number = FTS_TOP_N,
@@ -84,30 +103,44 @@ function mmrRerank(
 
   const selected: ScoredEvent[] = [];
   const remaining = [...candidates];
+  // Both arrays are index-parallel to `remaining` and spliced with it, so index i
+  // always describes the same candidate.
+  //   remainingWords[i] — built exactly once per candidate (see `contentWords`).
+  //   maxSimToSelected[i] — RUNNING max of sim(i, s) over every already-selected s.
+  //
+  // The running max is what makes this O(n^2) instead of O(n^2 * k). The original
+  // recomputed `max over selected` from scratch inside the candidate loop, so the
+  // similarity was evaluated Sum_{k=0..n-1} (n-k)*k times — 20,825 for n=50. Folding
+  // each newly-selected item into the running max instead evaluates it n(n-1)/2 = 1,225
+  // times. The value is identical: max is order-independent, and both start at 0.
+  const remainingWords = remaining.map((c) => contentWords(c.event.content));
+  const maxSimToSelected: number[] = new Array<number>(remaining.length).fill(0);
 
   while (remaining.length > 0 && selected.length < maxItems) {
     let bestScore = -Infinity;
     let bestIdx = 0;
 
     for (let i = 0; i < remaining.length; i++) {
-      const c = remaining[i];
-      // Max similarity to any already-selected item
-      let maxSim = 0;
-      for (const s of selected) {
-        const sim = wordJaccard(c.event.content, s.event.content);
-        if (sim > maxSim) {
-          maxSim = sim;
-        }
-      }
-      const mmr = lambda * c.score - (1 - lambda) * maxSim;
+      const mmr = lambda * remaining[i].score - (1 - lambda) * maxSimToSelected[i];
       if (mmr > bestScore) {
         bestScore = mmr;
         bestIdx = i;
       }
     }
 
+    const chosenWords = remainingWords[bestIdx];
     selected.push(remaining[bestIdx]);
     remaining.splice(bestIdx, 1);
+    remainingWords.splice(bestIdx, 1);
+    maxSimToSelected.splice(bestIdx, 1);
+
+    // Fold the just-selected item into every survivor's running max.
+    for (let i = 0; i < remaining.length; i++) {
+      const sim = jaccardOfSets(remainingWords[i], chosenWords);
+      if (sim > maxSimToSelected[i]) {
+        maxSimToSelected[i] = sim;
+      }
+    }
   }
 
   return selected;

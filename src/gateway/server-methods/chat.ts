@@ -3,17 +3,22 @@ import path from "node:path";
 import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { abortEmbeddedPiRun } from "../../agents/embedded-agent-runner/runs.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/embedded-agent-runner/transcript-rewrite.js";
 import { resolveFailoverReasonFromError } from "../../agents/failover-error.js";
 import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox/context.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
+import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
+import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
 import { createReplyDispatcher } from "../../auto-reply/reply/reply-dispatcher.js";
+import { replyRunRegistry } from "../../auto-reply/reply/reply-run-registry.js";
 import { stageSandboxMedia } from "../../auto-reply/reply/stage-sandbox-media.js";
 import type { MsgContext, TemplateContext } from "../../auto-reply/templating.js";
+import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { extractCanvasFromText } from "../../chat/canvas-render.js";
-import { resolveSessionFilePath } from "../../config/sessions.js";
+import { resolveSessionFilePath, updateSessionStore } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
@@ -70,7 +75,11 @@ import {
   resolveEffectiveChatHistoryMaxChars,
 } from "../chat-display-projection.js";
 import { stripEnvelopeFromMessage } from "../chat-sanitize.js";
-import { augmentChatHistoryWithCliSessionImports } from "../cli-session-history.js";
+import {
+  augmentChatHistoryWithCliSessionImports,
+  resolveClaudeCliProvenanceSessionIds,
+  resolveClaudeCliSessionFilePath,
+} from "../cli-session-history.js";
 import { isSuppressedControlReplyText } from "../control-reply-text.js";
 import {
   attachManagedOutgoingImagesToMessage,
@@ -120,7 +129,7 @@ import type {
   GatewayRequestHandlers,
 } from "./types.js";
 
-type TranscriptAppendResult = {
+export type TranscriptAppendResult = {
   ok: boolean;
   messageId?: string;
   message?: Record<string, unknown>;
@@ -786,12 +795,24 @@ function buildChatSendTranscriptMessage(params: {
   message: string;
   savedImages: SavedMedia[];
   timestamp: number;
+  // FORK 2026-08-16 — stamp the client's idempotencyKey onto the PERSISTED user turn.
+  //
+  // Every other transcript writer here already records one (see appendAssistantTranscriptMessage),
+  // and `transcriptHasIdempotencyKey` reads exactly this field to make appends idempotent ACROSS a
+  // restart — but the user turn, the one message a human actually typed, was written without it.
+  // Consequences, both real: the durable dedup could never protect a user turn, and a client
+  // holding an unconfirmed prompt had no way to ask "did you already get this?" except by
+  // comparing text, which is ambiguous the moment the same thing is sent twice. The webchat outbox
+  // (tinker-ui/src/outbox.ts) resends unconfirmed prompts after a restart, so this key is what
+  // makes that replay exact instead of a guess.
+  idempotencyKey?: string;
 }) {
   const mediaFields = resolveChatSendTranscriptMediaFields(params.savedImages);
   return {
     role: "user" as const,
     content: params.message,
     timestamp: params.timestamp,
+    ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
     ...mediaFields,
   };
 }
@@ -1195,6 +1216,153 @@ export function buildOversizedHistoryPlaceholder(message?: unknown): Record<stri
   };
 }
 
+// FORK 2026-08-25 (the architect: "the intermediate thinking gets deleted in the chat") — a message goes
+// over the cap because of ONE fat block: a screenshot's base64, or a tool_result carrying a whole
+// file. The prose in the same message is a few hundred bytes and is innocent, but the whole-message
+// placeholder threw it away with the image, so the narration the user had already READ came back
+// from the next chat.history as "[chat.history omitted: message too large]".
+//
+// That is a deletion, not a truncation, and the client cannot undo it: a frozen streamed bubble
+// carries no CLIENT_ONLY flag (tinker-ui msg-order.ts), so `loadChat`'s `messages = incoming`
+// replaces the good on-screen copy with the stub. The reload is DEFERRED during a live turn and
+// fires the moment the turn ends — which is why INTERRUPTING a turn is when the text visibly
+// disappears: the interrupt is what ends the turn and releases the swap.
+//
+// So shrink the BLOCK, not the message. Text blocks are always kept verbatim; only the heavy
+// carriers are replaced, each with a stub naming what was dropped. The whole-message placeholder
+// survives as the last resort for a message that is still oversized after shrinking (or that is not
+// block-shaped at all) — that path is genuinely unrepresentable, and it is now rare.
+//
+// FORK 2026-08-28 (R3: what the gateway answers must be what the chat shows). The shrink above
+// only ran when the message carried prose. A message with NO text block — a lone fat tool_result,
+// the commonest shape — still went to the whole-message placeholder, which throws away the block's
+// type, its name and its tool_use_id. tinker-ui decides a bubble is renderable from exactly those
+// (msgHasVisibleContent keys on tool_use / tool_result), so the tool did not appear truncated: it
+// VANISHED. Measured live on the dashboard session, 6 of 428 served messages were such stubs — six
+// tool results the architect could never see.
+//
+// The cap is not the bug and is deliberately unchanged. What changes is that an omitted body now
+// degrades to a per-BLOCK stub that keeps the row's identity and states how many bytes were left
+// out, so truncation stays but becomes visible and structured instead of destroying the record.
+
+/** Heavy carriers that are NOT tool rows; tool block types match via isToolHistoryBlockType. */
+const OVERSIZED_BLOCK_KINDS = new Set(["image"]);
+
+/** Identity keys a stub must carry, or the UI cannot pair the row with the call that made it. */
+const OVERSIZED_BLOCK_IDENTITY_KEYS = [
+  "id",
+  "tool_use_id",
+  "toolUseId",
+  "tool_call_id",
+  "toolCallId",
+  "name",
+  "tool_name",
+  "toolName",
+] as const;
+
+// Every spelling the transcript uses (tool_use / tooluse / toolcall / tool_result / toolResult …)
+// behind one predicate, instead of a hand-maintained casing list that silently misses one.
+function isOversizedDroppableBlockKind(kind: string): boolean {
+  return isToolHistoryBlockType(kind) || OVERSIZED_BLOCK_KINDS.has(kind.trim().toLowerCase());
+}
+
+/**
+ * Per-block replacement for a carrier that blew the cap: keeps the block's own `type` and every
+ * identity key it carries, and states the byte size of the body that was left out. The row still
+ * renders, and the omission is legible instead of invisible.
+ */
+function buildOmittedBlockStub(block: unknown, bytes: number): Record<string, unknown> {
+  const rec = (block && typeof block === "object" ? block : {}) as Record<string, unknown>;
+  const kind = typeof rec.type === "string" && rec.type.trim() ? rec.type : "content";
+  const note = `[${kind} omitted: ${bytes} bytes]`;
+  const omission = { omitted: true, reason: "oversized", bytes };
+  if (!isToolHistoryBlockType(kind)) {
+    // A screenshot stripped of its base64 is not renderable as an image, so a non-tool carrier
+    // still degrades to a text marker — but the marker now says how much was left out.
+    const marker: Record<string, unknown> = { type: "text", text: note, __openclaw: omission };
+    const id = rec.tool_use_id;
+    if (typeof id === "string" && id) {
+      marker.tool_use_id = id;
+    }
+    return marker;
+  }
+  const stub: Record<string, unknown> = { type: kind };
+  for (const key of OVERSIZED_BLOCK_IDENTITY_KEYS) {
+    const value = rec[key];
+    if (typeof value === "string" && value) {
+      stub[key] = value;
+    }
+  }
+  if (typeof rec.is_error === "boolean") {
+    stub.is_error = rec.is_error;
+  }
+  // tinker-ui renders a tool_result body from a STRING `content` and a tool_use's arguments from
+  // `input`, so put the note where the block's own shape expects to find its body.
+  stub.content = note;
+  if (rec.input !== undefined) {
+    stub.input = { omitted: note };
+  }
+  stub.__openclaw = omission;
+  return stub;
+}
+
+function shrinkOversizedBlocks(
+  message: unknown,
+  maxSingleMessageBytes: number,
+): { message: unknown; shrunk: boolean } {
+  if (!message || typeof message !== "object") {
+    return { message, shrunk: false };
+  }
+  const rec = message as Record<string, unknown>;
+  const content = rec.content;
+  if (!Array.isArray(content)) {
+    return { message, shrunk: false };
+  }
+  // FORK 2026-08-28: no `carriesText` gate any more. A message with no prose used to bail out here
+  // and lose its whole record to the placeholder; every oversized carrier is now stubbed in place.
+  //
+  // Biggest blocks first: drop only as many as the cap actually requires, so a message with one
+  // huge screenshot and three small ones keeps the three.
+  const sized = content.map((block, index) => ({ index, bytes: jsonUtf8Bytes(block) }));
+  sized.sort((a, b) => b.bytes - a.bytes);
+  const stubs = new Map<number, Record<string, unknown>>();
+  let running = jsonUtf8Bytes(message);
+  for (const { index, bytes } of sized) {
+    if (running <= maxSingleMessageBytes) {
+      break;
+    }
+    const block = content[index] as { type?: unknown } | null;
+    const kind = typeof block?.type === "string" ? block.type : "";
+    // NEVER a text (or thinking) block. Losing prose is the defect this function exists to stop; a
+    // message that is oversized on prose alone falls through to the whole-message placeholder.
+    if (!isOversizedDroppableBlockKind(kind)) {
+      continue;
+    }
+    const stub = buildOmittedBlockStub(block, bytes);
+    stubs.set(index, stub);
+    // Charge the stub against the saving, not just the block against the total: a message built
+    // from many mid-sized carriers would otherwise measure under the cap here, fail the re-check in
+    // replaceOversizedChatHistoryMessages, and fall back to the whole-message placeholder anyway.
+    running -= bytes - jsonUtf8Bytes(stub);
+  }
+  if (stubs.size === 0) {
+    return { message, shrunk: false };
+  }
+  const nextContent = content.map((block, index) => stubs.get(index) ?? block);
+  return {
+    message: {
+      ...rec,
+      content: nextContent,
+      __openclaw: {
+        ...((rec.__openclaw as Record<string, unknown> | undefined) ?? {}),
+        truncated: true,
+        reason: "oversized-blocks",
+      },
+    },
+    shrunk: true,
+  };
+}
+
 export function replaceOversizedChatHistoryMessages(params: {
   messages: unknown[];
   maxSingleMessageBytes: number;
@@ -1204,14 +1372,21 @@ export function replaceOversizedChatHistoryMessages(params: {
     return { messages, replacedCount: 0 };
   }
   let replacedCount = 0;
+  let changed = false;
   const next = messages.map((message) => {
     if (jsonUtf8Bytes(message) <= maxSingleMessageBytes) {
       return message;
     }
+    const shrunk = shrinkOversizedBlocks(message, maxSingleMessageBytes);
+    if (shrunk.shrunk && jsonUtf8Bytes(shrunk.message) <= maxSingleMessageBytes) {
+      changed = true;
+      return shrunk.message;
+    }
     replacedCount += 1;
+    changed = true;
     return buildOversizedHistoryPlaceholder(message);
   });
-  return { messages: replacedCount > 0 ? next : messages, replacedCount };
+  return { messages: changed ? next : messages, replacedCount };
 }
 
 export function enforceChatHistoryFinalBudget(params: { messages: unknown[]; maxBytes: number }): {
@@ -1353,6 +1528,65 @@ function appendAssistantTranscriptMessage(params: {
     idempotencyKey: params.idempotencyKey,
     abortMeta: params.abortMeta,
   });
+}
+
+// FORK 2026-07-22 (chat-error-persist): projection of the delivered replies
+// that the !agentRunStarted completion path renders + persists. Includes BOTH
+// dispatcher kinds:
+// - "final": the normal agent reply / fast pre-start failure text
+// - "block": command acks delivered via dispatcher.sendBlockReply (e.g.
+//   "Model set to claude-code/claude-fable-5." from a /model directive).
+//   These were previously filtered out (kind==="final" only) and thus
+//   structurally invisible in webchat — proven 2026-07-22 when a /model ack
+//   never rendered.
+// Exported for tests (chat.error-persistence.test.ts).
+export function projectPreRunReplyPayloads(
+  deliveredReplies: ReadonlyArray<{ payload: ReplyPayload; kind: "block" | "final" }>,
+): ReplyPayload[] {
+  return deliveredReplies
+    .filter((entry) => entry.kind === "final" || entry.kind === "block")
+    .map((entry) => entry.payload);
+}
+
+// FORK 2026-07-22 (chat-error-persist): persist only agent-started ERROR
+// fallback text (e.g. "⚠️ Agent failed before reply: …" after a mid-run agent
+// death) to the session transcript. Successful replies are already persisted
+// by the agent runtime; persisting the successful backstop too creates a
+// second gateway-injected assistant message. Previously error text was only
+// fire-and-forget WS-broadcast: any tab reload / WS reconnect lost it and the
+// user saw NOTHING. The persisted text block carries `isError: true` so the UI
+// can render the bubble red on reload.
+// Exported for tests (chat.error-persistence.test.ts).
+export function persistAgentStartedFallbackReply(params: {
+  sessionKey: string;
+  clientRunId: string;
+  agentId?: string;
+  fallbackText: string;
+  isError?: boolean;
+  logWarn?: (message: string) => void;
+}): TranscriptAppendResult | undefined {
+  const trimmed = params.fallbackText.trim();
+  if (params.isError !== true || !trimmed || isSilentReplyText(trimmed, SILENT_REPLY_TOKEN)) {
+    return undefined;
+  }
+  const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(params.sessionKey);
+  const sessionId = latestEntry?.sessionId ?? params.clientRunId;
+  const appended = appendAssistantTranscriptMessage({
+    message: trimmed,
+    content: [{ type: "text", text: trimmed, isError: true }],
+    sessionId,
+    storePath: latestStorePath,
+    sessionFile: latestEntry?.sessionFile,
+    agentId: params.agentId,
+    createIfMissing: true,
+    idempotencyKey: `${params.clientRunId}:assistant-final`,
+  });
+  if (!appended.ok) {
+    params.logWarn?.(
+      `webchat agent-started fallback transcript append failed: ${appended.error ?? "unknown error"}`,
+    );
+  }
+  return appended;
 }
 
 function collectSessionAbortPartials(params: {
@@ -1522,6 +1756,76 @@ function resolveAuthorizedRunIdsForSession(params: {
   };
 }
 
+/**
+ * FORK 2026-08-20 (the architect: Stop Grok, it spins again). `chat.abort` used to
+ * abort only the in-flight AbortController. The `/stop` text path already
+ * drained the followup queue, aborted the embedded runner, and killed
+ * children — the UI Stop button never did, so a queued followup or a
+ * leftover tool-call started a fresh turn the moment the controller died.
+ * Best-effort: abort must never throw.
+ */
+function settleSessionAfterAbort(params: {
+  context: Pick<GatewayRequestContext, "logGateway">;
+  sessionKey: string;
+}): void {
+  try {
+    const { cfg, storePath, entry, canonicalKey } = loadSessionEntry(params.sessionKey);
+    const key = canonicalKey || params.sessionKey;
+    const sessionId =
+      replyRunRegistry.resolveSessionId(key) ??
+      replyRunRegistry.resolveSessionId(params.sessionKey) ??
+      entry?.sessionId;
+    const abortedRunner =
+      replyRunRegistry.abort(key) ||
+      (key !== params.sessionKey ? replyRunRegistry.abort(params.sessionKey) : false) ||
+      (sessionId ? abortEmbeddedPiRun(sessionId) : false);
+    const cleared = clearSessionQueues([key, params.sessionKey, sessionId]);
+    let stoppedChildren = 0;
+    try {
+      stoppedChildren = stopSubagentsForRequester({
+        cfg,
+        requesterSessionKey: key,
+      }).stopped;
+    } catch (err) {
+      params.context.logGateway.warn(`chat.abort child-stop failed: ${formatErrorMessage(err)}`);
+    }
+    if (
+      abortedRunner ||
+      cleared.followupCleared > 0 ||
+      cleared.laneCleared > 0 ||
+      stoppedChildren > 0
+    ) {
+      params.context.logGateway.info?.(
+        `chat.abort settled ${key} runner=${abortedRunner} followups=${cleared.followupCleared} lane=${cleared.laneCleared} children=${stoppedChildren}`,
+      );
+    }
+    if (storePath && key && entry) {
+      void updateSessionStore(
+        storePath,
+        (store) => {
+          const current = store[key];
+          if (!current) {
+            return;
+          }
+          current.abortedLastRun = true;
+          if (current.status === "running") {
+            current.status = "done";
+            current.endedAt = Date.now();
+          }
+          current.updatedAt = Date.now();
+        },
+        { skipMaintenance: true },
+      ).catch((err) => {
+        params.context.logGateway.warn(
+          `chat.abort could not persist abortedLastRun: ${formatErrorMessage(err)}`,
+        );
+      });
+    }
+  } catch (err) {
+    params.context.logGateway.warn(`chat.abort session settle failed: ${formatErrorMessage(err)}`);
+  }
+}
+
 function abortChatRunsForSessionKeyWithPartials(params: {
   context: GatewayRequestContext;
   ops: ChatAbortOps;
@@ -1535,11 +1839,11 @@ function abortChatRunsForSessionKeyWithPartials(params: {
     sessionKey: params.sessionKey,
     requester: params.requester,
   });
-  if (authorizedRunIds.length === 0) {
+  if (authorizedRunIds.length === 0 && matchedSessionRuns > 0) {
     return {
       aborted: false,
       runIds: [],
-      unauthorized: matchedSessionRuns > 0,
+      unauthorized: true,
     };
   }
   const authorizedRunIdSet = new Set(authorizedRunIds);
@@ -1568,6 +1872,12 @@ function abortChatRunsForSessionKeyWithPartials(params: {
       snapshots,
     });
   }
+  // Drain even when no live controller matched — a queued followup is how
+  // Stop "lands" and then thinking starts again.
+  settleSessionAfterAbort({
+    context: params.context,
+    sessionKey: params.sessionKey,
+  });
   return res;
 }
 
@@ -1655,71 +1965,27 @@ function broadcastChatError(params: {
   params.context.agentRunSeq.delete(params.runId);
 }
 
-// FORK 2026-06-24 (repeating-answers bug): final serve-boundary answer dedup.
-// chat.history serves `rawMessages` = the local session store MERGED with the cc-bridge
-// CLI-session JSONL import (augmentChatHistoryWithCliSessionImports). For a heavily-compacted
-// tinker session the JSONL retains a whole conversation's worth of re-answers (re-emitted
-// across cc-bridge respawns + compactions) while the local store kept only the post-compaction
-// tail — so the merge's timestamp/slot heuristics (cli-session-history.merge.ts) have too few
-// local anchors and the same answers flood the served history (observed raw=1040 vs local=68;
-// the front-end then renders each answer 2x+ — the "I see my answer twice" report).
-// This is a content-based last line of defence on the PROJECTED display messages, independent
-// of timestamps: drop an ASSISTANT message whose normalized visible text exactly duplicates an
-// earlier-kept assistant message, OR is a strict prefix of any other assistant message (the
-// cc-bridge leading-narration echo of a fuller coalesced answer). Min-length guard mirrors
-// merge.ts LONG_TEXT_DEDUP_MIN_LEN so legit short repeats ("ok", "done") survive; user messages
-// are untouched (distinct prompts must not collapse).
-const SERVED_ANSWER_DEDUP_MIN_LEN = 50;
-
-function visibleAssistantTextForDedup(message: unknown): string | undefined {
-  if (!message || typeof message !== "object") return undefined;
-  const m = message as { role?: unknown; content?: unknown };
-  if (m.role !== "assistant") return undefined;
-  const c = m.content;
-  let text = "";
-  if (typeof c === "string") {
-    text = c;
-  } else if (Array.isArray(c)) {
-    for (const b of c) {
-      if (b && typeof b === "object") {
-        const blk = b as { type?: unknown; text?: unknown };
-        if ((blk.type === "text" || blk.type === "output_text") && typeof blk.text === "string") {
-          text += blk.text;
-        }
-      }
-    }
-  } else {
-    return undefined;
-  }
-  const normalized = text.replace(/\s+/g, " ").trim();
-  return normalized.length >= SERVED_ANSWER_DEDUP_MIN_LEN ? normalized : undefined;
-}
-
-export function dedupeServedAssistantAnswers(messages: unknown[]): unknown[] {
-  const texts = messages.map(visibleAssistantTextForDedup);
-  const drop = new Array<boolean>(messages.length).fill(false);
-  for (let i = 0; i < messages.length; i++) {
-    const ti = texts[i];
-    if (ti === undefined) continue;
-    for (let j = 0; j < messages.length; j++) {
-      if (i === j) continue;
-      const tj = texts[j];
-      if (tj === undefined) continue;
-      // ti is a strict prefix of a longer assistant answer → ti is the echo, drop it
-      if (ti.length < tj.length && tj.startsWith(ti)) {
-        drop[i] = true;
-        break;
-      }
-      // exact duplicate → keep the earliest occurrence, drop the later copies
-      if (ti === tj && i > j) {
-        drop[i] = true;
-        break;
-      }
-    }
-  }
-  if (!drop.some(Boolean)) return messages;
-  return messages.filter((_, i) => !drop[i]);
-}
+// FORK 2026-08-05 (dedup REMOVED — do NOT re-add): a content-based serve-boundary dedup
+// (`dedupeServedAssistantAnswers`, added 2026-06-24 for the "repeating answers" bug) used to
+// run here. It dropped any assistant message whose normalized text was a strict PREFIX of any
+// other assistant message anywhere in the session — earlier OR LATER, because the double loop
+// was `for i: for j`, not `j < i` — and additionally dropped the LONGER message whenever it
+// ENDED WITH a shorter one. Measured on the real store for agent:main:tinker:ms39dshj it
+// deleted 19 of 59 assistant messages (32%), one of them killed by a message 13 positions
+// LATER. `loadChat` consumes this result, so that was permanent, silent deletion from screen:
+// a genuine short answer is legitimately a prefix of a longer later answer all the time.
+//
+// Chat history is now served VERBATIM and IN ORDER; nothing is dropped on content. The
+// duplicate text it was papering over is fixed at its SOURCE instead:
+//   - live streaming duplicates → the buffer-replace signal in src/gateway/server-chat.ts
+//     (`isLiveChatBufferReplaced` + the `replace: true` field on chat delta events)
+//   - abort echoes → `suppressSupersededAbortEchoes` (chat-display-projection.ts), which stays:
+//     it is narrowly keyed on the openclawAbort marker, not on free-text similarity
+// Known consequence (accepted, tracked separately): answers re-persisted across a cc-bridge
+// respawn/compaction — same text, different id/parentId — are no longer hidden here. That is a
+// persistence/merge-layer defect and belongs in augmentChatHistoryWithCliSessionImports /
+// cli-session-history.merge.ts, not in a lossy filter at the serve boundary.
+// Contract pinned by chat.dedup.test.ts.
 
 export const chatHandlers: GatewayRequestHandlers = {
   "chat.history": async ({ params, respond, context }) => {
@@ -1747,6 +2013,11 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionId && storePath ? readSessionMessages(sessionId, storePath, entry?.sessionFile) : [];
     const rawMessages = augmentChatHistoryWithCliSessionImports({
       entry,
+      // Attribution for the flood-valve warn ONLY (never affects what is served). Without it the
+      // valve logs entry.sessionId — a raw UUID that cannot be joined against the [duprep-history]
+      // line below, which keys on sessionKey. The two must name the same thing to be readable
+      // together, and they are the only diagnostics for this path.
+      sessionKey,
       provider: resolvedSessionModel.provider,
       localMessages,
     });
@@ -1788,8 +2059,41 @@ export const chatHandlers: GatewayRequestHandlers = {
     const localUsers = countUser(localMessages);
     const rawUsers = countUser(rawMessages);
     if (rawUsers > localUsers || rawUsers >= 2) {
+      // FORK 2026-08-26 (duprep source diagnostics): name the SOURCE of the import on this
+      // SAME line. The counts alone say "the merge added user rows" without saying WHICH
+      // claude-code transcript they came from or how big it had grown — and the 8 MB
+      // oversized-resume guard rebinds a tab to a FRESH transcript mid-day (it fired 3x on
+      // 2026-08-26), which silently changes the answer every other field here reports.
+      // Without the id, a rebind and a merge regression are indistinguishable in the log.
+      //
+      // Re-resolved from the SAME `entry` the augment call above used (both default homeDir),
+      // because augmentChatHistoryWithCliSessionImports does not return what it read.
+      // Provenance is a LIST, not a scalar: the binding id and the tinker-bridge-map id are
+      // chained (orphan fix a1b7819258) and the merge reads BOTH, so a single-valued field
+      // would hide exactly the second source this exists to expose. `cliSessionId` and
+      // `cliTranscriptBytes` are therefore comma-joined and INDEX-ALIGNED. `none` — never
+      // `0` — for "no id recorded" and for "id recorded but no readable .jsonl", so neither
+      // can ever be misread as an empty transcript.
+      //
+      // Cost/safety: resolveClaudeCliProvenanceSessionIds already ran unconditionally in the
+      // augment call above, so this adds no new throw class; resolveClaudeCliSessionFilePath
+      // swallows its own readdir failure and the statSync is guarded. The readdir+stat is
+      // negligible beside the full .jsonl read that same call already performed, but it is
+      // kept INSIDE the log gate regardless so unlogged chat.history calls pay nothing.
+      const importedCliSessionIds = resolveClaudeCliProvenanceSessionIds({ entry });
+      const importedCliTranscriptBytes = importedCliSessionIds.map((cliSessionId) => {
+        const transcriptPath = resolveClaudeCliSessionFilePath({ cliSessionId });
+        if (!transcriptPath) {
+          return "none";
+        }
+        try {
+          return String(fs.statSync(transcriptPath).size);
+        } catch {
+          return "none";
+        }
+      });
       context.logGateway.info(
-        `[duprep-history] sessionKey=${sessionKey} local.total=${localMessages.length} local.user=${localUsers} raw.total=${rawMessages.length} raw.user=${rawUsers} lastLocalUser=${JSON.stringify(lastUserText(localMessages))} lastRawUser=${JSON.stringify(lastUserText(rawMessages))}`,
+        `[duprep-history] sessionKey=${sessionKey} local.total=${localMessages.length} local.user=${localUsers} raw.total=${rawMessages.length} raw.user=${rawUsers} lastLocalUser=${JSON.stringify(lastUserText(localMessages))} lastRawUser=${JSON.stringify(lastUserText(rawMessages))} cliSessionId=${importedCliSessionIds.join(",") || "none"} cliTranscriptBytes=${importedCliTranscriptBytes.join(",") || "none"}`,
       );
     }
     const hardMax = 1000;
@@ -1797,13 +2101,13 @@ export const chatHandlers: GatewayRequestHandlers = {
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
     const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars(cfg, maxChars);
+    // FORK 2026-08-05: served VERBATIM — no content-based dedup pass. See the tombstone
+    // comment above `chatHandlers` for what was removed and why.
     const normalized = augmentChatHistoryWithCanvasBlocks(
-      dedupeServedAssistantAnswers(
-        projectRecentChatDisplayMessages(rawMessages, {
-          maxChars: effectiveMaxChars,
-          maxMessages: max,
-        }),
-      ),
+      projectRecentChatDisplayMessages(rawMessages, {
+        maxChars: effectiveMaxChars,
+        maxMessages: max,
+      }),
     );
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
@@ -2313,6 +2617,7 @@ export const chatHandlers: GatewayRequestHandlers = {
               message: parsedMessage,
               savedImages: persistedImages,
               timestamp: now,
+              idempotencyKey: clientRunId,
             }),
           });
         })();
@@ -2518,11 +2823,11 @@ export const chatHandlers: GatewayRequestHandlers = {
                 sessionKey,
               });
             } else {
+              // FORK 2026-07-22 (chat-error-persist): include "block" acks too —
+              // see projectPreRunReplyPayloads.
               const finalPayloads = appendedWebchatAgentMedia
                 ? []
-                : deliveredReplies
-                    .filter((entry) => entry.kind === "final")
-                    .map((entry) => entry.payload);
+                : projectPreRunReplyPayloads(deliveredReplies);
               const { storePath: latestStorePath, entry: latestEntry } =
                 loadSessionEntry(sessionKey);
               const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
@@ -2680,6 +2985,12 @@ export const chatHandlers: GatewayRequestHandlers = {
                 .map((p) => (typeof p?.text === "string" ? p.text.trim() : ""))
                 .filter(Boolean)
                 .join("\n\n") || undefined;
+            // FORK 2026-07-22 (chat-error-persist): optional error flag set by
+            // agent-runner-execution on failure payloads (sibling change —
+            // optional chaining so this compiles standalone). Propagated on the
+            // broadcast message AND the persisted transcript entry so the UI
+            // can render the bubble red, live and after reload.
+            const fallbackIsError = finalPayloads.some((p) => p?.isError === true);
             const fallbackMessage = fallbackText
               ? {
                   role: "assistant",
@@ -2688,8 +2999,29 @@ export const chatHandlers: GatewayRequestHandlers = {
                   timestamp: Date.now(),
                   stopReason: "stop",
                   usage: { input: 0, output: 0, totalTokens: 0 },
+                  ...(fallbackIsError ? { isError: true } : {}),
                 }
               : undefined;
+            // FORK 2026-07-22 (chat-error-persist): ALSO persist the backstop
+            // ERROR text. A mid-run agent death ("⚠️ Agent failed before
+            // reply: …") was broadcast-only here, so any tab reload / WS
+            // reconnect showed NOTHING. Successful replies are already
+            // persisted by the agent runtime; persisting the successful
+            // backstop here creates a duplicate assistant transcript entry.
+            if (
+              fallbackIsError &&
+              fallbackText &&
+              !isSilentReplyText(fallbackText, SILENT_REPLY_TOKEN)
+            ) {
+              persistAgentStartedFallbackReply({
+                sessionKey,
+                clientRunId,
+                agentId,
+                fallbackText,
+                isError: fallbackIsError,
+                logWarn: (message) => context.logGateway.warn(message),
+              });
+            }
             broadcastChatFinal({
               context,
               runId: clientRunId,

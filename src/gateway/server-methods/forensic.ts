@@ -376,7 +376,16 @@ export const forensicHandlers: GatewayRequestHandlers = {
     respond(true, { enabled: isForensicMode() });
   },
 
-  // ─── Live (in-memory) endpoints — no disk I/O ───
+  // ─── Live (session-scoped) endpoints ───
+  // FORK 2026-08-28 — this banner used to read "Live (in-memory) endpoints — no disk
+  // I/O", sitting directly above a handler that triggered 0.97 GB of synchronous fs
+  // calls. It was FALSE: `getRunForSession`/`getLatestRun` swept the entire
+  // `forensic-sessions/` directory (3,269 files) on the first touch after every gateway
+  // start — 11,658 / 11,172 / 11,132 / 14,612 ms of blocking, measured on four separate
+  // starts. dump-writer.ts now reads at most ONE session file, lazily, for the key
+  // actually requested; `getLatestRun()` touches no disk at all and returns null on a
+  // cold LRU, which surfaces below as NO_DATA. Accurate statement: in-memory LRU, plus a
+  // single-file read on a miss — never a directory scan.
   "forensic.getLive": async ({ params, respond }) => {
     const sk = typeof params?.sessionKey === "string" ? params.sessionKey : undefined;
     const dump = sk ? getDumpForSession(sk) : getLatestDump();

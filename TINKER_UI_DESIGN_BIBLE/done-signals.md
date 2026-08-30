@@ -2,7 +2,7 @@
 file: done-signals.md
 purpose: The cross-signal methodology for "is this turn/task done?" — the master map of every input that drives the Tinker UI thinking/activity indicator, their authority/precedence, and a fixed procedure for analysing or changing this area before bugs surface.
 audience: AI (Claude, etc). Human readability is incidental.
-last_verified: 2026-05-17
+last_verified: 2026-08-17
 last_verified_commit: HEAD
 single_owner: yes — the cross-signal *precedence contract* and the master doneness map live here. Per-signal facts are owned elsewhere (lifecycles.md = session/worker/recovery state machines; tool-loop.md = heartbeat/idle-watchdog/lifecycle:end emission/no-UI-watchdog; flows.md = the chat.final guarantee + F-PLAN-RESUME; subagents-and-recipes.md = plan/kit/recipe; panels.md = prefrontal render levels + the §147 helpers; failures.md = failure-mode maps). This file does NOT re-derive them — it sequences them.
 see_also: lifecycles.md (L1 session, L2 tinker-bridge worker, L4 restart-recovery), tool-loop.md (heartbeat, idle watchdog, lifecycle:end emission, the deleted UI watchdog), flows.md (chat.send always ends in a final/error/aborted broadcast; F-PLAN-RESUME), panels.md (§115 prefrontal render levels, §147 single-source-of-truth helpers), subagents-and-recipes.md (plan RPCs, kits, recipes, restart-continue), failures.md (M1 idle SIGTERM, M2 stuck spinner, incomplete_turn)
@@ -13,6 +13,16 @@ verify:
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/panels/prefrontal-tree.ts")).read(); assert "Priority 2" in t and "synthetic" in t.lower(), "prefrontal-tree.ts no longer documents the explicit-plan → synthetic-2-step → idle priority ladder; done-signals.md §3 and panels.md §115 describe a precedence that the code must still implement"'
   - name: the terminal lifecycle phase:"error" event carries the SAME identity fields as phase:"end" so the Tier-3 debounced delete fires for errored runs too (FORK 2026-06-04, the error-clears-the-run precedence this doc owns)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-subscribe.handlers.lifecycle.ts")).read(); m=re.search(r"phase:\s*\"error\",\s*\n", t); assert m, "could not find the terminal phase:\"error\" emit object in handleAgentEnd"; blk=t[m.start():m.start()+600]; assert "model:" in blk and "sessionKey:" in blk, "the terminal phase:\"error\" gateway event no longer carries model+sessionKey — the Tinker UI gates its lifecycle handler on p.data?.model, so an identity-less error event is DROPPED and the errored run is NEVER scheduled for the Tier-3 debounced delete (its thinking indicator sticks + stacks). done-signals.md §2: phase:error MUST mirror phase:end identity. Re-read before touching the lifecycle terminal emit."'
+  - name: R2b — exactly ONE activity clock, and it ticks under a second (FORK 2026-08-17, five reports of a blank/desynced indicator)
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); m=re.search(r"const ACTIVITY_TICK_MS\s*=\s*([0-9_]+)", t); assert m, "ACTIVITY_TICK_MS is gone. done-signals.md R2b requires exactly ONE sub-second clock driving every activity surface; without it a poll-only input (sessions[].run, elapsed seconds) is never re-read and the indicator stays blank for whole turns."; ms=int(m.group(1).replace("_","")); assert ms <= 1000, "the activity clock is %dms. R2b requires under 1s (the architect, 2026-08-17: ideally 0.5s)." % ms; assert "thinkingTickInterval = setInterval" not in t and "livenessRepaintInterval = setInterval" not in t, "a SECOND activity clock is back. Two clocks means two phases: the same fact renders at different moments on different surfaces, which is the R2 corollary desync fixed on 2026-08-17."'
+  - name: R2b — every governed surface repaints from the ONE trigger, and the one clock calls it (would have failed on the 2026-08-15 regression)
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); m=re.search(r"function repaintActivitySurfaces\(\)[^{]*\{(.*?)\n\}", t, re.S); assert m, "repaintActivitySurfaces is gone — it is the ONE TRIGGER named in run-state.ts and done-signals.md R2b."; body=m.group(1); missing=[f for f in ("updateSessionsPanel","updateBudgetPanel","repaintThinkingIndicator") if f not in body]; assert not missing, "these surfaces left the one trigger: %s. A surface repainted on its own schedule holds a stale answer indefinitely — it is not late, nothing will correct it. That is verbatim the 2026-08-15 bug (the chat indicator was the surface left out)." % missing; c=re.search(r"function activityTick\(\)[^{]*\{(.*?)\n\}", t, re.S); assert c and "repaintActivitySurfaces" in c.group(1), "the one clock no longer calls the one trigger."'
+  - name: ONE STATE SET — `pending` is per-SESSION, so a tab you are not looking at keeps its indicator (FORK 2026-08-17)
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); m=re.search(r"function tabsRunningNow\(\)[\s\S]*?\n\}", t); assert m, "tabsRunningNow not found"; body=m.group(0); assert "sessionPending(" in body, "the tab glow no longer asks the per-session pending derivation. pending has gone back to being a property of the VIEWED tab, so sending a prompt and switching away blanks that tab for the whole 21-36s pre-model window — the 2026-08-17 report."; assert not re.search(r"tab\.id === activeTabId && viewedSessionPending\(\)\s*\)?\s*\{", body), "the pending glow is gated on activeTabId again — that is verbatim the 2026-08-17 regression."; v=re.search(r"function viewedSessionPending\(\)[\s\S]*?\n\}", t); assert v and "sessionPending(" in v.group(0), "viewedSessionPending no longer consults the shared per-session derivation, so the chat pill and the tab title can drift apart — the desync class this whole area keeps reproducing."'
+  - name: R2a (transitive) — no PAINTING function may mutate run state, however deep in the clock's call chain (FORK 2026-08-17)
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); ms=list(re.finditer(r"^(?:async )?function ([A-Za-z0-9_$]+)", t, re.M)); PAINT=re.compile(r"^(render|paint|fill|update|sync|repaint|sweep|activityTick|activityFingerprint|tabsRunningNow)"); bad=[]; [bad.append(n) for i,m in enumerate(ms) for n in [m.group(1)] if PAINT.match(n) for body in [t[m.end(): ms[i+1].start() if i+1 < len(ms) else len(t)]] for ln in body.splitlines() if not ln.strip().startswith(("//","*")) and ("activeRuns.delete" in ln or "rememberTerminated(" in ln)]; assert not bad, "these PAINTING functions mutate run state: %s. done-signals.md R2a forbids a timer that CLEARS a run, and every painter is on the 500ms clock — so a delete here IS the stale-run watchdog, just hidden one call deeper. Found 2026-08-17 in sweepDeadEegBranches, reached via activityTick -> repaintActivitySurfaces -> updateBudgetPanel -> renderEegPanel -> fillEegPaper: it deleted the run AND rememberTerminated() it, so a turn quiet for 90s (a long tool call) lost its indicator permanently. Freshness belongs at READ time (clientRunIsFresh), never as a delete." % sorted(set(bad))'
+  - name: R2a — no timer may CLEAR a run (the stale-run watchdog stays deleted)
+    cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "STALE_RUN_WATCHDOG_MS" not in t, "the stale-run watchdog is back. done-signals.md R2a: the 2026-05-14 deletion is permanent — a stuck indicator is cured at the emitter, never by a UI timer that lies about doneness."; c=re.search(r"function activityTick\(\)[^{]*\{(.*?)\n\}", t, re.S); assert c, "activityTick not found"; body=c.group(1); assert "activeRuns.delete" not in body and "backgroundRuns.delete" not in body, "the activity clock now REMOVES a run. R2 turns on DIRECTION: a clock that re-reads and repaints is required; one that clears is forbidden."'
   - name: subagent chat terminals also close the run — handleSubagentChatEvent deletes from activeRuns (FORK 2026-06-22, stuck spinner after a fractal turn)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); m=re.search(r"function handleSubagentChatEvent[\s\S]*?\nfunction ", t); assert m, "handleSubagentChatEvent not found"; blk=m.group(0); assert "activeRuns.delete" in blk and "rememberTerminated" in blk, "handleSubagentChatEvent no longer closes the subagent run on its terminal chat event — a subagent (e.g. a fractal-triage lane) whose tier-3 lifecycle:end is dropped on hard teardown will stick its thinking indicator forever. done-signals.md section 2 R1: a chat terminal is tier-1 for SUBAGENT runs too, not just the main run. Re-read before changing the subagent chat handler."'
 ---
@@ -84,6 +94,8 @@ Authority tiers — when two signals disagree, the **lower tier number wins**.
 | 7   | restart-continue / main-session-restart-recovery                                      | boot scan → re-dispatch a turn (#1 cycle restarts)                                           | A turn was interrupted by a gateway restart; the task is resumed. Detected via `status:"running"`→`abortedLastRun` and `in_progress` plan with unfinished steps.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | — (recovery)                      | lifecycles.md L4                                        |
 | 8   | live chat-**delta** (text) for the viewed session                                     | stream delta → app.ts delta handler                                                          | The run is _alive RIGHT NOW_ (Jarvis is streaming). Normally `activeRuns` already has the entry (created by `phase:start`, #4). **FORK 2026-06-04 (U4 delta SELF-HEAL):** a delta whose `activeRuns` entry is **missing** is _authoritative proof of life_ → re-create a minimal entry + resume the indicator tick. This is **R1 applied to liveness** (an authoritative live signal supersedes the advisory `phase:end` that emptied `activeRuns`). It does **not** add a UI watchdog (R2 holds) — it reacts to a real inbound delta, never to a timer.                                                               | — (liveness, self-healing)        | tool-loop.md (emission) / here (cross-signal self-heal) |
 
+| 9 | pre-model window (`preModelSince`, pre-model-window.ts) | app.ts `send()` → the tab glow + the chat pill | **The session is working but no model has been named yet.** Prompt accepted, gateway assembling the prompt; measured 21-36s (turn-latency.md). The gateway's run set correctly says "not live" for this whole span, so it is the ONE activity state no server lane can supply. Opened at send; closed by ANY of three proofs, each recorded for EVERY session above every viewed gate — a model-bearing lifecycle event, a chat delta, or a terminal chat event — and bounded by `PRE_MODEL_MAX_MS` so a dropped clear stops the glow rather than latching it. **FORK 2026-08-17:** was the boolean `sending`, a property of the VIEWED TAB, so `tabsRunningNow()` could only grant it to `activeTabId` and switching away blanked the tab you left for the whole window. Now keyed by session. | — (liveness, client-only) | here |
+
 **The two rules that resolve every historical bug here:**
 
 - **R1 — `chat.final/aborted` is authoritative and immediate; `lifecycle:end`
@@ -125,15 +137,53 @@ Authority tiers — when two signals disagree, the **lower tier number wins**.
     `activeRuns.delete` → `rememberTerminated` → recompute `sending`), so a
     subagent has the same two independent terminators (tier-1 chat + tier-3
     lifecycle) the main run has. (Enforced by this file's new verify block.)
-- **R2 — there is no UI-side stale-run watchdog.** The 2026-05-14 deletion
-  is permanent (`STALE_RUN_WATCHDOG_MS` must never reappear — owned/enforced
-  by tool-loop.md). A stuck indicator is ALWAYS cured by hardening
-  `lifecycle:end`/`final` _emission_ (server side), never by a UI timer
-  that lies about doneness. **The U4 delta self-heal does NOT violate R2:**
-  it fires only in response to an actual inbound delta (an authoritative
-  liveness event), never on a scheduled/polled timer, and it _re-creates_ a
-  run rather than _clearing_ one — the exact opposite of the watchdog that
-  was deleted (which lied a run was _done_).
+- **R2 — a UI timer may never CLEAR a run; a UI clock that only RE-READS is
+  required.** The test is **direction**, not the presence of a timer.
+  - **R2a (forbidden) — no UI-side stale-run watchdog.** The 2026-05-14
+    deletion is permanent (`STALE_RUN_WATCHDOG_MS` must never reappear —
+    owned/enforced by tool-loop.md). Nothing on a timer may delete, expire or
+    otherwise retire a run from `activeRuns`. A stuck indicator is ALWAYS
+    cured by hardening `lifecycle:end`/`final` _emission_ (server side), never
+    by a UI timer that lies about doneness.
+  - **R2b (required) — exactly ONE repaint clock, and it is sub-second.** A
+    timer that re-reads authoritative state and repaints is not merely
+    tolerated, it is **mandatory**, because several of the inputs the
+    indicator depends on are poll-only values that change with no event:
+    `sessions[].run` (the gateway's run set) is replaced only by
+    `loadSessions()`, and elapsed seconds advance on wall-clock alone. Such a
+    clock **cannot lie about doneness** — it removes nothing and can only ADD
+    an indicator the server itself asserts. `app.ts` `ACTIVITY_TICK_MS = 500`
+    drives the single `activityTick()`, which is the only timer permitted to
+    render an activity surface.
+
+  **Why this had to be spelled out (2026-08-17).** The previous wording said
+  "never on a scheduled/polled timer" as part of the U4 carve-out. Read
+  literally that forbids R2b, and a future reader would have been right to
+  delete the repaint clock on principle — while the actual bug, reported five
+  times between 2026-07-29 and 2026-08-17, was the **absence** of that clock:
+  the chat indicator had no timer at all, so a poll-only value it depended on
+  was never re-read and the indicator stayed blank for entire turns. A rule
+  phrased against a mechanism (timers) instead of against a failure mode
+  (lying about doneness) forbids the cure along with the disease.
+
+  **R2 corollary — ONE CLOCK, not one per surface (FORK 2026-08-17).** Two
+  clocks rendering the same fact is the third way these surfaces desynchronize,
+  after a second predicate (fixed by run-state.ts) and a second trigger (fixed
+  by `repaintActivitySurfaces`). Until 2026-08-17 there were two — a 5s
+  liveness repaint and a 1s thinking tick — so the same fact could be 5s old on
+  the tab bar and 1s old in the chat. Worse, the 1s tick self-terminated on
+  `activeRuns.size === 0`, which is exactly the out-of-focus case, so a
+  background turn's counters never ticked at all. There is now one clock with
+  two cadences split **by cost, not by subject**: every 500ms tick does the
+  text-only work (elapsed counters, retry countdowns — text-only because
+  replacing the indicator node restarts its CSS animation), and the expensive
+  surfaces repaint on a change-fingerprint with the old 5s cadence retained as
+  a forced backstop.
+
+  **The U4 delta self-heal is legal under the same test:** it fires on an
+  actual inbound delta and it _re-creates_ a run rather than _clearing_ one —
+  the exact opposite of the watchdog that was deleted (which lied a run was
+  _done_).
 
 ## 3. How prefrontal derives the indicator (sequence, not mechanics)
 

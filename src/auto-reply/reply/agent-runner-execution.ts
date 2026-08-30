@@ -24,6 +24,7 @@ import {
   isTransientHttpError,
 } from "../../agents/embedded-agent-helpers.js";
 import { sanitizeUserFacingText } from "../../agents/embedded-agent-helpers/sanitize-user-facing-text.js";
+import { resolveEmbeddedSessionLane } from "../../agents/embedded-agent-runner/lanes.js";
 import { isLikelyExecutionAckPrompt } from "../../agents/embedded-agent-runner/run/incomplete-turn.js";
 import { runEmbeddedPiAgent } from "../../agents/embedded-agent.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
@@ -44,7 +45,11 @@ import { buildErrorEnvelope } from "../../fork/error-envelope.js";
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
+import {
+  CommandLaneClearedError,
+  GatewayDrainingError,
+  getQueueSize,
+} from "../../process/command-queue.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
@@ -761,13 +766,53 @@ function applyOpenAIGptChatReplyGuard(params: {
   }
 }
 
-function buildRestartLifecycleReplyText(): string {
+function buildRestartLifecycleReplyText(params: {
+  /** Triggering error, recorded in `details.errorName` for provenance. */
+  err?: unknown;
+  /** Call-site tag recorded in `details.source` so the emitting branch is identifiable. */
+  source: "reply_operation_restart_abort" | "gateway_draining" | "command_lane_cleared";
+  sessionKey?: string;
+  sessionId?: string;
+}): string {
   // FORK 2026-05-09: emit as `__ERR_ENV__:` envelope (bible §5.69) so the
   // Tinker UI renders it as an orange centered warning chip, not as raw
-  // assistant text. Category `lane_busy` (fatal=false) maps to the right
-  // visual treatment + icon. Headline + explanation come from the lookup
-  // entry in error-envelope.ts so wording stays consistent across surfaces.
-  const envelope = buildErrorEnvelope({ code: "lane_busy" });
+  // assistant text. Headline + explanation come from the lookup entry in
+  // error-envelope.ts so wording stays consistent across surfaces.
+  //
+  // FORK 2026-07-22: two fixes, proven by a user message queued behind a
+  // 46-minute stuck turn that got the lane_busy "clears within a few seconds"
+  // text with no way to tell which call site emitted it:
+  //  1. Provenance — every envelope now carries `details.source` (call-site
+  //     tag) and `details.errorName`.
+  //  2. When the session's command lane still has active/queued work (the
+  //     same lane run.ts enqueues embedded runs into), "a few seconds" is a
+  //     lie: the message is queued behind a running turn. Emit the
+  //     `queued_behind_turn` variant instead; `lane_busy` stays for the
+  //     genuinely-transient no-queue case.
+  const errorName = params.err instanceof Error ? params.err.name : undefined;
+  const details: Record<string, unknown> = { source: params.source };
+  if (errorName) {
+    details.errorName = errorName;
+  }
+  const laneKey = params.sessionKey?.trim() || params.sessionId?.trim() || "";
+  const laneDepth = laneKey ? getQueueSize(resolveEmbeddedSessionLane(laneKey)) : 0;
+  if (laneDepth > 0) {
+    // Envelope JSON has no top-level code field, so mirror it into details
+    // for machine consumers (headline alone is not a stable identifier).
+    details.code = "queued_behind_turn";
+    details.laneDepth = laneDepth;
+    const envelope = buildErrorEnvelope({
+      code: "queued_behind_turn",
+      sessionKey: params.sessionKey,
+      details,
+    });
+    return `__ERR_ENV__:${JSON.stringify(envelope)}`;
+  }
+  const envelope = buildErrorEnvelope({
+    code: "lane_busy",
+    sessionKey: params.sessionKey,
+    details,
+  });
   return `__ERR_ENV__:${JSON.stringify(envelope)}`;
 }
 
@@ -1738,7 +1783,12 @@ export async function runAgentTurnWithFallback(params: {
         return {
           kind: "final",
           payload: {
-            text: buildRestartLifecycleReplyText(),
+            text: buildRestartLifecycleReplyText({
+              err,
+              source: "reply_operation_restart_abort",
+              sessionKey: params.sessionKey,
+              sessionId: params.getActiveSessionEntry()?.sessionId,
+            }),
           },
         };
       }
@@ -1758,7 +1808,12 @@ export async function runAgentTurnWithFallback(params: {
         return {
           kind: "final",
           payload: {
-            text: buildRestartLifecycleReplyText(),
+            text: buildRestartLifecycleReplyText({
+              err: restartLifecycleError,
+              source: "gateway_draining",
+              sessionKey: params.sessionKey,
+              sessionId: params.getActiveSessionEntry()?.sessionId,
+            }),
           },
         };
       }
@@ -1768,7 +1823,12 @@ export async function runAgentTurnWithFallback(params: {
         return {
           kind: "final",
           payload: {
-            text: buildRestartLifecycleReplyText(),
+            text: buildRestartLifecycleReplyText({
+              err: restartLifecycleError,
+              source: "command_lane_cleared",
+              sessionKey: params.sessionKey,
+              sessionId: params.getActiveSessionEntry()?.sessionId,
+            }),
           },
         };
       }
@@ -1869,6 +1929,30 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
+      // FORK 2026-07-30 (the architect: "Grok is firing without stop. I stop its thinking
+      // indicator and it starts again") — THE run ended with no reply, and every
+      // retry/fallback above has already been exhausted (transient-HTTP retries
+      // `continue` before reaching here). If we leave without a terminal status on
+      // disk, `sessions.json` keeps `status:"running"` with no `endedAt`, and
+      // tinker-ui/src/run-state.ts resolves "server-running" on every sessions.list
+      // poll — so the thinking indicator re-lights the instant the user stops it,
+      // forever, until the boot sweep (`markRunningMainSessionsAsInterrupted`)
+      // clears it. The 2026-05-12 fix wired only the `stage:"prompt"` throw site;
+      // a `stage:"assistant"` timeout (live: xai/grok-4.5, runId 755f5fd8) bypassed
+      // it. This funnel is the single exit for ALL pre-reply failures, so marking
+      // here closes the class, not the instance. Best-effort — awaited so the write
+      // lands before the error payload returns, but it can never throw. failures.md M10.
+      await (
+        await import("../../fork/attempt-hooks.js")
+      ).markFailedOnSurfaceError({
+        sessionKey: params.sessionKey,
+        reason: message,
+        storePath: params.storePath,
+        // The provider failed; the user did not abort. Without this, body.ts
+        // prefixes the next turn with "aborted by the user … ask for
+        // clarification" and Jarvis opens the following turn confused.
+        abortedLastRun: false,
+      });
       // Only classify as rate-limit when we have concrete evidence from the
       // underlying error. FallbackSummaryError messages embed per-attempt
       // reason labels like `(rate_limit)`, so string-matching the summary text
@@ -1923,6 +2007,11 @@ export async function runAgentTurnWithFallback(params: {
         kind: "final",
         payload: {
           text: userVisibleFallbackText,
+          // FORK 2026-07-22: mark the pre-reply failure payload as an error so
+          // downstream renderers treat it as an error bubble instead of a
+          // normal assistant reply — matching the other error envelopes (e.g.
+          // get-reply-run-queue.ts's queue busy banner).
+          isError: true,
         },
       };
     }

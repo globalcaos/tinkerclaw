@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buildTurnDigest,
+  readReplyWithBackoff,
   clearTriagePromptCache,
   DIGEST_CHAR_CEILING,
   parseTriageVerdict,
@@ -68,6 +69,93 @@ function makeInput(parentRunId: string, onPending = vi.fn()) {
   return { parentRunId, sessionKey: "agent:main:main", messages: baseMessages, onPending };
 }
 
+describe("readReplyWithBackoff", () => {
+  const log = { info: () => {}, warn: () => {} };
+  const surface = (reads: unknown[][]) => {
+    let i = 0;
+    return {
+      run: async () => ({ runId: "r" }),
+      waitForRun: async () => ({ status: "ok" }),
+      getSessionMessages: async () => ({ messages: reads[Math.min(i++, reads.length - 1)] }),
+    };
+  };
+  const assistant = (t: string) => ({ role: "assistant", content: t });
+  const user = { role: "user", content: "the triage prompt" };
+
+  it("returns on the first read without sleeping when the transcript is already there", async () => {
+    const slept: number[] = [];
+    const got = await readReplyWithBackoff({
+      subagent: surface([[user, assistant("the verdict")]]),
+      sessionKey: "fractal-reflection:x",
+      log,
+      parentRunId: "x",
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    expect(got.text).toBe("the verdict");
+    expect(got.attempts).toBe(1);
+    // The common path must not pay the worst case — this is why it is a retry, not a fixed wait.
+    expect(slept).toEqual([]);
+    expect(got.waitedMs).toBe(0);
+  });
+
+  it("recovers the reply when the transcript lags the run's terminal event", async () => {
+    // The measured bug: agent.wait returns, sessions.get still has only the prompt. 25 of 45
+    // rows died here, and the text was present when re-read afterwards.
+    const slept: number[] = [];
+    const got = await readReplyWithBackoff({
+      subagent: surface([[user], [user], [user, assistant("the late verdict")]]),
+      sessionKey: "fractal-reflection:x",
+      log,
+      parentRunId: "x",
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    expect(got.text).toBe("the late verdict");
+    expect(got.attempts).toBe(3);
+    expect(slept).toEqual([250, 500]);
+    expect(got.waitedMs).toBe(750);
+  });
+
+  it("still fails — and says how long it waited — when the reply is genuinely absent", async () => {
+    const got = await readReplyWithBackoff({
+      subagent: surface([[user]]),
+      sessionKey: "fractal-reflection:x",
+      log,
+      parentRunId: "x",
+      backoffMs: [10, 20],
+      sleep: async () => {},
+    });
+    expect(got.text).toBeNull();
+    expect(got.attempts).toBe(3);
+    expect(got.waitedMs).toBe(30);
+  });
+
+  it("survives a throwing read and recovers on the next attempt", async () => {
+    let i = 0;
+    const flaky = {
+      run: async () => ({ runId: "r" }),
+      waitForRun: async () => ({ status: "ok" }),
+      getSessionMessages: async () => {
+        i++;
+        if (i === 1) throw new Error("transient store read failure");
+        return { messages: [user, assistant("recovered")] };
+      },
+    };
+    const got = await readReplyWithBackoff({
+      subagent: flaky,
+      sessionKey: "fractal-reflection:x",
+      log,
+      parentRunId: "x",
+      sleep: async () => {},
+    });
+    expect(got.text).toBe("recovered");
+    expect(got.attempts).toBe(2);
+  });
+});
+
 describe("buildTurnDigest", () => {
   it("orders earlier-turn notes, last user message, then the full final answer, with the cold-arm header", () => {
     const digest = buildTurnDigest(baseMessages);
@@ -81,6 +169,26 @@ describe("buildTurnDigest", () => {
     expect(note2).toBeGreaterThan(note1);
     expect(user).toBeGreaterThan(note2);
     expect(answer).toBeGreaterThan(user);
+  });
+
+  it("never labels the reviewed turn as 'assistant' — the judge IS an assistant and adopts that voice", () => {
+    // The bug this pins, reported 2026-08-05: fractal routinely wrote up the MAIN turn's file
+    // edits as work it had done ("updated x.ts"). The judge receives the digest inside a single
+    // user message; a block headed "## Final assistant answer" and notes tagged "[assistant]"
+    // read, to an assistant, as its own prior output. A prompt rule does not survive that pull,
+    // so attribution is carried by the LABELS and asserted here — prose can rot, this cannot.
+    const digest = buildTurnDigest(baseMessages);
+
+    expect(digest).not.toContain("[assistant]");
+    expect(digest).not.toContain("Final assistant answer");
+    expect(digest).toContain("[main-agent]");
+    expect(digest).toContain("MAIN AGENT");
+
+    // And the header must say plainly whose work it is, before any of it is quoted.
+    expect(digest).toContain("ATTRIBUTION");
+    expect(digest.indexOf("ATTRIBUTION")).toBeLessThan(
+      digest.indexOf("FINAL ANSWER about pears, in full."),
+    );
   });
 
   it("caps the digest at DIGEST_CHAR_CEILING dropping the OLDEST notes first", () => {

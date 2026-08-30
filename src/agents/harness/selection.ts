@@ -18,7 +18,11 @@ import {
   type EmbeddedAgentRuntime,
 } from "../embedded-agent-runner/runtime.js";
 import type { EmbeddedPiCompactResult } from "../embedded-agent-runner/types.js";
-import { isCliRuntimeAlias } from "../model-runtime-aliases.js";
+import {
+  isCliRuntimeAlias,
+  resolveLegacyRuntimeModelProviderAlias,
+} from "../model-runtime-aliases.js";
+import { normalizeProviderId } from "../provider-id.js";
 import { createPiAgentHarness } from "./builtin-pi.js";
 import { listRegisteredAgentHarnesses } from "./registry.js";
 import type { AgentHarness, AgentHarnessSupport } from "./types.js";
@@ -317,9 +321,18 @@ export function resolveAgentHarnessPolicy(params: {
     sessionKey: params.sessionKey,
   });
   const defaultsPolicy = resolveAgentRuntimePolicy(params.config?.agents?.defaults);
-  const runtime = env.OPENCLAW_AGENT_RUNTIME?.trim()
+  const configuredRuntime = env.OPENCLAW_AGENT_RUNTIME?.trim()
     ? resolveEmbeddedAgentRuntime(env)
     : normalizeEmbeddedAgentRuntime(agentPolicy?.id ?? defaultsPolicy?.id);
+  // Legacy runtime-prefixed model refs such as codex/* own the harness choice.
+  // A global CLI runtime (e.g. google-gemini-cli) or default PI must not force
+  // them into the PI path, or they die on synthetic auth markers like
+  // "codex-app-server". Explicit auto stays auto so multi-harness support
+  // probes still work. openai-codex/* is not a legacy provider prefix.
+  const runtime = resolveRuntimeWithLegacyProviderOverride({
+    configuredRuntime,
+    provider: params.provider,
+  });
   if (isCliRuntimeAlias(runtime)) {
     return {
       runtime: "pi",
@@ -335,6 +348,45 @@ export function resolveAgentHarnessPolicy(params: {
       defaultsPolicy,
     }),
   };
+}
+
+function resolveRuntimeWithLegacyProviderOverride(params: {
+  configuredRuntime: EmbeddedAgentRuntime;
+  provider?: string;
+}): EmbeddedAgentRuntime {
+  const legacyRuntime = resolveLegacyProviderRuntimeOverride(params.provider);
+  if (!legacyRuntime) {
+    return params.configuredRuntime;
+  }
+  if (params.configuredRuntime === "auto") {
+    return "auto";
+  }
+  if (params.configuredRuntime === "pi" || isCliRuntimeAlias(params.configuredRuntime)) {
+    return legacyRuntime;
+  }
+  return params.configuredRuntime;
+}
+
+function resolveLegacyProviderRuntimeOverride(
+  provider: string | undefined,
+): EmbeddedAgentRuntime | undefined {
+  if (!provider?.trim()) {
+    return undefined;
+  }
+  const alias = resolveLegacyRuntimeModelProviderAlias(provider);
+  if (!alias || alias.cli) {
+    return undefined;
+  }
+  // Only promote when the provider prefix itself is the legacy runtime name
+  // (codex/* → runtime codex). This keeps openai-codex/* on the PI OAuth path.
+  if (normalizeProviderId(provider) !== normalizeProviderId(alias.legacyProvider)) {
+    return undefined;
+  }
+  const runtime = normalizeEmbeddedAgentRuntime(alias.runtime);
+  if (runtime === "auto" || runtime === "pi") {
+    return undefined;
+  }
+  return runtime;
 }
 
 function resolveAgentHarnessFallbackPolicy(params: {

@@ -3,7 +3,9 @@ import {
   resolveAgentModelPrimaryValue,
 } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { recordAlgorithmOutcome } from "../infra/algorithm-metrics.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { declareInstrument, noteInstrumentFired } from "../infra/instrument-liveness.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { sanitizeForLog } from "../terminal/ansi.js";
@@ -38,6 +40,18 @@ import {
 } from "./model-selection-resolve.js";
 
 const log = createSubsystemLogger("model-fallback");
+
+// FORK: instrument-liveness enrollment — prove the fallback / auth-profile rotation path is
+// actually exercised, not merely wired. Declared at module load; fired ONLY when a NON-primary
+// candidate is genuinely attempted inside runFallbackAttempt (never in runWithModelFallback,
+// which is entered on every turn and would always look healthy). 24 h window: a healthy system
+// rarely falls back, and reporting it hourly would train everyone to ignore the alarm.
+declareInstrument({
+  id: "router:model-fallback",
+  kind: "gate",
+  description: "non-primary model candidate actually attempted (fallback / rotation)",
+  expectFireWithinMs: 24 * 60 * 60 * 1000,
+});
 
 /**
  * Structured error thrown when all model fallback candidates have been
@@ -227,6 +241,37 @@ async function runFallbackAttempt<T>(params: {
   attempt: number;
   total: number;
 }): Promise<{ success: ModelFallbackRunResult<T> } | { error: unknown }> {
+  // Liveness gate: fires ONLY for a NON-primary candidate (attempt 1 is the requested
+  // primary), at the point the candidate is actually attempted — not where it is registered.
+  if (params.attempt > 1) {
+    noteInstrumentFired(
+      "router:model-fallback",
+      `${params.provider}/${params.model} attempt ${params.attempt}/${params.total}`,
+    );
+  }
+  // Ledger: every attempt that reaches this point is recorded — primary rows are the
+  // denominator for the fallback rate, and a FAILED primary row is the rotation trigger.
+  // The outcome is recorded where it is truly known (post-run, post-classification), so a
+  // classified-as-failed result never lands as an optimistic "served". A user abort throws
+  // out of runFallbackCandidate and records nothing: it is neither served nor failed.
+  const attemptStartedAtMs = Date.now();
+  const recordAttemptOutcome = (outcome: "served" | "failed") => {
+    recordAlgorithmOutcome({
+      algorithm: "model-router",
+      variant: `${params.provider}/${params.model}`,
+      outcome,
+      metrics: {
+        attemptIndex: params.attempt,
+        durationMs: Date.now() - attemptStartedAtMs,
+      },
+      provenance: {
+        attemptIndex: "local-measured",
+        durationMs: "local-measured",
+      },
+      provider: params.provider,
+      model: params.model,
+    });
+  };
   const runResult = await runFallbackCandidate({
     run: params.run,
     provider: params.provider,
@@ -246,8 +291,10 @@ async function runFallbackAttempt<T>(params: {
       model: params.model,
     });
     if (classifiedError) {
+      recordAttemptOutcome("failed");
       return { error: classifiedError };
     }
+    recordAttemptOutcome("served");
     return {
       success: buildFallbackSuccess({
         result: runResult.result,
@@ -257,6 +304,7 @@ async function runFallbackAttempt<T>(params: {
       }),
     };
   }
+  recordAttemptOutcome("failed");
   return { error: runResult.error };
 }
 
@@ -546,7 +594,20 @@ function resolveFallbackCandidates(params: {
     addExplicitCandidate(resolved.ref);
   }
 
-  if (params.fallbacksOverride === undefined && primary?.provider && primary.model) {
+  // INVARIANT: a provider the architect did not configure as a fallback must never
+  // answer a pinned turn. The configured primary is only appended as a last-resort
+  // candidate when the REQUESTED model already lives on that same provider (i.e. a
+  // model-version fallback within one provider). Cross-provider substitution requires
+  // an explicit entry in agents.defaults.model.fallbacks — otherwise an empty
+  // `fallbacks: []` would still silently re-run an xai/openai-codex pin on the config
+  // primary, which is exactly what the gateway journal showed
+  // (decision=candidate_succeeded requested=xai/grok-4.6 candidate=claude-code/claude-opus-5).
+  if (
+    params.fallbacksOverride === undefined &&
+    normalizedPrimary.provider === configuredPrimary.provider &&
+    primary?.provider &&
+    primary.model
+  ) {
     addExplicitCandidate({ provider: primary.provider, model: primary.model });
   }
 

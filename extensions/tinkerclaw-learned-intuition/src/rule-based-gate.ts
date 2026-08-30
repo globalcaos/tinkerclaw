@@ -51,7 +51,10 @@ export interface AegisRule {
  */
 export const AEGIS_RULES: AegisRule[] = [
   {
-    pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?\//,
+    // The -r group is REQUIRED: with it optional this matched `rm -f /tmp/x`,
+    // i.e. any non-recursive delete of an absolute path. `rm -rf /` and `rm -fr /`
+    // are still covered by the two combined-flag rules below.
+    pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)\//,
     rule: "FS_DESTRUCTIVE_ROOT",
     explanation: "Recursive delete from root filesystem",
     enforce: true,
@@ -79,7 +82,9 @@ export const AEGIS_RULES: AegisRule[] = [
     scope: "exec",
   },
   {
-    pattern: /dd\s+.*of=\/dev\//i,
+    // /dev/null and /dev/zero are sinks, not devices to destroy — exempt them
+    // so decompressor/throughput sanity checks are not flagged as device writes.
+    pattern: /dd\s+.*of=\/dev\/(?!null\b|zero\b)/i,
     rule: "FS_DD_DEVICE",
     explanation: "Direct device write via dd",
     enforce: true,

@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
-import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
+import {
+  CommandLaneClearedError,
+  enqueueCommandInLane,
+  GatewayDrainingError,
+  resetCommandQueueStateForTest,
+} from "../../process/command-queue.js";
 import type { TemplateContext } from "../templating.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
@@ -25,6 +30,11 @@ const state = vi.hoisted(() => ({
 
 const GENERIC_RUN_FAILURE_TEXT =
   "⚠️ Something went wrong while processing your request. Please try again, or use /new to start a fresh session.";
+
+function parseErrorEnvelope(text: string | undefined): Record<string, unknown> {
+  expect(text ?? "").toMatch(/^__ERR_ENV__:/);
+  return JSON.parse((text ?? "").slice("__ERR_ENV__:".length)) as Record<string, unknown>;
+}
 
 function makeTestModel(id: string, contextTokens: number): ModelDefinitionConfig {
   return {
@@ -694,6 +704,7 @@ describe("runAgentTurnWithFallback", () => {
       kind: "final",
       payload: {
         text: "⚠️ Selected model is at capacity. Try a different model, or wait and retry.",
+        isError: true,
       },
     });
   });
@@ -1917,9 +1928,17 @@ describe("runAgentTurnWithFallback", () => {
 
     expect(result.kind).toBe("final");
     if (result.kind === "final") {
-      expect(result.payload.text).toBe(
-        "⚠️ Gateway is restarting. Please wait a few seconds and try again.",
-      );
+      const envelope = parseErrorEnvelope(result.payload.text);
+      expect(envelope).toMatchObject({
+        kind: "error",
+        category: "busy",
+        fatal: false,
+        headline: "Previous run still shutting down",
+        details: {
+          source: "gateway_draining",
+          errorName: "GatewayDrainingError",
+        },
+      });
     }
     expect(failMock).toHaveBeenCalledWith("gateway_draining", expect.any(GatewayDrainingError));
   });
@@ -1969,9 +1988,17 @@ describe("runAgentTurnWithFallback", () => {
 
     expect(result.kind).toBe("final");
     if (result.kind === "final") {
-      expect(result.payload.text).toBe(
-        "⚠️ Gateway is restarting. Please wait a few seconds and try again.",
-      );
+      const envelope = parseErrorEnvelope(result.payload.text);
+      expect(envelope).toMatchObject({
+        kind: "error",
+        category: "busy",
+        fatal: false,
+        headline: "Previous run still shutting down",
+        details: {
+          source: "command_lane_cleared",
+          errorName: "CommandLaneClearedError",
+        },
+      });
     }
     expect(failMock).toHaveBeenCalledWith(
       "command_lane_cleared",
@@ -2017,11 +2044,94 @@ describe("runAgentTurnWithFallback", () => {
 
     expect(result.kind).toBe("final");
     if (result.kind === "final") {
-      expect(result.payload.text).toBe(
-        "⚠️ Gateway is restarting. Please wait a few seconds and try again.",
-      );
+      const envelope = parseErrorEnvelope(result.payload.text);
+      expect(envelope).toMatchObject({
+        kind: "error",
+        category: "busy",
+        fatal: false,
+        headline: "Previous run still shutting down",
+        details: {
+          source: "reply_operation_restart_abort",
+          errorName: "AbortError",
+        },
+      });
     }
     expect(failMock).not.toHaveBeenCalled();
+  });
+
+  it("emits queued_behind_turn with provenance when the session lane still has work", async () => {
+    let releaseLane: (() => void) | undefined;
+    // Occupy the real command lane the embedded run enqueues into
+    // (resolveEmbeddedSessionLane("main") === "session:main").
+    const laneTask = enqueueCommandInLane(
+      "session:main",
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLane = resolve;
+        }),
+    );
+    try {
+      const { replyOperation, failMock } = createMockReplyOperation();
+      state.runWithModelFallbackMock.mockRejectedValueOnce(
+        Object.assign(new Error("fallback exhausted"), {
+          name: "FallbackSummaryError",
+          attempts: [
+            {
+              provider: "anthropic",
+              model: "claude",
+              error: new CommandLaneClearedError("session:main"),
+            },
+          ],
+          soonestCooldownExpiry: null,
+          cause: new CommandLaneClearedError("session:main"),
+        }),
+      );
+
+      const runAgentTurnWithFallback = await getRunAgentTurnWithFallback();
+      const result = await runAgentTurnWithFallback({
+        ...createMinimalRunAgentTurnParams(),
+        replyOperation,
+      });
+
+      expect(result.kind).toBe("final");
+      if (result.kind === "final") {
+        const envelope = parseErrorEnvelope(result.payload.text);
+        expect(envelope).toMatchObject({
+          kind: "error",
+          category: "busy",
+          fatal: false,
+          icon: "⏳",
+          headline: "Message queued behind the current turn",
+          details: {
+            code: "queued_behind_turn",
+            source: "command_lane_cleared",
+            errorName: "CommandLaneClearedError",
+          },
+        });
+        expect(String(envelope.explanation)).toContain("queued and will start automatically");
+      }
+      expect(failMock).toHaveBeenCalledWith(
+        "command_lane_cleared",
+        expect.any(CommandLaneClearedError),
+      );
+    } finally {
+      releaseLane?.();
+      await laneTask;
+      resetCommandQueueStateForTest();
+    }
+  });
+
+  it("marks the pre-reply failure payload as an error", async () => {
+    state.runEmbeddedPiAgentMock.mockRejectedValueOnce(new Error("boom before reply"));
+
+    const runAgentTurnWithFallback = await getRunAgentTurnWithFallback();
+    const result = await runAgentTurnWithFallback(createMinimalRunAgentTurnParams());
+
+    expect(result.kind).toBe("final");
+    if (result.kind === "final") {
+      expect(result.payload.isError).toBe(true);
+      expect(result.payload.text).toBe(GENERIC_RUN_FAILURE_TEXT);
+    }
   });
 
   it("uses compact generic copy for raw external chat errors when verbose is off", async () => {

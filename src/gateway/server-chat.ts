@@ -1,7 +1,10 @@
+import fs from "node:fs";
+import path from "node:path";
 import { resolveFailoverReasonFromError } from "../agents/failover-error.js";
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-reply/heartbeat.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { getRuntimeConfig } from "../config/io.js";
+import { resolveSessionFilePath } from "../config/sessions.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { detectErrorKind, type ErrorKind } from "../infra/errors.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
@@ -14,8 +17,9 @@ import {
 } from "./live-chat-projector.js";
 import { loadGatewaySessionRow } from "./server-chat.load-gateway-session-row.runtime.js";
 import { persistGatewaySessionLifecycleEvent } from "./server-chat.persist-session-lifecycle.runtime.js";
+import { appendInjectedAssistantMessageToTranscript } from "./server-methods/chat-transcript-inject.js";
 import { deriveGatewaySessionLifecycleSnapshot } from "./session-lifecycle-state.js";
-import { loadSessionEntry } from "./session-utils.js";
+import { loadSessionEntry, resolveSessionModelRef } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
 function resolveHeartbeatAckMaxChars(): number {
@@ -408,6 +412,119 @@ function readChatErrorKind(value: unknown): ErrorKind | undefined {
     : undefined;
 }
 
+export type PreservedErrorPartialParams = {
+  sessionKey: string;
+  /** Client-facing runId (matches the abort-path buffer keying). */
+  runId: string;
+  text: string;
+};
+
+// FORK 2026-07-22 (error-partial-preserve): idempotency probe mirroring the
+// non-exported transcriptHasIdempotencyKey in server-methods/chat.ts — kept
+// local because that helper is not exported and chat.ts is owned by a sibling
+// edit-unit.
+function transcriptAlreadyHasIdempotencyKey(
+  transcriptPath: string,
+  idempotencyKey: string,
+): boolean {
+  try {
+    const lines = fs.readFileSync(transcriptPath, "utf-8").split(/\r?\n/);
+    for (const line of lines) {
+      if (!line.trim()) {
+        continue;
+      }
+      const parsed = JSON.parse(line) as { message?: { idempotencyKey?: unknown } };
+      if (parsed?.message?.idempotencyKey === idempotencyKey) {
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// FORK 2026-07-22 (error-partial-preserve): when an embedded run dies in
+// error/timeout (e.g. `FailoverError: LLM request timed out.` after a 46-min
+// turn), the buffered streamed partial used to be discarded by
+// clearBufferedChatState — the tab showed nothing after reload. Persist the
+// partial to the session transcript following the abort-path precedent
+// (persistAbortedPartials in server-methods/chat.ts): same
+// `${runId}:assistant` idempotencyKey, same SessionManager-backed append via
+// appendInjectedAssistantMessageToTranscript. Exported for tests.
+export function persistPreservedErrorPartial(params: PreservedErrorPartialParams): {
+  ok: boolean;
+  error?: string;
+} {
+  try {
+    const { storePath, entry } = loadSessionEntry(params.sessionKey);
+    if (!storePath && !entry?.sessionFile) {
+      return { ok: false, error: "transcript path not resolved" };
+    }
+    const sessionId = entry?.sessionId ?? params.runId;
+    const sessionsDir = storePath ? path.dirname(path.resolve(storePath)) : undefined;
+    const transcriptPath = resolveSessionFilePath(
+      sessionId,
+      entry?.sessionFile ? { sessionFile: entry.sessionFile } : undefined,
+      sessionsDir ? { sessionsDir } : undefined,
+    );
+    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+      // Unlike the abort path we do not create the transcript: a run that
+      // streamed partial text always has a transcript with the user turn.
+      return { ok: false, error: "transcript file not found" };
+    }
+    const idempotencyKey = `${params.runId}:assistant`;
+    if (transcriptAlreadyHasIdempotencyKey(transcriptPath, idempotencyKey)) {
+      return { ok: true };
+    }
+    return appendInjectedAssistantMessageToTranscript({
+      transcriptPath,
+      message: params.text,
+      idempotencyKey,
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// FORK 2026-08-05 (duprep — the "I see my answer twice" report): the chat delta payload carries
+// the SERVER-CUMULATIVE assistant buffer, and the client indexes into that one string with
+// integer cursors (tinker-ui/src/app.ts: the global `lastDeltaLen` plus a per-bubble
+// `_segmentStart`, sliced at app.ts:4460-4467 — its own comment says "deltaText is the
+// SERVER-CUMULATIVE text for the current run, NOT a per-delta increment").
+//
+// `resolveMergedAssistantText` (live-chat-projector.ts) does NOT always extend that buffer. It
+// invalidates every client cursor two ways:
+//   1. RESET — when the incoming snapshot is neither a prefix-extension of the buffer nor a
+//      stale prefix of it and carries no delta, the whole buffer becomes `nextText`
+//      (live-chat-projector.ts:42-44). This is the path the agent stream takes when it decides
+//      the text is a replacement: embedded-agent-subscribe.handlers.messages.ts:571-572 sets
+//      `replace = !cleanedText.startsWith(previousCleaned)` and clears the delta, so a reset
+//      arrives here as text-without-delta.
+//   2. CAP — once the buffer passes MAX_LIVE_CHAT_BUFFER_CHARS it is silently tail-sliced
+//      (live-chat-projector.ts:18-23), re-basing every offset. No upstream flag can announce
+//      this; only the gateway knows.
+// Either way the client keeps slicing the NEW text at OLD offsets and re-renders text it has
+// already shown — the duplicate.
+//
+// Why derive the flag here instead of relaying `evt.data.replace` from the agent stream: that
+// upstream flag is computed in the RUNNER's coordinate space (its own `lastStreamedAssistantCleaned`),
+// while the client indexes THIS buffer. When the two have drifted, relaying it raw would fire
+// on a snapshot that actually extends the gateway buffer, telling the client to reset when
+// nothing moved. Comparing the projector's own input and output is exact for the contract the
+// client consumes, and it covers case 2 as well.
+//
+// Branch table (proven against live-chat-projector.ts:25-46):
+//   prefix-extension  → returns nextText ⊃ prev      → startsWith → false ✓
+//   stale prefix      → returns previousText         → startsWith → false ✓
+//   delta append      → returns prev + delta         → startsWith → false ✓
+//   delta + cap slice → returns tail slice           → NOT startsWith → true ✓
+//   RESET             → returns nextText             → NOT startsWith → true ✓
+//   no-op             → returns previousText         → startsWith → false ✓
+export function isLiveChatBufferReplaced(previousText: string, mergedText: string): boolean {
+  return previousText.length > 0 && !mergedText.startsWith(previousText);
+}
+
 export type AgentEventHandlerOptions = {
   broadcast: ChatEventBroadcast;
   broadcastToConnIds: (
@@ -426,6 +543,8 @@ export type AgentEventHandlerOptions = {
   loadGatewaySessionRowForSnapshot?: typeof loadGatewaySessionRow;
   lifecycleErrorRetryGraceMs?: number;
   isChatSendRunActive?: (runId: string) => boolean;
+  /** Injectable for tests; defaults to persistPreservedErrorPartial. */
+  persistErrorPartial?: (params: PreservedErrorPartialParams) => void;
 };
 
 export function createAgentEventHandler({
@@ -441,14 +560,36 @@ export function createAgentEventHandler({
   loadGatewaySessionRowForSnapshot = loadGatewaySessionRow,
   lifecycleErrorRetryGraceMs = AGENT_LIFECYCLE_ERROR_RETRY_GRACE_MS,
   isChatSendRunActive = () => false,
+  persistErrorPartial = (params) => {
+    void persistPreservedErrorPartial(params);
+  },
 }: AgentEventHandlerOptions) {
   const pendingTerminalLifecycleErrors = new Map<string, NodeJS.Timeout>();
+  // FORK 2026-07-22 (error-partial-preserve): buffered partial text captured at
+  // the lifecycle-error event (before clearBufferedChatState wipes it), keyed
+  // by the source runId. Consumed by finalizeLifecycleEvent's error path;
+  // dropped when a retry reuses the runId (any non-error event) or when the
+  // run ends successfully.
+  const preservedErrorPartials = new Map<
+    string,
+    { sessionKey: string; clientRunId: string; text: string }
+  >();
+
+  // FORK 2026-08-05 (duprep): client runIds whose live buffer was re-based by
+  // resolveMergedAssistantText since the last delta we ACTUALLY broadcast. Sticky on purpose:
+  // emitChatDelta returns at the 150 ms throttle (and on a suppressed projection) BEFORE it
+  // builds a payload, so computing the flag per-event and dropping it would silently lose every
+  // reset that lands inside a throttled window — which is the common case, since a reset
+  // typically arrives immediately after a tool call. The flag is held until a delta or a flush
+  // is really sent, then cleared.
+  const pendingDeltaReplace = new Set<string>();
 
   const clearBufferedChatState = (clientRunId: string) => {
     chatRunState.rawBuffers.delete(clientRunId);
     chatRunState.buffers.delete(clientRunId);
     chatRunState.deltaSentAt.delete(clientRunId);
     chatRunState.deltaLastBroadcastLen.delete(clientRunId);
+    pendingDeltaReplace.delete(clientRunId);
   };
 
   const clearPendingTerminalLifecycleError = (runId: string) => {
@@ -553,6 +694,21 @@ export function createAgentEventHandler({
     const isAborted =
       chatRunState.abortedRuns.has(clientRunId) || chatRunState.abortedRuns.has(evt.runId);
 
+    // FORK 2026-07-22 (error-partial-preserve): consume the partial captured at
+    // the lifecycle-error event. Deleting on BOTH phases keeps the map from
+    // leaking when a retry turned the error into a successful end.
+    const preservedPartial = preservedErrorPartials.get(evt.runId);
+    preservedErrorPartials.delete(evt.runId);
+    const preservedPartialText =
+      lifecyclePhase === "error" && !isAborted ? preservedPartial?.text : undefined;
+    if (preservedPartialText && preservedPartial) {
+      persistErrorPartial({
+        sessionKey: preservedPartial.sessionKey,
+        runId: preservedPartial.clientRunId,
+        text: preservedPartialText,
+      });
+    }
+
     if (isControlUiVisible && sessionKey) {
       if (!isAborted) {
         const evtStopReason =
@@ -575,6 +731,7 @@ export function createAgentEventHandler({
               evt.data?.error,
               evtStopReason,
               evtErrorKind,
+              preservedPartialText,
             );
           }
         } else if (!(opts?.skipChatErrorFinal && lifecyclePhase === "error")) {
@@ -587,6 +744,7 @@ export function createAgentEventHandler({
             evt.data?.error,
             evtStopReason,
             evtErrorKind,
+            preservedPartialText,
           );
         }
       } else {
@@ -655,6 +813,11 @@ export function createAgentEventHandler({
     if (!mergedRawText) {
       return;
     }
+    // FORK 2026-08-05 (duprep): record a buffer re-base BEFORE the throttle/suppress early
+    // returns below can swallow it. See `isLiveChatBufferReplaced` and `pendingDeltaReplace`.
+    if (isLiveChatBufferReplaced(previousRawText, mergedRawText)) {
+      pendingDeltaReplace.add(clientRunId);
+    }
     chatRunState.rawBuffers.set(clientRunId, mergedRawText);
     const projected = projectLiveAssistantBufferedText(mergedRawText);
     const mergedText = projected.text;
@@ -672,11 +835,24 @@ export function createAgentEventHandler({
     }
     chatRunState.deltaSentAt.set(clientRunId, now);
     chatRunState.deltaLastBroadcastLen.set(clientRunId, mergedText.length);
+    const replaceBuffer = pendingDeltaReplace.has(clientRunId);
     const payload = {
       runId: clientRunId,
       sessionKey,
       seq,
       state: "delta" as const,
+      // FORK 2026-08-05 (duprep): present (and always literally `true`) ONLY when the cumulative
+      // buffer was re-based, absent on an ordinary extension. Clients must drop the cursors and
+      // bubbles they hold for this run and re-render from this text instead of appending —
+      // otherwise they slice new text at stale offsets and the answer appears twice. Clients
+      // that ignore the field behave exactly as before.
+      // NOTE: ChatEventSchema (src/gateway/protocol/schema/logs-chat.ts) is
+      // additionalProperties:false and does not declare `replace` yet — it needs
+      // `replace: Type.Optional(Type.Literal(true))` added. `validateChatEvent`
+      // (protocol/index.ts:586) is compiled but has NO call site today, so this is a contract
+      // gap, not a runtime break. The schema file is owned by a different edit-unit; same
+      // split as the reason/retryAfter fields already documented in that schema.
+      ...(replaceBuffer && { replace: true as const }),
       message: {
         role: "assistant",
         content: [{ type: "text", text: mergedText }],
@@ -685,6 +861,7 @@ export function createAgentEventHandler({
     };
     // Suppress webchat broadcast for heartbeat runs when showOk is false
     if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
+      pendingDeltaReplace.delete(clientRunId);
       broadcast("chat", payload, { dropIfSlow: true });
       nodeSendToSession(sessionKey, "chat", payload);
     }
@@ -729,8 +906,13 @@ export function createAgentEventHandler({
       return;
     }
 
+    // FORK 2026-08-05 (duprep): the grow-only guard compares lengths, which is only meaningful
+    // while the buffer stays in ONE coordinate space. After a re-base the new buffer is often
+    // SHORTER than what we last broadcast, so the guard would suppress the flush and leave the
+    // client showing stale text right up to the `final` event. A pending replace overrides it.
+    const replaceBuffer = pendingDeltaReplace.has(clientRunId);
     const lastBroadcastLen = chatRunState.deltaLastBroadcastLen.get(clientRunId) ?? 0;
-    if (text.length <= lastBroadcastLen) {
+    if (!replaceBuffer && text.length <= lastBroadcastLen) {
       return;
     }
 
@@ -740,12 +922,14 @@ export function createAgentEventHandler({
       sessionKey,
       seq,
       state: "delta" as const,
+      ...(replaceBuffer && { replace: true as const }),
       message: {
         role: "assistant",
         content: [{ type: "text", text }],
         timestamp: now,
       },
     };
+    pendingDeltaReplace.delete(clientRunId);
     broadcast("chat", flushPayload, { dropIfSlow: true });
     nodeSendToSession(sessionKey, "chat", flushPayload);
     chatRunState.deltaLastBroadcastLen.set(clientRunId, text.length);
@@ -761,6 +945,7 @@ export function createAgentEventHandler({
     error?: unknown,
     stopReason?: string,
     errorKind?: ErrorKind,
+    preservedPartialText?: string,
   ) => {
     const { text, shouldSuppressSilent } = resolveBufferedChatTextState(clientRunId, sourceRunId, {
       suppressLeadFragments: false,
@@ -775,6 +960,9 @@ export function createAgentEventHandler({
     chatRunState.buffers.delete(clientRunId);
     chatRunState.deltaSentAt.delete(clientRunId);
     chatRunState.deltaSentAt.delete(`thinking:${clientRunId}`);
+    // FORK 2026-08-05 (duprep): the flush above already carried any pending replace; drop it so
+    // a runId reused by a retry cannot inherit a stale reset signal.
+    pendingDeltaReplace.delete(clientRunId);
     if (jobState === "done") {
       const payload = {
         runId: clientRunId,
@@ -808,6 +996,12 @@ export function createAgentEventHandler({
     // this layer, so it is intentionally OMITTED; the frontend backoff ladder
     // owns the timing. `errorMessage` (human text) is unchanged.
     const failoverReason = resolveFailoverReasonFromError(error) ?? undefined;
+    // FORK 2026-07-22 (error-partial-preserve): surface the preserved partial
+    // on the error broadcast via the standard `message` field (ChatEventSchema
+    // is additionalProperties:false, so a new `partialText` field would be
+    // schema-illegal; `message` is already Type.Optional(Type.Unknown()) for
+    // every state). Live clients keyed by runId can render it above the error
+    // bubble exactly like a done-final message.
     const payload = {
       runId: clientRunId,
       sessionKey,
@@ -816,6 +1010,15 @@ export function createAgentEventHandler({
       errorMessage: error ? formatForLog(error) : undefined,
       ...(errorKind && { errorKind }),
       ...(failoverReason && { reason: failoverReason }),
+      ...(preservedPartialText
+        ? {
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: preservedPartialText }],
+              timestamp: Date.now(),
+            },
+          }
+        : {}),
     };
     // Suppress webchat broadcast for heartbeat error events too
     if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
@@ -851,6 +1054,9 @@ export function createAgentEventHandler({
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
     if (evt.stream !== "lifecycle" || lifecyclePhase !== "error") {
       clearPendingTerminalLifecycleError(evt.runId);
+      // A non-error event means a fallback/retry reused this runId — the
+      // captured partial is superseded by the new attempt's stream.
+      preservedErrorPartials.delete(evt.runId);
     }
 
     const chatLink = chatRunState.registry.peek(evt.runId);
@@ -1006,6 +1212,23 @@ export function createAgentEventHandler({
     }
 
     if (lifecyclePhase === "error") {
+      // FORK 2026-07-22 (error-partial-preserve): capture the buffered partial
+      // BEFORE clearBufferedChatState discards it. Empty/whitespace text and
+      // silent-reply (NO_REPLY-family) buffers are filtered out by
+      // resolveBufferedChatTextState. Abort partials are persisted by the
+      // chat.abort path in server-methods/chat.ts — skip them here.
+      if (!isAborted && sessionKey) {
+        const preserved = resolveBufferedChatTextState(clientRunId, evt.runId, {
+          suppressLeadFragments: false,
+        });
+        if (preserved.text && !preserved.shouldSuppressSilent) {
+          preservedErrorPartials.set(evt.runId, {
+            sessionKey,
+            clientRunId,
+            text: preserved.text,
+          });
+        }
+      }
       clearBufferedChatState(clientRunId);
       const skipChatErrorFinal = isChatSendRunActive(evt.runId) && !chatLink;
       if (isAborted || lifecycleErrorRetryGraceMs <= 0) {

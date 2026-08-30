@@ -7,9 +7,9 @@
  */
 
 import chokidar, { type FSWatcher } from "chokidar";
-import { resolveAuthStorePath } from "../../src/agents/auth-profiles/paths.js";
-import { clearRuntimeAuthProfileStoreSnapshots } from "../../src/agents/auth-profiles/store.js";
-import type { GatewayBroadcastFn } from "../../src/gateway/server-broadcast.js";
+import { clearRuntimeAuthProfileStoreSnapshots } from "openclaw/plugin-sdk/agent-runtime";
+import { resolveAuthStorePath } from "openclaw/plugin-sdk/fork-auth-admin";
+import type { GatewayBroadcastFn } from "openclaw/plugin-sdk/fork-gateway-broadcast";
 
 /** Module-level broadcast ref, captured from gateway method context. */
 let broadcastFn: GatewayBroadcastFn | null = null;

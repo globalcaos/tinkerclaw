@@ -171,6 +171,70 @@ export function getAgentRunContext(runId: string) {
   return getAgentEventState().runContextById.get(runId);
 }
 
+/**
+ * THE RUN SET — the frame of reference for "is this session running right now?".
+ *
+ * FORK 2026-07-29. Four UI surfaces (chat indicator, sessions-panel row, tab title, models
+ * count) had been answering that question by arbitrating between the persisted session store,
+ * a viewed-gated client map, and wall-clock comparisons between two different transports. Five
+ * successive precedence rules produced five user-visible inversions, because arbitration cannot
+ * repair an input that is unsound.
+ *
+ * The authoritative answer already lived here and nothing asked it:
+ *
+ *   - `runContextById` is opened by registerAgentRunContext and closed by clearAgentRunContext,
+ *     at event ingest — upstream of every gateway path that can miss a terminal write to the
+ *     session store (those corrupt the ARCHIVE; they cannot corrupt this map);
+ *   - `lastActiveAt` is refreshed on every emitAgentEvent, so silence is measurable;
+ *   - sweepStaleRunContexts (called from server-maintenance.ts) bounds a run that never closed;
+ *   - it is in memory, so a gateway restart erases it — "running at boot" is unrepresentable
+ *     rather than something a recovery path must remember to clear;
+ *   - it is a resolveGlobalSingleton, so bundle splits share one map.
+ *
+ * The only thing missing was a way to ask it BY SESSION. That is this function. It is
+ * deliberately a derivation over the existing map rather than a second index: the map is bounded
+ * by concurrent runs (single digits), and a second index is a second thing to keep in sync —
+ * which is the class of bug this whole exercise is about.
+ *
+ * Keyed per RUN, never per session: the embedded runner genuinely permits concurrent runs on one
+ * session, so collapsing to one slot would let a superseded run's late close silence a live
+ * sibling.
+ */
+export function getSessionRunLiveness(
+  sessionKey: string,
+  now = Date.now(),
+): { live: boolean; count: number; heartbeatCount: number; since?: number; lastActiveAt?: number } {
+  const empty = { live: false, count: 0, heartbeatCount: 0 };
+  if (!sessionKey) {
+    return empty;
+  }
+  const state = getAgentEventState();
+  let count = 0;
+  let heartbeatCount = 0;
+  let since: number | undefined;
+  let lastActiveAt: number | undefined;
+  for (const ctx of state.runContextById.values()) {
+    if (ctx.sessionKey !== sessionKey) {
+      continue;
+    }
+    if (ctx.isHeartbeat) {
+      heartbeatCount++;
+      continue;
+    }
+    count++;
+    const started = ctx.registeredAt;
+    if (typeof started === "number" && (since === undefined || started < since)) {
+      since = started;
+    }
+    const active = ctx.lastActiveAt ?? ctx.registeredAt;
+    if (typeof active === "number" && (lastActiveAt === undefined || active > lastActiveAt)) {
+      lastActiveAt = active;
+    }
+  }
+  void now;
+  return { live: count > 0, count, heartbeatCount, since, lastActiveAt };
+}
+
 export function clearAgentRunContext(runId: string) {
   const state = getAgentEventState();
   state.runContextById.delete(runId);

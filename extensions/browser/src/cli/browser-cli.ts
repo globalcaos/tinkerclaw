@@ -131,6 +131,16 @@ const browserCommandGroupDefinitions: readonly BrowserCommandGroupDefinition[] =
       module.registerBrowserStateCommands(args.browser, args.parentOpts);
     },
   },
+  {
+    // FORK 2026-08-03: restored. This group existed only as an unregistered, unimported file
+    // under src/cli/, so `openclaw browser --help` listed no `extension` subcommand at all
+    // while the relay README still documented `openclaw browser extension install`.
+    placeholders: [command("extension", "Chrome extension helpers")],
+    register: async (args) => {
+      const module = await import("./browser-cli-extension.js");
+      module.registerBrowserExtensionCommands(args.browser, args.parentOpts);
+    },
+  },
 ];
 
 function buildBrowserCommandGroups(params: {

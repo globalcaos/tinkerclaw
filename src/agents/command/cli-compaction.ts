@@ -1,12 +1,14 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { SessionEntry } from "../../config/sessions/types.js";
+import type { AgentCompactionMode } from "../../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveContextEngine as resolveContextEngineImpl } from "../../context-engine/registry.js";
 import type { ContextEngine } from "../../context-engine/types.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { buildEmbeddedCompactionRuntimeContext } from "../embedded-agent-runner/compaction-runtime-context.js";
 import { runContextEngineMaintenance as runContextEngineMaintenanceImpl } from "../embedded-agent-runner/context-engine-maintenance.js";
+import { resolveCompactionMode } from "../embedded-agent-runner/extensions.js";
 import { shouldPreemptivelyCompactBeforePrompt as shouldPreemptivelyCompactBeforePromptImpl } from "../embedded-agent-runner/run/preemptive-compaction.js";
 import { resolveLiveToolResultMaxChars as resolveLiveToolResultMaxCharsImpl } from "../embedded-agent-runner/tool-result-truncation.js";
 import { createPreparedEmbeddedPiSettingsManager as createPreparedEmbeddedPiSettingsManagerImpl } from "../pi-project-settings.js";
@@ -22,6 +24,9 @@ type SettingsManagerLike = {
     compaction: {
       reserveTokens?: number;
       keepRecentTokens?: number;
+      // FORK 2026-07-28: must mirror PiSettingsManagerLike — applyPiAutoCompactionGuard
+      // disables pi's decider through this override, and the dep slot is contravariant.
+      enabled?: boolean;
     };
   }) => void;
   setCompactionEnabled?: (enabled: boolean) => void;
@@ -38,6 +43,7 @@ type CliCompactionDeps = {
   applyPiAutoCompactionGuard: (params: {
     settingsManager: SettingsManagerLike;
     contextEngineInfo?: ContextEngine["info"];
+    compactionMode?: AgentCompactionMode;
   }) => unknown;
   shouldPreemptivelyCompactBeforePrompt: typeof shouldPreemptivelyCompactBeforePromptImpl;
   resolveLiveToolResultMaxChars: typeof resolveLiveToolResultMaxCharsImpl;
@@ -206,11 +212,48 @@ export async function runCliTurnCompactionLifecycle(params: {
   await cliCompactionDeps.applyPiAutoCompactionGuard({
     settingsManager,
     contextEngineInfo: contextEngine.info,
+    // FORK 2026-07-28: a non-default compaction mode means one of our extensions owns
+    // compaction, so pi's own decider must be off here too. This lane does not call
+    // resourceLoader.reload(), so a single application is sufficient.
+    compactionMode: resolveCompactionMode(params.cfg),
   });
+
+  // This is a LIVE production decider (it drives the real compaction below), and
+  // it used to score its system prompt as 0 tokens — pi's estimateTokens() has no
+  // `system` case — and never counted tool schemas at all. Source real sizes from
+  // the persisted system-prompt report; sessions written before that report
+  // existed simply omit the params and keep the previous behaviour.
+  //
+  // Deliberate omissions — do not "fix" these without re-reading the producers:
+  //  - report.skills.promptChars is NOT added: resolveSkillsPromptForRun()'s output
+  //    is spliced INTO the system prompt itself (system-prompt.ts
+  //    buildSkillsSection, via buildEmbeddedSystemPrompt), and systemPrompt.chars
+  //    measures that assembled prompt, so adding it again would double-count. The
+  //    one exception is the tools-allowlist path (attempt.ts drops the skills
+  //    prompt but still reports its length), a small known under-count.
+  //  - report.tools.listChars is NOT used: it is hardcoded 0 (system-prompt-report.ts).
+  //  - entry.schemaChars is only JSON.stringify(tool.parameters).length, roughly
+  //    65-73% of the real wire payload. We knowingly under-count rather than invent
+  //    an inflation multiplier.
+  //  - CLI-produced reports carry `tools: []` (cli-runner/prepare.ts), so the tool
+  //    sum is legitimately 0 there and the param is omitted.
+  const systemPromptReport = params.sessionEntry?.systemPromptReport;
+  const reportedSystemPromptChars = systemPromptReport?.systemPrompt?.chars;
+  const reportedToolSchemaChars = systemPromptReport?.tools?.entries?.reduce(
+    (sum, entry) =>
+      sum + (entry?.schemaChars ?? 0) + (entry?.summaryChars ?? 0) + (entry?.name?.length ?? 0),
+    0,
+  );
 
   const preemptiveCompaction = cliCompactionDeps.shouldPreemptivelyCompactBeforePrompt({
     messages: getSessionBranchMessages(sessionManager),
     prompt: "",
+    ...(typeof reportedSystemPromptChars === "number" && reportedSystemPromptChars > 0
+      ? { systemPromptChars: reportedSystemPromptChars }
+      : {}),
+    ...(typeof reportedToolSchemaChars === "number" && reportedToolSchemaChars > 0
+      ? { toolSchemaChars: reportedToolSchemaChars }
+      : {}),
     contextTokenBudget,
     reserveTokens: settingsManager.getCompactionReserveTokens(),
     toolResultMaxChars: cliCompactionDeps.resolveLiveToolResultMaxChars({
@@ -220,9 +263,15 @@ export async function runCliTurnCompactionLifecycle(params: {
     }),
   });
   const tokenSnapshot = resolveSessionTokenSnapshot(params.sessionEntry);
+  // A snapshot larger than the context window is definitionally NOT a context
+  // size — sessionEntry.totalTokens is historically polluted with the CLI's
+  // turn-AGGREGATE usage (input+cache summed across internal steps, up to ~18M
+  // on a 1M window), which made compaction fire on every substantive turn.
+  const plausibleTokenSnapshot =
+    tokenSnapshot !== undefined && tokenSnapshot <= contextTokenBudget ? tokenSnapshot : undefined;
   const currentTokenCount = Math.max(
     preemptiveCompaction.estimatedPromptTokens,
-    tokenSnapshot ?? 0,
+    plausibleTokenSnapshot ?? 0,
   );
   if (
     !preemptiveCompaction.shouldCompact &&

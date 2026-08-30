@@ -1,4 +1,43 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../auto-reply/reply/abort.js", () => ({
+  stopSubagentsForRequester: vi.fn(() => ({ stopped: 0 })),
+}));
+vi.mock("../../auto-reply/reply/queue.js", () => ({
+  clearSessionQueues: vi.fn(() => ({ followupCleared: 0, laneCleared: 0, keys: [] })),
+}));
+vi.mock("../../auto-reply/reply/reply-run-registry.js", () => ({
+  replyRunRegistry: {
+    abort: vi.fn(() => false),
+    resolveSessionId: vi.fn(() => undefined),
+  },
+}));
+vi.mock("../../agents/embedded-agent-runner/runs.js", () => ({
+  abortEmbeddedPiRun: vi.fn(() => false),
+}));
+vi.mock("../../config/sessions.js", async () => {
+  const original = await vi.importActual<typeof import("../../config/sessions.js")>(
+    "../../config/sessions.js",
+  );
+  return {
+    ...original,
+    updateSessionStore: vi.fn(async () => undefined),
+  };
+});
+vi.mock("../session-utils.js", async () => {
+  const original =
+    await vi.importActual<typeof import("../session-utils.js")>("../session-utils.js");
+  return {
+    ...original,
+    loadSessionEntry: () => ({
+      cfg: {},
+      storePath: "",
+      entry: undefined,
+      canonicalKey: "main",
+    }),
+  };
+});
+
 import {
   createActiveRun,
   createChatAbortContext,
@@ -120,5 +159,25 @@ describe("chat.abort authorization", () => {
     const [ok, payload] = respond.mock.calls.at(-1) ?? [];
     expect(ok).toBe(true);
     expect(payload).toMatchObject({ aborted: true, runIds: ["run-1"] });
+  });
+
+  it("session-scoped abort still drains queues when no live controller matched", async () => {
+    const { clearSessionQueues } = await import("../../auto-reply/reply/queue.js");
+    const context = createChatAbortContext({
+      chatAbortControllers: new Map(),
+    });
+    const respond = await invokeChatAbortHandler({
+      handler: chatHandlers["chat.abort"],
+      context,
+      request: { sessionKey: "main" },
+      client: {
+        connId: "conn-1",
+        connect: { device: { id: "dev-1" }, scopes: ["operator.write"] },
+      },
+    });
+    const [ok, payload] = respond.mock.calls.at(-1) ?? [];
+    expect(ok).toBe(true);
+    expect(payload).toMatchObject({ aborted: false, runIds: [] });
+    expect(clearSessionQueues).toHaveBeenCalled();
   });
 });

@@ -310,6 +310,84 @@ describe("deriveContextPromptTokens", () => {
       }),
     ).toBe(100_000);
   });
+
+  // FORK 2026-07-28 — the turn-aggregate poisoning. On the cc-bridge lane a message's
+  // persisted `usage` sums every internal API call of the turn, so it routinely exceeds the
+  // context window. These are the REAL numbers measured live on 2026-07-28.
+  describe("plausibility guard against turn aggregates", () => {
+    it("rejects an accumulated usage larger than the context window", () => {
+      // Live: pi reported 1,029,656 on a 1,000,000 window; real context was 52,116.
+      expect(
+        deriveContextPromptTokens({
+          usage: { input: 4_431, cacheRead: 912_160, cacheWrite: 113_065 },
+          contextWindow: 1_000_000,
+        }),
+      ).toBeUndefined();
+    });
+
+    it("rejects an implausible promptTokens OVERRIDE, not just the buckets", () => {
+      // The override arm fires FIRST on the embedded lane and carries the same poison.
+      expect(
+        deriveContextPromptTokens({
+          promptTokens: 6_448_106, // 644.8% of the window, measured live
+          contextWindow: 1_000_000,
+        }),
+      ).toBeUndefined();
+    });
+
+    it("does not fall back to equally-poisoned buckets once the override is rejected", () => {
+      expect(
+        deriveContextPromptTokens({
+          promptTokens: 6_448_106,
+          lastCallUsage: { input: 3_000_000, cacheRead: 3_400_000 },
+          usage: { input: 3_000_000, cacheRead: 3_448_106 },
+          contextWindow: 1_000_000,
+        }),
+      ).toBeUndefined();
+    });
+
+    it("still accepts a plausible value at high fill", () => {
+      expect(deriveContextPromptTokens({ promptTokens: 950_000, contextWindow: 1_000_000 })).toBe(
+        950_000,
+      );
+    });
+
+    it("prefers a plausible fallback when only the override is poisoned", () => {
+      expect(
+        deriveContextPromptTokens({
+          promptTokens: 6_448_106,
+          lastCallUsage: { input: 40_000, cacheRead: 12_116 },
+          contextWindow: 1_000_000,
+        }),
+      ).toBe(52_116);
+    });
+
+    it("is inert when the context window is unknown (behaviour unchanged)", () => {
+      expect(deriveContextPromptTokens({ promptTokens: 6_448_106 })).toBe(6_448_106);
+    });
+  });
+});
+
+describe("deriveSessionTotalTokens plausibility", () => {
+  it("refuses to persist a turn aggregate as SessionEntry.totalTokens", () => {
+    // contextTokens was accepted by this function but never used before 2026-07-28, which is
+    // how millions of tokens reached the memory-flush gate and the CLI compaction lane.
+    expect(
+      deriveSessionTotalTokens({
+        usage: { input: 4_431, cacheRead: 912_160, cacheWrite: 113_065 },
+        contextTokens: 1_000_000,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("persists a plausible snapshot unchanged", () => {
+    expect(
+      deriveSessionTotalTokens({
+        usage: { input: 40_000, cacheRead: 12_116 },
+        contextTokens: 1_000_000,
+      }),
+    ).toBe(52_116);
+  });
 });
 
 describe("deriveSessionTotalTokens", () => {

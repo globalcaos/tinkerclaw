@@ -36,10 +36,23 @@ The helper speaks the fork's WS RPC `fork.subagents.spawn`, which wraps the same
 <spawn_guidelines>
 
 - Spawn only when the work actually parallelises. Small tasks stay inline.
-- Pick the model by task weight (relative cost 1×/3×/5×/10×): `claude-code/claude-haiku-4-5` for minimal tasks (lookups, format — separate budget, ≈free), `claude-code/claude-sonnet-4-6` for standard work, `claude-code/claude-opus-4-8` for hard single-shot reasoning, and `claude-code/claude-fable-5` (the flagship — 2× opus sticker but ~⅓ tokens on long tasks, lead grows with complexity) for genuinely hard work OR when a fix keeps failing and you are going in circles. ESCALATE MODEL BEFORE EFFORT: fable at medium thinking beats opus at max, and is usually cheaper than the retries it eliminates. The full model × effort matrix lives in the orchestration-disposition block.
+- Pick the model by task weight (relative cost 1×/3×/5×/10×): `claude-code/claude-haiku-4-5` for minimal tasks (lookups, format — separate budget, ≈free), `claude-code/claude-sonnet-4-6` for standard work, `claude-code/claude-opus-5` for hard single-shot reasoning, and `claude-code/claude-fable-5` (the flagship — 2× opus sticker but ~⅓ tokens on long tasks, lead grows with complexity) for genuinely hard work OR when a fix keeps failing and you are going in circles. ESCALATE MODEL BEFORE EFFORT: fable at medium thinking beats opus at max, and is usually cheaper than the retries it eliminates. The full model × effort matrix lives in the orchestration-disposition block.
 - Always pass a short `--label` so the Prefrontal tree stays readable.
 - Do NOT narrate dispatches in chat. The user watches the Prefrontal panel for orchestration; chat stays focused on substantive output. Use the recipe-state CLI below to publish what is happening behind the scenes.
   </spawn_guidelines>
+
+<wait_contract>
+MANDATORY after every spawn (2026-07-20, after a 4-hour silent gap): the spawning turn WAITS IN-TURN for its children and synthesizes their results before ending. Never end a turn on "I'll report when they finish" — completion notifications to an idle worker are UNRELIABLE (bug [monitor-notify-idle-session-lost]) and the promise reads as a hallucinated dispatch to the user.
+
+Procedure:
+
+1. Every spawned task ends with: "Write your full report to /tmp/<label>.report.md and finish."
+2. Immediately after the last spawn, block FOREGROUND on the reports (this pattern is harness-approved; plain chained `sleep` is not):
+   `for i in $(seq 1 108); do [ -s /tmp/a.report.md ] && [ -s /tmp/b.report.md ] && exit 0; sleep 5; done; exit 1`
+   with a tool timeout ≤ 600000ms. If the children need longer, repeat the SAME wait call — each repeat keeps the turn alive and shows the user a visible "waiting" row.
+3. When the loop exits 0, READ the reports and deliver the synthesis in the SAME turn. If the wall-clock budget expires, say plainly which reports are missing and what the fallback is — never imply completion.
+4. Monitor/background-notification wake-ups may be used as a BONUS signal, never as the only delivery path.
+   </wait_contract>
 
 <orchestration_observability>
 Use the recipe-state CLI at {{RECIPE_STATE_BIN}} to publish what the user sees in the Prefrontal panel — recipe id, current step, in-flight labels, and a rolling trail of actions:

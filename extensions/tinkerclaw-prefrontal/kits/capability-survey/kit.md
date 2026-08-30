@@ -38,7 +38,7 @@ parallelism:
     human picks the threshold in step 3.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-8"
+  name: "claude-opus-5"
   hosting: "cloud API"
 resolverHints:
   [
@@ -90,8 +90,8 @@ For each kept candidate, find the matching J-series paper(s) (J1–J15) and grep
 
 ### 4. Rank + PRESENT for the human threshold (GATE)
 
-done-when: a single ranked candidate list (by absorb-value × leverage) is presented to Oscar, and he has chosen a threshold
-Merge all categories into ONE ranked list (highest absorb-value × leverage first), each row: candidate · what it adds · J-paper · have/partial/gap · effort (S/M/L/XL). Present it and STOP — Oscar decides where the cut line is. Do NOT proceed past this gate without his threshold.
+done-when: a single ranked candidate list (by absorb-value × leverage) is presented to the architect, and he has chosen a threshold
+Merge all categories into ONE ranked list (highest absorb-value × leverage first), each row: candidate · what it adds · J-paper · have/partial/gap · effort (S/M/L/XL). Present it and STOP — the architect decides where the cut line is. Do NOT proceed past this gate without his threshold.
 
 ### 5. Bake the selected features into the J-series improvement notes
 
@@ -102,4 +102,4 @@ For each selected candidate, write a grounded improvement-note section into its 
 
 done-when: each feature is implemented + tested (build clean) + committed + has a 📌 pending-testing task
 uses: subagent-driven-dev
-Implement the selected features (subagent-driven where multi-task), with real tests, build clean. Commit on `develop`. For each shipped capability create a 📌 task in the right "Closed and pending testing" bucket (⚙️ TinkerClaw Bugs `meta-closed` or 🤖 Jarvis Upgrades `jarvis-upgrades-closed-and-pending-testing`) for Oscar's weeks-long soak verification.
+Implement the selected features (subagent-driven where multi-task), with real tests, build clean. Commit on `develop`. For each shipped capability create a 📌 task in the right "Closed and pending testing" bucket (⚙️ TinkerClaw Bugs `meta-closed` or 🤖 Jarvis Upgrades `jarvis-upgrades-closed-and-pending-testing`) for the architect's weeks-long soak verification.

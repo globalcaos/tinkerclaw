@@ -18,8 +18,10 @@ import {
   diagnosticSessionStates,
   getDiagnosticSessionState,
   getDiagnosticSessionStateCountForTest as getDiagnosticSessionStateCountForTestImpl,
+  markDiagnosticSessionProgress,
   pruneDiagnosticSessionStates,
   resetDiagnosticSessionStateForTest,
+  resolveDiagnosticSessionLastProgressAt,
   type SessionRef,
   type SessionStateValue,
 } from "./diagnostic-session-state.js";
@@ -43,6 +45,7 @@ const webhookStats = {
 };
 
 const DEFAULT_STUCK_SESSION_WARN_MS = 120_000;
+const DEFAULT_STUCK_SESSION_PROGRESS_WINDOW_MS = 120_000;
 const MIN_STUCK_SESSION_WARN_MS = 1_000;
 const MAX_STUCK_SESSION_WARN_MS = 24 * 60 * 60 * 1000;
 const RECENT_DIAGNOSTIC_ACTIVITY_MS = 120_000;
@@ -460,7 +463,24 @@ export function logSessionStateChange(
   const prevState = state.state;
   state.state = params.state;
   state.lastActivity = Date.now();
-  if (params.state === "idle") {
+  // FORK 2026-08-23 (the architect: "the 'prompt queued' message is not working well, it shown
+  // during normal operation after I send a normal prompt").
+  //
+  // He is right, and the cause is here. `queueDepth` was incremented on ENQUEUE and decremented
+  // only on the transition to IDLE — so for the whole of a perfectly normal turn the counter
+  // still read 1 while that very prompt was the one RUNNING. The activity strip then showed
+  // "turn running" and "1 prompt queued" side by side, describing one prompt twice, and the
+  // second description was false: `attachmentButtonLabel` offers "Clear" on a queued row
+  // precisely because clearing destroys nothing that has started, and that one HAD started.
+  //
+  // The counter has to mean "accepted but NOT STARTED", so it must fall when work BEGINS, not
+  // when it ends. Decrementing on entry to `processing` does that. The idle branch is retained
+  // as a floor for the paths that go straight to idle without ever reporting processing (an
+  // aborted or rejected enqueue), because leaving those pinned at 1 forever is the failure this
+  // is replacing, not a different one.
+  if (params.state === "processing" && prevState !== "processing") {
+    state.queueDepth = Math.max(0, state.queueDepth - 1);
+  } else if (params.state === "idle" && prevState !== "processing") {
     state.queueDepth = Math.max(0, state.queueDepth - 1);
   }
   if (!isProbeSession && diag.isEnabled("debug")) {
@@ -484,15 +504,67 @@ export function logSessionStateChange(
   markActivity();
 }
 
-export function logSessionStuck(params: SessionRef & { state: SessionStateValue; ageMs: number }) {
+/**
+ * Warn about a session that looks wedged — but only when a wedge is actually
+ * evidenced. "state=processing for a long time" alone is NOT evidence: measured
+ * 2026-08-19..08-26, that naive rule flagged 4-66 distinct sessions per DAY,
+ * including one whose LLM client unit was active-running with a monotonically
+ * growing stream. A legitimately long turn must never be reported as stuck.
+ *
+ * The caller supplies the liveness probe:
+ *   - clientAlive:      false = client process confirmed dead -> always warn.
+ *   - lastProgressAtMs: last evidenced forward progress (tool call, streamed
+ *                       block). Progress within progressWindowMs (default
+ *                       120s) suppresses the warning.
+ * With no probe supplied (both undefined) the legacy behavior is kept: warn.
+ * An alive client with recent progress logs at DEBUG with an explicit
+ * state=processing-alive marker instead of warning, and emits no event
+ * (DiagnosticSessionStuckEvent is strict and cannot carry the marker).
+ */
+export function logSessionStuck(
+  params: SessionRef & {
+    state: SessionStateValue;
+    ageMs: number;
+    clientAlive?: boolean;
+    lastProgressAtMs?: number;
+    progressWindowMs?: number;
+  },
+) {
   if (!areDiagnosticsEnabledForProcess()) {
     return;
   }
   const state = getDiagnosticSessionState(params);
+  const progressWindowMs = params.progressWindowMs ?? DEFAULT_STUCK_SESSION_PROGRESS_WINDOW_MS;
+  const lastProgressAgoMs =
+    params.lastProgressAtMs === undefined
+      ? undefined
+      : Math.max(0, Date.now() - params.lastProgressAtMs);
+  const hasRecentProgress =
+    lastProgressAgoMs !== undefined && lastProgressAgoMs <= progressWindowMs;
+  if (params.clientAlive !== false && hasRecentProgress) {
+    if (diag.isEnabled("debug")) {
+      diag.debug(
+        `long turn alive: sessionId=${state.sessionId ?? "unknown"} sessionKey=${
+          state.sessionKey ?? "unknown"
+        } state=processing-alive age=${Math.round(params.ageMs / 1000)}s lastProgressAgo=${Math.round(
+          (lastProgressAgoMs ?? 0) / 1000,
+        )}s queueDepth=${state.queueDepth}`,
+      );
+    }
+    return;
+  }
+  const reason =
+    params.clientAlive === false
+      ? "client-dead"
+      : lastProgressAgoMs === undefined
+        ? "no-progress-signal"
+        : "no-recent-progress";
   diag.warn(
     `stuck session: sessionId=${state.sessionId ?? "unknown"} sessionKey=${
       state.sessionKey ?? "unknown"
-    } state=${params.state} age=${Math.round(params.ageMs / 1000)}s queueDepth=${state.queueDepth}`,
+    } state=${params.state} age=${Math.round(params.ageMs / 1000)}s reason=${reason} lastProgressAgo=${
+      lastProgressAgoMs === undefined ? "unknown" : `${Math.round(lastProgressAgoMs / 1000)}s`
+    } queueDepth=${state.queueDepth}`,
   );
   emitDiagnosticEvent({
     type: "session.stuck",
@@ -509,6 +581,7 @@ export function logRunAttempt(params: SessionRef & { runId: string; attempt: num
   if (!areDiagnosticsEnabledForProcess()) {
     return;
   }
+  markDiagnosticSessionProgress(params);
   diag.debug(
     `run attempt: sessionId=${params.sessionId ?? "unknown"} sessionKey=${
       params.sessionKey ?? "unknown"
@@ -658,6 +731,8 @@ export function startDiagnosticHeartbeat(
           sessionKey: state.sessionKey,
           state: state.state,
           ageMs,
+          clientAlive: state.clientAlive,
+          lastProgressAtMs: resolveDiagnosticSessionLastProgressAt(state),
         });
       }
     }

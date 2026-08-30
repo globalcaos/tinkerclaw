@@ -19,18 +19,50 @@ export type HeartbeatWakeRequest = {
 
 export type HeartbeatWakeHandler = (opts: HeartbeatWakeRequest) => Promise<HeartbeatRunResult>;
 
+/**
+ * FORK 2026-08-03 — A CRON WAKE IS NOT A HEARTBEAT.
+ *
+ * Every cron delivery used to be expressed as `requestHeartbeatNow(...)`, so the single
+ * switch that stops the periodic self-poll also stopped ALL cron work: the heartbeat
+ * runner answers `{status:"skipped", reason:"disabled"}` before it ever looks at the
+ * payload that was already queued, and `cron/service/timer.ts` copied that verdict into
+ * the CRON's own outcome. Measured on this deployment: 18 jobs fired on schedule and did
+ * zero work from 2026-07-30 onward, and the only evidence was the word "disabled" inside
+ * a run-log nobody reads.
+ *
+ * The two concerns are now separate LANES over ONE shared delivery mechanism
+ * (design-principles #18 — one canonical derivation, not a second copy of the wake
+ * machinery):
+ *   - "heartbeat" — the periodic self-poll. Governed by the enabled flag below.
+ *   - "cron"      — operator-scheduled work. Never gated by that flag, and never
+ *                   coalesced away by a heartbeat wake for the same session.
+ */
+export type WakeLane = "heartbeat" | "cron";
+
+/**
+ * Delivery handler for the cron lane. Registered independently of the heartbeat runner;
+ * an implementation MUST NOT consult `areHeartbeatsEnabled()`.
+ */
+export type CronWakeHandler = (opts: HeartbeatWakeRequest) => Promise<HeartbeatRunResult>;
+
 let heartbeatsEnabled = true;
 
 export function setHeartbeatsEnabled(enabled: boolean) {
   heartbeatsEnabled = enabled;
 }
 
+/**
+ * Whether the PERIODIC SELF-POLL is on. This is deliberately not a statement about
+ * whether the gateway may deliver a queued payload to a session — cron delivery runs on
+ * its own lane and must never be vetoed by this flag.
+ */
 export function areHeartbeatsEnabled(): boolean {
   return heartbeatsEnabled;
 }
 
 type WakeTimerKind = "normal" | "retry";
 type PendingWakeReason = {
+  lane: WakeLane;
   reason: string;
   priority: number;
   requestedAt: number;
@@ -41,6 +73,21 @@ type PendingWakeReason = {
 
 let handler: HeartbeatWakeHandler | null = null;
 let handlerGeneration = 0;
+let cronHandler: CronWakeHandler | null = null;
+let cronHandlerGeneration = 0;
+
+/**
+ * Pick the handler for a lane. The cron lane prefers its own handler — the ungated path —
+ * and falls back to the heartbeat handler only so a cron wake is never silently dropped
+ * before the cron handler is wired. A cron wake NEVER runs on the heartbeat handler when
+ * a cron handler exists.
+ */
+function resolveLaneHandler(lane: WakeLane): HeartbeatWakeHandler | null {
+  if (lane === "cron") {
+    return cronHandler ?? handler;
+  }
+  return handler;
+}
 const pendingWakes = new Map<string, PendingWakeReason>();
 let scheduled = false;
 let running = false;
@@ -80,34 +127,40 @@ function normalizeWakeTarget(value?: string): string | undefined {
   return trimmed || undefined;
 }
 
-function getWakeTargetKey(params: { agentId?: string; sessionKey?: string }) {
+function getWakeTargetKey(params: { lane: WakeLane; agentId?: string; sessionKey?: string }) {
   const agentId = normalizeWakeTarget(params.agentId);
   const sessionKey = normalizeWakeTarget(params.sessionKey);
-  return `${agentId ?? ""}::${sessionKey ?? ""}`;
+  // The lane is part of the identity. Without it a cron wake and a periodic heartbeat
+  // wake for the same session collapse into one entry and the lower-priority one is
+  // dropped — i.e. the cron silently loses its wake to the self-poll.
+  return `${params.lane}::${agentId ?? ""}::${sessionKey ?? ""}`;
 }
 
-function queuePendingWakeReason(params?: {
+function queuePendingWakeReason(params: {
+  lane: WakeLane;
   reason?: string;
   requestedAt?: number;
   agentId?: string;
   sessionKey?: string;
   heartbeat?: { target?: string };
 }) {
-  const requestedAt = params?.requestedAt ?? Date.now();
-  const normalizedReason = normalizeWakeReason(params?.reason);
-  const normalizedAgentId = normalizeWakeTarget(params?.agentId);
-  const normalizedSessionKey = normalizeWakeTarget(params?.sessionKey);
+  const requestedAt = params.requestedAt ?? Date.now();
+  const normalizedReason = normalizeWakeReason(params.reason);
+  const normalizedAgentId = normalizeWakeTarget(params.agentId);
+  const normalizedSessionKey = normalizeWakeTarget(params.sessionKey);
   const wakeTargetKey = getWakeTargetKey({
+    lane: params.lane,
     agentId: normalizedAgentId,
     sessionKey: normalizedSessionKey,
   });
   const next: PendingWakeReason = {
+    lane: params.lane,
     reason: normalizedReason,
     priority: resolveReasonPriority(normalizedReason),
     requestedAt,
     agentId: normalizedAgentId,
     sessionKey: normalizedSessionKey,
-    heartbeat: params?.heartbeat,
+    heartbeat: params.heartbeat,
   };
   const previous = pendingWakes.get(wakeTargetKey);
   if (!previous) {
@@ -153,8 +206,9 @@ function schedule(coalesceMs: number, kind: WakeTimerKind = "normal") {
     timerDueAt = null;
     timerKind = null;
     scheduled = false;
-    const active = handler;
-    if (!active) {
+    if (!handler && !cronHandler) {
+      // Nothing is wired yet. Return BEFORE draining so the queue survives until a
+      // handler registers (setHeartbeatWakeHandler / setCronWakeHandler reschedule).
       return;
     }
     if (running) {
@@ -174,10 +228,27 @@ function schedule(coalesceMs: number, kind: WakeTimerKind = "normal") {
           ...(pendingWake.sessionKey ? { sessionKey: pendingWake.sessionKey } : {}),
           ...(pendingWake.heartbeat ? { heartbeat: pendingWake.heartbeat } : {}),
         };
-        const res = await active(wakeOpts);
+        const laneHandler = resolveLaneHandler(pendingWake.lane);
+        if (!laneHandler) {
+          // This lane has no handler yet. Re-queue instead of dropping: a wake that
+          // vanishes because its lane was not wired is exactly the silent failure this
+          // split exists to end.
+          queuePendingWakeReason({
+            lane: pendingWake.lane,
+            reason: pendingWake.reason,
+            requestedAt: pendingWake.requestedAt,
+            agentId: pendingWake.agentId,
+            sessionKey: pendingWake.sessionKey,
+            heartbeat: pendingWake.heartbeat,
+          });
+          schedule(DEFAULT_RETRY_MS, "retry");
+          continue;
+        }
+        const res = await laneHandler(wakeOpts);
         if (res.status === "skipped" && res.reason === "requests-in-flight") {
           // The main lane is busy; retry this wake target soon.
           queuePendingWakeReason({
+            lane: pendingWake.lane,
             reason: pendingWake.reason ?? "retry",
             agentId: pendingWake.agentId,
             sessionKey: pendingWake.sessionKey,
@@ -187,9 +258,10 @@ function schedule(coalesceMs: number, kind: WakeTimerKind = "normal") {
         }
       }
     } catch {
-      // Error is already logged by the heartbeat runner; schedule a retry.
+      // Error is already logged by the wake handler; schedule a retry.
       for (const pendingWake of pendingBatch) {
         queuePendingWakeReason({
+          lane: pendingWake.lane,
           reason: pendingWake.reason ?? "retry",
           agentId: pendingWake.agentId,
           sessionKey: pendingWake.sessionKey,
@@ -257,12 +329,87 @@ export function requestHeartbeatNow(opts?: {
   heartbeat?: { target?: string };
 }) {
   queuePendingWakeReason({
+    lane: "heartbeat",
     reason: opts?.reason,
     agentId: opts?.agentId,
     sessionKey: opts?.sessionKey,
     heartbeat: opts?.heartbeat,
   });
   schedule(opts?.coalesceMs ?? DEFAULT_COALESCE_MS, "normal");
+}
+
+/**
+ * Register (or clear) the CRON wake handler — the delivery path for operator-scheduled
+ * work. Deliberately a SEPARATE slot from `setHeartbeatWakeHandler`: the whole point is
+ * that turning the periodic self-poll off must not turn cron delivery off. The handler
+ * registered here MUST NOT consult `areHeartbeatsEnabled()` and must not depend on the
+ * heartbeat interval config.
+ *
+ * Returns a disposer that clears this specific registration; stale disposers (from an
+ * earlier registration) are no-ops, matching `setHeartbeatWakeHandler`.
+ */
+export function setCronWakeHandler(next: CronWakeHandler | null): () => void {
+  cronHandlerGeneration += 1;
+  const generation = cronHandlerGeneration;
+  cronHandler = next;
+  if (cronHandler && pendingWakes.size > 0) {
+    schedule(DEFAULT_COALESCE_MS, "normal");
+  }
+  return () => {
+    if (cronHandlerGeneration !== generation) {
+      return;
+    }
+    if (cronHandler !== next) {
+      return;
+    }
+    cronHandlerGeneration += 1;
+    cronHandler = null;
+  };
+}
+
+export function hasCronWakeHandler() {
+  return cronHandler !== null;
+}
+
+/**
+ * Queue a CRON wake. Same coalescing/retry machinery as `requestHeartbeatNow` — the wake
+ * machinery is SHARED, not duplicated — but on the cron lane, so it is never merged away
+ * by a periodic heartbeat wake and never gated by the heartbeat-enabled flag.
+ */
+export function requestCronWake(opts?: {
+  reason?: string;
+  coalesceMs?: number;
+  agentId?: string;
+  sessionKey?: string;
+  heartbeat?: { target?: string };
+}) {
+  queuePendingWakeReason({
+    lane: "cron",
+    reason: opts?.reason,
+    agentId: opts?.agentId,
+    sessionKey: opts?.sessionKey,
+    heartbeat: opts?.heartbeat,
+  });
+  schedule(opts?.coalesceMs ?? DEFAULT_COALESCE_MS, "normal");
+}
+
+/**
+ * Deliver a cron wake now and await the verdict, bypassing the coalescing timer.
+ * When nothing is wired the reason is `"no-wake-handler"` — a distinct, greppable string,
+ * never the heartbeat's "disabled", so a missing wiring can never be mistaken for an
+ * operator switching something off.
+ */
+export async function runCronWakeOnce(opts?: HeartbeatWakeRequest): Promise<HeartbeatRunResult> {
+  const laneHandler = resolveLaneHandler("cron");
+  if (!laneHandler) {
+    return { status: "skipped", reason: "no-wake-handler" };
+  }
+  return await laneHandler({
+    reason: opts?.reason,
+    agentId: opts?.agentId,
+    sessionKey: opts?.sessionKey,
+    heartbeat: opts?.heartbeat,
+  });
 }
 
 export function hasHeartbeatWakeHandler() {
@@ -285,4 +432,6 @@ export function resetHeartbeatWakeStateForTests() {
   running = false;
   handlerGeneration += 1;
   handler = null;
+  cronHandlerGeneration += 1;
+  cronHandler = null;
 }

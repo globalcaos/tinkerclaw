@@ -5,7 +5,34 @@ import {
   scrubResidualSectionMarkers,
   splitLeadingNarration,
   splitReasoningFromAnswer,
+  isFractalSectionText,
 } from "./sectioned-reply";
+
+// FORK 2026-08-15 — the predicate app.ts's run classifier keys on. The literal test it replaces
+// (`trimStart().startsWith("🌿 FRACTAL:")`) recognised only the clean-turn form, so every
+// reflection that actually DID something — `🌿 FRACTAL ACTION:` — slipped past the guard written
+// to stop it demoting the answer.
+describe("isFractalSectionText", () => {
+  it("recognises BOTH mandated prefixes", () => {
+    expect(isFractalSectionText("🌿 FRACTAL: clean — nothing to learn")).toBe(true);
+    expect(isFractalSectionText("🌿 FRACTAL ACTION: appended the rule to the framing note")).toBe(
+      true,
+    );
+  });
+
+  it("tolerates the same decoration as the section markers", () => {
+    expect(isFractalSectionText("  🌿 FRACTAL: x")).toBe(true);
+    expect(isFractalSectionText("**🌿 FRACTAL ACTION:** x")).toBe(true);
+    expect(isFractalSectionText("## 🌿 FRACTAL x")).toBe(true);
+  });
+
+  it("is anchored at the START — a reply that MENTIONS the section is not one", () => {
+    expect(isFractalSectionText("Here is the answer.\n\n🌿 FRACTAL: clean")).toBe(false);
+    expect(isFractalSectionText("see the 🌿 FRACTAL block above")).toBe(false);
+    expect(isFractalSectionText("the fractal reflection is separate")).toBe(false);
+    expect(isFractalSectionText("")).toBe(false);
+  });
+});
 
 // Identity stubs — the structural assertions below (which bubbles/classes are
 // emitted) are independent of real markdown rendering / HTML escaping.
@@ -281,6 +308,29 @@ describe("splitReasoningFromAnswer", () => {
     const text = `${NARR} ${ANS}`;
     const once = splitReasoningFromAnswer(text).answer;
     expect(splitReasoningFromAnswer(once).answer).toBe(once);
+  });
+
+  // FORK 2026-08-16 — the anchor says WHERE a conclusion may start; it must not by itself decide
+  // that everything before it is disposable. Measured over 45 sessions: 24 folds, 24 of them with a
+  // hidden head under 10% narration. These pin the discrimination in both directions.
+  it("does NOT fold substantive prose just because a heading appears late", () => {
+    const prose =
+      "the architect — you're right, and the sharpest evidence is from tonight's own wind-down: I filed B037 " +
+      "before checking whether the report had already landed, and it had. The same shape shows up in " +
+      "the two cron failures earlier this week, which is why the count looks worse than it is. " +
+      "None of this is narration; it is the answer to the question you asked.";
+    const text = `${prose}\n\n## What to change\n\nGate the filing on a disk read.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.reasoning).toBe("");
+    expect(r.answer).toContain("you're right");
+    expect(r.answer).toContain("What to change");
+  });
+
+  it("STILL folds when the head really is working notes", () => {
+    const text = `${NARR} ${NARR2} Found the cause.\n\n## Fix\n\nDedup at the boundary.`;
+    const r = splitReasoningFromAnswer(text);
+    expect(r.reasoning).toContain("Let me check");
+    expect(r.answer.startsWith("## Fix")).toBe(true);
   });
 
   it("handles a working-note stream that ends in a JSON dump without throwing or blanking", () => {

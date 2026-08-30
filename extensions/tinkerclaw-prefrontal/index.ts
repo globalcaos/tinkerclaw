@@ -15,9 +15,11 @@
  *
  * Wired in by: OpenClaw plugin system via `plugins.entries.tinkerclaw-prefrontal` in openclaw.json
  */
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { emitAgentEvent } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import type {
   PluginHookSubagentSpawnedEvent,
@@ -34,6 +36,9 @@ import type {
   PluginHookAfterToolCallEvent,
   PluginHookToolContext,
 } from "./hook-types.js";
+// FORK 2026-07-25 (the architect): `prefrontal.status` reports the REAL fan-out cap to the Models
+// panel's routing card — import it rather than re-deriving min(16, cores-2) here.
+import { concurrencyCap } from "./orchestration-runtime.js";
 
 // Try to load session utils from fork source (available in tinkerclaw fork).
 // Falls back gracefully on vanilla OpenClaw — topology enrichment is skipped.
@@ -56,8 +61,8 @@ function getSessionStoreLoader(): ((cfg: any) => any) | null {
   }
   return _sessionStoreLoader;
 }
-import { callGateway } from "../../src/gateway/call.js";
-import { makeFitnessLookup } from "../../src/memory/engram/recipe-fitness.js";
+import { makeFitnessLookup } from "openclaw/plugin-sdk/fork-recipe-engine";
+import { callGateway } from "openclaw/plugin-sdk/testing";
 import {
   loadAntiGoldplatingPrompt,
   shouldInjectAntiGoldplating,
@@ -92,9 +97,44 @@ import { createRecipeRpcs } from "./recipe-rpcs.js";
 import { resolveOwnRecipesDir } from "./recipe-runner.js";
 import { RecipeStore } from "./recipe-store.js";
 import { type EmbedFn } from "./semantic-matcher.js";
+import { pruneTerminalRuns } from "./subagent-run-prune.js";
 import { TopologyStore } from "./topology.js";
 
 const PLUGIN_ID = "tinkerclaw-prefrontal";
+
+// FORK 2026-07-25 (the architect): the ORCA routing policy. Resolved from THIS module's location so
+// the UI never hardcodes a host path; the panel's footer link opens it in the system viewer.
+//
+// FIX 2026-07-27 (the architect: "the final link does not open the foundation md"): the link was dead
+// from the day it shipped. `import.meta.url` points into the BUILT plugin
+// (dist/extensions/tinkerclaw-prefrontal/) and the build copies openclaw.plugin.json but NOT
+// .md assets, so this named a file that has never existed. config.openExternalFile does not
+// stat before spawning xdg-open, so the click answered ok:true and opened nothing — a silent
+// failure with a success flash. Resolve it the way resolveOwnRecipesDir() already resolves this
+// plugin's other .md assets (walk up out of dist/ into the source tree), and hand back
+// undefined when nothing is found so the panel hides the link rather than rendering a dead one.
+function resolvePolicyPath(startDir: string): string | undefined {
+  const colocated = join(startDir, "orca-policy.md");
+  if (existsSync(colocated)) {
+    return colocated;
+  }
+  const MAX_LEVELS = 8;
+  let dir = startDir;
+  for (let i = 0; i < MAX_LEVELS; i++) {
+    const candidate = join(dir, "extensions", PLUGIN_ID, "orca-policy.md");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      break; // reached filesystem root
+    }
+    dir = parent;
+  }
+  return undefined;
+}
+
+const POLICY_PATH = resolvePolicyPath(dirname(fileURLToPath(import.meta.url)));
 
 // Module-level singletons — shared across all register() calls.
 // The gateway loads this plugin multiple times (gateway + per-agent),
@@ -315,6 +355,29 @@ export default function register(api: OpenClawPluginApi) {
       return;
     }
     const sessionKey = ctx.sessionKey || "agent:main:main";
+
+    // FORK 2026-08-04 (the architect): REOPEN a run that `agent_end` closed (see that hook).
+    // A steered or restarted child starts a new turn on the SAME session key without a
+    // fresh `subagent_spawned`, and the registry suppresses `subagent_ended` for exactly
+    // that case, so without this the child would sit at "completed" while it is
+    // demonstrably working again — and the retention prune would eventually evict a live
+    // agent from the tree.
+    //
+    // The cost is a brief cosmetic completed->running flicker in the panel. That is
+    // deliberate and strictly better than the 7-8 minute lie it replaces: a flicker is a
+    // visibly self-correcting error, a stale "running" is not. An already-pruned run
+    // simply does not match here — reopening never resurrects one.
+    for (const [runId, run] of subagentRuns) {
+      if (run.childSessionKey === sessionKey) {
+        if (run.endedAt) {
+          run.endedAt = undefined;
+          run.outcome = undefined;
+        }
+        lastEventTimestamps.set(runId, Date.now());
+        break;
+      }
+    }
+
     topology.activateMain({
       sessionKey,
       provider: event.provider,
@@ -334,6 +397,30 @@ export default function register(api: OpenClawPluginApi) {
     log.info?.(
       `[prefrontal] Main activated: ${sessionKey} (${event.provider}/${event.model}) topo.size=${topology.size}`,
     );
+    // FORK 2026-08-13 — this is the exact moment the model becomes known, and until now
+    // it was the FIRST thing the UI heard about the turn: everything before it (engram
+    // retrieval, the total-recall pack) happens server-side in silence, so the pill sat
+    // on "sending" for 21-36s and then jumped straight to "opus". That jump is what made
+    // Auto look like it was round-tripping somewhere to choose a model. It is not —
+    // classifyComplexity is a pure local function. Announce the handover explicitly.
+    // Best-effort only: telemetry must never break a turn. Contract shared with
+    // tinkerclaw-total-recall's emitTurnPhase and tinker-ui (stream "turn-phase").
+    try {
+      // `getAgentRunContext(runId)` is a LOOKUP by id, not an ambient accessor — calling
+      // it with no argument returns undefined and silently skipped every emit. The hook
+      // context already carries the run id; use it.
+      const runId = ctx.runId;
+      if (runId && sessionKey) {
+        emitAgentEvent({
+          runId,
+          sessionKey,
+          stream: "turn-phase",
+          data: { phase: "model", label: `starting ${event.model || "model"}` },
+        });
+      }
+    } catch {
+      /* never let telemetry break a turn */
+    }
   });
 
   api.on("llm_output", (event: PluginHookLlmOutputEvent, ctx: PluginHookAgentContext) => {
@@ -473,6 +560,35 @@ export default function register(api: OpenClawPluginApi) {
     }
     const sessionKey = ctx.sessionKey || "agent:main:main";
     topology.endSession(sessionKey, event.success, event.durationMs);
+
+    // FORK 2026-08-04 (the architect): close the run HERE, not in `subagent_ended`.
+    //
+    // `subagent_ended` is deliberately deferred behind the completion ANNOUNCE
+    // (src/agents/subagent-registry-lifecycle.ts, `shouldDeferEndedHook`), so it means
+    // "fully wrapped up INCLUDING delivery" and lands 7-8 minutes after the child
+    // actually stopped working (measured 461.7s / 456.5s / 480.7s). That lateness is
+    // correct for its own meaning and WRONG as a liveness clock: `runToNode` derives
+    // completed/failed purely from `endedAt`, so a finished child read as "running"
+    // for minutes and was then flagged by `detectStalls` once it passed
+    // staleThresholdMs (180s) — roughly half of every "Stalled agents detected" list
+    // was a phantom that had already succeeded.
+    //
+    // `subagent_ended` still runs and still records the final delivery outcome; this
+    // only fixes WHEN a run counts as finished. Matched on sessionKey exactly the way
+    // `subagent_ended` matches targetSessionKey — agent_end carries the child's own
+    // key — and the main session matches no run, so this is a no-op there.
+    //
+    // Set unconditionally: a child that is steered REOPENS on its next `llm_input`
+    // (see that hook), and its next agent_end must be able to close it again.
+    for (const [runId, run] of subagentRuns) {
+      if (run.childSessionKey === sessionKey) {
+        run.endedAt = Date.now();
+        run.outcome = { status: event.success ? "ok" : "error" };
+        lastEventTimestamps.set(runId, Date.now());
+        break;
+      }
+    }
+
     // Clear active main after a short delay so the UI poll catches the completed state.
     // Mark as completed first, then clear after 10s.
     const endedModel = topology.getNode(sessionKey);
@@ -657,6 +773,27 @@ export default function register(api: OpenClawPluginApi) {
 
   function rebuildAndBroadcastTree() {
     try {
+      // FORK 2026-08-04 (the architect): evict terminal runs past their retention window BEFORE
+      // building, so no tree the UI ever receives can contain a run the plugin has
+      // already finished with. `subagentRuns` had no delete anywhere in the plugin, so
+      // every subagent since boot stayed a tree child (observed 1 -> 21, never
+      // decreasing) until a gateway restart. This drops the run, its liveness timestamp
+      // and its monitor progress row together — pruning only the run map would relocate
+      // the leak into `nodeProgress` one module over.
+      //
+      // This function IS the monitor tick (monitorTimer at the bottom of register()) and
+      // is also called from the spawn/end hooks, so no separate timer is needed. Its
+      // clock is read here rather than hoisted from the `now` below: hoisting would mean
+      // rewriting an existing line for a sub-millisecond difference nothing observes.
+      const evicted = pruneTerminalRuns({
+        runs: subagentRuns,
+        now: Date.now(),
+        lastEventTimestamps,
+        forgetRun: (runId) => monitor.forgetRun(runId),
+      });
+      if (evicted.length > 0) {
+        log.info?.(`[prefrontal] Pruned ${evicted.length} terminal run(s): ${evicted.join(", ")}`);
+      }
       const runs = Array.from(subagentRuns.values());
       const tree = monitor.buildTree(runs, getPrefrontalSessionKey());
       enrichTreeWithTopology(tree);
@@ -713,13 +850,83 @@ export default function register(api: OpenClawPluginApi) {
   });
 
   api.registerGatewayMethod("prefrontal.status", async ({ respond }) => {
+    // FORK 2026-07-25 (the architect): report the fan-out cap the orchestration runtime actually
+    // enforces (min(16, cores-2), ≥1 — see orchestration-runtime.ts concurrencyCap) so the
+    // Models panel's routing card can justify the parallelism count instead of guessing it.
     respond(true, {
       nodeCount: topology.size,
       changesSinceLastPoll: topology.changes,
       persistPath,
       pollIntervalMs,
       stalenessThresholdMs,
+      cores: os.cpus?.().length ?? 0,
+      concurrencyCap: concurrencyCap(),
+      // FORK 2026-07-25 (the architect): the ORCA card's footer link OPENS this file in the system
+      // viewer, so the panel points at the real policy rather than restating it. Path only —
+      // serving the text would ship a few KB on every budget refresh for nothing.
+      // orca-policy-drift.test.ts pins the file's constants against effort-allocator.ts,
+      // orchestration-runtime.ts and the Conductor, so it can never describe rules we do not run.
+      policyPath: POLICY_PATH,
     });
+  });
+
+  // FORK 2026-07-25 (the architect): the ORCA panel's FAN-OUT section narrates the routing calls
+  // made during a turn. The Conductor (jarvis-icu docs/superpowers/orca-conductor.mjs) appends
+  // one row per routed unit to ~/.openclaw/orca-routes.jsonl; we return the MOST RECENT RUN's
+  // rows, which is the honest reading of "this turn". Cross-repo, so the 10-line reader is
+  // duplicated here rather than imported — fail-to-empty, a missing feed just hides the list.
+  api.registerGatewayMethod("prefrontal.routes", async ({ respond }) => {
+    const file = join(os.homedir(), ".openclaw", "orca-routes.jsonl");
+    let rows: Array<Record<string, unknown>> = [];
+    try {
+      for (const line of readFileSync(file, "utf-8").split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          rows.push(JSON.parse(line));
+        } catch {
+          /* skip a torn line */
+        }
+      }
+    } catch {
+      respond(true, { routes: [] });
+      return;
+    }
+    rows = rows.slice(-64);
+    // Prefer the latest run id; fall back to the trailing slice when the Conductor was
+    // invoked without --run (a manual `plan` call has no run to group by).
+    const lastRun = [...rows].reverse().find((r) => r.run)?.run;
+    const routes = lastRun ? rows.filter((r) => r.run === lastRun) : rows.slice(-8);
+    respond(true, { routes });
+  });
+
+  // FORK 2026-07-26 (the architect): the ORCA panel's fast↔smart dial. The UI owns the position; the
+  // gateway persists it so the Conductor can read it on the NEXT routed run and pick its tier
+  // from it. Written as a tiny JSON file rather than held in memory so it survives a gateway
+  // restart and is readable by the out-of-process conductor CLI.
+  api.registerGatewayMethod("prefrontal.orcaBias", async ({ respond, params }) => {
+    const file = join(os.homedir(), ".openclaw", "orca-bias.json");
+    const raw = (params as { biasIdx?: unknown } | undefined)?.biasIdx;
+    if (raw === undefined) {
+      // read
+      try {
+        respond(true, JSON.parse(readFileSync(file, "utf-8")));
+      } catch {
+        respond(true, { biasIdx: null });
+      }
+      return;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) {
+      respond(false, { error: "biasIdx must be a number" });
+      return;
+    }
+    const biasIdx = Math.max(0, Math.min(6, Math.round(n)));
+    try {
+      writeFileSync(file, JSON.stringify({ biasIdx, ts: Date.now() }) + "\n");
+      respond(true, { biasIdx });
+    } catch (e) {
+      respond(false, { error: String(e) });
+    }
   });
 
   api.registerGatewayMethod("prefrontal.tree", async ({ respond }) => {
@@ -981,13 +1188,23 @@ export default function register(api: OpenClawPluginApi) {
           // FORK 2026-05-31: structured provenance so the panel can name the recipe
           // + confidence in its always-visible summary (previously confidence lived
           // ONLY in the prose "(conf high)" suffix, invisible to the renderer).
+          // FORK 2026-08-28 (the architect: "Every time we use a broca recipe, I would like to see
+          // a particular message in the chat, just a short reminder that we are using it with a
+          // link to its md"). The trail event was already the moment a recipe becomes ACTIVE, but
+          // it named the recipe only by slug — no title to read, no path to open. `recipeTitle` and
+          // `recipePath` come straight off the matched index entry (which resolves the absolute
+          // .md path anyway for lazy step parsing), so the chat can render a one-line notice with
+          // a working `.fs-link` to the recipe's own source of truth.
+          const top = outcome.matches?.[0];
           const matchPayload: Record<string, unknown> = {
             recipeId: kits.join("+") || outcome.intent,
             confidence: outcome.confidence,
-            score: outcome.matches?.[0]?.score,
+            score: top?.score,
             catalogSize: outcome.catalogSize,
             matches: outcome.matches,
             semanticInvoked: outcome.semanticInvoked,
+            ...(top?.title ? { recipeTitle: top.title } : {}),
+            ...(top?.path ? { recipePath: top.path } : {}),
             ...(outcome.recoveredBySemantic
               ? { recoveredBySemantic: outcome.recoveredBySemantic }
               : {}),

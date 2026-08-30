@@ -234,6 +234,16 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 🔄 cyclic-arrow — cycle still draining
     icon: "🔄",
   },
+  queued_behind_turn: {
+    category: "busy",
+    fatal: false,
+    headline: "Message queued behind the current turn",
+    explanation:
+      "A previous turn is still running in this session. Your message is queued and will start automatically when it ends (even if it ends in an error).",
+    suggestedActions: [],
+    // ⏳ hourglass — parked until the running turn releases the lane
+    icon: "⏳",
+  },
   reply_run_already_active: {
     category: "busy",
     fatal: false,

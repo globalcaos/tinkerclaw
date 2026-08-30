@@ -473,6 +473,48 @@ export function getInspectableTaskAuditSummary(): TaskAuditSummary {
   return summarizeTaskAuditFindings(listTaskAuditFindings({ tasks }));
 }
 
+/**
+ * A task that has been silent for this long may still be shown as running in
+ * status displays, but it no longer gets to veto a gateway restart. Guards
+ * against workers that died without a terminal event while their session-store
+ * entry persists on disk (which keeps hasBackingSession() true forever and
+ * would otherwise defer restarts indefinitely).
+ */
+const RESTART_BLOCKING_TASK_STALE_MS = 10 * 60_000;
+
+export type RestartBlockingTaskSummary = { blocking: number; staleIgnored: number };
+
+/**
+ * Restart-gate view of the task registry: how many active tasks should defer a
+ * gateway restart right now. Runs the same reconcile pass as the inspection
+ * summaries first (durable cron recovery + lost-marking still apply), then
+ * splits the remaining queued/running tasks by freshness. Status displays are
+ * intentionally untouched — stale tasks keep showing as running; they just
+ * stop blocking restarts.
+ */
+export function getRestartBlockingTaskSummary(opts?: {
+  now?: number;
+  staleAfterMs?: number;
+}): RestartBlockingTaskSummary {
+  const now = opts?.now ?? Date.now();
+  const staleAfterMs = opts?.staleAfterMs ?? RESTART_BLOCKING_TASK_STALE_MS;
+  let blocking = 0;
+  let staleIgnored = 0;
+  for (const task of reconcileInspectableTasks()) {
+    if (!isActiveTask(task)) {
+      continue;
+    }
+    // Same freshness chain as hasLostGraceExpired.
+    const referenceAt = task.lastEventAt ?? task.startedAt ?? task.createdAt;
+    if (now - referenceAt >= staleAfterMs) {
+      staleIgnored += 1;
+    } else {
+      blocking += 1;
+    }
+  }
+  return { blocking, staleIgnored };
+}
+
 export function reconcileTaskLookupToken(token: string): TaskRecord | undefined {
   taskRegistryMaintenanceRuntime.ensureTaskRegistryReady();
   const task = taskRegistryMaintenanceRuntime.resolveTaskForLookupToken(token);

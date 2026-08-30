@@ -274,16 +274,34 @@ export async function resolveBootstrapContextForRun(params: {
   warn?: (message: string) => void;
   contextMode?: BootstrapContextMode;
   runKind?: BootstrapContextRunKind;
+  /**
+   * FORK 2026-08-24 (the architect: "If a task is in average more than 1 second it should be decomposed
+   * further") — report the two halves of this call separately.
+   *
+   * `bootstrap-files-read` averaged 5,250ms over 121 turns (gateway journal, 14 days) with a p50
+   * of 35ms and a max of 81,866ms. That shape is the whole finding: this is not a steady cost, it
+   * is a rare catastrophic one, and a single number cannot say whether the tail is DISK
+   * (discovering and reading the files) or CPU (truncating and assembling them). The two are
+   * attacked completely differently, so they are measured separately.
+   *
+   * A CALLBACK rather than a runId: this module has no business knowing about runs or event
+   * streams, and the caller already owns both. Optional, so every other caller is unaffected.
+   */
+  onStage?: (stage: string, ms: number) => void;
 }): Promise<{
   bootstrapFiles: WorkspaceBootstrapFile[];
   contextFiles: EmbeddedContextFile[];
 }> {
+  const readStartedAt = Date.now();
   const bootstrapFiles = await resolveBootstrapFilesForRun(params);
+  params.onStage?.("bootstrap-files-discover-read", Date.now() - readStartedAt);
+  const buildStartedAt = Date.now();
   const contextFiles = buildBootstrapContextFiles(bootstrapFiles, {
     maxChars: resolveBootstrapMaxChars(params.config),
     totalMaxChars: resolveBootstrapTotalMaxChars(params.config),
     warn: params.warn,
   });
+  params.onStage?.("bootstrap-files-assemble", Date.now() - buildStartedAt);
   return { bootstrapFiles, contextFiles };
 }
 
