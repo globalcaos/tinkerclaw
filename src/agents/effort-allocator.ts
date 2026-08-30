@@ -224,6 +224,40 @@ function recordAllocation(
   }
 }
 
+// FORK 2026-07-26 (the architect: "when I move the effort level it magically hops to high") —
+// the size heuristic must measure what the USER asked, not the envelope we wrap it in.
+//
+// The Tinker UI appends a fixed ~3,369-character FRACTAL reflection instruction to every
+// single message (app.ts buildInjectedPrompt). allocateEffort buckets on
+// `taskLen < 280 ? low : taskLen < 1200 ? medium : high`, so once that suffix is attached
+// EVERY prompt — a five-word question included — measures >3,300 chars and lands in the
+// `high` bucket. The allocator could not physically choose low or medium from the UI.
+//
+// Measured before this fix in ~/.openclaw/effort-ledger.jsonl: 17 of the last 18
+// allocations were `high`, every one with taskLen 1,300-1,600; the single `medium` had
+// taskLen 289 (a cron, which does not carry the suffix).
+//
+// Rather than hardcode that one boilerplate, strip the standard appended sections: the
+// injected trailer starts at the first section marker we control. Anything left is what
+// the user actually typed.
+const APPENDED_SECTION_MARKERS = [
+  "\n\n---\n\n**After your reply, append",
+  "\n\n---\n\n**After your reply",
+  "🌿 FRACTAL",
+  "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
+];
+/** Length of the user's own request, with our standard injected trailer removed. */
+export function userTaskLength(prompt: string | undefined): number {
+  let text = prompt ?? "";
+  for (const marker of APPENDED_SECTION_MARKERS) {
+    const at = text.indexOf(marker);
+    if (at >= 0) {
+      text = text.slice(0, at);
+    }
+  }
+  return text.trim().length;
+}
+
 /** Entry point for the `?? chooseAutoEffort(...)` tails (true-Auto primary turns only). */
 export function chooseAutoEffort(opts: {
   prompt?: string;
@@ -233,7 +267,7 @@ export function chooseAutoEffort(opts: {
   const nowMs = opts.nowMs ?? Date.now();
   const qp = deriveQuotaPressure(nowMs);
   const calib = readEffortCalibration();
-  const taskLen = (opts.prompt ?? "").length;
+  const taskLen = userTaskLength(opts.prompt);
   const level = allocateEffort({ pressure: qp.pressure, calib, taskLen, tick: memTick++ });
   recordAllocation(
     level,

@@ -11,6 +11,7 @@ import { consumeControlPlaneWriteBudget } from "./control-plane-rate-limit.js";
 import { ADMIN_SCOPE, authorizeOperatorScopesForMethod } from "./method-scopes.js";
 import { ErrorCodes, errorShape } from "./protocol/index.js";
 import { isRoleAuthorizedForMethod, parseGatewayRole } from "./role-policy.js";
+import { noteRpcDispatch, noteRpcRefusal, registerKnownRpcMethods } from "./rpc-observability.js";
 import { agentHandlers } from "./server-methods/agent.js";
 import { agentsHandlers } from "./server-methods/agents.js";
 import { briefingHandlers } from "./server-methods/briefing.js";
@@ -46,6 +47,7 @@ import { pluginHostHookHandlers } from "./server-methods/plugin-host-hooks.js";
 import { pluginProbesHandlers } from "./server-methods/plugin-probes.js";
 import { pushHandlers } from "./server-methods/push.js";
 import { sendHandlers } from "./server-methods/send.js";
+import { sessionAttachmentsHandlers } from "./server-methods/session-attachments.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
 import { sloBurnRateHandlers } from "./server-methods/slo-burn-rate.js";
@@ -165,6 +167,11 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...ttsHandlers,
   ...skillsHandlers,
   ...sessionsHandlers,
+  // FORK 2026-08-18: sessions.attachments / sessions.attachmentStop — the "what is this
+  // session still holding, and stop it" surface. Stopping a run delegates to chat.abort;
+  // stopping a child process signals ONLY a pid re-read from that same call's snapshot.
+  // See server-methods/session-attachments.ts for why there is deliberately no watchdog.
+  ...sessionAttachmentsHandlers,
   ...systemHandlers,
   ...updateHandlers,
   ...nodeHandlers,
@@ -181,12 +188,21 @@ export async function handleGatewayRequest(
   opts: GatewayRequestOptions & { extraHandlers?: GatewayRequestHandlers },
 ): Promise<void> {
   const { req, respond, client, isWebchatConnect, context } = opts;
+  // FORK 2026-08-04 — the ONLY observability the 185-method RPC surface has. Every core and
+  // plugin-registered method funnels through here, so counting happens at this one chokepoint
+  // and nowhere else; see rpc-observability.ts for why, and observability.md for the coverage
+  // measurement that found this surface at 0/185. Registering the known method names here (not
+  // from a list) keeps "never called" honest: the denominator is whatever actually exists.
+  registerKnownRpcMethods(Object.keys(coreGatewayHandlers));
+  if (opts.extraHandlers) registerKnownRpcMethods(Object.keys(opts.extraHandlers));
   const authError = authorizeGatewayMethod(req.method, client);
   if (authError) {
+    noteRpcRefusal(req.method, "auth");
     respond(false, undefined, authError);
     return;
   }
   if (context.unavailableGatewayMethods?.has(req.method)) {
+    noteRpcRefusal(req.method, "unavailable");
     respond(
       false,
       undefined,
@@ -202,6 +218,7 @@ export async function handleGatewayRequest(
     const budget = consumeControlPlaneWriteBudget({ client });
     if (!budget.allowed) {
       const actor = resolveControlPlaneActor(client);
+      noteRpcRefusal(req.method, "rate-limit");
       context.logGateway.warn(
         `control-plane write rate-limited method=${req.method} ${formatControlPlaneActor(actor)} retryAfterMs=${budget.retryAfterMs} key=${budget.key}`,
       );
@@ -226,6 +243,7 @@ export async function handleGatewayRequest(
   }
   const handler = opts.extraHandlers?.[req.method] ?? coreGatewayHandlers[req.method];
   if (!handler) {
+    noteRpcRefusal(req.method, "unknown-method");
     respond(
       false,
       undefined,
@@ -233,6 +251,10 @@ export async function handleGatewayRequest(
     );
     return;
   }
+  // Fired here — after the handler is RESOLVED and before it runs — so the count means "reached
+  // its handler". Firing after `await` would silently undercount every method that throws, which
+  // is precisely the population worth seeing.
+  noteRpcDispatch(req.method);
   const invokeHandler = () =>
     handler({
       req,

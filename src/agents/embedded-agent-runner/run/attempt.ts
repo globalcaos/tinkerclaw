@@ -150,7 +150,11 @@ import {
 import { resolveSystemPromptOverride } from "../../system-prompt-override.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
-import { resolveAgentTimeoutMs } from "../../timeout.js";
+import {
+  resolveAgentActivityGraceMs,
+  resolveAgentMaxRunMs,
+  resolveAgentTimeoutMs,
+} from "../../timeout.js";
 import {
   buildEmptyExplicitToolAllowlistError,
   collectExplicitToolAllowlistSources,
@@ -164,7 +168,7 @@ import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
 import { applyFinalEffectiveToolPolicy } from "../effective-tool-policy.js";
-import { buildEmbeddedExtensionFactories } from "../extensions.js";
+import { buildEmbeddedExtensionFactories, resolveCompactionMode } from "../extensions.js";
 import {
   applyExtraParamsToAgent,
   resolveAgentTransportOverride,
@@ -229,6 +233,7 @@ import { mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import { createEmbeddedAgentSessionWithResourceLoader } from "./attempt-session.js";
 import { evaluateSpawnBudget } from "./spawn-budget.js";
+import { markSpan, turnSpan, turnSpanSync } from "./turn-span.js";
 export { buildContextEnginePromptCacheInfo } from "./attempt.context-engine-helpers.js";
 import {
   resolveAttemptWorkspaceBootstrapRouting,
@@ -317,6 +322,7 @@ import {
   PREEMPTIVE_OVERFLOW_ERROR_TEXT,
   shouldPreemptivelyCompactBeforePrompt,
 } from "./preemptive-compaction.js";
+import { resolveRunTimeoutOnDeadline } from "./run-timeout-policy.js";
 import {
   buildRuntimeContextSystemContext,
   queueRuntimeContextForNextTurn,
@@ -593,11 +599,13 @@ export async function runEmbeddedAttempt(
 
   const sandboxSessionKey =
     params.sandboxSessionKey?.trim() || params.sessionKey?.trim() || params.sessionId;
-  const sandbox = await resolveSandboxContext({
-    config: params.config,
-    sessionKey: sandboxSessionKey,
-    workspaceDir: resolvedWorkspace,
-  });
+  const sandbox = await turnSpan(params.runId, "sandbox", () =>
+    resolveSandboxContext({
+      config: params.config,
+      sessionKey: sandboxSessionKey,
+      workspaceDir: resolvedWorkspace,
+    }),
+  );
   const effectiveWorkspace = sandbox?.enabled
     ? sandbox.workspaceAccess === "rw"
       ? resolvedWorkspace
@@ -621,12 +629,21 @@ export async function runEmbeddedAttempt(
     | ((outcome: "completed" | "aborted" | "error", err?: unknown) => void)
     | undefined;
   try {
-    const { shouldLoadSkillEntries, skillEntries } = resolveEmbeddedRunSkillEntries({
-      workspaceDir: effectiveWorkspace,
-      config: params.config,
-      agentId: sessionAgentId,
-      skillsSnapshot: params.skillsSnapshot,
-    });
+    // FORK 2026-08-23 — the gap that held 41s on one of the architect's turns is HERE, not in
+    // bootstrap. Spanning the three bootstrap awaits measured them at 25ms / 5ms / 6ms while the
+    // gap BEFORE the first one was 3,246ms and 2,714ms on consecutive runs. The only work in
+    // that window is skill resolution and tool-context assembly, and both are SYNCHRONOUS — the
+    // same event-loop-blocking shape as the pack build, which is the defect this whole effort
+    // keeps rediscovering in new clothes. `turnSpanSync` so a blocking stage cannot hide inside
+    // its neighbours.
+    const { shouldLoadSkillEntries, skillEntries } = turnSpanSync(params.runId, "skills-load", () =>
+      resolveEmbeddedRunSkillEntries({
+        workspaceDir: effectiveWorkspace,
+        config: params.config,
+        agentId: sessionAgentId,
+        skillsSnapshot: params.skillsSnapshot,
+      }),
+    );
     restoreSkillEnv = params.skillsSnapshot
       ? applySkillEnvOverridesFromSnapshot({
           snapshot: params.skillsSnapshot,
@@ -637,13 +654,15 @@ export async function runEmbeddedAttempt(
           config: params.config,
         });
 
-    const skillsPrompt = resolveSkillsPromptForRun({
-      skillsSnapshot: params.skillsSnapshot,
-      entries: shouldLoadSkillEntries ? skillEntries : undefined,
-      config: params.config,
-      workspaceDir: effectiveWorkspace,
-      agentId: sessionAgentId,
-    });
+    const skillsPrompt = turnSpanSync(params.runId, "skills-prompt", () =>
+      resolveSkillsPromptForRun({
+        skillsSnapshot: params.skillsSnapshot,
+        entries: shouldLoadSkillEntries ? skillEntries : undefined,
+        config: params.config,
+        workspaceDir: effectiveWorkspace,
+        agentId: sessionAgentId,
+      }),
+    );
 
     const sessionLabel = params.sessionKey ?? params.sessionId;
     const contextInjectionMode = resolveContextInjectionMode(params.config);
@@ -695,112 +714,150 @@ export async function runEmbeddedAttempt(
     const toolsRaw =
       params.disableTools || isRawModelRun
         ? []
-        : (() => {
-            const allTools = createOpenClawCodingTools({
-              agentId: sessionAgentId,
-              ...buildEmbeddedAttemptToolRunContext({ ...params, trace: runTrace }),
-              exec: {
-                ...params.execOverrides,
-                elevated: params.bashElevated,
-              },
-              sandbox,
-              messageProvider: params.messageChannel ?? params.messageProvider,
-              agentAccountId: params.agentAccountId,
-              messageTo: params.messageTo,
-              messageThreadId: params.messageThreadId,
-              groupId: params.groupId,
-              groupChannel: params.groupChannel,
-              groupSpace: params.groupSpace,
-              memberRoleIds: params.memberRoleIds,
-              spawnedBy: params.spawnedBy,
-              senderId: params.senderId,
-              senderName: params.senderName,
-              senderUsername: params.senderUsername,
-              senderE164: params.senderE164,
-              senderIsOwner: params.senderIsOwner,
-              allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
-              sessionKey: sandboxSessionKey,
-              sessionId: params.sessionId,
-              runId: params.runId,
-              agentDir,
-              workspaceDir: effectiveWorkspace,
-              // When sandboxing uses a copied workspace (`ro` or `none`), effectiveWorkspace points
-              // at the sandbox copy. Spawned subagents should inherit the real workspace instead.
-              spawnWorkspaceDir: resolveAttemptSpawnWorkspaceDir({
+        : turnSpanSync(params.runId, "tools-build", () => {
+            // FORK 2026-08-24 — `tools-build` measured p50 3,432ms / p90 5,124ms over n=85 runs,
+            // with a floor of 2,610ms and NOT ONE run under a second. It is now the largest item
+            // on the pre-model path by a factor of four, and it is SYNCHRONOUS, so every
+            // millisecond of it also blocks every other session sharing this event loop.
+            //
+            // Three separate things happen in here and a single number cannot say which. Split
+            // before theorising: the last four attempts to name a cost in this file from source
+            // reading alone were all wrong, and the one that was right was measured.
+            const toolRunContext = turnSpanSync(params.runId, "tools-run-context", () =>
+              buildEmbeddedAttemptToolRunContext({ ...params, trace: runTrace }),
+            );
+            // The argument object is HOISTED into its own span, not passed inline. Evaluating it
+            // runs `resolveAttemptSpawnWorkspaceDir`, `extractModelCompat` and
+            // `resolveModelAuthMode` — real calls that happened inside `tools-build` but outside
+            // every span it contained, which is exactly the blind spot that let 7.2s hide behind
+            // three 0ms children.
+            // Typed from the factory's own parameter rather than left to inference: hoisting the
+            // literal out of the call removed its contextual type, so `onYield`'s parameter became
+            // an implicit any. Naming the type here restores contextual typing for EVERY callback
+            // in the object, including ones added later.
+            const toolFactoryArgs: NonNullable<Parameters<typeof createOpenClawCodingTools>[0]> =
+              turnSpanSync(params.runId, "tools-factory-args", () => ({
+                agentId: sessionAgentId,
+                ...toolRunContext,
+                exec: {
+                  ...params.execOverrides,
+                  elevated: params.bashElevated,
+                },
                 sandbox,
-                resolvedWorkspace,
-              }),
-              config: params.config,
-              abortSignal: runAbortController.signal,
-              modelProvider: params.model.provider,
-              modelId: params.modelId,
-              modelCompat: extractModelCompat(params.model),
-              modelApi: params.model.api,
-              modelContextWindowTokens: params.model.contextWindow,
-              modelAuthMode: resolveModelAuthMode(params.model.provider, params.config),
-              currentChannelId: params.currentChannelId,
-              currentThreadTs: params.currentThreadTs,
-              currentMessageId: params.currentMessageId,
-              replyToMode: params.replyToMode,
-              hasRepliedRef: params.hasRepliedRef,
-              modelHasVision: params.model.input?.includes("image") ?? false,
-              requireExplicitMessageTarget:
-                params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
-              disableMessageTool: params.disableMessageTool,
-              forceMessageTool: params.forceMessageTool,
-              onYield: (message) => {
-                yieldDetected = true;
-                yieldMessage = message;
-                queueYieldInterruptForSession?.();
-                runAbortController.abort("sessions_yield");
-                abortSessionForYield?.();
-              },
-            });
-            return applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow);
-          })();
+                messageProvider: params.messageChannel ?? params.messageProvider,
+                agentAccountId: params.agentAccountId,
+                messageTo: params.messageTo,
+                messageThreadId: params.messageThreadId,
+                groupId: params.groupId,
+                groupChannel: params.groupChannel,
+                groupSpace: params.groupSpace,
+                memberRoleIds: params.memberRoleIds,
+                spawnedBy: params.spawnedBy,
+                senderId: params.senderId,
+                senderName: params.senderName,
+                senderUsername: params.senderUsername,
+                senderE164: params.senderE164,
+                senderIsOwner: params.senderIsOwner,
+                allowGatewaySubagentBinding: params.allowGatewaySubagentBinding,
+                sessionKey: sandboxSessionKey,
+                sessionId: params.sessionId,
+                runId: params.runId,
+                agentDir,
+                workspaceDir: effectiveWorkspace,
+                // When sandboxing uses a copied workspace (`ro` or `none`), effectiveWorkspace points
+                // at the sandbox copy. Spawned subagents should inherit the real workspace instead.
+                spawnWorkspaceDir: resolveAttemptSpawnWorkspaceDir({
+                  sandbox,
+                  resolvedWorkspace,
+                }),
+                config: params.config,
+                abortSignal: runAbortController.signal,
+                modelProvider: params.model.provider,
+                modelId: params.modelId,
+                modelCompat: extractModelCompat(params.model),
+                modelApi: params.model.api,
+                modelContextWindowTokens: params.model.contextWindow,
+                modelAuthMode: resolveModelAuthMode(params.model.provider, params.config),
+                currentChannelId: params.currentChannelId,
+                currentThreadTs: params.currentThreadTs,
+                currentMessageId: params.currentMessageId,
+                replyToMode: params.replyToMode,
+                hasRepliedRef: params.hasRepliedRef,
+                modelHasVision: params.model.input?.includes("image") ?? false,
+                requireExplicitMessageTarget:
+                  params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
+                disableMessageTool: params.disableMessageTool,
+                forceMessageTool: params.forceMessageTool,
+                onYield: (message) => {
+                  yieldDetected = true;
+                  yieldMessage = message;
+                  queueYieldInterruptForSession?.();
+                  runAbortController.abort("sessions_yield");
+                  abortSessionForYield?.();
+                },
+              }));
+            const allTools = createOpenClawCodingTools(toolFactoryArgs);
+            return turnSpanSync(params.runId, "tools-allow", () =>
+              applyEmbeddedAttemptToolsAllow(allTools, params.toolsAllow),
+            );
+          });
     const toolsEnabled = supportsModelTools(params.model);
     const bootstrapHasFileAccess = toolsEnabled && toolsRaw.some((tool) => tool.name === "read");
-    const bootstrapRouting = await resolveAttemptWorkspaceBootstrapRouting({
-      isWorkspaceBootstrapPending,
-      bootstrapContextRunKind: params.bootstrapContextRunKind,
-      trigger: params.trigger,
-      sessionKey: params.sessionKey,
-      isPrimaryRun: isPrimaryBootstrapRun(params.sessionKey),
-      isCanonicalWorkspace: params.isCanonicalWorkspace,
-      effectiveWorkspace,
-      resolvedWorkspace,
-      hasBootstrapFileAccess: bootstrapHasFileAccess,
-    });
+    // FORK 2026-08-23 — the `before:mcp-runtime` gap. Naming the gaps put 41s of a 90s turn
+    // between `sandbox` and `mcp-runtime`, and these three bootstrap awaits are the only work
+    // in that region. Spanned rather than reasoned about: the previous four attempts to name
+    // this region's cost from source were all wrong.
+    const bootstrapRouting = await turnSpan(params.runId, "bootstrap-routing", () =>
+      resolveAttemptWorkspaceBootstrapRouting({
+        isWorkspaceBootstrapPending,
+        bootstrapContextRunKind: params.bootstrapContextRunKind,
+        trigger: params.trigger,
+        sessionKey: params.sessionKey,
+        isPrimaryRun: isPrimaryBootstrapRun(params.sessionKey),
+        isCanonicalWorkspace: params.isCanonicalWorkspace,
+        effectiveWorkspace,
+        resolvedWorkspace,
+        hasBootstrapFileAccess: bootstrapHasFileAccess,
+      }),
+    );
     const bootstrapMode = bootstrapRouting.bootstrapMode;
     const shouldStripBootstrapFromContext = bootstrapRouting.shouldStripBootstrapFromContext;
     const {
       bootstrapFiles: hookAdjustedBootstrapFiles,
       contextFiles: resolvedContextFiles,
       shouldRecordCompletedBootstrapTurn,
-    } = await resolveAttemptBootstrapContext({
-      // modelRun is a provider probe, not an agent turn. Keep AGENTS/BOOTSTRAP
-      // context out even when the gateway is exercising the embedded runtime.
-      contextInjectionMode: isRawModelRun ? "never" : contextInjectionMode,
-      bootstrapContextMode: params.bootstrapContextMode,
-      bootstrapContextRunKind: params.bootstrapContextRunKind ?? "default",
-      bootstrapMode,
-      sessionFile: params.sessionFile,
-      hasCompletedBootstrapTurn,
-      resolveBootstrapContextForRun: async () =>
-        await resolveBootstrapContextForRun({
-          workspaceDir: resolvedWorkspace,
-          config: params.config,
-          sessionKey: params.sessionKey,
-          sessionId: params.sessionId,
-          warn: makeBootstrapWarn({
-            sessionLabel,
-            workspaceDir: resolvedWorkspace,
-            warn: (message) => log.warn(message),
-          }),
-          contextMode: params.bootstrapContextMode,
-          runKind: params.bootstrapContextRunKind,
-        }),
-    });
+    } = await turnSpan(params.runId, "bootstrap-context", () =>
+      resolveAttemptBootstrapContext({
+        // modelRun is a provider probe, not an agent turn. Keep AGENTS/BOOTSTRAP
+        // context out even when the gateway is exercising the embedded runtime.
+        contextInjectionMode: isRawModelRun ? "never" : contextInjectionMode,
+        bootstrapContextMode: params.bootstrapContextMode,
+        bootstrapContextRunKind: params.bootstrapContextRunKind ?? "default",
+        bootstrapMode,
+        sessionFile: params.sessionFile,
+        hasCompletedBootstrapTurn,
+        resolveBootstrapContextForRun: async () =>
+          await turnSpan(params.runId, "bootstrap-files-read", () =>
+            resolveBootstrapContextForRun({
+              workspaceDir: resolvedWorkspace,
+              config: params.config,
+              sessionKey: params.sessionKey,
+              sessionId: params.sessionId,
+              warn: makeBootstrapWarn({
+                sessionLabel,
+                workspaceDir: resolvedWorkspace,
+                warn: (message) => log.warn(message),
+              }),
+              contextMode: params.bootstrapContextMode,
+              runKind: params.bootstrapContextRunKind,
+              // FORK 2026-08-24 — split the 5.2s average (p50 35ms, max 81.9s) into its disk half
+              // and its CPU half. `markSpan` rather than `turnSpan` because the durations are
+              // measured inside the callee, which owns the two seams.
+              onStage: (stage, ms) => markSpan(params.runId, stage, ms),
+            }),
+          ),
+      }),
+    );
     const remappedContextFiles = remapInjectedContextFilesToWorkspace({
       files: resolvedContextFiles,
       sourceWorkspaceDir: resolvedWorkspace,
@@ -882,33 +939,42 @@ export async function runEmbeddedAttempt(
       toolsAllow: params.toolsAllow,
     });
     const bundleMcpSessionRuntime = bundleMcpEnabled
-      ? await getOrCreateSessionMcpRuntime({
-          sessionId: params.sessionId,
-          sessionKey: params.sessionKey,
-          workspaceDir: effectiveWorkspace,
-          cfg: params.config,
-        })
-      : undefined;
-    const bundleMcpRuntime = bundleMcpSessionRuntime
-      ? await materializeBundleMcpToolsForRun({
-          runtime: bundleMcpSessionRuntime,
-          reservedToolNames: [
-            ...tools.map((tool) => tool.name),
-            ...(clientTools?.map((tool) => tool.function.name) ?? []),
-          ],
-        })
-      : undefined;
-    const bundleLspRuntime =
-      toolsEnabled && !isRawModelRun
-        ? await createBundleLspToolRuntime({
+      ? await turnSpan(params.runId, "mcp-runtime", () =>
+          getOrCreateSessionMcpRuntime({
+            sessionId: params.sessionId,
+            sessionKey: params.sessionKey,
             workspaceDir: effectiveWorkspace,
             cfg: params.config,
+          }),
+        )
+      : undefined;
+    const bundleMcpRuntime = bundleMcpSessionRuntime
+      ? await turnSpan(params.runId, "mcp-tools", () =>
+          materializeBundleMcpToolsForRun({
+            runtime: bundleMcpSessionRuntime,
             reservedToolNames: [
               ...tools.map((tool) => tool.name),
               ...(clientTools?.map((tool) => tool.function.name) ?? []),
-              ...(bundleMcpRuntime?.tools.map((tool) => tool.name) ?? []),
             ],
-          })
+            // FORK 2026-08-24 — split the 1.3s average (p50 878ms, n=321) into the servers'
+            // half and ours. See the note on `onStage` in the callee.
+            onStage: (stage, ms) => markSpan(params.runId, stage, ms),
+          }),
+        )
+      : undefined;
+    const bundleLspRuntime =
+      toolsEnabled && !isRawModelRun
+        ? await turnSpan(params.runId, "lsp-runtime", () =>
+            createBundleLspToolRuntime({
+              workspaceDir: effectiveWorkspace,
+              cfg: params.config,
+              reservedToolNames: [
+                ...tools.map((tool) => tool.name),
+                ...(clientTools?.map((tool) => tool.function.name) ?? []),
+                ...(bundleMcpRuntime?.tools.map((tool) => tool.name) ?? []),
+              ],
+            }),
+          )
         : undefined;
     const filteredBundledTools = applyFinalEffectiveToolPolicy({
       bundledTools: [...(bundleMcpRuntime?.tools ?? []), ...(bundleLspRuntime?.tools ?? [])],
@@ -932,6 +998,31 @@ export async function runEmbeddedAttempt(
       warn: (message) => log.warn(message),
     });
     const effectiveTools = [...tools, ...filteredBundledTools];
+    // Char weight of the tool schemas shipped with every request. pi's
+    // estimateTokens() only walks messages, so the preemptive-compaction
+    // precheck further down never counted tool schemas at all. Computed ONCE
+    // here so the precheck never has to re-stringify every schema.
+    // Known under-count — do not paper over it with a fudge factor:
+    // JSON.stringify(parameters) is roughly 65-73% of the real wire payload and
+    // provider-side schema framing is not counted.
+    const effectiveToolSchemaChars = effectiveTools.reduce((sum, tool) => {
+      const meta = tool as {
+        name?: string;
+        description?: string;
+        label?: string;
+        parameters?: unknown;
+      };
+      const summary = meta.description?.trim() || meta.label?.trim() || "";
+      let schemaChars = 0;
+      if (meta.parameters && typeof meta.parameters === "object") {
+        try {
+          schemaChars = JSON.stringify(meta.parameters).length;
+        } catch {
+          schemaChars = 0;
+        }
+      }
+      return sum + (meta.name?.length ?? 0) + summary.length + schemaChars;
+    }, 0);
     const allowedToolNames = collectAllowedToolNames({
       tools: effectiveTools,
       clientTools,
@@ -1122,48 +1213,52 @@ export async function runEmbeddedAttempt(
         context: promptContributionContext,
       });
 
-    const builtAppendPrompt =
-      resolveSystemPromptOverride({
-        config: params.config,
-        agentId: sessionAgentId,
-      }) ??
-      buildEmbeddedSystemPrompt({
-        workspaceDir: effectiveWorkspace,
-        defaultThinkLevel: params.thinkLevel,
-        reasoningLevel: params.reasoningLevel ?? "off",
-        extraSystemPrompt: params.extraSystemPrompt,
-        ownerNumbers: params.ownerNumbers,
-        ownerDisplay: ownerDisplay.ownerDisplay,
-        ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
-        reasoningTagHint,
-        heartbeatPrompt,
-        skillsPrompt: effectiveSkillsPrompt,
-        docsPath: openClawReferences.docsPath ?? undefined,
-        sourcePath: openClawReferences.sourcePath ?? undefined,
-        ttsHint,
-        workspaceNotes: workspaceNotes?.length ? workspaceNotes : undefined,
-        reactionGuidance,
-        promptMode: effectivePromptMode,
-        sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
-        silentReplyPromptMode: params.silentReplyPromptMode,
-        acpEnabled: isAcpRuntimeSpawnAvailable({
+    const builtAppendPrompt = turnSpanSync(
+      params.runId,
+      "system-prompt-build",
+      () =>
+        resolveSystemPromptOverride({
           config: params.config,
-          sandboxed: sandboxInfo?.enabled === true,
+          agentId: sessionAgentId,
+        }) ??
+        buildEmbeddedSystemPrompt({
+          workspaceDir: effectiveWorkspace,
+          defaultThinkLevel: params.thinkLevel,
+          reasoningLevel: params.reasoningLevel ?? "off",
+          extraSystemPrompt: params.extraSystemPrompt,
+          ownerNumbers: params.ownerNumbers,
+          ownerDisplay: ownerDisplay.ownerDisplay,
+          ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
+          reasoningTagHint,
+          heartbeatPrompt,
+          skillsPrompt: effectiveSkillsPrompt,
+          docsPath: openClawReferences.docsPath ?? undefined,
+          sourcePath: openClawReferences.sourcePath ?? undefined,
+          ttsHint,
+          workspaceNotes: workspaceNotes?.length ? workspaceNotes : undefined,
+          reactionGuidance,
+          promptMode: effectivePromptMode,
+          sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,
+          silentReplyPromptMode: params.silentReplyPromptMode,
+          acpEnabled: isAcpRuntimeSpawnAvailable({
+            config: params.config,
+            sandboxed: sandboxInfo?.enabled === true,
+          }),
+          nativeCommandGuidanceLines: listRegisteredPluginAgentPromptGuidance(),
+          runtimeInfo,
+          messageToolHints,
+          sandboxInfo,
+          tools: effectiveTools,
+          modelAliasLines: buildModelAliasLines(params.config),
+          userTimezone,
+          userTime,
+          userTimeFormat,
+          contextFiles,
+          includeMemorySection: !activeContextEngine || activeContextEngine.info.id === "legacy",
+          memoryCitationsMode: params.config?.memory?.citations,
+          promptContribution,
         }),
-        nativeCommandGuidanceLines: listRegisteredPluginAgentPromptGuidance(),
-        runtimeInfo,
-        messageToolHints,
-        sandboxInfo,
-        tools: effectiveTools,
-        modelAliasLines: buildModelAliasLines(params.config),
-        userTimezone,
-        userTime,
-        userTimeFormat,
-        contextFiles,
-        includeMemorySection: !activeContextEngine || activeContextEngine.info.id === "legacy",
-        memoryCitationsMode: params.config?.memory?.citations,
-        promptContribution,
-      });
+    );
     const appendPrompt = isRawModelRun
       ? ""
       : transformProviderSystemPrompt({
@@ -1218,15 +1313,17 @@ export async function runEmbeddedAttempt(
     // Keep the session lock scoped to transcript/session mutations. Cold plugin
     // and tool setup can be slow, and holding the lock there blocks CLI fallback
     // from taking over the same session when a gateway run stalls before model I/O.
-    const sessionLock = await acquireSessionWriteLock({
-      sessionFile: params.sessionFile,
-      maxHoldMs: resolveSessionLockMaxHoldFromTimeout({
-        timeoutMs: resolveRunTimeoutWithCompactionGraceMs({
-          runTimeoutMs: params.timeoutMs,
-          compactionTimeoutMs: resolveCompactionTimeoutMs(params.config),
+    const sessionLock = await turnSpan(params.runId, "session-lock", () =>
+      acquireSessionWriteLock({
+        sessionFile: params.sessionFile,
+        maxHoldMs: resolveSessionLockMaxHoldFromTimeout({
+          timeoutMs: resolveRunTimeoutWithCompactionGraceMs({
+            runTimeoutMs: params.timeoutMs,
+            compactionTimeoutMs: resolveCompactionTimeoutMs(params.config),
+          }),
         }),
       }),
-    });
+    );
 
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
@@ -1234,10 +1331,12 @@ export async function runEmbeddedAttempt(
     let trajectoryRecorder: ReturnType<typeof createTrajectoryRuntimeRecorder> | null = null;
     let trajectoryEndRecorded = false;
     try {
-      await repairSessionFileIfNeeded({
-        sessionFile: params.sessionFile,
-        warn: (message) => log.warn(message),
-      });
+      await turnSpan(params.runId, "session-repair", () =>
+        repairSessionFileIfNeeded({
+          sessionFile: params.sessionFile,
+          warn: (message) => log.warn(message),
+        }),
+      );
       const hadSessionFile = await fs
         .stat(params.sessionFile)
         .then(() => true)
@@ -1252,8 +1351,13 @@ export async function runEmbeddedAttempt(
         env: process.env,
       });
 
-      await prewarmSessionFile(params.sessionFile);
-      sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
+      await turnSpan(params.runId, "session-prewarm", () => prewarmSessionFile(params.sessionFile));
+      // SYNC and on the loop: measured at 99ms on a quiet turn, and it grows with the
+      // transcript. Spanned with the sync variant so it cannot hide inside its neighbours.
+      const openedSessionManager = turnSpanSync(params.runId, "session-open", () =>
+        SessionManager.open(params.sessionFile),
+      );
+      sessionManager = guardSessionManager(openedSessionManager, {
         agentId: sessionAgentId,
         sessionKey: params.sessionKey,
         config: params.config,
@@ -1270,39 +1374,43 @@ export async function runEmbeddedAttempt(
       });
       trackSessionManagerAccess(params.sessionFile);
 
-      await runAttemptContextEngineBootstrap({
-        hadSessionFile,
-        contextEngine: activeContextEngine,
-        sessionId: params.sessionId,
-        sessionKey: params.sessionKey,
-        sessionFile: params.sessionFile,
-        sessionManager,
-        runtimeContext: buildAfterTurnRuntimeContext({
-          attempt: params,
-          workspaceDir: effectiveWorkspace,
-          agentDir,
-          tokenBudget: params.contextTokenBudget,
-        }),
-        runMaintenance: async (contextParams) =>
-          await runContextEngineMaintenance({
-            contextEngine: contextParams.contextEngine as never,
-            sessionId: contextParams.sessionId,
-            sessionKey: contextParams.sessionKey,
-            sessionFile: contextParams.sessionFile,
-            reason: contextParams.reason,
-            sessionManager: contextParams.sessionManager as never,
-            runtimeContext: contextParams.runtimeContext,
+      await turnSpan(params.runId, "context-bootstrap", () =>
+        runAttemptContextEngineBootstrap({
+          hadSessionFile,
+          contextEngine: activeContextEngine,
+          sessionId: params.sessionId,
+          sessionKey: params.sessionKey,
+          sessionFile: params.sessionFile,
+          sessionManager,
+          runtimeContext: buildAfterTurnRuntimeContext({
+            attempt: params,
+            workspaceDir: effectiveWorkspace,
+            agentDir,
+            tokenBudget: params.contextTokenBudget,
           }),
-        warn: (message) => log.warn(message),
-      });
+          runMaintenance: async (contextParams) =>
+            await runContextEngineMaintenance({
+              contextEngine: contextParams.contextEngine as never,
+              sessionId: contextParams.sessionId,
+              sessionKey: contextParams.sessionKey,
+              sessionFile: contextParams.sessionFile,
+              reason: contextParams.reason,
+              sessionManager: contextParams.sessionManager as never,
+              runtimeContext: contextParams.runtimeContext,
+            }),
+          warn: (message) => log.warn(message),
+        }),
+      );
 
-      await prepareSessionManagerForRun({
-        sessionManager,
-        sessionFile: params.sessionFile,
-        hadSessionFile,
-        sessionId: params.sessionId,
-        cwd: effectiveWorkspace,
-      });
+      await turnSpan(params.runId, "session-manager-prepare", () =>
+        prepareSessionManagerForRun({
+          sessionManager,
+          sessionFile: params.sessionFile,
+          hadSessionFile,
+          sessionId: params.sessionId,
+          cwd: effectiveWorkspace,
+        }),
+      );
 
       const settingsManager = createPreparedEmbeddedPiSettingsManager({
         cwd: effectiveWorkspace,
@@ -1310,10 +1418,14 @@ export async function runEmbeddedAttempt(
         cfg: params.config,
         contextTokenBudget: params.contextTokenBudget,
       });
-      applyPiAutoCompactionGuard({
+      // FORK 2026-07-28: hoisted so the post-reload re-application below is provably the
+      // SAME call. reload() discards applyOverrides mutations; see the guard's JSDoc.
+      const piAutoCompactionGuardArgs = {
         settingsManager,
         contextEngineInfo: activeContextEngine?.info,
-      });
+        compactionMode: resolveCompactionMode(params.config),
+      };
+      applyPiAutoCompactionGuard(piAutoCompactionGuardArgs);
 
       // Sets compaction/pruning runtime state and returns extension factories
       // that must be passed to the resource loader for the safeguard to be active.
@@ -1330,7 +1442,7 @@ export async function runEmbeddedAttempt(
         settingsManager,
         extensionFactories,
       });
-      await resourceLoader.reload();
+      await turnSpan(params.runId, "resource-reload", () => resourceLoader.reload());
       // DefaultResourceLoader.reload() rehydrates settings from disk and can drop OpenClaw
       // compaction overrides applied in createPreparedEmbeddedPiSettingsManager.
       applyPiCompactionSettingsFromConfig({
@@ -1338,6 +1450,11 @@ export async function runEmbeddedAttempt(
         cfg: params.config,
         contextTokenBudget: params.contextTokenBudget,
       });
+      // FORK 2026-07-28: the auto-compaction guard is an applyOverrides mutation on the
+      // MERGED settings, so reload() wipes it exactly like the reserve/keepRecent overrides
+      // above. Re-applying is mandatory — without it pi's decider comes back to life
+      // mid-attempt and resumes compacting on the turn-aggregate usage field.
+      applyPiAutoCompactionGuard(piAutoCompactionGuardArgs);
 
       // Get hook runner early so it's available when creating tools
       const hookRunner = getGlobalHookRunner();
@@ -1856,6 +1973,16 @@ export async function runEmbeddedAttempt(
 
       let idleTimeoutTrigger: ((error: Error) => void) | undefined;
 
+      // Sliding wall-clock timeout support: track the last real agent event
+      // (stream token, tool result, assistant message start) so the run abort
+      // timer can distinguish an actively-working turn from a silent hang.
+      // Bumped only on real events, never on a timer.
+      const runStartedAtMs = Date.now();
+      let lastActivityAtMs = runStartedAtMs;
+      const bumpRunActivity = () => {
+        lastActivityAtMs = Date.now();
+      };
+
       // Wrap stream with idle timeout detection
       const configuredRunTimeoutMs = resolveAgentTimeoutMs({
         cfg: params.config,
@@ -1879,6 +2006,7 @@ export async function runEmbeddedAttempt(
           activeSession.agent.streamFn,
           idleTimeoutMs,
           (error) => idleTimeoutTrigger?.(error),
+          bumpRunActivity,
         );
       }
       let diagnosticModelCallSeq = 0;
@@ -2126,6 +2254,7 @@ export async function runEmbeddedAttempt(
           shouldEmitToolResult: params.shouldEmitToolResult,
           shouldEmitToolOutput: params.shouldEmitToolOutput,
           onToolResult: (payload: Parameters<NonNullable<typeof params.onToolResult>>[0]) => {
+            bumpRunActivity();
             const result = params.onToolResult?.(payload);
             checkSpawnBudget();
             return result;
@@ -2138,6 +2267,7 @@ export async function runEmbeddedAttempt(
           blockReplyChunking: params.blockReplyChunking,
           onPartialReply: params.onPartialReply,
           onAssistantMessageStart: () => {
+            bumpRunActivity();
             const result = params.onAssistantMessageStart?.();
             checkSpawnBudget();
             return result;
@@ -2165,6 +2295,7 @@ export async function runEmbeddedAttempt(
         unsubscribe,
         waitForCompactionRetry,
         isCompactionInFlight,
+        isCompacting,
         getItemLifecycle,
         getMessagingToolSentTexts,
         getMessagingToolSentMediaUrls,
@@ -2234,11 +2365,37 @@ export async function runEmbeddedAttempt(
       let abortWarnTimer: NodeJS.Timeout | undefined;
       const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
       const compactionTimeoutMs = resolveCompactionTimeoutMs(params.config);
+      const activityGraceMs = resolveAgentActivityGraceMs(params.config);
+      const runHardCapMs = resolveAgentMaxRunMs(params.config);
       let abortTimer: NodeJS.Timeout | undefined;
       let compactionGraceUsed = false;
-      const scheduleAbortTimer = (delayMs: number, reason: "initial" | "compaction-grace") => {
+      const scheduleAbortTimer = (
+        delayMs: number,
+        reason: "initial" | "activity-extend" | "compaction-grace",
+      ) => {
         abortTimer = setTimeout(
           () => {
+            // Sliding wall-clock: a run with recent stream/tool activity is still
+            // working — extend the deadline (bounded by the hard cap) instead of
+            // killing an actively-working agentic turn. Silent runs fall through
+            // to the legacy timeout path (incl. compaction grace) unchanged.
+            const nowMs = Date.now();
+            const deadlineAction = resolveRunTimeoutOnDeadline({
+              nowMs,
+              lastActivityAtMs,
+              activityGraceMs,
+              runStartedAtMs,
+              hardCapMs: runHardCapMs,
+            });
+            if (deadlineAction.action === "extend") {
+              if (!isProbeSession) {
+                log.info(
+                  `embedded run timeout deferred by recent activity: runId=${params.runId} sessionId=${params.sessionId} elapsedMs=${nowMs - runStartedAtMs} silenceMs=${nowMs - lastActivityAtMs} extendMs=${deadlineAction.extendMs}`,
+                );
+              }
+              scheduleAbortTimer(deadlineAction.extendMs, "activity-extend");
+              return;
+            }
             const timeoutAction = resolveRunTimeoutDuringCompaction({
               isCompactionPendingOrRetrying: subscription.isCompacting(),
               isCompactionInFlight: activeSession.isCompacting,
@@ -2676,6 +2833,7 @@ export async function runEmbeddedAttempt(
             messages: activeSession.messages,
             unwindowedMessages: unwindowedContextEngineMessagesForPrecheck,
             systemPrompt: systemPromptText,
+            toolSchemaChars: effectiveToolSchemaChars,
             prompt: effectivePrompt,
             contextTokenBudget,
             reserveTokens,
@@ -2964,7 +3122,13 @@ export async function runEmbeddedAttempt(
         // Only trust snapshot if compaction wasn't running before or after capture
         const preCompactionSnapshot = wasCompactingBefore || wasCompactingAfter ? null : snapshot;
         const preCompactionSessionId = activeSession.sessionId;
-        const COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS = 60_000;
+        const COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS = 180_000;
+        // A hung IN-FLIGHT compaction (its LLM summarize call never returns)
+        // must not extend the wait forever: past this cap the compaction is
+        // aborted and the attempt proceeds on the pre-compaction snapshot, so
+        // an already-completed answer survives instead of dying with the run
+        // at the run-level timeout (2026-07-22 stuck-tabs incident).
+        const COMPACTION_INFLIGHT_HARD_CAP_MS = 540_000;
 
         try {
           // Flush buffered block replies before waiting for compaction so the
@@ -2978,19 +3142,26 @@ export async function runEmbeddedAttempt(
           // Skip compaction wait when yield aborted the run — the signal is
           // already tripped and abortable() would immediately reject.
           const compactionRetryWait = yieldAborted
-            ? { timedOut: false }
+            ? { timedOut: false, timedOutWhileInFlight: false }
             : await waitForCompactionRetryWithAggregateTimeout({
                 waitForCompactionRetry,
                 abortable,
                 aggregateTimeoutMs: COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS,
-                isCompactionStillInFlight: isCompactionInFlight,
+                isCompactionStillInFlight: isCompacting,
+                inflightHardCapMs: COMPACTION_INFLIGHT_HARD_CAP_MS,
+                // No-op unless a compaction is actually running; cancels the
+                // hung summarize call so the lane frees instead of dangling.
+                onTimeout: abortCompaction,
               });
           if (compactionRetryWait.timedOut) {
             timedOutDuringCompaction = true;
             if (!isProbeSession) {
               log.warn(
-                `compaction retry aggregate timeout (${COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS}ms): ` +
-                  `proceeding with pre-compaction state runId=${params.runId} sessionId=${params.sessionId}`,
+                `compaction retry aggregate timeout (${COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS}ms` +
+                  (compactionRetryWait.timedOutWhileInFlight
+                    ? `; in-flight hard cap ${COMPACTION_INFLIGHT_HARD_CAP_MS}ms hit — hung compaction aborted`
+                    : "") +
+                  `): proceeding with pre-compaction state runId=${params.runId} sessionId=${params.sessionId}`,
               );
             }
           }
@@ -3453,6 +3624,7 @@ export async function runEmbeddedAttempt(
           systemPromptReport,
           provider: params.provider,
           modelId: params.modelId,
+          thinkLevel: params.thinkLevel,
           contextWindowTokens:
             params.model.contextWindow ?? params.model.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
           getCompactionCount,

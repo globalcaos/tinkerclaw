@@ -32,7 +32,7 @@ parallelism:
     subagents via the kit-runner. The single step below documents the contract.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-8"
+  name: "claude-opus-5"
   hosting: "cloud API"
 resolverHints:
   [

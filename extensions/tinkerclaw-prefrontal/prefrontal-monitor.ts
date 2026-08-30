@@ -44,6 +44,12 @@ export interface PrefrontalMonitor {
   getTreeState(sessionFilter?: string): PrefrontalTreeResponse;
   /** Set the active main session so we always show a root node when LLM is active. */
   setActiveMain(info: ActiveMainSession | null): void;
+  /** FORK 2026-08-04 (the architect): drop the per-node state for a run the caller has evicted
+   * (see subagent-run-prune.ts). `nodeProgress` is keyed by runId and was never deleted,
+   * so pruning only index.ts's run map would relocate the unbounded growth here rather
+   * than end it. Purely additive — every consumer builds through createPrefrontalMonitor,
+   * nothing in the repo hand-implements this interface. */
+  forgetRun(runId: string): void;
 }
 
 export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMonitor {
@@ -206,5 +212,12 @@ export function createPrefrontalMonitor(config: PrefrontalConfig): PrefrontalMon
     activeMain = info;
   }
 
-  return { buildTree, detectStalls, updateNodeProgress, getTreeState, setActiveMain };
+  function forgetRun(runId: string): void {
+    // Only nodeProgress needs clearing: `currentTree` is reassigned wholesale by the
+    // next buildTree(), which runs in the same synchronous block as the prune that
+    // called us, so no caller can ever observe a cached tree holding an evicted run.
+    nodeProgress.delete(runId);
+  }
+
+  return { buildTree, detectStalls, updateNodeProgress, getTreeState, setActiveMain, forgetRun };
 }

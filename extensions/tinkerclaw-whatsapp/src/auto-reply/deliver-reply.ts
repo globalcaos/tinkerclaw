@@ -28,6 +28,7 @@ import { convertMarkdownTables } from "../text-runtime.js";
 import { markdownToWhatsApp } from "../text-runtime.js";
 import { getRuntimeConfig } from "./config.runtime.js";
 import { whatsappOutboundLog } from "./loggers.js";
+import { stripHtmlRenderBlocks } from "./strip-html-render.js";
 import type { WebInboundMsg } from "./types.js";
 import { elide } from "./util.js";
 
@@ -70,7 +71,11 @@ export async function deliverWebReply(params: {
   // global → DEFAULT_OUTBOUND_PREFIX) so config edits land without restart.
   const personaPrefix = resolveOutboundPrefix(getRuntimeConfig(), msg.accountId);
   const decoratedText = applyOutboundPrefix(normalizedReply.text, personaPrefix);
-  const convertedText = markdownToWhatsApp(convertMarkdownTables(decoratedText, tableMode));
+  // FORK 2026-08-30: ```html-render is a Tinker-chat-only fence — on WhatsApp it
+  // arrives as raw tags. Convert it to plain text BEFORE the markdown→WA pass so
+  // the card's words survive but no markup ever ships.
+  const renderSafeText = stripHtmlRenderBlocks(decoratedText);
+  const convertedText = markdownToWhatsApp(convertMarkdownTables(renderSafeText, tableMode));
   const textChunks = chunkMarkdownTextWithMode(convertedText, textLimit, chunkMode);
   const mediaList = normalizedReply.mediaUrls ?? [];
 

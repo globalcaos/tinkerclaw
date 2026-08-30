@@ -78,10 +78,17 @@ export async function buildSituation(
     getTargetSize(targetId, targetType),
   ]);
 
-  const [recentCommits, recentAuthors] = await Promise.all([
-    gitCache.getRecentCommits(targetId, 72),
-    gitCache.getRecentAuthors(targetId, 72),
-  ]);
+  // Same guard as getTargetAgeHours/getTargetSize above. classifyTargetType
+  // falls back to "file" for anything containing a ".", so a Bash command like
+  // `grep -c foo bar.md` classifies as a file and used to be handed to git as a
+  // path — see 2026-08-05, when that path reached a shell and launched Orca.
+  const [recentCommits, recentAuthors] =
+    targetType === "file"
+      ? await Promise.all([
+          gitCache.getRecentCommits(targetId, 72),
+          gitCache.getRecentAuthors(targetId, 72),
+        ])
+      : [0, 0];
 
   const lastHumanRef = getLastHumanReference(targetId, context.recentTranscripts);
   const recentCorrections = context.correctionCount24h;

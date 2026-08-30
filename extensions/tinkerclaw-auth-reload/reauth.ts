@@ -7,17 +7,17 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
+import type { AuthProfileStore } from "openclaw/plugin-sdk/agent-runtime";
+import { clearAuthProfileCooldown } from "openclaw/plugin-sdk/agent-runtime";
 import {
   resolveCredentialFilePath,
   writeCredentialFile,
-} from "../../src/agents/auth-profiles/credential-file.js";
+} from "openclaw/plugin-sdk/fork-auth-admin";
+import { loadConfig } from "openclaw/plugin-sdk/memory-core-host-runtime-core";
 import {
   ensureAuthProfileStore,
   updateAuthProfileStoreWithLock,
-} from "../../src/agents/auth-profiles/store.js";
-import type { AuthProfileStore } from "../../src/agents/auth-profiles/types.js";
-import { clearAuthProfileCooldown } from "../../src/agents/auth-profiles/usage.js";
-import { loadConfig } from "../../src/config/config.js";
+} from "openclaw/plugin-sdk/provider-auth";
 import { getBroadcast } from "./watcher.js";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";

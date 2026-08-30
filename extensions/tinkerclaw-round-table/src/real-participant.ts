@@ -19,7 +19,7 @@ export type Phase = "propose" | "challenge" | "defend" | "synthesize" | "ratify"
 // so the researcher role substitutes openai/o3 (closest math/code/CoT reasoner),
 // keeping a 3-vendor spread (Anthropic + OpenAI + Google).
 const ROLE_MODEL: Record<string, string> = {
-  architect: "claude-code/claude-opus-4-8",
+  architect: "claude-code/claude-opus-5",
   critic: "openai/gpt-5.3-codex",
   pragmatist: "google/gemini-3.1-pro-preview",
   researcher: "openai/o3",

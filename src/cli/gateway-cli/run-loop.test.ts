@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatewayBonjourBeacon } from "../../infra/bonjour-discovery.js";
 import { pickBeaconHost, pickGatewayPort } from "./discover.js";
 
@@ -50,7 +50,10 @@ const abortEmbeddedPiRun = vi.fn(
 const getActiveEmbeddedRunCount = vi.fn(() => 0);
 const waitForActiveEmbeddedRuns = vi.fn(async (_timeoutMs?: number) => ({ drained: true }));
 const DRAIN_TIMEOUT_LOG = "drain timeout reached; proceeding with restart";
-const loadConfig = vi.fn(() => ({
+// `gateway.reload` and `deferralTimeoutMs` are both optional in the real schema
+// (see config/zod-schema.ts), so the mock's type has to allow their absence —
+// an unconfigured drain is a case the shutdown path must handle.
+const loadConfig = vi.fn<() => { gateway: { reload?: { deferralTimeoutMs?: number } } }>(() => ({
   gateway: {
     reload: {
       deferralTimeoutMs: 90_000,
@@ -251,6 +254,17 @@ async function createSignaledLoopHarness(exitCallOrder?: string[]) {
 }
 
 describe("runGatewayLoop", () => {
+  // These cases assert drain budgets, which are now clamped to the supervisor's
+  // stop budget. Pin a generous supervisor budget so the pre-existing cases keep
+  // exercising their configured drain rather than the clamp.
+  beforeEach(() => {
+    process.env.OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS = "600000";
+  });
+  afterEach(() => {
+    delete process.env.OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS;
+    loadConfig.mockReturnValue({ gateway: { reload: { deferralTimeoutMs: 90_000 } } });
+  });
+
   it("exits 0 on SIGTERM after graceful close", async () => {
     vi.clearAllMocks();
 
@@ -319,6 +333,64 @@ describe("runGatewayLoop", () => {
         reason: "gateway stopping",
         restartExpectedMs: null,
       });
+    });
+  });
+
+  // The supervisor SIGKILLs the process once its stop budget expires, so any
+  // drain the gateway grants itself beyond that budget is time it never gets.
+  // See the 2026-08-11 incident: a 900s configured drain against a 120s
+  // systemd TimeoutStopSec ended every restart in `status=9/KILL`.
+  const driveRestartDrain = async (captureSignal: (signal: LoopSignal) => () => void) => {
+    const { runtime, exited } = createRuntimeWithExitSignal();
+    const start = vi.fn().mockResolvedValue({ close: vi.fn(async () => {}) });
+    const { runGatewayLoop } = await import("./run-loop.js");
+    void runGatewayLoop({
+      start: start as unknown as Parameters<typeof runGatewayLoop>[0]["start"],
+      runtime: runtime as unknown as Parameters<typeof runGatewayLoop>[0]["runtime"],
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const sigterm = captureSignal("SIGTERM");
+    const sigint = captureSignal("SIGINT");
+    sigterm();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return { sigint, exited };
+  };
+
+  it("clamps a configured restart drain that exceeds the supervisor stop budget", async () => {
+    vi.clearAllMocks();
+    process.env.OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS = "120000";
+    loadConfig.mockReturnValue({ gateway: { reload: { deferralTimeoutMs: 900_000 } } });
+    consumeGatewayRestartIntentSync.mockReturnValueOnce(true);
+    getActiveTaskCount.mockReturnValueOnce(1).mockReturnValue(0);
+
+    await withIsolatedSignals(async ({ captureSignal }) => {
+      const { sigint, exited } = await driveRestartDrain(captureSignal);
+
+      // 120s supervisor budget - 5s kill margin - 5s close reserve.
+      expect(waitForActiveTasks).toHaveBeenCalledWith(110_000);
+      expect(gatewayLog.warn).toHaveBeenCalledWith(expect.stringContaining("clamping"));
+
+      sigint();
+      await expect(exited).resolves.toBe(0);
+    });
+  });
+
+  it("bounds an unconfigured restart drain instead of waiting indefinitely", async () => {
+    vi.clearAllMocks();
+    process.env.OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS = "120000";
+    loadConfig.mockReturnValue({ gateway: {} });
+    consumeGatewayRestartIntentSync.mockReturnValueOnce(true);
+    getActiveTaskCount.mockReturnValueOnce(1).mockReturnValue(0);
+
+    await withIsolatedSignals(async ({ captureSignal }) => {
+      const { sigint, exited } = await driveRestartDrain(captureSignal);
+
+      expect(waitForActiveTasks).toHaveBeenCalledWith(110_000);
+      expect(waitForActiveTasks).not.toHaveBeenCalledWith(undefined);
+
+      sigint();
+      await expect(exited).resolves.toBe(0);
     });
   });
 
@@ -756,5 +828,39 @@ describe("gateway discover routing helpers", () => {
     };
     expect(pickBeaconHost(beacon)).toBeNull();
     expect(pickGatewayPort(beacon)).toBeNull();
+  });
+});
+
+describe("shutdown budgets", () => {
+  it("keeps the in-process watchdog strictly below the supervisor stop budget", async () => {
+    const { resolveShutdownBudgetsMs } = await import("./run-loop.js");
+    const { shutdownTimeoutMs, maxRestartDrainMs } = resolveShutdownBudgetsMs(120_000);
+    expect(shutdownTimeoutMs).toBeLessThan(120_000);
+    expect(maxRestartDrainMs).toBeLessThan(shutdownTimeoutMs);
+  });
+
+  it("never yields a negative budget for a very small supervisor stop budget", async () => {
+    const { resolveShutdownBudgetsMs } = await import("./run-loop.js");
+    const { shutdownTimeoutMs, maxRestartDrainMs } = resolveShutdownBudgetsMs(1_000);
+    expect(shutdownTimeoutMs).toBeGreaterThan(0);
+    expect(maxRestartDrainMs).toBeGreaterThanOrEqual(0);
+  });
+
+  // Anti-drift guard: the runtime's idea of the supervisor budget and the value
+  // actually written into the generated unit are the same number, in one place.
+  it("defaults to the stop timeout written into the generated systemd unit", async () => {
+    const { resolveSupervisorStopTimeoutMs } = await import("./run-loop.js");
+    const { SERVICE_STOP_TIMEOUT_SEC } = await import("../../daemon/systemd-unit.js");
+    expect(resolveSupervisorStopTimeoutMs({})).toBe(SERVICE_STOP_TIMEOUT_SEC * 1_000);
+  });
+
+  it("prefers an explicit supervisor stop budget from the environment", async () => {
+    const { resolveSupervisorStopTimeoutMs } = await import("./run-loop.js");
+    expect(resolveSupervisorStopTimeoutMs({ OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS: "120000" })).toBe(
+      120_000,
+    );
+    expect(resolveSupervisorStopTimeoutMs({ OPENCLAW_SUPERVISOR_STOP_TIMEOUT_MS: "nope" })).toBe(
+      resolveSupervisorStopTimeoutMs({}),
+    );
   });
 });

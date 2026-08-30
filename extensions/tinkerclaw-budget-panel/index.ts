@@ -7,18 +7,18 @@
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { getRateLimitSnapshot } from "../../src/agents/anthropic-ratelimit-store.js";
 import {
   resolveApiKeyForProfile,
   ensureAuthProfileStore,
   saveAuthProfileStore,
-} from "../../src/agents/auth-profiles.js";
+} from "openclaw/plugin-sdk/agent-runtime";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   resolveCredentialFilePath,
   writeCredentialFile,
-} from "../../src/agents/auth-profiles/credential-file.js";
-import { setUsageSnapshot } from "../../src/infra/usage-snapshot-store.js";
+} from "openclaw/plugin-sdk/fork-auth-admin";
+import { getRateLimitSnapshot } from "openclaw/plugin-sdk/fork-usage-metrics";
+import { setUsageSnapshot } from "openclaw/plugin-sdk/fork-usage-metrics";
 
 /** Anthropic OAuth profile IDs to poll for usage. */
 const USAGE_PROFILES: Record<string, string> = {
@@ -279,16 +279,169 @@ async function fetchAllClaudeUsage(
   return result;
 }
 
+/** FORK: the ONE parser for every provider timestamp that reaches the usage snapshot.
+ *  Anthropic (`resets_at`), xAI (`currentPeriod.end`) and Codex (`resets_at`) all hand us
+ *  ISO-8601 strings. Hoisted out of publishUsageSnapshot on 2026-08-29 so the non-Anthropic
+ *  producers below cannot grow a second, subtly-different parser. */
+function isoToMs(s: unknown): number | undefined {
+  if (typeof s !== "string") return undefined;
+  const ms = new Date(s).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** Structural mirror of `UsageWindowEntry` in src/infra/usage-snapshot-store.ts. Declared
+ *  locally on purpose: the published SDK surface `openclaw/plugin-sdk/fork-usage-metrics`
+ *  exports `setUsageSnapshot` but not the type, and an extension must never reach into
+ *  `../../src/**` — that path does not exist on a vanilla OpenClaw install. TypeScript still
+ *  checks it structurally at the setUsageSnapshot() call, so core-type drift fails the build. */
+export type QuotaWindow = { label: string; usedPercent: number; resetAtMs?: number };
+
+/** The non-Anthropic quota payloads. Fetched by the snapshot poller in register(), NOT by the
+ *  `budget.usage` RPC — before 2026-08-29 all four lived inside that handler, so a gateway with
+ *  no Tinker UI tab connected had ZERO quota data for every provider except Anthropic. */
+export type ExtraUsage = {
+  xai: XaiQuota | null;
+  copilot: Record<string, unknown> | null;
+  gemini: GeminiUsageResult | null;
+  chatgpt: Record<string, any> | null;
+  openaiCosts: { monthSpend: number; dailyBreakdown: { date: string; amount: number }[] } | null;
+};
+
+/** What one poll produced: the Anthropic profiles plus everything else. */
+type RefreshResult = {
+  liveProfiles: Record<string, Record<string, any> | null>;
+  extras: ExtraUsage;
+};
+
+const clampPct = (n: unknown): number => {
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 0;
+};
+
+/** Rank a Codex/ChatGPT window label shortest-first. Regex rather than a lookup table so a
+ *  window the vendor invents later ("3h", "Monthly") still sorts sanely; anything unrecognised
+ *  sorts LAST, never first, so it can never masquerade as the binding constraint. */
+function codexWindowRank(label: string): number {
+  if (/^\d+\s*h/i.test(label)) return 0;
+  if (/day/i.test(label)) return 1;
+  if (/week/i.test(label)) return 2;
+  if (/month/i.test(label)) return 3;
+  return 9;
+}
+
+/** FORK 2026-08-29: fold the already-paid-for vendor payloads into the provider-agnostic
+ *  `windows` map that UsageSnapshot now carries.
+ *
+ *  ORDER WITHIN EACH ARRAY IS LOAD-BEARING — shortest window first. A consumer takes the FIRST
+ *  exhausted entry as the BINDING window (the deadline it must actually wait for), so appending
+ *  in fetch order instead of duration order silently changes routing and nothing fails loudly.
+ *
+ *  Exported for src/provider-windows.test.ts — the order invariant above has no other guard. */
+export function buildProviderWindows(extras: ExtraUsage | null): Record<string, QuotaWindow[]> {
+  const out: Record<string, QuotaWindow[]> = {};
+  if (!extras) return out;
+
+  // xAI — a single subscription pool; the server names its own period (weekly / monthly).
+  if (extras.xai) {
+    out.xai = [
+      {
+        label: extras.xai.period_type || "period",
+        usedPercent: clampPct(extras.xai.usage_pct),
+        resetAtMs: isoToMs(extras.xai.period_end),
+      },
+    ];
+  }
+
+  // GitHub Copilot — two pools sharing ONE monthly period, so shortest-first is a tie here and
+  // the order below exists only for determinism; do not read it as a duration ranking. No reset
+  // instant: /copilot_internal/user reports percent_remaining only, and inventing a month
+  // boundary would be a guess dressed as data.
+  if (extras.copilot) {
+    const c = extras.copilot as { premium_used_pct?: number; chat_used_pct?: number };
+    out["github-copilot"] = [
+      { label: "monthly-chat", usedPercent: clampPct(c.chat_used_pct) },
+      { label: "monthly-premium", usedPercent: clampPct(c.premium_used_pct) },
+    ];
+  }
+
+  // Google / Gemini — the requests-per-day window (tinker-ui calls the same thing "rpd").
+  // The RPM window is DELIBERATELY EXCLUDED: it is a rolling 60-second count with no reset
+  // instant, so publishing it shortest-first would let a one-minute blip become the "binding"
+  // constraint with an unknowable deadline — strictly worse than not knowing.
+  if (extras.gemini && extras.gemini.rpd_limit > 0) {
+    out.google = [
+      {
+        label: "daily",
+        usedPercent: clampPct((extras.gemini.rpd_used / extras.gemini.rpd_limit) * 100),
+      },
+    ];
+  }
+
+  // OpenAI Codex / ChatGPT — memory/chatgpt-usage.json carries one entry per window
+  // (live keys today: "5h", "Weekly"), each with its own resets_at.
+  if (extras.chatgpt) {
+    const models = (extras.chatgpt.models ?? {}) as Record<string, any>;
+    const ranked: Array<QuotaWindow & { rank: number }> = [];
+    for (const [label, val] of Object.entries(models)) {
+      const limitReq = Number.parseInt(val?.rate_limits?.limit_requests) || 0;
+      const remainReq = Number.parseInt(val?.rate_limits?.remaining_requests) || 0;
+      // Same computation the RPC handler renders, so panel and snapshot cannot disagree;
+      // fall back to the file's own utilization_pct when the request counters are absent.
+      const used =
+        limitReq > 0 ? ((limitReq - remainReq) / limitReq) * 100 : Number(val?.utilization_pct);
+      if (!Number.isFinite(used)) continue;
+      ranked.push({
+        label,
+        usedPercent: clampPct(used),
+        resetAtMs: isoToMs(val?.resets_at),
+        rank: codexWindowRank(label),
+      });
+    }
+    ranked.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
+    if (ranked.length > 0) {
+      out["openai-codex"] = ranked.map(({ rank: _rank, ...w }) => w);
+    }
+  }
+
+  // NOT a window: fetchOpenAICosts() yields month-to-date DOLLARS with no cap attached, and a
+  // window needs a denominator. The cap lives per-model in openclaw.json (`monthlyCapUsd`),
+  // which this layer never sees. See the `providers.openai` note in usage-snapshot-store.ts.
+  return out;
+}
+
+/** Last Anthropic block we published, and WHEN it was fetched. Retained because the Anthropic
+ *  OAuth-usage poll fails independently of the other vendors (dead refresh token, per-token rate
+ *  limit) and the published SDK surface exposes only `setUsageSnapshot` — there is no read-back.
+ *  Without it, a poll where only xAI answered would wipe the allocator's Anthropic signal. */
+let lastAnthropic: {
+  block: {
+    sevenDayUtilization: number;
+    fiveHourUtilization: number;
+    sevenDayResetAt?: number;
+    fiveHourResetAt?: number;
+    accounts: Array<{
+      label: string;
+      sevenDayUtilization: number;
+      fiveHourUtilization: number;
+      sevenDayResetAt?: number;
+      fiveHourResetAt?: number;
+    }>;
+  };
+  at: number;
+} | null = null;
+
 /** FORK 2026-06-18 (bible §5.84a): publish live Anthropic usage into the in-process snapshot bridge
  *  for the burn-down effort allocator (`deriveQuotaPressure` reads it synchronously). v1 simplification:
  *  MAX utilization across profiles + the SOONEST reset (the imminent deadline we must not waste);
- *  per-account aggregation with distinct caps/resets is a documented v2 refinement. */
-function publishUsageSnapshot(liveProfiles: Record<string, Record<string, any> | null>): void {
-  const iso = (s: unknown): number | undefined => {
-    if (typeof s !== "string") return undefined;
-    const ms = new Date(s).getTime();
-    return Number.isFinite(ms) ? ms : undefined;
-  };
+ *  per-account aggregation with distinct caps/resets is a documented v2 refinement.
+ *
+ *  FORK 2026-08-29: also publishes `windows` for xAI / Copilot / Google / Codex, so quota-aware
+ *  routing stops being Anthropic-only. `providers.anthropic` is unchanged — both of its readers
+ *  (agents/effort-allocator.ts, agents/billing-gate.ts) see exactly what they saw before. */
+function publishUsageSnapshot(
+  liveProfiles: Record<string, Record<string, any> | null>,
+  extras: ExtraUsage | null = null,
+): void {
   let maxSeven = 0;
   let maxFive = 0;
   let soonestSeven: number | undefined;
@@ -310,9 +463,9 @@ function publishUsageSnapshot(liveProfiles: Record<string, Record<string, any> |
     const f5 = Number(data.five_hour?.utilization ?? 0);
     maxSeven = Math.max(maxSeven, s7);
     maxFive = Math.max(maxFive, f5);
-    const sr = iso(data.seven_day?.resets_at);
+    const sr = isoToMs(data.seven_day?.resets_at);
     if (sr !== undefined && (soonestSeven === undefined || sr < soonestSeven)) soonestSeven = sr;
-    const fr = iso(data.five_hour?.resets_at);
+    const fr = isoToMs(data.five_hour?.resets_at);
     if (fr !== undefined && (soonestFive === undefined || fr < soonestFive)) soonestFive = fr;
     accounts.push({
       label,
@@ -322,18 +475,37 @@ function publishUsageSnapshot(liveProfiles: Record<string, Record<string, any> |
       fiveHourResetAt: fr,
     });
   }
-  if (!any) return; // keep the last good snapshot rather than zeroing on a transient failure
-  setUsageSnapshot({
-    lastSuccessfulFetch: Date.now(),
-    providers: {
-      anthropic: {
+  const windows = buildProviderWindows(extras);
+  if (any) {
+    lastAnthropic = {
+      block: {
         sevenDayUtilization: maxSeven,
         fiveHourUtilization: maxFive,
         sevenDayResetAt: soonestSeven,
         fiveHourResetAt: soonestFive,
         accounts,
       },
-    },
+      at: Date.now(),
+    };
+    // 5-hour before 7-day: shortest first (see UsageSnapshot.windows).
+    windows.anthropic = [
+      { label: "5-hour", usedPercent: clampPct(maxFive), resetAtMs: soonestFive },
+      { label: "7-day", usedPercent: clampPct(maxSeven), resetAtMs: soonestSeven },
+    ];
+  }
+  // Nothing arrived at all — keep the last good snapshot rather than zeroing on a transient
+  // failure. This is the pre-2026-08-29 guard, now also satisfied by windows-only data.
+  if (!any && Object.keys(windows).length === 0) return;
+
+  setUsageSnapshot({
+    // Deliberately the ANTHROPIC fetch time, not now(). billing-gate.ts treats this as "how old
+    // is the usage data" and BLOCKS every metered model when it is stale; a poll that refreshed
+    // only xAI must never report dead Anthropic auth as fresh. No memo ⇒ 0 ⇒ read as stale ⇒
+    // blocks, which is byte-for-byte what happened when the snapshot was null.
+    lastSuccessfulFetch: lastAnthropic?.at ?? 0,
+    windows,
+    windowsUpdatedAt: Date.now(),
+    providers: lastAnthropic ? { anthropic: lastAnthropic.block } : {},
   });
 }
 
@@ -549,26 +721,249 @@ async function fetchGeminiUsage(
 
 import { BudgetTracker } from "./src/tracker.js";
 
+// ─── GitHub Copilot quota (the architect 2026-07-30) ───
+// api.github.com/copilot_internal/user returns premium_interactions + chat
+// percent_remaining. Paid individual plans bill in AI credits (1 credit=$0.01):
+//   Pro $10 → 1,500 credits · Pro+ $39 → 7,000 · Max $100 → 20,000.
+// Free limited: Premium often empty; frontier models (gpt-5.5 etc.) policy-disabled.
+const COPILOT_CACHE_TTL_MS = 10 * 60_000;
+let copilotCache: { data: Record<string, unknown> | null; ts: number } | null = null;
+
+// Plan → included AI credits (GitHub docs 2026-07-30). Free has no credit pool.
+const COPILOT_PLAN_CREDITS: Record<string, { price: number; credits: number; label: string }> = {
+  free: { price: 0, credits: 0, label: "Free / free_limited" },
+  free_limited_copilot: { price: 0, credits: 0, label: "Free limited" },
+  individual: { price: 10, credits: 1500, label: "Pro (individual)" },
+  pro: { price: 10, credits: 1500, label: "Pro" },
+  pro_plus: { price: 39, credits: 7000, label: "Pro+" },
+  "pro+": { price: 39, credits: 7000, label: "Pro+" },
+  max: { price: 100, credits: 20000, label: "Max" },
+  business: { price: 19, credits: 0, label: "Business (pooled)" },
+  enterprise: { price: 39, credits: 0, label: "Enterprise (pooled)" },
+};
+
+async function fetchCopilotQuota(
+  githubToken: string | null,
+  log: (...a: any[]) => void,
+): Promise<Record<string, unknown> | null> {
+  if (!githubToken) {
+    return null;
+  }
+  if (copilotCache && Date.now() - copilotCache.ts < COPILOT_CACHE_TTL_MS) {
+    return copilotCache.data;
+  }
+  try {
+    const res = await fetch("https://api.github.com/copilot_internal/user", {
+      headers: {
+        Authorization: `token ${githubToken}`,
+        "Editor-Version": "vscode/1.98.0",
+        "User-Agent": "GitHubCopilotChat/0.26.7",
+        "X-Github-Api-Version": "2025-04-01",
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) {
+      log(`[budget-panel] Copilot usage HTTP ${res.status}`);
+      copilotCache = { data: null, ts: Date.now() };
+      return null;
+    }
+    const data = (await res.json()) as {
+      copilot_plan?: string;
+      access_type_sku?: string;
+      quota_snapshots?: {
+        premium_interactions?: { percent_remaining?: number | null };
+        chat?: { percent_remaining?: number | null };
+      };
+    };
+    const planRaw = (data.copilot_plan || data.access_type_sku || "").toLowerCase();
+    const planInfo =
+      COPILOT_PLAN_CREDITS[planRaw] ||
+      (planRaw.includes("free")
+        ? COPILOT_PLAN_CREDITS.free_limited_copilot
+        : planRaw.includes("pro+") || planRaw.includes("pro_plus")
+          ? COPILOT_PLAN_CREDITS.pro_plus
+          : planRaw.includes("max")
+            ? COPILOT_PLAN_CREDITS.max
+            : planRaw.includes("pro") || planRaw.includes("individual")
+              ? COPILOT_PLAN_CREDITS.pro
+              : undefined);
+    const premRem = data.quota_snapshots?.premium_interactions?.percent_remaining;
+    const chatRem = data.quota_snapshots?.chat?.percent_remaining;
+    const premium_used_pct =
+      typeof premRem === "number" ? Math.max(0, Math.min(100, 100 - premRem)) : 0;
+    const chat_used_pct =
+      typeof chatRem === "number" ? Math.max(0, Math.min(100, 100 - chatRem)) : 0;
+    const out: Record<string, unknown> = {
+      premium_used_pct,
+      chat_used_pct,
+      plan: planInfo?.label || data.copilot_plan || data.access_type_sku || "unknown",
+      plan_raw: planRaw,
+      plan_price_usd: planInfo?.price ?? null,
+      monthly_ai_credits: planInfo?.credits ?? null,
+      fetchedAt: new Date().toISOString(),
+      note:
+        (planInfo?.credits ?? 0) > 0
+          ? `Included ≈ ${planInfo!.credits} AI credits/mo (1 credit = $0.01). GPT-5.5 burns credits at $5 in / $30 out per Mtok.`
+          : "Free/limited: frontier models (gpt-5.5, Sol, Opus 5…) policy-disabled until Pro+",
+    };
+    copilotCache = { data: out, ts: Date.now() };
+    return out;
+  } catch (e) {
+    log(`[budget-panel] Copilot usage fetch failed: ${e}`);
+    copilotCache = { data: null, ts: Date.now() };
+    return null;
+  }
+}
+
+// ─── xAI quota (the architect 2026-07-27: "figure out a way to find quota info for XAI") ───
+// SUPERSEDED 2026-07-30. The original implementation read the quota off
+// `x-ratelimit-*` response headers from a 1-token probe. Those headers are a
+// STATIC CEILING, not a counter: measured over five consecutive calls they sat at
+// 53,000,000/53,000,000 and never moved, so the bar could only ever render 0%.
+// It also cost a real chat call every 30 minutes to learn nothing.
+//
+// The real source is the subscription's own ledger, which the SuperGrok oauth
+// token can read for free:
+//
+//   GET https://cli-chat-proxy.grok.com/v1/billing?format=credits
+//
+// `?format=credits` is load-bearing. Without it the server replies in a shape its
+// own client marks deprecated — a monthly dollar budget that is vestigial for
+// unified-billing accounts and reported 33% where the binding weekly pool was at
+// 78%. xAI open-sourced that client (github.com/xai-org/grok-build, crate
+// `xai-grok-pager`); `credit_balance_from_config` in `app/effects/helpers.rs` is
+// the reference for the precedence used here — server percentage over anything
+// derived, `currentPeriod.end` over `billingPeriodEnd`.
+//
+// Cheap now (no tokens spent), so the cache exists only to avoid hammering; the
+// upstream figure itself lags 30-60s behind a call, so finer polling buys nothing.
+const XAI_CACHE_TTL_MS = 5 * 60_000;
+
+type XaiQuota = {
+  usage_pct: number;
+  period_type?: string;
+  period_start?: string;
+  period_end?: string;
+  products?: { product: string; usage_pct: number }[];
+  on_demand_cap_cents?: number;
+  on_demand_used_cents?: number;
+  fetchedAt: string;
+};
+
+let xaiCache: { data: XaiQuota | null; ts: number } | null = null;
+
+async function fetchXaiQuota(
+  apiKey: string | null,
+  log: (...a: any[]) => void,
+): Promise<XaiQuota | null> {
+  if (!apiKey) {
+    return null;
+  }
+  if (xaiCache && Date.now() - xaiCache.ts < XAI_CACHE_TTL_MS) {
+    return xaiCache.data;
+  }
+  try {
+    // The proxy version-gates its clients: without the Grok-CLI identity headers
+    // it answers HTTP 426 no matter how valid the token is.
+    const res = await fetch("https://cli-chat-proxy.grok.com/v1/billing?format=credits", {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "User-Agent": "grok-pager/0.2.116 grok-shell/0.2.116 (linux; x86_64)",
+        "x-grok-client-identifier": "grok-pager",
+        "x-grok-client-version": "0.2.116",
+      },
+    });
+    if (!res.ok) {
+      log(`[budget-panel] xAI billing: HTTP ${res.status}; skipping`);
+      xaiCache = { data: null, ts: Date.now() };
+      return null;
+    }
+    const cfg = ((await res.json()) as { config?: Record<string, any> })?.config;
+    // Prefer the server's own percentage; fall back to the deprecated dollar
+    // fields only when an older server omits it.
+    const limitCents = Number(cfg?.monthlyLimit?.val ?? 0);
+    const usedCents = Number(cfg?.used?.val ?? 0);
+    const pct =
+      typeof cfg?.creditUsagePercent === "number"
+        ? cfg.creditUsagePercent
+        : limitCents > 0
+          ? (usedCents / limitCents) * 100
+          : null;
+    if (pct == null) {
+      log("[budget-panel] xAI billing: no usage percentage in response; skipping");
+      xaiCache = { data: null, ts: Date.now() };
+      return null;
+    }
+    const data: XaiQuota = {
+      usage_pct: Math.min(100, Math.max(0, pct)),
+      period_type: String(cfg?.currentPeriod?.type ?? "")
+        .replace(/^USAGE_PERIOD_TYPE_/, "")
+        .toLowerCase(),
+      period_start: cfg?.currentPeriod?.start ?? cfg?.billingPeriodStart,
+      period_end: cfg?.currentPeriod?.end ?? cfg?.billingPeriodEnd,
+      products: Array.isArray(cfg?.productUsage)
+        ? cfg.productUsage.map((p: any) => ({
+            product: String(p?.product ?? "?"),
+            usage_pct: Number(p?.usagePercent ?? 0),
+          }))
+        : [],
+      on_demand_cap_cents: Number(cfg?.onDemandCap?.val ?? 0),
+      on_demand_used_cents: Number(cfg?.onDemandUsed?.val ?? 0),
+      fetchedAt: new Date().toISOString(),
+    };
+    xaiCache = { data, ts: Date.now() };
+    return data;
+  } catch (e) {
+    log(`[budget-panel] xAI quota fetch failed: ${e}`);
+    xaiCache = { data: null, ts: Date.now() };
+    return null;
+  }
+}
+
+/** FORK 2026-08-29: gather every non-Anthropic quota payload in one place.
+ *
+ *  These fetches used to live inside the `budget.usage` RPC handler, so they only ran while a
+ *  Tinker UI tab was connected: a headless gateway had ZERO quota data for xAI, Copilot, Codex
+ *  and Gemini, and "quota-aware" routing quietly changed behaviour depending on whether a
+ *  browser was open. The snapshot poller owns them now.
+ *
+ *  Every fetcher below is cache-backed (5-30 min TTL), so the RPC calling this on top of the
+ *  10-minute timer costs no extra upstream requests. Each leg is independently fault-isolated:
+ *  one dead credential must not blank the other three. */
+async function collectExtraUsage(
+  log: (...a: any[]) => void,
+  readChatgptUsage: () => Record<string, any> | null,
+): Promise<ExtraUsage> {
+  const settle = async <T>(work: () => Promise<T | null>): Promise<T | null> => {
+    try {
+      return await work();
+    } catch (e) {
+      log(`[budget-panel] extra-usage leg failed: ${e}`);
+      return null;
+    }
+  };
+  const [gemini, openaiCosts, xai, copilot] = await Promise.all([
+    settle(() => fetchGeminiUsage(log)),
+    settle(() => fetchOpenAICosts(log)),
+    settle(async () => await fetchXaiQuota(await resolveToken("xai:default", log), log)),
+    settle(async () => {
+      return await fetchCopilotQuota(await resolveToken("github-copilot:github", log), log);
+    }),
+  ]);
+  let chatgpt: Record<string, any> | null = null;
+  try {
+    chatgpt = readChatgptUsage();
+  } catch (e) {
+    log(`[budget-panel] chatgpt-usage.json read failed: ${e}`);
+  }
+  return { xai, copilot, gemini, chatgpt, openaiCosts };
+}
+
 export default function register(api: OpenClawPluginApi) {
   const homeDir = process.env.HOME || "/tmp";
   const workspaceDir =
     (api.config as any)?.agents?.defaults?.workspace || `${homeDir}/.openclaw/workspace`;
   const tracker = new BudgetTracker(workspaceDir);
-
-  // FORK 2026-06-18 (bible §5.84a): keep the burn-down allocator's quota signal fresh even with no
-  // Tinker UI open — poll Anthropic usage on an interval and publish it to the in-process
-  // usage-snapshot bridge (deriveQuotaPressure reads it synchronously). Best-effort; the 30-min
-  // per-profile cache keeps real API hits well under the OAuth-usage rate limit.
-  const refreshUsageSnapshot = () => {
-    fetchAllClaudeUsage()
-      .then(publishUsageSnapshot)
-      .catch(() => {
-        /* best-effort — allocator falls back to task-weighted when the snapshot is stale/absent */
-      });
-  };
-  refreshUsageSnapshot(); // prime on boot
-  const usageSnapshotTimer = setInterval(refreshUsageSnapshot, 10 * 60_000);
-  if (typeof usageSnapshotTimer.unref === "function") usageSnapshotTimer.unref();
 
   // Paths to usage JSON files (hardcoded for reliability)
   const usageFiles = {
@@ -592,6 +987,44 @@ export default function register(api: OpenClawPluginApi) {
       return null;
     }
   }
+
+  // FORK 2026-06-18 (bible §5.84a) · WIDENED 2026-08-29: keep the quota signal fresh with NO
+  // Tinker UI open. Anthropic was already polled here; the xAI / Copilot / Codex / Gemini reads
+  // have MOVED here out of the `budget.usage` RPC handler, where they only ran while a browser
+  // tab was connected — so a headless gateway had zero non-Anthropic quota data and any
+  // quota-aware routing silently degraded to Anthropic-only. The RPC renders what this wrote.
+  //
+  // POSITION IS LOAD-BEARING: the prime call below runs synchronously, so this block must sit
+  // AFTER `log`, `usageFiles` and `readUsageFile` are initialised. Hoisted back up next to the
+  // other setup, the boot prime dies in the temporal dead zone.
+  const readChatgptFile = () => readUsageFile(usageFiles.chatgpt) as Record<string, any> | null;
+  let lastRefresh: RefreshResult | null = null;
+  let refreshInFlight: Promise<RefreshResult | null> | null = null;
+  const refreshUsageSnapshot = (): Promise<RefreshResult | null> => {
+    // Collapse overlapping refreshes (a timer tick landing on top of an RPC) onto one poll.
+    if (refreshInFlight) return refreshInFlight;
+    const run = (async (): Promise<RefreshResult | null> => {
+      try {
+        const [liveProfiles, extras] = await Promise.all([
+          fetchAllClaudeUsage(log),
+          collectExtraUsage(log, readChatgptFile),
+        ]);
+        publishUsageSnapshot(liveProfiles, extras);
+        lastRefresh = { liveProfiles, extras };
+      } catch (e) {
+        // best-effort — the allocator falls back to task-weighted when the snapshot is absent
+        log(`[budget-panel] usage snapshot refresh failed: ${e}`);
+      } finally {
+        refreshInFlight = null;
+      }
+      return lastRefresh;
+    })();
+    refreshInFlight = run;
+    return run;
+  };
+  void refreshUsageSnapshot(); // prime on boot
+  const usageSnapshotTimer = setInterval(() => void refreshUsageSnapshot(), 10 * 60_000);
+  if (typeof usageSnapshotTimer.unref === "function") usageSnapshotTimer.unref();
 
   // Load budgets from config
   const config = api.config as Record<string, unknown>;
@@ -645,16 +1078,21 @@ export default function register(api: OpenClawPluginApi) {
       delete usageCache["cli-file"];
     }
     const claudeFileData = readUsageFile(usageFiles.claude) as any;
-    const geminiData = readUsageFile(usageFiles.gemini) as any;
     const manusData = readUsageFile(usageFiles.manus) as any;
-    const chatgptData = readUsageFile(usageFiles.chatgpt) as any;
+    // (`geminiData` used to be read here from usageFiles.gemini and was never referenced —
+    //  verified zero uses 2026-08-29 — so the disk read is gone with it.)
 
-    // Fetch live usage from both OAuth profiles + Gemini in parallel
-    const [liveProfiles, geminiLive] = await Promise.all([
-      fetchAllClaudeUsage(log),
-      fetchGeminiUsage(log),
-    ]);
-    publishUsageSnapshot(liveProfiles); // FORK §5.84a: feed the burn-down effort allocator
+    // FORK 2026-08-29: the poller owns every fetch now (see refreshUsageSnapshot). This awaits
+    // the SAME refresh the 10-minute timer runs — every fetcher underneath is cache-backed, so
+    // it costs no extra upstream calls — and then RENDERS what the snapshot was built from,
+    // instead of fetching a second, private copy here. That is the fix for "non-Anthropic quota
+    // only exists while a browser is open": both paths now read one poll.
+    const refreshed = await refreshUsageSnapshot();
+    const liveProfiles = refreshed?.liveProfiles ?? {};
+    const geminiLive = refreshed?.extras.gemini ?? null;
+    // Fall back to a direct read if the very first poll threw: the file is local and free, and
+    // rendering nothing here would be a regression against the pre-2026-08-29 handler.
+    const chatgptData = refreshed?.extras.chatgpt ?? readChatgptFile();
 
     function buildClaudeProfile(live: Record<string, any> | null) {
       if (!live) {
@@ -779,14 +1217,33 @@ export default function register(api: OpenClawPluginApi) {
       })(),
     };
 
-    // OpenAI API Costs (via Admin key)
-    log("[budget-panel] Fetching OpenAI costs...");
-    const openaiCosts = await fetchOpenAICosts(log);
-    log(
-      `[budget-panel] OpenAI costs result: ${openaiCosts ? `$${openaiCosts.monthSpend}` : "null"}`,
-    );
+    // OpenAI API Costs (via Admin key) — fetched by the poller (collectExtraUsage), read here.
+    // NOT folded into `windows`: this is month-to-date DOLLARS with no cap attached, and a window
+    // needs a denominator. The cap lives per-model in openclaw.json (`monthlyCapUsd`), which this
+    // layer never sees. See the `providers.openai` note in usage-snapshot-store.ts.
+    const openaiCosts = refreshed?.extras.openaiCosts ?? null;
     if (openaiCosts) {
       result.openaiCosts = openaiCosts;
+    }
+
+    // xAI quota — the subscription's own ledger, free to read (see fetchXaiQuota).
+    // Fetched by the poller (collectExtraUsage), read here.
+    const xaiQuota = refreshed?.extras.xai ?? null;
+    if (xaiQuota) {
+      result.xai = xaiQuota;
+      log(
+        `[budget-panel] xAI quota: ${xaiQuota.usage_pct.toFixed(0)}% of the ${xaiQuota.period_type || "current"} allowance, resets ${xaiQuota.period_end ?? "?"}`,
+      );
+    }
+
+    // GitHub Copilot Premium + Chat windows (same source as openclaw models status).
+    // Fetched by the poller (collectExtraUsage), read here.
+    const copilotQuota = refreshed?.extras.copilot ?? null;
+    if (copilotQuota) {
+      result.copilot = copilotQuota;
+      log(
+        `[budget-panel] Copilot: Premium ${copilotQuota.premium_used_pct}% · Chat ${copilotQuota.chat_used_pct}% · ${copilotQuota.plan}`,
+      );
     }
 
     // ChatGPT / OpenAI
@@ -806,6 +1263,13 @@ export default function register(api: OpenClawPluginApi) {
           utilization_pct: limitReq ? ((limitReq - remainReq) / limitReq) * 100 : 0,
           requests: { used: limitReq - remainReq, limit: limitReq, remaining: remainReq },
           tokens: { used: limitTok - remainTok, limit: limitTok, remaining: remainTok },
+          // FORK 2026-07-31 (the architect: "for sol-terra-luna, I am missing the reset
+          // time"). This rebuilds the window rather than spreading it, so every
+          // field not named here was silently dropped — including `resets_at`,
+          // which the source file has carried all along
+          // (memory/chatgpt-usage.json → models.Weekly.resets_at). The panel was
+          // not missing the data; this loop was throwing it away.
+          resets_at: val?.resets_at ?? null,
         };
       }
       return {
@@ -902,12 +1366,22 @@ export default function register(api: OpenClawPluginApi) {
 
   // Register gateway method: config.models (live model configuration from openclaw.json)
   api.registerGatewayMethod("config.models", async ({ respond }) => {
-    const agentDefaults = (config.agents as any)?.defaults || {};
+    // FORK 2026-07-30: read openclaw.json from disk each call. The plugin's
+    // `api.config` snapshot can lag file edits (and protected-path patches),
+    // which left the MODELS panel showing the pre-cull 59-row list after AA≥50.
+    let liveConfig: Record<string, unknown> = config;
+    try {
+      const raw = readFileSync(`${homeDir}/.openclaw/openclaw.json`, "utf-8");
+      liveConfig = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      /* fall back to api.config snapshot */
+    }
+    const agentDefaults = (liveConfig.agents as any)?.defaults || {};
     const modelCfg = agentDefaults.model || {};
     const primary: string = typeof modelCfg === "string" ? modelCfg : modelCfg.primary || "";
     const fallbacks: string[] = modelCfg.fallbacks || [];
     const models: Record<string, any> = agentDefaults.models || {};
-    const authCfg = (config as any).auth || {};
+    const authCfg = (liveConfig as any).auth || {};
     const authProfiles: Record<string, any> = authCfg.profiles || {};
     const authOrder: Record<string, string[]> = authCfg.order || {};
 

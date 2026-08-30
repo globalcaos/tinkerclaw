@@ -117,6 +117,36 @@ test("process poll exposes adaptive retryInMs for repeated no-output polls", asy
   expect(polls.map((poll) => retryMs(poll))).toEqual([5000, 10000, 30000, 60000, 60000]);
 });
 
+test("process poll aborts its wait when the turn signal fires", async () => {
+  vi.useFakeTimers();
+  try {
+    const { processTool } = createProcessSessionHarness("sess-abort");
+    const controller = new AbortController();
+    const args = {
+      action: "poll",
+      sessionId: "sess-abort",
+      timeout: 30_000,
+    } as unknown as Parameters<ReturnType<typeof createProcessTool>["execute"]>[1];
+    const pollPromise = processTool.execute("toolcall-abort", args, controller.signal);
+    let resolved = false;
+    void pollPromise.finally(() => {
+      resolved = true;
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(resolved).toBe(false);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(250);
+    const poll = await pollPromise;
+    expect(resolved).toBe(true);
+    expect(pollStatus(poll)).toBe("failed");
+    expect(
+      String(poll.content[0] && "text" in poll.content[0] ? poll.content[0].text : ""),
+    ).toMatch(/aborted/i);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 test("process poll resets retryInMs when output appears and clears on completion", async () => {
   const sessionId = "sess-reset";
   const { processTool, session } = createProcessSessionHarness(sessionId);

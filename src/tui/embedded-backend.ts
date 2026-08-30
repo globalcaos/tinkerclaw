@@ -199,6 +199,8 @@ export class EmbeddedTuiBackend implements TuiBackend {
     const localMessages =
       sessionId && storePath ? readSessionMessages(sessionId, storePath, entry?.sessionFile) : [];
     const rawMessages = augmentChatHistoryWithCliSessionImports({
+      // Attribution for the flood-valve warn only; never affects what is served.
+      sessionKey: opts.sessionKey,
       entry,
       provider: resolvedSessionModel.provider,
       localMessages,

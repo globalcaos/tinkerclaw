@@ -7,6 +7,7 @@ import {
   WRITE_SCOPE,
 } from "./method-scopes.js";
 import type {
+  GatewayBroadcastCounts,
   GatewayBroadcastFn,
   GatewayBroadcastOpts,
   GatewayBroadcastStateVersion,
@@ -52,6 +53,7 @@ const EVENT_SCOPE_GUARDS: Record<string, string[]> = {
 const NODE_ALLOWED_EVENTS = new Set<string>(["voicewake.changed", "voicewake.routing.changed"]);
 
 export type {
+  GatewayBroadcastCounts,
   GatewayBroadcastFn,
   GatewayBroadcastOpts,
   GatewayBroadcastStateVersion,
@@ -91,6 +93,65 @@ function hasEventScope(client: GatewayWsClient, event: string): boolean {
   return required.some((scope) => scopes.includes(scope));
 }
 
+function zeroBroadcastCounts(): GatewayBroadcastCounts {
+  return { attempted: 0, sent: 0, scopeSkipped: 0, droppedSlow: 0, sendThrew: 0 };
+}
+
+type ChatDeliverPayload = {
+  state?: unknown;
+  sessionKey?: unknown;
+  runId?: unknown;
+  message?: { content?: unknown } | null;
+};
+
+function chatFinalTextLen(payload: ChatDeliverPayload): number {
+  const content = payload.message?.content;
+  if (typeof content === "string") {
+    return content.length;
+  }
+  if (!Array.isArray(content)) {
+    return 0;
+  }
+  let len = 0;
+  for (const part of content) {
+    const text = (part as { text?: unknown } | null)?.text;
+    if (typeof text === "string") {
+      len += text.length;
+    }
+  }
+  return len;
+}
+
+function chatDeliverField(value: unknown): string {
+  return typeof value === "string" && value.length > 0 ? value : "unknown";
+}
+
+/**
+ * FORK 2026-08-26 (chat-deliver): deliberately NOT behind `shouldLogWs()`.
+ *
+ * `sent=0` for a chat final on a session whose tab is open is the real "the
+ * answer was routed to zero sockets" condition, and until now it left no trace
+ * anywhere. The only nearby number, `routedFinalCount` in
+ * auto-reply/reply/dispatch-from-config.ts, counts cross-channel re-routes and
+ * reads 0 on every webchat turn by construction — four bug-log entries read it
+ * as "the router found no live sink" and chased the wrong layer. A diagnostic you
+ * have to enable in advance cannot catch an incident you only notice afterwards,
+ * so this line always prints. It fires on chat FINALS only — at most one line per
+ * completed turn — so it cannot flood the log.
+ */
+function logChatDelivery(event: string, payload: unknown, counts: GatewayBroadcastCounts): void {
+  if (event !== "chat" || !payload || typeof payload !== "object") {
+    return;
+  }
+  const chat = payload as ChatDeliverPayload;
+  if (chat.state !== "final") {
+    return;
+  }
+  console.log(
+    `[chat-deliver] sessionKey=${chatDeliverField(chat.sessionKey)} runId=${chatDeliverField(chat.runId)} attempted=${counts.attempted} sent=${counts.sent} scopeSkipped=${counts.scopeSkipped} droppedSlow=${counts.droppedSlow} sendThrew=${counts.sendThrew} textLen=${chatFinalTextLen(chat)}`,
+  );
+}
+
 export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient> }) {
   const clientSeq = new WeakMap<GatewayWsClient, number>();
   const reportedSlowPayloadClients = new WeakSet<GatewayWsClient>();
@@ -100,9 +161,13 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
     payload: unknown,
     opts?: GatewayBroadcastOpts,
     targetConnIds?: ReadonlySet<string>,
-  ) => {
+  ): GatewayBroadcastCounts => {
+    const counts = zeroBroadcastCounts();
     if (params.clients.size === 0) {
-      return;
+      // Zeroed counters, never `undefined`: "nobody was connected" is the single
+      // most interesting delivery outcome there is, so it has to be reportable.
+      logChatDelivery(event, payload, counts);
+      return counts;
     }
     const isTargeted = Boolean(targetConnIds);
     if (shouldLogWs()) {
@@ -124,7 +189,9 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       if (targetConnIds && !targetConnIds.has(c.connId)) {
         continue;
       }
+      counts.attempted += 1;
       if (!hasEventScope(c, event)) {
+        counts.scopeSkipped += 1;
         continue;
       }
       const nextSeq = (clientSeq.get(c) ?? 0) + 1;
@@ -141,9 +208,12 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
         });
       }
       if (slow && opts?.dropIfSlow) {
+        // Behaviour unchanged: the dropped frame still consumes this client's
+        // sequence number. It is now RECORDED instead of vanishing.
         if (!isTargeted) {
           clientSeq.set(c, nextSeq);
         }
+        counts.droppedSlow += 1;
         continue;
       }
       if (slow) {
@@ -167,14 +237,29 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
           stateVersion: opts?.stateVersion,
         });
         c.socket.send(frame);
+        counts.sent += 1;
       } catch {
-        /* ignore */
+        // FORK 2026-08-26 (chat-deliver): this was a bare ignore-catch. A send
+        // that throws is precisely the failure the delivery investigation could
+        // not see; count it instead of discarding it.
+        counts.sendThrew += 1;
       }
     }
+    logChatDelivery(event, payload, counts);
+    return counts;
   };
 
-  const broadcast: GatewayBroadcastFn = (event, payload, opts) =>
-    broadcastInternal(event, payload, opts);
+  // Deliberately NOT annotated `GatewayBroadcastFn`: that alias returns
+  // `GatewayBroadcastCounts | void` so it can still accept the void-returning
+  // relays elsewhere in the gateway, and annotating with it would erase the
+  // counters right where they are produced. This stays exactly
+  // `=> GatewayBroadcastCounts`, and remains assignable to `GatewayBroadcastFn`
+  // for every consumer that takes one.
+  const broadcast = (
+    event: string,
+    payload: unknown,
+    opts?: GatewayBroadcastOpts,
+  ): GatewayBroadcastCounts => broadcastInternal(event, payload, opts);
 
   const broadcastToConnIds: GatewayBroadcastToConnIdsFn = (event, payload, connIds, opts) => {
     if (connIds.size === 0) {

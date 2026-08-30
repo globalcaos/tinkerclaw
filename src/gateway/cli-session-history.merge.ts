@@ -3,7 +3,48 @@ import { normalizeOptionalString, readStringValue } from "../shared/string-coerc
 
 const DEDUPE_TIMESTAMP_WINDOW_MS = 5 * 60 * 1000;
 
+// FORK 2026-07-28 — PER-MESSAGE MEMOISATION. This is the single hottest path in chat.history.
+//
+// The merge below is `for (imported) { merged.some((existing) => isEquivalent(existing, imported)) }`
+// with `merged` GROWING as imports are appended — quadratic by construction. That is tolerable;
+// what was not is that every pair re-derived BOTH sides' comparable text from scratch, joining and
+// whitespace-collapsing strings up to 28 KB, with no caching. Measured on a real transcript:
+// 1,587,479 pair comparisons drove 1,785,742 extraction calls over 1,911 messages = 8,576 ms.
+// Extracting once per message instead: 59.6 ms — a 144x reduction, and the live p90 for
+// chat.history was 5,947 ms with a 20,283 ms max, which is what made tab switching feel broken.
+//
+// A WeakMap keyed on the message object is safe here: these are plain parsed-JSON objects that
+// live only for the duration of one merge, the derivation is pure, and nothing mutates a message
+// between comparisons. Memoising does NOT change any decision — identical inputs, identical
+// outputs, just computed once. The quadratic shape is left alone deliberately: it is not the cost
+// driver at these sizes, and changing the comparison order risks the dedup semantics that four
+// separate FORK comments in this file were written to protect.
+const comparableTextCache = new WeakMap<object, string | undefined>();
+const comparableRoleCache = new WeakMap<object, string | undefined>();
+const importedExternalIdCache = new WeakMap<object, string | undefined>();
+
+function memoised<T>(
+  cache: WeakMap<object, T | undefined>,
+  message: unknown,
+  compute: () => T | undefined,
+): T | undefined {
+  if (!message || typeof message !== "object") {
+    return compute();
+  }
+  const key = message as object;
+  if (cache.has(key)) {
+    return cache.get(key);
+  }
+  const value = compute();
+  cache.set(key, value);
+  return value;
+}
+
 function extractComparableText(message: unknown): string | undefined {
+  return memoised(comparableTextCache, message, () => extractComparableTextUncached(message));
+}
+
+function extractComparableTextUncached(message: unknown): string | undefined {
   if (!message || typeof message !== "object") {
     return undefined;
   }
@@ -63,11 +104,75 @@ function resolveComparableTimestamp(message: unknown): number | undefined {
   return resolveFiniteNumber((message as { timestamp?: unknown }).timestamp);
 }
 
-function resolveComparableRole(message: unknown): string | undefined {
+// FORK 2026-08-05 — SORT-ONLY timestamp resolution. Some stores keep `timestamp` as an
+// ISO string rather than epoch ms. Accept that form HERE ONLY: resolveComparableTimestamp
+// also feeds the dedup window (isEquivalentImportedMessage), where a missing timestamp is
+// deliberately treated as "equivalent", so widening it there would silently change which
+// messages collapse. Ordering is a separate question from identity.
+function resolveSortTimestamp(message: unknown): number | undefined {
+  const numeric = resolveComparableTimestamp(message);
+  if (numeric !== undefined) {
+    return numeric;
+  }
   if (!message || typeof message !== "object") {
     return undefined;
   }
-  return readStringValue((message as { role?: unknown }).role);
+  const raw = (message as { timestamp?: unknown }).timestamp;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+type HistoryMergeEntry = { message: unknown; order: number; sortTimestamp?: number };
+
+// FORK 2026-08-05 — POSITIONAL FALLBACK FOR UNTIMESTAMPED MESSAGES.
+// compareHistoryMessages sorts a message with no resolvable timestamp AFTER every
+// timestamped one. The claude-cli importer OMITS `timestamp` entirely whenever the JSONL
+// entry carries none it can parse (cli-session-history.claude.ts spreads
+// `...(timestamp !== undefined ? { timestamp } : {})`), so those messages were dragged to
+// the very tail of the served transcript. Live symptom: the LAST user message in a served
+// history was not the prompt the user typed last.
+//
+// An unknown timestamp is not "infinitely late", it is UNKNOWN. The only honest information
+// left is the message's POSITION in the array it arrived in. So each untimestamped entry
+// inherits the timestamp of the nearest timestamped entry BEFORE it in its own source
+// segment (forward carry) or, failing that, the nearest one AFTER it (backward fill).
+// `order` still breaks ties, so an inherited timestamp reproduces source order exactly
+// instead of jumping to the end. If a whole segment has no timestamps at all there is
+// nothing to inherit, its entries keep `undefined`, and the old undefined-sorts-last rule
+// applies — which for that segment is identical to plain `order`.
+function assignPositionalSortTimestamps(segment: HistoryMergeEntry[]): void {
+  let carried: number | undefined;
+  for (const entry of segment) {
+    const own = resolveSortTimestamp(entry.message);
+    if (own !== undefined) {
+      carried = own;
+    }
+    entry.sortTimestamp = own ?? carried;
+  }
+  let upcoming: number | undefined;
+  for (let index = segment.length - 1; index >= 0; index -= 1) {
+    const entry = segment[index];
+    if (!entry) {
+      continue;
+    }
+    if (entry.sortTimestamp !== undefined) {
+      upcoming = entry.sortTimestamp;
+      continue;
+    }
+    entry.sortTimestamp = upcoming;
+  }
+}
+
+function resolveComparableRole(message: unknown): string | undefined {
+  return memoised(comparableRoleCache, message, () => {
+    if (!message || typeof message !== "object") {
+      return undefined;
+    }
+    return readStringValue((message as { role?: unknown }).role);
+  });
 }
 
 function resolveImportedExternalId(message: unknown): string | undefined {
@@ -152,12 +257,9 @@ function isEquivalentImportedMessage(existing: unknown, imported: unknown): bool
   return Math.abs(existingTimestamp - importedTimestamp) <= DEDUPE_TIMESTAMP_WINDOW_MS;
 }
 
-function compareHistoryMessages(
-  a: { message: unknown; order: number },
-  b: { message: unknown; order: number },
-): number {
-  const aTimestamp = resolveComparableTimestamp(a.message);
-  const bTimestamp = resolveComparableTimestamp(b.message);
+function compareHistoryMessages(a: HistoryMergeEntry, b: HistoryMergeEntry): number {
+  const aTimestamp = a.sortTimestamp;
+  const bTimestamp = b.sortTimestamp;
   if (aTimestamp !== undefined && bTimestamp !== undefined && aTimestamp !== bTimestamp) {
     return aTimestamp - bTimestamp;
   }
@@ -212,6 +314,20 @@ export function mergeImportedChatHistoryMessages(params: {
       ? localTsMin - IMPORT_PREHISTORY_GRACE_MS
       : -Infinity;
 
+    // --- layer 1 SAFETY VALVE (FORK 2026-08-05) ---
+    // The floor may TRIM a transcript's head; it must never DELETE the whole transcript.
+    // It fires on "older than the local store's earliest message", which is evidence of
+    // already-covered pre-compaction prehistory only when the two spans OVERLAP. When the
+    // local store has been rotated or reset (fresh sessionFile, gateway restart, the 4am
+    // wipe) its earliest message is NEWER than every imported one, the floor matches all of
+    // them, and the session's only surviving record of that period is dropped — the same
+    // "config deleted my history" shape as the provider gate this path just lost. If nothing
+    // survives the floor then the import is not redundant prehistory, it IS the history.
+    const importOverlapsLocalSpan = params.importedMessages.some((imported) => {
+      const ts = resolveComparableTimestamp(imported);
+      return ts === undefined || ts >= importFloor;
+    });
+
     // --- layer 2: local assistant timestamps for slot-coverage check ---
     const localAssistantTs: number[] = [];
     for (const msg of params.localMessages) {
@@ -225,8 +341,9 @@ export function mergeImportedChatHistoryMessages(params: {
 
     filteredImports = params.importedMessages.filter((imported) => {
       const ts = resolveComparableTimestamp(imported);
-      // layer 1: prehistory gate (messages without a timestamp always pass)
-      if (ts !== undefined && ts < importFloor) {
+      // layer 1: prehistory gate (messages without a timestamp always pass; skipped
+      // entirely when the floor would swallow the whole import — see the valve above)
+      if (importOverlapsLocalSpan && ts !== undefined && ts < importFloor) {
         return false;
       }
       // layer 2: assistant slot coverage
@@ -239,7 +356,11 @@ export function mergeImportedChatHistoryMessages(params: {
     });
   }
 
-  const merged = params.localMessages.map((message, index) => ({ message, order: index }));
+  const merged: HistoryMergeEntry[] = params.localMessages.map((message, index) => ({
+    message,
+    order: index,
+  }));
+  const localCount = merged.length;
   let nextOrder = merged.length;
   for (const imported of filteredImports) {
     if (merged.some((existing) => isEquivalentImportedMessage(existing.message, imported))) {
@@ -248,6 +369,12 @@ export function mergeImportedChatHistoryMessages(params: {
     merged.push({ message: imported, order: nextOrder });
     nextOrder += 1;
   }
+  // Resolve the positional fallback PER SOURCE SEGMENT — the local block first, then the
+  // appended imports — so an untimestamped import never inherits a local message's clock
+  // (and vice versa); each segment's unknown timestamps stay anchored to their own array.
+  // `slice` hands back the same entry objects, so assigning in place is visible on `merged`.
+  assignPositionalSortTimestamps(merged.slice(0, localCount));
+  assignPositionalSortTimestamps(merged.slice(localCount));
   merged.sort(compareHistoryMessages);
   return merged.map((entry) => entry.message);
 }

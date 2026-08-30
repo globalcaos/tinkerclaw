@@ -26,8 +26,11 @@ export type WhatsmeowClient = {
 
 // Lazy holder for the createClient function from the optional module.
 // biome-ignore lint/suspicious/noExplicitAny: optional module
-let _createClient: ((opts: { store: string }) => WhatsmeowClient) | null = null;
-async function loadCreateClient(): Promise<(opts: { store: string }) => WhatsmeowClient> {
+let _createClient: ((opts: { store: string; binaryPath?: string }) => WhatsmeowClient) | null =
+  null;
+async function loadCreateClient(): Promise<
+  (opts: { store: string; binaryPath?: string }) => WhatsmeowClient
+> {
   if (_createClient) {
     return _createClient;
   }
@@ -47,6 +50,34 @@ async function loadCreateClient(): Promise<(opts: { store: string }) => Whatsmeo
 }
 
 const DEFAULT_STORE_PATH = "~/.openclaw/credentials/whatsapp/default/whatsmeow.db";
+
+/**
+ * FORK 2026-08-29: escape hatch for the whatsmeow Go binary.
+ *
+ * WhatsApp enforces a minimum client version and raised it on ~2026-07-29.
+ * Every published @whatsmeow-node release (0.5.3 through 0.7.0) embeds the same
+ * Go library, `whatsmeowVersion 0.0.0-20260305`, so the channel died and NO npm
+ * upgrade could revive it: WhatsApp answered `getQRChannel` with
+ * `qr:error / err-client-outdated` and refused to issue a pairing code at all.
+ *
+ * The cure is a binary rebuilt against current go.mau.fi/whatsmeow. It cannot
+ * live in node_modules, because a deploy builds in a clean worktree and
+ * `pnpm install` restores the stale one. Point this at a rebuilt binary
+ * instead; unset, behaviour is exactly as before.
+ *
+ * This WILL recur the next time WhatsApp raises the floor. Rebuild with
+ * scripts/build-whatsmeow-node.sh and the symptom is the same:
+ * `err-client-outdated` on a FRESH store.
+ */
+const BINARY_PATH_ENV = "OPENCLAW_WHATSMEOW_BINARY";
+
+function resolveWhatsmeowBinaryPath(): string | undefined {
+  const raw = process.env[BINARY_PATH_ENV]?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  return resolveUserPath(raw);
+}
 
 let activeClient: WhatsmeowClient | null = null;
 
@@ -68,7 +99,11 @@ export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<
   await ensureDir(storeDir);
 
   const createClient = await loadCreateClient();
-  const client = createClient({ store: storePath });
+  const binaryPath = resolveWhatsmeowBinaryPath();
+  if (binaryPath) {
+    logger.info({ binaryPath }, "whatsmeow: using binary override");
+  }
+  const client = createClient(binaryPath ? { store: storePath, binaryPath } : { store: storePath });
 
   // ── QR events ──
   if (opts.onQr) {
@@ -154,10 +189,52 @@ export function getWmClient(): WhatsmeowClient | null {
 
 /** Connect + wait for connection (with timeout). */
 export async function connectWmClient(client: WhatsmeowClient, timeoutMs = 60_000): Promise<void> {
+  // FORK 2026-08-29: capture the REASON the link failed.
+  //
+  // This used to report only `connection timed out after ${timeoutMs}ms`, which
+  // was doubly misleading: whatsmeow answers in seconds (waitForConnection
+  // resolves false as soon as the socket gives up — observed 2-5s, never 60s),
+  // and the specific cause was being thrown away. For a month the channel
+  // reported a timeout while whatsmeow was in fact emitting
+  // `qr:error / err-client-outdated` — WhatsApp rejecting an outdated client
+  // build. Nobody could act on it because the message never named it.
+  //
+  // Record the last diagnostic event and put it in the thrown error.
+  let reason: string | null = null;
+  const note = (label: string) => (payload: unknown) => {
+    if (reason) {
+      return;
+    }
+    let detail = "";
+    try {
+      // Never log a QR payload: it is a pairing secret.
+      detail = label === "qr" ? "" : (JSON.stringify(payload) ?? "").slice(0, 300);
+    } catch {
+      detail = "<unserializable>";
+    }
+    reason = detail ? `${label}: ${detail}` : label;
+  };
+  for (const ev of ["qr:error", "stream_error", "logged_out", "error", "disconnected"]) {
+    try {
+      client.on(ev, note(ev));
+    } catch {
+      // best-effort: an older addon may not emit every event
+    }
+  }
+
+  const startedAt = Date.now();
   await client.connect();
   const connected = await client.waitForConnection(timeoutMs);
   if (!connected) {
-    throw new Error(`whatsmeow: connection timed out after ${timeoutMs}ms`);
+    const waitedMs = Date.now() - startedAt;
+    const because = reason ? ` (${reason})` : " (no diagnostic event received)";
+    const hint = reason?.includes("err-client-outdated")
+      ? " — WhatsApp rejected this client as OUTDATED; the whatsmeow Go binary must be" +
+        ` rebuilt against a current go.mau.fi/whatsmeow and pointed at via ${BINARY_PATH_ENV}`
+      : "";
+    throw new Error(
+      `whatsmeow: connection failed after ${waitedMs}ms (budget ${timeoutMs}ms)${because}${hint}`,
+    );
   }
 }
 

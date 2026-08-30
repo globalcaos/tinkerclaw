@@ -9,7 +9,7 @@ import {
   type PrefrontalPlanStepParams,
   type PrefrontalPlanGetParams,
   type PrefrontalPlanCloseParams,
-} from "../../src/gateway/protocol/schema/prefrontal-plan.js";
+} from "openclaw/plugin-sdk/fork-prefrontal-schema";
 import { PlanStore } from "./plan-store.js";
 
 // ajv-formats is not a project dependency; the input param schemas (set/step/get/close)

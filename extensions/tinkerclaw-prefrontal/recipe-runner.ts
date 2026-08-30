@@ -27,9 +27,9 @@ import fs from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import AjvPkg from "ajv";
+import type { Plan } from "openclaw/plugin-sdk/fork-prefrontal-schema";
+import type { SkillLibrary } from "openclaw/plugin-sdk/fork-recipe-engine";
 import { parse as parseYaml } from "yaml";
-import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
-import type { SkillLibrary } from "../../src/memory/engram/skill-library.js";
 import { deriveCombinatorFanOut, deriveUsesDepthBudget } from "./combinator-budget.js";
 import { deriveOverseerLoopBudget } from "./overseer-budget.js";
 import type { PlanStore } from "./plan-store.js";
@@ -86,7 +86,7 @@ export interface RecipeRunOptions {
    * When true, an existing in_progress plan for this sessionKey with the SAME
    * kitRef is resumed: dispatch starts at plan.currentStep, already-`done` rows
    * are skipped, and prior steps' artifacts are injected into later steps' tasks.
-   * Default policy (the owner, 2026-05-30): NO silent re-attach — auto-resume fires
+   * Default policy (the architect, 2026-05-30): NO silent re-attach — auto-resume fires
    * only when resume:true is passed. A bare run always force-restarts at step 0.
    */
   resume?: boolean;
@@ -1868,7 +1868,7 @@ export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult
   };
 
   // ── Durable checkpointing (FORK 2026-05-30, Upgrade 5) ───────────────────────
-  // Decide resume vs. fresh BEFORE seeding. Default policy (the owner 2026-05-30):
+  // Decide resume vs. fresh BEFORE seeding. Default policy (the architect 2026-05-30):
   // never silently re-attach — auto-resume requires resume:true AND a matching
   // in_progress plan with the SAME kitRef (a stale plan from an unrelated session
   // must not be hijacked). A partially-written plan that fails to parse is

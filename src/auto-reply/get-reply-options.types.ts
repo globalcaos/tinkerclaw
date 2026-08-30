@@ -47,6 +47,15 @@ export type GetReplyOptions = {
   onTypingCleanup?: () => void;
   onTypingController?: (typing: TypingController) => void;
   isHeartbeat?: boolean;
+  /**
+   * FORK (2026-07-27): the heartbeat run carries an actionable cron payload, so the
+   * transcript body must be the real prompt instead of HEARTBEAT_TRANSCRIPT_PROMPT.
+   * Otherwise `resolveRuntimeContextPromptParts` demotes the whole cron instruction
+   * into runtime SYSTEM context ("runtime-generated, not user-authored") and the
+   * model sees a bare "[OpenClaw heartbeat poll]" as its turn — so it acks and
+   * no-ops. See reference_cron_main_session_wake_key_bug.
+   */
+  heartbeatCarriesCronPayload?: boolean;
   /** Policy-level typing control for run classes (user/system/internal/heartbeat). */
   typingPolicy?: TypingPolicy;
   /** Force-disable typing indicators for this run (system/internal/cross-channel routes). */

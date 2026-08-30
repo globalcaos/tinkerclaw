@@ -29,16 +29,18 @@ describe("renderFractalDock — collapsed verdict dock", () => {
   it("carries a status-specific class and the status word in the summary", () => {
     const el = renderFractalDock(row({ status: "flagged" }));
     expect(el.classList.contains("fractal-status-flagged")).toBe(true);
-    expect(el.querySelector("summary")?.textContent).toBe("🌿 Fractal · flagged");
+    expect(el.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · flagged ⓘ");
   });
 
   it("spells the liveness words: ⚠ error, skipped with reason", () => {
     const err = renderFractalDock(row({ status: "error" }));
     expect(err.classList.contains("fractal-status-error")).toBe(true);
-    expect(err.querySelector("summary")?.textContent).toBe("🌿 Fractal · ⚠ error");
+    expect(err.querySelector("summary")?.textContent).toBe("🔍 Fractal Reasoning · ⚠ error ⓘ");
     const skipped = renderFractalDock(row({ status: "skipped", reason: "quota" }));
     expect(skipped.classList.contains("fractal-status-skipped")).toBe(true);
-    expect(skipped.querySelector("summary")?.textContent).toBe("🌿 Fractal · skipped:quota");
+    expect(skipped.querySelector("summary")?.textContent).toBe(
+      "🔍 Fractal Reasoning · skipped:quota ⓘ",
+    );
   });
 
   it("summary appends a findings count only when findings exist", () => {
@@ -53,7 +55,9 @@ describe("renderFractalDock — collapsed verdict dock", () => {
         ],
       }),
     );
-    expect(two.querySelector("summary")?.textContent).toBe("🌿 Fractal · flagged · 2 findings");
+    expect(two.querySelector("summary")?.textContent).toBe(
+      "🔍 Fractal Reasoning · flagged · 2 findings ⓘ",
+    );
   });
 
   it("expanded body renders headline, findings (kind chip + claim + path), reasoning as text", () => {
@@ -180,5 +184,90 @@ describe("findDockAnchor — docks after the resolved answer, orphan fallback ot
     findDockAnchor(container, dock, "run-main-1", () => detached);
     expect(dock.parentElement).toBe(container);
     expect(dock.classList.contains("fractal-orphan")).toBe(true);
+  });
+});
+
+// FORK 2026-08-11 (the architect) — LEVEL 3: the reflection's own transcript, nested in the
+// dock so its run no longer needs a separate tab.
+describe("renderFractalDock — nested full-reasoning transcript", () => {
+  it("renders no transcript section when no loader is supplied (back-compat)", () => {
+    const el = renderFractalDock(row({ status: "clean" }));
+    expect(el.querySelector(".fractal-dock-transcript")).toBeNull();
+  });
+
+  it("omits the transcript section on a pending stub — there is nothing to show yet", () => {
+    const el = renderFractalDock(row({ status: "pending" }), async () => "anything");
+    expect(el.querySelector(".fractal-dock-transcript")).toBeNull();
+  });
+
+  it("renders the section but does NOT fetch until first open (lazy by construction)", () => {
+    let calls = 0;
+    const el = renderFractalDock(row({ status: "clean" }), async () => {
+      calls++;
+      return "the transcript";
+    });
+    expect(el.querySelector(".fractal-dock-transcript")).not.toBeNull();
+    expect(calls).toBe(0); // the whole point: a dock per turn must not pull a transcript per turn
+  });
+
+  it("fetches once on open, renders the text, and does not refetch on reopen", async () => {
+    let calls = 0;
+    const el = renderFractalDock(row({ status: "clean", parentRunId: "run-xyz" }), async (id) => {
+      calls++;
+      return `transcript for ${id}`;
+    });
+    const section = el.querySelector<HTMLDetailsElement>(".fractal-dock-transcript")!;
+    section.open = true;
+    section.dispatchEvent(new Event("toggle"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    expect(section.querySelector(".fractal-transcript-body")?.textContent).toContain(
+      "transcript for run-xyz",
+    );
+    // close + reopen must not refetch
+    section.open = false;
+    section.dispatchEvent(new Event("toggle"));
+    section.open = true;
+    section.dispatchEvent(new Event("toggle"));
+    await Promise.resolve();
+    expect(calls).toBe(1);
+  });
+
+  it("reports an empty transcript as a real state, not a blank box", async () => {
+    const el = renderFractalDock(row({ status: "clean" }), async () => "   ");
+    const section = el.querySelector<HTMLDetailsElement>(".fractal-dock-transcript")!;
+    section.open = true;
+    section.dispatchEvent(new Event("toggle"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(section.querySelector(".fractal-transcript-body")?.textContent).toBe(
+      "no transcript found for this reflection run",
+    );
+  });
+
+  it("surfaces a load failure and un-latches so the next open retries", async () => {
+    let calls = 0;
+    const el = renderFractalDock(row({ status: "clean" }), async () => {
+      calls++;
+      throw new Error("gateway down");
+    });
+    const section = el.querySelector<HTMLDetailsElement>(".fractal-dock-transcript")!;
+    section.open = true;
+    section.dispatchEvent(new Event("toggle"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(section.querySelector(".fractal-transcript-body")?.textContent).toContain(
+      "gateway down",
+    );
+    section.dispatchEvent(new Event("toggle")); // retry is allowed after a failure
+    await Promise.resolve();
+    expect(calls).toBe(2);
+  });
+
+  it("threads the loader through upsertFractalDock", () => {
+    const container = document.createElement("div");
+    upsertFractalDock(container, row({ status: "clean" }), undefined, async () => "t");
+    expect(container.querySelector(".fractal-dock-transcript")).not.toBeNull();
   });
 });

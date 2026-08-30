@@ -191,11 +191,23 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
   });
 
   let connectedJid: string | null = null;
+  // FORK 2026-08-04: link state, tracked from the client's own lifecycle events.
+  // Backfill sends peer messages over the socket, so dispatching while the link is
+  // down produces nothing but failures — see the deferred triggers below.
+  let linkUp = false;
+  const deferredTimers: ReturnType<typeof setTimeout>[] = [];
+  const cancelDeferred = (why: string) => {
+    if (deferredTimers.length === 0) return;
+    for (const t of deferredTimers) clearTimeout(t);
+    deferredTimers.length = 0;
+    visible("cancelled pending deferred backfill timers", { why });
+  };
 
   client.on("connected", ({ jid }: { jid: string }) => {
     logger.info({ jid }, "Connected — history capture active (wm)");
     visible("connected event received", { jid });
     connectedJid = jid;
+    linkUp = true;
     void loadBackfill().then((mod) => {
       if (!mod) {
         visible("backfill module unavailable on connected");
@@ -207,26 +219,55 @@ export function bindWmHistoryCapture(client: WhatsmeowClient): void {
     });
   });
 
+  // FORK 2026-08-04: the link going down must stop pending backfills. Without this,
+  // a bind whose socket never came up still fired both deferred triggers below.
+  for (const ev of ["disconnected", "logged_out"]) {
+    client.on(ev, () => {
+      linkUp = false;
+      cancelDeferred(ev);
+    });
+  }
+
   // Deferred backfill trigger: fires 8s after bind to catch the case where
   // the 'connected' event already fired before we registered the listener
   // (common during QR login -> 515 restart -> fresh client handoff).
-  setTimeout(() => {
-    if (!connectedJid) {
-      logger.info("Deferred backfill check — 'connected' event not yet received, running anyway");
-      visible("8s deferred backfill firing — connected event was missed");
-      // Try with empty JID — the DB query doesn't need it if lastSender is populated
-      void loadBackfill().then((mod) => mod?.requestBackfill(client, ""));
-    } else {
-      visible("8s deferred check — connected already observed; skipping", { jid: connectedJid });
-    }
-  }, 8000);
+  //
+  // FORK 2026-08-04 — THIS USED TO RUN "ANYWAY" WHEN connectedJid WAS NULL, and the
+  // 60s trigger below ran unconditionally. Both dispatch up to 50 peer messages. The
+  // WhatsApp channel rebinds constantly (2,573 "channel exited without an error" in
+  // three days, most with `connection timed out after 60000ms`), so every rebind fired
+  // 2 x 50 sends into a socket that was not up: 256,809 "backfill request failed
+  // ... websocket not connected" lines in 3 days — 66% of the ENTIRE gateway journal.
+  //
+  // "connected not yet received" and "link is down" are indistinguishable from a null
+  // jid alone, and the honest reading of a missing connected event is that we are NOT
+  // connected. Both triggers now require a live link; a genuinely-missed connected
+  // event is still covered, because whatsmeow re-emits it on the next successful bind.
+  deferredTimers.push(
+    setTimeout(() => {
+      if (linkUp) {
+        visible("8s deferred backfill firing — link up, connected event was missed", {
+          jid: connectedJid ?? "",
+        });
+        void loadBackfill().then((mod) => mod?.requestBackfill(client, connectedJid ?? ""));
+      } else {
+        visible("8s deferred backfill SKIPPED — link is down");
+      }
+    }, 8000),
+  );
 
-  // Second attempt at 60s in case the first was too early (session still stabilizing)
-  setTimeout(() => {
-    logger.info("Scheduled backfill check (60s post-bind)");
-    visible("60s scheduled backfill firing", { jid: connectedJid ?? "" });
-    void loadBackfill().then((mod) => mod?.requestBackfill(client, connectedJid ?? ""));
-  }, 60_000);
+  // Second attempt at 60s in case the first was too early (session still stabilizing).
+  deferredTimers.push(
+    setTimeout(() => {
+      if (!linkUp) {
+        visible("60s scheduled backfill SKIPPED — link is down");
+        return;
+      }
+      logger.info("Scheduled backfill check (60s post-bind)");
+      visible("60s scheduled backfill firing", { jid: connectedJid ?? "" });
+      void loadBackfill().then((mod) => mod?.requestBackfill(client, connectedJid ?? ""));
+    }, 60_000),
+  );
 
   logger.info("whatsmeow history capture bound successfully");
   visible("bind complete; awaiting connected event");

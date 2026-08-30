@@ -1147,7 +1147,21 @@ export function mountContextTreemap(
     anatomyTimestamp = ev.timestampMs ?? (ev.timestamp ? new Date(ev.timestamp).getTime() : null);
     maxTokenWindow = ev.contextWindow?.maxTokens ?? 200_000;
 
-    const totalTokens = ev.contextWindow?.usedTokens ?? cs.totalTokens ?? 0;
+    // FORK 2026-07-28 — app.ts:342-345 states the rule verbatim: the fill is derived from
+    // contextSent.totalTokens and NEVER from contextWindow.usedTokens / utilizationPercent,
+    // which are TURN-AGGREGATE counters that read well past 100% on long turns. This panel read
+    // both anyway, and then derived a DOLLAR COST from the poisoned figure below — so a 6,448,106
+    // reading on a 1,000,000 window (real context 52,116) produced a ~124x cost overstatement as
+    // well as a "645%" footer. Prefer the honest composition; accept the reported figure only
+    // when it is physically possible.
+    const reportedUsed = ev.contextWindow?.usedTokens;
+    const windowMax = ev.contextWindow?.maxTokens;
+    const reportedIsPlausible =
+      typeof reportedUsed === "number" &&
+      Number.isFinite(reportedUsed) &&
+      reportedUsed > 0 &&
+      (typeof windowMax !== "number" || windowMax <= 0 || reportedUsed <= windowMax);
+    const totalTokens = reportedIsPlausible ? (reportedUsed as number) : (cs.totalTokens ?? 0);
     currentDump = {
       totals: { chars: totalTokens * 4, estimated_tokens: totalTokens },
       meta: { model: ev.model },
@@ -1158,7 +1172,10 @@ export function mountContextTreemap(
 
     // Update footer with anatomy info
     const max = ev.contextWindow?.maxTokens ?? 200_000;
-    const util = ev.contextWindow?.utilizationPercent ?? (max > 0 ? (totalTokens / max) * 100 : 0);
+    // Derived from the vetted totalTokens above, never read from the event: utilizationPercent is
+    // the same turn-aggregate counter expressed as a ratio, so trusting it would re-introduce the
+    // 645% footer through the back door after the numerator had already been corrected.
+    const util = max > 0 ? (totalTokens / max) * 100 : 0;
     const model = cleanModelName(ev.model ?? "unknown");
     const profileId = ev.authProfileId ?? "";
     const isSub = /oauth|cli/i.test(profileId);

@@ -68,15 +68,79 @@ const EMBEDDED_RUN_MODEL_SWITCH_REQUESTS =
 // Messages arriving within the debounce window are concatenated with
 // double-newline separators and steered as one combined user message.
 const STEER_DEBOUNCE_MS = 300;
-const steerBuffers = new Map<string, { texts: string[]; timer: NodeJS.Timeout }>();
+// FORK (2026-08-28): The debounce timer resets on EVERY new message, so a fast
+// typist could postpone injection indefinitely. Cap the total wait from the
+// FIRST buffered message: 5 debounce windows (1500 ms) is long enough to batch
+// a burst of quick follow-ups, short enough that the injection still lands
+// within the current tool round instead of drifting behind the whole turn.
+const STEER_MAX_WAIT_MS = 1_500;
 
-function flushSteerBuffer(sessionId: string) {
+// FORK (2026-08-28): A buffered user message must NEVER vanish. The caller can
+// hand the buffer a fallback that re-delivers the text as a NEW follow-up turn
+// (agent-runner owns the followup-queue context this registry doesn't have);
+// when the run ends before the flush timer fires, the fallback — not the
+// void — gets the text.
+type SteerDeliveryFallback = (texts: string[], combined: string) => void;
+type SteerBuffer = {
+  texts: string[];
+  timer: NodeJS.Timeout;
+  // FORK (2026-08-28): timestamp of the FIRST buffered message — anchor for
+  // the max-wait cap. Deliberately not refreshed on subsequent messages.
+  firstBufferedAt: number;
+  fallback?: SteerDeliveryFallback;
+};
+const steerBuffers = new Map<string, SteerBuffer>();
+
+// FORK (2026-08-28): Last-resort delivery when no live handle can take the
+// buffered text. With a registered fallback the text becomes a NEW follow-up
+// turn (the Claude Code shape: finish the immediate work, then resume with the
+// follow-up as fresh input). Without one, fail LOUDLY — a debug line is how
+// this hole stayed invisible; an ERROR carrying the message head is at least
+// recoverable from the logs.
+function deliverSteerBufferViaFallback(
+  sessionId: string,
+  buf: SteerBuffer,
+  combined: string,
+  reason: string,
+): boolean {
+  if (buf.fallback) {
+    try {
+      buf.fallback(buf.texts, combined);
+      diag.debug(
+        `steer flush: delivered via followup fallback sessionId=${sessionId} reason=${reason} chars=${combined.length}`,
+      );
+      return true;
+    } catch (err) {
+      diag.error(
+        `steer flush: followup fallback threw — buffered user message LOST sessionId=${sessionId} reason=${reason} err=${String(err)} head=${JSON.stringify(combined.slice(0, 200))}`,
+      );
+      return false;
+    }
+  }
+  diag.error(
+    `steer flush DROPPED a buffered user message: sessionId=${sessionId} reason=${reason} messages=${buf.texts.length} chars=${combined.length} head=${JSON.stringify(combined.slice(0, 200))} — no delivery fallback registered (pass onDeliveryLost to queueEmbeddedPiMessage)`,
+  );
+  return false;
+}
+
+function flushSteerBuffer(sessionId: string, opts?: { runEnding?: boolean }) {
   const buf = steerBuffers.get(sessionId);
   if (!buf || buf.texts.length === 0) {
     return;
   }
   steerBuffers.delete(sessionId);
+  clearTimeout(buf.timer);
   const combined = buf.texts.join("\n\n");
+  // FORK (2026-08-28): The run is tearing down NOW (clearActiveEmbeddedRun).
+  // Steering into a finishing worker or queueMessage()-ing a "next round" that
+  // will never come are both dead letters — with a registered fallback, skip
+  // the handle entirely and deliver as a NEW follow-up turn. Mutually
+  // exclusive with the paths below — never both, or the message would be
+  // delivered twice.
+  if (opts?.runEnding && buf.fallback) {
+    deliverSteerBufferViaFallback(sessionId, buf, combined, "run_ending");
+    return;
+  }
   // FORK P4 (in-flight steer): try to fold the message INTO the live provider
   // turn first — tinker-bridge writes it to the running claude-cli stdin, which
   // picks it up between tool rounds (like Claude Code), so it changes the
@@ -92,7 +156,11 @@ function flushSteerBuffer(sessionId: string) {
   }
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (!handle) {
-    diag.debug(`steer flush skipped: sessionId=${sessionId} reason=no_active_run`);
+    // FORK (2026-08-28): The run ended during the debounce window. This used
+    // to be a silent drop behind a debug line — the ONE way a buffered user
+    // message could vanish. Deliver as a new follow-up turn instead, or fail
+    // loudly when no fallback was registered.
+    deliverSteerBufferViaFallback(sessionId, buf, combined, "no_active_run");
     return;
   }
   diag.debug(
@@ -101,7 +169,19 @@ function flushSteerBuffer(sessionId: string) {
   void handle.queueMessage(combined);
 }
 
-export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean {
+// FORK (2026-08-28): `true` means ACCEPTED FOR DELIVERY, not yet delivered —
+// the flush delivers via in-flight steer or the run's next round, and when the
+// run ends first, via `opts.onDeliveryLost` as a NEW follow-up turn. Callers
+// that treat `true` as "handled" and skip their own fallback should pass
+// onDeliveryLost; without it a run that ends mid-debounce surfaces as a diag
+// ERROR — never a silent drop. Return type stays boolean so the existing call
+// sites (agent-runner steer path, subagent announce delivery, dozens of test
+// mocks) keep compiling unchanged.
+export function queueEmbeddedPiMessage(
+  sessionId: string,
+  text: string,
+  opts?: { onDeliveryLost?: SteerDeliveryFallback },
+): boolean {
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (!handle) {
     diag.debug(`queue message failed: sessionId=${sessionId} reason=no_active_run`);
@@ -118,15 +198,29 @@ export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean
   logMessageQueued({ sessionId, source: "embedded-agent-runner" });
   // FORK: Buffer the message — flush after debounce window so rapid
   // follow-up messages are combined into a single steer injection.
+  const now = Date.now();
   const existing = steerBuffers.get(sessionId);
   if (existing) {
     clearTimeout(existing.timer);
     existing.texts.push(text);
-    existing.timer = setTimeout(() => flushSteerBuffer(sessionId), STEER_DEBOUNCE_MS);
+    if (opts?.onDeliveryLost) {
+      // FORK (2026-08-28): latest caller-supplied fallback wins — in practice
+      // one session has one delivery path, so this is a refresh, not a race.
+      existing.fallback = opts.onDeliveryLost;
+    }
+    // FORK (2026-08-28): keep debouncing for batching, but never schedule the
+    // flush past the max-wait cap measured from the FIRST buffered message —
+    // a steady stream of keystroke-fast messages must not postpone injection
+    // indefinitely.
+    const elapsedMs = now - existing.firstBufferedAt;
+    const delayMs = Math.min(STEER_DEBOUNCE_MS, Math.max(0, STEER_MAX_WAIT_MS - elapsedMs));
+    existing.timer = setTimeout(() => flushSteerBuffer(sessionId), delayMs);
   } else {
     steerBuffers.set(sessionId, {
       texts: [text],
       timer: setTimeout(() => flushSteerBuffer(sessionId), STEER_DEBOUNCE_MS),
+      firstBufferedAt: now,
+      fallback: opts?.onDeliveryLost,
     });
   }
   return true;
@@ -361,6 +455,46 @@ export function resolveActiveEmbeddedRunSessionId(sessionKey: string): string | 
   return undefined;
 }
 
+/**
+ * Ambiguity-aware variant of {@link resolveActiveEmbeddedRunSessionId}.
+ *
+ * The substring fallback above returns the FIRST matching run, which is Map
+ * insertion order. That is fine when a session key identifies exactly one run,
+ * but several UI tabs share one agent session key (e.g. every Claude Code tab
+ * is `agent:main:main`), so a fuzzy match silently picks a sibling tab. Callers
+ * that route a message to a specific requester must not guess: delivering a
+ * subagent result into the wrong tab makes an unrelated agent act on it.
+ *
+ * Exact match always wins. Otherwise substring matches are counted, and a
+ * unique match is returned; two or more candidates report `ambiguous` with no
+ * sessionId so the caller can fail closed instead of picking one.
+ */
+export function resolveActiveEmbeddedRunSessionIdUnique(sessionKey: string): {
+  sessionId?: string;
+  ambiguous: boolean;
+  candidateCount: number;
+} {
+  if (ACTIVE_EMBEDDED_RUNS.has(sessionKey)) {
+    return { sessionId: sessionKey, ambiguous: false, candidateCount: 1 };
+  }
+  const matches: string[] = [];
+  for (const sessionId of ACTIVE_EMBEDDED_RUNS.keys()) {
+    if (sessionId.includes(sessionKey) || sessionKey.includes(sessionId)) {
+      matches.push(sessionId);
+    }
+  }
+  if (matches.length === 1) {
+    return { sessionId: matches[0], ambiguous: false, candidateCount: 1 };
+  }
+  if (matches.length > 1) {
+    diag.debug(
+      `ambiguous active run for sessionKey=${sessionKey} candidates=${matches.length}; refusing to guess`,
+    );
+    return { ambiguous: true, candidateCount: matches.length };
+  }
+  return { ambiguous: false, candidateCount: 0 };
+}
+
 export function setActiveEmbeddedRun(
   sessionId: string,
   handle: EmbeddedPiQueueHandle,
@@ -397,10 +531,13 @@ export function clearActiveEmbeddedRun(
   if (ACTIVE_EMBEDDED_RUNS.get(sessionId) === handle) {
     // FORK: Flush any pending steer buffer before clearing the run
     // so buffered messages aren't silently lost.
+    // FORK (2026-08-28): runEnding tells the flush this handle is a dead
+    // letter — with a registered fallback the text becomes a NEW follow-up
+    // turn instead of a queueMessage() the finished run will never read.
     const pending = steerBuffers.get(sessionId);
     if (pending) {
       clearTimeout(pending.timer);
-      flushSteerBuffer(sessionId);
+      flushSteerBuffer(sessionId, { runEnding: true });
     }
     ACTIVE_EMBEDDED_RUNS.delete(sessionId);
     ACTIVE_EMBEDDED_RUN_SNAPSHOTS.delete(sessionId);
@@ -417,6 +554,13 @@ export function clearActiveEmbeddedRun(
 
 export const __testing = {
   resetActiveEmbeddedRuns() {
+    // FORK (2026-08-28): also drop pending steer buffers — a leftover flush
+    // timer firing after reset would now log a loud DROPPED error into an
+    // unrelated test.
+    for (const buf of steerBuffers.values()) {
+      clearTimeout(buf.timer);
+    }
+    steerBuffers.clear();
     for (const waiters of EMBEDDED_RUN_WAITERS.values()) {
       for (const waiter of waiters) {
         clearTimeout(waiter.timer);
@@ -430,4 +574,4 @@ export const __testing = {
   },
 };
 
-export type { EmbeddedPiQueueHandle };
+export type { EmbeddedPiQueueHandle, SteerDeliveryFallback };

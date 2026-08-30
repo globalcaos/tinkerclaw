@@ -17,8 +17,30 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+// FORK 2026-08-04 (FOUNDATION #9 — bounded, replicable) — the observability substrate is reached
+// through DECLARED plugin-SDK surfaces, never through a relative `../../src/infra/*` path. Two
+// independent reasons, either fatal on its own:
+//   1. this extension is `publishToNpm: true` and its `files:` list ships only its own directory,
+//      so a `../../src/**` specifier cannot resolve in the published tarball at all;
+//   2. it sets `openclaw.bundle.stageRuntimeDependencies: true`, so it gets its OWN rolldown graph
+//      (tsdown.config.ts:288-341), in which a relative src import INLINES A SECOND COPY of the
+//      module. Measured: dist/extensions/tinkerclaw-learned-intuition/index.js was ~194 KB with
+//      `emitAgentEvent`/`declareInstrument` duplicated and no edge back to core's copy.
+//      `openclaw/plugin-sdk/*` is externalised by isPluginSdkSelfReference(), so exactly one copy
+//      stays in the shared graph.
+// Be precise about what the duplication did NOT do: it did not fork the liveness registry or the
+// event bus. Both resolve their state through `resolveGlobalSingleton` specifically so bundle
+// splits converge on one globalThis slot (src/infra/instrument-liveness.ts:96-114,
+// src/infra/agent-events.ts:130), and algorithm-metrics is stateless. Deduplicating here is about
+// publishability and weight, not about repairing broken state — the false reason would be read as
+// an invariant by the next person, and it is the opposite of the real one.
+import { onAgentEvent, emitAgentEvent } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import { onAgentEvent, emitAgentEvent } from "../../src/infra/agent-events.js";
+import {
+  recordAlgorithmOutcome,
+  declareInstrument,
+  noteInstrumentFired,
+} from "openclaw/plugin-sdk/fork-instrumentation";
 import { decodePersonalityNudge } from "./src/personality-decoder.js";
 import { generateTargetVector, DEFAULT_TARGET_DIMENSIONS } from "./src/personality-seed.js";
 import { writePolicySnapshot, policyPaths } from "./src/policy-snapshot.js";
@@ -41,6 +63,27 @@ const HOOK_DECISIONS_PATH = join(AMYGDALA_DATA_DIR, "hook-decisions.jsonl");
 // FORK 2026-06-07: register() runs ~5×/gateway boot; attach the tinker-bridge prudence
 // listener ONCE per process or every tool call gets evaluated (and recorded) N times.
 let tinkerBridgePrudenceListenerAttached = false;
+
+// FORK 2026-07-28 (instrument-liveness) — the WRITE half of the AMYGDALA personality thermostat.
+// Its pair is `amygdala:nudge-injection` in src/agents/system-prompt.ts, and the PAIR is the whole
+// point: a nudge that is written but never injected is exactly the inert-component failure the
+// liveness registry exists to catch, and NEITHER instrument alone can separate "the thermostat had
+// nothing to say" from "it spoke and the prompt discarded it".
+//
+// Declared at module scope rather than inside register() for two reasons: register() runs
+// ~5x/gateway boot (see the note above), and merely LOADING this extension is what should make its
+// silence visible — registration is the static property, firing is the dynamic one, and only the
+// second is worth anything.
+//
+// Tolerance is 6h rather than the 30-minute default: the writer only fires when the decoder finds a
+// dimension drifted past DRIFT_THRESHOLD, so a quiet stretch is legitimate, not a defect.
+const NUDGE_WRITE_INSTRUMENT = {
+  id: "amygdala:nudge-write",
+  kind: "producer" as const,
+  description: "AMYGDALA thermostat writing a personality nudge",
+  expectFireWithinMs: 6 * 60 * 60 * 1000,
+};
+declareInstrument(NUDGE_WRITE_INSTRUMENT);
 
 // -- Helpers --
 
@@ -120,7 +163,7 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
       // AEGIS tool-gate (that stays observe-only via cfg.observeOnly).
       // FORK 2026-06-04: bumped personality 0.15 → 0.5 for the narration-canary
       // experiment — narration_discipline nudge is the visible tell that the
-      // whole personality pipeline is live (the owner's instrument). Prudence stays
+      // whole personality pipeline is live (the architect's instrument). Prudence stays
       // 0.15 (observe-only safety gate).
       alpha_prudence: 0.15,
       alpha_personality: 0.5,
@@ -296,6 +339,19 @@ export default definePluginEntry({
                 : "onnx"
               : "novelty";
             writeSharedState(mode, !hook.useRuleBasedFallback);
+            // FORK 2026-07-28 (instrument-liveness) — in rule-based fallback the llm_output nudge
+            // writer returns BEFORE it can write, so `amygdala:nudge-write` cannot fire and would be
+            // reported BROKEN forever: that is the false alarm `conditional` exists for. Re-declare
+            // here, once init has resolved and `useRuleBasedFallback` is finally known.
+            // declareInstrument merges (Object.assign), so the accumulated counters survive, and
+            // passing `undefined` explicitly CLEARS a previously-set reason instead of letting it go
+            // stale — silence must stop being excused the moment the models do load.
+            declareInstrument({
+              ...NUDGE_WRITE_INSTRUMENT,
+              conditional: hook.useRuleBasedFallback
+                ? "ONNX personality models unavailable — the nudge writer returns before writing"
+                : undefined,
+            });
             const nov = hook.noveltyStatus;
             log.info(
               `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}, ` +
@@ -497,6 +553,35 @@ export default definePluginEntry({
 
           if (nudge.adjustments.length > 0) {
             writePersonalityNudge(nudge);
+            // FORK 2026-07-28 — fire AFTER the file is on disk, never before. writePersonalityNudge
+            // is synchronous and can throw (writeFileSync), so reaching this line is the proof that
+            // the nudge is persisted at PERSONALITY_NUDGE_PATH; claiming "written" any earlier would
+            // make the ledger lie in precisely the direction that hides the bug.
+            noteInstrumentFired(
+              "amygdala:nudge-write",
+              `${nudge.adjustments.length} adjustments, strength=${nudge.strength}`,
+            );
+            // Parts only, never a ratio (algorithm-metrics rule 2): `adjustments` is the COUNT of
+            // nudge lines actually persisted, not the strings. `embeddingSource` segments rows
+            // decoded from the Personality net's REAL combined_embedding from rows decoded against
+            // the neutral 0.5 stub — without it a paper cannot tell a measured nudge from a
+            // placeholder one, which is the same measured-vs-estimated contamination rule 3 forbids.
+            recordAlgorithmOutcome({
+              algorithm: "persona-nudge",
+              variant: "amygdala-thermostat",
+              outcome: "written",
+              metrics: {
+                adjustments: nudge.adjustments.length,
+                strength: nudge.strength,
+              },
+              provenance: {
+                adjustments: "local-measured",
+                strength: "local-measured",
+              },
+              config: {
+                embeddingSource: lastPersonalityEmbedding ? "personality-net" : "neutral-stub",
+              },
+            });
             log.debug(
               `[learned-intuition] personality nudge written: ${nudge.adjustments.length} adjustments`,
             );

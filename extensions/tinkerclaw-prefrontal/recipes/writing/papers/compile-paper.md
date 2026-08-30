@@ -52,9 +52,13 @@ Grep the chosen `.md` for `![...](path)` image references. Cross-reference again
 
 For each missing figure: open `diagram-suggestions.md`, find the suggestion matching the figure name, and generate it.
 
-- Architecture / flow / boundary diagrams: TikZ inline in a small `.tex` file, compiled to PDF via `pdflatex`, then either embed the PDF directly or convert to PNG.
-- Charts and plots: short Python (`matplotlib`) script in a temp file, run it, save the PNG into `images/`.
-  Per-figure isolated: one failure does not abort the run. Skip silently if the figure is already on disk.
+**{{paper-figures}} owns the figure policy — follow its ROUTING RULE, do not re-decide it here.** In short:
+
+- Architecture / flow / boundary / concept diagrams: **napkin.ai** via the `napkin-diagrams` skill, then the Nano Banana Pro cohesion pass. NOT TikZ, NOT matplotlib box-art.
+- Charts and plots of real numbers: short Python (`matplotlib`) script in a temp file, house-style rcParams applied, PNG into `images/`. Never restyle these through an image model.
+- TikZ/D2 only when Napkin is unavailable or the topology must be literally exact.
+
+Per-figure isolated: one failure does not abort the run. Skip silently if the figure is already on disk.
 
 ### 4. Convert markdown to LaTeX
 

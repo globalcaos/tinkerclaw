@@ -15,6 +15,36 @@ const STRICT_ENTRY_MAINTENANCE_MAX_ENTRIES = 49;
 const MIN_BATCHED_ENTRY_MAINTENANCE_SLACK = 25;
 const BATCHED_ENTRY_MAINTENANCE_SLACK_RATIO = 0.1;
 
+/**
+ * FORK 2026-08-11 (the architect) — session key classes that carry a real conversation
+ * (a human on one end) or a pinned runtime lane. These are NEVER evicted by
+ * entry maintenance, at any `maxEntries` and any `pruneAfterMs`.
+ *
+ * Why this exists: `capEntryCount` evicts strictly by `updatedAt`, and only the
+ * single ACTIVE session key was preserved. That is a plain LRU, so any lane that
+ * mints sessions faster than the user talks will push the user's own chats out
+ * of the store. That is not hypothetical — the fractal-reflection lane mints
+ * ~70 sessions/day against a 500-entry default cap, and on 2026-08-10 it evicted
+ * 16 of the architect's real conversations (family, hiring, paper-revision and
+ * client threads) in two sweeps, emptying
+ * the Tinker session panel down to `main`. The transcripts survived on disk —
+ * the registry keys did not, which is what the panel renders.
+ *
+ * The invariant is a CLASS invariant, not a recency one: a conversation is not
+ * disposable because it has been quiet. Background lanes (`subagent`, `cron`,
+ * `fractal-reflection`) stay evictable — they are throwaway by construction, and
+ * archiving them is the cleaning-lady cron's sanctioned job.
+ */
+function isProtectedSessionKey(key: string): boolean {
+  return (
+    key.endsWith(":main") ||
+    key.includes(":heartbeat") ||
+    key.includes(":tinker:") ||
+    key.includes(":dashboard:") ||
+    key.includes(":whatsapp:")
+  );
+}
+
 export type SessionMaintenanceWarning = {
   activeSessionKey: string;
   activeUpdatedAt?: number;
@@ -176,7 +206,7 @@ export function pruneStaleEntries(
   const cutoffMs = Date.now() - maxAgeMs;
   let pruned = 0;
   for (const [key, entry] of Object.entries(store)) {
-    if (opts.preserveKeys?.has(key)) {
+    if (opts.preserveKeys?.has(key) || isProtectedSessionKey(key)) {
       continue;
     }
     if (entry?.updatedAt != null && entry.updatedAt < cutoffMs) {
@@ -286,11 +316,11 @@ export function capEntryCount(
   } = {},
 ): number {
   const maxEntries = overrideMax ?? resolveMaintenanceConfigFromInput().maxEntries;
-  const preservedCount = opts.preserveKeys
-    ? Object.keys(store).filter((key) => opts.preserveKeys?.has(key)).length
-    : 0;
+  const isPreserved = (key: string): boolean =>
+    Boolean(opts.preserveKeys?.has(key)) || isProtectedSessionKey(key);
+  const preservedCount = Object.keys(store).filter(isPreserved).length;
   const maxRemovableEntries = Math.max(0, maxEntries - preservedCount);
-  const keys = Object.keys(store).filter((key) => !opts.preserveKeys?.has(key));
+  const keys = Object.keys(store).filter((key) => !isPreserved(key));
   if (keys.length <= maxRemovableEntries) {
     return 0;
   }

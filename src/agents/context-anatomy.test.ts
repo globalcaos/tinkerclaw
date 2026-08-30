@@ -172,6 +172,102 @@ describe("buildContextAnatomy", () => {
     expect(event.contextSent.conversationHistoryChars).toBeGreaterThan(0);
   });
 
+  // FORK 2026-07-28 — REGRESSION: every tool result was silently dropped from the composition.
+  //
+  // The classifier tested `msg.role === ("tool" as string)`, but the PRODUCTION role literal is
+  // `"toolResult"` (@mariozechner/pi-ai types.d.ts:154). A real tool-result message matched no
+  // branch and contributed ZERO to totalChars, so the decoded composition reported
+  // "tool results: 0" — which was read as "no tool results resident" when it actually meant
+  // "not counted". Figures derived from that total under-read the real context.
+  //
+  // The suite did not catch it because its own fixture uses `role: "tool"`, the one spelling
+  // that DID match. The test agreed with the code and both disagreed with production. These
+  // cases therefore use the production literal deliberately.
+  test("counts tool results under the PRODUCTION role literal, not just 'tool'", () => {
+    const event = buildContextAnatomy({
+      turn: 1,
+      compactionCycle: 0,
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      systemPromptReport: makeReport(),
+      messagesSnapshot: [
+        { role: "user", content: "run the thing" },
+        // The shape production actually emits:
+        { role: "toolResult", content: "X".repeat(5_000) } as never,
+        { role: "user", content: "thanks" },
+      ],
+      contextWindowTokens: 200000,
+    });
+
+    expect(event.contextSent.toolResultsChars).toBeGreaterThanOrEqual(5_000);
+  });
+
+  test("an unclassifiable role inflates no slab but is not silently discarded", () => {
+    // The terminal else-branch exists so a role the union grows shows up as a visible
+    // unattributed slab rather than quietly shrinking the reported total.
+    const withUnknown = buildContextAnatomy({
+      turn: 1,
+      compactionCycle: 0,
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      systemPromptReport: makeReport(),
+      messagesSnapshot: [
+        { role: "user", content: "hi" },
+        { role: "someFutureRole", content: "Y".repeat(4_000) } as never,
+      ],
+      contextWindowTokens: 200000,
+    });
+
+    // It must not be misfiled as history or as tool results...
+    expect(withUnknown.contextSent.conversationHistoryChars).toBeLessThan(4_000);
+    expect(withUnknown.contextSent.toolResultsChars).toBeLessThan(4_000);
+    // ...and the event must still be produced rather than throwing.
+    expect(withUnknown.contextSent.totalChars).toBeGreaterThan(0);
+  });
+
+  // FORK 2026-07-28 — REGRESSION: a run-cumulative total was published as context fill.
+  // `totalTokensUsed` comes from usageTotals.total, which accumulates across every assistant
+  // message of the run and never resets, not even on compaction. This event is the SOURCE the
+  // timeline, the treemap and the anatomy DB all consume, so one bad figure reached three
+  // consumers — and it is how a "645%" fill became renderable at all.
+  test("rejects a run-cumulative total larger than the window instead of publishing it", () => {
+    const event = buildContextAnatomy({
+      turn: 8,
+      compactionCycle: 1,
+      provider: "claude-code",
+      model: "claude-opus-5",
+      sessionKey: "agent:main:main",
+      systemPromptReport: makeReport(),
+      messagesSnapshot: makeMessages(),
+      contextWindowTokens: 1_000_000,
+      // The real figure measured live on 2026-07-28.
+      totalTokensUsed: 6_448_106,
+    });
+
+    // Never publish an impossible fill...
+    expect(event.contextWindow.usedTokens).toBeLessThanOrEqual(event.contextWindow.maxTokens);
+    expect(event.contextWindow.utilizationPercent).toBeLessThanOrEqual(100);
+    // ...and specifically fall back to the honest local estimate rather than clamping to the
+    // window, which would fabricate a plausible-looking number from a poisoned one.
+    expect(event.contextWindow.usedTokens).toBe(event.contextSent.totalTokens);
+    expect(event.contextWindow.usedTokens).not.toBe(1_000_000);
+  });
+
+  test("still trusts a plausible reported total over the local estimate", () => {
+    const event = buildContextAnatomy({
+      turn: 2,
+      compactionCycle: 0,
+      provider: "anthropic",
+      model: "claude-opus-4-6",
+      systemPromptReport: makeReport(),
+      messagesSnapshot: makeMessages(),
+      contextWindowTokens: 1_000_000,
+      totalTokensUsed: 120_000,
+    });
+
+    expect(event.contextWindow.usedTokens).toBe(120_000);
+  });
+
   test("identifies memory files in autoRecall", () => {
     const event = buildContextAnatomy({
       turn: 1,

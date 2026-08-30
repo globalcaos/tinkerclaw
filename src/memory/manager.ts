@@ -66,6 +66,29 @@ function getMemoryIndexManagerCacheStore(): MemoryIndexManagerCacheStore {
 
 const log = createSubsystemLogger("memory");
 
+/**
+ * Search is best-effort by design: one failing retrieval stage must not take the whole query
+ * down. But a THROWN query is a BUG, not an empty result set. The bare `.catch(() => [])` that
+ * used to guard the stages below hid a broken FTS5 statement (`bm25(f)` / `f MATCH ?` against a
+ * table addressed by its JOIN alias — SQLite rejects that at PREPARE time with
+ * "no such column: f") for months, because here a throw and a genuine miss looked identical.
+ * (SQLiteMemoryStore.search() calls the same helper with no catch at all, so that path did
+ * surface the throw; it is simply not wired into fork.memory.search.)
+ *
+ * INVARIANT for this file: every retrieval stage that degrades to [] logs WHY first.
+ * Deliberately `error` rather than the `warn` used by the other degraded paths here — a query
+ * that cannot even prepare is a defect, and silence about it is what cost us the months.
+ * The stack goes in `meta`, never in the message, so a persistent failure cannot flood the
+ * console on every turn (search runs per turn).
+ */
+function logSearchStageFailure(stage: string, err: unknown): void {
+  const summary = err instanceof Error ? err.message : String(err);
+  log.error(`memory search: ${stage} stage failed, degrading to 0 results: ${summary}`, {
+    stage,
+    error: err instanceof Error ? (err.stack ?? err.message) : String(err),
+  });
+}
+
 const { indexCache: INDEX_CACHE, indexCachePending: INDEX_CACHE_PENDING } =
   getMemoryIndexManagerCacheStore();
 
@@ -401,13 +424,19 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     // If FTS isn't available, hybrid mode cannot use keyword search; degrade to vector-only.
     const keywordResults =
       hybrid.enabled && this.fts.enabled && this.fts.available
-        ? await this.searchKeyword(cleaned, candidates, { temporalMode, asOfTime }).catch(() => [])
+        ? await this.searchKeyword(cleaned, candidates, { temporalMode, asOfTime }).catch((err) => {
+            logSearchStageFailure("keyword", err);
+            return [];
+          })
         : [];
 
     const queryVec = await this.embedQueryWithTimeout(cleaned);
     const hasVector = queryVec.some((v) => v !== 0);
     const vectorResults = hasVector
-      ? await this.searchVector(queryVec, candidates, { temporalMode, asOfTime }).catch(() => [])
+      ? await this.searchVector(queryVec, candidates, { temporalMode, asOfTime }).catch((err) => {
+          logSearchStageFailure("vector", err);
+          return [];
+        })
       : [];
 
     if (!hybrid.enabled || !this.fts.enabled || !this.fts.available) {
@@ -547,7 +576,12 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     const searchTerms = keywords.length > 0 ? keywords : [query];
 
     const resultSets = await Promise.all(
-      searchTerms.map((term) => this.searchKeyword(term, candidates).catch(() => [])),
+      searchTerms.map((term) =>
+        this.searchKeyword(term, candidates).catch((err) => {
+          logSearchStageFailure(`keyword(${JSON.stringify(term)})`, err);
+          return [];
+        }),
+      ),
     );
 
     // Merge across keyword sets, keeping the best score per chunk.

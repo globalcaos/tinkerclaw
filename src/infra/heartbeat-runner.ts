@@ -94,10 +94,12 @@ import { createHeartbeatTypingCallbacks } from "./heartbeat-typing.js";
 import { resolveHeartbeatVisibility } from "./heartbeat-visibility.js";
 import {
   areHeartbeatsEnabled,
+  type CronWakeHandler,
   type HeartbeatRunResult,
   type HeartbeatWakeHandler,
   type HeartbeatWakeRequest,
   requestHeartbeatNow,
+  setCronWakeHandler,
   setHeartbeatsEnabled,
   setHeartbeatWakeHandler,
 } from "./heartbeat-wake.js";
@@ -617,6 +619,11 @@ async function resolveHeartbeatPreflight(params: {
     params.forcedSessionKey,
   );
   const pendingEventEntries = peekSystemEventEntries(session.sessionKey);
+  if (params.reason?.startsWith("cron:")) {
+    console.error(
+      `[cron-diag] preflight peek sessionKey=${session.sessionKey} forced=${params.forcedSessionKey} reason=${params.reason} peeked=${pendingEventEntries.length} keys=${JSON.stringify(pendingEventEntries.map((e) => e.contextKey))}`,
+    );
+  }
   const turnSourceDeliveryContext = resolveSystemEventDeliveryContext(pendingEventEntries);
   const hasTaggedCronEvents = pendingEventEntries.some((event) =>
     event.contextKey?.startsWith("cron:"),
@@ -808,6 +815,20 @@ export async function runHeartbeatOnce(opts: {
   heartbeat?: HeartbeatConfig;
   reason?: string;
   deps?: HeartbeatDeps;
+  /**
+   * Which lane asked for this run.
+   *
+   * "heartbeat" (default) is the periodic self-poll and is subject to every
+   * heartbeat-enablement gate below. "cron" is a scheduled job delivering a payload to a
+   * session: it borrows this function's delivery machinery but is NOT a heartbeat, so the
+   * three enablement gates — the global switch, per-agent enablement, and the polling
+   * interval — do not apply to it. They answer "should we poll?", never "may we deliver?".
+   *
+   * This is the fourth and deepest place the heartbeat switch was consulted on the cron
+   * path. The first three (the wake gate, the missing lane registration, and agent
+   * registration) each hid this one, because all four returned the same word: "disabled".
+   */
+  lane?: "heartbeat" | "cron";
 }): Promise<HeartbeatRunResult> {
   const cfg = opts.cfg ?? getRuntimeConfig();
   const explicitAgentId = typeof opts.agentId === "string" ? opts.agentId.trim() : "";
@@ -817,14 +838,17 @@ export async function runHeartbeatOnce(opts: {
     explicitAgentId || forcedSessionAgentId || resolveDefaultAgentId(cfg),
   );
   const heartbeat = opts.heartbeat ?? resolveHeartbeatConfig(cfg, agentId);
-  if (!areHeartbeatsEnabled()) {
-    return { status: "skipped", reason: "disabled" };
-  }
-  if (!isHeartbeatEnabledForAgent(cfg, agentId)) {
-    return { status: "skipped", reason: "disabled" };
-  }
-  if (!resolveHeartbeatIntervalMs(cfg, undefined, heartbeat)) {
-    return { status: "skipped", reason: "disabled" };
+  const lane = opts.lane ?? "heartbeat";
+  if (lane === "heartbeat") {
+    if (!areHeartbeatsEnabled()) {
+      return { status: "skipped", reason: "disabled" };
+    }
+    if (!isHeartbeatEnabledForAgent(cfg, agentId)) {
+      return { status: "skipped", reason: "agent-heartbeat-off" };
+    }
+    if (!resolveHeartbeatIntervalMs(cfg, undefined, heartbeat)) {
+      return { status: "skipped", reason: "no-interval" };
+    }
   }
 
   const startedAt = opts.deps?.nowMs?.() ?? Date.now();
@@ -1156,6 +1180,10 @@ export async function runHeartbeatOnce(opts: {
       heartbeat?.lightContext === true ? "lightweight" : undefined;
     const replyOpts = {
       isHeartbeat: true,
+      // FORK (2026-07-27): a cron-carrying heartbeat must deliver its payload as the
+      // turn's own prompt. Without this the payload is split off into runtime system
+      // context and the agent answers the bare poll instead of running the job.
+      heartbeatCarriesCronPayload: hasCronEvents,
       ...(heartbeatModelOverride ? { heartbeatModelOverride } : {}),
       suppressToolErrorWarnings,
       // Heartbeat timeout is a per-run override so user turns keep the global default.
@@ -1453,6 +1481,13 @@ export function startHeartbeatRunner(opts: {
     });
 
   const advanceAgentSchedule = (agent: HeartbeatAgentState, now: number, reason?: string) => {
+    // An agent with no polling interval is addressable but never scheduled. Advancing it would
+    // set nextDueMs to `now + 0 === now`, making it permanently "due" and re-arming the timer
+    // on every wake. Leave it at Infinity.
+    if (!(agent.intervalMs > 0)) {
+      agent.nextDueMs = Number.POSITIVE_INFINITY;
+      return;
+    }
     agent.nextDueMs =
       reason === "interval"
         ? computeNextHeartbeatPhaseDueMs({
@@ -1508,22 +1543,47 @@ export function startHeartbeatRunner(opts: {
     }
     const now = Date.now();
     const prevAgents = state.agents;
-    const prevEnabled = prevAgents.size > 0;
+    // "enabled" means at least one agent actually POLLS. Map size no longer implies that:
+    // interval-less agents are registered too, so they can receive targeted delivery.
+    const hasPolling = (m: Map<string, HeartbeatAgentState>) => {
+      for (const a of m.values()) {
+        if (a.intervalMs > 0) {
+          return true;
+        }
+      }
+      return false;
+    };
+    const prevEnabled = hasPolling(prevAgents);
     const nextAgents = new Map<string, HeartbeatAgentState>();
     const intervals: number[] = [];
+    // FORK 2026-08-03: register EVERY known agent, including those with no polling interval.
+    //
+    // This map used to be built only from agents that had a heartbeat interval, because it was
+    // treated purely as the heartbeat SCHEDULE. But it is also the only place delivery can
+    // resolve a target agent from (see the targeted branch in `run`), so with
+    // `heartbeat.every: ""` the map was EMPTY and every cron delivery answered "no agents" —
+    // the third and last layer of the cron/heartbeat coupling, after the wake gate and the
+    // missing lane registration.
+    //
+    // An agent with no interval is registered with intervalMs 0 and nextDueMs Infinity: it is
+    // addressable for targeted delivery but is never polled. scheduleNext() sees only Infinity
+    // and arms no timer; the interval broadcast loop skips it because `now < Infinity`.
     for (const agent of resolveHeartbeatAgents(cfg)) {
-      const intervalMs = resolveHeartbeatIntervalMs(cfg, undefined, agent.heartbeat);
-      if (!intervalMs) {
-        continue;
-      }
-      const phaseMs = resolveHeartbeatPhaseMs({
-        schedulerSeed: state.schedulerSeed,
-        agentId: agent.agentId,
-        intervalMs,
-      });
-      intervals.push(intervalMs);
+      const intervalMs = resolveHeartbeatIntervalMs(cfg, undefined, agent.heartbeat) || 0;
+      const phaseMs = intervalMs
+        ? resolveHeartbeatPhaseMs({
+            schedulerSeed: state.schedulerSeed,
+            agentId: agent.agentId,
+            intervalMs,
+          })
+        : 0;
       const prevState = prevAgents.get(agent.agentId);
-      const nextDueMs = resolveNextDue(now, intervalMs, phaseMs, prevState);
+      const nextDueMs = intervalMs
+        ? resolveNextDue(now, intervalMs, phaseMs, prevState)
+        : Number.POSITIVE_INFINITY;
+      if (intervalMs) {
+        intervals.push(intervalMs);
+      }
       nextAgents.set(agent.agentId, {
         agentId: agent.agentId,
         heartbeat: agent.heartbeat,
@@ -1535,7 +1595,7 @@ export function startHeartbeatRunner(opts: {
 
     state.cfg = cfg;
     state.agents = nextAgents;
-    const nextEnabled = nextAgents.size > 0;
+    const nextEnabled = hasPolling(nextAgents);
     if (!initialized) {
       if (!nextEnabled) {
         log.info("heartbeat: disabled", { enabled: false });
@@ -1554,14 +1614,24 @@ export function startHeartbeatRunner(opts: {
     scheduleNext();
   };
 
-  const run: HeartbeatWakeHandler = async (params) => {
+  // FORK 2026-08-03: `run` is the DELIVERY primitive and is lane-agnostic. It keeps only the
+  // gates that make delivery genuinely impossible — a stopped runner, or no registered agents.
+  //
+  // The `areHeartbeatsEnabled()` gate deliberately does NOT live here any more: it is a
+  // property of the periodic self-poll, not of delivering a payload to a session. It now sits
+  // in `wakeHandler` (the heartbeat lane only), so the cron lane can share this exact delivery
+  // path without inheriting a switch that has nothing to do with cron.
+  //
+  // Why this matters: for five days every cron fired on schedule and did NOTHING, because cron
+  // delivery ran through this function and the operator had switched the heartbeat off. One
+  // flag silently disabled 18 unrelated jobs, and the only symptom was the word "disabled" in
+  // a run-log nobody reads. See design-principles.md #18 — one canonical derivation, and a
+  // kill-switch must be scoped to the concern it kills.
+  const run = async (
+    params: HeartbeatWakeRequest & { lane?: "heartbeat" | "cron" },
+  ): Promise<HeartbeatRunResult> => {
+    const lane = params.lane ?? "heartbeat";
     if (state.stopped) {
-      return {
-        status: "skipped",
-        reason: "disabled",
-      } satisfies HeartbeatRunResult;
-    }
-    if (!areHeartbeatsEnabled()) {
       return {
         status: "skipped",
         reason: "disabled",
@@ -1570,7 +1640,7 @@ export function startHeartbeatRunner(opts: {
     if (state.agents.size === 0) {
       return {
         status: "skipped",
-        reason: "disabled",
+        reason: "no-agents",
       } satisfies HeartbeatRunResult;
     }
 
@@ -1593,7 +1663,11 @@ export function startHeartbeatRunner(opts: {
         const targetAgentId = requestedAgentId ?? resolveAgentIdFromSessionKey(requestedSessionKey);
         const targetAgent = state.agents.get(targetAgentId);
         if (!targetAgent) {
-          return { status: "skipped", reason: "disabled" };
+          // Distinct from "disabled": the agent is genuinely unknown to this runner, which is
+          // an addressing problem, not a switch. Three conditions used to collapse into the
+          // single word "disabled" in the cron run logs, which is how a five-day outage looked
+          // like a deliberate setting.
+          return { status: "skipped", reason: "unknown-agent" };
         }
         try {
           const res = await runOnce({
@@ -1603,6 +1677,7 @@ export function startHeartbeatRunner(opts: {
             reason,
             sessionKey: requestedSessionKey,
             deps: { runtime: state.runtime },
+            lane,
           });
           if (res.status !== "skipped" || res.reason !== "disabled") {
             advanceAgentSchedule(targetAgent, now, reason);
@@ -1631,6 +1706,7 @@ export function startHeartbeatRunner(opts: {
             heartbeat: agent.heartbeat,
             reason,
             deps: { runtime: state.runtime },
+            lane,
           });
         } catch (err) {
           const errMsg = formatErrorMessage(err);
@@ -1667,14 +1743,35 @@ export function startHeartbeatRunner(opts: {
     }
   };
 
-  const wakeHandler: HeartbeatWakeHandler = async (params: HeartbeatWakeRequest) =>
-    run({
+  // The heartbeat lane owns the enabled-gate. Turning heartbeats off must stop the periodic
+  // self-poll and NOTHING else.
+  const wakeHandler: HeartbeatWakeHandler = async (params: HeartbeatWakeRequest) => {
+    if (!areHeartbeatsEnabled()) {
+      return { status: "skipped", reason: "disabled" } satisfies HeartbeatRunResult;
+    }
+    return run({
       reason: params.reason,
       agentId: params.agentId,
       sessionKey: params.sessionKey,
       heartbeat: params.heartbeat,
     });
+  };
   const disposeWakeHandler = setHeartbeatWakeHandler(wakeHandler);
+
+  // The CRON lane shares the same delivery primitive and is deliberately NOT gated on
+  // `areHeartbeatsEnabled()`. Without this registration `hasCronWakeHandler()` stays false,
+  // `cronLaneWired` in src/cron/service/timer.ts stays false, and every cron silently falls
+  // back to the heartbeat lane — which is exactly the bug this lane exists to fix. A lane with
+  // no registered handler is a dormant gene; this is its one production call site.
+  const cronWakeHandler: CronWakeHandler = async (params: HeartbeatWakeRequest) =>
+    run({
+      reason: params.reason,
+      agentId: params.agentId,
+      sessionKey: params.sessionKey,
+      heartbeat: params.heartbeat,
+      lane: "cron",
+    });
+  const disposeCronWakeHandler = setCronWakeHandler(cronWakeHandler);
   updateConfig(state.cfg);
 
   const cleanup = () => {
@@ -1683,6 +1780,7 @@ export function startHeartbeatRunner(opts: {
     }
     state.stopped = true;
     disposeWakeHandler();
+    disposeCronWakeHandler();
     if (state.timer) {
       clearTimeout(state.timer);
     }

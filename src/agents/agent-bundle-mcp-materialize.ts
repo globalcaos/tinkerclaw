@@ -65,17 +65,37 @@ export async function materializeBundleMcpToolsForRun(params: {
   runtime: SessionMcpRuntime;
   reservedToolNames?: Iterable<string>;
   disposeRuntime?: () => Promise<void>;
+  /**
+   * FORK 2026-08-24 (the architect: "If a task is in average more than 1 second it should be decomposed
+   * further") — report the two halves separately.
+   *
+   * `mcp-tools` averaged 1,311ms over 321 turns (gateway journal, 14 days), p50 878ms, max 12.5s —
+   * a per-turn tax, not a warm-up. It is two unlike things under one name: `getCatalog()`, which
+   * reaches every configured MCP server, and a pure-CPU loop that renames and binds what came
+   * back. One is a network/process cost you fix by caching or by dropping a server; the other you
+   * fix by writing less code. A single number cannot tell you which you are looking at.
+   *
+   * A CALLBACK rather than a runId, for the same reason as `resolveBootstrapContextForRun`: this
+   * module has no business knowing about runs. Optional, so every other caller is unaffected.
+   */
+  onStage?: (stage: string, ms: number) => void;
 }): Promise<BundleMcpToolRuntime> {
   let disposed = false;
   const releaseLease = params.runtime.acquireLease?.();
   params.runtime.markUsed();
   let catalog;
+  const catalogStartedAt = Date.now();
   try {
     catalog = await params.runtime.getCatalog();
   } catch (error) {
+    // Reported on the failure path too: a catalog that took nine seconds and THREW is exactly the
+    // measurement worth having, and timing only the happy path hides the slowest turns there are.
+    params.onStage?.("mcp-catalog", Date.now() - catalogStartedAt);
     releaseLease?.();
     throw error;
   }
+  params.onStage?.("mcp-catalog", Date.now() - catalogStartedAt);
+  const bindStartedAt = Date.now();
   const reservedNames = normalizeReservedToolNames(params.reservedToolNames);
   const tools: BundleMcpToolRuntime["tools"] = [];
   const sortedCatalogTools = [...catalog.tools].toSorted((a, b) => {
@@ -132,6 +152,10 @@ export async function materializeBundleMcpToolsForRun(params: {
   // turns (defensive — listTools() order is usually stable but not guaranteed).
   // Cannot fix name collisions: collision suffixes above are order-dependent.
   tools.sort((a, b) => a.name.localeCompare(b.name));
+  // The pure-CPU half: renaming, collision-suffixing, binding and sorting whatever the catalog
+  // returned. Measured against `mcp-catalog` above, these two answer "is the MCP tax the servers
+  // or is it us".
+  params.onStage?.("mcp-tool-bind", Date.now() - bindStartedAt);
 
   return {
     tools,

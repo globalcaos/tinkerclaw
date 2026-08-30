@@ -38,7 +38,7 @@ parallelism:
     human picks the threshold in step 3.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-8"
+  name: "claude-opus-5"
   hosting: "cloud API"
 resolverHints:
   [

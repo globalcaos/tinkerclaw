@@ -244,7 +244,9 @@ function coercePayload(payload: UnknownRecord) {
     delete next.model;
     delete next.fallbacks;
     delete next.thinking;
-    delete next.timeoutSeconds;
+    // timeoutSeconds is intentionally KEPT: a main-session systemEvent wakes a real agent
+    // turn and may need to outlive the generic job ceiling. It was already validated above
+    // by TimeoutSecondsFieldSchema, so it is safe to carry through.
     delete next.lightContext;
     delete next.allowUnsafeExternalContent;
     delete next.toolsAllow;

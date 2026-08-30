@@ -153,10 +153,39 @@ describe("runAgentHarnessAttemptWithFallback", () => {
   it("uses PI by default even when plugin harnesses would support the model", async () => {
     registerFailingCodexHarness();
 
-    const result = await runAgentHarnessAttemptWithFallback(createAttemptParams());
+    const result = await runAgentHarnessAttemptWithFallback({
+      ...createAttemptParams(),
+      provider: "openai",
+      modelId: "gpt-5.4",
+      model: { id: "gpt-5.4", provider: "openai" } as Model<Api>,
+    });
 
     expect(result.sessionIdUsed).toBe("pi");
     expect(piRunAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the codex harness for legacy codex/* even when defaults force a CLI runtime", async () => {
+    const runAttempt = vi.fn(async () => createAttemptResult("codex"));
+    registerAgentHarness(
+      {
+        id: "codex",
+        label: "Codex",
+        supports: (ctx) =>
+          ctx.provider === "codex" ? { supported: true, priority: 100 } : { supported: false },
+        runAttempt,
+      },
+      { ownerPluginId: "codex" },
+    );
+
+    const result = await runAgentHarnessAttemptWithFallback(
+      createAttemptParams({
+        agents: { defaults: { agentRuntime: { id: "google-gemini-cli" } } },
+      }),
+    );
+
+    expect(result.sessionIdUsed).toBe("codex");
+    expect(runAttempt).toHaveBeenCalledTimes(1);
+    expect(piRunAttempt).not.toHaveBeenCalled();
   });
 
   it("surfaces a forced plugin harness failure instead of replaying through PI", async () => {
@@ -274,12 +303,52 @@ describe("selectAgentHarness", () => {
     });
 
     const harness = selectAgentHarness({
-      provider: "codex",
+      provider: "openai",
       modelId: "gpt-5.4",
     });
 
     expect(harness.id).toBe("pi");
     expect(supports).not.toHaveBeenCalled();
+  });
+
+  it("auto-selects the codex harness for legacy codex/* model refs", () => {
+    registerAgentHarness({
+      id: "codex",
+      label: "Codex",
+      supports: (ctx) =>
+        ctx.provider === "codex"
+          ? { supported: true as const, priority: 100 }
+          : { supported: false as const, reason: "provider mismatch" },
+      runAttempt: vi.fn(async () => createAttemptResult("codex")),
+    });
+
+    const harness = selectAgentHarness({
+      provider: "codex",
+      modelId: "gpt-5.6-sol",
+    });
+
+    expect(harness.id).toBe("codex");
+  });
+
+  it("does not let a global CLI runtime force legacy codex/* into PI", () => {
+    process.env.OPENCLAW_AGENT_RUNTIME = "google-gemini-cli";
+    registerAgentHarness({
+      id: "codex",
+      label: "Codex",
+      supports: (ctx) =>
+        ctx.provider === "codex"
+          ? { supported: true as const, priority: 100 }
+          : { supported: false as const, reason: "provider mismatch" },
+      runAttempt: vi.fn(async () => createAttemptResult("codex")),
+    });
+
+    const harness = selectAgentHarness({
+      provider: "codex",
+      modelId: "gpt-5.6-sol",
+      config: { agents: { defaults: { agentRuntime: { id: "google-gemini-cli" } } } },
+    });
+
+    expect(harness.id).toBe("codex");
   });
 
   it("auto-selects the highest-priority plugin harness without duplicate support probes", () => {

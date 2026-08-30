@@ -514,13 +514,14 @@ export async function runPreparedReply(
   const effectiveBaseBody = hasUserBody
     ? baseBodyForPrompt
     : [inboundUserContext, "[User sent media without caption]"].filter(Boolean).join("\n\n");
-  const transcriptBodyBase = isHeartbeat
-    ? HEARTBEAT_TRANSCRIPT_PROMPT
-    : isBareSessionReset
-      ? softResetTail || `[OpenClaw session ${startupAction}]`
-      : hasUserBody
-        ? baseBodyFinal
-        : "[User sent media without caption]";
+  const transcriptBodyBase =
+    isHeartbeat && opts?.heartbeatCarriesCronPayload !== true
+      ? HEARTBEAT_TRANSCRIPT_PROMPT
+      : isBareSessionReset
+        ? softResetTail || `[OpenClaw session ${startupAction}]`
+        : hasUserBody
+          ? baseBodyFinal
+          : "[User sent media without caption]";
   let prefixedBodyBase = await applySessionHints({
     baseBody: effectiveBaseBody,
     abortedLastRun,

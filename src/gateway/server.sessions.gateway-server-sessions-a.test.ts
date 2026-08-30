@@ -3786,4 +3786,74 @@ describe("gateway server sessions", () => {
 
     ws.close();
   });
+
+  // FORK 2026-08-06 — the Tinker UI model picker's Auto stop.
+  //
+  // The picker could SET a durable model override (chat.send's `model` param persists one
+  // as modelOverrideSource:"user") but never CLEAR it: Auto dropped only the client-side
+  // pin and sent no `model` param, so the stored override survived and every subsequent
+  // "Auto" turn kept resolving to the last model pinned in that tab. Observed live on a tab
+  // stuck at openrouter/qwen while the picker read Auto.
+  //
+  // A model-ONLY patch is therefore allowed from webchat (isModelOnlyPatch). It grants no
+  // new authority — only the power to clear what chat.send can already set. The control
+  // below is the load-bearing half: the carve-out must stay NARROW, so the same client
+  // sending model + anything else is still rejected.
+  test("webchat clients can clear a session model override with a model-only patch", async () => {
+    const { dir } = await createSessionStoreDir();
+    const sessionId = "sess-model-only-patch";
+    await writeSingleLineSession(dir, sessionId, "hello");
+
+    await writeSessionStore({
+      entries: {
+        main: {
+          sessionId,
+          sessionFile: path.join(dir, `${sessionId}.jsonl`),
+          updatedAt: Date.now(),
+          // The exact shape the picker leaves behind after pinning a model.
+          modelOverride: "qwen/qwen3.8-max",
+          providerOverride: "openrouter",
+          modelOverrideSource: "user",
+        },
+      },
+    });
+
+    const ws = new WebSocket(`ws://127.0.0.1:${harness.port}`, {
+      headers: { origin: `http://127.0.0.1:${harness.port}` },
+    });
+    trackConnectChallengeNonce(ws);
+    await new Promise<void>((resolve) => ws.once("open", resolve));
+    await connectOk(ws, {
+      client: {
+        id: GATEWAY_CLIENT_IDS.WEBCHAT_UI,
+        version: "1.0.0",
+        platform: "test",
+        mode: GATEWAY_CLIENT_MODES.UI,
+      },
+      scopes: ["operator.admin"],
+    });
+
+    // Auto: model:null is the reset. Before this carve-out the guard rejected it outright.
+    const cleared = await rpcReq(ws, "sessions.patch", {
+      key: "agent:main:main",
+      model: null,
+    });
+    expect(cleared.ok).toBe(true);
+    const clearedEntry = cleared.payload?.entry as
+      | { modelOverride?: string; providerOverride?: string }
+      | undefined;
+    expect(clearedEntry?.modelOverride).toBeUndefined();
+    expect(clearedEntry?.providerOverride).toBeUndefined();
+
+    // The carve-out is model-ONLY: smuggling another field alongside it stays blocked.
+    const smuggled = await rpcReq(ws, "sessions.patch", {
+      key: "agent:main:main",
+      model: null,
+      label: "should-fail",
+    });
+    expect(smuggled.ok).toBe(false);
+    expect(smuggled.error?.message ?? "").toMatch(/webchat clients cannot patch sessions/i);
+
+    ws.close();
+  });
 });

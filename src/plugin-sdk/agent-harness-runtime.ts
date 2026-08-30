@@ -59,7 +59,16 @@ export type {
 export { VERSION as OPENCLAW_VERSION } from "../version.js";
 export { formatErrorMessage } from "../infra/errors.js";
 export { formatApprovalDisplayPath } from "../infra/approval-display-paths.js";
-export { emitAgentEvent, onAgentEvent, resetAgentEventsForTest } from "../infra/agent-events.js";
+// FORK 2026-08-04: `getAgentRunContext` joins the pair already published here.
+// Extensions that emit an agent event usually need the run context to attribute it;
+// exporting the emitter without it forced a relative `../../src/infra/agent-events.js`
+// reach, which FOUNDATION #9 forbids for a published extension.
+export {
+  emitAgentEvent,
+  getAgentRunContext,
+  onAgentEvent,
+  resetAgentEventsForTest,
+} from "../infra/agent-events.js";
 export { log as embeddedAgentLog } from "../agents/embedded-agent-runner/logger.js";
 export { buildAgentRuntimePlan } from "../agents/runtime-plan/build.js";
 export { classifyEmbeddedPiRunResultForModelFallback } from "../agents/embedded-agent-runner/result-fallback-classifier.js";

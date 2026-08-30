@@ -14,8 +14,12 @@ export const DEFAULT_JOB_TIMEOUT_MS = 10 * 60_000; // 10 minutes
 export const AGENT_TURN_SAFETY_TIMEOUT_MS = 60 * 60_000; // 60 minutes
 
 export function resolveCronJobTimeoutMs(job: CronJob): number | undefined {
+  // Both payload kinds may carry an explicit ceiling. A systemEvent aimed at the main
+  // session wakes a real agent turn (often one that spawns and awaits a subagent), so
+  // pinning it to the generic 10-minute default made such jobs fail every run even when
+  // the work completed. Honour timeoutSeconds regardless of kind.
   const configuredTimeoutMs =
-    job.payload.kind === "agentTurn" && typeof job.payload.timeoutSeconds === "number"
+    typeof job.payload.timeoutSeconds === "number"
       ? Math.floor(job.payload.timeoutSeconds * 1_000)
       : undefined;
   if (configuredTimeoutMs === undefined) {

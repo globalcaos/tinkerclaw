@@ -17,7 +17,7 @@
  * / `const FLOOR` in this file (the bible gate asserts their absence).
  */
 
-import type { Plan, PlanStep } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
+import type { Plan, PlanStep } from "openclaw/plugin-sdk/fork-prefrontal-schema";
 
 /** One step's struggle profile aggregated across a recipe's archived runs. */
 export interface StepStruggle {

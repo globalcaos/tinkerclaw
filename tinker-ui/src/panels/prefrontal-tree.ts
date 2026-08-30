@@ -25,7 +25,11 @@ import { colorForSubagent } from "../subagent-color.js";
 // (yellow) ONLY when the label is EXACTLY a known skill id; otherwise it returns
 // the HTML-escaped label unchanged. No fuzzy prose matching, no links.
 import { colorSkillTokens } from "./broca.js";
-import { getProviderColor, getProviderBorderColor, getProviderLogoSvg } from "./provider-logos.js";
+// FORK 2026-08-06 (the architect: unify the thinking indicators): the root node's glow
+// is the running model's EEG trace color, resolved at the same central point as
+// every other surface — eeg-trace.ts is pure (no DOM), so panels may import it.
+import { resolveEegGlowColor } from "./eeg-trace.js";
+import { getProviderBorderColor, getRoutedLogoSvg } from "./provider-logos.js";
 
 // FORK 2026-05-13 — Current Plan types (Phase 2 plan-board).
 export type PlanStepStatus = "pending" | "in_progress" | "done" | "error";
@@ -128,8 +132,15 @@ export type TrailEventKind =
 export interface TrailEventPayload {
   confidence?: string; // MatchConfidence: "none" | "low" | "high"
   recipeId?: string;
+  /**
+   * FORK 2026-08-28: the matched recipe's human title and the absolute path of its recipe.md.
+   * Carried on `matched`/`merged` so the chat can render the architect's one-line "Using recipe X"
+   * reminder with a working link to the recipe's own source of truth.
+   */
+  recipeTitle?: string;
+  recipePath?: string;
   score?: number;
-  matches?: Array<{ slug: string; score: number }>;
+  matches?: Array<{ slug: string; score: number; title?: string; path?: string }>;
   catalogSize?: number;
   composedFrom?: string[];
   semanticInvoked?: boolean;
@@ -857,9 +868,12 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     const row = el("div", `pf-node ${isChild ? "pf-child" : "pf-root"}`);
     // FORK 2026-05-30: child = subagent → use its stable per-subagent identity color
     // (glyph dot, glow, model name) so the row matches the subagent's chat sub-bubble.
-    // The root (main run) keeps the provider color. The provider LOGO below still
-    // renders the provider's own brand color so the model family stays legible.
-    const color = isChild ? colorForSubagent(node.runId) : getProviderColor(node.provider);
+    // FORK 2026-08-06: the ROOT run's glow is the running model's EEG trace color,
+    // resolved centrally from the run's model+provider — an openrouter vendor run
+    // used to fall through getProviderColor("openrouter") to the unknown gray.
+    const color = isChild
+      ? colorForSubagent(node.runId)
+      : resolveEegGlowColor({ model: node.model, provider: node.provider });
     const borderColor = isChild
       ? colorForSubagent(node.runId)
       : getProviderBorderColor(node.provider);
@@ -904,10 +918,17 @@ export function mountPrefrontalTree(container: HTMLElement): PrefrontalTreeContr
     glyph.style.color = node.status === "failed" ? "#f85149" : color;
     row.appendChild(glyph);
 
-    // Logo
+    // Logo — FORK 2026-08-06: resolve by MODEL id first (the architect: "inside recipes
+    // the logo of the model does not update correctly"). getProviderLogoSvg
+    // defaults to the Anthropic sparkle, so an openrouter vendor run showed a
+    // Claude sparkle next to a Qwen model. The vendor mark wins when the model
+    // id carries one; the provider logo stays the fallback for everything else.
     const logo = el("span", "pf-logo");
     logo.style.color = color;
-    logo.innerHTML = getProviderLogoSvg(node.provider);
+    // FORK 2026-08-30: same fallback defect the smart x cost chart had — an unknown
+    // provider used to resolve to Anthropic's mark, so every OpenRouter subagent node
+    // wore a Claude sparkle. One resolver now serves both surfaces.
+    logo.innerHTML = getRoutedLogoSvg(node.model, node.provider);
     row.appendChild(logo);
 
     // Model/label

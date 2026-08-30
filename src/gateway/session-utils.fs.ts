@@ -811,6 +811,15 @@ function resolvePositiveUsageNumber(value: unknown): number | undefined {
 
 function extractLatestUsageFromTranscriptChunk(
   chunk: string,
+  /**
+   * FORK 2026-07-28 — the model's context window, threaded solely to ARM the plausibility
+   * guard in `deriveSessionTotalTokens`. That guard rejects a value larger than the window
+   * (it cannot be a context size), but it is OPT-IN BY ARGUMENT: called without a window it
+   * silently does nothing. This was the one call site of five that omitted it, so a transcript
+   * line carrying the cc-bridge turn aggregate was laundered into a "fresh" session total —
+   * defeating the fix everywhere else. Omitting it again re-opens that path.
+   */
+  contextWindow?: number,
 ): SessionTranscriptUsageSnapshot | null {
   const lines = chunk.split(/\r?\n/).filter((line) => line.trim().length > 0);
   const snapshot: SessionTranscriptUsageSnapshot = {};
@@ -847,7 +856,9 @@ function extractLatestUsageFromTranscriptChunk(
             ? parsed.usage
             : undefined;
       const usage = normalizeUsage(usageRaw);
-      const totalTokens = resolvePositiveUsageNumber(deriveSessionTotalTokens({ usage }));
+      const totalTokens = resolvePositiveUsageNumber(
+        deriveSessionTotalTokens({ usage, contextTokens: contextWindow }),
+      );
       const costUsd = extractTranscriptUsageCost(usageRaw);
       const modelProvider =
         typeof message.provider === "string"
@@ -861,7 +872,25 @@ function extractLatestUsageFromTranscriptChunk(
           : typeof parsed.model === "string"
             ? parsed.model.trim()
             : undefined;
-      const isDeliveryMirror = modelProvider === "openclaw" && model === "delivery-mirror";
+      // FORK 2026-07-31 — TRANSCRIPT-ONLY SENTINELS. `provider:"openclaw"` assistant entries with
+      // model `delivery-mirror` (channel delivery mirror, src/config/sessions/transcript.ts) or
+      // `gateway-injected` (restart warnings / abort envelopes, see
+      // src/gateway/server-methods/chat-transcript-inject.ts) are records the gateway wrote into
+      // the transcript ITSELF, not model output. This scan feeds the SESSION ROW, so a sentinel
+      // that reaches `snapshot.model` poisons every downstream reader of that row: the Tinker UI
+      // thinking indicator loses its provider colour (a grey dot reading "gatewa..." while opus
+      // was answering) and the Models panel counts live runs under "gateway-injected". Only
+      // `delivery-mirror` was excluded here before; `gateway-injected` leaked. NOTE the real
+      // injected envelope carries `usage.cost.total: 0`, which makes `hasMeaningfulUsage` true —
+      // so the zero-usage early-continue below never catches it and this guard is the only stop.
+      // KEEP IN SYNC — no shared module owns this list yet; the other copies are:
+      //   - src/agents/embedded-agent-runner/replay-history.ts (TRANSCRIPT_ONLY_OPENCLAW_MODELS)
+      //   - src/agents/embedded-agent-subscribe.handlers.messages.ts
+      //     (isTranscriptOnlyOpenClawAssistantMessage)
+      //   - tinker-ui/src/transcript-only-models.ts (UI-side filter)
+      const isTranscriptOnlySentinel =
+        modelProvider === "openclaw" &&
+        (model === "delivery-mirror" || model === "gateway-injected");
       const hasMeaningfulUsage =
         hasNonzeroUsage(usage) ||
         typeof totalTokens === "number" ||
@@ -870,12 +899,12 @@ function extractLatestUsageFromTranscriptChunk(
       if (!hasMeaningfulUsage && !hasModelIdentity) {
         continue;
       }
-      if (isDeliveryMirror && !hasMeaningfulUsage) {
+      if (isTranscriptOnlySentinel && !hasMeaningfulUsage) {
         continue;
       }
 
       sawSnapshot = true;
-      if (!isDeliveryMirror) {
+      if (!isTranscriptOnlySentinel) {
         if (modelProvider) {
           snapshot.modelProvider = modelProvider;
         }
@@ -938,6 +967,12 @@ export function readLatestSessionUsageFromTranscript(
   storePath: string | undefined,
   sessionFile?: string,
   agentId?: string,
+  /**
+   * FORK 2026-07-28 — pass the session's context window whenever the caller knows it, so the
+   * plausibility guard downstream is ARMED. Optional to keep existing call sites valid, but a
+   * caller that has the window and omits it silently re-opens the turn-aggregate path.
+   */
+  contextWindow?: number,
 ): SessionTranscriptUsageSnapshot | null {
   const filePath = findExistingTranscriptPath(sessionId, storePath, sessionFile, agentId);
   if (!filePath) {
@@ -950,7 +985,7 @@ export function readLatestSessionUsageFromTranscript(
       return null;
     }
     const chunk = fs.readFileSync(fd, "utf-8");
-    return extractLatestUsageFromTranscriptChunk(chunk);
+    return extractLatestUsageFromTranscriptChunk(chunk, contextWindow);
   });
 }
 

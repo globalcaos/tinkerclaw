@@ -11,8 +11,10 @@ import {
   diagnosticSessionStates,
   getDiagnosticSessionStateCountForTest,
   getDiagnosticSessionState,
+  markDiagnosticSessionProgress,
   pruneDiagnosticSessionStates,
   resetDiagnosticSessionStateForTest,
+  setDiagnosticSessionClientLiveness,
 } from "./diagnostic-session-state.js";
 import {
   getDiagnosticStabilitySnapshot,
@@ -22,6 +24,7 @@ import {
 } from "./diagnostic-stability.js";
 import {
   logSessionStateChange,
+  logSessionStuck,
   resetDiagnosticStateForTest,
   resolveStuckSessionWarnMs,
   startDiagnosticHeartbeat,
@@ -326,6 +329,140 @@ describe("stuck session diagnostics threshold", () => {
     expect(resolveStuckSessionWarnMs({ diagnostics: { stuckSessionWarnMs: -1 } })).toBe(120_000);
     expect(resolveStuckSessionWarnMs({ diagnostics: { stuckSessionWarnMs: 0 } })).toBe(120_000);
     expect(resolveStuckSessionWarnMs()).toBe(120_000);
+  });
+});
+
+describe("stuck session liveness gating", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetDiagnosticStateForTest();
+    resetDiagnosticEventsForTest();
+  });
+
+  afterEach(() => {
+    resetDiagnosticEventsForTest();
+    resetDiagnosticStateForTest();
+    vi.useRealTimers();
+  });
+
+  function watchStuckEvents() {
+    const events: string[] = [];
+    const unsubscribe = onDiagnosticEvent((event) => events.push(event.type));
+    return {
+      unsubscribe,
+      stuckCount: () => events.filter((type) => type === "session.stuck").length,
+    };
+  }
+
+  it("warns for an old session whose client is dead, even with recent progress", () => {
+    const { unsubscribe, stuckCount } = watchStuckEvents();
+    try {
+      startDiagnosticHeartbeat({ diagnostics: { enabled: true } });
+      logSessionStateChange({ sessionId: "s-dead", sessionKey: "main", state: "processing" });
+      setDiagnosticSessionClientLiveness({ sessionId: "s-dead" }, false);
+      for (let i = 0; i < 5; i += 1) {
+        markDiagnosticSessionProgress({ sessionId: "s-dead" });
+        vi.advanceTimersByTime(30_000);
+      }
+    } finally {
+      unsubscribe();
+    }
+
+    expect(stuckCount()).toBeGreaterThan(0);
+  });
+
+  it("does not warn for an old session with a live, recently-progressing client", () => {
+    const { unsubscribe, stuckCount } = watchStuckEvents();
+    try {
+      startDiagnosticHeartbeat({ diagnostics: { enabled: true } });
+      logSessionStateChange({ sessionId: "s-alive", sessionKey: "main", state: "processing" });
+      setDiagnosticSessionClientLiveness({ sessionId: "s-alive" }, true);
+      for (let i = 0; i < 10; i += 1) {
+        markDiagnosticSessionProgress({ sessionId: "s-alive" });
+        vi.advanceTimersByTime(30_000);
+      }
+    } finally {
+      unsubscribe();
+    }
+
+    expect(stuckCount()).toBe(0);
+  });
+
+  it("warns for an old session whose live client stalled beyond the progress window", () => {
+    const { unsubscribe, stuckCount } = watchStuckEvents();
+    try {
+      startDiagnosticHeartbeat({ diagnostics: { enabled: true } });
+      logSessionStateChange({ sessionId: "s-stalled", sessionKey: "main", state: "processing" });
+      setDiagnosticSessionClientLiveness({ sessionId: "s-stalled" }, true);
+      markDiagnosticSessionProgress({ sessionId: "s-stalled" });
+      vi.advanceTimersByTime(150_000);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(stuckCount()).toBe(1);
+  });
+
+  it("never warns for a young session, even with a dead client and no progress", () => {
+    const { unsubscribe, stuckCount } = watchStuckEvents();
+    try {
+      startDiagnosticHeartbeat({ diagnostics: { enabled: true } });
+      logSessionStateChange({ sessionId: "s-young", sessionKey: "main", state: "processing" });
+      setDiagnosticSessionClientLiveness({ sessionId: "s-young" }, false);
+      vi.advanceTimersByTime(90_000);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(stuckCount()).toBe(0);
+  });
+
+  it("counts a recent recorded tool call as progress", () => {
+    const { unsubscribe, stuckCount } = watchStuckEvents();
+    try {
+      startDiagnosticHeartbeat({ diagnostics: { enabled: true } });
+      logSessionStateChange({ sessionId: "s-tools", sessionKey: "main", state: "processing" });
+      vi.advanceTimersByTime(120_000);
+      const state = getDiagnosticSessionState({ sessionId: "s-tools" });
+      state.toolCallHistory = [{ toolName: "exec", argsHash: "h1", timestamp: Date.now() }];
+      vi.advanceTimersByTime(30_000);
+      expect(stuckCount()).toBe(0);
+
+      vi.advanceTimersByTime(120_000);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(stuckCount()).toBeGreaterThan(0);
+  });
+
+  it("honors a caller-supplied progress window on direct calls", () => {
+    const { unsubscribe, stuckCount } = watchStuckEvents();
+    try {
+      logSessionStateChange({ sessionId: "s-window", sessionKey: "main", state: "processing" });
+      const lastProgressAtMs = Date.now() - 60_000;
+      logSessionStuck({
+        sessionId: "s-window",
+        state: "processing",
+        ageMs: 300_000,
+        clientAlive: true,
+        lastProgressAtMs,
+      });
+      expect(stuckCount()).toBe(0);
+
+      logSessionStuck({
+        sessionId: "s-window",
+        state: "processing",
+        ageMs: 300_000,
+        clientAlive: true,
+        lastProgressAtMs,
+        progressWindowMs: 30_000,
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(stuckCount()).toBe(1);
   });
 });
 

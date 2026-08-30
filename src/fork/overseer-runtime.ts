@@ -17,6 +17,7 @@
  * Overseer's own spawned run cannot recursively trigger another Overseer.
  */
 
+import { isOperatorScopeDenial } from "../gateway/method-scopes.js";
 import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
 import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
@@ -42,6 +43,14 @@ function isAutomatedSession(sessionKey: string): boolean {
 interface SnapshotMessage {
   role?: string;
   content?: unknown;
+}
+
+/** The subset of the fork.subagents.spawn response this runtime consumes. */
+interface SubagentSpawnResult {
+  ok?: boolean;
+  childSessionKey?: string;
+  runId?: string;
+  note?: string;
 }
 
 /** Flatten a transcript message's content to plain text (string or content-block array). */
@@ -81,24 +90,37 @@ function buildOverseerDeps(jarvisSessionKey: string): OverseerDeps {
     spawnOverseer: async (context: string): Promise<string> => {
       const { callGateway } = await import("../gateway/call.js");
       const task = `${OVERSEER_PERSONA}\n\n${context}`;
-      const spawn = await callGateway<{
-        ok?: boolean;
-        childSessionKey?: string;
-        runId?: string;
-        note?: string;
-      }>({
-        method: "fork.subagents.spawn",
-        params: {
-          task,
-          label: "overseer",
-          parentSessionKey: jarvisSessionKey,
-          runTimeoutSeconds: RUN_TIMEOUT_S,
-          // We read the verdict ourselves; the Overseer must NOT post to the parent
-          // channel (that would bypass the left-bubble nudge rendering + the loop).
-          expectsCompletionMessage: false,
-        },
-        timeoutMs: (RUN_TIMEOUT_S + 10) * 1000,
-      });
+      let spawn: SubagentSpawnResult;
+      try {
+        spawn = await callGateway<SubagentSpawnResult>({
+          method: "fork.subagents.spawn",
+          params: {
+            task,
+            label: "overseer",
+            parentSessionKey: jarvisSessionKey,
+            runTimeoutSeconds: RUN_TIMEOUT_S,
+            // We read the verdict ourselves; the Overseer must NOT post to the parent
+            // channel (that would bypass the left-bubble nudge rendering + the loop).
+            expectsCompletionMessage: false,
+          },
+          timeoutMs: (RUN_TIMEOUT_S + 10) * 1000,
+        });
+      } catch (err) {
+        // FORK 2026-08-04: a gateway SCOPE REFUSAL is a wiring bug, not a transient blip.
+        // overseer.ts collapses every spawn throw into reason:"spawn-error", which at the
+        // caller reads exactly like a healthy quiet cycle -- that indistinguishability is
+        // why the unclassified-fork.* outage ran for months. Name it loudly HERE, where we
+        // still know the cause, and carry it in the rethrown message.
+        const msg = err instanceof Error ? err.message : String(err);
+        if (isOperatorScopeDenial(err)) {
+          log.error(
+            `[overseer] REFUSED by gateway: fork.subagents.spawn denied (${msg}). ` +
+              `The Overseer did NOT run -- this is a scope-classification bug, not "nothing to nudge".`,
+          );
+          throw new Error(`overseer spawn refused (scope): ${msg}`);
+        }
+        throw err;
+      }
       if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) {
         throw new Error(`overseer spawn failed: ${spawn?.note ?? "no childSessionKey/runId"}`);
       }
@@ -168,12 +190,31 @@ export async function maybeRunOverseerFromHook(
       messages,
       buildOverseerDeps(sessionKey),
     );
-    log.info(`[overseer] cycle on ${sessionKey}: ${outcome.reason} (nudge ${outcome.iteration})`);
+    // FORK 2026-08-04: "spawn-error" means the Overseer could not run AT ALL. Logged at
+    // info alongside the healthy terminal reasons it was indistinguishable from a quiet
+    // pass, which is precisely how a months-long outage stayed invisible. Failures are
+    // now ERROR and say so in words.
+    if (outcome.reason === "spawn-error") {
+      log.error(
+        `[overseer] cycle FAILED on ${sessionKey}: ${outcome.reason} (nudge ${outcome.iteration}) ` +
+          `-- the Overseer did NOT run; this is not a quiet pass`,
+      );
+    } else {
+      log.info(`[overseer] cycle on ${sessionKey}: ${outcome.reason} (nudge ${outcome.iteration})`);
+    }
   } catch (err) {
-    // The Overseer must never break a turn.
-    log.warn(
-      `[overseer] cycle failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-    );
+    // The Overseer must never break a turn -- but a scope refusal is a permanent wiring
+    // bug that must not hide at warn level behind the word "non-fatal". It will never
+    // self-heal, unlike a transport hiccup.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (isOperatorScopeDenial(err)) {
+      log.error(
+        `[overseer] cycle REFUSED by gateway (scope) -- the Overseer is dead until the ` +
+          `method classification is fixed, it is NOT idling: ${msg}`,
+      );
+    } else {
+      log.warn(`[overseer] cycle failed (non-fatal): ${msg}`);
+    }
   }
 }
 

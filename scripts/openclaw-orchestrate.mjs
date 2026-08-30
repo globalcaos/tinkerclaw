@@ -22,7 +22,13 @@
  *
  * Usage:
  *   openclaw-orchestrate --script-file <path.js> [--args '<json>']
- *     [--session agent:main:main] [--label name] [--timeout 1800] [--json]
+ *     [--session <sessionKey>] [--label name] [--timeout 1800] [--json]
+ *
+ * --session defaults to the HEADLESS SINK `agent:main:orchestrator` (2026-08-04),
+ * never the human Main tab. Unlike the spawn CLI the field cannot be omitted --
+ * PrefrontalKitOrchestrateParamsSchema declares `sessionKey` REQUIRED with
+ * `additionalProperties: false` -- so the default is a substituted literal.
+ * Pass --session explicitly only to attribute the run to a real live tab.
  *
  * Environment:
  *   OPENCLAW_GATEWAY_URL     default: http://127.0.0.1:18789 (WS derived)
@@ -49,7 +55,7 @@ const SCRIPT_FILE = flag("script-file") ?? flag("script");
 if (!SCRIPT_FILE) {
   console.error("openclaw-orchestrate: --script-file <path> is required");
   console.error(
-    '  usage: openclaw-orchestrate --script-file plan.js [--args \'{"q":"..."}\'] [--session agent:main:main] [--label name]',
+    '  usage: openclaw-orchestrate --script-file plan.js [--args \'{"q":"..."}\'] [--session <sessionKey>] [--label name]',
   );
   process.exit(2);
 }
@@ -72,7 +78,20 @@ if (rawArgs != null) {
   }
 }
 
-const SESSION = flag("session") ?? flag("sessionKey") ?? "agent:main:main";
+// The headless sink: where an UNATTENDED orchestration (ORCA, cron, CI) is
+// attributed when no live tab owns it. Omitting the field is NOT an option here
+// -- PrefrontalKitOrchestrateParamsSchema
+// (src/gateway/protocol/schema/prefrontal-kit.ts) declares
+// `sessionKey: Type.String({ minLength: 1, maxLength: 200 })` as REQUIRED, with
+// `additionalProperties: false`, so this CLI must send SOMETHING. It sends the
+// sink rather than the old "agent:main:main", which silently claimed the human
+// Main tab.
+//
+// OWNER of this string: src/agents/headless-requester-session-key.ts. A .mjs
+// script cannot import that TS module, so the literal below is a hand-maintained
+// copy -- if the owner changes the key, change it here in the SAME commit.
+const HEADLESS_REQUESTER_SESSION_KEY = "agent:main:orchestrator";
+const SESSION = flag("session") ?? flag("sessionKey") ?? HEADLESS_REQUESTER_SESSION_KEY;
 const LABEL = flag("label");
 const TIMEOUT_S = flag("timeout") != null ? Number(flag("timeout")) : 1800;
 const EMIT_JSON = boolFlag("json");
@@ -172,6 +191,9 @@ ws.on("message", (buf) => {
           args: ARGS,
           sessionKey: SESSION,
           label: LABEL,
+          // forward --timeout as the per-agent run ceiling (server default 300s
+          // starves real investigation agents; 2026-07-20)
+          runTimeoutSeconds: Math.min(7200, Math.max(30, TIMEOUT_S)),
         }),
       )
       .then((res) => done(res?.ok ? 0 : 1, res))

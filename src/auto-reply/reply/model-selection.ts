@@ -13,9 +13,12 @@ import {
   resolveReasoningDefault,
   resolveThinkingDefault,
 } from "../../agents/model-selection.js";
+import { resolveQuotaAwareAutoModel } from "../../agents/quota-aware-auto-model.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { getUsageSnapshot } from "../../infra/usage-snapshot-store.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
+import { formatProviderModelRef } from "../model-runtime.js";
 import type { ThinkLevel } from "./directives.js";
 export {
   resolveModelDirectiveSelection,
@@ -24,6 +27,50 @@ export {
 import { resolveStoredModelOverride } from "./stored-model-override.js";
 
 type ModelCatalog = ModelCatalogEntry[];
+
+/**
+ * Set only on a turn where the quota-aware Auto ladder replaced the Auto
+ * selection because the selected provider's token window is spent.
+ *
+ * Resolved per turn and PERSISTED NOWHERE: no `modelOverride`/`providerOverride`
+ * write and no new `SessionEntry` field (a new field would also have to be
+ * registered in FALLBACK_SELECTION_STATE_KEYS / snapshotFallbackSelectionState
+ * in agent-runner-execution.ts or it could never roll back). Because it is
+ * recomputed every turn, "held until resets_at, then snapped back" falls out of
+ * the quota state itself — self-healing, and nothing that a later reader could
+ * mistake for a user pin.
+ */
+export type QuotaAwareAutoSubstitution = {
+  /** The Auto selection that was displaced. */
+  originalProvider: string;
+  originalModel: string;
+  /** The substitute that actually runs this turn. */
+  provider: string;
+  model: string;
+  /** Resolver-supplied cause, e.g. "claude-code 5-hour window exhausted (resets 15:00)". */
+  reason: string;
+  /** Ready-to-send disclosure line; surface it on EVERY turn it is present. */
+  notice: string;
+};
+
+/**
+ * Disclosure carrier for a quota-aware Auto substitution.
+ *
+ * The `↪️ Model Fallback` notice compares the ACTIVE provider against the
+ * SELECTED one. Substituting at selection time makes the substitute *be* the
+ * selection everywhere downstream, so those two are equal and that notice stays
+ * silent — this substitution therefore needs its own carrier, and it is emitted
+ * on EVERY turn it is active. That is the same every-turn rule cross-provider
+ * fallback already follows, for the same reason: a sustained silent
+ * substitution is indistinguishable from the model picker being ignored.
+ */
+export function formatQuotaAwareAutoNotice(params: {
+  reason: string;
+  provider: string;
+  model: string;
+}): string {
+  return `↪️ Auto: ${params.reason}, using ${formatProviderModelRef(params.provider, params.model)}`;
+}
 
 type ModelSelectionState = {
   provider: string;
@@ -36,6 +83,9 @@ type ModelSelectionState = {
   /** Default reasoning level from model capability: "on" if model has reasoning, else "off". */
   resolveDefaultReasoningLevel: () => Promise<"on" | "off">;
   needsModelCatalog: boolean;
+  /** Present only when the quota ladder substituted this turn's primary.
+   *  `quotaSubstitution.notice` MUST reach the user on every such turn. */
+  quotaSubstitution?: QuotaAwareAutoSubstitution;
 };
 
 export function createFastTestModelSelectionState(params: {
@@ -237,6 +287,76 @@ export async function createModelSelectionState(params: {
     }
   }
 
+  // AUTO ONLY. A stored session/parent pin, an inline `!model` directive or a
+  // resolved heartbeat.model is an explicit choice and hard-stops here — the
+  // resolver is not even consulted. That line is the whole design: it is what
+  // separates this from the silent substitution 317825d0f7a removed, which
+  // overrode explicit pins.
+  //
+  // The PRIMARY is swapped, not a fallback list handed over. Swapping the
+  // provider makes resolveFallbackCandidates (model-fallback.ts) return [] for
+  // the configured fallbacks and makes the 317825d0f7a guard decline to append
+  // the config primary, so the substitute runs with an EMPTY ladder — that
+  // guard's own invariant, reached BY COMPOSITION rather than by bypass. A
+  // `fallbacksOverride` array would instead satisfy the guard's bypass
+  // precondition and synthesize a cross-provider ladder from nothing, the
+  // literal case its comment forbids. model-fallback.ts is untouched.
+  //
+  // Placed AFTER the authProfileOverride reconciliation above on purpose: that
+  // block DELETES a stored auth-profile pin whose provider does not match
+  // `provider`. Substituting before it would make a spent token window silently
+  // and permanently discard the architect's auth-profile pick — a persisted
+  // side effect, which is exactly what this feature must not have. The auth
+  // profile is therefore still validated against the Auto selection.
+  let quotaSubstitution: QuotaAwareAutoSubstitution | undefined;
+  const hasExplicitModelSelection =
+    params.hasModelDirective === true ||
+    params.hasResolvedHeartbeatModelOverride === true ||
+    Boolean(storedOverride?.model);
+  if (!hasExplicitModelSelection) {
+    // `snapshot` and `nowMs` are ARGUMENTS, never read inside the resolver: it is pure so every
+    // decision is reproducible in a test, and so the gateway and the browser cannot disagree about
+    // the same window from two hidden clocks (same rule as `src/shared/quota-window.ts`).
+    //
+    // `allowedModelKeys` goes IN rather than being filtered after: the resolver walks the ladder
+    // and returns the first survivor, so handing it the routability filter lets it fall through to
+    // rung 2 when rung 1 is not routable. Filtering only the returned choice would abandon the
+    // substitution entirely in that case — the caller's own allowlist check below stays as a
+    // belt-and-braces guard for an empty set.
+    const substitute = resolveQuotaAwareAutoModel({
+      cfg,
+      provider,
+      model,
+      allowedModelKeys,
+      // `?? undefined`: the store returns `| null`, the resolver's param is `| undefined`. Both
+      // mean "no quota data", and the resolver reads either as UNKNOWN — never as headroom.
+      snapshot: getUsageSnapshot() ?? undefined,
+      nowMs: Date.now(),
+    });
+    if (substitute) {
+      const normalizedSubstitute = normalizeModelRef(substitute.provider, substitute.model);
+      const substituteKey = modelKey(normalizedSubstitute.provider, normalizedSubstitute.model);
+      // An agent model allowlist is a hard boundary: Auto never routes outside it.
+      if (allowedModelKeys.size === 0 || allowedModelKeys.has(substituteKey)) {
+        quotaSubstitution = {
+          originalProvider: provider,
+          originalModel: model,
+          provider: normalizedSubstitute.provider,
+          model: normalizedSubstitute.model,
+          reason: substitute.reason,
+          notice: formatQuotaAwareAutoNotice({
+            reason: substitute.reason,
+            provider: normalizedSubstitute.provider,
+            model: normalizedSubstitute.model,
+          }),
+        };
+        provider = normalizedSubstitute.provider;
+        model = normalizedSubstitute.model;
+        logStage("quota-aware-auto-substituted", `to=${substituteKey}`);
+      }
+    }
+  }
+
   let thinkingCatalog: ModelCatalog | undefined;
   const resolveThinkingCatalog = async () => {
     if (thinkingCatalog) {
@@ -313,6 +433,7 @@ export async function createModelSelectionState(params: {
     resolveDefaultThinkingLevel,
     resolveDefaultReasoningLevel,
     needsModelCatalog,
+    quotaSubstitution,
   };
 }
 

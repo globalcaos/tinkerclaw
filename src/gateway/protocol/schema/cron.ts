@@ -135,6 +135,9 @@ export const CronPayloadSchema = Type.Union([
     {
       kind: Type.Literal("systemEvent"),
       text: NonEmptyString,
+      // A main-session systemEvent wakes a real agent turn, so it needs the same escape
+      // hatch as an agentTurn payload from the generic 10-minute job ceiling.
+      timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
     },
     { additionalProperties: false },
   ),
@@ -149,6 +152,7 @@ export const CronPayloadPatchSchema = Type.Union([
     {
       kind: Type.Literal("systemEvent"),
       text: Type.Optional(NonEmptyString),
+      timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
     },
     { additionalProperties: false },
   ),

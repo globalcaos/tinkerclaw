@@ -202,11 +202,44 @@ async function scanRecipeDir(dir: string): Promise<RecipeIndexEntry[]> {
   } catch {
     return index; // dir absent (e.g. no bridged imports yet) — not an error
   }
-  for (const slug of slugs) {
+  // FORK 2026-08-22: the loop below only ever opened `<dir>/<slug>/recipe.md`
+  // (or kit.md), one level deep. The library ALSO holds recipes as
+  // `<dir>/<category>/<name>.md` — the half-finished `340fd1ae232` migration
+  // ("migrate recipes/ → kits/ in kit/1.0 format", 2026-05-13). Those 44 files
+  // were returned by prefrontal.recipe.list but skipped here, so the matcher's
+  // catalogSize was 29 against a library of 73 and the CORE workflows could
+  // never auto-select: `match("debug this failing test, find the root cause")`
+  // returned confidence:none while `recipes/coding/debug.md` sat right there.
+  // The gap stayed invisible because `list` uses a different enumeration and
+  // still showed them. Fix: expand a category directory one extra level and
+  // index its `*.md` files too. Own-dir slug entries are scanned first and
+  // `loadRecipeIndex` keeps the first slug it sees, so a curated kit still
+  // wins any collision.
+  const targets: Array<{ slug: string; candidates: string[] }> = [];
+  for (const entry of slugs) {
+    targets.push({
+      slug: entry,
+      candidates: RECIPE_FILENAMES.map((f) => join(dir, entry, f)),
+    });
+    let nested: string[] = [];
+    try {
+      nested = await fs.readdir(join(dir, entry));
+    } catch {
+      // not a directory — the plain-file candidates above still apply
+    }
+    for (const child of nested) {
+      if (!child.endsWith(".md")) continue;
+      if ((RECIPE_FILENAMES as readonly string[]).includes(child)) continue; // already covered
+      // `compose.recipe.md` → slug `compose`; `debug.md` → slug `debug`
+      const childSlug = child.replace(/\.recipe\.md$/, "").replace(/\.md$/, "");
+      targets.push({ slug: childSlug, candidates: [join(dir, entry, child)] });
+    }
+  }
+
+  for (const { slug, candidates } of targets) {
     let path = "";
     let text: string | null = null;
-    for (const fname of RECIPE_FILENAMES) {
-      const candidate = join(dir, slug, fname);
+    for (const candidate of candidates) {
       try {
         text = await fs.readFile(candidate, "utf8");
         path = candidate;
@@ -579,7 +612,12 @@ export interface SeedPlanOutcome {
   kitRefs?: string[];
   composedFrom?: string[];
   /** All scored matches (for provenance trail). */
-  matches: Array<{ slug: string; score: number }>;
+  /**
+   * All scored matches. FORK 2026-08-28: `title` + `path` ride along so the turn hook can tell the
+   * architect WHICH recipe is being used and link its .md — the index already resolves the absolute
+   * path for lazy step parsing, so this carries an existing fact through rather than re-deriving it.
+   */
+  matches: Array<{ slug: string; score: number; title?: string; path?: string }>;
   confidence: MatchConfidence;
   /** Total kits scanned this turn (catalog size). */
   catalogSize: number;
@@ -675,7 +713,12 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
       );
     }
   }
-  const matchSummary = matches.map((m) => ({ slug: m.entry.slug, score: m.score }));
+  const matchSummary = matches.map((m) => ({
+    slug: m.entry.slug,
+    score: m.score,
+    title: m.entry.title,
+    path: m.entry.path,
+  }));
 
   if (matches.length === 0) {
     deps.log?.warn?.(

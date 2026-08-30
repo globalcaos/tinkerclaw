@@ -35,23 +35,23 @@ authoredBy: "jarvis-on-the-fly"
 ## Goal
 
 Reproduce, as a repeatable playbook, the one-off Belgium-trip gather from
-2026-07-07: pull the flight / hotel / car documents out of the owner's **work
+2026-07-07: pull the flight / hotel / car documents out of the architect's **work
 Outlook**, assemble a TripIt-style briefing, and deliver it to his **WhatsApp**
 (text now; the full itinerary+tickets **PDF** as an attachment when the channel
 allows, else a documented fallback). Two enhancements over the original run:
 
-1. **Clickable Google Maps links** on every address the owner has to _navigate to_,
+1. **Clickable Google Maps links** on every address the architect has to _navigate to_,
    in travel order — arrival airport → **hotel** → **venue** → back to the
    **departure airport**.
 2. **Completeness gate** — if any trip pillar is still TBD / unconfirmed /
    missing, DO NOT send a half-finished briefing. Send ONE short enquiry asking
-   what to do, and stop. (the owner, 2026-07-08: _"account for a trip where not all
+   what to do, and stop. (the architect, 2026-07-08: _"account for a trip where not all
    the details are finalized… enquire what to do instead of spamming me with a
    half-finished business plan."_)
 
 ## When to Use
 
-- the owner says he's travelling and wants his trip gathered / sent to WhatsApp.
+- the architect says he's travelling and wants his trip gathered / sent to WhatsApp.
 - A trip's docs live in his work inbox and he wants them consolidated TripIt-style.
 - Re-running for a new trip: same steps, new search terms (dates, city, airline).
 
@@ -69,7 +69,7 @@ confirmed (has a booking/confirmation ref and concrete times/addresses):
 | Venue / purpose  | full address, dates, hours                                        | address resolvable                                      |
 
 Pillars can be legitimately **N/A** (e.g. no car — he's using trains). N/A ≠
-missing. A pillar that the owner _expects_ but whose doc is absent/`TBD`/unpriced =
+missing. A pillar that the architect _expects_ but whose doc is absent/`TBD`/unpriced =
 **missing** → triggers the gate (Step 4).
 
 ## Steps
@@ -78,7 +78,7 @@ missing. A pillar that the owner _expects_ but whose doc is absent/`TBD`/unprice
 
 **Done when:** I know which trip (destination + dates) and can name the pillars I expect.
 
-From the owner's ask, fix the destination, the travel window, and whether a car is
+From the architect's ask, fix the destination, the travel window, and whether a car is
 expected. If two trips are in flight (the Belgium run had a Belgium leg AND an
 Amsterdam leg the next week), confirm which one he means, or brief the imminent
 one and append the next as a compact continuation.
@@ -113,7 +113,7 @@ to re-mint it from the shared **Teams** tab via the browser relay:
 - Download: `node $SK/../outlook-mail-fetch.mjs --get-attachments <id> --out <dir>`.
   Read PDFs with `pdftotext -layout`; flight tickets sent as PNG → read as image.
 
-Only gather **the owner's own** documents. Colleagues' tickets in the same email
+Only gather **the architect's own** documents. Colleagues' tickets in the same email
 (e.g. "…D. Ortiz.pdf") are their PII — exclude them from the briefing (a shared
 car/hotel booked under a colleague's name is fine to _reference_, not to attach).
 
@@ -162,7 +162,7 @@ This gate is the heart of the recipe — the default on incomplete data is
 chronological order. Lead with the most urgent fact (imminent departure). Include
 confirmation/e-ticket numbers and any gotcha (e.g. 0 checked bags on return).
 
-**Google Maps links** — on the addresses the owner _navigates to_, in this order:
+**Google Maps links** — on the addresses the architect _navigates to_, in this order:
 **hotel → venue → return airport** (the arrival airport needs no link — he lands
 there). Use a **directions** deep link so tapping starts navigation from his
 current location:
@@ -177,7 +177,7 @@ syntax there. Put the link on its own line right under each place so it's an eas
 tap.
 
 **PDF** — one-page TripIt-style summary (chrome headless from an HTML template)
-merged with the owner's actual tickets:
+merged with the architect's actual tickets:
 
 ```bash
 google-chrome --headless --disable-gpu --no-pdf-header-footer --print-to-pdf=00-itinerary.pdf itinerary.html
@@ -191,7 +191,7 @@ Visually verify page 1 (`pdftoppm -png -r 90 -f 1 -l 1 00-itinerary.pdf _p` → 
 
 **Done when:** Text is delivered with a real messageId, and the PDF reached his phone (or a documented fallback did).
 
-the owner's own number / Note-to-Self = **+34600000000**.
+the architect's own number / Note-to-Self = **+34600000000**.
 
 ```bash
 # 1) text itinerary (WORKS — returns a real messageId)
@@ -204,8 +204,8 @@ See `memory/reference_whatsapp_media_send_broken_gateway.md`. Try `--media` once
 if it errors, fall back WITHOUT rabbit-holing:
 
 ```bash
-# fallback: park the PDF in the owner's own Gmail (private, opens on his phone)
-gog gmail drafts create --to you@example.com \
+# fallback: park the PDF in the architect's own Gmail (private, opens on his phone)
+gog gmail drafts create --to "$ARCHITECT_EMAIL" \
   --subject "<flag> <Trip> — itinerary + flight tickets" \
   --body "<one-line summary>" --attach "<Name>-<Trip>.pdf" --json
 ```
@@ -221,7 +221,7 @@ can't be verified by reading history.
 
 ### 7. Confirm honestly
 
-**Done when:** the owner knows exactly what landed where.
+**Done when:** the architect knows exactly what landed where.
 
 Report which messages hit WhatsApp (with the fact that the PDF went to Gmail if
 media was down). If the completeness gate fired at Step 4, the "delivery" is the
@@ -230,10 +230,10 @@ enquiry — say so, and that the briefing is held pending his answer.
 ## Constraints
 
 - **Ask-don't-assemble on incomplete data** (Step 4) is the defining rule — never
-  send a partial briefing without the owner's go-ahead.
-- the owner's PII only; exclude colleagues' tickets from attachments (Rule 2).
+  send a partial briefing without the architect's go-ahead.
+- the architect's PII only; exclude colleagues' tickets from attachments (Rule 2).
 - No irreversible outbound beyond the WhatsApp-to-self / Gmail-draft-to-self path
-  without explicit ok (Rules 3/4). The message is to the owner himself, so this is in
+  without explicit ok (Rules 3/4). The message is to the architect himself, so this is in
   bounds.
 - Maps links: directions deep links, bare URLs, only on places he drives to.
 

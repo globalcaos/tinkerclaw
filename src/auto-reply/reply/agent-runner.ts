@@ -742,6 +742,9 @@ function buildInlineRawTracePayload(params: {
     lastCallUsage: params.lastCallUsage,
     promptTokens: params.promptTokens,
     usage: params.usage,
+    // FORK 2026-07-28: reject a turn-aggregate masquerading as a context size, so the raw
+    // trace does not print "6,448,106 / 1,000,000".
+    contextWindow: params.contextLimit,
   });
   const requestContextBlock = formatRequestContextTraceBlock({
     provider: params.provider,
@@ -925,8 +928,59 @@ export async function runReplyAgent(params: {
     }
   };
 
+  // FORK 2026-08-28 — HOISTED ABOVE THE STEER ATTEMPT so the delivery-lost fallback below can
+  // close over it. Nothing between here and its old position reassigns `activeSessionEntry` or
+  // `activeSessionStore`, so the captured values are identical; only the position moved.
+  const queuedRunFollowupTurn = createFollowupRunner({
+    opts,
+    typing,
+    typingMode,
+    sessionEntry: activeSessionEntry,
+    sessionStore: activeSessionStore,
+    sessionKey,
+    storePath,
+    defaultModel,
+    agentCfgContextTokens,
+  });
+
   if (shouldSteer && isStreaming) {
-    const steered = queueEmbeddedPiMessage(followupRun.run.sessionId, followupRun.prompt);
+    // FORK 2026-08-28 — GIVE THE BUFFERED MESSAGE SOMEWHERE TO LAND.
+    //
+    // MEASURED (the architect, 2026-08-28): with steer-backlog on webchat, a prompt typed mid-turn is
+    // delivered and answered when the running turn HAS further provider round-trips — the steer
+    // folds in between tool rounds, exactly as intended. But when the running turn is a SINGLE-SHOT
+    // generation there is no next round-trip to inject into, and the buffered text was DROPPED:
+    // probe `zz-bound-155438` ended with 2 messages and the follow-up nowhere, no delivery at all.
+    //
+    // `queueEmbeddedPiMessage` returning true means ACCEPTED FOR DELIVERY, not delivered (see its
+    // contract note), and this call site treats true as "handled" and returns without enqueueing a
+    // followup. That is only safe if the buffer has a way to reach the user when the steer cannot.
+    // `onDeliveryLost` is that way, and it fires ONLY on the drop paths (`run_ending` /
+    // `no_active_run`) — mutually exclusive with a successful steer, so the message can never be
+    // delivered twice.
+    //
+    // Delivering `combined` rather than `followupRun.prompt`: the buffer coalesces every message
+    // queued inside the debounce window, and the surviving fallback belongs to the LAST caller, so
+    // enqueueing only that caller's own prompt would silently drop its predecessors. One follow-up
+    // turn carrying the combined text is what the steer path itself would have injected.
+    const steered = queueEmbeddedPiMessage(followupRun.run.sessionId, followupRun.prompt, {
+      onDeliveryLost: (_texts, combined) => {
+        enqueueFollowupRun(
+          queueKey,
+          combined === followupRun.prompt ? followupRun : { ...followupRun, prompt: combined },
+          resolvedQueue,
+          "message-id",
+          queuedRunFollowupTurn,
+          false,
+        );
+        // Same liveness re-check the ordinary enqueue path makes below: by the time a lost
+        // delivery surfaces the original run has usually ALREADY finished, which is precisely the
+        // case that would otherwise leave the followup queue idle forever.
+        if (!isRunActive?.()) {
+          finalizeWithFollowup(undefined, queueKey, queuedRunFollowupTurn);
+        }
+      },
+    });
     if (steered) {
       // FORK: Always return after successful steer — don't also enqueue as
       // followup, which would cause the message to be processed twice.
@@ -941,18 +995,6 @@ export async function runReplyAgent(params: {
     isHeartbeat,
     shouldFollowup,
     queueMode: resolvedQueue.mode,
-  });
-
-  const queuedRunFollowupTurn = createFollowupRunner({
-    opts,
-    typing,
-    typingMode,
-    sessionEntry: activeSessionEntry,
-    sessionStore: activeSessionStore,
-    sessionKey,
-    storePath,
-    defaultModel,
-    agentCfgContextTokens,
   });
 
   if (activeRunQueueAction === "drop") {
@@ -1394,6 +1436,9 @@ export async function runReplyAgent(params: {
         lastCallUsage: runResult.meta?.agentMeta?.lastCallUsage,
         promptTokens,
         usage,
+        // FORK 2026-07-28: same plausibility guard as the trace path — a value above the
+        // window is an accumulator, not a context size.
+        contextWindow: contextTokensUsed,
       });
       const costConfig = resolveModelCostConfig({
         provider: providerUsed,
@@ -1470,7 +1515,9 @@ export async function runReplyAgent(params: {
       });
     }
 
-    // If verbose is enabled, prepend operational run notices.
+    // Prepended run notices. Most are verbose-gated operational chatter; the
+    // model-fallback pair below is not, because it discloses that a different
+    // model answered than the one the user selected.
     let finalPayloads = guardedReplyPayloads;
     const verboseNotices: ReplyPayload[] = [];
 
@@ -1478,7 +1525,20 @@ export async function runReplyAgent(params: {
       verboseNotices.push({ text: `🧭 New session: ${followupRun.run.sessionId}` });
     }
 
+    // A substitution inside the SELECTED provider (a model-version slip) is
+    // announced on transition only — repeating it every turn is noise. A
+    // cross-PROVIDER substitution is announced on EVERY turn: a sustained one
+    // is otherwise indistinguishable from the model picker being silently
+    // ignored, which is the exact failure this disclosure exists to catch.
+    // Plain !== deliberately mirrors how fallbackActive compares refs; the
+    // fallbackActive guard keeps a normalization mismatch from ever firing
+    // this on a non-substituted turn.
+    const crossProviderFallback =
+      fallbackTransition.fallbackActive && selectedProvider !== providerUsed;
     if (fallbackTransition.fallbackTransitioned) {
+      // Lifecycle stays transition-only: consumers read `phase: "fallback"` as
+      // an edge, and re-emitting it on an unchanged state would double-emit
+      // into every lifecycle consumer.
       emitAgentEvent({
         runId,
         sessionKey,
@@ -1494,17 +1554,22 @@ export async function runReplyAgent(params: {
           attempts: fallbackAttempts,
         },
       });
-      if (verboseEnabled) {
-        const fallbackNotice = buildFallbackNotice({
-          selectedProvider,
-          selectedModel,
-          activeProvider: providerUsed,
-          activeModel: modelUsed,
-          attempts: fallbackAttempts,
-        });
-        if (fallbackNotice) {
-          verboseNotices.push({ text: fallbackNotice });
-        }
+    }
+    if (fallbackTransition.fallbackTransitioned || crossProviderFallback) {
+      // NOT verbose-gated. A model substitution is a correctness disclosure,
+      // not operational chatter: the user asked model A and model B answered.
+      // Suppressing this let two days of "Sol" replies pass as Opus while the
+      // UI kept showing the Sol nameplate (bug-log
+      // [codex-sol-accountid-silent-opus-fallback]).
+      const fallbackNotice = buildFallbackNotice({
+        selectedProvider,
+        selectedModel,
+        activeProvider: providerUsed,
+        activeModel: modelUsed,
+        attempts: fallbackAttempts,
+      });
+      if (fallbackNotice) {
+        verboseNotices.push({ text: fallbackNotice });
       }
     }
     if (fallbackTransition.fallbackCleared) {
@@ -1521,15 +1586,16 @@ export async function runReplyAgent(params: {
           previousActiveModel: fallbackTransition.previousState.activeModel,
         },
       });
-      if (verboseEnabled) {
-        verboseNotices.push({
-          text: buildFallbackClearedNotice({
-            selectedProvider,
-            selectedModel,
-            previousActiveModel: fallbackTransition.previousState.activeModel,
-          }),
-        });
-      }
+      // Also not verbose-gated, for symmetry with the fallback notice above:
+      // having been told "B answered instead of A", the user must be told when
+      // A is answering again, or they keep assuming the substitution is live.
+      verboseNotices.push({
+        text: buildFallbackClearedNotice({
+          selectedProvider,
+          selectedModel,
+          previousActiveModel: fallbackTransition.previousState.activeModel,
+        }),
+      });
     }
 
     if (autoCompactionCount > 0) {

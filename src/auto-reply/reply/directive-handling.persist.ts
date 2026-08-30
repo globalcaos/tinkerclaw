@@ -310,6 +310,14 @@ export async function persistInlineDirectives(params: {
           );
         }
         updated = updated || modelUpdated;
+      } else if (modelResolution.errorText) {
+        // Slider-initiated /model switch was rejected (e.g. model not in allowlist).
+        // Surface the error as a system event so the user sees it instead of a
+        // silent stay-on-current-provider.
+        enqueueSystemEvent(modelResolution.errorText, {
+          sessionKey,
+          contextKey: `model-rejected:${modelDirective}`,
+        });
       }
     }
     if (directives.hasQueueDirective && directives.queueReset) {

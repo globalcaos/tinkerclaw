@@ -113,7 +113,7 @@ Run the front section through the ai-humanizer skill to strip AI-tells. Then run
 
 ## Safety Notes
 
-- This recipe writes COPY only. Publishing/rescan needs `clawhub login` (the owner's hands; the token gets revoked often) — never auto-publish.
+- This recipe writes COPY only. Publishing/rescan needs `clawhub login` (the architect's hands; the token gets revoked often) — never auto-publish.
 - If the target file has foreign uncommitted WIP, graft only the front block and preserve the other session's edits; do not overwrite the whole file.
 - Skills vs plugins differ at publish: `clawhub skill publish` / `skills install` vs `clawhub package publish` / `package install`. Match the install line to the artifact type.
 

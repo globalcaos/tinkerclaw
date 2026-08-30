@@ -40,6 +40,22 @@ const ANS_MARKER_RE =
 const FRA_MARKER_RE =
   /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?:?(?:\*\*|__)?:?\s*/i;
 
+// FORK 2026-08-15 — ONE predicate for "is this bubble the 🌿 FRACTAL section itself".
+// app.ts had its own inline copy (`trimStart().startsWith("🌿 FRACTAL:")`) whose comment says it
+// exists so "the real answer before a fractal isn't demoted to 'thinking'". That literal test
+// recognised only the CLEAN-turn form. The per-turn injection mandates a second prefix for a
+// reflection that actually did something — `🌿 FRACTAL ACTION:` — and it does not start with
+// "🌿 FRACTAL:", so every reflection that DID work slipped past the very guard written to catch it.
+// Anchored at the start of the text (not FRA_MARKER_RE, which also matches mid-body) and tolerant
+// of the same heading/bold decoration as the markers above.
+const FRACTAL_OPENER_RE =
+  /^\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?\s*:?/i;
+
+/** True when this bubble OPENS with a 🌿 FRACTAL marker — i.e. it is the reflection block, not a reply. */
+export function isFractalSectionText(text: string): boolean {
+  return FRACTAL_OPENER_RE.test(text ?? "");
+}
+
 export function splitSectionedReply(text: string): SectionedReply | null {
   if (!text) {
     return null;
@@ -249,6 +265,37 @@ function findConclusionAnchor(text: string): number {
   return best;
 }
 
+// FORK 2026-08-16 (the architect: "Some chats still show a short final message as the final answer and
+// collapses the rest") — THE ANCHOR FOLD NEVER CHECKED WHAT IT WAS HIDING.
+//
+// findConclusionAnchor answers "where might a conclusion start?". The branch below then treated
+// everything before it as working notes and collapsed it into "▸ Commentary" — without ever asking
+// whether that head LOOKS like working notes. Any reply that opens with substance and only reaches
+// a heading, a numbered list or a **Bold label:** past its midpoint got its opening buried.
+//
+// Measured over the 45 most recently active sessions: 24 folds fired, 23 of them hid MORE than they
+// showed (worst: 11,059 chars hidden behind 435 shown), and the narration char-share of the hidden
+// head was BELOW 0.1 in 24 of 24. Not one fold in the sample was hiding actual narration. Among them
+// is the exact case the 2026-08-09 fork note recorded and only half-fixed: "the architect — you're right,
+// and the sharpest evidence is from tonight's own wind-down" — 4,177 hidden, 2,178 shown.
+//
+// So the anchor stays as the WHERE and gains a WHETHER: fold only when the head is predominantly the
+// "let me check X" register this was built to peel. The measured gap is wide enough that any
+// threshold in (0.1, 0.5] separates every observed case; 0.5 is the conservative end of it.
+const WORKING_NOTES_MIN_SHARE = 0.5;
+function isWorkingNotes(head: string): boolean {
+  const sentences = head.split(/(?<=[.!?])\s+/);
+  let narrationChars = 0;
+  let total = 0;
+  for (const s of sentences) {
+    const len = s.trim().length;
+    if (!len) continue;
+    total += len;
+    if (isNarrationSentence(s)) narrationChars += len;
+  }
+  return total > 0 && narrationChars / total >= WORKING_NOTES_MIN_SHARE;
+}
+
 export function splitReasoningFromAnswer(text: string): { reasoning: string; answer: string } {
   if (!text || !text.trim()) {
     return { reasoning: "", answer: text };
@@ -257,7 +304,9 @@ export function splitReasoningFromAnswer(text: string): { reasoning: string; ans
   if (anchor > 0) {
     const head = text.slice(0, anchor).trim();
     const tail = text.slice(anchor).trim();
-    if (tail) {
+    // The sentence-level fallback below still peels any genuine "let me check X" run, so a head that
+    // fails this test is not ignored — it is just no longer hidden wholesale.
+    if (tail && isWorkingNotes(head)) {
       return { reasoning: head, answer: scrubResidualSectionMarkers(tail) };
     }
   }
@@ -287,11 +336,23 @@ export function splitReasoningFromAnswer(text: string): { reasoning: string; ans
 // section is gone: pre-marker narration (sec.other) folds INTO the answer bubble
 // inline instead of a collapsed reasoning surface, and no amygdala block is ever
 // fabricated.
+// FORK 2026-08-11 (the architect: "I an still not seing the button at the end of the expanded
+// fractal reasoning") — `anchorAttr` carries the ` data-fractal-parent-run="…"` tag that
+// app.ts computes for answer bubbles. It is threaded in because THIS renderer returns
+// early at its call site (app.ts `h += renderSectionedReply(...); return h;`), BEFORE the
+// code that emits that attribute on the plain-markdown path. Consequence, unnoticed since
+// the sectioned layout landed: every sectioned reply — i.e. every reply with a 🌿 section,
+// which is nearly all of them — produced an UNTAGGED bubble. Two things broke on it:
+//   1. the fractal dock's anchor lookup found nothing and fell back to `fractal-orphan`,
+//      appending the verdict to the BOTTOM of the chat instead of under its own answer;
+//   2. the level-3 transcript graft keyed off the same attribute and mounted nowhere.
+// The tag goes on the <details> itself so the graft can select it directly.
 export function renderSectionedReply(
   sec: SectionedReply,
   elapsed: string,
   md: (text: string) => string,
   esc: (s: string) => string,
+  anchorAttr = "",
 ): string {
   let h = "";
   // Pre-marker narration (sec.other) PLUS any leading inter-tool narration peeled
@@ -376,7 +437,7 @@ export function renderSectionedReply(
   if (sec.fractal) {
     const s = artifactSummary(sec.fractal, "<em>Fractal</em> — reflection");
     h +=
-      `<details class="fractal-details">` +
+      `<details class="fractal-details"${anchorAttr}>` +
       `<summary class="fractal-summary${s.cls}">🌿 ${s.html}</summary>` +
       `<div class="msg msg-fractal">${md(sec.fractal)}</div>` +
       `</details>`;

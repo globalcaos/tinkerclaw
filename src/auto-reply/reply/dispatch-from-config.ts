@@ -734,17 +734,17 @@ export async function dispatchReplyFromConfig(
     }
     const fastAbort = await fastAbortResolver({ ctx, cfg });
     if (fastAbort.handled) {
-      let queuedFinal = false;
-      let routedFinalCount = 0;
+      let enqueuedFinal = false;
+      let crossChannelReroutes = 0;
       if (!suppressDelivery) {
         const payload = {
           text: formatAbortReplyTextResolver(fastAbort.stoppedSubagents),
         } satisfies ReplyPayload;
         const result = await routeReplyToOriginating(payload);
         if (result) {
-          queuedFinal = result.ok;
+          enqueuedFinal = result.ok;
           if (result.ok) {
-            routedFinalCount += 1;
+            crossChannelReroutes += 1;
           }
           if (!result.ok) {
             logVerbose(
@@ -753,7 +753,7 @@ export async function dispatchReplyFromConfig(
           }
         } else {
           markInboundDedupeReplayUnsafe();
-          queuedFinal = dispatcher.sendFinalReply(payload);
+          enqueuedFinal = dispatcher.sendFinalReply(payload);
         }
       } else {
         logVerbose(
@@ -761,11 +761,15 @@ export async function dispatchReplyFromConfig(
         );
       }
       const counts = dispatcher.getQueuedCounts();
-      counts.final += routedFinalCount;
+      counts.final += crossChannelReroutes;
       recordProcessed("completed", { reason: "fast_abort" });
       markIdle("message_completed");
       commitInboundDedupeIfClaimed();
-      return { queuedFinal, counts };
+      // `queuedFinal` stays the PUBLIC key of this function's return — channel
+      // monitors, the inbound testkit and their tests read it across dozens of
+      // files — so the honest internal name is mapped here rather than propagated
+      // across the tree.
+      return { queuedFinal: enqueuedFinal, counts };
     }
 
     const isSlackNonDirectSurface =
@@ -774,9 +778,27 @@ export async function dispatchReplyFromConfig(
       !isSlackNonDirectSurface && (ctx.ChatType !== "group" || ctx.IsForum === true);
     const shouldSendToolSummaries = shouldSendVerboseProgressMessages;
     const shouldSendToolStartStatuses = shouldSendVerboseProgressMessages;
+    // FORK 2026-08-26 (false-signal): both fields were named for something they
+    // do not measure, and one of them misdirected an entire delivery
+    // investigation.
+    //
+    // `crossChannelReroutes` (was `routedFinalCount`) counts replies re-routed to
+    // a DIFFERENT originating channel via `routeReplyToOriginating`. It is not,
+    // and never was, a socket count. On the `dispatcher.sendFinalReply` branch
+    // below it is the literal constant 0, and routing-policy.ts forces
+    // `shouldRouteToOriginating=false` on every internal webchat turn — so it read
+    // 0 in 1,463 of 1,463 journal lines across the full 30-day retention, and four
+    // bug-log entries read that constant as "the router found no live sink".
+    // The real "how many sockets received this" number now lives in the gateway
+    // broadcaster's `[chat-deliver]` line (src/gateway/server-broadcast.ts).
+    //
+    // `enqueuedFinal` (was `queuedFinal`) means ONLY "survived normalization and
+    // was scheduled on the dispatcher's send chain" — reply-dispatcher.ts:236/285
+    // returns true before `options.deliver` ever runs, so it is not evidence of
+    // delivery either.
     const sendFinalPayload = async (
       payload: ReplyPayload,
-    ): Promise<{ queuedFinal: boolean; routedFinalCount: number }> => {
+    ): Promise<{ enqueuedFinal: boolean; crossChannelReroutes: number }> => {
       if (resolveSendableOutboundReplyParts(payload).hasContent) {
         markInboundDedupeReplayUnsafe();
       }
@@ -799,14 +821,14 @@ export async function dispatchReplyFromConfig(
           );
         }
         return {
-          queuedFinal: result.ok,
-          routedFinalCount: result.ok ? 1 : 0,
+          enqueuedFinal: result.ok,
+          crossChannelReroutes: result.ok ? 1 : 0,
         };
       }
       markInboundDedupeReplayUnsafe();
       return {
-        queuedFinal: dispatcher.sendFinalReply(normalizedPayload),
-        routedFinalCount: 0,
+        enqueuedFinal: dispatcher.sendFinalReply(normalizedPayload),
+        crossChannelReroutes: 0,
       };
     };
 
@@ -832,19 +854,20 @@ export async function dispatchReplyFromConfig(
       );
       if (beforeDispatchResult?.handled) {
         const text = beforeDispatchResult.text;
-        let queuedFinal = false;
-        let routedFinalCount = 0;
+        let enqueuedFinal = false;
+        let crossChannelReroutes = 0;
         if (text && !suppressDelivery) {
           const handledReply = await sendFinalPayload({ text });
-          queuedFinal = handledReply.queuedFinal;
-          routedFinalCount += handledReply.routedFinalCount;
+          enqueuedFinal = handledReply.enqueuedFinal;
+          crossChannelReroutes += handledReply.crossChannelReroutes;
         }
         const counts = dispatcher.getQueuedCounts();
-        counts.final += routedFinalCount;
+        counts.final += crossChannelReroutes;
         recordProcessed("completed", { reason: "before_dispatch_handled" });
         markIdle("message_completed");
         commitInboundDedupeIfClaimed();
-        return { queuedFinal, counts };
+        // Public key preserved — see the fast_abort return above.
+        return { queuedFinal: enqueuedFinal, counts };
       }
     }
 
@@ -1319,8 +1342,8 @@ export async function dispatchReplyFromConfig(
       `[DELIVERY-DICHOTOMY] entering reply loop: replyResult.exists=${!!replyResult} replies.count=${replies.length} suppressDelivery=${suppressDelivery}`,
     );
 
-    let queuedFinal = false;
-    let routedFinalCount = 0;
+    let enqueuedFinal = false;
+    let crossChannelReroutes = 0;
     if (!suppressDelivery) {
       for (const reply of replies) {
         // Suppress reasoning payloads from channel delivery — channels using this
@@ -1333,11 +1356,13 @@ export async function dispatchReplyFromConfig(
           `[DELIVERY-DICHOTOMY] calling sendFinalPayload kind=${(reply as { kind?: string }).kind ?? "?"} textLen=${(reply as { text?: string }).text?.length ?? 0}`,
         );
         const finalReply = await sendFinalPayload(reply);
+        // Neither number below is a socket count. For "did the tab receive it",
+        // read the gateway's `[chat-deliver] ... sent=N` line instead.
         console.log(
-          `[DELIVERY-DICHOTOMY] sendFinalPayload returned queuedFinal=${finalReply.queuedFinal} routedFinalCount=${finalReply.routedFinalCount}`,
+          `[DELIVERY-DICHOTOMY] sendFinalPayload returned enqueuedFinal=${finalReply.enqueuedFinal} crossChannelReroutes=${finalReply.crossChannelReroutes}`,
         );
-        queuedFinal = finalReply.queuedFinal || queuedFinal;
-        routedFinalCount += finalReply.routedFinalCount;
+        enqueuedFinal = finalReply.enqueuedFinal || enqueuedFinal;
+        crossChannelReroutes += finalReply.crossChannelReroutes;
       }
 
       const ttsMode = resolveConfiguredTtsMode(cfg, {
@@ -1377,9 +1402,9 @@ export async function dispatchReplyFromConfig(
             const normalizedTtsOnlyPayload = await normalizeReplyMediaPayload(ttsOnlyPayload);
             const result = await routeReplyToOriginating(normalizedTtsOnlyPayload);
             if (result) {
-              queuedFinal = result.ok || queuedFinal;
+              enqueuedFinal = result.ok || enqueuedFinal;
               if (result.ok) {
-                routedFinalCount += 1;
+                crossChannelReroutes += 1;
               }
               if (!result.ok) {
                 logVerbose(
@@ -1389,7 +1414,7 @@ export async function dispatchReplyFromConfig(
             } else {
               markInboundDedupeReplayUnsafe();
               const didQueue = dispatcher.sendFinalReply(normalizedTtsOnlyPayload);
-              queuedFinal = didQueue || queuedFinal;
+              enqueuedFinal = didQueue || enqueuedFinal;
             }
           }
         } catch (err) {
@@ -1401,14 +1426,15 @@ export async function dispatchReplyFromConfig(
     }
 
     const counts = dispatcher.getQueuedCounts();
-    counts.final += routedFinalCount;
+    counts.final += crossChannelReroutes;
     commitInboundDedupeIfClaimed();
     recordProcessed(
       "completed",
       pluginFallbackReason ? { reason: pluginFallbackReason } : undefined,
     );
     markIdle("message_completed");
-    return { queuedFinal, counts };
+    // Public key preserved — see the fast_abort return above.
+    return { queuedFinal: enqueuedFinal, counts };
   } catch (err) {
     if (inboundDedupeClaim.status === "claimed") {
       if (inboundDedupeReplayUnsafe) {

@@ -2,11 +2,15 @@
 file: tool-loop.md
 purpose: Why tinker-bridge's tool loop differs from pi-agent-core's; consequences and the heartbeat-stream proposal
 audience: AI
-last_verified: 2026-05-14
+last_verified: 2026-08-19
 last_verified_commit: HEAD
 single_owner: yes — this is the one place to learn why fork tool-loop ≠ upstream
 see_also: flows.md (F1 tinker-bridge spawn flow), failures.md (M1 idle-watchdog SIGTERM), config-shape.md (timeoutSeconds), panels.md (thinking indicator + prefrontal panel)
 verify:
+  - name: the spawn argv is NUL-quarantined (a single NUL makes Node refuse to start the child at all)
+    cmd: python3 -c 'import os; w=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/worker.ts")).read(); assert "stripNulBytesFromArgv(rawWrapperArgs)" in w, "worker.ts no longer strips NUL bytes from the spawn argv — one stray NUL anywhere in the appended system prompt or a --setenv value makes Node throw ERR_INVALID_ARG_VALUE BEFORE the child exists, and the worker dies fatally in a retry loop that can never succeed (27 deaths on 2026-08-18)"'
+  - name: no tracked source file carries a RAW NUL byte (the byte that poisons transcripts, and through them every later spawn)
+    cmd: python3 -c 'import os,subprocess; root=os.path.expanduser("~/src/tinkerclaw"); names=[n for n in subprocess.run(["git","-C",root,"ls-files","-z","*.ts","*.tsx","*.mjs","*.cjs","*.js","*.md","*.json"],capture_output=True).stdout.split(b"\x00") if n]; bad=[n.decode("utf8","replace") for n in names if b"\x00" in open(os.path.join(root,n.decode("utf8","replace")),"rb").read()]; assert not bad, "raw NUL byte(s) committed in tracked source -> " + str(bad[:5]) + " -- an agent meant to write the two-character escape and emitted the byte instead. Every agent that READS the file inherits it permanently in its transcript, which is replayed into --append-system-prompt. Replace with the escape sequence"'
   - name: tinker-bridge stream.ts still suppresses tool_use blocks from assistant.message.content
     cmd: python3 -c 'import os; t = open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-tinker-bridge/src/stream.ts")).read(); assert "FORK (2026-04-22)" in t and "re-execute them via the OpenClaw exec tool" in t, "the 2026-04-22 tool-loop divergence comment block is missing from stream.ts — verify the suppression still holds"'
   - name: idle-timeout-diag log line is emitted on each turn (idle watchdog is wrapped)

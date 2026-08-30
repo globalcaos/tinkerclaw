@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { logCompactionDecision } from "../../agents/compaction-diagnostics.js";
 import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
 import { parseNonNegativeByteSize } from "../../config/byte-size.js";
@@ -63,6 +64,22 @@ function resolveMemoryFlushGateState<
   if (threshold <= 0) {
     return null;
   }
+
+  // FORK 2026-07-27 (the architect: "instrument the compaction predicate") — this gate reads
+  // SessionEntry.totalTokens, which on the embedded path is the TURN AGGREGATE, not a
+  // context snapshot (measured 9,380,101 with fresh:true against a 1,000,000 window; 58%
+  // of persisted assistant-usage rows exceed the model window). If this gate is the one
+  // firing, that is the defect. Log the exact comparison so the next real turn settles it.
+  // Once per gate evaluation, so volume is bounded by turns, not by tokens.
+  logCompactionDecision({
+    gate: "preflight/memory-flush",
+    tokens: totalTokens,
+    threshold,
+    contextWindow,
+    source:
+      resolvePositiveTokenCount(params.tokenCount) != null ? "tokenCount" : "entry.totalTokens",
+    fires: totalTokens >= threshold,
+  });
 
   return { entry: params.entry, totalTokens, threshold };
 }

@@ -3,8 +3,8 @@
 // day one (the live skill-library is empty + the extractor declines until Task 0b).
 // These are deliberately small, genuinely-reusable, fully-typed skills. They round
 // trip as ordinary Skill records; the never-delete library versions/dedups them.
-import type { SkillLibrary } from "../../../src/memory/engram/skill-library.js";
-import type { Skill } from "../../../src/memory/storage/types.js";
+import type { SkillLibrary } from "openclaw/plugin-sdk/fork-recipe-engine";
+import type { Skill } from "openclaw/plugin-sdk/fork-recipe-engine";
 
 /** Laplace-neutral fitness for a never-invoked seed: (0+1)/(0+2) = 0.5. */
 function neutralMetrics(): Skill["successMetrics"] {
