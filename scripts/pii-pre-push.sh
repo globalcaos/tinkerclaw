@@ -82,7 +82,7 @@ declare -a exclude_paths=(
 # by pii-boundary.md and MUST NOT be matched — they are not leaks.
 # ugrep is not used because not all dev hosts have it.
 # Use grep -P (PCRE) which supports lookbehind/lookahead.
-PII_RE='Oscar(?! Serra)|Xavi[er]?\b|REDACTED-NAME|Barcelona|/home/user|talleres serra|hikrobot|glpat-|oserra@'
+PII_RE='Oscar(?! Serra)|Xavi[er]?\b|Ortodó|Barcelona|/home/globalcaos|talleres serra|hikrobot|glpat-|oserra@'
 
 hit_count=0
 hit_buffer=""
