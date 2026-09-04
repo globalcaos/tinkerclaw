@@ -49,11 +49,9 @@ export function gc(opts: {
   now?: number;
   isAlive?: (pid: number) => boolean;
 }): { reclaimed: number };
-export function gcAll(opts?: {
-  root?: string;
-  now?: number;
-  isAlive?: (pid: number) => boolean;
-}): { reclaimed: number };
+export function gcAll(opts?: { root?: string; now?: number; isAlive?: (pid: number) => boolean }): {
+  reclaimed: number;
+};
 export function renew(opts: {
   repo: string;
   path: string;

@@ -326,6 +326,16 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 💥 collision — process crashed
     icon: "💥",
   },
+  spawn_e2big: {
+    category: "provider_error",
+    fatal: true,
+    headline: "The Overseer briefing was too large to start",
+    explanation:
+      "Linux refused to start the child (`spawn E2BIG`): one argument exceeded the 128 KB argv cap. This is not a provider outage and retrying the same payload cannot succeed. The briefing now goes by file, not on the command line — if you still see this, the spawn path is stuffing a transcript into argv again.",
+    suggestedActions: [],
+    // 📦 package — payload too big for the slot it was put in
+    icon: "📦",
+  },
 };
 
 /** Generate a short stable id. */
@@ -407,6 +417,9 @@ export function classifyRawErrorMessage(raw: string): string {
   }
   if (/incomplete turn|turn ended without/.test(s)) {
     return "incomplete_turn";
+  }
+  if (/\be2big\b/.test(s)) {
+    return "spawn_e2big";
   }
   return "provider_generic";
 }

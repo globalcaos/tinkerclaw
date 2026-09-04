@@ -12,6 +12,7 @@ import {
   DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
+  DEFAULT_VOICE_FILENAME,
   ensureAgentWorkspace,
   filterBootstrapFilesForSession,
   isWorkspaceBootstrapPending,
@@ -72,6 +73,7 @@ function expectSubagentAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
   expect(names).toContain("USER.md");
   expect(names).not.toContain("HEARTBEAT.md");
   expect(names).not.toContain("BOOTSTRAP.md");
+  expect(names).not.toContain("VOICE.md");
   expect(names).not.toContain("MEMORY.md");
 }
 
@@ -309,6 +311,16 @@ describe("loadWorkspaceBootstrapFiles", () => {
     expectSingleMemoryEntry(files, "memory");
   });
 
+  it("includes VOICE.md when present", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-");
+    await writeWorkspaceFile({ dir: tempDir, name: DEFAULT_VOICE_FILENAME, content: "speak" });
+
+    const files = await loadWorkspaceBootstrapFiles(tempDir);
+    const voice = files.find((file) => file.name === DEFAULT_VOICE_FILENAME);
+    expect(voice?.missing).toBe(false);
+    expect(voice?.content).toBe("speak");
+  });
+
   it("ignores lowercase memory.md when MEMORY.md is absent", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     await writeWorkspaceFile({ dir: tempDir, name: "memory.md", content: "alt" });
@@ -365,6 +377,7 @@ describe("filterBootstrapFilesForSession", () => {
     { name: "USER.md", path: "/w/USER.md", content: "", missing: false },
     { name: "HEARTBEAT.md", path: "/w/HEARTBEAT.md", content: "", missing: false },
     { name: "BOOTSTRAP.md", path: "/w/BOOTSTRAP.md", content: "", missing: false },
+    { name: "VOICE.md", path: "/w/VOICE.md", content: "", missing: false },
     { name: "MEMORY.md", path: "/w/MEMORY.md", content: "", missing: false },
   ];
 

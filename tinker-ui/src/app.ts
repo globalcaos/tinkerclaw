@@ -1,5 +1,9 @@
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
+// FORK 2026-09-03 (the architect): the €/task Pareto frontier THALAMUS routes along — the same
+// module behind the chart's yellow envelope and the reply-path router, so the routing
+// card's "would route" line cannot disagree with either.
+import { frontierRungsFor, thalamusRoute } from "../../src/shared/thalamus-frontier.js";
 // FORK 2026-08-18 (the architect: "if a process is attached to a tab and it prevents me to send more
 // prompts ... I would prefer if it was shown as a progress indicator with a stop button, so I can
 // kill it or understand it better"). The ATTACHED ACTIVITY strip's pure rules — live age, row
@@ -47,7 +51,7 @@ import {
 // keeps only the KNOWN_STREAMS entry, the stream:"fractal" dispatch, and the
 // dock-anchor lookup over app.ts-owned message state.
 import { upsertFractalDock, renderTranscriptSection, type FractalDockRow } from "./fractal-dock.js";
-import { splitInjectedPrompt, type InjectedKind } from "./injected-prompt.js";
+import { splitInjectedPrompt, skillNoticeFromTool, type InjectedKind } from "./injected-prompt.js";
 import { openExternalLinksInNewTab } from "./md-links.js";
 import {
   getModelUsage as sharedGetModelUsage,
@@ -101,6 +105,16 @@ import {
   cronSkimTag,
   parseCronItemText,
 } from "./panels/cron-item-voice.js";
+import {
+  buildCronDefaultModelPatch,
+  cronModelRef,
+  effectiveCronDefaultModel,
+  normalizeCronModelChoices,
+  readCronModelConfigState,
+  resolveCronJobModel,
+  type CronModelChoice,
+  type CronModelConfigState,
+} from "./panels/cron-models.js";
 import {
   DEFAULT_TZ,
   WEEKDAYS,
@@ -173,7 +187,7 @@ import {
 } from "./panels/presence-graph.js";
 // FORK 2026-08-04 (the architect): vendor-resolved logo + accent for OpenRouter models —
 // the MODEL id, not the provider key, carries the vendor.
-import { getModelLogoSvg } from "./panels/provider-logos.js";
+import { getRoutedLogoSvg } from "./panels/provider-logos.js";
 import { mountResponseTreemap } from "./panels/response-treemap.js";
 // FORK 2026-07-25 (the architect): the "why this routing" card under the MODEL slider — two
 // phrases justifying the model/effort in force and the fan-out count, each with its reason.
@@ -209,6 +223,7 @@ import {
   type ScView,
   scClampView,
   SC_VIEW_FULL,
+  scThalamusRelCost,
 } from "./panels/smart-cost-chart.js";
 // FORK 2026-08-06 #3 (the architect): SMART MODELS dossier — best-at + trained refusals.
 import {
@@ -269,6 +284,7 @@ import {
   clearPreModelFor as clearPreModelForIn,
   openPreModelWindow,
   sessionPending as sessionPendingIn,
+  terminalClosesPreModelWindow,
 } from "./pre-model-window.js";
 // FORK 2026-06-08 — bug "queued prompts stick forever + show in every tab": pure, unit-tested
 // helpers that scope the queued-send array by session (render only the active tab's entries; settle
@@ -330,6 +346,16 @@ import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
 // something the human actually typed so it can be rendered as an automated notice. See
 // system-notice.ts.
 import { detectSystemNotice } from "./system-notice.js";
+import {
+  SESSION_PANEL_ORDER_KEY,
+  dropBeforeId,
+  dropKeyFromOrder,
+  mergeTabSessionOrder,
+  orderSessionsByTabs,
+  reorderTabs,
+  restoreTabsWithMain,
+  sessionKeysOfTabs,
+} from "./tab-session-order.js";
 import { compactUnknownModelLabel, isTranscriptOnlyModel } from "./transcript-only-models.js";
 import {
   appendTurnPhase,
@@ -637,6 +663,56 @@ function isPendingSessionDelete(key: string | undefined | null): boolean {
     }
   }
   return false;
+}
+
+// FORK 2026-09-01 (the architect: tab right-click Delete = sessions-panel bin).
+// One owner for the optimistic hide + sessions.delete RPC. The bin button
+// and the tab context menu both call this; two writers of the same teardown
+// would resurrect a row mid-flight (pendingSessionDeletes exists because
+// that already happened once).
+function canonicalSessionKeyOf(key: string): string {
+  const rows = Array.isArray(sessions) ? (sessions as Array<{ key?: unknown }>) : [];
+  const match = rows.find((s) => typeof s.key === "string" && sessionKeyMatches(s.key, key));
+  return typeof match?.key === "string" ? match.key : key;
+}
+
+function isProtectedSessionKey(key: string | undefined | null): boolean {
+  if (!key) return true;
+  const suffix = key.split(":").pop() ?? "";
+  return (
+    key.endsWith(":main") ||
+    suffix === "main" ||
+    key.endsWith(":heartbeat") ||
+    suffix === "heartbeat"
+  );
+}
+
+async function deleteSession(rawKey: string | undefined | null): Promise<void> {
+  if (!rawKey || isProtectedSessionKey(rawKey) || isPendingSessionDelete(rawKey)) return;
+  const key = canonicalSessionKeyOf(rawKey);
+  pendingSessionDeletes.add(key);
+  setOrderedIds(
+    SESSION_PANEL_ORDER_KEY,
+    dropKeyFromOrder(getOrderedIds(SESSION_PANEL_ORDER_KEY), key, sessionKeyMatches),
+  );
+  const affectedTab = tabs.find((t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey));
+  if (affectedTab && affectedTab.id !== "tab-main") {
+    closeTab(affectedTab.id);
+  } else if (affectedTab?.id === "tab-main") {
+    sessionKey = "";
+    messages = [];
+    updateChat();
+  }
+  updateSessionsPanel();
+  try {
+    await req("sessions.delete", { key, deleteTranscript: false });
+  } catch (err) {
+    console.error("[sessions] delete failed", err);
+    showToast(`Delete failed: ${err instanceof Error ? err.message : String(err)}`, true);
+  } finally {
+    pendingSessionDeletes.delete(key);
+    await loadSessions();
+  }
 }
 
 /**
@@ -1736,6 +1812,10 @@ interface Tab {
 // and server (src/gateway/session-cookie-phrase.ts) import from the
 // same JSON now. See bible session-naming.md.
 import { FORTUNE_COOKIES, fortuneForKey, randomFortune } from "../../src/shared/fortune-cookies.js";
+// FORK 2026-09-02 (the architect): one rule, read by the selector AND the panel, so they
+// cannot drift. See src/shared/reseller-route-policy.ts for why it is a vendor-namespace
+// predicate rather than a list of banned model names.
+import { isRedundantResellerRoute } from "../../src/shared/reseller-route-policy.js";
 
 // FORK 2026-05-25 — emoji catalog for the inline group/sub-group
 // rename picker (openInlineAxisLabelEdit). Curated common set across
@@ -4122,6 +4202,21 @@ function saveTabs() {
     // reads the CACHE — it would faithfully persist the write that just failed.
     scheduleUiStateMirror();
   } catch {}
+  persistSessionPanelOrder();
+}
+
+// FORK 2026-09-01 (the architect: drag-reorder tabs; sessions panel follows that order).
+// Open tab keys occupy the front; keys that just left the tab bar stay immediately
+// after that prefix. Explicit sessions.delete is the only prune. Called from
+// saveTabs so close/reorder/create all write one list, and from the panel paint
+// so a reconnect that restored tabs without saveTabs still syncs the rail.
+function persistSessionPanelOrder(): void {
+  const openKeys = sessionKeysOfTabs(tabs);
+  const previous = getOrderedIds(SESSION_PANEL_ORDER_KEY);
+  setOrderedIds(
+    SESSION_PANEL_ORDER_KEY,
+    mergeTabSessionOrder(openKeys, previous, sessionKeyMatches),
+  );
 }
 
 function loadTabs() {
@@ -4243,12 +4338,22 @@ PROVIDER_ICONS["openai-codex"] = PROVIDER_ICONS.openai;
 // which is in no icon table — so Kimi, Qwen, GLM and DeepSeek all rendered the
 // anonymous grey dot. Resolve the vendor from the MODEL id first, and only fall
 // back to the provider-keyed table.
+// FORK 2026-09-02 (the architect: "the logo in the models panel in front of fable 5.1 is
+// still not correct, I see a gray circle instead of the claude icon"). This read
+// `getModelLogoSvg(modelId)` — which only knows the four VENDOR_MARKS (Kimi, Qwen,
+// GLM, DeepSeek) — and fell through to `providerIcon(provider)` for everything else.
+// For any model reached THROUGH a router the provider string is the literal
+// "openrouter", which has no entry in PROVIDER_ICONS, so providerIcon emitted its
+// last-resort `model-provider-dot`: a plain grey circle.
+//
+// The class is much wider than Fable. Every `openrouter/<vendor>/*` row whose vendor
+// is not one of those four drew a grey dot — Anthropic, OpenAI, Meta, MiniMax,
+// Tencent and the rest. The smart x cost chart already resolves this correctly via
+// getRoutedLogoSvg, which reads the vendor out of the id's MIDDLE segment; the panel
+// simply never got that fix. Use the same resolver so one model has one mark
+// everywhere, and keep providerIcon only for the case where there is no model id.
 function modelIcon(modelId: string, provider: string): string {
-  const svg = getModelLogoSvg(modelId);
-  if (svg) {
-    return `<span class="model-provider-icon">${svg}</span>`;
-  }
-  return providerIcon(provider);
+  return `<span class="model-provider-icon">${getRoutedLogoSvg(modelId, provider)}</span>`;
 }
 
 function providerIcon(provider: string): string {
@@ -4944,7 +5049,28 @@ function loadModelPin(key: string): void {
   if (!key) return;
   try {
     const v = localStorage.getItem(MODEL_PIN_LS_PREFIX + key);
-    if (v) modelPinBySession.set(key, v);
+    if (!v) return;
+    // FORK 2026-09-02 (the architect: "No claude models should ever route through openrouter").
+    //
+    // A PIN OUTLIVES THE CATALOG. This restored whatever string was in localStorage with no
+    // validation, and the slider then sends it as `chat.send({model})` on every turn — so a
+    // route deleted from openclaw.json keeps being requested from the browser for ever. That
+    // is not hypothetical: the Herbalist tab spent 2026-09-02 pinned to
+    // `openrouter/anthropic/claude-fable-5.1`, a route already absent from config, and every
+    // turn died on a 402 (that OpenRouter key had $0.0088 left) with no fallback configured,
+    // across two gateway restarts. The server-side session row held no override at all — the
+    // dead route lived entirely in this one localStorage key.
+    //
+    // Dropping the pin falls the tab back to Auto, which is always routable, instead of
+    // replaying a request that cannot succeed. Deliberately NOT a catalog-membership check:
+    // the catalog may not have loaded yet at restore time, and rejecting an unknown-but-valid
+    // id would silently unpin working tabs on a slow first paint. This vetoes only what is
+    // knowably wrong from the id alone.
+    if (isRedundantResellerRoute(v)) {
+      localStorage.removeItem(MODEL_PIN_LS_PREFIX + key);
+      return;
+    }
+    modelPinBySession.set(key, v);
   } catch {
     /* localStorage unavailable — in-memory only */
   }
@@ -6442,8 +6568,11 @@ function onFrame(f: unknown) {
             restoredMain.isAttached = true;
           }
           const mainTab = restoredMain ?? defaultMainTab;
-          const others = restored.filter((t) => t.id !== "tab-main");
-          tabs = [mainTab, ...others];
+          // FORK 2026-09-01: keep Main where the stored list put it so a drag-reorder
+          // of tab-main survives reconnect. First load (no stored Main) still prepends.
+          tabs = restoreTabsWithMain(restored, mainTab);
+          persistSessionPanelOrder();
+          const others = tabs.filter((t) => t.id !== "tab-main");
           // FORK: Initialize TabState for main and all restored tabs.
           //
           // FORK 2026-07-28 (the architect: "the history often appears blank for a few seconds") — this
@@ -7698,6 +7827,36 @@ function onEvent(evt: unknown) {
       // sending reflects the VIEWED tab only — never the global map size, so a
       // different tab's live run can't pin this tab on "sending" forever.
       sending = viewedSessionBusy();
+      // FORK 2026-09-03 (the architect: "the serraclaw tab is preparing context forever").
+      //
+      // THE VIEWED LANE'S MISSING TERMINATOR — the exact shape of the 2026-08-26 bug twenty
+      // lines up, one variable over. `preparingSince` was closed by two proofs only, and BOTH
+      // require the turn to reach a model: a model-bearing `phase:start` (line ~9183) and the
+      // first assistant delta (line ~7274). An Anthropic HTTP 529 reaches neither — the request
+      // is refused upstream, so the only event this tab ever sees is the terminal one below.
+      // With nothing clearing the window here it stayed open for the life of the page: the pill
+      // counted "preparing context" forever and `taskRunning` held the timing block open behind
+      // it, on a turn that had been over for half an hour.
+      //
+      // Discarded WITHOUT a timing row, the same rule the disconnect and send-failure paths
+      // state: this window did not FINISH, it was cut off, and a duration for a stage that never
+      // completed would read as a measurement of that stage. Gated on the event's session (the
+      // predicate is pure and unit-tested in pre-model-window.ts) because a BACKGROUND session
+      // ending must not blank the window of a tab whose own prompt was accepted seconds ago.
+      if (
+        terminalClosesPreModelWindow({
+          eventSessionKey: p.sessionKey,
+          viewedSessionKey: sessionKey,
+          state: p.state,
+          matches: sessionKeyMatches,
+        })
+      ) {
+        preparingSince = null;
+        preparingStages = [];
+        pendingSince = null;
+        turnPhase = null;
+        turnPhaseTrail = [];
+      }
       // FORK 2026-06-22: collapse any duplicate assistant answer left in messages[] by an in-flight
       // reconnect/finalize race before this turn renders.
       // FORK 2026-08-05 (the architect, explicit) — REMOVED, function and all. `dedupeAssistantAnswers()`
@@ -9995,6 +10154,19 @@ async function loadChat(opts?: { force?: boolean }) {
     if (t.length > 0 && incomingText.has(t)) {
       continue;
     }
+    // FORK 2026-09-02 — STRIP THE STREAMING MARKS AS THE BUBBLE CROSSES THE RELOAD. This loop only
+    // runs once `liveWriter` has been ruled out above, so nothing is streaming and a surviving
+    // `_temporary` is stale by definition. Carrying it across was the ROOT of the reasoning group
+    // that never collapsed: `_isReasoning` is in CLIENT_ONLY_FLAGS and `_temporary` is not, so a
+    // live reasoning bubble came through `messages = incoming` intact — while the very same
+    // assignment destroyed the `_runId` that `ownsTempMsg` and the frozen-reasoning loop match on.
+    // The flag then had no owner left in the session and pinned its whole run to `isStreaming`.
+    // Freeze it exactly the way turn-end does (drop `_temporary`, keep `_isReasoning`), so the text
+    // stays on screen and only its PRESENTATION is settled — the 2026-08-05 law, unchanged.
+    if (rec._temporary) {
+      delete rec._temporary;
+      rec._reasoningFrozen = true;
+    }
     preserved.push({ m, turn: turnAnchorOf(messages, m) });
   }
   // FORK 2026-08-30 — THE HYPOTHESIS, MADE MEASURABLE. `_runId` is a client-only stamp that lives
@@ -10504,9 +10676,9 @@ async function hydrateTab(tab: Tab): Promise<void> {
 
 // FORK 2026-06-24 — tab-title via the gateway `sessions.suggestTitle` RPC (replaces
 // the old fire-and-forget subagent-spawn + async-correlation isolation layer). The RPC
-// runs the title model server-side and returns {title:string|null} synchronously; no
-// chat/EEG event isolation is needed client-side. Resolves to the title string, or null
-// on unavailable/error.
+// runs the title model server-side (xAI Grok 4.6 since 2026-09-01; was cc-bridge Sonnet)
+// and returns {title:string|null} synchronously; no chat/EEG event isolation is needed
+// client-side. Resolves to the title string, or null on unavailable/error.
 async function spawnTitleViaBridge(
   prompt: string,
   _tabId: string,
@@ -10624,11 +10796,11 @@ async function generateTabTitle(tab: Tab) {
       .join("\n");
 
     try {
-      // FORK 2026-06-24 — generate the title via the cc-bridge Sonnet subagent
-      // (subscription-billed claude-code worker — NOT the metered API, NOT ollama).
-      // Fire-and-forget spawn + async correlation lives in spawnTitleViaBridge; it
-      // resolves to the subagent's final text (or null on unavailable/timeout/error,
-      // in which case we leave the existing tab name untouched).
+      // FORK 2026-06-24 — generate the title via sessions.suggestTitle (server-side
+      // one-shot; xAI Grok 4.6 since 2026-09-01 — NOT cc-bridge Sonnet, NOT the
+      // metered API, NOT ollama). spawnTitleViaBridge resolves to the title text
+      // (or null on unavailable/timeout/error, in which case we leave the existing
+      // tab name untouched).
       const raw = await spawnTitleViaBridge(prompt, tab.id, tab.sessionKey);
       // Take the FIRST non-empty line (the model may add a stray trailing line even
       // when asked for title-only), then strip any wrapping quotes/backticks.
@@ -11936,7 +12108,19 @@ async function loadBudget() {
   if (mc) {
     modelConfigData = mc;
   }
-  budgetUsageData = bu;
+  // FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+  // This was an unconditional `budgetUsageData = bu`, while the line above it already
+  // guards `mc`. `pUsage` ends in `.catch(() => null)`, so ONE failed or hung `budget.usage`
+  // overwrote a good snapshot with null — and null is not "one provider is quiet", it is the
+  // top gate of getModelUsage(), which returns null for EVERY model. Result: all the
+  // orange-green usage bars disappear together, while the model rows keep rendering off
+  // their localStorage snapshot, so the panel looks half-loaded rather than disconnected.
+  // Same guard as `mc` now: a failed poll keeps the last good numbers instead of erasing
+  // them. Stale bars are honest and readable (their hover carries the fetch instant); no
+  // bars at all reads as "this model has no quota", which is a different and false claim.
+  if (bu) {
+    budgetUsageData = bu;
+  }
   // FORK 2026-07-09: aggregate per-model token totals (7d) for the MODELS rows.
   // The per-call split lives in usage.modelUsage[] — the session-level `model`
   // field is null for ~half the sessions (see bug-log usage-tab-model-attribution).
@@ -13057,6 +13241,12 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
   if (split) {
     msg._injectedKind = split.kind;
     msg._injectedLabel = split.label;
+    // FORK 2026-09-02: the live trail event dies on reload. Reconstruct the chip
+    // from the persisted <active_recipe title path> tag in the stored user turn.
+    if (split.kind === "recipe" && split.recipeTitle && split.recipePath) {
+      msg._recipeTitle = split.recipeTitle;
+      msg._recipePath = split.recipePath;
+    }
   }
   msg._fullPrompt = rawText;
   // Rewrite the FIRST text block (regardless of strict text===rawText match)
@@ -13149,6 +13339,44 @@ function renderRecipeNotice(title: string, path: string): string {
     `title="Open ${safePath}">recipe.md ↗</code>` +
     `</div>`
   );
+}
+
+function renderSkillNotice(name: string, path: string): string {
+  const safeName = escapeHtml(name);
+  const safePath = escapeHtml(path);
+  return (
+    `<div class="msg-skill-notice">` +
+    `<span class="msg-skill-notice-icon">🔧</span>` +
+    `<span class="msg-skill-notice-text">Using skill <strong>${safeName}</strong></span>` +
+    `<code class="fs-link msg-skill-notice-link" data-path="${safePath}" ` +
+    `title="Open ${safePath}">SKILL.md ↗</code>` +
+    `</div>`
+  );
+}
+
+/** Skills used in the run that follows a user prompt. Structural: a `read` of …/skills/<name>/SKILL.md. */
+function skillNoticesHtmlAfter(
+  view: unknown[],
+  userIdx: number,
+  isBoundary: (m: unknown) => boolean,
+): string {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (let j = userIdx + 1; j < view.length; j++) {
+    if (isBoundary(view[j])) break;
+    const c = Array.isArray((view[j] as { content?: unknown }).content)
+      ? (view[j] as { content: unknown[] }).content
+      : [];
+    for (const b of c) {
+      const blk = b as { type?: string; name?: string; input?: unknown };
+      if (blk?.type !== "tool_use") continue;
+      const n = skillNoticeFromTool(blk.name, blk.input);
+      if (!n || seen.has(n.path)) continue;
+      seen.add(n.path);
+      out.push(renderSkillNotice(n.name, n.path));
+    }
+  }
+  return out.join("");
 }
 
 function renderUserBubbleWithPromptToggle(
@@ -14920,13 +15148,48 @@ function updateChat(skipScroll = false) {
       // main-turn end, when this run is still the LAST one in the view and the reflection has not
       // been appended yet. narrationIndices now decides from the run alone, with no lookahead.
       const runMsgs = view.slice(runStart, i) as Record<string, unknown>[];
-      if (!runMsgs.some((m) => m._narration !== undefined) && !runMsgs.some((m) => m._temporary)) {
+      // FORK 2026-09-02 — same staleness question as the `isStreaming` gate below, and it has to be
+      // asked here too or the fix is half a fix: `!some(_temporary)` is this freeze's "the turn has
+      // ended" test, so a stranded temp ALSO blocks classification forever and the run never gets a
+      // `_narration` stamp to read back. "No temps left" and "nothing is streaming" are both valid
+      // proofs that the turn is over; accept either.
+      const runSettled =
+        !runMsgs.some((m) => m._temporary) || !(streamRunId !== null || streamMsgUid !== null);
+      // FORK 2026-09-02 (the architect: "a bunch of thinking messages as final answers … all the tool calls
+      // in one single section … hints towards not having respected the time of arrival") — THE
+      // FREEZE MUST BE ALL-OR-NOTHING PER RUN.
+      //
+      // Both gates used to ask `some(...)`, and that is the bug: ONE stamped message put the whole
+      // run into read-back mode forever, while the read-back below only adds `_narration === true`
+      // to `thinkingSet`. A member that arrived AFTER the stamp carries `undefined`, which is
+      // neither true nor false — so it is never classified, falls through to the answer branch, and
+      // renders as a final answer for the rest of the session. The run is then split by CLASS
+      // rather than by time (all intermediates emitted first, all "answers" after), which is
+      // exactly the destroyed chronology the architect diagnosed from the outside.
+      //
+      // Measured on this session's own transcript, run 68→278 (`agent:main:tinker:mtievarb`):
+      // 210 messages — 86 tool, 63 thinking, 61 text — and the SERVED history is perfectly
+      // interleaved (h T C h T C …). Running the real `narrationIndices` over it returns
+      // **60 narration + exactly 1 answer**, and that one answer is the bubble opening `**Jarvis:**`
+      // and closing with the html summary. The screen showed 61 answers and no narration, so the
+      // data was right, the classifier was right, and only the stamp was wrong.
+      //
+      // So: stamp only when EVERY member can be stamped together, and treat a partially-stamped run
+      // as stale — recompute rather than read half a verdict. This keeps the 2026-08-05 guarantee
+      // (a run that was fully classified is never re-shuffled) while removing the state that made
+      // "classified" and "unclassified" coexist inside one run.
+      const stampedCount = runMsgs.filter((m) => m._narration !== undefined).length;
+      const fullyStamped = runMsgs.length > 0 && stampedCount === runMsgs.length;
+      if (!fullyStamped && runSettled) {
         const narration = new Set(narrationIndices(runKinds));
         for (let k = 0; k < runMsgs.length; k++) {
           runMsgs[k]._narration = narration.has(k);
         }
       }
-      if (runMsgs.some((m) => m._narration !== undefined)) {
+      // Re-read: the block above may have just completed the stamp. Anything short of a COMPLETE
+      // stamp falls back to classifying this repaint from the run itself, so no member is ever left
+      // unclassified — the failure mode above cannot recur even if a new growth path appears.
+      if (runMsgs.length > 0 && runMsgs.every((m) => m._narration !== undefined)) {
         for (let k = 0; k < runMsgs.length; k++) {
           if (runMsgs[k]._narration === true) {
             thinkingSet.add(runStart + k);
@@ -15032,7 +15295,32 @@ function updateChat(skipScroll = false) {
       }
 
       // Determine if this run is still streaming (has temporary messages)
-      const hasTemporaries = intermediateIndices.some((j) => view[j]._temporary);
+      // FORK 2026-09-02 (the architect: "a lot of reasoning that did not collapse correctly") — A
+      // `_temporary` FLAG MUST NOT OUTLIVE THE STREAM THAT SET IT. This test used to read the flag
+      // alone, so ONE stale temp pinned a long-settled run to `isStreaming` FOREVER and the flat
+      // branch below rendered every narration bubble as an answer, permanently. Nothing ever
+      // re-collapsed it: the `_narration` freeze is gated on the same flag, so the run could not
+      // even be classified. Measured on this session's own transcript (`agent:main:tinker:mtievarb`,
+      // the run ending in the 3,941-char answer): replaying narrationIndices over the served history
+      // classifies 229 intermediates / 2 answers — a clean collapse — while the rendered DOM shows
+      // ~30 loose `msg assistant` bubbles and NO `reasoning-group`. `isStreaming` is the only gate
+      // between those two facts.
+      //
+      // Two ways a temp gets stranded, both of which end at a runId that will never come back:
+      // `ownsTempMsg` only promotes a temp whose `_runId` matches the FINAL's run, and the frozen-
+      // reasoning loop only clears one whose `_reasoningRunId` matches. A history reload assigns
+      // `messages = incoming` and destroys every `_runId` stamp, while `_isReasoning` IS in
+      // msg-order's CLIENT_ONLY_FLAGS and `_temporary` is NOT — so a live reasoning bubble is
+      // preserved verbatim, `_temporary` and all, and no later run can ever claim it.
+      //
+      // The honest question is not "does this run hold a temp" but "is anything actually streaming
+      // right now". When no run is live, a leftover temp is stale by construction. During a live
+      // turn `streamRunId`/`streamMsgUid` are set, so the live path is bit-for-bit unchanged — this
+      // is NOT the `isCurrentRun` guard that caused the blinking-chat-text bug twice (that one sat
+      // in the narration CLASSIFIER; this one only answers "has the turn ended").
+      const liveStreamActive = streamRunId !== null || streamMsgUid !== null;
+      const hasTemporaries =
+        liveStreamActive && intermediateIndices.some((j) => view[j]._temporary);
       const isStreaming = hasTemporaries || (i === view.length && streamMsgUid !== null);
 
       // FORK 2026-08-24 (the architect: "The timings of the fractal pass should show only when expanding
@@ -15146,6 +15434,9 @@ function updateChat(skipScroll = false) {
       // Render the user message that ends this run (if not end-of-array)
       if (i < view.length) {
         h += renderMsg(view[i], i, false, globalResultMap, globalToolNames);
+        // FORK 2026-09-02: skill chips ride under the prompt that used them, same as the recipe
+        // chip. Producer is a tool_use `read` of …/skills/<name>/SKILL.md in the following run.
+        h += skillNoticesHtmlAfter(view, i, isRunBoundary);
       }
       runStart = i + 1;
     }
@@ -15416,6 +15707,57 @@ function tabsRunningNow(): Map<string, { provider?: string; model?: string; pend
  *  when it actually changed — renderTabs rewrites innerHTML and scrolls the active tab into view,
  *  which must not happen on every unrelated session-panel refresh. */
 let lastTabRunSig = "";
+
+// FORK 2026-09-01 (the architect: drag-reorder context tabs). Pointer drag with a
+// 4px threshold so a plain click still switches tabs (exec-task / cron-card
+// precedent). HTML5 draggable is not used: it fights the click + contextmenu
+// already on this bar, and a collapsed card in the cron board taught that
+// lesson the expensive way.
+const TAB_DRAG_THRESHOLD_PX = 4;
+type TabDragState = {
+  pointerId: number;
+  tabId: string;
+  startX: number;
+  startY: number;
+  passedThreshold: boolean;
+  source: HTMLElement;
+  ghost: HTMLElement;
+  indicator: HTMLElement;
+};
+let tabDrag: TabDragState | null = null;
+let tabDragDidReorder = false;
+
+function tabBarScrollHost(): HTMLElement | null {
+  return $("tab-bar-scroll");
+}
+
+function endTabDrag(commit: boolean): void {
+  const drag = tabDrag;
+  if (!drag) return;
+  tabDrag = null;
+  drag.source.classList.remove("tab-dragging");
+  drag.ghost.remove();
+  const indicatorInBar = drag.indicator.parentElement != null;
+  const beforeEl = drag.indicator.nextElementSibling as HTMLElement | null;
+  const beforeId = beforeEl?.dataset.tabId ?? null;
+  drag.indicator.remove();
+  try {
+    drag.source.releasePointerCapture?.(drag.pointerId);
+  } catch {
+    /* already released */
+  }
+  // A gesture that passed the threshold is a drag, not a click — even if the
+  // tab landed back where it started.
+  if (commit && drag.passedThreshold) tabDragDidReorder = true;
+  if (!commit || !drag.passedThreshold || !indicatorInBar) return;
+  const next = reorderTabs(tabs, drag.tabId, beforeId);
+  if (next.every((tab, i) => tab.id === tabs[i]?.id)) return;
+  tabs = next;
+  saveTabs();
+  renderTabs();
+  updateSessionsPanel();
+}
+
 function syncTabActivityGlow() {
   const sig = Array.from(tabsRunningNow().entries())
     // `pending` is part of the signature: entering and leaving the pre-model window changes what
@@ -15434,6 +15776,13 @@ function syncTabActivityGlow() {
 }
 
 function renderTabs() {
+  // A live drag owns the tab-bar DOM (ghost + drop indicator). Rewriting
+  // innerHTML mid-gesture would orphan both, drop pointer capture, and
+  // silently cancel the reorder. Freeze for the whole pointerdown, not only
+  // after the 4px threshold — a glow refresh in that window is common.
+  if (tabDrag) {
+    return;
+  }
   const container = $("tab-bar-scroll");
   if (!container) {
     return;
@@ -15525,12 +15874,22 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
       ? ""
       : `<button data-tab-action="rename" class="exec-context-item">✏️ Rename…</button>
     <button data-tab-action="auto" class="exec-context-item">${AUTO_NAME_ICON} Auto-name</button>`;
+  // FORK 2026-09-01 (the architect): Delete here is the SAME sessions.delete as the
+  // sessions-panel bin — close-tab (×) only detaches. Hidden on Main, matching
+  // the panel's protected-row rule (main + heartbeat cannot be deleted).
+  const canDelete =
+    tab.id !== "tab-main" && !!tab.sessionKey && !isProtectedSessionKey(tab.sessionKey);
+  const deleteItem = canDelete
+    ? `<div class="exec-context-sep"></div>
+    <button data-tab-action="delete" class="exec-context-item exec-context-item-warn">🗑 Delete session</button>`
+    : "";
   menu.innerHTML = `
     ${renameItems}
     <button data-tab-action="clone" class="exec-context-item">⧉ Clone tab</button>
+    ${deleteItem}
   `;
   menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
-  menu.style.top = `${Math.min(y, window.innerHeight - 100)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 160)}px`;
   document.body.appendChild(menu);
   requestAnimationFrame(() => {
     const r = menu.getBoundingClientRect();
@@ -15555,6 +15914,9 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
           // longer toggle the .tab-renaming DOM class imperatively here — just kick off the title.
           void generateTabTitle(t);
         }
+      } else if (action === "delete") {
+        const t = tabs.find((tt) => tt.id === tabId);
+        if (t?.sessionKey) void deleteSession(t.sessionKey);
       }
     });
   });
@@ -16551,9 +16913,30 @@ export function modelIsHiddenFromModelsPanel(id: string): boolean {
 }
 
 const AA_INTELLIGENCE_INDEX: Record<string, number> = {
-  // Refreshed against the live Artificial Analysis leaderboard 2026-08-30 08:53 UTC
-  // (624 rows) and the live OpenRouter catalog in the same pass (http=200, 396
-  // models, 655,423 bytes). FOUR models added — see the block at the end.
+  // Re-verified against the live Artificial Analysis leaderboard 2026-09-02 03:54 UTC
+  // (631 rows, 618 scored) and the live OpenRouter catalog in the same pass (http=200,
+  // 420 models, 695,199 bytes). Existing scores did not move. The five marked
+  // "frozen" are still genuinely absent from AA (re-checked, not assumed).
+  //
+  // CORRECTION 2026-09-02 (the architect). This block said "Claude Code 2.1.251 still has no
+  // `claude-fable-5.1` id, so the native subscription route is skipped", and Fable 5.1
+  // shipped as an OpenRouter-only metered dot at $50. The id was wrong, not the model:
+  // AA prints the DOTTED display name `claude-fable-5.1`, but every claude-code id is
+  // HYPHENATED (`claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5`), so the
+  // probe asked for an id that has never existed. `claude-fable-5-1` answers on Claude
+  // Code 2.1.258 — verified against two bogus-id controls that fail loudly, so the
+  // probe discriminates. It carries the Max 20x amortised price (~€0.15/Mtok, RE-DERIVED
+  // from live quota + measured burn — see EEG_COST_TABLE) and the sticker appears as its
+  // API-price TRIANGLE, which is what that layer is for.
+  //
+  // The metered OpenRouter twin was REMOVED on the architect's instruction (2026-09-02). THIS
+  // TABLE IS A DOT SOURCE, not just a score lookup: `moreIds` unions its keys with the
+  // configured models, so an id left here keeps drawing even after it is deleted from
+  // openclaw.json. Leaving the twin put a SECOND Fable 5.1 on the chart at the $50
+  // sticker — exactly the "still at the official price" the architect reported. One model, one
+  // route, one dot.
+  // WHEN ADDING AN ANTHROPIC MODEL, DERIVE THE ID FROM THE CONFIG'S OWN CONVENTION
+  // AND PROBE IT — never transcribe AA's display name.
   //
   // A model needs BOTH HALVES to be plottable and neither may be inferred: a
   // measured AA index (y) and a live provider id + price (x). Two named gaps this
@@ -16579,8 +16962,14 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   //
   // Entries marked "frozen" are genuinely ABSENT from AA (verified, not assumed),
   // which is why they keep their last measured value.
+  "claude-code/claude-fable-5-1": 65.6529, // AA #1; Max 20x subscription route (verified on Claude Code 2.1.258)
   "claude-code/claude-opus-5": 63.0532,
-  "claude-code/claude-fable-5": 62.0727,
+  // FORK 2026-09-02 (the architect): "there are two Fable models next to each other, just
+  // remove the 5.0, the old one, it does not make sense to have it there anymore". Fable 5.0
+  // (62.0727) is superseded by Fable 5.1 (65.6529) directly above. Removed from
+  // openclaw.json in the same pass — and removed HERE too, because this table is a DOT
+  // SOURCE, not just a score lookup: `moreIds` unions its keys with the configured models,
+  // so an id left behind keeps rendering after it is gone from config.
   "codex/gpt-5.6-sol": 60.9299, // legacy alias — correct IDs below
   "openai/gpt-5.6-sol": 60.9299,
   "openai-codex/gpt-5.6-sol": 60.9299,
@@ -16654,7 +17043,6 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   "openrouter/qwen/qwen3.8-2.4t-a95b": 57.7043,
   "openrouter/meta/muse-spark-1.2": 56.7616,
   "google/gemini-3.7-flash": 56.0301, // panel model — native google provider
-  "openrouter/google/gemini-3.7-flash": 56.0301, // openrouter alias
   "openrouter/meta/muse-spark-1.1": 53.199,
   "openrouter/deepseek/deepseek-v4-pro": 53.1977, // undated slug
   "openrouter/deepseek/deepseek-v4-pro-0813": 53.1977, // dated alias (panel model)
@@ -16668,7 +17056,10 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   "openrouter/qwen/qwen3.7-max": 46.7122,
   "openrouter/minimax/minimax-m3": 45.3969,
   "openrouter/moonshotai/kimi-k2.6": 45.1382, // panel model added 2026-08-21
-  "openrouter/openai/gpt-5.3-codex": 45.5117, // panel model added 2026-08-23 via OpenRouter ($1.75/$14.00)
+  // FORK 2026-09-02 (the architect): `openrouter/openai/gpt-5.3-codex` removed — a GPT reached
+  // through OpenRouter at metered $1.75/$14.00 while we hold `openai-codex` directly. The
+  // sibling `openai/gpt-5.3-codex` above is the DIRECT route and stays. See
+  // src/shared/reseller-route-policy.ts for the standing rule.
   "openrouter/moonshotai/kimi-k2.7-code": 43.0245,
   "openrouter/xiaomi/mimo-v2.5-pro": 42.8797,
   "openrouter/thinkingmachines/inkling": 42.2948,
@@ -16692,11 +17083,22 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
 
   // ROUTE TWIN, not a new brain. Anthropic's fast mode is Opus 5 served faster —
   // "identical capabilities ... at 2x pricing" in Anthropic's own words — so it
-  // takes Opus 5's measured index, exactly as the github-copilot twins take their
-  // vendor's. What differs is the BILL: $10/$50 metered cash against €0.2232 on
-  // the Max 20x plan. The twin connector draws that gap, which is the point of
-  // plotting it at all — /fast is one keystroke away in Claude Code.
-  "openrouter/anthropic/claude-opus-5-fast": 63.0532, // = claude-code/claude-opus-5
+  // FORK 2026-09-02 (the architect): "No claude models should ever route through openrouter,
+  // since we have a 20x subscription that makes it way cheaper."
+  //
+  // `openrouter/anthropic/claude-opus-5-fast` is REMOVED. The comment above used to argue for
+  // plotting it: it takes Opus 5's measured index (63.0532) while billing $10/$50 metered
+  // against ~€0.073 on the Max 20x plan, and the twin connector drew that gap. That argument
+  // is now settled rather than illustrated — the answer is "never route it", so the row stops
+  // being evidence and becomes a selectable trap. It is deleted here rather than merely in
+  // openclaw.json precisely because this table is a dot source: the metered Fable 5.1 twin
+  // survived its own config deletion this same week by sitting in this map, and drew a second
+  // Fable at the $50 sticker. One model, one route, one dot.
+  //
+  // The github-copilot twins deliberately STAY: they are governed by
+  // modelIsHiddenFromModelsPanel (hidden from the MODELS panel, still plotted on the chart as
+  // the procurement argument), which is a different decision about a different vendor
+  // relationship and was not what the architect asked to change.
 };
 
 function configuredIntelligenceIndex(
@@ -16896,7 +17298,11 @@ function updateBudgetPanel() {
   // modelIsHiddenFromModelsPanel for why the rule deliberately does not live in
   // modelPassesPanelMin (which the chart and dossier share).
   const candidateIds = [...new Set([...chain, ...Object.keys(models || {})])].filter(
-    (id) => !modelIsHiddenFromModelsPanel(id),
+    // FORK 2026-09-02 (the architect): the SAME reseller veto the model selector applies, read
+    // from the SAME module constant, so SMART MODELS, the MORE MODELS tail and the selector
+    // agree by construction. Two predicates over one set is exactly how qwen3.8 and deepseek
+    // went missing from one list but not the other, twice, earlier this year.
+    (id) => !modelIsHiddenFromModelsPanel(id) && !isRedundantResellerRoute(id),
   );
   const allIds = candidateIds.filter(passesPanelMin);
   const byPanelOrder = (a: string, b: string): number => {
@@ -17043,6 +17449,24 @@ function updateBudgetPanel() {
   // painted from the same repaint end up disagreeing about whether THALAMUS is in control.
   const thalamusBody = document.getElementById("thalamus-panel-body");
   const thalamusSignals = routingSignals(chain[0]);
+  // FORK 2026-09-03 (the architect): say where this session's BIAS lands on the frontier. The
+  // rungs are every AA-indexed model at its REL_COST_TABLE price (an unpriced id has no
+  // rung — never an invented one), and the pick is thalamusRoute's, at the same biasIdx
+  // routingSignals() just handed the dial.
+  const frontierRungs = Object.keys(AA_INTELLIGENCE_INDEX).flatMap((id) => {
+    const rel = scThalamusRelCost(id);
+    return rel === undefined ? [] : frontierRungsFor(id, AA_INTELLIGENCE_INDEX[id], rel);
+  });
+  const frontierRoute = thalamusRoute({ rungs: frontierRungs, biasIdx: thalamusSignals.biasIdx });
+  if (frontierRoute) {
+    thalamusSignals.frontierPick = {
+      model: modelName(frontierRoute.rung.key),
+      effort: frontierRoute.rung.effort,
+      smart: frontierRoute.rung.smart,
+      cost: frontierRoute.rung.cost,
+      frontierSize: frontierRoute.frontier.length,
+    };
+  }
   if (thalamusBody) {
     thalamusBody.innerHTML = renderRoutingRationale(thalamusSignals);
   }
@@ -17528,10 +17952,11 @@ async function openSmartCostChart(): Promise<void> {
   // already collapsed to EEG_GOOGLE_GLOW), so a chip can never disagree with the
   // dots it controls.
   //
-  // The logo resolves the way the dossier already does it — getModelLogoSvg
-  // first, PROVIDER_ICONS second. NOT getProviderLogoSvg, which falls back to
-  // the Anthropic sparkle for any unknown key and would put a Claude mark on the
-  // OpenRouter tail. A vendor with neither logo gets a colour dot instead.
+  // The logo resolves the way the dossier and the panel do it — getRoutedLogoSvg,
+  // which reads the vendor out of the id's middle segment. NOT getProviderLogoSvg,
+  // which falls back to the Anthropic sparkle for any unknown key and would put a
+  // Claude mark on the OpenRouter tail; getRoutedLogoSvg returns the neutral routed
+  // glyph instead (FORK 2026-09-02 — all three sites unified, see modelIcon()).
   // These chips live in the overlay's HTML, not inside the <svg>, so the Copilot
   // <img> mark is safe here (the foreign-content breakout only bites inside svg).
   //
@@ -17559,7 +17984,7 @@ async function openSmartCostChart(): Promise<void> {
     )
     .map(([key, g]) => {
       const sample = g.ids[0];
-      const logo = getModelLogoSvg(sample) ?? PROVIDER_ICONS[providerOf(sample)] ?? "";
+      const logo = getRoutedLogoSvg(sample, providerOf(sample)); // FORK 2026-09-02: see modelIcon()
       const label = vendorMarkFor(sample)?.label ?? key;
       return (
         `<button class="sc-chip" data-vendor="${esc(key)}" style="--sc-chip:${esc(g.color)}"` +
@@ -17579,7 +18004,7 @@ async function openSmartCostChart(): Promise<void> {
       <div class="sc-head">
         <div>
           <div class="sc-title">SMARTNESS × COST</div>
-          <div class="sc-sub">AA intelligence index · effective cost · a stop is plotted only when the vendor documents it AND AA published a number for it</div>
+          <div class="sc-sub">AA intelligence index · effective cost · a stop is plotted when the vendor documents it · solid = AA measured it · dotted = estimated from other public benchmarks (±1σ on hover) · dashed = neither, hung at the headline</div>
         </div>
         <label class="sc-switch" data-hint="Per-token price ↔ average cost to complete ONE task (tokens-per-task research: OckBench-anchored, estimates labelled). Opus 5 @ high (Anthropic's default) is the fixed reference.">
           <span class="sc-switch-opt">€/MTOK</span>
@@ -17601,10 +18026,10 @@ async function openSmartCostChart(): Promise<void> {
       </div>
       <div class="sc-foot">
         <span>◎ outline + logo = model · size ∝ context window (see the three sample rings, bottom-left of the plot)</span>
-        <span>— a circle per <b>vendor-documented</b> effort that AA actually scored · missing AA number = the stop is omitted, never guessed · a model AA has not split stays one headline-index dot</span>
+        <span>— a circle per <b>vendor-documented</b> effort · <b>solid</b> ring = AA measured that effort · <b>dotted</b> ring + dotted line = ESTIMATED from other public per-effort benchmark runs (Epoch AI hub, LMArena) fitted to the AA scale, ±1σ on hover, never above a measured max · <b>dashed</b> ring on a dashed rail = neither, hung at the headline index · a model with no ladder stays one dot</span>
         <span>△ shaded triangle = the <b>official API list price</b> of the same model · - - - dashed bridge = the gap between what this plan pays and sticker · hover either to light both${apiNote}</span>
         <span>prepaid circles (Claude, Grok, ChatGPT) sit at <b>${Math.round(0.75 * 100)}% of the quota ceiling</b> — drag one toward its triangle to read other utilisation; it snaps back on drop</span>
-        <span><b>Read the two marks as different questions.</b> A circle answers "what does this token cost ME" (Anthropic Max 20x amortises Opus 5's $25 sticker to €0.2232 — <b>112×</b>); a triangle answers "what does this model cost". Metered routes — every Chinese lab, Google, the OpenRouter tail — have <b>no triangle because their circle already IS list price</b>. Comparing a circle to a circle across those two bases is the one thing this chart must never be used for.</span>
+        <span><b>Read the two marks as different questions.</b> A circle answers "what does this token cost ME" (Anthropic Max 20x amortises Opus 5's $25 sticker to ~€0.073 — <b>340×</b>, re-derived 2026-09-02 from live quota utilisation and measured burn, not from dividing the sticker); a triangle answers "what does this model cost". Metered routes — every Chinese lab, Google, the OpenRouter tail — have <b>no triangle because their circle already IS list price</b>. Comparing a circle to a circle across those two bases is the one thing this chart must never be used for.</span>
         <span>€/task: tokens-per-task <b>OckBench-anchored</b> (Opus 5, Kimi K3), rest estimated · reference = Opus 5 @ high, Anthropic's documented default (fixed)</span>
         <span>- - - dashed = one model, several vendors · <b>Copilot is not a markup</b>: GitHub charges each model's own list price (13 of 14 triples verified 2026-08-15) — its dots sit right because our Anthropic plan is the deeper discount, and Copilot rows are <b>prospective</b> (we hold no Pro+ seat)</span>
         <span>Auto not plotted (uncapped)${exNote}</span>
@@ -17912,7 +18337,12 @@ async function openSmartCostChart(): Promise<void> {
 
   const paint = () => {
     body.innerHTML = plotted.length
-      ? renderSmartCostChart(plotted, { xScale: scaleInput.checked ? "linear" : "log" })
+      ? renderSmartCostChart(plotted, {
+          xScale: scaleInput.checked ? "linear" : "log",
+          // FORK 2026-09-03: the envelope's PICK ring follows this session's BIAS dial —
+          // the same value routingSignals() hands the THALAMUS card.
+          biasIdx: loadOrcaBias(sessionKey),
+        })
       : '<div class="sc-empty">No plottable models.</div>';
     const svgNow = body.querySelector(".sc-svg") as SVGSVGElement | null;
     if (svgNow && taskInput.checked) svgNow.classList.add("sc-taskmode");
@@ -18005,9 +18435,20 @@ async function openDossier(): Promise<void> {
       // Model id first: every OpenRouter model reports provider "openrouter", so
       // the provider table would paint a Claude sparkle on Kimi. Same precedence
       // as modelIcon() uses for the panel rows.
-      logo: getModelLogoSvg(id) ?? PROVIDER_ICONS[providerOf(id)],
+      // FORK 2026-09-02: was `getModelLogoSvg(id) ?? PROVIDER_ICONS[providerOf(id)]`,
+      // which knows only the four VENDOR_MARKS and then looks up the literal
+      // "openrouter" — so every routed Anthropic/OpenAI/Meta/MiniMax row resolved to
+      // undefined and rendered blank. getRoutedLogoSvg reads the vendor out of the
+      // id's middle segment and still never returns the Anthropic sparkle for an
+      // unknown key, which is the precedence this comment was protecting.
+      logo: getRoutedLogoSvg(id, providerOf(id)),
     });
   }
+  // FORK 2026-09-02 (the architect: "make sure Thalamus routes intelligently depending on the
+  // task at hand"): the dossier's THALAMUS ROUTES strip reads the SAME dial the ORCA
+  // panel shows — loadOrcaBias(sessionKey), BIAS_DEFAULT_IDX when no session is
+  // focused — so the strip and the slider cannot disagree about the bias.
+  const biasIdx = loadOrcaBias(sessionKey);
   const overlay = document.createElement("div");
   overlay.className = "sc-overlay sd-overlay";
   overlay.innerHTML = `
@@ -18019,7 +18460,7 @@ async function openDossier(): Promise<void> {
         </div>
         <button class="sc-close" title="Close">✕</button>
       </div>
-      <div class="sd-body">${renderDossierTable(rows)}${renderCnProviderMatrix(CN_PROVIDER_PRICES)}</div>
+      <div class="sd-body">${renderDossierTable(rows, undefined, { biasIdx })}${renderCnProviderMatrix(CN_PROVIDER_PRICES)}</div>
     </div>`;
   document.body.appendChild(overlay);
   const close = () => {
@@ -18783,6 +19224,11 @@ function modelForceStops(): { id: string | null; label: string }[] {
     // Reading the SAME module-scope predicate makes selector and panel agree BY
     // CONSTRUCTION rather than by two rules kept in sync by hand.
     if (modelIsHiddenFromModelsPanel(id)) return false;
+    // FORK 2026-09-02 (the architect): a reseller route to a vendor we already pay for
+    // directly is never the right pin — it is metered at list price against a subscription
+    // that already covers the same model at the same measured intelligence. Read from the
+    // shared predicate so the gateway and this selector can never disagree.
+    if (isRedundantResellerRoute(id)) return false;
     if (EEG_SLIDER_EXCLUDE.test(id)) return false;
     // Same pin the MODELS panel honours, read from the same module constant, so a
     // model pinned into SMART cannot be missing from the control that selects it.
@@ -18813,7 +19259,9 @@ function modelForceStops(): { id: string | null; label: string }[] {
   // control — stops beyond ~14 overlapped into unreadable mush. The selector wraps to
   // as many rows as it needs now, so the cap has no reason to exist and silently
   // hiding a model the panel lists would recreate exactly the divergence above.
-  let keep = [...eligible].sort(byRank);
+  // `const` since the Fable splice below was removed (2026-09-02): this array is now only
+  // ever mutated in place (push/sort/reverse), never rebound.
+  const keep = [...eligible].sort(byRank);
   // FORK 2026-08-04 (the architect: "only I should be the one moving sliders"). The axis
   // MUST be able to represent the state it is reporting. Every gate above can
   // legitimately drop a model the user has already pinned — CAP=14, the AA>=50
@@ -18834,12 +19282,18 @@ function modelForceStops(): { id: string | null; label: string }[] {
   // smartest FIRST, then flip so the SMARTEST sits on the RIGHT (low→high L→R).
   keep.sort(byRank);
   keep.reverse();
-  // the architect pins FABLE to the far right (his flagship sits at the end of the axis).
-  const fableId = keep.find((id) => /fable/i.test(id));
-  if (fableId) {
-    keep = keep.filter((id) => id !== fableId);
-    keep.push(fableId);
-  }
+  // FORK 2026-09-02 (the architect): "make sure that all the models shown there are ordered by
+  // intelligence index." The sort above is now the WHOLE ordering — there is no exception.
+  //
+  // SUPERSEDES the 2026-06-24 rule that pinned Fable to the far right by hand. That splice is
+  // deleted rather than quietly dropped, and it was doing real damage: it ran AFTER
+  // `keep.reverse()`, so `find(/fable/i)` matched the LOWEST-scoring Fable first. With both
+  // Fables in the catalog it therefore hoisted Fable 5.0 (62.0727) past Fable 5.1 (65.6529)
+  // AND past Opus 5 (63.0532) — the axis was presenting the OLD Fable as the smartest stop.
+  //
+  // Fable 5.1 still lands on the right, now ON MERIT as the highest-scoring model, so the axis
+  // reads low→high left→right with nothing overriding it. If a smarter model ships tomorrow it
+  // takes that slot, which is the behaviour the instruction asks for and the splice prevented.
   for (const id of keep) {
     stops.push({ id, label: modelName(id) });
   }
@@ -19136,22 +19590,24 @@ function updateSessionsPanel() {
     }
   }
 
-  // FORK 2026-05-25 — within the pinned group, force Main first and
-  // Heartbeat second. Array.prototype.sort is stable in every modern
-  // browser, so items at the same priority (the tinker:* tabs) keep
-  // their original ordering — the order sessions.list returned them
-  // plus any tab-only entries injected just above.
+  // FORK 2026-09-01 (the architect: sessions panel follows the tab-bar order).
+  // Open tabs occupy the front of the pinned group, in tab-bar order; a
+  // just-closed tab (still in the stored list, no longer open) lands
+  // immediately after that prefix. Heartbeat and any other leftover pinned
+  // rows keep their incoming relative order below the workspace block.
+  // Order is persisted from saveTabs / restore, not from this paint — a glow
+  // refresh must not rewrite the stored list.
   const pinned = groups.get("pinned");
   if (pinned) {
-    const pinnedPriority = (key: string): number => {
-      if (key.endsWith(":main")) return 0;
-      if (key.includes(":heartbeat")) return 1;
-      return 2;
-    };
-    pinned.sort(
-      (a, b) =>
-        pinnedPriority((a.session as { key: string }).key) -
-        pinnedPriority((b.session as { key: string }).key),
+    groups.set(
+      "pinned",
+      orderSessionsByTabs(
+        pinned,
+        sessionKeysOfTabs(tabs),
+        getOrderedIds(SESSION_PANEL_ORDER_KEY),
+        (item) => (item.session as { key: string }).key,
+        sessionKeyMatches,
+      ),
     );
   }
 
@@ -19170,8 +19626,22 @@ function updateSessionsPanel() {
     }
 
     if (groupKey === "pinned") {
-      // Pinned sessions render directly, no group header
+      // Pinned sessions render directly, no group header.
+      // FORK 2026-09-02 (the architect: "a line between the tabs that are open and the ones
+      // that are not"). orderSessionsByTabs above already puts the open tabs at the
+      // front in tab-bar order, so the boundary is a single transition: emit one
+      // hairline at the first row with no open tab, and only if an open row preceded
+      // it (no leading rule when nothing is open, no trailing rule when all are).
+      let sawOpen = false;
+      let sepDone = false;
       for (const { session: s, shortLabel } of items) {
+        const isOpen = sessionHasOpenTab((s as { key: string }).key);
+        if (isOpen) {
+          sawOpen = true;
+        } else if (sawOpen && !sepDone) {
+          html += '<div class="session-open-sep" aria-hidden="true"></div>';
+          sepDone = true;
+        }
         html += renderSessionRow(s, shortLabel);
       }
     } else {
@@ -19207,54 +19677,7 @@ function updateSessionsPanel() {
       const delBtn = tgt.closest(".session-delete-btn") as HTMLElement | null;
       if (delBtn) {
         e.stopPropagation();
-        const key = delBtn.dataset.deleteKey;
-        if (!key) {
-          return;
-        }
-        // FORK 2026-08-23 — OPTIMISTIC. Everything the user can see happens on THIS click;
-        // the RPC is not awaited. Replaces the 2026-05-24 in-flight affordance (dim to 0.3 +
-        // pointer-events lock + ⌛ overlay), which existed only because the row sat there for
-        // the whole server teardown — a row that leaves immediately needs no progress hint and
-        // cannot receive the double-click that affordance was guarding against.
-        //
-        // Order matters: mark pending BEFORE closing the tab, because closeTab() fires its own
-        // loadSessions() repaint, and updateSessionsPanel would re-inject the still-open tab's
-        // key as a "pinned" fake row (bug task-mpjhzu3j-ma9ts) unless it is already suppressed.
-        pendingSessionDeletes.add(key);
-        // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts: tab-match was using exact `===` which
-        // missed the canonicalisation gap. The delete button's data-delete-key is the server's
-        // canonical key ("agent:main:tinker:abc") while tab.sessionKey is the unprefixed form
-        // ("tinker:abc"); exact equality always failed and the tab stayed open.
-        // sessionKeyMatches handles the prefix variance (same helper renderSessionRow uses).
-        const affectedTab = tabs.find((t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey));
-        if (affectedTab && affectedTab.id !== "tab-main") {
-          closeTab(affectedTab.id);
-        } else if (affectedTab?.id === "tab-main") {
-          // Main tab can't be closed — just clear its state
-          sessionKey = "";
-          messages = [];
-          updateChat();
-        }
-        updateSessionsPanel();
-        try {
-          // FORK (2026-04-24): soft delete — archive transcript on disk
-          // instead of wiping it. The UI still treats the session as gone
-          // (list refreshes, affected tab closes), but on the next sessions
-          // mutation the transcript survives at `sessions-archive/` so we
-          // can recover if the click was a misfire or if an in-flight turn
-          // was still writing its answer.
-          await req("sessions.delete", { key, deleteTranscript: false });
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error("Failed to delete session:", err);
-          // The server refused (typically UNAVAILABLE "still active"). Clearing the pending
-          // mark below lets the reload put the row back, so say why it returned — otherwise a
-          // row reappearing on its own reads as a bug rather than a rejected delete.
-          showToast(`Delete failed: ${err instanceof Error ? err.message : String(err)}`, true);
-        } finally {
-          pendingSessionDeletes.delete(key);
-          await loadSessions();
-        }
+        void deleteSession(delBtn.dataset.deleteKey);
         return;
       }
 
@@ -19327,6 +19750,15 @@ const GENERIC_WS_CLIENT_LABELS = new Set(["Tinker UI", "webchat-ui", "openclaw-c
 function meaningfulSessionLabel(s: string | undefined): string | undefined {
   if (!s) return undefined;
   return GENERIC_WS_CLIENT_LABELS.has(s) ? undefined : s;
+}
+
+/** FORK 2026-09-02 — does this session currently have a tab open in the tab bar?
+ * Same prefix-tolerant match renderSessionRow uses for the tab-title lookup
+ * (gateway keys are `agent:main:tinker:<id>`, tab.sessionKey is often bare
+ * `tinker:<id>`). Drives both the `session-open` row class and the divider the
+ * panel draws between open and closed sessions. */
+function sessionHasOpenTab(key: string): boolean {
+  return tabs.some((t) => sessionKeyMatches(key, t.sessionKey));
 }
 
 function renderSessionRow(s: unknown, shortLabel: string): string {
@@ -19439,7 +19871,11 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
     : `<button class="session-delete-btn" data-delete-key="${esc(s.key)}" data-hint="Delete session">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
     </button>`;
-  return `<div class="session-row${isActive ? " session-active" : ""}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
+  // FORK 2026-09-02 — `session-open` = this session has a tab open right now.
+  // `tab` is the very same lookup used for the label above, so the class can
+  // never disagree with the title the row is showing.
+  const openClass = tab ? " session-open" : "";
+  return `<div class="session-row${isActive ? " session-active" : ""}${openClass}${liveClass}" data-session-key="${esc(s.key)}"${liveStyle}>
     <span class="session-label" data-hint="${esc(label)}">${esc(label)} ${channel}</span>
     <span class="session-stats">${tokens}${tokens && age ? " · " : ""}${age}</span>
     ${deleteBtnHtml}
@@ -20772,6 +21208,7 @@ function init() {
     description?: string;
     briefPath?: string;
     enabled: boolean;
+    modelOverride?: string;
     schedule?: CronScheduleInput;
     scheduleHuman: string;
     state: { lastRunStatus?: string; lastError?: string; nextRunAtMs?: number };
@@ -20958,8 +21395,202 @@ function init() {
   /** `${jobId}::${itemId}` → the reason typed so far, kept across re-renders. */
   const cronPanelDismissDrafts = new Map<string, string>();
   let cronPanelJobs: CronPanelJob[] = [];
+  let cronPanelModels: CronModelChoice[] = [];
+  let cronPanelModelConfig: CronModelConfigState = { hash: null };
+  let cronPanelDefaultModelSaving = false;
+  let cronPanelDefaultModelStatus = "";
+
+  function cronErrorMessage(err: unknown): string {
+    if (typeof err === "string") return err;
+    if (err instanceof Error) return err.message;
+    if (err && typeof err === "object" && "message" in err) {
+      return String((err as { message: unknown }).message);
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return "unknown error";
+    }
+  }
+
   /** The card that OWNS an in-flight ITEM drag. */
   let cronPanelDragJob: string | null = null;
+
+  function cronSortedModelRefs(): string[] {
+    const cfg = modelConfigData as {
+      models?: Record<string, ModelIntelligenceMeta>;
+    } | null;
+    const modelsMeta = cfg?.models;
+    if (modelsMeta && Object.keys(modelsMeta).length > 0) {
+      return Object.keys(modelsMeta)
+        .filter((id) => !modelIsHiddenFromModelsPanel(id))
+        .sort((a, b) => {
+          const intel = compareModelIntelligence(a, b, modelsMeta);
+          return intel !== 0 ? intel : a.localeCompare(b);
+        });
+    }
+    return cronPanelModels.map(cronModelRef).sort((a, b) => a.localeCompare(b));
+  }
+
+  function cronModelChoiceVisual(ref: string): { icon: string; label: string } {
+    const provider = providerOf(ref);
+    return { icon: modelIcon(ref, provider), label: modelName(ref) };
+  }
+
+  function cronPickerButtonHtml(selected: string | undefined, emptyLabel: string): string {
+    const selectedRef = selected?.trim() ?? "";
+    if (!selectedRef) {
+      return `<span class="cron-model-picker-empty">${escapeHtml(emptyLabel)}</span>`;
+    }
+    const visual = cronModelChoiceVisual(selectedRef);
+    return `${visual.icon}<span>${escapeHtml(visual.label)}</span>`;
+  }
+
+  function cronPickerOptionsHtml(selected: string | undefined, emptyLabel: string): string {
+    const selectedRef = selected?.trim() ?? "";
+    const ids = cronSortedModelRefs();
+    const rows = [
+      `<button type="button" class="cron-model-option${selectedRef ? "" : " selected"}" data-value="" role="option">${escapeHtml(emptyLabel)}</button>`,
+    ];
+    if (selectedRef && !ids.includes(selectedRef)) {
+      const visual = cronModelChoiceVisual(selectedRef);
+      rows.push(
+        `<button type="button" class="cron-model-option selected" data-value="${escapeHtml(selectedRef)}" role="option">${visual.icon}<span>${escapeHtml(visual.label)}</span><span class="cron-model-option-note">unavailable</span></button>`,
+      );
+    }
+    for (const id of ids) {
+      const visual = cronModelChoiceVisual(id);
+      rows.push(
+        `<button type="button" class="cron-model-option${id === selectedRef ? " selected" : ""}" data-value="${escapeHtml(id)}" role="option">${visual.icon}<span>${escapeHtml(visual.label)}</span></button>`,
+      );
+    }
+    return rows.join("");
+  }
+
+  function cronModelPickerHtml(
+    kind: "fleet" | "job",
+    selected: string | undefined,
+    emptyLabel: string,
+    jobId?: string,
+  ): string {
+    const disabled = kind === "fleet" ? cronPanelDefaultModelSaving : false;
+    return `<div class="cron-model-picker" data-kind="${kind}"${jobId ? ` data-job="${escapeHtml(jobId)}"` : ""} data-value="${escapeHtml(selected?.trim() ?? "")}">
+      <button type="button" class="cron-model-picker-btn" aria-haspopup="listbox"${disabled ? " disabled" : ""}>${cronPickerButtonHtml(selected, emptyLabel)}</button>
+      <div class="cron-model-picker-menu" role="listbox">${cronPickerOptionsHtml(selected, emptyLabel)}</div>
+    </div>`;
+  }
+
+  function cronCloseModelPickers(except?: Element | null): void {
+    document.querySelectorAll(".cron-model-picker.open").forEach((el) => {
+      if (el !== except) el.classList.remove("open");
+    });
+  }
+
+  function bindCronModelPickerEvents(): void {
+    if ((bindCronModelPickerEvents as { bound?: boolean }).bound) return;
+    (bindCronModelPickerEvents as { bound?: boolean }).bound = true;
+    document.addEventListener("click", (ev) => {
+      const target = ev.target as HTMLElement | null;
+      if (!target) return;
+      const picker = target.closest(".cron-model-picker");
+      if (!picker) {
+        cronCloseModelPickers();
+        return;
+      }
+      const btn = target.closest(".cron-model-picker-btn");
+      if (btn) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const wasOpen = picker.classList.contains("open");
+        cronCloseModelPickers();
+        if (!wasOpen && !btn.hasAttribute("disabled")) picker.classList.add("open");
+        return;
+      }
+      const option = target.closest<HTMLButtonElement>(".cron-model-option");
+      if (!option) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const value = option.dataset.value ?? "";
+      const kind = picker.getAttribute("data-kind");
+      cronCloseModelPickers();
+      if (kind === "fleet") {
+        void cronSaveDefaultModel(value || undefined);
+        return;
+      }
+      if (kind === "job") {
+        const jobId = picker.getAttribute("data-job");
+        if (!jobId) return;
+        const status = picker
+          .closest(".cron-model-row")
+          ?.querySelector<HTMLElement>(".cron-model-status");
+        const currentBtn = picker.querySelector<HTMLButtonElement>(".cron-model-picker-btn");
+        if (currentBtn) currentBtn.disabled = true;
+        if (status) status.textContent = "saving…";
+        void cronApplyJobUpdate(jobId, {
+          payload: {
+            kind: "agentTurn",
+            model: value || null,
+          },
+        }).then((err) => {
+          const current = cronCardElement(jobId);
+          const again = current?.querySelector<HTMLElement>(".cron-model-status");
+          const againBtn = current?.querySelector<HTMLButtonElement>(".cron-model-picker-btn");
+          if (againBtn) againBtn.disabled = false;
+          if (again) again.textContent = err ? err : "saved";
+        });
+      }
+    });
+  }
+
+  function renderCronDefaultModelControl(scope?: ParentNode): void {
+    const host = (scope ?? execPanelEl)?.querySelector<HTMLElement>("#exec-cron-default-model");
+    if (!host) return;
+    bindCronModelPickerEvents();
+    const agentDefault = cronPanelModelConfig.agentDefaultModel ?? "system default";
+    const agentVisual = cronPanelModelConfig.agentDefaultModel
+      ? cronModelChoiceVisual(cronPanelModelConfig.agentDefaultModel)
+      : { icon: "", label: agentDefault };
+    const emptyLabel = `Agent default · ${agentVisual.label}`;
+    const unavailable = cronSortedModelRefs().length === 0;
+    host.innerHTML = `
+      <label class="cron-fleet-model">
+        <span>Default model</span>
+        ${cronModelPickerHtml("fleet", cronPanelModelConfig.cronDefaultModel, emptyLabel)}
+      </label>
+      <span class="cron-fleet-model-status" title="${escapeHtml(cronPanelDefaultModelStatus)}">${escapeHtml(
+        cronPanelDefaultModelStatus || (unavailable ? "models unavailable" : ""),
+      )}</span>`;
+  }
+
+  async function cronSaveDefaultModel(model: string | undefined): Promise<void> {
+    if (cronPanelDefaultModelSaving) return;
+    const baseHash = cronPanelModelConfig.hash;
+    if (!baseHash) {
+      cronPanelDefaultModelStatus = "config hash missing — reload";
+      renderCronDefaultModelControl();
+      return;
+    }
+    cronPanelDefaultModelSaving = true;
+    cronPanelDefaultModelStatus = "saving…";
+    renderCronDefaultModelControl(body);
+    try {
+      await req("config.patch", {
+        raw: buildCronDefaultModelPatch(model),
+        baseHash,
+        note: "Cron default model updated from the Crons panel.",
+      });
+      const snapshot = await req("config.get", {});
+      cronPanelModelConfig = readCronModelConfigState(snapshot);
+      cronPanelDefaultModelStatus = "saved";
+      paintCronBoard();
+    } catch (err) {
+      console.error("[exec-panel] cron default model update failed", err);
+      cronPanelDefaultModelStatus = cronErrorMessage(err);
+    } finally {
+      cronPanelDefaultModelSaving = false;
+      renderCronDefaultModelControl();
+    }
+  }
 
   const CRON_READ_TITLE =
     "Tick when you have read it. It leaves All and waits in Acknowledged. The next night archives it if it did not come back.";
@@ -21110,6 +21741,19 @@ function init() {
       .join("");
   }
 
+  function cronModelHtml(job: CronPanelJob): string {
+    const defaultModel = effectiveCronDefaultModel(cronPanelModelConfig);
+    const effective = resolveCronJobModel(job.modelOverride, defaultModel);
+    const defaultVisual = cronModelChoiceVisual(defaultModel);
+    return `<div class="cron-model-row">
+      <label>Model
+        ${cronModelPickerHtml("job", job.modelOverride, `Default · ${defaultVisual.label}`, job.id)}
+      </label>
+      <span class="cron-model-effective cron-model-${effective.status}" title="Effective model: ${escapeHtml(effective.model)}">${effective.status === "inherited" ? "default" : "override"} · ${escapeHtml(cronModelChoiceVisual(effective.model).label)}</span>
+      <span class="cron-model-status"></span>
+    </div>`;
+  }
+
   function cronSetupHtml(job: CronPanelJob): string {
     const view = parseSchedule(job.schedule);
     const weekdayOpts = WEEKDAYS.map(
@@ -21128,6 +21772,7 @@ function init() {
     return `<form class="cron-setup" data-repeat="${escapeHtml(formRepeat)}" data-job="${escapeHtml(job.id)}">
       ${next}
       ${current}
+      ${cronModelHtml(job)}
       <div class="cron-setup-row">
         <label>Repeat
           <select class="cron-setup-repeat">
@@ -21179,14 +21824,29 @@ function init() {
         id?: string;
         enabled?: boolean;
         schedule?: CronScheduleInput;
+        payload?: { kind?: string; model?: string };
       }>("cron.update", { id: jobId, patch });
       const idx = cronPanelJobs.findIndex((j) => j.id === jobId);
       if (idx >= 0) {
         const prev = cronPanelJobs[idx];
         const schedule = updated?.schedule ?? prev.schedule;
+        const requestedPayload =
+          patch.payload && typeof patch.payload === "object"
+            ? (patch.payload as { model?: unknown })
+            : undefined;
+        const modelOverride = updated?.payload
+          ? typeof updated.payload.model === "string" && updated.payload.model.trim()
+            ? updated.payload.model.trim()
+            : undefined
+          : requestedPayload && "model" in requestedPayload
+            ? typeof requestedPayload.model === "string" && requestedPayload.model.trim()
+              ? requestedPayload.model.trim()
+              : undefined
+            : prev.modelOverride;
         cronPanelJobs[idx] = {
           ...prev,
           enabled: typeof updated?.enabled === "boolean" ? updated.enabled : prev.enabled,
+          modelOverride,
           schedule,
           scheduleHuman: humanizeSchedule(schedule) || prev.scheduleHuman,
         };
@@ -21194,7 +21854,8 @@ function init() {
       rerenderCronCard(jobId);
       return null;
     } catch (err) {
-      return String(err);
+      console.error("[exec-panel] cron.update failed", jobId, err);
+      return cronErrorMessage(err);
     }
   }
 
@@ -21585,9 +22246,12 @@ function init() {
   function renderCronPanel(body: HTMLElement): void {
     body.innerHTML = `
         <div class="exec-section exec-crons">
-          <div class="exec-section-title">
+          <div class="exec-section-title exec-crons-title">
             <span>⏰ Crons</span>
-            <button class="exec-section-refresh" data-section="crons" title="Reload the cron board">↻</button>
+            <div class="cron-header-controls">
+              <div id="exec-cron-default-model" class="cron-default-model-control"></div>
+              <button class="exec-section-refresh" data-section="crons" title="Reload the cron board">↻</button>
+            </div>
           </div>
           <div class="exec-filter-bar" id="exec-cron-filter-bar"></div>
           <div class="exec-add-group-wrap">
@@ -21601,6 +22265,7 @@ function init() {
           <div class="exec-crons-body" id="exec-crons-body">Loading…</div>
         </div>
     `;
+    renderCronDefaultModelControl();
     renderCronFilterBar(body);
     attachCronAddGroupHandlers(body);
     const host = body.querySelector<HTMLElement>("#exec-crons-body");
@@ -21866,7 +22531,11 @@ function init() {
     host.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0) return;
       const target = ev.target as HTMLElement;
-      if (target.closest("button, input, textarea, select, .cron-item, .cron-setup, .fs-link"))
+      if (
+        target.closest(
+          "button, input, textarea, select, .cron-item, .cron-setup, .fs-link, .cron-model-picker",
+        )
+      )
         return;
       const head = target.closest(".cron-card-head") as HTMLElement | null;
       if (!head) return;
@@ -22166,18 +22835,26 @@ function init() {
     let jobs: CronPanelJob[];
     let summaries: CronBoardSummary[];
     try {
-      // Both in flight at once. The board RPCs are newer than this tab, so a
-      // gateway without them degrades to headers-only rather than a red error.
-      const [listRes, boardRes] = await Promise.all([
+      // All control-plane reads travel together. Board/config/model failures
+      // degrade independently so the job cards remain available.
+      const [listRes, boardRes, modelsRes, configRes, catalogRes] = await Promise.all([
         req<{ jobs: CronPanelJob[] }>("cronpanel.list", {}),
         req<{ summaries: CronBoardSummary[] }>("cronpanel.board.list", {}).catch(() => ({
           summaries: [] as CronBoardSummary[],
         })),
+        req<{ models: unknown[] }>("models.list", {}).catch(() => ({ models: [] })),
+        req("config.get", {}).catch(() => null),
+        req("config.models", {}).catch(() => null),
       ]);
       jobs = listRes.jobs ?? [];
       summaries = boardRes.summaries ?? [];
+      cronPanelModels = normalizeCronModelChoices(modelsRes.models);
+      cronPanelModelConfig = readCronModelConfigState(configRes);
+      if (catalogRes) modelConfigData = catalogRes;
+      cronPanelDefaultModelStatus = "";
     } catch (err) {
-      bodyEl.innerHTML = `<div class="exec-crons-error">cron panel unavailable (${escapeHtml(String(err))})</div>`;
+      console.error("[exec-panel] cron panel load failed", err);
+      bodyEl.innerHTML = `<div class="exec-crons-error">cron panel unavailable (${escapeHtml(cronErrorMessage(err))}) <span class="hint">(devtools console has full error)</span></div>`;
       return;
     }
     // Arranged order becomes the ONE order of record: the render, the board prefetch
@@ -22189,6 +22866,7 @@ function init() {
     // expanded card refetches instead of repainting last night's items.
     cronPanelBoards.clear();
     cronPanelBoardErrors.clear();
+    renderCronDefaultModelControl();
     paintCronBoard();
   }
 
@@ -28855,9 +29533,106 @@ function init() {
 
     const tabEl = tgt.closest("[data-tab-id]") as HTMLElement | null;
     if (tabEl) {
+      if (tabDragDidReorder) {
+        tabDragDidReorder = false;
+        return;
+      }
       switchToTab(tabEl.dataset.tabId!);
     }
   });
+
+  // FORK 2026-09-01 — drag-reorder the tab bar. Thresholded pointer drag so a
+  // click still switches and a right-click still opens the rename menu. The
+  // close button is excluded: a drag that starts on × is a close, not a move.
+  {
+    const scroll = $("tab-bar-scroll")!;
+    scroll.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const tgt = ev.target as HTMLElement;
+      if (tgt.closest("[data-tab-close]")) return;
+      const tabEl = tgt.closest("[data-tab-id]") as HTMLElement | null;
+      const tabId = tabEl?.dataset.tabId;
+      if (!tabEl || !tabId) return;
+      tabEl.setPointerCapture?.(ev.pointerId);
+      const rect = tabEl.getBoundingClientRect();
+      const ghost = tabEl.cloneNode(true) as HTMLElement;
+      ghost.classList.add("tab-drag-ghost");
+      ghost.style.position = "fixed";
+      ghost.style.pointerEvents = "none";
+      ghost.style.zIndex = "10000";
+      ghost.style.left = `${rect.left}px`;
+      ghost.style.top = `${rect.top}px`;
+      ghost.style.width = `${rect.width}px`;
+      ghost.style.height = `${rect.height}px`;
+      ghost.style.opacity = "0";
+      document.body.appendChild(ghost);
+      const indicator = document.createElement("div");
+      indicator.className = "tab-drop-indicator";
+      tabDrag = {
+        pointerId: ev.pointerId,
+        tabId,
+        startX: ev.clientX,
+        startY: ev.clientY,
+        passedThreshold: false,
+        source: tabEl,
+        ghost,
+        indicator,
+      };
+    });
+    scroll.addEventListener("pointermove", (ev) => {
+      const drag = tabDrag;
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+      if (!drag.passedThreshold) {
+        const dx = ev.clientX - drag.startX;
+        const dy = ev.clientY - drag.startY;
+        if (dx * dx + dy * dy < TAB_DRAG_THRESHOLD_PX * TAB_DRAG_THRESHOLD_PX) return;
+        drag.passedThreshold = true;
+        drag.source.classList.add("tab-dragging");
+        drag.ghost.style.opacity = "0.9";
+      }
+      drag.ghost.style.left = `${ev.clientX - 24}px`;
+      drag.ghost.style.top = `${ev.clientY - 12}px`;
+      const host = tabBarScrollHost();
+      if (host) {
+        const rect = host.getBoundingClientRect();
+        const fromLeft = ev.clientX - rect.left;
+        const fromRight = rect.right - ev.clientX;
+        if (fromLeft < 40) host.scrollLeft -= ((40 - fromLeft) / 40) * 18;
+        else if (fromRight < 40) host.scrollLeft += ((40 - fromRight) / 40) * 18;
+      }
+      drag.ghost.style.visibility = "hidden";
+      const under = document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null;
+      drag.ghost.style.visibility = "";
+      if (!under) return;
+      if (under === drag.indicator || under.closest(".tab-drop-indicator")) return;
+      const over = under.closest("[data-tab-id]") as HTMLElement | null;
+      // Hovering the source (or empty chrome) must not jump the marker to the end.
+      if (!over || over === drag.source) return;
+      const overId = over.dataset.tabId ?? null;
+      const overRect = over.getBoundingClientRect();
+      const closerToStart = ev.clientX < overRect.left + overRect.width / 2;
+      const beforeId = dropBeforeId(
+        tabs.map((t) => t.id).filter((id) => id !== drag.tabId),
+        overId,
+        closerToStart,
+      );
+      const parent = host ?? scroll;
+      if (beforeId) {
+        const beforeEl = parent.querySelector(`[data-tab-id="${beforeId}"]`);
+        if (beforeEl) parent.insertBefore(drag.indicator, beforeEl);
+      } else {
+        parent.appendChild(drag.indicator);
+      }
+    });
+    const finish = (ev: PointerEvent, commit: boolean) => {
+      if (tabDrag && ev.pointerId === tabDrag.pointerId) endTabDrag(commit);
+    };
+    scroll.addEventListener("pointerup", (ev) => finish(ev, true));
+    scroll.addEventListener("pointercancel", (ev) => finish(ev, false));
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && tabDrag) endTabDrag(false);
+    });
+  }
 
   // Middle-click to close tab
   $("tab-bar-scroll")!.addEventListener("auxclick", (e) => {

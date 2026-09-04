@@ -3581,15 +3581,59 @@ code.fs-link.fs-link-error {
   padding: 4px 6px;
   border-radius: 4px;
   cursor: pointer;
-  transition: background 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
   gap: 6px;
+  /* FORK 2026-09-02 — every row reserves the active row's 1px border so
+     selecting a session does not nudge the whole list by 2px. */
+  border: 1px solid transparent;
 }
 .session-row:hover {
   background: var(--surface2);
 }
-.session-row.session-active {
-  background: rgba(37, 99, 235, 0.08);
-  border: 1px solid rgba(37, 99, 235, 0.15);
+/* FORK 2026-09-02 (the architect: "make it stand more, make it darker, similar to the
+   colour the tab title gets, so that it seems it is integrated into the chat
+   window"). Was rgba(37,99,235,.08/.15) — upstream BLUE at 8%/15% over a brown
+   wood texture, which is why it read as "a very subtle outline". It now borrows
+   the active tab's own recipe (.tab.tab-active): --surface fill so the row sits
+   on the same plane as the chat, --text label, and the accent edge the tab wears
+   as its underline — here on the left, the side facing the chat window. */
+.session-row.session-active,
+.session-row.session-active:hover {
+  /* background-COLOR, never the shorthand: the shorthand resets background-image
+     and would kill the .session-live shimmer on an active+running row (same trap
+     documented on .tab.tab-active:hover above). */
+  background-color: var(--surface);
+  border-color: var(--accent);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.session-row.session-active .session-label {
+  color: var(--text);
+  font-weight: 600;
+}
+.session-row.session-active .session-stats {
+  color: var(--accent);
+}
+/* FORK 2026-09-02 — the rule between sessions WITH a tab open and the ones
+   without (emitted once, by renderSessionsPanel). Fades at both ends so it
+   reads as a divider on the wood rather than a border on a row. */
+.session-open-sep {
+  height: 1px;
+  margin: 7px 3px 6px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(193, 154, 107, 0.75) 12%,
+    rgba(193, 154, 107, 0.75) 88%,
+    transparent 100%
+  );
+  /* engraved: a dark line under the light one, so the rule survives the wood
+     texture at 1x instead of dissolving into a grain highlight. */
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
 }
 /* FORK: Session radial glow + shimmer when LLM run is active */
 @keyframes session-shimmer {
@@ -3605,7 +3649,9 @@ code.fs-link.fs-link-error {
   }
 }
 .session-row.session-live {
-  border: none;
+  /* FORK 2026-09-02 — was `border: none`, which collapsed the 1px the base row
+     now reserves and made a glowing row jump 2px shorter than its neighbours. */
+  border-color: transparent;
   background-image:
     linear-gradient(
       90deg,
@@ -3943,7 +3989,7 @@ code.fs-link.fs-link-error {
   padding: 0 12px;
   height: 32px;
   border-radius: 6px 6px 0 0;
-  cursor: pointer;
+  cursor: grab;
   font-size: 11px;
   font-weight: 500;
   color: var(--muted);
@@ -3953,6 +3999,7 @@ code.fs-link.fs-link-error {
     background 0.12s,
     color 0.12s;
   user-select: none;
+  touch-action: none;
   /* FORK 2026-05-23 — Chrome-style tab shrink. Was `flex-shrink: 0` which
      made tabs overflow the bar instead of shrinking. Now `flex: 0 1 auto`
      sizes each tab to its content (no padding-out to a target width — a
@@ -3979,6 +4026,28 @@ code.fs-link.fs-link-error {
 }
 .tab.tab-active:hover {
   background: var(--surface);
+}
+/* FORK 2026-09-01 — drag-reorder context tabs. Source dims; a 2px accent
+   marker shows the insertion slot; the ghost is the cloned tab following
+   the pointer (same contract as .exec-drag-ghost / .exec-drop-indicator). */
+.tab.tab-dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+}
+.tab-drag-ghost {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--accent);
+  border-radius: 6px 6px 0 0;
+  cursor: grabbing;
+}
+.tab-drop-indicator {
+  width: 2px;
+  align-self: stretch;
+  background: var(--accent);
+  border-radius: 1px;
+  margin: 0 1px;
+  pointer-events: none;
+  flex: 0 0 2px;
 }
 .tab-close {
   font-size: 13px;
@@ -4949,6 +5018,115 @@ code.fs-link.fs-link-error {
   min-height: 0;
   padding: 4px 0;
 }
+.exec-crons-title {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cron-header-controls,
+.cron-default-model-control,
+.cron-fleet-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.cron-header-controls {
+  margin-left: auto;
+}
+.cron-fleet-model span {
+  color: #9a8e7a;
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.cron-model-picker {
+  position: relative;
+  min-width: 0;
+}
+.cron-model-picker-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: min(178px, 45vw);
+  padding: 2px 8px 2px 5px;
+  background: #2a2018;
+  color: #e8dcc8;
+  border: 1px solid #5a4530;
+  border-radius: 4px;
+  font: 10px/1.3 inherit;
+  text-align: left;
+  text-transform: none;
+  cursor: pointer;
+}
+.cron-model-picker-btn:hover {
+  border-color: #7a6044;
+}
+.cron-model-picker-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.cron-model-picker-empty {
+  color: #9a8e7a;
+}
+.cron-model-picker-btn .model-provider-icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+.cron-model-picker-menu {
+  display: none;
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 3px);
+  right: 0;
+  min-width: 100%;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  background: #2a2018;
+  border: 1px solid #5a4530;
+  border-radius: 6px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+}
+.cron-model-picker.open .cron-model-picker-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cron-model-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  background: transparent;
+  color: #e8dcc8;
+  border: 0;
+  border-radius: 4px;
+  font: 11px/1.3 inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cron-model-option:hover,
+.cron-model-option.selected {
+  background: #3a2c20;
+}
+.cron-model-option-note {
+  margin-left: auto;
+  color: #c99f69;
+  font-size: 9px;
+}
+.cron-fleet-model-status {
+  max-width: 120px;
+  overflow: hidden;
+  color: #c99f69;
+  font-size: 9px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
 /* Crons groups outrank job names: the group is the room, the card is furniture. */
 .exec-crons-body > .exec-group > .exec-group-header {
   font-size: 15px;
@@ -5221,6 +5399,46 @@ code.fs-link.fs-link-error {
 .cron-setup-next {
   color: #9a8e7a;
   font-size: 10px;
+}
+.cron-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 4px 8px;
+  padding: 5px 0 7px;
+  border-bottom: 1px solid rgba(90, 69, 48, 0.72);
+}
+.cron-model-row label {
+  grid-row: 1 / span 2;
+}
+.cron-model-row .cron-model-picker-btn {
+  width: 100%;
+  padding: 3px 8px 3px 6px;
+  font-size: 11px;
+}
+.cron-model-effective {
+  max-width: 150px;
+  overflow: hidden;
+  font-size: 9px;
+  line-height: 1.2;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cron-model-inherited {
+  color: #9a8e7a;
+}
+.cron-model-overridden {
+  color: #e8c79a;
+}
+.cron-model-status {
+  min-height: 11px;
+  overflow: hidden;
+  color: #c99f69;
+  font-size: 9px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cron-setup-row {
   display: flex;
@@ -8026,9 +8244,9 @@ code.fs-link.fs-link-error {
 
 /* FORK 2026-08-28 (the architect: "Every time we use a broca recipe, I would like to see a
    particular message in the chat, just a short reminder that we are using it with a link to its
-   md"). Deliberately quiet: one centred line under the prompt that matched, in the recipe panel's
-   own green so it reads as the BROCA layer speaking rather than as a warning. A reminder should be
-   noticed once and then ignored — it is not an alert, and it must not compete with the answer. */
+   md"). One centred line under the prompt that matched. Bright green so the BROCA layer is
+   immediately readable against the woody chat; still a reminder, not an alert. Salience raised
+   2026-09-03 after the muted 10% mix disappeared on the dark background. */
 .msg-recipe-notice {
   align-self: center;
   display: flex;
@@ -8037,21 +8255,51 @@ code.fs-link.fs-link-error {
   max-width: 100%;
   margin: 2px 0 6px;
   padding: 3px 10px;
-  border: 1px solid color-mix(in srgb, #3fb950 40%, transparent);
+  border: 1px solid color-mix(in srgb, #22e35a 80%, transparent);
   border-radius: 999px;
-  background: color-mix(in srgb, #3fb950 10%, transparent);
-  color: #9fe0ac;
+  background: color-mix(in srgb, #22e35a 32%, transparent);
+  color: #7dff9c;
   font-size: 11px;
   line-height: 1.5;
 }
 .msg-recipe-notice-text strong {
-  color: #d6f5dd;
+  color: #d4ffde;
   font-weight: 600;
 }
 .msg-recipe-notice-link {
   cursor: pointer;
   border-bottom: 1px dotted currentColor;
-  color: #7fd394;
+  color: #3dff7a;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+/* FORK 2026-09-02: skill chip — same shape as the recipe notice, yellow so the two layers don't
+   collapse into one colour. Producer is a `read` of SKILL.md, not a prompt the model remembers.
+   Salience raised 2026-09-03: amber-on-wood was too quiet; yellow fill reads at a glance. */
+.msg-skill-notice {
+  align-self: center;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  margin: 2px 0 6px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, #ffd400 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #ffd400 32%, transparent);
+  color: #ffe566;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.msg-skill-notice-text strong {
+  color: #fff6c2;
+  font-weight: 600;
+}
+.msg-skill-notice-link {
+  cursor: pointer;
+  border-bottom: 1px dotted currentColor;
+  color: #ffd400;
   font-size: 10px;
   white-space: nowrap;
 }
@@ -9947,6 +10195,10 @@ code.fs-link.routing-why-policy:hover {
 .sc-svg .sc-labelpos,
 .sc-svg .sc-line-cost,
 .sc-svg .sc-line-task,
+.sc-svg .sc-line-est-cost,
+.sc-svg .sc-line-est-task,
+.sc-svg .sc-rail-cost,
+.sc-svg .sc-rail-task,
 .sc-svg .sc-apipos,
 .sc-svg .sc-line-api-cost,
 .sc-svg .sc-line-api-task,
@@ -9958,15 +10210,38 @@ code.fs-link.routing-why-policy:hover {
 .sc-svg.sc-focus .sc-labelpos,
 .sc-svg.sc-focus .sc-line-cost,
 .sc-svg.sc-focus .sc-line-task,
+.sc-svg.sc-focus .sc-line-est-cost,
+.sc-svg.sc-focus .sc-line-est-task,
+.sc-svg.sc-focus .sc-rail-cost,
+.sc-svg.sc-focus .sc-rail-task,
 .sc-svg.sc-focus .sc-apipos,
 .sc-svg.sc-focus .sc-line-api-cost,
 .sc-svg.sc-focus .sc-line-api-task {
   opacity: 0.13; /* the house dim, a touch deeper: the plot is dense */
 }
+/* The THALAMUS envelope (.sc-env-*) is DELIBERATELY ABSENT from the enumeration
+   above and must stay absent. The latch only ever writes .sc-hl onto nodes it
+   finds with querySelectorAll("[data-vendor],[data-twin],[data-model]"), and the
+   envelope's emitter gives it none of those three attributes — so no vendor or
+   twin latch can mark it .sc-hl, and listing it here would pin it at 0.13 on
+   EVERY latch. The "what THALAMUS considered this turn" overlay would vanish the
+   moment you touched the legend. It is an annotation ABOUT the selection, not a
+   member of it. Do not "fix" this omission.
+
+   The corollary is a MARKUP rule, and it is the same rule: the envelope must be
+   emitted in a layer of its own, outside <g class="sc-dotpos"> — not merely
+   outside the inner .sc-dotg. `opacity` on .sc-dotpos dims every descendant, so
+   an envelope nested anywhere beneath it is dimmed by the rule above no matter
+   what it is or is not called. The full contract sits beside the .sc-env-*
+   rules further down. */
 .sc-svg.sc-focus .sc-dotpos.sc-hl,
 .sc-svg.sc-focus .sc-labelpos.sc-hl,
 .sc-svg.sc-focus .sc-line-cost.sc-hl,
 .sc-svg.sc-focus .sc-line-task.sc-hl,
+.sc-svg.sc-focus .sc-line-est-cost.sc-hl,
+.sc-svg.sc-focus .sc-line-est-task.sc-hl,
+.sc-svg.sc-focus .sc-rail-cost.sc-hl,
+.sc-svg.sc-focus .sc-rail-task.sc-hl,
 .sc-svg.sc-focus .sc-apipos.sc-hl,
 .sc-svg.sc-focus .sc-line-api-cost.sc-hl,
 .sc-svg.sc-focus .sc-line-api-task.sc-hl {
@@ -10124,6 +10399,146 @@ code.fs-link.routing-why-policy:hover {
 }
 .sc-svg.sc-taskmode .sc-line-task {
   stroke-opacity: 0.34;
+}
+/* the ESTIMATE line (dotted, through measured + estimated rungs) crossfades the
+   same way as the measured line — same channel, same timing, quieter at rest */
+.sc-line-est-cost,
+.sc-line-est-task {
+  transition: stroke-opacity 1.3s ease;
+}
+.sc-svg.sc-taskmode .sc-line-est-cost {
+  stroke-opacity: 0;
+}
+.sc-svg.sc-taskmode .sc-line-est-task {
+  stroke-opacity: 0.3;
+}
+/* ── THALAMUS envelope (FORK 2026-08-30) ──
+   "Which models did THALAMUS consider this turn, and which did it pick?", drawn
+   over the constellation: a light dashed ring around every CANDIDATE dot and a
+   heavier solid one on the CHOSEN dot. Two sibling emitters produce the markup —
+   the chart (.sc-env-*) and the dossier (.sd-env* further down) — and this block
+   owns every rule for both, so the two panels cannot drift apart.
+
+   THE MARKUP CONTRACT, because these rules are wrong without it:
+
+     <g class="sc-env-cost" transform="translate(xCost, y)">
+       <circle class="sc-env-ring" r="R" stroke="…SC_THALAMUS…"
+               stroke-opacity="0.85"/></g>
+     <g class="sc-env-task" transform="translate(xTask, y)">
+       <circle class="sc-env-ring" r="R" stroke="…SC_THALAMUS…"
+               stroke-opacity="0"/></g>
+
+   — the wrapper-plus-mark shape of <g class="sc-ghostpos"><circle class="sc-ghost">,
+   and every clause of it is load-bearing:
+     · A LAYER OF ITS OWN, outside <g class="sc-dotpos">. `opacity` on that
+       ancestor dims every descendant, so an envelope nested inside it is dimmed
+       by the .sc-focus rule regardless of what it is called — see the note
+       beside that rule.
+     · THE MARK SITS AT ITS GROUP'S ORIGIN: `r` only, never cx/cy — the same
+       place .sc-dotg's own .sc-ring sits. The counter-scale below has to leave
+       the mark centred on the dot it annotates, and it only does that for a
+       shape drawn at the origin the scale is taken about; a circle placed with
+       cx/cy drifts off its dot as the zoom changes. A flat emission — one
+       element carrying both the pair class and the mark class, positioned by
+       cx/cy — is NOT supported, for that same reason.
+     · POSITION BY ATTRIBUTE ON THE GROUP, COUNTER-SCALE BY CSS ON THE CIRCLE:
+       two different elements, exactly as .sc-dotpos (translate attribute) wraps
+       .sc-dotg (CSS scale). Never both on one element — a CSS declaration
+       REPLACES the `transform` presentation attribute rather than composing with
+       it, which is the bug that once collapsed every dot to the SVG origin
+       (FORK 2026-08-06 #6, above).
+
+   THE STROKE COLOUR IS NOT DECLARED HERE, ON PURPOSE. It is the chart's exported
+   SC_THALAMUS constant, carried by the markup as a presentation attribute exactly
+   as .sc-ring's and .sc-line-cost's colours are today. Presentation attributes
+   carry no specificity, so ANY `stroke:` written in this sheet would outrank one
+   and silently repaint the envelope. One hex, one owner: the module that exports
+   it. */
+.sc-env-cost,
+.sc-env-task,
+.sc-env-ring,
+.sc-env-pick {
+  /* LOAD-BEARING. The envelope is drawn OVER the dot it annotates, and a stroked
+     SVG shape is a hit target on its own stroke — without this, ringing a
+     candidate would steal the <title> tooltip and the util-drag from the very
+     circle it points at. Same property, same reason, as the .model-btn-exhausted
+     X overlay. If the envelope itself ever wants a tooltip, give it a separate
+     transparent hit-circle the way .sc-dotpos already does; do not lift this. */
+  pointer-events: none;
+  /* The crossfade transition lives here, on the pair classes AND the marks, so it
+     is present whichever of them the emitter labels — see the toggle below. */
+  transition: stroke-opacity 1.3s ease;
+}
+.sc-env-ring,
+.sc-env-pick {
+  fill: none;
+  /* --sc-k DOES reach this element — app.ts writes it on the <svg> root once per
+     zoom and custom properties inherit — and what needs it is the RADIUS, not the
+     stroke. Zoom drives the viewBox, so an untouched `r` grows with the zoom while
+     every other marker layer holds its on-screen size by counter-scaling
+     (.sc-dotg, .sc-ghostpos, .sc-apig); without this line the envelope would swell
+     away from the dot it is pointing at. No transition on the transform, so unlike
+     .sc-dotg this needs no .sc-zooming suppression. */
+  transform: scale(var(--sc-k, 1));
+  /* Stroke WIDTH is the separate problem, and non-scaling-stroke — not --sc-k — is
+     what solves it: it pins the stroke in screen space under any transform, the
+     counter-scale above included, so the widths below are plain screen pixels and
+     multiplying them by var(--sc-k) would double-correct. Same idiom as .sc-ring
+     and .sc-ghost, which set it as an attribute; .pg-line sets it from CSS as
+     here. */
+  vector-effect: non-scaling-stroke;
+  /* A hair under .sc-ring's 1.5: the call-out must not out-weigh the data. */
+  stroke-width: 1.4;
+  /* a candidate is PROVISIONAL — dashed, like the ghost landing rings */
+  stroke-dasharray: 3 2.4;
+}
+/* The PICK is the same colour, heavier: solid and thicker. A second hue would read
+   as a second actor, when the point of the envelope is that one actor — THALAMUS —
+   drew all of it. `stroke-dasharray: none` is explicit so the mark is right whether
+   the emitter writes `sc-env-pick` alone or `sc-env-ring sc-env-pick` on the chosen
+   dot. */
+.sc-env-pick {
+  stroke-width: 2.8;
+  stroke-dasharray: none;
+}
+/* Envelope crossfade — the SAME mechanism and the same 1.3s ease as
+   .sc-line-cost/.sc-line-task above and .sc-bridge-cost/.sc-bridge-task: one copy
+   per axis position, swapped on stroke-opacity. Not a second mechanism — `opacity`
+   is already owned by the dim/glow state machine, and `display` would kill the
+   transition.
+
+   Each toggle names the MARK as well as the pair class, because stroke-opacity
+   INHERITS and an inherited value loses to the child's own presentation attribute.
+   With the pair class on the wrapper <g> (the shape contracted above), setting it
+   on the group alone would leave the circle painted at stroke-opacity="0.85" in
+   both modes — no crossfade at all, and the group in devtools reading a perfectly
+   correct 0. The descendant selectors reach the circle directly, so the toggle
+   holds whether the emitter labels the group or the mark.
+
+   The emitter must still choose resting values that match: 0.85 on the €/Mtok copy,
+   0 on the €/task copy. Change the number here and change it there. */
+.sc-svg.sc-taskmode .sc-env-cost,
+.sc-svg.sc-taskmode .sc-env-cost .sc-env-ring,
+.sc-svg.sc-taskmode .sc-env-cost .sc-env-pick {
+  stroke-opacity: 0;
+}
+.sc-svg.sc-taskmode .sc-env-task,
+.sc-svg.sc-taskmode .sc-env-task .sc-env-ring,
+.sc-svg.sc-taskmode .sc-env-task .sc-env-pick {
+  stroke-opacity: 0.85;
+}
+/* the dashed COST RAIL (the architect 2026-08-30) crossfades on the same clock as the
+   measured curve — if the two drifted apart, a model's rungs and its rail would
+   separate mid-toggle and read as the price changing. */
+.sc-rail-cost,
+.sc-rail-task {
+  transition: stroke-opacity 1.3s ease;
+}
+.sc-svg.sc-taskmode .sc-rail-cost {
+  stroke-opacity: 0;
+}
+.sc-svg.sc-taskmode .sc-rail-task {
+  stroke-opacity: 0.2;
 }
 /* labels glide with their constellation.
    FORK 2026-08-06 #10 (the architect: "the model names should be to the right of its most
@@ -10392,6 +10807,47 @@ code.fs-link.routing-why-policy:hover {
   color: var(--muted);
   border: 1px dashed color-mix(in srgb, var(--muted) 55%, transparent);
 }
+/* ── THALAMUS envelope, dossier side (FORK 2026-08-30) ──
+   The table's answer to the chart's .sc-env-* rings: `.sd-env` marks a row
+   THALAMUS CONSIDERED this turn, `.sd-env-pick` the one it chose. Candidate and
+   pick differ ONLY in weight — a deeper wash, a wider gutter — never in colour,
+   for the same reason as the chart marks.
+
+   The hue is the chart's exported SC_THALAMUS, handed in by the row as the inline
+   custom property `--sd-env`: a table row has no presentation attribute to carry a
+   colour, and hardcoding the hex here is exactly the drift this feature must not
+   have. `var(--sd-env, var(--accent))` covers the property being ABSENT — that is
+   all a var() fallback covers. A present-but-malformed value (`--sd-env: undefined`
+   out of a bad import, say) is invalid at computed-value time and takes the wash
+   with it, which is why the gutter is declared with a plain `var(--accent)` first
+   and only then recoloured: its width and style survive whatever the row hands in.
+
+   Hover wins the wash — `.sd-table tbody tr:hover` is the more specific selector —
+   exactly as it already does over .sd-ref. That is precisely why the mark is a
+   BORDER and not only a tint: the gutter is what keeps the row identifiable while
+   the cursor is sitting on it. */
+.sd-env,
+.sd-env-pick {
+  --sd-envc: var(--sd-env, var(--accent));
+  background: color-mix(in srgb, var(--sd-envc) 8%, transparent);
+}
+.sd-env-pick {
+  background: color-mix(in srgb, var(--sd-envc) 17%, transparent);
+}
+/* `:first-child`, NOT `td:first-child`: .sd-table is worn by two tables and the
+   cn-price one opens its body rows with `<th class="sd-model">`, so a td-only
+   selector would drop the gutter on half the panel and a hovered pick would lose
+   every trace of being picked. The gutter is on the CELL rather than the row
+   because a row border in the collapsed model must win border-conflict resolution
+   against every cell it crosses; a cell's own border has no such fight. */
+.sd-env > :first-child,
+.sd-env-pick > :first-child {
+  border-left: 2px solid var(--accent);
+  border-left-color: var(--sd-envc);
+}
+.sd-env-pick > :first-child {
+  border-left-width: 4px;
+}
 .sd-model[data-tip] {
   cursor: help;
 }
@@ -10626,6 +11082,64 @@ td.sd-sorted {
 .sd-note {
   color: var(--muted);
   font-size: 8.5px;
+}
+/* ── BEST-IN-COLUMN mark + THALAMUS ROUTES strip (FORK 2026-09-02) ──
+   `.sd-best` rings the single best configured cell of each capability column in
+   currentColor — it borrows the grade's own hue from the ordinal ramp above, so no
+   fifth colour enters the grid; the `<sup>` mark is the file's existing "?" grammar.
+   `.sd-routes` is the router's answer per task domain, painted in the chart's
+   envelope hue the way .sd-env is: the renderer hands SC_THALAMUS in as the inline
+   `--sd-env`, and the hex here is only the var() fallback for the property being
+   ABSENT. A SWITCH row (the domain moved the route off the bias pick) gets the
+   deeper wash and a solid gutter — the same weight grammar as .sd-env-pick. */
+.sd-best {
+  box-shadow: inset 0 0 0 1px currentColor;
+  font-weight: 700;
+}
+.sd-best-mark {
+  font-size: 6.5px;
+  line-height: 0;
+  margin-left: 1px;
+  opacity: 0.85;
+}
+.sd-routes {
+  --sd-envc: var(--sd-env, #f7ba08);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin: 0 0 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-family: "SF Mono", ui-monospace, monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--sd-envc) 6%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--sd-envc) 35%, transparent);
+}
+.sd-routes-title {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--sd-envc);
+  cursor: help;
+}
+.sd-route {
+  padding: 1px 6px;
+  border-radius: 3px;
+  border-left: 2px dashed color-mix(in srgb, var(--sd-envc) 40%, transparent);
+  cursor: help;
+}
+.sd-route-dom {
+  color: var(--sd-envc);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.sd-route-switch {
+  color: var(--text);
+  background: color-mix(in srgb, var(--sd-envc) 14%, transparent);
+  border-left-style: solid;
+  border-left-color: var(--sd-envc);
 }
 /* end FORK 2026-08-06 #3 (dossier + prominent chart button) */
 

@@ -67,6 +67,50 @@ try {
   process.exit(2);
 }
 
+// TWO RUNNERS, TWO PLAN FORMATS -- tolerate the other one instead of dying on it.
+//
+// Claude Code's Workflow tool REQUIRES plans to start with `export const meta =
+// {...}`. This CLI evaluates the file as a plain async function BODY, where any
+// `export` is a hard syntax error ("Unexpected token 'export'") that names
+// neither the file nor the real problem. Authors move between the two runners
+// constantly and the header is muscle memory, so strip a leading meta block and
+// carry on rather than making everyone lose a round trip to rediscover this.
+//
+// Deliberately narrow: only an `export const meta = { ... }` at the very top,
+// balanced by brace counting (string/comment-naive, which is fine for a literal
+// that is required to be a pure object literal). Anything else still errors.
+{
+  const header = /^\s*export\s+const\s+meta\s*=\s*\{/.exec(SCRIPT);
+  if (header) {
+    let depth = 0;
+    let end = -1;
+    for (let i = header[0].length - 1; i < SCRIPT.length; i++) {
+      const ch = SCRIPT[i];
+      if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          end = i + 1;
+          break;
+        }
+      }
+    }
+    if (end > 0) {
+      const trailing = /^\s*;?/.exec(SCRIPT.slice(end))[0].length;
+      SCRIPT = SCRIPT.slice(end + trailing);
+      console.error(
+        "openclaw-orchestrate: stripped a Workflow-style `export const meta = {...}` header " +
+          "(this runner evaluates the plan as a function body, so `export` is not valid here)",
+      );
+    }
+  } else if (/^\s*(export|import)\s/m.test(SCRIPT)) {
+    console.error(
+      "openclaw-orchestrate: this plan uses `export`/`import`, but --script-file is evaluated as " +
+        "a plain async function BODY. Use top-level `const` and a final `return`; no module syntax.",
+    );
+  }
+}
+
 let ARGS;
 const rawArgs = flag("args");
 if (rawArgs != null) {

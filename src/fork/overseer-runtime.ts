@@ -17,6 +17,9 @@
  * Overseer's own spawned run cannot recursively trigger another Overseer.
  */
 
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { isOperatorScopeDenial } from "../gateway/method-scopes.js";
 import { ErrorCodes, errorShape } from "../gateway/protocol/index.js";
 import type { GatewayRequestHandlers } from "../gateway/server-methods/shared-types.js";
@@ -26,6 +29,7 @@ import {
   deactivateOverseer,
   getOverseerSession,
   maybeRunOverseer,
+  overseerSpawnTask,
   shouldRunOverseer,
   OVERSEER_PERSONA,
   OVERSEER_PROMPT_PREFIX,
@@ -86,73 +90,88 @@ function buildOverseerDeps(jarvisSessionKey: string): OverseerDeps {
     log: (m) => log.info(m),
 
     // Spawn the Overseer persona as a subagent, wait for it, read its final text.
-    // The persona is prepended to the task (the spawn RPC's content channel).
+    // The briefing (task + full transcript) is a FILE, not an argv element — a
+    // long session used to die with `spawn E2BIG` once persona+context crossed
+    // Linux MAX_ARG_STRLEN (131072). The spawn `task` is now a short pointer.
     spawnOverseer: async (context: string): Promise<string> => {
       const { callGateway } = await import("../gateway/call.js");
-      const task = `${OVERSEER_PERSONA}\n\n${context}`;
-      let spawn: SubagentSpawnResult;
+      const dir = path.join(os.tmpdir(), "tinkerclaw-overseer");
+      await fs.mkdir(dir, { recursive: true });
+      const briefingPath = path.join(
+        dir,
+        `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.md`,
+      );
+      await fs.writeFile(briefingPath, context, "utf8");
+      const task = overseerSpawnTask(OVERSEER_PERSONA, briefingPath);
       try {
-        spawn = await callGateway<SubagentSpawnResult>({
-          method: "fork.subagents.spawn",
-          params: {
-            task,
-            label: "overseer",
-            parentSessionKey: jarvisSessionKey,
-            runTimeoutSeconds: RUN_TIMEOUT_S,
-            // We read the verdict ourselves; the Overseer must NOT post to the parent
-            // channel (that would bypass the left-bubble nudge rendering + the loop).
-            expectsCompletionMessage: false,
-          },
-          timeoutMs: (RUN_TIMEOUT_S + 10) * 1000,
-        });
-      } catch (err) {
-        // FORK 2026-08-04: a gateway SCOPE REFUSAL is a wiring bug, not a transient blip.
-        // overseer.ts collapses every spawn throw into reason:"spawn-error", which at the
-        // caller reads exactly like a healthy quiet cycle -- that indistinguishability is
-        // why the unclassified-fork.* outage ran for months. Name it loudly HERE, where we
-        // still know the cause, and carry it in the rethrown message.
-        const msg = err instanceof Error ? err.message : String(err);
-        if (isOperatorScopeDenial(err)) {
-          log.error(
-            `[overseer] REFUSED by gateway: fork.subagents.spawn denied (${msg}). ` +
-              `The Overseer did NOT run -- this is a scope-classification bug, not "nothing to nudge".`,
-          );
-          throw new Error(`overseer spawn refused (scope): ${msg}`);
+        let spawn: SubagentSpawnResult;
+        try {
+          spawn = await callGateway<SubagentSpawnResult>({
+            method: "fork.subagents.spawn",
+            params: {
+              task,
+              label: "overseer",
+              parentSessionKey: jarvisSessionKey,
+              runTimeoutSeconds: RUN_TIMEOUT_S,
+              // We read the verdict ourselves; the Overseer must NOT post to the parent
+              // channel (that would bypass the left-bubble nudge rendering + the loop).
+              expectsCompletionMessage: false,
+            },
+            timeoutMs: (RUN_TIMEOUT_S + 10) * 1000,
+          });
+        } catch (err) {
+          // FORK 2026-08-04: a gateway SCOPE REFUSAL is a wiring bug, not a transient blip.
+          // overseer.ts collapses every spawn throw into reason:"spawn-error", which at the
+          // caller reads exactly like a healthy quiet cycle -- that indistinguishability is
+          // why the unclassified-fork.* outage ran for months. Name it loudly HERE, where we
+          // still know the cause, and carry it in the rethrown message.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (isOperatorScopeDenial(err)) {
+            log.error(
+              `[overseer] REFUSED by gateway: fork.subagents.spawn denied (${msg}). ` +
+                `The Overseer did NOT run -- this is a scope-classification bug, not "nothing to nudge".`,
+            );
+            throw new Error(`overseer spawn refused (scope): ${msg}`);
+          }
+          throw err;
         }
-        throw err;
-      }
-      if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) {
-        throw new Error(`overseer spawn failed: ${spawn?.note ?? "no childSessionKey/runId"}`);
-      }
-      const { childSessionKey, runId } = spawn;
-
-      const wait = await callGateway<{ status?: "ok" | "timeout" | "error"; error?: string }>({
-        method: "agent.wait",
-        params: { runId, timeoutMs: RUN_TIMEOUT_S * 1000 },
-        timeoutMs: RUN_TIMEOUT_S * 1000 + 5_000,
-      });
-      if (wait?.status === "error") throw new Error(`overseer run errored: ${wait.error ?? "?"}`);
-      if (wait?.status === "timeout") return ""; // treat a stalled check as "no nudge" (safe)
-
-      // Read the final assistant text, with a short retry for sessionFile flush.
-      const deadline = Date.now() + 12_000;
-      do {
-        const hist = await callGateway<{ messages?: SnapshotMessage[] }>({
-          method: "chat.history",
-          params: { sessionKey: childSessionKey, limit: 50 },
-          timeoutMs: 10_000,
-        });
-        const messages = Array.isArray(hist?.messages) ? hist.messages : [];
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i]?.role !== "assistant") continue;
-          const text = messageText(messages[i]).trim();
-          if (text) return text;
-          break; // newest assistant msg seen but empty → that IS the (silent) verdict
+        if (!spawn?.ok || !spawn.childSessionKey || !spawn.runId) {
+          throw new Error(`overseer spawn failed: ${spawn?.note ?? "no childSessionKey/runId"}`);
         }
-        if (Date.now() >= deadline) break;
-        await new Promise((r) => setTimeout(r, 150));
-      } while (true);
-      return ""; // no assistant text → silence → done
+        const { childSessionKey, runId } = spawn;
+
+        const wait = await callGateway<{ status?: "ok" | "timeout" | "error"; error?: string }>({
+          method: "agent.wait",
+          params: { runId, timeoutMs: RUN_TIMEOUT_S * 1000 },
+          timeoutMs: RUN_TIMEOUT_S * 1000 + 5_000,
+        });
+        if (wait?.status === "error") throw new Error(`overseer run errored: ${wait.error ?? "?"}`);
+        if (wait?.status === "timeout") return ""; // treat a stalled check as "no nudge" (safe)
+
+        // Read the final assistant text, with a short retry for sessionFile flush.
+        const deadline = Date.now() + 12_000;
+        do {
+          const hist = await callGateway<{ messages?: SnapshotMessage[] }>({
+            method: "chat.history",
+            params: { sessionKey: childSessionKey, limit: 50 },
+            timeoutMs: 10_000,
+          });
+          const messages = Array.isArray(hist?.messages) ? hist.messages : [];
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i]?.role !== "assistant") continue;
+            const text = messageText(messages[i]).trim();
+            if (text) return text;
+            break; // newest assistant msg seen but empty → that IS the (silent) verdict
+          }
+          if (Date.now() >= deadline) break;
+          await new Promise((r) => setTimeout(r, 150));
+        } while (true);
+        return ""; // no assistant text → silence → done
+      } finally {
+        // Child is done (or never started). Drop the briefing so /tmp does not
+        // accumulate a copy of every supervised transcript.
+        await fs.unlink(briefingPath).catch(() => undefined);
+      }
     },
 
     // Inject the nudge as a prompt into Jarvis' session (sessions.send, the same path
@@ -194,7 +213,7 @@ export async function maybeRunOverseerFromHook(
     // info alongside the healthy terminal reasons it was indistinguishable from a quiet
     // pass, which is precisely how a months-long outage stayed invisible. Failures are
     // now ERROR and say so in words.
-    if (outcome.reason === "spawn-error") {
+    if (outcome.reason === "spawn-error" || outcome.reason === "spawn-e2big") {
       log.error(
         `[overseer] cycle FAILED on ${sessionKey}: ${outcome.reason} (nudge ${outcome.iteration}) ` +
           `-- the Overseer did NOT run; this is not a quiet pass`,

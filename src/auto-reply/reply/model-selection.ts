@@ -16,8 +16,23 @@ import {
 import { resolveQuotaAwareAutoModel } from "../../agents/quota-aware-auto-model.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { readOrcaBias } from "../../infra/orca-bias-store.js";
 import { getUsageSnapshot } from "../../infra/usage-snapshot-store.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
+import { relCostLookup } from "../../shared/rel-cost-table.js";
+import {
+  classifyTaskDomain,
+  frontierRungsFor,
+  type TaskDomain,
+  THALAMUS_BIAS_GAP,
+} from "../../shared/thalamus-frontier.js";
+import {
+  thalamusPlan,
+  type CompositionMode,
+  type ReservedReason,
+  type RungVeto,
+} from "../../shared/thalamus-plan.js";
+import { supplyStates, type SupplyId, type SupplyState } from "../../shared/thalamus-supply.js";
 import { formatProviderModelRef } from "../model-runtime.js";
 import type { ThinkLevel } from "./directives.js";
 export {
@@ -72,6 +87,90 @@ export function formatQuotaAwareAutoNotice(params: {
   return `↪️ Auto: ${params.reason}, using ${formatProviderModelRef(params.provider, params.model)}`;
 }
 
+/**
+ * Set on a turn where THALAMUS chose the (model, thinking effort) rung, i.e. on
+ * every Auto turn with a scored catalog and no explicit pin.
+ *
+ * Resolved per turn and PERSISTED NOWHERE, for the quota substitution's reason
+ * verbatim: a written `modelOverride` would survive the next dial move and would
+ * later be indistinguishable from a user pin. Recomputing it every turn is what
+ * makes "drag the slider, the next turn obeys it" fall out of the dial's own state.
+ */
+export type ThalamusAutoRoute = {
+  /** The routed rung's provider/model, already normalized. */
+  provider: string;
+  model: string;
+  /** Vendor effort for the rung; "" when the route has no graded ladder. */
+  effort: string;
+  /** What `classifyTaskDomain` made of the prompt; "general" when it saw no signal. */
+  domain: TaskDomain;
+  /** AA Intelligence Index of the routed rung (measured, estimated or headline). */
+  smart: number;
+  /** EUR/Mtok of the routed rung: route relCost x the effort's cost multiplier. */
+  cost: number;
+  /** The dial position that produced this, already clamped to 0..6. */
+  biasIdx: number;
+  /** The router's own one-line rationale. */
+  reason: string;
+  /** Ready-to-send disclosure line. */
+  notice: string;
+  /**
+   * FORK 2026-09-03 — THE RECOVERY LADDER, as `provider/model` strings ready for
+   * `fallbacksOverride`. This is the field that fixes "rate limitations stall our thinking":
+   * `agents.defaults.model.fallbacks` is `[]` in the live config, so the whole
+   * `runWithModelFallback` machinery has been running on an empty ladder. One rung per OTHER
+   * supply, because the failure it must survive is a rate limit and a second rung on the same
+   * limited supply survives nothing. EMPTY means Thalamus genuinely found no alternative —
+   * that is a fact worth surfacing, not a default worth hiding.
+   */
+  chain: string[];
+  /** solo | critic | debate | fan-out — how the turn is composed (Fugu §3.2 tiers). */
+  mode: CompositionMode;
+  /** debate: the independent answerers; fan-out: the leaf model. */
+  panel: string[];
+  /** debate / fan-out: who synthesises. Per query, never fixed. */
+  chair?: string;
+  /** A subscription window is about to destroy surplus; tokens are free and exploration is on. */
+  ballistic: boolean;
+  /** Set only when a reserved model (Fable) was admitted, and names which of the three
+   *  reasons opened it. A reserved model that arrives unexplained is a bug. */
+  reservedReason?: ReservedReason;
+  /** Rungs ruled out before fitness was even compared, for the panel. */
+  vetoes: RungVeto[];
+  /** Supply states as the turn saw them — utilization, binding window, shadow price. */
+  supplies: SupplyState[];
+};
+
+/**
+ * Disclosure carrier for a THALAMUS route.
+ *
+ * A sibling of `formatQuotaAwareAutoNotice` rather than a reuse of it: the two
+ * answer different questions ("your provider is spent" vs "the dial and the task
+ * chose this rung"), and folding them into one string would make a routine
+ * bias-driven pick read as a quota failure.
+ *
+ * THE STOP IS A NUMBER, NOT A NAME. `BIAS_STOPS` (fast · quick · lean · balanced ·
+ * deep · wide · smart) lives in `tinker-ui/src/panels/routing-rationale.ts`, which
+ * the gateway must not import; copying the seven labels here would be a second home
+ * for one fact, which is the drift `rel-cost-table.ts` and `thalamus-candidates.ts`
+ * both exist to end. The denominator comes from `THALAMUS_BIAS_GAP` so "of 6" can
+ * never disagree with the dial the router actually read.
+ */
+export function formatThalamusRouteNotice(params: {
+  biasIdx: number;
+  domain: string;
+  provider: string;
+  model: string;
+  effort: string;
+  reason: string;
+}): string {
+  const at = params.effort ? ` @${params.effort}` : "";
+  return (
+    `🧭 THALAMUS: bias ${params.biasIdx}/${THALAMUS_BIAS_GAP.length - 1} · domain ${params.domain}` +
+    ` → ${formatProviderModelRef(params.provider, params.model)}${at} — ${params.reason}`
+  );
+}
+
 type ModelSelectionState = {
   provider: string;
   model: string;
@@ -86,6 +185,10 @@ type ModelSelectionState = {
   /** Present only when the quota ladder substituted this turn's primary.
    *  `quotaSubstitution.notice` MUST reach the user on every such turn. */
   quotaSubstitution?: QuotaAwareAutoSubstitution;
+  /** Present when THALAMUS chose this turn's (model, effort) rung from the BIAS
+   *  dial and the task domain. `thalamusRoute.effort` is the effort the turn
+   *  SHOULD run at — see the rung argument in get-reply-directives.ts. */
+  thalamusRoute?: ThalamusAutoRoute;
 };
 
 export function createFastTestModelSelectionState(params: {
@@ -144,6 +247,10 @@ export async function createModelSelectionState(params: {
   /** True when heartbeat.model was explicitly resolved for this run.
    *  In that case, skip session-stored overrides so the heartbeat selection wins. */
   hasResolvedHeartbeatModelOverride?: boolean;
+  /** The user's message for THIS turn, used ONLY to classify the task domain
+   *  (`classifyTaskDomain`). Omitted => domain "general", i.e. the plain bias
+   *  pick with no expertise switch. Never logged, never persisted. */
+  promptText?: string;
 }): Promise<ModelSelectionState> {
   const timingEnabled = shouldLogModelSelectionTiming();
   const startMs = timingEnabled ? Date.now() : 0;
@@ -357,6 +464,192 @@ export async function createModelSelectionState(params: {
     }
   }
 
+  // ── THALAMUS: the BIAS dial and the task domain choose the rung ─────────────
+  //
+  // FORK 2026-09-02 (the architect): "make sure … Thalamus actually automatically switches
+  // among them smartly, following the BIAS selected in the slider … and routes
+  // intelligently depending on the task at hand, following the Fugu family of
+  // harnesses approach." Until this block the dial wrote ~/.openclaw/orca-bias.json
+  // for the ORCA Conductor and NOTHING on the reply path read it, so Auto moved only
+  // when a provider's window was spent: the slider was a control with no effect on
+  // the turn the architect was typing.
+  //
+  // PRECEDENCE IS THE SAME LINE THE QUOTA BLOCK DRAWS, which is why this lives
+  // INSIDE the same `!hasExplicitModelSelection` guard rather than after it. An
+  // inline `!model`, a session/parent pin or a resolved heartbeat.model is an
+  // explicit choice and hard-stops the router — the same separation from the silent
+  // substitution 317825d0f7a removed. `OPENCLAW_THALAMUS_ROUTING=off` is the kill
+  // switch. An agent model allowlist is a hard boundary TWICE: it goes IN to
+  // `thalamusCandidates` so the frontier is built only from reachable rungs, and the
+  // routed key is re-checked after normalization.
+  //
+  // IT RUNS AFTER THE QUOTA SUBSTITUTION, DELIBERATELY. `thalamusCandidates` applies
+  // `providerQuotaExhaustion` — the very predicate the quota ladder uses, imported
+  // rather than re-derived — so a spent provider is already absent from the rungs.
+  // Running second therefore means thalamus may SUPERSEDE a quota substitution, but
+  // can never route back INTO an exhausted provider. Nothing is persisted, for the
+  // quota block's reason: a written override would be indistinguishable from a user
+  // pin next turn, and would outlive the dial position that produced it.
+  //
+  // AN UNPRICED MODEL IS SKIPPED, NEVER DEFAULTED. `relCostLookup` returns undefined
+  // on a table miss where `relCostFor` would answer DEFAULT_REL_COST (2.58); a rung
+  // placed at an invented price would be ranked, could win the pick, and could
+  // cost-veto a genuinely cheaper model on a number nobody published. A rung with no
+  // cost cannot be placed on the plane at all, so it is dropped.
+  //
+  // KEYS ARE NORMALIZED BEFORE THE CATALOG IS BUILT. `allowedModelKeys` is produced
+  // by parsing this very `agents.defaults.models` map through `parseModelRef`, so a
+  // catalog keyed by the RAW config strings would read as `not-routable` for every
+  // entry whose provider or model id normalizes — and the router would be silently
+  // inert, with no error and no log. Normalizing here keeps both sides in one space.
+  //
+  // THE IMPORT IS DYNAMIC for two reasons, and the second one is the load-bearing
+  // one: (1) a turn whose catalog publishes no `intelligenceIndex` should not pay to
+  // load the module at all, and (2) `thalamus-candidates.ts` re-exports
+  // `COST_CEILING_MULTIPLIER` from `agents/quota-aware-auto-model.js`, which several
+  // reply tests replace with a PARTIAL `vi.mock` factory; a static import would
+  // evaluate that re-export in every one of them and break files this change does
+  // not own. The `priced` guard means those fixtures never reach the import.
+  let thalamusRoute: ThalamusAutoRoute | undefined;
+  if (!hasExplicitModelSelection && process.env.OPENCLAW_THALAMUS_ROUTING !== "off") {
+    const configuredModels = cfg.agents?.defaults?.models ?? {};
+    const thalamusCatalog: Record<string, { intelligenceIndex: number }> = {};
+    for (const [rawKey, entry] of Object.entries(configuredModels)) {
+      const index = entry?.intelligenceIndex;
+      if (typeof index !== "number" || !Number.isFinite(index)) {
+        continue;
+      }
+      const slash = rawKey.indexOf("/");
+      if (slash <= 0 || slash === rawKey.length - 1) {
+        continue;
+      }
+      const ref = normalizeModelRef(rawKey.slice(0, slash), rawKey.slice(slash + 1));
+      thalamusCatalog[modelKey(ref.provider, ref.model)] = { intelligenceIndex: index };
+    }
+    if (Object.keys(thalamusCatalog).length > 0) {
+      try {
+        const { thalamusCandidates } = await import("../../shared/thalamus-candidates.js");
+        const reachable = thalamusCandidates({
+          catalog: thalamusCatalog,
+          // `?? undefined`: the store returns `| null`, the module's param is
+          // `| undefined`. Both mean "no quota data", read as UNKNOWN, never headroom.
+          snapshot: getUsageSnapshot() ?? undefined,
+          nowMs: Date.now(),
+          // The key already carries "provider/model", which is exactly what
+          // `relCostKey` wants, so it goes straight through.
+          relCostFor: (key) => relCostLookup(key),
+          allowedModelKeys: allowedModelKeys.size > 0 ? allowedModelKeys : undefined,
+        });
+        const rungs = reachable.considered.flatMap((candidate) =>
+          candidate.relCost === undefined
+            ? []
+            : frontierRungsFor(candidate.key, candidate.intelligenceIndex, candidate.relCost),
+        );
+        const domain = classifyTaskDomain(params.promptText ?? "");
+        const nowMs = Date.now();
+        // SUPPLIES — the inventory, not the provider list. Absent from `windows` is UNKNOWN,
+        // never headroom; `supplyStates` keeps that distinction and prices only what it can see.
+        const supplies = supplyStates(getUsageSnapshot()?.windows, nowMs);
+        // CONTEXT WINDOWS come from the live catalog, never from a table in this tree: the
+        // catalog is the only copy that moves when a vendor raises a limit. A model the catalog
+        // does not describe is UNKNOWN and passes the capacity veto (see `fitsContext`).
+        const ctxByKey = new Map<string, number>();
+        for (const entry of allowedModelCatalog) {
+          if (typeof entry.contextWindow === "number" && entry.contextWindow > 0) {
+            ctxByKey.set(modelKey(entry.provider, entry.id), entry.contextWindow);
+          }
+        }
+        const plan = thalamusPlan({
+          rungs,
+          supplies,
+          biasIdx: readOrcaBias(),
+          domain,
+          promptText: params.promptText,
+          contextWindowFor: (key) => ctxByKey.get(key),
+          // OPENROUTER IS UNFUNDED BY POLICY (the architect, 2026-09-03: "I will keep openrouter
+          // without credits unless necessary because we are making too many mistakes trying to
+          // route to it, and it is way too expensive for regular use"). It is METERED, so it
+          // can never win on the burn term either — this flag only makes the standing decision
+          // explicit and reversible with one env var rather than a code edit.
+          unfunded:
+            process.env.OPENCLAW_THALAMUS_ALLOW_OPENROUTER === "on"
+              ? undefined
+              : (new Set<SupplyId>(["openrouter"]) as ReadonlySet<SupplyId>),
+          nowMs,
+        });
+        const route = plan?.route;
+        logStage(
+          "thalamus-considered",
+          `catalog=${Object.keys(thalamusCatalog).length} reachable=${reachable.considered.length} rungs=${rungs.length} domain=${domain}` +
+            ` supplies=${[...supplies.values()].map((x) => `${x.id}:${Math.round((x.binding?.used ?? 0) * 100)}%${x.spent ? "!" : ""}${x.ballistic ? "*" : ""}`).join(",")}` +
+            ` vetoed=${plan?.vetoes.length ?? 0} chain=${plan?.chain.length ?? 0} mode=${plan?.mode ?? "-"}`,
+        );
+        const routedKey = route?.rung.key ?? "";
+        const slash = routedKey.indexOf("/");
+        if (route && slash > 0 && slash < routedKey.length - 1) {
+          const normalized = normalizeModelRef(
+            routedKey.slice(0, slash),
+            routedKey.slice(slash + 1),
+          );
+          const routeKey = modelKey(normalized.provider, normalized.model);
+          // An agent model allowlist is a hard boundary: Auto never routes outside it.
+          if (allowedModelKeys.size === 0 || allowedModelKeys.has(routeKey)) {
+            const movesModel = normalized.provider !== provider || normalized.model !== model;
+            // A route that keeps the model but names an EFFORT is still a decision —
+            // the rung, not the model, is what was picked off the frontier.
+            // A PLAN IS A DECISION EVEN WHEN IT KEEPS THE MODEL. The old guard published a
+            // route only when the model or the effort moved, which meant a turn that stayed on
+            // Opus carried NO recovery chain — precisely the turn that stalls on a 429. The
+            // chain is published whenever there is one.
+            if (movesModel || route.rung.effort || (plan && plan.chain.length > 0)) {
+              thalamusRoute = {
+                provider: normalized.provider,
+                model: normalized.model,
+                effort: route.rung.effort,
+                domain: route.domain,
+                smart: route.rung.smart,
+                cost: route.rung.cost,
+                biasIdx: route.biasIdx,
+                reason: plan?.reason ?? route.reason,
+                notice: formatThalamusRouteNotice({
+                  biasIdx: route.biasIdx,
+                  domain: route.domain,
+                  provider: normalized.provider,
+                  model: normalized.model,
+                  effort: route.rung.effort,
+                  reason: plan?.reason ?? route.reason,
+                }),
+                chain: (plan?.chain ?? []).map((r) => r.key),
+                mode: plan?.mode ?? "solo",
+                panel: plan?.panel ?? [],
+                chair: plan?.chair,
+                ballistic: plan?.ballistic ?? false,
+                reservedReason: plan?.reservedReason,
+                vetoes: plan?.vetoes ?? [],
+                supplies: plan?.supplies ?? [],
+              };
+              provider = normalized.provider;
+              model = normalized.model;
+              logStage(
+                "thalamus-routed",
+                `to=${routeKey} effort=${route.rung.effort || "(none)"} bias=${route.biasIdx} domain=${route.domain}`,
+              );
+            }
+          } else {
+            // Not silent: an allowlist that excludes every rung is indistinguishable
+            // from a broken router unless it says so.
+            logStage("thalamus-blocked-by-allowlist", `key=${routeKey}`);
+          }
+        }
+      } catch (err) {
+        // ROUTING IS AN OPTIMISATION, NEVER A GATE. The turn already has a valid Auto
+        // selection before this block runs; a failure here must lose the improvement,
+        // not the reply.
+        logStage("thalamus-skipped", `error=${String((err as Error)?.message ?? err)}`);
+      }
+    }
+  }
+
   let thinkingCatalog: ModelCatalog | undefined;
   const resolveThinkingCatalog = async () => {
     if (thinkingCatalog) {
@@ -434,6 +727,7 @@ export async function createModelSelectionState(params: {
     resolveDefaultReasoningLevel,
     needsModelCatalog,
     quotaSubstitution,
+    thalamusRoute,
   };
 }
 

@@ -295,3 +295,7 @@ dist.bak-*/
 dist-runtime.bak-*/
 dist.prev-*/
 dist.broken-*/
+
+# Personal communication profile: family names, work email/phone, contacts.
+# Lives on disk, never in the repo — it feeds the public fork.
+.agents/email-communication-profile.yaml

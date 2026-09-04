@@ -9,6 +9,7 @@ import {
   effortLine,
   explainBurn,
   fanOutLine,
+  frontierLine,
   jobLabel,
   modelLine,
   renderRoutingRationale,
@@ -336,6 +337,44 @@ describe("renderRoutingRationale", () => {
     const html = renderRoutingRationale({ ...base, effortPinned: true, effortLabel: "high" });
     expect(words(html)).toContain("Fixed to Opus 5.");
     expect(words(html)).toContain("Fixed at high.");
+  });
+});
+
+describe("frontier line — what THALAMUS would route to at this bias (2026-09-03)", () => {
+  const pick = {
+    model: "Opus 5",
+    effort: "medium",
+    smart: 58.6355,
+    cost: 0.14876,
+    frontierSize: 8,
+  };
+
+  it("renders the pick, its effort, index, €/task and the frontier size", () => {
+    const html = frontierLine({ ...base, frontierPick: pick });
+    expect(html).toBe(
+      '<div class="routing-why-frontier">THALAMUS would route → <b>Opus 5</b> @medium' +
+        " · idx 58.6 · €0.149/task (frontier of 8 rungs)</div>",
+    );
+  });
+
+  it("omits the effort for a ladderless model, and renders nothing without a pick", () => {
+    expect(frontierLine({ ...base, frontierPick: { ...pick, effort: "" } })).toContain(
+      "<b>Opus 5</b> · idx",
+    );
+    expect(frontierLine(base)).toBe("");
+    expect(renderRoutingRationale(base)).not.toContain("would route");
+  });
+
+  it("sits under the dial and above the three rows, and is not a fourth row", () => {
+    const html = renderRoutingRationale({ ...base, biasIdx: 2, frontierPick: pick });
+    expect((html.match(/routing-why-row/g) || []).length).toBe(3);
+    expect(html.indexOf("orca-bias-slider")).toBeLessThan(html.indexOf("routing-why-frontier"));
+    expect(html.indexOf("routing-why-frontier")).toBeLessThan(html.indexOf("routing-why-row"));
+  });
+
+  it("escapes the model label", () => {
+    const html = frontierLine({ ...base, frontierPick: { ...pick, model: "<b>x" } });
+    expect(html).toContain("&lt;b&gt;x");
   });
 });
 

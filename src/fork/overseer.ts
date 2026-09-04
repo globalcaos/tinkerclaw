@@ -2,7 +2,7 @@
  * FORK 2026-05-31: THE OVERSEER — a supervisory critic persona that closes a
  * nudge-loop around Jarvis on complex tasks.
  *
- * Shape (per Oscar's spec):
+ * Shape (per the architect's spec):
  *   - Triggered by the `overseer` recipe on complex tasks (sets the session active).
  *   - After each Jarvis turn completes, the Overseer — a DISTINCT persona, not Jarvis —
  *     is given the chat window + its task and asked whether the ORIGINAL prompt is fully
@@ -166,6 +166,32 @@ export function buildOverseerContext(
   return `THE TASK (the user's original request Jarvis must fully complete):\n${task}\n\n--- FULL CONVERSATION SO FAR ---\n${transcript}\n--- END CONVERSATION ---\n\nIs THE TASK fully and correctly complete? If YES, output nothing (silence ends the loop). If NO, output a concrete completion directive for Jarvis: enumerate every remaining gap and the specific next actions that finish it — not a generic "keep going".`;
 }
 
+/**
+ * Linux refuses any SINGLE argv element over MAX_ARG_STRLEN (32 pages =
+ * 131072 bytes). The Overseer used to concatenate persona + the full
+ * transcript into `fork.subagents.spawn`'s `task`, which the tinker-bridge
+ * then put on the `claude` argv as `--append-system-prompt`. Past ~128 KB
+ * that exec dies with `spawn E2BIG` — classified as a generic provider
+ * error, retried forever because spawn-error did not consume the loop budget.
+ *
+ * The spawn TASK must therefore stay small. The briefing (task + transcript)
+ * lives in a file; this string just points at it. Keep it well under the cap
+ * even with the persona prepended.
+ */
+export function overseerSpawnTask(persona: string, briefingPath: string): string {
+  return `${persona}
+
+THE BRIEFING (THE TASK + the FULL conversation) is on disk at:
+${briefingPath}
+
+Read that file in full before judging. It is the source of truth — do not guess from this message. Then answer as specified above: silence if done, a concrete completion directive if not.`;
+}
+
+export function isOverseerSpawnE2Big(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\be2big\b/i.test(msg);
+}
+
 export interface OverseerDeps {
   /** Spawn the Overseer persona with the given context; resolve its raw text output.
    *  Real impl: subagent spawn with childSystemPrompt = OVERSEER_PERSONA. */
@@ -226,8 +252,23 @@ export async function maybeRunOverseer(
   try {
     output = await deps.spawnOverseer(context);
   } catch (err) {
+    // Consume budget on a failed spawn. The old path left `iteration` untouched,
+    // so a permanently-failing spawn (E2BIG, scope denial) retried forever while
+    // appearing to run. E2BIG is non-retryable — same payload, same death — so
+    // the loop ends immediately rather than burning the remaining budget.
+    s.iteration += 1;
+    const e2big = isOverseerSpawnE2Big(err);
+    if (e2big || s.iteration >= bound) {
+      deactivateOverseer(sessionKey);
+    }
     deps.log?.(`[overseer] spawn failed: ${err instanceof Error ? err.message : String(err)}`);
-    return { ran: true, done: false, nudged: false, iteration: s.iteration, reason: "spawn-error" };
+    return {
+      ran: true,
+      done: false,
+      nudged: false,
+      iteration: s.iteration,
+      reason: e2big ? "spawn-e2big" : "spawn-error",
+    };
   }
 
   const verdict = parseOverseerVerdict(output);

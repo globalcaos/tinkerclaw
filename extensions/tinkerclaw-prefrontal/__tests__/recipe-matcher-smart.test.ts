@@ -287,6 +287,91 @@ describe("loadRecipeIndex — extraDirs (bridged-skills) scan", () => {
   });
 });
 
+// FORK 2026-09-02: two blind spots found while auditing the coding recipes.
+// (1) The recipe/1.0 playbooks under `recipes/<category>/<name>.md` declare their
+//     matchable phrases as `triggers:` (kit/1.0 uses `tags:`). The scanner only read
+//     `tags`, so `feature` / `debug` / `refactor` were scored on title+summary alone
+//     and every coding prompt matched at confidence "low" — "build me a feature that
+//     adds a login button" scored 4 against a library of 57.
+// (2) The scanner stopped one level below a category folder, so the 17 recipes in a
+//     subdivision folder (`writing/papers/*.md`, `operations/infra/*.md`, …) were
+//     listed by prefrontal.recipe.list but invisible to the matcher: list said 83,
+//     the matcher said 57.
+describe("loadRecipeIndex — triggers: are scored and subdivision folders are indexed", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-triggers-"));
+    // recipe/1.0 playbook: `id:` + `triggers:`, no `slug:`/`tags:`
+    const featureMd = `---\nschema: recipe/1.0\nid: feature\ntitle: Build Feature\nsummary: Explore codebase, design approach, implement with tests, verify\ntriggers: [add, create, build, implement, "new feature", "make it"]\n---\n### 1. Explore\nbody\n`;
+    // kit/1.0 kit in a two-level subdivision folder
+    const paperMd = `---\nschema: "kit/1.0"\nslug: "write-paper"\ntitle: "Write a paper"\nsummary: "outline research draft review polish"\ntags: ["paper", "write-up", "article"]\n---\n### 1. Outline\nbody\n`;
+    await fs.mkdir(path.join(dir, "coding"), { recursive: true });
+    await fs.writeFile(path.join(dir, "coding", "feature.md"), featureMd);
+    await fs.mkdir(path.join(dir, "writing", "papers"), { recursive: true });
+    await fs.writeFile(path.join(dir, "writing", "papers", "write-paper.md"), paperMd);
+    invalidateRecipeIndexCache();
+  });
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+    invalidateRecipeIndexCache();
+  });
+
+  it("folds a recipe/1.0 `triggers:` list into the scored tags", async () => {
+    const index = await loadRecipeIndex(dir);
+    const feature = index.find((e) => e.slug === "feature");
+    expect(feature).toBeTruthy();
+    expect(feature!.tags).toEqual(expect.arrayContaining(["build", "implement", "new feature"]));
+  });
+
+  it("a triggers-only playbook wins a prompt made of its trigger words", async () => {
+    invalidateRecipeIndexCache();
+    const index = await loadRecipeIndex(dir);
+    const { matches } = matchRecipesDetailed(
+      "build me a new feature that adds a login button",
+      index,
+    );
+    expect(matches[0]?.entry.slug).toBe("feature");
+    // Scored on the trigger tokens, not just the title: strictly more than title-only.
+    const titleOnly = { ...index.find((e) => e.slug === "feature")!, tags: [] };
+    const tokens = new Set(
+      "build me a new feature that adds a login button".toLowerCase().split(/\s+/),
+    );
+    expect(matches[0].score).toBeGreaterThan(
+      scoreRecipe("build me a new feature that adds a login button", tokens, titleOnly),
+    );
+  });
+
+  it("indexes a kit two levels below the library root (category/subdivision/name.md)", async () => {
+    invalidateRecipeIndexCache();
+    const index = await loadRecipeIndex(dir);
+    const paper = index.find((e) => e.slug === "write-paper");
+    expect(paper).toBeTruthy();
+    expect(paper!.path).toBe(path.join(dir, "writing", "papers", "write-paper.md"));
+  });
+
+  // (3) The index cache was keyed on the ROOT dir's mtime. Overwriting a file
+  //     inside `coding/` never touches the root's mtime, so the live gateway kept
+  //     scoring the OLD text of a rewritten recipe until someone `touch`ed the
+  //     library root — observed 2026-09-02: `feature` scored 4/"low" after the
+  //     rewrite and 20/"high" the moment the root was touched.
+  it("re-reads a recipe rewritten inside a category folder without the root mtime changing", async () => {
+    invalidateRecipeIndexCache();
+    const before = await loadRecipeIndex(dir);
+    expect(before.find((e) => e.slug === "feature")!.tags).not.toContain("login button");
+    const rootBefore = (await fs.stat(dir)).mtimeMs;
+    // Overwrite IN PLACE: the file already exists, so the root dir's mtime does
+    // not move (only entry create/delete/rename touches a directory's mtime).
+    const rewritten = `---\nschema: recipe/1.0\nid: feature\ntitle: Build Feature\nsummary: rewritten\ntriggers: [build, "login button"]\n---\n### 1. Explore\nbody\n`;
+    await fs.writeFile(path.join(dir, "coding", "feature.md"), rewritten);
+    // Make the in-place write observable even on coarse filesystem timestamps.
+    const future = new Date(Date.now() + 5000);
+    await fs.utimes(path.join(dir, "coding", "feature.md"), future, future);
+    expect((await fs.stat(dir)).mtimeMs).toBe(rootBefore); // the test's premise
+    const after = await loadRecipeIndex(dir);
+    expect(after.find((e) => e.slug === "feature")!.tags).toContain("login button");
+  });
+});
+
 // U1 + U12 PRODUCER WIRING: the turn-start seed (seedPlanFromPrompt) must thread
 // the injected feedback + rating lookups into matchRecipesDetailed. Before this wiring
 // the deps existed but seedPlanFromPrompt called the matcher WITHOUT them, so the

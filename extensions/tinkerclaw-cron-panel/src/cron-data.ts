@@ -46,6 +46,7 @@ export type CronJobEntry = {
   /** Path to the markdown that defines the job — hover/open-card destination. */
   briefPath?: string;
   enabled: boolean;
+  modelOverride?: string;
   schedule: { kind?: string; expr?: string; tz?: string };
 };
 
@@ -100,7 +101,7 @@ export function readJobs(cfg: CronPanelResolvedConfig): CronJobEntry[] {
     if (!j || typeof j.id !== "string") continue;
     const payload =
       j.payload && typeof j.payload === "object"
-        ? (j.payload as { text?: unknown; message?: unknown })
+        ? (j.payload as { text?: unknown; message?: unknown; model?: unknown })
         : undefined;
     const payloadText =
       typeof payload?.text === "string"
@@ -117,6 +118,10 @@ export function readJobs(cfg: CronPanelResolvedConfig): CronJobEntry[] {
         `~/.openclaw/cron-payloads/${j.id}.md`,
       ]),
       enabled: j.enabled !== false,
+      modelOverride:
+        typeof payload?.model === "string" && payload.model.trim()
+          ? payload.model.trim()
+          : undefined,
       schedule:
         typeof j.schedule === "object" && j.schedule
           ? (j.schedule as CronJobEntry["schedule"])
@@ -237,6 +242,8 @@ export type CronPanelJobRow = {
   description?: string;
   briefPath?: string;
   enabled: boolean;
+  /** Per-job payload.model override; absent jobs inherit the fleet/default model. */
+  modelOverride?: string;
   schedule: { expr?: string; tz?: string };
   scheduleHuman: string;
   state: CronJobState;
@@ -270,6 +277,7 @@ export function listJobsJoined(cfg: CronPanelResolvedConfig): CronPanelJobRow[] 
       description: job.description,
       briefPath: job.briefPath,
       enabled: job.enabled,
+      modelOverride: job.modelOverride,
       schedule: { expr: job.schedule.expr, tz: job.schedule.tz },
       scheduleHuman: humanizeCronExpr(job.schedule.expr, job.schedule.tz),
       state: states[job.id] ?? {},

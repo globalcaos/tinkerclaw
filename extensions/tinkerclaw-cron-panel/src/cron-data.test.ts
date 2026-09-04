@@ -1,5 +1,13 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { extractBriefPath, parseReport } from "./cron-data.js";
+import {
+  extractBriefPath,
+  listJobsJoined,
+  parseReport,
+  type CronPanelResolvedConfig,
+} from "./cron-data.js";
 
 describe("extractBriefPath", () => {
   it("picks the cron-payloads file over the report contract", () => {
@@ -47,5 +55,52 @@ describe("parseReport keeps a title-plus-body bullet", () => {
       "CHANGED: Alex has a new job\nHe started at Ficosa. Evenings will be busier.",
       "FLAG: The card on file expires in three days",
     ]);
+  });
+});
+
+describe("listJobsJoined model overrides", () => {
+  it("exposes payload.model as modelOverride and leaves inherited jobs unset", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cron-panel-model-"));
+    const cfg: CronPanelResolvedConfig = {
+      cronDir: root,
+      jobsPath: path.join(root, "jobs.json"),
+      statePath: path.join(root, "jobs-state.json"),
+      reportsDir: path.join(root, "reports"),
+    };
+    try {
+      fs.writeFileSync(
+        cfg.jobsPath,
+        JSON.stringify({
+          jobs: [
+            {
+              id: "overridden",
+              name: "Overridden",
+              enabled: true,
+              payload: {
+                kind: "agentTurn",
+                message: "run",
+                model: "  anthropic/claude-sonnet-4-6  ",
+              },
+              schedule: { kind: "cron", expr: "0 7 * * *" },
+            },
+            {
+              id: "inherited",
+              name: "Inherited",
+              enabled: true,
+              payload: { kind: "agentTurn", message: "run" },
+              schedule: { kind: "cron", expr: "0 8 * * *" },
+            },
+          ],
+        }),
+      );
+
+      const rows = listJobsJoined(cfg);
+      expect(rows.find((row) => row.id === "overridden")?.modelOverride).toBe(
+        "anthropic/claude-sonnet-4-6",
+      );
+      expect(rows.find((row) => row.id === "inherited")?.modelOverride).toBeUndefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

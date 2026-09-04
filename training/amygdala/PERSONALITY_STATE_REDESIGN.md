@@ -13,36 +13,32 @@ re-architecting.
 New (well-posed): a **multi-axis sentiment/state classifier** on the conversation window.
 Input = the real situation/conversation embedding (already populated — same encoder the
 prudence gate uses). Output = the operator's current STATE across several axes. That state
-selects a **behavioural guide** (the nudge). Labels are *generatable* (LLM-score past
+selects a **behavioural guide** (the nudge). Labels are _generatable_ (LLM-score past
 conversation windows per axis), so unlike the old design this can actually be trained.
 
-## The axes (Oscar's + proposed additions)
+## The axes (the architect's + proposed additions)
 
 Each axis is a bounded scale; the net predicts a position on it (regression in [0,1] or
 3-bucket low/mid/high — decide at build, lean 3-bucket for clean per-class P/R).
 
-Oscar's:
+the architect's:
+
 1. **Pace** — in a hurry ↔ calm
 2. **Momentum** — winning (big results from little prompting) ↔ frustrated (recurring bugs)
 3. **Domain** — Serra/paid work ↔ hobbies/personal exploration
 4. **Resourcing** — financially tight ↔ in abundance
 
-Proposed (the "whatever else you can come up with"):
-5. **Cognitive load** — deep focus/flow ↔ scattered/context-switching
-6. **Energy** — fresh ↔ fatigued (proxied by session length, time-of-day, message cadence)
-7. **Certainty** — decisive/confident ↔ uncertain/seeking-validation
-8. **Depth appetite** — wants the quick answer ↔ wants to go down the rabbit hole
-9. **Valence / "vibration"** — high (open, generative, playful) ↔ low (closed, terse, stuck)
+Proposed (the "whatever else you can come up with"): 5. **Cognitive load** — deep focus/flow ↔ scattered/context-switching 6. **Energy** — fresh ↔ fatigued (proxied by session length, time-of-day, message cadence) 7. **Certainty** — decisive/confident ↔ uncertain/seeking-validation 8. **Depth appetite** — wants the quick answer ↔ wants to go down the rabbit hole 9. **Valence / "vibration"** — high (open, generative, playful) ↔ low (closed, terse, stuck)
 
 Axis 9 is the spiritual-science throughline: the premise is that the higher the operator's
-felt-state, the more ideas and synchronicities surface — so detecting and *protecting* a
+felt-state, the more ideas and synchronicities surface — so detecting and _protecting_ a
 high-vibration state is a first-class goal, not a metaphor. The `deep-research` pass on
 flow/affect/high-vibration fills in what behaviour raises vs collapses it.
 
 ## State → guide mechanism
 
 - Each detected state maps to a **behavioural guide** (the nudge text): how the ideal
-  partner behaves for *that* state. Guides are **fixed but mutable** — a lookup table we
+  partner behaves for _that_ state. Guides are **fixed but mutable** — a lookup table we
   can edit as we learn, not learned weights.
 - The guide CONTENT comes from the `deep-research` application step (psychology of
   partner-pairing for productivity; how cops/EMT partners complement under stress; how to
@@ -65,6 +61,7 @@ flow/affect/high-vibration fills in what behaviour raises vs collapses it.
 4. Export ONNX → verify <1e-4 → stage (no auto-restart).
 
 ## Open decisions
+
 - Regression-on-axis vs 3-bucket classification (lean 3-bucket).
 - Which axes survive after research (some may merge — e.g. valence ⊇ momentum).
 - Label budget: how many windows to LLM-label (cost vs signal).

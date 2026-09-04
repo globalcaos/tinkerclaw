@@ -147,3 +147,64 @@ describe("checkActionClaims — must not cry wolf", () => {
     expect(checks).toHaveLength(1);
   });
 });
+
+// FORK 2026-08-15 — the append-verb gap. The 2026-07-27 entry shipped knowing that
+// "I appended to <existing file>" passes a path-only check; on 2026-08-15 exactly that
+// sentence was emitted for a repro that was never filed. These lock the new warning.
+describe("append claims against a pre-existing file", () => {
+  const LOG = "/repo/bug-log.md";
+
+  it("flags an append claim that names no entry key", () => {
+    const checks = checkActionClaims(
+      `${ACTION_MARKER} Filed the defect as a one-line repro in \`${LOG}\`.`,
+      probeOver({ [LOG]: "months of unrelated entries" }),
+    );
+    expect(checks[0].exists).toBe(true);
+    expect(checks[0].unverifiable).toBe(true);
+    expect(claimWarnings(checks)[0]).toContain("verified NOTHING");
+  });
+
+  it("stays quiet once the claim names an entry key the file contains", () => {
+    const checks = checkActionClaims(
+      `${ACTION_MARKER} Filed [append-verb-gap] in \`${LOG}\`.`,
+      probeOver({ [LOG]: "## [append-verb-gap] 2026-08-15 — repro" }),
+    );
+    expect(checks[0].unverifiable).toBe(false);
+    expect(claimWarnings(checks)).toHaveLength(0);
+  });
+
+  it("still reports the missing key rather than the weaker append warning", () => {
+    const checks = checkActionClaims(
+      `${ACTION_MARKER} Appended [not-there] to \`${LOG}\`.`,
+      probeOver({ [LOG]: "unrelated" }),
+    );
+    expect(claimWarnings(checks)[0]).toContain("[not-there]");
+  });
+
+  it("does not flag a CREATE claim — a new path proves itself", () => {
+    const checks = checkActionClaims(
+      `${ACTION_MARKER} wrote \`/repo/new-note.md\`.`,
+      probeOver({ "/repo/new-note.md": "body" }),
+    );
+    expect(checks[0].unverifiable).toBe(false);
+    expect(claimWarnings(checks)).toHaveLength(0);
+  });
+
+  it("does not read a verb out of the path itself (`/a/index.ts` is not 'indexed')", () => {
+    const checks = checkActionClaims(
+      `${ACTION_MARKER} wrote \`/a/one.ts\` and wired it into \`/a/index.ts\`.`,
+      probeOver({ "/a/index.ts": "x" }),
+    );
+    expect(checks.find((c) => c.path === "/a/index.ts")?.unverifiable).toBe(false);
+    expect(claimWarnings(checks)).toHaveLength(1); // only the genuinely missing /a/one.ts
+  });
+
+  it("prefers the hard missing-path warning when the file is absent too", () => {
+    const checks = checkActionClaims(
+      `${ACTION_MARKER} Appended a note to \`${LOG}\`.`,
+      probeOver({}),
+    );
+    expect(checks[0].unverifiable).toBe(false);
+    expect(claimWarnings(checks)[0]).toContain("does not exist");
+  });
+});

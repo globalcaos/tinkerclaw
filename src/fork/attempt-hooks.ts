@@ -666,6 +666,51 @@ export async function emitPrePromptAnatomy(params: {
 }
 
 /**
+ * FORK 2026-08-17 (EEG parallelism): wall-clock START of each run.
+ *
+ * `duration_ms` existed in the anatomy schema from the beginning but NOTHING ever wrote it —
+ * all 38 500 rows were NULL. The EEG's backfill restores a subagent branch as
+ * `[timestampMs, timestampMs + durationMs]`, so a NULL duration produced a ZERO-LENGTH
+ * interval, and eeg-trace's overlap test (`o.startedAt < sEnd && sStart < endOf(o)`) can
+ * never be true for one. Result: a genuinely concurrent fan-out repainted as N sequential
+ * ticks — no depth stack, no lanes, `concurrentAtSpawn` stuck at 0. That is why parallelism
+ * was invisible in the seismograph.
+ *
+ * The start is stamped from `captureForensicDumpHook` because that is the only fork hook
+ * wired on the REQUEST side (immediately before `activeSession.prompt(...)`); `onTurnComplete`
+ * then reads it back. Keeping both ends inside this file means no new injection surface for
+ * `apply-fork-wiring.mjs` to lose on a merge — the failure mode that killed the anatomy feed
+ * for 25 days in 2026-05.
+ */
+const runStartedAtMs = new Map<string, number>();
+const RUN_START_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** First prompt of a run wins: retries and compaction rounds must not reset the turn's start. */
+function markRunStarted(runId: string): void {
+  if (!runId || runStartedAtMs.has(runId)) {
+    return;
+  }
+  const now = Date.now();
+  runStartedAtMs.set(runId, now);
+  // A run that never completes (abort, crash) would otherwise pin its entry forever.
+  if (runStartedAtMs.size > 256) {
+    for (const [id, started] of runStartedAtMs) {
+      if (now - started > RUN_START_TTL_MS) runStartedAtMs.delete(id);
+    }
+  }
+}
+
+/** Consume the recorded start; undefined when the request hook never fired for this run. */
+function takeRunDurationMs(runId: string): number | undefined {
+  const started = runStartedAtMs.get(runId);
+  if (started === undefined) {
+    return undefined;
+  }
+  runStartedAtMs.delete(runId);
+  return Math.max(0, Date.now() - started);
+}
+
+/**
  * FORK 2026-06-04 (Stream C — forensic map permanently empty): standalone
  * pre-prompt forensic-dump capture, wired directly into attempt.ts right
  * before `activeSession.prompt(...)`. The pre-existing `emitPrePromptAnatomy`
@@ -691,6 +736,9 @@ export function captureForensicDumpHook(params: {
   effectivePrompt: string;
   log: { warn: (msg: string) => void };
 }): void {
+  // Stamp the run's start BEFORE the forensic early-return: this hook fires immediately
+  // before the prompt, which is the only place the fork can observe a turn beginning.
+  markRunStarted(params.runId);
   if (!params.sessionKey) {
     return;
   }
@@ -994,6 +1042,14 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         // gateway row had effort=NULL while Claude Code rows had it. Stamped here beside runId,
         // the same way that field is attached after the build.
         (contextAnatomy as unknown as Record<string, unknown>).effort = params.thinkLevel;
+        // FORK 2026-08-17: the row's own `timestampMs` is stamped HERE (turn completion), so
+        // without a duration the EEG has an instant, not an interval — and instants cannot
+        // overlap, which is what made every fan-out repaint as a sequence. `insertAnatomyEvent`
+        // binds this straight into the long-empty `duration_ms` column.
+        const runDurationMs = takeRunDurationMs(params.runId);
+        if (runDurationMs !== undefined) {
+          (contextAnatomy as unknown as Record<string, unknown>).durationMs = runDurationMs;
+        }
         // FORK 2026-07-25 (anatomy-cache-fix): pin an EXPLICIT round number on the
         // anatomy object BEFORE it is inserted. `buildContextAnatomy` is called
         // above WITHOUT `roundNumber`, so the row was written with

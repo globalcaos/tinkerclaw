@@ -18,7 +18,7 @@
  *   - src/fractal-result.ts two-event contract (pending stub / final) + watchdog
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
@@ -347,6 +347,26 @@ export default definePluginEntry({
           );
           for (const w of warnings) {
             log.warn(`[fractal-reflection] ${w} (parent=${parentRunId})`);
+          }
+          // FORK 2026-08-13: the detector above has worked correctly since 2026-07-27 and
+          // changed NOTHING — six more fabricated claims shipped between 08-11 and 08-13
+          // while it dutifully wrote 1,667 journal lines nobody reads. A guard whose only
+          // output is a log sink is indistinguishable from no guard. Persist failures next
+          // to the ledger so they survive the process, are greppable, and can be surfaced
+          // in the dock (the in-chat reflection surface) rather than dying in journalctl.
+          // Still non-fatal and still never blocks a turn.
+          if (warnings.length > 0) {
+            try {
+              appendFileSync(
+                join(stateDir, "claim-failures.log"),
+                warnings
+                  .map((w) => `${new Date().toISOString()}\t${parentRunId}\t${sessionKey}\t${w}\n`)
+                  .join(""),
+                "utf8",
+              );
+            } catch (err) {
+              log.warn(`[fractal-reflection] claim-failure persist failed: ${String(err)}`);
+            }
           }
         }
       } catch (err) {

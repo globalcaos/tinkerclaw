@@ -41,12 +41,17 @@ export type ResolveCronModelSelectionResult =
       error: string;
     };
 
-function formatCronPayloadModelRejection(modelOverride: string, error: string): string {
+function formatCronModelRejection(
+  field: "payload.model" | "defaultModel",
+  modelOverride: string,
+  error: string,
+): string {
+  const source = field === "payload.model" ? "cron payload.model" : "cron.defaultModel";
   if (error.startsWith("model not allowed:")) {
     const modelRef = error.slice("model not allowed:".length).trim();
-    return `cron payload.model '${modelOverride}' rejected by agents.defaults.models allowlist: ${modelRef}`;
+    return `${source} '${modelOverride}' rejected by agents.defaults.models allowlist: ${modelRef}`;
   }
-  return `cron payload.model '${modelOverride}' rejected: ${error}`;
+  return `${source} '${modelOverride}' rejected: ${error}`;
 }
 
 export async function resolveCronModelSelection(
@@ -86,6 +91,31 @@ export async function resolveCronModelSelection(
     }
   }
 
+  let cronDefaultModelApplied = false;
+  const cronDefaultModel = params.cfg.cron?.defaultModel?.trim();
+  if (cronDefaultModel) {
+    const resolvedCronDefault = resolveAllowedModelRef({
+      cfg: params.cfgWithAgentDefaults,
+      catalog: await loadCatalogOnce(),
+      raw: cronDefaultModel,
+      defaultProvider: resolvedDefault.provider,
+      defaultModel: resolvedDefault.model,
+    });
+    if ("error" in resolvedCronDefault) {
+      return {
+        ok: false,
+        error: formatCronModelRejection(
+          "defaultModel",
+          cronDefaultModel,
+          resolvedCronDefault.error,
+        ),
+      };
+    }
+    provider = resolvedCronDefault.ref.provider;
+    model = resolvedCronDefault.ref.model;
+    cronDefaultModelApplied = true;
+  }
+
   let hooksGmailModelApplied = false;
   const hooksGmailModelRef = params.isGmailHook
     ? resolveHooksGmailModel({
@@ -121,14 +151,14 @@ export async function resolveCronModelSelection(
     if ("error" in resolvedOverride) {
       return {
         ok: false,
-        error: formatCronPayloadModelRejection(modelOverride, resolvedOverride.error),
+        error: formatCronModelRejection("payload.model", modelOverride, resolvedOverride.error),
       };
     }
     provider = resolvedOverride.ref.provider;
     model = resolvedOverride.ref.model;
   }
 
-  if (!modelOverride && !hooksGmailModelApplied) {
+  if (!modelOverride && !hooksGmailModelApplied && !cronDefaultModelApplied) {
     const sessionModelOverride = params.sessionEntry.modelOverride?.trim();
     if (sessionModelOverride) {
       const sessionProviderOverride =

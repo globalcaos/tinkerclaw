@@ -166,6 +166,24 @@ changed? Name only axes with real signal. Silence on the rest.
     owner just reported. Name the exact command, say plainly that it is one step and whose call it
     is, and stop there.
 
+    **When the owner says he did not see an answer — and then "try again" — the FIRST
+    tokens of this turn are the answer, not more diagnosis.** _Added 2026-08-28, after two
+    consecutive retries drowned in file reads and never produced a user-visible reply._
+    The previous turn's work is usually already on disk. Lead with it. Diagnosis of the
+    delivery failure belongs in the FRACTAL section, after the answer, never instead of it.
+
+    Auto-detect, without the owner having to name the class:
+    - Symptom: a long thinking/tool loop with no answer bubble, then "I did not see any
+      answer" / "try again" / "done?". Treat as **persisted-or-on-disk, not painted**.
+      Reload-first one-liner, then the answer from the artifact, then the autopsy.
+    - Symptom: a mid-turn warning (gateway restart, provider error) that should be a
+      **centered orange envelope with extra info**, but shows only a collapsed headline
+      or a grey system chip. Class: recoverable `__ERR_ENV__` envelopes used to hide
+      `explanation` behind `<details>` collapse (`openAttr` only when `fatal`). Extra
+      info that tells the user what is happening belongs in the collapsed view; tech
+      kv/raw stays behind the expand. Source fix is in `renderEnvelope` in `app.ts`.
+      Do not rebuild the live bundle unasked (rule 5) — say **written, not running**.
+
 ## The census — one instance is a sample, not an incident
 
 **Added 2026-08-22, because its absence was caught by the owner and not by this prompt.** When a

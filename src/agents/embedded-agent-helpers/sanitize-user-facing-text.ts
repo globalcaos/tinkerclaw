@@ -27,9 +27,9 @@ export function formatBillingErrorMessage(provider?: string, model?: string): st
   const providerLabel =
     providerName && modelName ? `${providerName} (${modelName})` : providerName || undefined;
   if (providerLabel) {
-    return `⚠️ ${providerLabel} returned a billing error — your API key has run out of credits or has an insufficient balance. Check your ${providerName} billing dashboard and top up or switch to a different API key.`;
+    return `⚠️ ${providerLabel} returned a billing error — no remaining credits or an insufficient balance. Check the ${providerName} billing dashboard and top up, renew the plan, or switch credentials.`;
   }
-  return "⚠️ API provider returned a billing error — your API key has run out of credits or has an insufficient balance. Check your provider's billing dashboard and top up or switch to a different API key.";
+  return "⚠️ API provider returned a billing error — no remaining credits or an insufficient balance. Check the provider's billing dashboard and top up, renew the plan, or switch credentials.";
 }
 
 export const BILLING_ERROR_USER_MESSAGE = formatBillingErrorMessage();

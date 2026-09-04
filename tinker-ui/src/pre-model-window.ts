@@ -110,3 +110,50 @@ export function clearPreModelFor(
   }
   return changed;
 }
+
+/**
+ * Does this chat event end the VIEWED tab's pre-model window?
+ *
+ * FORK 2026-09-03 (the architect: "the serraclaw tab is preparing context forever").
+ *
+ * THE THIRD PROOF, WHICH THE VIEWED LANE NEVER HAD. Everything above keys the window by
+ * session and is written for the tab glow. app.ts keeps a SECOND, viewed-only window in
+ * `preparingSince` — the one that paints the "preparing context" pill and anchors the turn
+ * timing block — and that one was closed by only two proofs, both of which require the turn
+ * to get as far as a model: a model-bearing `phase:start`, or the first assistant delta.
+ *
+ * A turn can end before either. An Anthropic HTTP 529 is exactly that shape: the request
+ * never reaches a model, so the only event the tab ever sees is the terminal one carrying
+ * the error. With no terminator on that path `preparingSince` stayed set for the life of the
+ * page — the pill counted up forever and `taskRunning` held the timing block open behind it.
+ * The disconnect, next-send and send-failure clears could not help: the socket was healthy,
+ * and the architect was waiting rather than sending again.
+ *
+ * That is precisely the latch this module's header forbids: a dropped clear must degrade to
+ * "the glow stops early", never to "the glow never stops". This restores the symmetry — the
+ * same three proofs, on both lanes.
+ *
+ * Gated on the session because a BACKGROUND session's turn ending must not blank the window
+ * of a tab whose own prompt was accepted seconds ago; that window is 21-36s on every turn
+ * (turn-latency.md), so ungating it would trade this latch for a blind spot on every send.
+ *
+ * Pure and total: the caller owns the state, this only reads the event.
+ */
+export function terminalClosesPreModelWindow(params: {
+  eventSessionKey: unknown;
+  viewedSessionKey: string | undefined;
+  state: unknown;
+  matches: KeyMatcher;
+}): boolean {
+  const { eventSessionKey, viewedSessionKey, state, matches } = params;
+  if (state !== "final" && state !== "error" && state !== "aborted") {
+    return false;
+  }
+  if (typeof eventSessionKey !== "string" || !eventSessionKey) {
+    return false;
+  }
+  if (typeof viewedSessionKey !== "string" || !viewedSessionKey) {
+    return false;
+  }
+  return matches(eventSessionKey, viewedSessionKey);
+}

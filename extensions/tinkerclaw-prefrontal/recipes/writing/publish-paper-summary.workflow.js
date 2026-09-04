@@ -60,8 +60,12 @@ MAIN image = the most representative figure in \`${BASE}/${folder}/images/*.png\
 Then verify: curl -sI "https://thetinkerzone.com/wp-content/uploads/2026/06/<pdf-basename>" → expect HTTP 200, application/pdf. That URL is the pdfUrl.
 
 == STEP 4 — upload images via REST (PNG works) ==
-  PW=\$(grep '^WP_APP_PASSWORD=' ~/.openclaw/workspace/skills/wordpress-ultimate/.env | cut -d= -f2-)
-  For cover and main-figure: curl -s -u "oserra:\$PW" -H "Content-Disposition: attachment; filename=<paper>-<role>.png" -H "Content-Type: image/png" --data-binary @<file> "https://thetinkerzone.com/wp-json/wp/v2/media" → capture "id" and "source_url" from the JSON.
+  For cover and main-figure: ~/.openclaw/workspace/skills/wordpress-ultimate/scripts/wp-upload.sh <file> "<alt text>" → prints {"id","url",...}; capture "id" and "url".
+  Do NOT hand-roll plain \`curl\` here. thetinkerzone sits behind Cloudflare, which 403s
+  plain curl's TLS/JA3 fingerprint ("Just a moment..."); wp-upload.sh routes through
+  curl_cffi with Chrome impersonation (fixed 2026-09-02) and handles the alt-text call on
+  the same transport. Note images >2560px on the long side are auto-scaled by WP — display
+  the \`-scaled\` file but link the un-suffixed original.
 
 == STEP 5 — compose post HTML (woody palette; do NOT set font-family) ==
 Colors: headings/CTA/strong = #7A3921 ; borders/accents = #B97040 ; box backgrounds = #FDE5D0 ; body text = #404040 ; muted = #8a6a52.

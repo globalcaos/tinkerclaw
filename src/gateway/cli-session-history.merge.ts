@@ -329,9 +329,28 @@ export function mergeImportedChatHistoryMessages(params: {
     });
 
     // --- layer 2: local assistant timestamps for slot-coverage check ---
+    //
+    // FORK 2026-08-23 (B043 — "I saw an answer yesterday and this morning it was gone"):
+    // ONLY a local assistant that actually HAS TEXT may cover an imported one. Coverage means
+    // "the local store already provides this turn"; a content-empty assistant provides nothing,
+    // so letting it match deletes the turn from both sides and renders an empty bubble.
+    //
+    // This filter and `dropImportCoveredLocalAssistants` are symmetric and run in SEQUENCE on the
+    // same data. That one already ignores no-text messages, so an empty placeholder (left behind
+    // by a turn that died before emitting text) SURVIVES it — and then, here, covered the import's
+    // real answer. Net: filter A deleted the local copy as "the import has it", filter B deleted
+    // the imported copy as "the local store has it", and the answer existed in both stores while
+    // appearing in neither response. Observed live on session c4786af3, Sat 2026-08-22 22:27, a
+    // 9,526-char answer present in BOTH the session JSONL and the cc-bridge transcript and absent
+    // from chat.history. The asymmetry was the whole bug; the two filters must agree on what
+    // "covers" means.
     const localAssistantTs: number[] = [];
     for (const msg of params.localMessages) {
       if (resolveComparableRole(msg) === "assistant") {
+        const text = extractComparableText(msg);
+        if (text === undefined || text.trim().length === 0) {
+          continue;
+        }
         const ts = resolveComparableTimestamp(msg);
         if (ts !== undefined) {
           localAssistantTs.push(ts);

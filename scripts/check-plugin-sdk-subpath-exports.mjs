@@ -70,9 +70,8 @@ async function collectViolations() {
   const DISABLED_DIR_RE = /(^|\/)[^/]+\.disabled[^/]*\//;
   const files = (await collectTypeScriptFilesFromRoots(scanRoots, { includeTests: true }))
     .filter((filePath) => !DISABLED_DIR_RE.test(normalizeRepoPath(repoRoot, filePath)))
-    .toSorted(
-      (left, right) =>
-        normalizeRepoPath(repoRoot, left).localeCompare(normalizeRepoPath(repoRoot, right)),
+    .toSorted((left, right) =>
+      normalizeRepoPath(repoRoot, left).localeCompare(normalizeRepoPath(repoRoot, right)),
     );
   const violations = [];
 

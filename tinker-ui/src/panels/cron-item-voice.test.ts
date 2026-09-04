@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  cronCardChrome,
   cronSkimTag,
   parseCronItemText,
   pathToFsLink,
@@ -59,8 +60,8 @@ describe("parseCronItemText", () => {
   });
 
   it("pathToFsLink promotes workspace-relative paths", () => {
-    expect(pathToFsLink("memory/people/xavi.md")).toBe(
-      "`~/.openclaw/workspace/memory/people/xavi.md`",
+    expect(pathToFsLink("memory/people/alex.md")).toBe(
+      "`~/.openclaw/workspace/memory/people/alex.md`",
     );
     expect(pathToFsLink("~/.openclaw/cron-payloads/life-butler.md")).toBe(
       "`~/.openclaw/cron-payloads/life-butler.md`",
@@ -69,5 +70,38 @@ describe("parseCronItemText", () => {
 
   it("stripCronKindPrefix leaves plain prose alone", () => {
     expect(stripCronKindPrefix("just a thought")).toBe("just a thought");
+  });
+});
+
+describe("cronCardChrome", () => {
+  it("puts the registry name on the left and a prompt-skim on the right, never the report headline", () => {
+    expect(
+      cronCardChrome({
+        name: "Memory Consolidation (Sleep Cycle)",
+        description:
+          "Nightly sleep-consolidation pass per J5 paper — ENGRAM + daily-log → knowledge.",
+      }),
+    ).toEqual({
+      name: "Memory Consolidation (Sleep Cycle)",
+      promptSkim: "Nightly sleep-consolidation pass per J5 paper — ENGRAM + daily-log → knowledge.",
+    });
+  });
+
+  it("clips a long prompt description to a first-sentence skim", () => {
+    const chrome = cronCardChrome({
+      name: "Life Butler",
+      description:
+        "19:00 personal-admin assistant. Self-improving scope (butler-scope.md) — calendar, flowers, tradesmen, and a long tail of household errands that must not leak into the briefing.",
+    });
+    expect(chrome.name).toBe("Life Butler");
+    expect(chrome.promptSkim).toBe("19:00 personal-admin assistant.");
+    expect(chrome.promptSkim.length).toBeLessThanOrEqual(80);
+  });
+
+  it("has no skim when the job has no description", () => {
+    expect(cronCardChrome({ name: "Night Digest (main tab)" })).toEqual({
+      name: "Night Digest (main tab)",
+      promptSkim: "",
+    });
   });
 });

@@ -20855,6 +20855,13 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
             description:
               "Limits how many cron jobs can execute at the same time when multiple schedules fire together, including isolated agent-turn LLM execution on the dedicated cron-nested lane. Use lower values to protect CPU/memory under heavy automation load, or raise carefully for higher throughput.",
           },
+          defaultModel: {
+            type: "string",
+            minLength: 1,
+            title: "Cron Default Model",
+            description:
+              "Default model for isolated cron agent turns that do not set payload.model. Use a provider/model id or configured alias from the allowed model catalog; per-job payload.model always wins.",
+          },
           retry: {
             type: "object",
             properties: {
@@ -27629,6 +27636,11 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
       label: "Cron Max Concurrent Runs",
       help: "Limits how many cron jobs can execute at the same time when multiple schedules fire together, including isolated agent-turn LLM execution on the dedicated cron-nested lane. Use lower values to protect CPU/memory under heavy automation load, or raise carefully for higher throughput.",
       tags: ["performance", "automation"],
+    },
+    "cron.defaultModel": {
+      label: "Cron Default Model",
+      help: "Default model for isolated cron agent turns that do not set payload.model. Use a provider/model id or configured alias from the allowed model catalog; per-job payload.model always wins.",
+      tags: ["automation"],
     },
     "cron.retry": {
       label: "Cron Retry Policy",

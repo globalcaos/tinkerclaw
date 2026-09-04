@@ -17,8 +17,10 @@ parallelism:
 lineage:
   composedFrom: "compose"
   sourceQuery: "summarize a document and cite sources"
-  composedSkills: ["dep-71e968be-b506-4a4c-99a8-da15218a801b", "dep-32788471-87cb-4488-baae-2d25d416c91e"]
+  composedSkills:
+    ["dep-71e968be-b506-4a4c-99a8-da15218a801b", "dep-32788471-87cb-4488-baae-2d25d416c91e"]
 ---
+
 # composed: summarize a document and cite sources
 
 > Auto-composed from 2 stdlib skill(s) for: summarize a document and cite sources

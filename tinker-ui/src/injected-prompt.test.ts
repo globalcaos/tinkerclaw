@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { splitInjectedPrompt } from "./injected-prompt.js";
+import {
+  splitInjectedPrompt,
+  recipeNoticeFromInjected,
+  skillNoticeFromTool,
+  skillNoticeFromInjectedBody,
+} from "./injected-prompt.js";
 
 // Fixtures are shortened but structurally faithful to the live transcripts in
 // ~/.openclaw/agents/main/sessions (scanned 2026-08-01 → 08-28).
@@ -122,5 +127,115 @@ describe("splitInjectedPrompt", () => {
     );
     expect(s?.kind).toBe("fractal");
     expect(s?.visible).toBe("point one\n\n---\n\npoint two, still me");
+  });
+});
+
+describe("recipeNoticeFromInjected", () => {
+  it("reads title and path off the persisted active_recipe tag", () => {
+    const n = recipeNoticeFromInjected(
+      '<active_recipe kits="globalcaos/clean-public-push" steps="4" title="Clean public push" path="/home/x/recipes/clean-public-push/recipe.md">plan</active_recipe>',
+    );
+    expect(n).toEqual({
+      title: "Clean public push",
+      path: "/home/x/recipes/clean-public-push/recipe.md",
+    });
+  });
+
+  it("falls back to the slug when title/path were not yet on the tag", () => {
+    const n = recipeNoticeFromInjected(
+      '<active_recipe kits="globalcaos/clean-public-push" steps="4">plan</active_recipe>',
+    );
+    expect(n?.title).toBe("clean-public-push");
+    expect(n?.path).toContain("recipes/clean-public-push/recipe.md");
+  });
+
+  it("returns null when there is no tag", () => {
+    expect(recipeNoticeFromInjected("just a recipe body")).toBeNull();
+  });
+});
+
+describe("skillNoticeFromTool", () => {
+  it("fires on a read of …/skills/<name>/SKILL.md", () => {
+    expect(
+      skillNoticeFromTool("read", {
+        path: "/home/x/.openclaw/workspace/skills/orca/SKILL.md",
+      }),
+    ).toEqual({
+      name: "orca",
+      path: "/home/x/.openclaw/workspace/skills/orca/SKILL.md",
+      source: "read",
+    });
+  });
+
+  it("accepts file_path and a Windows separator", () => {
+    expect(
+      skillNoticeFromTool("Read", {
+        file_path: "C:\\users\\x\\skills\\amazon-shopper\\SKILL.md",
+      }),
+    ).toEqual({
+      name: "amazon-shopper",
+      path: "C:\\users\\x\\skills\\amazon-shopper\\SKILL.md",
+      source: "read",
+    });
+  });
+
+  it("does not fire on a non-skill read, or a non-read tool", () => {
+    expect(skillNoticeFromTool("read", { path: "/tmp/foo.ts" })).toBeNull();
+    expect(
+      skillNoticeFromTool("exec", {
+        command: "cat ~/.openclaw/workspace/skills/orca/SKILL.md",
+      }),
+    ).toBeNull();
+  });
+
+  // FORK 2026-09-02: the harness's own `Skill` tool (input.skill) is the other producer. The
+  // architect's 13:45 note: the mention must carry the icon, be outlined, and click through to
+  // the .md — and the skill body itself must not be painted.
+  it("fires on the Skill tool, resolving the path from the result's base-directory line", () => {
+    const result =
+      "Base directory for this skill: /home/x/.claude/plugins/cache/claude-plugins-official/superpowers/6.3.0/skills/writing-plans\n\n# Writing Plans\n…";
+    expect(skillNoticeFromTool("Skill", { skill: "superpowers:writing-plans" }, result)).toEqual({
+      name: "superpowers:writing-plans",
+      path: "/home/x/.claude/plugins/cache/claude-plugins-official/superpowers/6.3.0/skills/writing-plans/SKILL.md",
+      source: "skill",
+    });
+  });
+
+  it("returns null when the result has no base-directory line — never a guessed path", () => {
+    expect(skillNoticeFromTool("Skill", { skill: "jarvis-skills:orca" })).toBeNull();
+    expect(skillNoticeFromTool("skill", { skill: "orca" }, "Launching skill: orca")).toBeNull();
+  });
+
+  it("folds the injected skill body (user-role turn) into a chip with the exact plugin path", () => {
+    const body =
+      "Base directory for this skill: /home/x/.claude/plugins/cache/claude-plugins-official/superpowers/6.3.0/skills/writing-plans\n\n# Writing Plans\n\n## Overview\n…";
+    expect(skillNoticeFromInjectedBody(body)).toEqual({
+      name: "superpowers:writing-plans",
+      path: "/home/x/.claude/plugins/cache/claude-plugins-official/superpowers/6.3.0/skills/writing-plans/SKILL.md",
+      source: "skill",
+    });
+  });
+
+  it("names a workspace skill by its directory and ignores ordinary prompts", () => {
+    expect(
+      skillNoticeFromInjectedBody(
+        "Base directory for this skill: /home/x/.openclaw/workspace/skills/orca\n# ORCA",
+      ),
+    ).toEqual({
+      name: "orca",
+      path: "/home/x/.openclaw/workspace/skills/orca/SKILL.md",
+      source: "skill",
+    });
+    expect(
+      skillNoticeFromInjectedBody("please read the base directory for this skill later"),
+    ).toBeNull();
+    expect(skillNoticeFromInjectedBody("")).toBeNull();
+  });
+
+  it("a read of SKILL.md reports source read", () => {
+    expect(
+      skillNoticeFromTool("read", { path: "/home/x/.openclaw/workspace/skills/orca/SKILL.md" })
+        ?.source,
+    ).toBe("read");
   });
 });

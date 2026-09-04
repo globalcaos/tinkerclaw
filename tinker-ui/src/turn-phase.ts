@@ -74,7 +74,20 @@ export type TurnPhasePluginTiming = { id: string; ms: number };
 export const TURN_STAGE_STREAM = "turn-stage";
 
 /** One runner stage. Mirrors `src/agents/embedded-agent-runner/run/turn-span.ts`. */
-export type TurnStage = { stage: string; ms: number; sessionKey: string };
+export type TurnStage = {
+  stage: string;
+  ms: number;
+  sessionKey: string;
+  /**
+   * FORK 2026-08-24 — the plugin that owns this stage, when a plugin emitted it.
+   *
+   * Without it every stage was attached to the client-measured "preparing context" bracket,
+   * including the two Total Recall emits — so the largest plugin on the path stayed a single
+   * opaque number ("'Total Recall' is still not itemized") while its own breakdown sat in a
+   * neighbouring row. An owned stage belongs under its owner.
+   */
+  plugin?: string;
+};
 
 /**
  * Parse a `turn-stage` envelope, or null if unusable.
@@ -101,7 +114,10 @@ export function readTurnStageEvent(
   if (typeof rawMs !== "number" || !Number.isFinite(rawMs) || rawMs < 0) {
     return null;
   }
-  return { stage, ms: rawMs, sessionKey };
+  // A gateway that predates the `plugin` tag simply omits it, and the stage then falls back to
+  // the static ownership table in `phase-docs.ts`. Neither path can invent an owner.
+  const plugin = asString((data as { plugin?: unknown }).plugin).trim();
+  return { stage, ms: rawMs, sessionKey, ...(plugin ? { plugin } : {}) };
 }
 
 /** Did this envelope report a FINISHED stage (as opposed to one starting)? */

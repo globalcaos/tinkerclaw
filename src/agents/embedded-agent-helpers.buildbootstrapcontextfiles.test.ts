@@ -59,6 +59,24 @@ describe("buildBootstrapContextFiles", () => {
     const files = [makeFile({ content: "   \n  " })];
     expect(buildBootstrapContextFiles(files)).toEqual([]);
   });
+  it("injects a file whole when the set still fits the total budget", () => {
+    const long = `HEAD-${"a".repeat(18_000)}-TAIL`;
+    const files = [
+      makeFile({ name: "AGENTS.md", content: long }),
+      makeFile({ name: "SOUL.md", path: "/tmp/SOUL.md", content: "soul" }),
+    ];
+    const warnings: string[] = [];
+    const result = buildBootstrapContextFiles(files, {
+      maxChars: 12_000,
+      totalMaxChars: 60_000,
+      warn: (message) => warnings.push(message),
+    });
+    expect(result).toHaveLength(2);
+    expect(result[0]?.content).toBe(long);
+    expect(result[0]?.content).not.toContain("truncated");
+    expect(result[1]?.content).toBe("soul");
+    expect(warnings).toEqual([]);
+  });
   it("truncates large bootstrap content", () => {
     const head = `HEAD-${"a".repeat(600)}`;
     const tail = `${"b".repeat(300)}-TAIL`;
@@ -68,6 +86,7 @@ describe("buildBootstrapContextFiles", () => {
     const maxChars = 200;
     const [result] = buildBootstrapContextFiles(files, {
       maxChars,
+      totalMaxChars: maxChars,
       warn: (message) => warnings.push(message),
     });
     const kept = result?.content.match(/kept (\d+)\+(\d+) chars/);
@@ -97,7 +116,7 @@ describe("buildBootstrapContextFiles", () => {
         content: "a".repeat(maxChars * 2),
       }),
     ];
-    const [result] = buildBootstrapContextFiles(files, { maxChars });
+    const [result] = buildBootstrapContextFiles(files, { maxChars, totalMaxChars: maxChars });
     expect(result?.content).toContain("[...truncated, read HEARTBEAT.md for full content...]");
     expect(result?.content.length).toBeLessThanOrEqual(maxChars);
   });
@@ -111,7 +130,7 @@ describe("buildBootstrapContextFiles", () => {
         content,
       }),
     ];
-    const [result] = buildBootstrapContextFiles(files, { maxChars });
+    const [result] = buildBootstrapContextFiles(files, { maxChars, totalMaxChars: maxChars });
     expect(result?.content.startsWith("HEAD-")).toBe(true);
     expect(result?.content.endsWith("-TAIL")).toBe(true);
     expect(result?.content).toContain("truncated");
@@ -127,7 +146,7 @@ describe("buildBootstrapContextFiles", () => {
         content,
       }),
     ];
-    const [result] = buildBootstrapContextFiles(files, { maxChars });
+    const [result] = buildBootstrapContextFiles(files, { maxChars, totalMaxChars: maxChars });
     expect(result?.content).toContain("truncated");
     expect(result?.content.length).toBeLessThanOrEqual(maxChars);
     expect(result?.content).toContain("H");
@@ -151,7 +170,7 @@ describe("buildBootstrapContextFiles", () => {
 
   it("caps total injected bootstrap characters when totalMaxChars is configured", () => {
     const files = createLargeBootstrapFiles();
-    const result = buildBootstrapContextFiles(files, { totalMaxChars: 24_000 });
+    const result = buildBootstrapContextFiles(files, { maxChars: 12_000, totalMaxChars: 24_000 });
     const totalChars = result.reduce((sum, entry) => sum + entry.content.length, 0);
     expect(totalChars).toBeLessThanOrEqual(24_000);
     expect(result).toHaveLength(3);

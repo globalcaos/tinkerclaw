@@ -56,6 +56,7 @@ import {
   type RecipeSpec,
   type RecipeParamSpec,
 } from "./recipe-author.js";
+import { findRecipeFile } from "./recipe-locate.js";
 import {
   bumpVersion,
   makeRatingLookup,
@@ -995,6 +996,19 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
             break;
           } catch {
             // try next filename / fall through to downloaded
+          }
+        }
+      }
+      if (md === null && slug) {
+        // FORK 2026-09-02: `<own>/<category>/<slug>.md` layouts via the shared
+        // resolver (recipe-locate.ts) — the recipe page 404'd on `feature`,
+        // `debug`, `refactor`, `code-review` while the tab listed them.
+        const located = await findRecipeFile(deps.ownRecipesDir, slug);
+        if (located) {
+          try {
+            md = await fs.readFile(located, "utf-8");
+          } catch {
+            md = null;
           }
         }
       }

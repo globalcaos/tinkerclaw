@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Memory write paths — what survives a crash</title>
-<!--
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Memory write paths — what survives a crash</title>
+    <!--
   BIBLE VISUAL. Owner optic: memory-layout.md.
   The optic is the AUTHORITY; this page explains it and is not a second source of truth.
 
@@ -22,203 +22,426 @@
                                                in onTurnComplete; inert until a producer stashes
   Anything below marked "schematic" is drawn for shape and is NOT a verified line-level claim.
 -->
-<style>
-  :root {
-    color-scheme: light dark;
-    --bg:#fbfaf8; --fg:#1a1a1a; --muted:#6b6b6b; --line:#dcd8d2; --card:#fff;
-    --safe:#2f6f4f; --risk:#b4531f; --dead:#8c2f39; --rule:#c9c4bc;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#16181a; --fg:#e8e6e3; --muted:#9a9a9a; --line:#2e3236; --card:#1d2023;
-            --safe:#6fbf8f; --risk:#e08a4e; --dead:#e0616e; --rule:#3a3f44; }
-  }
-  :root[data-theme="dark"]{--bg:#16181a;--fg:#e8e6e3;--muted:#9a9a9a;--line:#2e3236;--card:#1d2023;
-    --safe:#6fbf8f;--risk:#e08a4e;--dead:#e0616e;--rule:#3a3f44;}
-  :root[data-theme="light"]{--bg:#fbfaf8;--fg:#1a1a1a;--muted:#6b6b6b;--line:#dcd8d2;--card:#fff;
-    --safe:#2f6f4f;--risk:#b4531f;--dead:#8c2f39;--rule:#c9c4bc;}
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfaf8;
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --line: #dcd8d2;
+        --card: #fff;
+        --safe: #2f6f4f;
+        --risk: #b4531f;
+        --dead: #8c2f39;
+        --rule: #c9c4bc;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16181a;
+          --fg: #e8e6e3;
+          --muted: #9a9a9a;
+          --line: #2e3236;
+          --card: #1d2023;
+          --safe: #6fbf8f;
+          --risk: #e08a4e;
+          --dead: #e0616e;
+          --rule: #3a3f44;
+        }
+      }
+      :root[data-theme="dark"] {
+        --bg: #16181a;
+        --fg: #e8e6e3;
+        --muted: #9a9a9a;
+        --line: #2e3236;
+        --card: #1d2023;
+        --safe: #6fbf8f;
+        --risk: #e08a4e;
+        --dead: #e0616e;
+        --rule: #3a3f44;
+      }
+      :root[data-theme="light"] {
+        --bg: #fbfaf8;
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --line: #dcd8d2;
+        --card: #fff;
+        --safe: #2f6f4f;
+        --risk: #b4531f;
+        --dead: #8c2f39;
+        --rule: #c9c4bc;
+      }
 
-  * { box-sizing:border-box; }
-  body { margin:0; padding:2rem 1.25rem 4rem; background:var(--bg); color:var(--fg);
-         font:15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width:960px; margin:0 auto; }
-  h1 { font-size:1.45rem; margin:0 0 .35rem; letter-spacing:-.01em; }
-  h2 { font-size:1rem; margin:2rem 0 .6rem; }
-  .sub { color:var(--muted); margin:0 0 1.4rem; }
-  code,.mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:.87em; }
-  .note { color:var(--muted); font-size:.85rem; }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 2rem 1.25rem 4rem;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.55 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.45rem;
+        margin: 0 0 0.35rem;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 2rem 0 0.6rem;
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 1.4rem;
+      }
+      code,
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.87em;
+      }
+      .note {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
 
-  .panel { border:1px solid var(--line); border-radius:10px; background:var(--card); padding:1rem; }
-  .timeline { position:relative; margin:1.6rem 0 .6rem; padding-top:1.2rem; }
-  .track { position:relative; height:4px; background:var(--rule); border-radius:2px; }
-  .phase { position:absolute; top:-1.2rem; transform:translateX(-50%); font-size:.74rem;
-           color:var(--muted); white-space:nowrap; }
-  .pip { position:absolute; top:-5px; width:14px; height:14px; border-radius:50%;
-         background:var(--card); border:2px solid var(--rule); transform:translateX(-50%); }
-  input[type=range]{ width:100%; margin:1.1rem 0 .2rem; accent-color:var(--dead); }
-  .crashlabel { text-align:center; color:var(--dead); font-weight:600; font-size:.9rem; }
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--card);
+        padding: 1rem;
+      }
+      .timeline {
+        position: relative;
+        margin: 1.6rem 0 0.6rem;
+        padding-top: 1.2rem;
+      }
+      .track {
+        position: relative;
+        height: 4px;
+        background: var(--rule);
+        border-radius: 2px;
+      }
+      .phase {
+        position: absolute;
+        top: -1.2rem;
+        transform: translateX(-50%);
+        font-size: 0.74rem;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+      .pip {
+        position: absolute;
+        top: -5px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--card);
+        border: 2px solid var(--rule);
+        transform: translateX(-50%);
+      }
+      input[type="range"] {
+        width: 100%;
+        margin: 1.1rem 0 0.2rem;
+        accent-color: var(--dead);
+      }
+      .crashlabel {
+        text-align: center;
+        color: var(--dead);
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
 
-  .writes { display:grid; gap:.5rem; margin-top:1.2rem; }
-  .w { border:1px solid var(--line); border-left:3px solid var(--rule); border-radius:8px;
-       padding:.6rem .8rem; background:var(--card); display:grid;
-       grid-template-columns:1fr auto; gap:.2rem .8rem; align-items:center; transition:all .2s; }
-  .w .what { font-weight:600; font-size:.92rem; }
-  .w .where { grid-column:1; color:var(--muted); font-size:.78rem; font-family:ui-monospace,monospace; }
-  .w .verdict { grid-row:1 / span 2; font-size:.8rem; font-weight:600; padding:.25rem .55rem;
-                border-radius:999px; white-space:nowrap; }
-  .w.survived { border-left-color:var(--safe); }
-  .w.survived .verdict { background:color-mix(in srgb, var(--safe) 18%, transparent); color:var(--safe); }
-  .w.lost { border-left-color:var(--risk); opacity:.75; }
-  .w.lost .verdict { background:color-mix(in srgb, var(--risk) 18%, transparent); color:var(--risk); }
-  .w.never { border-left-color:var(--dead); }
-  .w.never .verdict { background:color-mix(in srgb, var(--dead) 18%, transparent); color:var(--dead); }
+      .writes {
+        display: grid;
+        gap: 0.5rem;
+        margin-top: 1.2rem;
+      }
+      .w {
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--rule);
+        border-radius: 8px;
+        padding: 0.6rem 0.8rem;
+        background: var(--card);
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.2rem 0.8rem;
+        align-items: center;
+        transition: all 0.2s;
+      }
+      .w .what {
+        font-weight: 600;
+        font-size: 0.92rem;
+      }
+      .w .where {
+        grid-column: 1;
+        color: var(--muted);
+        font-size: 0.78rem;
+        font-family: ui-monospace, monospace;
+      }
+      .w .verdict {
+        grid-row: 1 / span 2;
+        font-size: 0.8rem;
+        font-weight: 600;
+        padding: 0.25rem 0.55rem;
+        border-radius: 999px;
+        white-space: nowrap;
+      }
+      .w.survived {
+        border-left-color: var(--safe);
+      }
+      .w.survived .verdict {
+        background: color-mix(in srgb, var(--safe) 18%, transparent);
+        color: var(--safe);
+      }
+      .w.lost {
+        border-left-color: var(--risk);
+        opacity: 0.75;
+      }
+      .w.lost .verdict {
+        background: color-mix(in srgb, var(--risk) 18%, transparent);
+        color: var(--risk);
+      }
+      .w.never {
+        border-left-color: var(--dead);
+      }
+      .w.never .verdict {
+        background: color-mix(in srgb, var(--dead) 18%, transparent);
+        color: var(--dead);
+      }
 
-  table { border-collapse:collapse; width:100%; font-size:.86rem; margin-top:.5rem; }
-  th,td { text-align:left; padding:.35rem .5rem; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--muted); font-weight:600; }
-  .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:.8rem; color:var(--muted); margin-top:.8rem; }
-  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:.3rem; }
-</style>
-</head>
-<body>
-<main>
-  <h1>Memory write paths</h1>
-  <p class="sub">Drag the crash marker. The question is not <em>what gets written</em> — it is <em>what is on disk when the process dies here</em>.</p>
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.86rem;
+        margin-top: 0.5rem;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.35rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .legend {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-top: 0.8rem;
+      }
+      .dot {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        margin-right: 0.3rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Memory write paths</h1>
+      <p class="sub">
+        Drag the crash marker. The question is not <em>what gets written</em> — it is
+        <em>what is on disk when the process dies here</em>.
+      </p>
 
-  <div class="panel">
-    <div class="timeline">
-      <div class="track" id="track"></div>
-    </div>
-    <input type="range" id="crash" min="0" max="100" value="55" aria-label="Crash point in the turn" />
-    <div class="crashlabel" id="crashlabel"></div>
+      <div class="panel">
+        <div class="timeline">
+          <div class="track" id="track"></div>
+        </div>
+        <input
+          type="range"
+          id="crash"
+          min="0"
+          max="100"
+          value="55"
+          aria-label="Crash point in the turn"
+        />
+        <div class="crashlabel" id="crashlabel"></div>
 
-    <div class="writes" id="writes"></div>
+        <div class="writes" id="writes"></div>
 
-    <div class="legend">
-      <span><span class="dot" style="background:var(--safe)"></span>on disk</span>
-      <span><span class="dot" style="background:var(--risk)"></span>lost</span>
-      <span><span class="dot" style="background:var(--dead)"></span>never written at all</span>
-    </div>
-  </div>
+        <div class="legend">
+          <span><span class="dot" style="background: var(--safe)"></span>on disk</span>
+          <span><span class="dot" style="background: var(--risk)"></span>lost</span>
+          <span><span class="dot" style="background: var(--dead)"></span>never written at all</span>
+        </div>
+      </div>
 
-  <h2>The asymmetry that matters</h2>
-  <table>
-    <thead><tr><th>Write</th><th>How it is issued</th><th>Consequence</th></tr></thead>
-    <tbody>
-      <tr>
-        <td>ENGRAM event append</td>
-        <td><code>appendFileSync</code> — <code>event-store.ts:106,114</code></td>
-        <td>Returns only once the OS has the bytes. Survives a process crash. <em>Not</em> <code>fsync</code>'d, so a host power-loss can still lose the tail.</td>
-      </tr>
-      <tr>
-        <td>Everything in <code>onTurnComplete</code></td>
-        <td><code>attempt.ts:3540</code> — called <strong>without <code>await</code></strong>, then <code>.catch(err =&gt; log.warn(...))</code></td>
-        <td>Fire-and-forget. If the turn ends and the process exits, this may never run — and if it throws, the only trace is one warning line. Nothing retries it.</td>
-      </tr>
-    </tbody>
-  </table>
-  <p class="note">
-    That single missing <code>await</code> is the difference between the two colours above. It is a
-    deliberate latency trade — the user's reply is not held hostage to a bookkeeping write — but it
-    means the forensic record is <strong>best-effort</strong>, and any reasoning that assumes
-    "the turn finished, therefore the trace exists" is unsound.
-  </p>
+      <h2>The asymmetry that matters</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Write</th>
+            <th>How it is issued</th>
+            <th>Consequence</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>ENGRAM event append</td>
+            <td><code>appendFileSync</code> — <code>event-store.ts:106,114</code></td>
+            <td>
+              Returns only once the OS has the bytes. Survives a process crash. <em>Not</em>
+              <code>fsync</code>'d, so a host power-loss can still lose the tail.
+            </td>
+          </tr>
+          <tr>
+            <td>Everything in <code>onTurnComplete</code></td>
+            <td>
+              <code>attempt.ts:3540</code> — called <strong>without <code>await</code></strong
+              >, then <code>.catch(err =&gt; log.warn(...))</code>
+            </td>
+            <td>
+              Fire-and-forget. If the turn ends and the process exits, this may never run — and if
+              it throws, the only trace is one warning line. Nothing retries it.
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">
+        That single missing <code>await</code> is the difference between the two colours above. It
+        is a deliberate latency trade — the user's reply is not held hostage to a bookkeeping write
+        — but it means the forensic record is <strong>best-effort</strong>, and any reasoning that
+        assumes "the turn finished, therefore the trace exists" is unsound.
+      </p>
 
-  <h2>Writes that are dead rather than deferred</h2>
-  <p class="note">
-    A third category, and the reason this page exists rather than a tidy diagram: some writes never
-    happen at all, while their instrument reports healthily.
-    <code>attempt-hooks.ts:49-51</code> records that <code>emitPrePromptAnatomy</code> also calls
-    <code>insertAnatomyEvent</code> but <strong>has zero callers</strong> — so the
-    <code>eeg:anatomy-write</code> instrument is deliberately bound to the <code>onTurnComplete</code>
-    insert instead. And <code>attempt-hooks.ts:411-429</code> notes the reasoning trace is consumed
-    from a stash that, until a producer calls <code>stashReasoningTrace</code>, is never filled —
-    so the <code>reasoning_tree_state</code> event is inert by data, not by code.
-    See <code>failures.md</code> § "Faults that surface as silence".
-  </p>
-</main>
+      <h2>Writes that are dead rather than deferred</h2>
+      <p class="note">
+        A third category, and the reason this page exists rather than a tidy diagram: some writes
+        never happen at all, while their instrument reports healthily.
+        <code>attempt-hooks.ts:49-51</code> records that <code>emitPrePromptAnatomy</code> also
+        calls <code>insertAnatomyEvent</code> but <strong>has zero callers</strong> — so the
+        <code>eeg:anatomy-write</code> instrument is deliberately bound to the
+        <code>onTurnComplete</code> insert instead. And <code>attempt-hooks.ts:411-429</code> notes
+        the reasoning trace is consumed from a stash that, until a producer calls
+        <code>stashReasoningTrace</code>, is never filled — so the
+        <code>reasoning_tree_state</code> event is inert by data, not by code. See
+        <code>failures.md</code> § "Faults that surface as silence".
+      </p>
+    </main>
 
-<script>
-"use strict";
-// Phases of one turn, positioned 0-100 along the timeline.
-const PHASES = [
-  { at: 4,  name: "prompt built" },
-  { at: 22, name: "user msg ingested" },
-  { at: 48, name: "model streaming" },
-  { at: 70, name: "reply delivered" },
-  { at: 84, name: "turn returns" },
-  { at: 96, name: "onTurnComplete settles" },
-];
+    <script>
+      "use strict";
+      // Phases of one turn, positioned 0-100 along the timeline.
+      const PHASES = [
+        { at: 4, name: "prompt built" },
+        { at: 22, name: "user msg ingested" },
+        { at: 48, name: "model streaming" },
+        { at: 70, name: "reply delivered" },
+        { at: 84, name: "turn returns" },
+        { at: 96, name: "onTurnComplete settles" },
+      ];
 
-// A write is characterised by WHEN it is issued and HOW (sync => durable at that instant;
-// deferred => only durable if the process lives to `settledAt`; dead => never issued).
-const WRITES = [
-  { what: "ENGRAM: user message event",
-    where: "engram/event-store.ts:106 — appendFileSync",
-    issuedAt: 22, kind: "sync" },
-  { what: "ENGRAM: assistant message event",
-    where: "engram/event-store.ts:114 — appendFileSync (llm_output hook)",
-    issuedAt: 78, kind: "sync" },
-  { what: "Reply to the user",
-    where: "server-chat.ts — emitChatFinal broadcast (schematic)",
-    issuedAt: 70, kind: "sync" },
-  { what: "EEG anatomy row",
-    where: "fork/attempt-hooks.ts — insert inside onTurnComplete",
-    issuedAt: 84, settledAt: 96, kind: "deferred" },
-  { what: "Reasoning tree (reasoning_tree_state)",
-    where: "attempt-hooks.ts:411-429 — consumed from a stash nobody fills",
-    issuedAt: 84, settledAt: 96, kind: "dead",
-    deadWhy: "inert by DATA: no producer calls stashReasoningTrace()" },
-  { what: "Pre-prompt anatomy",
-    where: "attempt-hooks.ts:49-51 — emitPrePromptAnatomy has ZERO callers",
-    issuedAt: 4, kind: "dead",
-    deadWhy: "inert by CODE: attempt.ts never wires it" },
-];
+      // A write is characterised by WHEN it is issued and HOW (sync => durable at that instant;
+      // deferred => only durable if the process lives to `settledAt`; dead => never issued).
+      const WRITES = [
+        {
+          what: "ENGRAM: user message event",
+          where: "engram/event-store.ts:106 — appendFileSync",
+          issuedAt: 22,
+          kind: "sync",
+        },
+        {
+          what: "ENGRAM: assistant message event",
+          where: "engram/event-store.ts:114 — appendFileSync (llm_output hook)",
+          issuedAt: 78,
+          kind: "sync",
+        },
+        {
+          what: "Reply to the user",
+          where: "server-chat.ts — emitChatFinal broadcast (schematic)",
+          issuedAt: 70,
+          kind: "sync",
+        },
+        {
+          what: "EEG anatomy row",
+          where: "fork/attempt-hooks.ts — insert inside onTurnComplete",
+          issuedAt: 84,
+          settledAt: 96,
+          kind: "deferred",
+        },
+        {
+          what: "Reasoning tree (reasoning_tree_state)",
+          where: "attempt-hooks.ts:411-429 — consumed from a stash nobody fills",
+          issuedAt: 84,
+          settledAt: 96,
+          kind: "dead",
+          deadWhy: "inert by DATA: no producer calls stashReasoningTrace()",
+        },
+        {
+          what: "Pre-prompt anatomy",
+          where: "attempt-hooks.ts:49-51 — emitPrePromptAnatomy has ZERO callers",
+          issuedAt: 4,
+          kind: "dead",
+          deadWhy: "inert by CODE: attempt.ts never wires it",
+        },
+      ];
 
-const track = document.getElementById("track");
-for (const p of PHASES) {
-  const lab = document.createElement("div");
-  lab.className = "phase"; lab.style.left = p.at + "%"; lab.textContent = p.name;
-  const pip = document.createElement("div");
-  pip.className = "pip"; pip.style.left = p.at + "%";
-  track.append(lab, pip);
-}
+      const track = document.getElementById("track");
+      for (const p of PHASES) {
+        const lab = document.createElement("div");
+        lab.className = "phase";
+        lab.style.left = p.at + "%";
+        lab.textContent = p.name;
+        const pip = document.createElement("div");
+        pip.className = "pip";
+        pip.style.left = p.at + "%";
+        track.append(lab, pip);
+      }
 
-const slider = document.getElementById("crash");
-const label  = document.getElementById("crashlabel");
-const host   = document.getElementById("writes");
+      const slider = document.getElementById("crash");
+      const label = document.getElementById("crashlabel");
+      const host = document.getElementById("writes");
 
-function nearestPhase(v) {
-  return PHASES.reduce((a, b) => (Math.abs(b.at - v) < Math.abs(a.at - v) ? b : a));
-}
+      function nearestPhase(v) {
+        return PHASES.reduce((a, b) => (Math.abs(b.at - v) < Math.abs(a.at - v) ? b : a));
+      }
 
-function render() {
-  const t = Number(slider.value);
-  label.textContent = `process dies at ~${t}% — just after “${nearestPhase(t).name}”`;
-  host.innerHTML = "";
-  for (const w of WRITES) {
-    let cls, verdict;
-    if (w.kind === "dead") {
-      cls = "never"; verdict = "never written";
-    } else if (w.kind === "sync") {
-      const ok = t >= w.issuedAt;
-      cls = ok ? "survived" : "lost";
-      verdict = ok ? "on disk" : "not reached";
-    } else {
-      const ok = t >= (w.settledAt ?? w.issuedAt);
-      cls = ok ? "survived" : "lost";
-      verdict = ok ? "on disk" : (t >= w.issuedAt ? "in flight — lost" : "not reached");
-    }
-    const el = document.createElement("div");
-    el.className = "w " + cls;
-    el.innerHTML =
-      `<div class="what">${w.what}</div>` +
-      `<div class="verdict">${verdict}</div>` +
-      `<div class="where">${w.where}${w.deadWhy ? " — " + w.deadWhy : ""}</div>`;
-    host.appendChild(el);
-  }
-}
-slider.addEventListener("input", render);
-render();
-</script>
-</body>
+      function render() {
+        const t = Number(slider.value);
+        label.textContent = `process dies at ~${t}% — just after “${nearestPhase(t).name}”`;
+        host.innerHTML = "";
+        for (const w of WRITES) {
+          let cls, verdict;
+          if (w.kind === "dead") {
+            cls = "never";
+            verdict = "never written";
+          } else if (w.kind === "sync") {
+            const ok = t >= w.issuedAt;
+            cls = ok ? "survived" : "lost";
+            verdict = ok ? "on disk" : "not reached";
+          } else {
+            const ok = t >= (w.settledAt ?? w.issuedAt);
+            cls = ok ? "survived" : "lost";
+            verdict = ok ? "on disk" : t >= w.issuedAt ? "in flight — lost" : "not reached";
+          }
+          const el = document.createElement("div");
+          el.className = "w " + cls;
+          el.innerHTML =
+            `<div class="what">${w.what}</div>` +
+            `<div class="verdict">${verdict}</div>` +
+            `<div class="where">${w.where}${w.deadWhy ? " — " + w.deadWhy : ""}</div>`;
+          host.appendChild(el);
+        }
+      }
+      slider.addEventListener("input", render);
+      render();
+    </script>
+  </body>
 </html>

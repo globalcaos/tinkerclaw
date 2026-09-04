@@ -2,14 +2,7 @@
 name: exec-display
 description: Structured command execution with security levels, color-coded output, and 4-line max summaries. Enforces transparency and visibility for all shell commands. Use when running any exec/shell commands to ensure consistent, auditable output.
 homepage: https://github.com/openclaw/openclaw/tree/main/skills/exec-display
-metadata:
-  {
-    "openclaw":
-      {
-        "emoji": "🛡️",
-        "requires": { "bins": ["python3"] },
-      },
-  }
+metadata: { "openclaw": { "emoji": "🛡️", "requires": { "bins": ["python3"] } } }
 ---
 
 # Exec Display
@@ -19,12 +12,14 @@ Structured, security-aware command execution with color-coded output.
 ## Why This Skill?
 
 Raw command execution lacks:
+
 - **Visibility**: Output can be verbose or hidden
 - **Classification**: No indication of command risk level
 - **Consistency**: Different commands, different formats
 - **Auditability**: Hard to track what was executed and why
 
 This skill enforces:
+
 - **4-line max output** with summarized results
 - **Security levels** (🟢 SAFE → 🔴 CRITICAL)
 - **Color-coded ANSI output** for terminal visibility
@@ -32,13 +27,13 @@ This skill enforces:
 
 ## Security Levels
 
-| Level | Emoji | Color | Description |
-|-------|-------|-------|-------------|
-| SAFE | 🟢 | Green | Read-only information gathering |
-| LOW | 🔵 | Blue | Project file modifications |
-| MEDIUM | 🟡 | Yellow | Configuration changes |
-| HIGH | 🟠 | Orange | System-level changes |
-| CRITICAL | 🔴 | Red | Potential data loss, requires confirmation |
+| Level    | Emoji | Color  | Description                                |
+| -------- | ----- | ------ | ------------------------------------------ |
+| SAFE     | 🟢    | Green  | Read-only information gathering            |
+| LOW      | 🔵    | Blue   | Project file modifications                 |
+| MEDIUM   | 🟡    | Yellow | Configuration changes                      |
+| HIGH     | 🟠    | Orange | System-level changes                       |
+| CRITICAL | 🔴    | Red    | Potential data loss, requires confirmation |
 
 ## Usage
 
@@ -51,21 +46,25 @@ python3 {baseDir}/scripts/cmd_display.py <level> "<command>" "<purpose>" "$(<com
 ### Examples
 
 **SAFE - Information gathering:**
+
 ```bash
 python3 {baseDir}/scripts/cmd_display.py safe "git status --short" "Check repository state" "$(git status --short)"
 ```
 
 **LOW - File modifications:**
+
 ```bash
 python3 {baseDir}/scripts/cmd_display.py low "touch newfile.txt" "Create placeholder file" "$(touch newfile.txt && echo '✓ Created')"
 ```
 
 **MEDIUM - Config changes:**
+
 ```bash
 python3 {baseDir}/scripts/cmd_display.py medium "npm config set registry https://registry.npmjs.org" "Set npm registry" "$(npm config set registry https://registry.npmjs.org && echo '✓ Registry set')"
 ```
 
 **HIGH - System changes (show for manual execution):**
+
 ```bash
 # HIGH/CRITICAL commands should be shown, not executed
 python3 {baseDir}/scripts/cmd_display.py high "sudo systemctl restart nginx" "Restart web server" "⚠️ Requires manual execution"
@@ -86,6 +85,7 @@ python3 {baseDir}/scripts/cmd_display.py medium "rm -rf node_modules" "Clean dep
 ```
 
 With warning:
+
 ```
 🟡 MEDIUM: CONFIGURATION CHANGES: npm config set registry
 ✓  Registry updated
@@ -107,28 +107,33 @@ With warning:
 ### Classification Guide
 
 **🟢 SAFE** (execute immediately):
+
 - `ls`, `cat`, `head`, `tail`, `grep`, `find`
 - `git status`, `git log`, `git diff`
 - `pwd`, `whoami`, `date`, `env`
 - Any read-only command
 
 **🔵 LOW** (execute, notify):
+
 - `touch`, `mkdir`, `cp`, `mv` (within project)
 - `git add`, `git commit`
 - File edits within project scope
 
 **🟡 MEDIUM** (execute with caution):
+
 - `npm install`, `pip install` (dependencies)
 - Config file modifications
 - `git push`, `git pull`
 
 **🟠 HIGH** (show, ask before executing):
+
 - System service commands
 - Global package installs
 - Network configuration
 - Anything affecting system state
 
 **🔴 CRITICAL** (NEVER execute directly):
+
 - `rm -rf` on important directories
 - `sudo` commands
 - Database drops
@@ -155,6 +160,7 @@ ALL shell commands MUST use the exec-display wrapper:
 ### Colors Reference
 
 The script uses ANSI color codes for terminal output:
+
 - Green (32): Success, SAFE level
 - Blue (34): LOW level
 - Yellow (33): MEDIUM level, warnings

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { EEG_EFFORT_MULT } from "./eeg-trace";
+import { EEG_EFFORT_MULT, eegRelCost } from "./eeg-trace";
 import {
   renderSmartCostChart,
   scClampView,
@@ -10,6 +10,7 @@ import {
   scY,
   scRadius,
   scPointsFor,
+  scEffortsFor,
   scFmtCtx,
   scFmtTokens,
   scBaseTokens,
@@ -87,10 +88,22 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
     expect(pts.map((p) => p.lvl)).not.toContain("minimal");
   });
 
-  it("omits Sonnet 5 low/medium/high/xhigh because AA published those as null", () => {
+  // REVISED 2026-08-30, then again 2026-09-02. A rung AA had not scored was first
+  // DROPPED, then drawn on the dashed cost rail at the headline index. Since 2026-09-02
+  // (the architect: "find other benchmarks … approximate") such a rung carries an ESTIMATE from
+  // other public per-effort benchmark runs fitted to AA's scale, flagged as such. The
+  // guard that matters is unchanged: `measured` is true ONLY for AA's own number, the
+  // measured rung's value never moves, and an estimate is never a measurement.
+  it("plots Sonnet 5's whole ladder, with only max carrying an AA score", () => {
     const pts = scPointsFor(model({ id: "claude-sonnet-5", relCost: 1, index: 55.26 }));
-    expect(pts.map((p) => p.lvl)).toEqual(["max"]);
-    expect(pts[0].smart).toBe(55.2612);
+    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(55.2612);
+    for (const p of pts.filter((x) => !x.measured)) {
+      expect(p.estimate, p.lvl).toBeDefined(); // flagged, with a σ and a basis
+      expect(p.estimate!.sd).toBeGreaterThan(0);
+      expect(p.smart).toBeLessThan(55.2612); // clamped below the measured max
+    }
   });
 
   it("plots Grok 4.6 at AA's four named efforts, not a single flattened dot", () => {
@@ -101,13 +114,14 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
     expect(pts.map((p) => p.smart)).toEqual([51.6796, 59.0064, 60.923, 60.0136]);
   });
 
-  it("plots GLM-5.3 only at max — AA scored max, not low or high", () => {
+  it("scores GLM-5.3 only at max — low and high ride the rail", () => {
     const pts = scPointsFor(model({ id: "glm-5.3", provider: "zai", relCost: 4.4, index: 59.51 }));
-    expect(pts.map((p) => p.lvl)).toEqual(["max"]);
-    expect(pts[0].smart).toBe(59.5134);
+    expect(pts.map((p) => p.lvl)).toEqual(["low", "high", "max"]);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(59.5134);
   });
 
-  it("plots Kimi K3 at low and max — AA has those two, not high", () => {
+  it("scores Kimi K3 at low and max, and rails the unscored high", () => {
     const pts = scPointsFor(
       model({
         id: "openrouter/moonshotai/kimi-k3",
@@ -116,8 +130,16 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
         index: 59.7,
       }),
     );
-    expect(pts.map((p) => p.lvl)).toEqual(["low", "max"]);
-    expect(pts.map((p) => p.smart)).toEqual([48.2515, 59.6995]);
+    expect(pts.map((p) => p.lvl)).toEqual(["low", "high", "max"]);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["low", "max"]);
+    expect(pts.filter((p) => p.measured).map((p) => p.smart)).toEqual([48.2515, 59.6995]);
+    // the unscored middle rung is an ESTIMATE (flagged), clamped between the two
+    // measured neighbours — never a bare copy of the headline
+    const high = pts.find((p) => p.lvl === "high")!;
+    expect(high.estimate).toBeDefined();
+    expect(high.smart).toBeGreaterThanOrEqual(48.2515);
+    expect(high.smart).toBeLessThanOrEqual(59.6995);
+    expect(high.smart).not.toBe(59.7);
   });
 
   it("says UNKNOWN for a catalog-tail model with no vendor page", () => {
@@ -901,23 +923,21 @@ describe("smart-cost chart — API list-price layer", () => {
 // (glm-5-turbo, nex-n2-mini, gemini-3.6-flash). A new model added below its
 // family's generic row is mispriced in a way nothing else detects.
 describe("smart-cost chart — 2026-08-30 arrivals", () => {
-  it("prices Anthropic's metered fast route at ITS price, not Opus 5's list", () => {
-    // /opus/i would hand this $25 while the dot plots at $50 — rendering a 2x
-    // surcharge as a 50% discount, with the triangle drawn LEFT of its circle.
-    expect(scApiPrice("openrouter/anthropic/claude-opus-5-fast")).toBe(50);
-    expect(scApiPrice("claude-code/claude-opus-5")).toBe(25);
-  });
-
-  it("gives the fast route NO triangle — metered, so its circle already IS list", () => {
-    const fast = model({
-      id: "openrouter/anthropic/claude-opus-5-fast",
-      provider: "openrouter",
-      relCost: 50,
-      index: 63.0532,
-    });
-    expect(scApiPointsFor(fast)).toEqual([]);
-    expect(scApiMultiple(fast)).toBeUndefined();
-    expect(renderSmartCostChart([fast])).not.toContain("sc-tri");
+  // FORK 2026-09-02 — two cases lived here and both existed ONLY to pin the
+  // `claude-opus-5-fast` overrides in SC_API_PRICE and SC_CTX_RULES. The architect
+  // banned OpenRouter routes that duplicate a vendor we hold a direct subscription
+  // with; the route left the catalog and the overrides went with it, so the cases are
+  // DELETED rather than re-pointed at a live model. Neither thing they asserted is
+  // now unguarded: Opus 5's $25 sticker is pinned by "prices a subscription model at
+  // its published sticker" and "a metered route draws NO triangle" by the Kimi K3
+  // case, both in the API list-price describe above — and again by Fable 5.1 below.
+  it("keeps no override for a route the architect banned", () => {
+    // The gate that replaces those two cases. Prose saying "we removed the rows"
+    // decays into being ignored; this fails the moment either row comes back, because
+    // a re-added special case would beat the generic row each assertion names.
+    const banned = "openrouter/anthropic/claude-opus-5-fast";
+    expect(scApiPrice(banned)).toBe(25); // generic /opus/i, not a $50 special case
+    expect(scDefaultCtx(banned)).toBe(200_000); // generic /claude/i, not a 1M one
   });
 
   it("puts the whole gpt-5.6 family on ONE pricing basis (short context)", () => {
@@ -929,7 +949,10 @@ describe("smart-cost chart — 2026-08-30 arrivals", () => {
   });
 
   it("uses each arrival's REAL context window — circle area depends on it", () => {
-    expect(scDefaultCtx("openrouter/anthropic/claude-opus-5-fast")).toBe(1_000_000);
+    // FORK 2026-09-02: the `claude-opus-5-fast` line that led this list went with its
+    // route and its SC_CTX_RULES override. The ordering it guarded — a specific 1M row
+    // must beat the generic /claude/i 200k — is still guarded, by Fable 5.1 in the
+    // Claude Fable 5.1 describe further down this file.
     expect(scDefaultCtx("openrouter/meituan/longcat-2.0")).toBe(1_048_756);
     expect(scDefaultCtx("openrouter/nvidia/nemotron-3.5-lightning")).toBe(262_144);
     expect(scDefaultCtx("openrouter/inclusionai/ling-3.0-flash")).toBe(262_144);
@@ -978,9 +1001,15 @@ describe("smart-cost chart — no bubble wears the wrong vendor's mark", () => {
   it("reads the vendor out of the id's middle segment for routed models", () => {
     // the vendor is stated verbatim in the id and was simply never parsed
     expect(dot("openrouter/google/gemini-3.7-flash", "openrouter")).toContain("#4285f4");
-    expect(dot("openrouter/openai/gpt-5.3-codex", "openrouter")).toContain("#10A37F");
+    // FORK 2026-09-02: was `openrouter/openai/gpt-5.3-codex`, removed from the catalog
+    // by the architect's ban on OpenRouter routes that duplicate a vendor we hold a
+    // direct subscription with. The `openai` alias is keyed on the id's MIDDLE SEGMENT,
+    // not on a model, so it is still live code that needs a guard — the id below is a
+    // deliberate SYNTHETIC probe of the parser, not a catalog entry.
+    expect(dot("openrouter/openai/some-future-route", "openrouter")).toContain("#10A37F");
     // …and a genuinely Anthropic model routed via OpenRouter still gets the sparkle
-    expect(dot("openrouter/anthropic/claude-opus-5-fast", "openrouter")).toContain(ANTHROPIC_MARK);
+    // (Fable 5.1 — a live route — replaces the banned opus-5-fast twin here)
+    expect(dot("openrouter/anthropic/claude-fable-5.1", "openrouter")).toContain(ANTHROPIC_MARK);
   });
 
   it("keeps the four vendor marks that resolve from the model id", () => {
@@ -1000,5 +1029,280 @@ describe("smart-cost chart — no bubble wears the wrong vendor's mark", () => {
     const out = dot("openrouter/acme/never-heard-of-it", "openrouter");
     expect(out).toContain("#b9ab97"); // the neutral routed mark
     expect(out).not.toContain(ANTHROPIC_MARK);
+  });
+});
+
+// ─── cost rail (the architect 2026-08-30: "Fable appears only as one bubble, break it
+//     down into different thinking efforts") ───
+// AA scores Fable 5 at exactly ONE effort (max) against Anthropic's five-rung
+// ladder — verified live 2026-08-30 15:09 UTC. So the rungs are real, the SCORES
+// are not, and these tests pin that the chart shows the first without claiming
+// the second. The census found 60 of 99 models in this state; Fable was a sample.
+describe("smart-cost chart — vendor rungs AA never scored", () => {
+  const fable = () => model({ id: "claude-fable-5", relCost: 0.4464, index: 62.0727 });
+
+  it("plots ALL five Anthropic rungs for Fable, not just the one AA scored", () => {
+    const pts = scPointsFor(fable());
+    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
+  it("marks exactly the AA-scored rung as measured, the rest as rail", () => {
+    const pts = scPointsFor(fable());
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(62.0727);
+  });
+
+  it("carries a flagged ESTIMATE on every unmeasured rung — never a bare headline copy", () => {
+    const pts = scPointsFor(fable());
+    for (const p of pts.filter((x) => !x.measured)) {
+      expect(p.estimate, p.lvl).toBeDefined();
+      expect(p.estimate!.basis.length).toBeGreaterThan(0);
+      expect(p.smart).not.toBe(62.0727);
+      expect(p.smart).toBeLessThanOrEqual(62.0727);
+    }
+    // the measured rung is untouched, and the ladder reads in effort order
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(62.0727);
+    const ys = pts.map((p) => p.smart);
+    for (let i = 1; i < ys.length; i++) expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1]);
+  });
+
+  it("spreads the rungs across COST on the documented burn multipliers", () => {
+    const pts = scPointsFor(fable());
+    expect(pts.find((p) => p.lvl === "low")!.cost).toBeCloseTo(0.4464 * 0.75);
+    expect(pts.find((p) => p.lvl === "max")!.cost).toBeCloseTo(0.4464 * 3);
+  });
+
+  it("says in the note how many efforts AA actually scored", () => {
+    const note = scEffortsFor(fable()).note;
+    expect(note).toContain("AA scored 1 of 5 efforts");
+    expect(note).toContain("ESTIMATED from other public benchmarks");
+  });
+
+  it("draws estimated rungs DOTTED with a dotted line, so they cannot pass as data", () => {
+    const svg = renderSmartCostChart([fable()]);
+    // 4 estimated rungs → 4 dotted rings (the ESTIMATE pattern, not the rail's dashes)
+    const dotted = svg.match(/class="sc-ring"[^>]*stroke-dasharray="1\.2 1\.7"/g) ?? [];
+    expect(dotted).toHaveLength(4);
+    expect(svg).toContain("sc-line-est-cost");
+    // every rung has a number we stand behind, so there is no cost rail left to draw
+    expect(svg).not.toContain("sc-rail-cost");
+  });
+
+  it("keeps the dashed cost rail for a rung with neither a measurement nor an estimate", () => {
+    // Copilot's Anthropic ladder exposes `minimal`, which no benchmark ran and no AA
+    // ladder pair can shape — it must stay on the rail at the headline index.
+    const m = model({
+      id: "github-copilot/claude-opus-4.7",
+      provider: "github-copilot",
+      relCost: 1,
+      index: 54.96,
+    });
+    const pts = scPointsFor(m);
+    const minimal = pts.find((p) => p.lvl === "minimal")!;
+    expect(minimal.measured).toBe(false);
+    expect(minimal.estimate).toBeUndefined();
+    expect(minimal.smart).toBe(54.96);
+    const svg = renderSmartCostChart([m]);
+    expect(svg).toContain("sc-rail-cost");
+    expect(svg).toContain("headline — AA published no per-effort split");
+  });
+
+  it("leaves a FULLY scored model untouched — no rail, solid curve, real spread", () => {
+    const opus = model({ id: "claude-opus-5", relCost: 0.2232, index: 63.0532 });
+    const pts = scPointsFor(opus);
+    expect(pts.every((p) => p.measured)).toBe(true);
+    expect(new Set(pts.map((p) => p.smart)).size).toBe(5); // a real curve, not flat
+    expect(renderSmartCostChart([opus])).not.toContain("sc-rail-cost");
+  });
+
+  it("keeps the tooltip honest about which rungs are measured", () => {
+    const svg = renderSmartCostChart([fable()]);
+    expect(svg).toContain("at Max (AA)");
+    expect(svg).toContain("ESTIMATE");
+    expect(svg).toContain("not an AA measurement");
+  });
+});
+
+// ─── real vendor marks for the OpenRouter tail (2026-09-02) ───
+// Finishes the item left open on 2026-08-30, when 12 models fell through to the
+// neutral routed glyph because we shipped no art for their vendor. Each tint below
+// is the fill of that vendor's official mark, so asserting it proves the right
+// ARTWORK resolved, not merely that something non-Anthropic did.
+describe("smart-cost chart — OpenRouter vendors get their own logo", () => {
+  const ANTHROPIC_MARK = "#D97757";
+  const NEUTRAL = "#b9ab97";
+  const dot = (id: string) =>
+    renderSmartCostChart([
+      model({ id, provider: "openrouter", relCost: 1, index: 50, ctx: 262_144 }),
+    ]);
+
+  it("resolves each vendor to its real brand mark", () => {
+    const want: [string, string][] = [
+      ["openrouter/nvidia/nemotron-3.5-lightning", "#74B71B"],
+      ["openrouter/meta/muse-spark-1.2", "#0082FB"],
+      ["openrouter/meta/muse-spark-1.1", "#0082FB"],
+      ["openrouter/minimax/minimax-m3", "#FF6B5A"],
+      ["openrouter/upstage/solar-pro4", "#A88BFF"],
+    ];
+    for (const [id, tint] of want) {
+      const out = dot(id);
+      expect(out).toContain(tint);
+      expect(out).not.toContain(NEUTRAL);
+      expect(out).not.toContain(ANTHROPIC_MARK);
+    }
+  });
+
+  it("uses the MODEL-FAMILY mark where the parent company is not the identity", () => {
+    // Tencent the company also makes WeChat; the model family is Hunyuan.
+    expect(dot("openrouter/tencent/hy3")).toContain("#00BCFF");
+    // Xiaomi's model family is MiMo, and the package ships that mark specifically.
+    expect(dot("openrouter/xiaomi/mimo-v2.5-pro")).toContain("#FF7A33");
+    // Meituan's model is LongCat, which is the mark that exists.
+    expect(dot("openrouter/meituan/longcat-2.0")).toContain("#29E154");
+  });
+
+  it("keeps the neutral glyph for vendors that genuinely ship no mark", () => {
+    for (const id of [
+      "openrouter/thinkingmachines/inkling",
+      "openrouter/thinkingmachines/inkling-small",
+      "openrouter/inclusionai/ling-3.0-flash",
+      "openrouter/nex-agi/nex-n2-pro",
+    ]) {
+      const out = dot(id);
+      expect(out).toContain(NEUTRAL);
+      expect(out).not.toContain(ANTHROPIC_MARK);
+    }
+  });
+
+  it("does not disturb the marks that already resolved", () => {
+    expect(dot("openrouter/moonshotai/kimi-k3")).toContain("#07B2FE");
+    expect(dot("openrouter/z-ai/glm-5.3")).toContain("#80EE24");
+    expect(dot("openrouter/google/gemini-3.7-flash")).toContain("#4285f4");
+    // FORK 2026-09-02: was `openrouter/anthropic/claude-opus-5-fast`; Fable 5.1 is the
+    // live Anthropic OpenRouter route that now carries this assertion.
+    expect(dot("openrouter/anthropic/claude-fable-5.1")).toContain(ANTHROPIC_MARK);
+  });
+});
+
+// ─── Claude Fable 5.1, the new AA #1 (2026-09-02) ───
+// The nightly job added the model, its price and its five AA effort scores, but two
+// channels it does not own were wrong: the effort LADDER (a lookahead meant for
+// `opus-4-70` also blocked every point release, so 5.1 fell to the minimal→high base
+// and lost xhigh and max — its two best rungs) and the CONTEXT WINDOW (200k default
+// against a real 1M, and circle area is proportional to it).
+describe("smart-cost chart — Claude Fable 5.1", () => {
+  const fable51 = () =>
+    model({
+      id: "openrouter/anthropic/claude-fable-5.1",
+      provider: "openrouter",
+      relCost: 50,
+      index: 65.6529,
+      ctx: scDefaultCtx("openrouter/anthropic/claude-fable-5.1"),
+    });
+
+  it("takes the 5-class ladder, so xhigh and max are not lost", () => {
+    const pts = scPointsFor(fable51());
+    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(pts.map((p) => p.lvl)).not.toContain("minimal"); // not exposed for this class
+  });
+
+  it("carries AA's measurement at every rung — the only fully scored model besides Opus 5", () => {
+    const pts = scPointsFor(fable51());
+    expect(pts.every((p) => p.measured)).toBe(true);
+    expect(pts.map((p) => p.smart)).toEqual([58.1487, 60.4752, 62.4807, 64.8016, 65.6529]);
+  });
+
+  it("tops the board: its max beats Opus 5's max", () => {
+    const f = scPointsFor(fable51()).find((p) => p.lvl === "max")!.smart;
+    const o = scPointsFor(model({ id: "claude-opus-5", relCost: 0.2232, index: 63.0532 })).find(
+      (p) => p.lvl === "max",
+    )!.smart;
+    expect(f).toBeGreaterThan(o);
+  });
+
+  it("uses its real 1M context window, not the 200k Claude default", () => {
+    expect(scDefaultCtx("openrouter/anthropic/claude-fable-5.1")).toBe(1_000_000);
+    expect(scDefaultCtx("claude-code/claude-sonnet-5")).toBe(200_000); // default still stands
+  });
+
+  // The OpenRouter route was REMOVED from the panel and the chart catalog on
+  // 2026-09-02 (the architect: "remove the erroneous openrouter Fable 5.1 model") — we hold
+  // the model on the subscription. The PRICING RULE it exercised is still live and
+  // still worth guarding, because it is what stops a metered route drawing a fake
+  // discount: when a model's plotted cost already IS its list price, there is no
+  // second mark and no dashed bridge.
+  it("a metered route's circle IS list price, so it gets no triangle", () => {
+    expect(scApiPrice("openrouter/anthropic/claude-fable-5.1")).toBe(50);
+    expect(scApiPointsFor(fable51())).toEqual([]);
+  });
+
+  it("does not disturb Fable 5, which keeps its own ladder and single AA score", () => {
+    const pts = scPointsFor(
+      model({ id: "claude-code/claude-fable-5", relCost: 0.4464, index: 62.0727 }),
+    );
+    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
+  });
+});
+
+// FORK 2026-09-02 (the architect: "the triangles need to go at its official price and the
+// circles at the 20x price. The model points for different thinking efforts need
+// different intelligence index and different cost, without hallucinating any value").
+// Fable 5.1 shipped as an OpenRouter-only dot because the id was probed with AA's
+// DOTTED display name; the real subscription id is hyphenated, and Claude Code serves
+// it. This block locks the shape of the subscription route: five rungs, five DISTINCT
+// AA-measured heights, five DISTINCT plan costs, and a triangle ladder at sticker.
+describe("smart-cost chart — Claude Fable 5.1 on the Max 20x subscription", () => {
+  const ID = "claude-code/claude-fable-5-1";
+  // relCost comes from the SHIPPED table, never a literal — otherwise this fixture
+  // keeps asserting a price the chart no longer draws, which is exactly what happened
+  // when the Anthropic block was re-derived on 2026-09-02 and this file did not move.
+  const PLAN = eegRelCost(ID);
+  const sub = () =>
+    model({
+      id: ID,
+      provider: "claude-code",
+      relCost: PLAN,
+      index: 65.6529,
+      ctx: scDefaultCtx(ID),
+    });
+
+  it("plots the circles at the amortised plan price, far under sticker", () => {
+    const pts = scPointsFor(sub());
+    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    // Every rung a DIFFERENT cost — the effort multiplier applied to the plan price.
+    const costs = pts.map((p) => Number(p.cost.toFixed(4)));
+    expect(costs).toEqual([0.75, 1, 1.5, 2, 3].map((k) => Number((PLAN * k).toFixed(4))));
+    expect(new Set(costs).size).toBe(5);
+    expect(PLAN).toBeLessThan(1); // the plan price, not the $50 sticker
+  });
+
+  it("plots the triangles at the OFFICIAL API price, same effort ladder", () => {
+    const tri = scApiPointsFor(sub());
+    expect(scApiPrice(ID)).toBe(50);
+    expect(tri.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(tri.map((p) => Number(p.cost.toFixed(2)))).toEqual([37.5, 50, 75, 100, 150]);
+  });
+
+  it("every rung's Y is AA-measured — no rung hangs on the headline index", () => {
+    const pts = scPointsFor(sub());
+    expect(pts.every((p) => p.measured)).toBe(true);
+    expect(pts.map((p) => p.smart)).toEqual([58.1487, 60.4752, 62.4807, 64.8016, 65.6529]);
+    expect(new Set(pts.map((p) => p.smart)).size).toBe(5);
+  });
+
+  it("each triangle sits at the same Y as the circle of the same effort", () => {
+    const pts = scPointsFor(sub());
+    const tri = scApiPointsFor(sub());
+    for (let i = 0; i < pts.length; i++) expect(tri[i].smart).toBe(pts[i].smart);
+  });
+
+  it("the circle↔triangle gap IS the subscription discount", () => {
+    expect(scApiMultiple(sub())).toBeCloseTo(50 / PLAN, 6);
+    expect(scApiMultiple(sub())!).toBeGreaterThan(100); // two orders of magnitude
+  });
+
+  it("keeps its real 1M window under the hyphenated id too", () => {
+    expect(scDefaultCtx(ID)).toBe(1_000_000);
   });
 });

@@ -275,6 +275,107 @@ describe("cron model formatting and precedence edge cases", () => {
   });
 
   describe("model precedence isolation", () => {
+    it("inherits cron.defaultModel when the job has no model override", async () => {
+      await expectSelectedModel(
+        {
+          cfg: {
+            cron: { defaultModel: "openai/gpt-4.1-mini" },
+          },
+        },
+        { provider: "openai", model: "gpt-4.1-mini" },
+      );
+    });
+
+    it("job payload model wins over cron.defaultModel", async () => {
+      await expectSelectedModel(
+        {
+          cfg: {
+            cron: { defaultModel: "openai/gpt-4.1-mini" },
+          },
+          payload: {
+            kind: "agentTurn",
+            message: DEFAULT_MESSAGE,
+            model: "anthropic/claude-sonnet-4-6",
+          },
+        },
+        { provider: "anthropic", model: "claude-sonnet-4-6" },
+      );
+    });
+
+    it("cron.defaultModel wins over a stored cron session override", async () => {
+      await expectSelectedModel(
+        {
+          cfg: {
+            cron: { defaultModel: "anthropic/claude-sonnet-4-6" },
+          },
+          sessionEntry: {
+            providerOverride: "openai",
+            modelOverride: "gpt-4.1-mini",
+          },
+        },
+        { provider: "anthropic", model: "claude-sonnet-4-6" },
+      );
+    });
+
+    it("preserves the Gmail hook override over cron.defaultModel", async () => {
+      resolveHooksGmailModelMock.mockReturnValue({
+        provider: "openrouter",
+        model: "google/gemini-2.5-flash",
+      });
+      getModelRefStatusMock.mockReturnValue({ allowed: true });
+
+      await expectSelectedModel(
+        {
+          cfg: {
+            cron: { defaultModel: "openai/gpt-4.1-mini" },
+          },
+          isGmailHook: true,
+        },
+        { provider: "openrouter", model: "google/gemini-2.5-flash" },
+      );
+    });
+
+    it("job payload model wins over both Gmail and cron.defaultModel", async () => {
+      resolveHooksGmailModelMock.mockReturnValue({
+        provider: "openrouter",
+        model: "google/gemini-2.5-flash",
+      });
+      getModelRefStatusMock.mockReturnValue({ allowed: true });
+
+      await expectSelectedModel(
+        {
+          cfg: {
+            cron: { defaultModel: "openai/gpt-4.1-mini" },
+          },
+          payload: {
+            kind: "agentTurn",
+            message: DEFAULT_MESSAGE,
+            model: "anthropic/claude-sonnet-4-6",
+          },
+          isGmailHook: true,
+        },
+        { provider: "anthropic", model: "claude-sonnet-4-6" },
+      );
+    });
+
+    it("rejects an invalid cron.defaultModel through the cron model resolver", async () => {
+      resolveAllowedModelRefMock.mockReturnValueOnce({
+        error: "model not allowed: anthropic/claude-sonnet-4-6",
+      });
+
+      await expect(
+        selectModel({
+          cfg: {
+            cron: { defaultModel: "anthropic/claude-sonnet-4-6" },
+          },
+        }),
+      ).resolves.toEqual({
+        ok: false,
+        error:
+          "cron.defaultModel 'anthropic/claude-sonnet-4-6' rejected by agents.defaults.models allowlist: anthropic/claude-sonnet-4-6",
+      });
+    });
+
     it("job payload model overrides default (anthropic -> openai)", async () => {
       await expectSelectedModel(
         {

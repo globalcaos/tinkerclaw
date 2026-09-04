@@ -139,7 +139,16 @@ export function resolveProviderEffortLadder(provider: string, modelId: string): 
     // / Sonnet 5 / Opus 4.8 / Opus 4.7 expose low→max including xhigh. Sonnet 4.6
     // and Opus 4.6 expose max but not xhigh. Older Claude keeps the plugin's
     // minimal→high base.
-    if (/(?:opus-5|fable-5|sonnet-5|opus-4[.-]8|opus-4[.-]7)(?![.\d])/.test(id)) {
+    // FORK 2026-09-02: `fable-5[.-]1` is listed FIRST and explicitly. The trailing
+    // `(?![.\d])` exists to stop `opus-4-7` swallowing an `opus-4-70`, but it also
+    // blocked every POINT RELEASE of the 5 class, so Claude Fable 5.1 fell through to
+    // the minimal→high base below — losing `xhigh` and `max`, which are precisely its
+    // two best rungs (AA 64.8016 and 65.6529, the highest scores on the whole board),
+    // while gaining a `minimal` rung Anthropic does not expose for this class.
+    // Named rather than generalised: AA publishes low/medium/high/xhigh/max for THIS
+    // model, which is evidence for this id and not a licence to loosen the lookahead
+    // for every future point release.
+    if (/(?:fable-5[.-]1|opus-5|fable-5|sonnet-5|opus-4[.-]8|opus-4[.-]7)(?![.\d])/.test(id)) {
       return {
         kind: "graded",
         levels: [...CLAUDE_EFFORT_5],

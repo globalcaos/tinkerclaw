@@ -5,6 +5,7 @@ import {
   preModelSinceFor,
   PRE_MODEL_MAX_MS,
   sessionPending,
+  terminalClosesPreModelWindow,
 } from "./pre-model-window.js";
 
 const NOW = 1_786_999_000_000;
@@ -97,5 +98,115 @@ describe("it must never latch — every failure mode degrades to the glow STOPPI
     expect(preModelSinceFor(w, OTHER, matches)).toBe(NOW + 90_000);
     // The bound is measured from the LATEST send, so a second prompt gets its own full window.
     expect(sessionPending(w, OTHER, NOW + 90_000 + 60_000, matches)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FORK 2026-09-03 (the architect: "the serraclaw tab is preparing context forever").
+//
+// The VIEWED tab's twin of this window (`preparingSince` in app.ts) had no terminal-event
+// terminator. It was cleared on disconnect, on the next send, and on send failure — never
+// by the turn actually ending. A turn that ends BEFORE a model is named (an Anthropic 529
+// overload is exactly that: the request never reaches a model, so neither a model-bearing
+// `phase:start` nor an assistant delta ever arrives) left the pill counting forever.
+//
+// That is the precise latch this module's header forbids: "a dropped clear must degrade to
+// 'the glow stops early', never to 'the glow never stops'." The background lane got three
+// closing proofs; the viewed lane was left with two of them missing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("a terminal chat event closes the VIEWED pre-model window", () => {
+  it("closes on error — the SerraClaw case: 529 before any model was named", () => {
+    // THE BUG, stated as a test. Nothing else in the client would ever clear this window.
+    expect(
+      terminalClosesPreModelWindow({
+        eventSessionKey: VIEWED,
+        viewedSessionKey: VIEWED,
+        state: "error",
+        matches,
+      }),
+    ).toBe(true);
+  });
+
+  it("closes on aborted and on final too", () => {
+    for (const state of ["aborted", "final"]) {
+      expect(
+        terminalClosesPreModelWindow({
+          eventSessionKey: VIEWED,
+          viewedSessionKey: VIEWED,
+          state,
+          matches,
+        }),
+        `state=${state}`,
+      ).toBe(true);
+    }
+  });
+
+  it("ignores a non-terminal event: a delta must not close the window from here", () => {
+    // Deltas have their OWN close site (app.ts closes on first assistant text). Closing here
+    // as well would be harmless but this predicate answers one question only.
+    for (const state of ["delta", "start", undefined, null, 7]) {
+      expect(
+        terminalClosesPreModelWindow({
+          eventSessionKey: VIEWED,
+          viewedSessionKey: VIEWED,
+          state,
+          matches,
+        }),
+        `state=${String(state)}`,
+      ).toBe(false);
+    }
+  });
+
+  it("does NOT close the viewed window when ANOTHER session's turn ends", () => {
+    // The regression this gate exists to prevent: a background tab finishing would otherwise
+    // blank the window of a tab whose own prompt was accepted seconds ago — the 21-36s
+    // pre-model window on every turn.
+    expect(
+      terminalClosesPreModelWindow({
+        eventSessionKey: OTHER,
+        viewedSessionKey: VIEWED,
+        state: "error",
+        matches,
+      }),
+    ).toBe(false);
+  });
+
+  it("matches through the canonical/short key drift, like every other reader here", () => {
+    expect(
+      terminalClosesPreModelWindow({
+        eventSessionKey: "agent:main:tinker:msok52zc",
+        viewedSessionKey: "tinker:msok52zc",
+        state: "error",
+        matches,
+      }),
+    ).toBe(true);
+  });
+
+  it("is safe on junk: no session key, no viewed key", () => {
+    expect(
+      terminalClosesPreModelWindow({
+        eventSessionKey: undefined,
+        viewedSessionKey: VIEWED,
+        state: "error",
+        matches,
+      }),
+    ).toBe(false);
+    expect(
+      terminalClosesPreModelWindow({
+        eventSessionKey: VIEWED,
+        viewedSessionKey: undefined,
+        state: "error",
+        matches,
+      }),
+    ).toBe(false);
+    expect(
+      terminalClosesPreModelWindow({
+        eventSessionKey: "",
+        viewedSessionKey: "",
+        state: "error",
+        matches,
+      }),
+    ).toBe(false);
   });
 });
