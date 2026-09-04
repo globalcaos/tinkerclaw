@@ -182,18 +182,39 @@ describe("eegCostWidthPx", () => {
   // $20, which puts it BELOW Opus 5's $25 rather than above it. The property under
   // test is unchanged — prepaid seats rank by public sticker — and it is exactly
   // this test that caught the reordering, which is the whole reason it exists.
-  it("ranks prepaid models across VENDORS by their public sticker price", () => {
+  // REWRITTEN 2026-09-02. This asserted a single sticker-ordered ladder ACROSS
+  // vendors (fable > opus > sol > terra > sonnet). That premise was never sound and
+  // the 2026-09-02 Anthropic re-derivation exposed it: the Anthropic rows are
+  // MEASURED (live quota x real burn) while the OpenAI seats sit on the ÷4.65
+  // blanket, so the two families are not on a comparable basis — the long note above
+  // EEG_COST_TABLE says exactly this ("Amortising a flat fee over a nearly idle seat
+  // …a more precise answer to the wrong question"). Once Anthropic's unit dropped 3x,
+  // Opus fell below Sol and the test failed — correctly. Cross-vendor px order is a
+  // statement about SEAT UTILISATION, not about sticker price, so asserting it as
+  // sticker order encodes a claim the column cannot support.
+  //
+  // What IS true, and what this now guards: within one billing basis the widths are
+  // the sticker ladder, exactly.
+  it("ranks prepaid models WITHIN a vendor by their public sticker price", () => {
     const fable = eegCostWidthPx("claude-fable-5", "medium"); // $50
     const opus = eegCostWidthPx("claude-opus-4-8", "medium"); // $25
-    const sol = eegCostWidthPx("codex/gpt-5.6-sol", "medium"); // $20 short-ctx
-    const terra = eegCostWidthPx("codex/gpt-5.6-terra", "medium"); // $12
-    const sonnet = eegCostWidthPx("claude-sonnet-4-5", "medium"); // $10
+    const sonnet = eegCostWidthPx("claude-sonnet-5", "medium"); // $10
     expect(fable).toBeGreaterThan(opus);
-    expect(opus).toBeGreaterThan(sol);
+    expect(opus).toBeGreaterThan(sonnet);
+    expect(fable / opus).toBeCloseTo(50 / 25, 1);
+
+    const sol = eegCostWidthPx("codex/gpt-5.6-sol", "medium"); // $20
+    const terra = eegCostWidthPx("codex/gpt-5.6-terra", "medium"); // $12
     expect(sol).toBeGreaterThan(terra);
-    expect(terra).toBeGreaterThan(sonnet);
-    // …and the ratio is the sticker ratio, not merely the order.
-    expect(fable / sol).toBeCloseTo(50 / 20, 1);
+    expect(sol / terra).toBeCloseTo(20 / 12, 1);
+  });
+
+  // The confound, asserted so it cannot be "fixed" back into a cross-vendor ladder.
+  it("does NOT claim cross-vendor px order equals sticker order", () => {
+    const opus = eegRelCost("claude-opus-4-8"); // $25 sticker, MEASURED plan basis
+    const sol = eegRelCost("codex/gpt-5.6-sol"); // $20 sticker, ÷4.65 blanket basis
+    // Cheaper sticker, dearer per token — because the OpenAI seat is barely used.
+    expect(sol).toBeGreaterThan(opus);
   });
 
   // FORK 2026-08-12: the PROPERTY linear buys, and the reason the architect kept it — the
@@ -570,6 +591,83 @@ describe("eegProviderPaint", () => {
     expect(paint.stroke).toBe(FALLBACK_GRAY);
     expect(paint.isRainbow).toBe(false);
     expect(Object.keys(EEG_PROVIDER_COLORS).length).toBeGreaterThan(0);
+  });
+
+  // FORK 2026-09-02 (the architect: "the color of the trace of fable 5.1 should be the one
+  // assigned to claude, the orange one"). A model reached THROUGH a router arrives
+  // with provider "openrouter" and its brand in the id's middle segment. The brand
+  // branches used to test the provider string alone, so every one of these painted
+  // the neutral gray. Regression-locked per vendor, because Fable was one symptom of
+  // a class that covered five brands.
+  it("routed openrouter/<brand>/* ids paint the BRAND, not the router", () => {
+    expect(eegProviderPaint("openrouter", "openrouter/anthropic/claude-fable-5.1").stroke).toBe(
+      ANTHROPIC_STROKE,
+    );
+    // FORK 2026-09-02: this leg used `openrouter/openai/gpt-5.3-codex` until the
+    // architect banned OpenRouter routes for vendors we hold a direct subscription
+    // with and that id left the catalog. The leg locks the BRAND SEGMENT of a routed
+    // id, not the model, so it keeps its assertion under a live id.
+    expect(eegProviderPaint("openrouter", "openrouter/openai/gpt-5.4").stroke).toBe(
+      EEG_PROVIDER_COLORS.openai,
+    );
+    expect(eegProviderPaint("openrouter", "openrouter/x-ai/grok-4.6").stroke).toBe(
+      EEG_PROVIDER_COLORS.xai,
+    );
+    expect(eegProviderPaint("openrouter", "openrouter/meta/muse-spark-1.2").stroke).toBe(
+      EEG_PROVIDER_COLORS.meta,
+    );
+    expect(eegProviderPaint("openrouter", "openrouter/mistralai/mistral-medium-3.5").stroke).toBe(
+      EEG_PROVIDER_COLORS.mistral,
+    );
+  });
+
+  // Copilot resolves BEFORE the brand branches and must keep its own lane — widening
+  // those branches to read the model id is exactly what could have leaked it.
+  it("github-copilot/claude-* stays Copilot pink, not Anthropic orange", () => {
+    expect(eegProviderPaint("github-copilot", "github-copilot/claude-opus-4.7").stroke).toBe(
+      EEG_PROVIDER_COLORS["github-copilot"],
+    );
+  });
+
+  // The native subscription route: hyphenated id, `claude-code` provider.
+  it("the claude-code Fable 5.1 subscription route paints Anthropic orange", () => {
+    expect(eegProviderPaint("claude-code", "claude-code/claude-fable-5-1").stroke).toBe(
+      ANTHROPIC_STROKE,
+    );
+  });
+});
+
+// FORK 2026-09-02 (the architect: "the cost of Fable 5.1 is not correct ... claude models cost
+// us about 112 times less"). The two Fable 5.1 routes are the SAME model on different
+// bills, and the cost table must tell them apart by BILLING ROUTE (provider prefix),
+// not by the dot-vs-hyphen spelling of the id — which is how the original row did it,
+// and which would have silently re-broken on a future `claude-fable-5.2`.
+describe("fable 5.1 — subscription vs metered route", () => {
+  it("the claude-code route is amortised, an openrouter route would be cash", () => {
+    expect(eegRelCost("claude-code/claude-fable-5-1")).toBeCloseTo(0.147, 4);
+    expect(eegRelCost("openrouter/anthropic/claude-fable-5.1")).toBe(50);
+  });
+
+  // The plan price is DERIVED (live quota utilisation x measured burn x published
+  // price weights), never sticker/N. This asserts the RATIO LADDER, which is the part
+  // that must hold no matter how the unit moves: the four Anthropic rows are one unit
+  // times 0.5 / 1 / 2.5 / 5, straight off the public sticker ladder. If a future
+  // re-derivation changes the unit, these stay true; if someone hand-edits ONE row,
+  // they break — which is the failure this guards (a chart claiming Fable < Opus).
+  it("the four Anthropic rows keep the public sticker ratios exactly", () => {
+    const haiku = eegRelCost("claude-code/claude-haiku-4-5");
+    expect(eegRelCost("claude-code/claude-sonnet-5") / haiku).toBeCloseTo(2, 6);
+    expect(eegRelCost("claude-code/claude-opus-5") / haiku).toBeCloseTo(5, 6);
+    expect(eegRelCost("claude-code/claude-fable-5-1") / haiku).toBeCloseTo(10, 6);
+    // Fable 5.1 carries the SAME $10/$50 sticker as Fable 5 (live OR catalog
+    // 2026-09-02), so the two share a row rather than 5.1 getting an assumed price.
+    expect(eegRelCost("claude-code/claude-fable-5-1")).toBe(eegRelCost("claude-fable-5"));
+  });
+
+  it("a hypothetical future hyphen/dot spelling cannot flip the basis", () => {
+    // Route decides, spelling does not: both metered ids stay at cash price.
+    expect(eegRelCost("openrouter/anthropic/claude-fable-5-2")).toBe(50);
+    expect(eegRelCost("claude-code/claude-fable-5-2")).toBeCloseTo(0.147, 4);
   });
 });
 

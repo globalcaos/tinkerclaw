@@ -1,5 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
+  domainStrengthFor,
+  frontierRungsFor,
+  thalamusRoutesByDomain,
+} from "../../../src/shared/thalamus-frontier";
+import type { ThalamusRoute } from "../../../src/shared/thalamus-frontier";
+import { scThalamusRelCost } from "./smart-cost-chart";
+import {
+  renderThalamusRoutes,
+  scBestBySkill,
+  sdRouteSwitched,
+  renderCnProviderMatrix,
+  cnMatrixColumns,
+  CN_PROVIDER_PRICES,
   scDossierFor,
   scRankBySkill,
   scFactsFor,
@@ -333,5 +346,160 @@ describe("smart-model dossier — rendering", () => {
       { id: "x/<script>", name: "<script>alert(1)</script>", color: "#fff", index: 50 },
     ]);
     expect(html).not.toContain("<script>alert(1)</script>");
+  });
+});
+
+// FORK 2026-08-15 (the architect): the CN provider × model price matrix at the foot of the
+// dossier. Assert PROPERTIES against the generated data, never literal prices — the
+// figures are regenerated daily and any hardcoded number here would go red within days,
+// which is exactly how assertions in this UI have rotted five times already.
+describe("CN provider × model matrix", () => {
+  it("bolds exactly the cheapest provider in every row", () => {
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    for (const [id, m] of Object.entries(CN_PROVIDER_PRICES.models)) {
+      const cheapest = Math.min(...Object.values(m.providers).map((p) => p.out));
+      expect(m.cheapest.out).toBeCloseTo(cheapest, 6);
+      expect(m.providers[m.cheapest.provider]?.out).toBeCloseTo(cheapest, 6);
+      expect(html).toContain(id);
+    }
+    // One bold per model row, in the cheapest cell, plus one in the cheapest column.
+    const bolds = (html.match(/<b>/g) ?? []).length;
+    expect(bolds).toBeGreaterThanOrEqual(Object.keys(CN_PROVIDER_PRICES.models).length);
+  });
+
+  it("marks subscription vs pay-per-use, and flags unconfirmed plans", () => {
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    expect(html).toContain("pay/use"); // DeepSeek: pay-per-use only
+    expect(html).toContain(">sub<"); // Z.AI / Moonshot: confirmed plans
+    // An unconfirmed plan must never render as a plain confirmed one.
+    const unconfirmed = Object.values(CN_PROVIDER_PRICES.subscriptions).filter(
+      (s) => s && !s.confirmed,
+    );
+    if (unconfirmed.length) expect(html).toContain("sub?");
+  });
+
+  it("chooses columns by measured coverage, never a pinned list", () => {
+    const cols = cnMatrixColumns(CN_PROVIDER_PRICES);
+    expect(cols.length).toBeGreaterThan(2);
+    const labs = new Set(
+      Object.values(CN_PROVIDER_PRICES.models)
+        .map((m) => m.lab)
+        .filter(Boolean),
+    );
+    // Labs get the dedicated "lab direct" column; they must not also take a slot.
+    for (const c of cols) expect(labs.has(c)).toBe(false);
+  });
+
+  it("carries a fetch timestamp so a stale matrix is visible, not silent", () => {
+    expect(CN_PROVIDER_PRICES.fetchedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(renderCnProviderMatrix(CN_PROVIDER_PRICES)).toContain(
+      CN_PROVIDER_PRICES.fetchedAt.slice(0, 10),
+    );
+  });
+});
+
+// FORK 2026-09-02 (the architect): "mark in the dossier table the best at each category, and
+// make sure Thalamus routes intelligently depending on the task at hand". Every
+// expectation is COMPUTED from domainStrengthFor / thalamusRoutesByDomain, never a
+// literal winner — the Epoch table is regenerated daily and a pinned name would rot.
+describe("smart-model dossier — best per column + THALAMUS routes", () => {
+  const rows = [
+    { id: "claude-code/claude-opus-5", name: "Claude Opus 5", color: "#E8702A", index: 60.7 },
+    { id: "xai/grok-4.6", name: "Grok 4.6", color: "#000000", index: 59.5 },
+    { id: "openrouter/moonshotai/kimi-k3", name: "Kimi K3", color: "#07B2FE", index: 57.1 },
+  ];
+  const bestCells = (html: string, key: string) =>
+    html.match(
+      new RegExp(`data-col="${key}"[^>]*><span class="sd-tag sd-s-[a-z]+ sd-best"`, "g"),
+    ) ?? [];
+  const eff = (r: ThalamusRoute) => (r.rung.effort ? ` @${r.rung.effort}` : "");
+  const nameOf = (r: ThalamusRoute) => rows.find((x) => x.id === r.rung.key)!.name;
+
+  it("marks exactly one best cell per capability column, never on a reference row", () => {
+    const html = renderDossierTable(rows);
+    for (const s of SC_SKILLS) expect(bestCells(html, s.key).length, s.key).toBe(1);
+    expect(html.split("sd-best-mark").length - 1).toBe(SC_SKILLS.length);
+    const refWithBest = html
+      .split("<tr")
+      .filter((tr) => tr.startsWith(' class="sd-ref"') && tr.includes("sd-best"));
+    expect(refWithBest).toEqual([]);
+  });
+
+  it("the best CODE cell is the configured row with the highest measured percentile", () => {
+    const measured = rows.map((r) => ({ r, s: domainStrengthFor(r.id, "code") }));
+    for (const m of measured) {
+      expect(m.s, `${m.r.id} lost its DOMAIN_STRENGTH code row`).toBeDefined();
+    }
+    const expected = measured.reduce((a, b) => (b.s!.p > a.s!.p ? b : a)).r;
+    const best = scBestBySkill(rows, "code")!;
+    expect(best.basis).toBe("measured");
+    expect(best.row.id).toBe(expected.id);
+    const html = renderDossierTable(rows);
+    const tr = html
+      .split("<tr")
+      .find((chunk) => chunk.includes(expected.name) && chunk.includes('data-col="code"'))!;
+    expect(tr).toMatch(/data-col="code"[^>]*><span class="sd-tag sd-s-[a-z]+ sd-best"/);
+    expect(html).toContain(`BEST — ${expected.name} (measured p`);
+  });
+
+  it("a column with no measurement falls back to the judged grade and says so", () => {
+    const anyMeasured = rows.some((r) => domainStrengthFor(r.id, "write") !== undefined);
+    const best = scBestBySkill(rows, "write")!;
+    expect(best.basis).toBe(anyMeasured ? "measured" : "judged");
+    if (!anyMeasured) {
+      expect(best.row.id).toBe(scRankBySkill(rows, "write")[0].id);
+      expect(renderDossierTable(rows)).toContain(`BEST — ${best.row.name} (judged:`);
+    }
+    // SPEED and COST are not routing domains: always today's rank.
+    expect(scBestBySkill(rows, "speed")!.basis).toBe("judged");
+    expect(scBestBySkill(rows, "cost")!.row.id).toBe(scRankBySkill(rows, "cost")[0].id);
+  });
+
+  it("every measured cell carries the Epoch line and data-p; one argument = no strip", () => {
+    const html = renderDossierTable(rows);
+    expect(html).toContain("MEASURED — Epoch AI percentile");
+    const s = domainStrengthFor("claude-code/claude-opus-5", "code")!;
+    expect(html).toContain(`data-col="code" data-p="${s.p}"`);
+    expect(html).toContain(`p${Math.round(s.p * 100)} over ${s.n} benchmark`);
+    expect(html).not.toContain("sd-routes");
+  });
+
+  const rungs = rows.flatMap((r) => frontierRungsFor(r.id, r.index, scThalamusRelCost(r.id)!));
+
+  it("the strip lists every domain, general first, and marks the switches the router reports", () => {
+    for (const r of rows) expect(scThalamusRelCost(r.id), `${r.id} has no price`).toBeDefined();
+    const routes = thalamusRoutesByDomain(rungs, 0);
+    const domains = Object.keys(routes);
+    expect(domains[0]).toBe("general");
+    expect(domains.length).toBe(9);
+    const html = renderThalamusRoutes(rows, 0);
+    expect(html).toContain("THALAMUS ROUTES · bias 0 (fast)");
+    expect((html.match(/class="sd-route( sd-route-switch)?"/g) ?? []).length).toBe(domains.length);
+    const list = Object.values(routes) as ThalamusRoute[];
+    for (const route of list) {
+      expect(html).toContain(
+        `</b> → ${nameOf(route)}${eff(route)} · idx ${route.rung.smart.toFixed(1)}`,
+      );
+    }
+    const switches = list.filter(sdRouteSwitched).length;
+    expect((html.match(/sd-route-switch/g) ?? []).length).toBe(switches);
+    // hover = the router's own reason, not a paraphrase
+    expect(html).toContain(routes.general!.reason.slice(0, 30));
+  });
+
+  it("biasIdx 6 and 0 route GENERAL differently, and the table passes the dial through", () => {
+    const fast = thalamusRoutesByDomain(rungs, 0).general!;
+    const smart = thalamusRoutesByDomain(rungs, 6).general!;
+    expect(`${fast.rung.key}@${fast.rung.effort}`).not.toBe(
+      `${smart.rung.key}@${smart.rung.effort}`,
+    );
+    expect(smart.rung.smart).toBeGreaterThan(fast.rung.smart);
+    const h0 = renderDossierTable(rows, undefined, { biasIdx: 0 });
+    const h6 = renderDossierTable(rows, undefined, { biasIdx: 6 });
+    expect(h0).toContain("THALAMUS ROUTES · bias 0 (fast)");
+    expect(h6).toContain("THALAMUS ROUTES · bias 6 (smart)");
+    expect(h0.indexOf("sd-routes")).toBeLessThan(h0.indexOf("<table"));
+    expect(h0).toContain(`GENERAL</b> → ${nameOf(fast)}${eff(fast)}`);
+    expect(h6).toContain(`GENERAL</b> → ${nameOf(smart)}${eff(smart)}`);
   });
 });

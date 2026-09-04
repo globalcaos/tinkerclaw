@@ -77,7 +77,11 @@ describe("fetchClaudeUsage", () => {
     ]);
   });
 
-  it("clamps oauth usage windows and prefers sonnet over opus when both exist", async () => {
+  // FORK 2026-08-12: was "prefers sonnet over opus when both exist". The per-model
+  // weekly windows are SEPARATE allowances, so preferring one hid the other — and on
+  // an Opus-heavy account the hidden one is the binding constraint. Note this very
+  // fixture: opus 90 vs sonnet 40, and the panel used to report 40.
+  it("reports BOTH per-model weekly windows, clamped", async () => {
     const mockFetch = createProviderUsageFetch(async () =>
       makeResponse(200, {
         five_hour: { utilization: -5 },
@@ -93,7 +97,23 @@ describe("fetchClaudeUsage", () => {
       { label: "5h", usedPercent: 0, resetAt: undefined },
       { label: "Week", usedPercent: 100, resetAt: undefined },
       { label: "Sonnet", usedPercent: 40 },
+      { label: "Opus", usedPercent: 90 },
     ]);
+  });
+
+  // A sonnet object present but carrying no number used to swallow a VALID opus
+  // reading, because the truthy test ran on the object instead of the utilization.
+  it("still reports opus when the sonnet window exists but carries no utilization", async () => {
+    const mockFetch = createProviderUsageFetch(async () =>
+      makeResponse(200, {
+        seven_day_sonnet: {},
+        seven_day_opus: { utilization: 63 },
+      }),
+    );
+
+    const result = await fetchClaudeUsage("token", 5000, mockFetch);
+
+    expect(result.windows).toEqual([{ label: "Opus", usedPercent: 63 }]);
   });
 
   it("returns HTTP errors with provider message suffix", async () => {

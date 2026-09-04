@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Command lanes — why a wedged tab cannot starve main</title>
-<!--
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Command lanes — why a wedged tab cannot starve main</title>
+    <!--
   BIBLE VISUAL. Owner optic: topology.md § "Command-lane topology".
   The optic is the AUTHORITY; this page is an explanation of it, not a second source of truth.
 
@@ -20,268 +20,568 @@
     src/agents/embedded-agent-runner/run.ts:321-323   enqueueSession(() => enqueueGlobal(work))
     src/process/command-queue.ts:105-107,169      lanes default to maxConcurrent 1; the drain loop
 -->
-<style>
-  :root {
-    color-scheme: light dark;
-    --bg: #fbfaf8; --fg: #1a1a1a; --muted: #6b6b6b; --line: #dcd8d2;
-    --card: #ffffff; --accent: #2f6f4f; --warn: #b4531f; --wedge: #8c2f39;
-    --slot-free: #eceae6; --tok: #2f6f4f;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#16181a; --fg:#e8e6e3; --muted:#9a9a9a; --line:#2e3236;
-            --card:#1d2023; --accent:#6fbf8f; --warn:#e08a4e; --wedge:#e0616e;
-            --slot-free:#26292d; --tok:#6fbf8f; }
-  }
-  :root[data-theme="dark"] { --bg:#16181a; --fg:#e8e6e3; --muted:#9a9a9a; --line:#2e3236;
-    --card:#1d2023; --accent:#6fbf8f; --warn:#e08a4e; --wedge:#e0616e; --slot-free:#26292d; --tok:#6fbf8f; }
-  :root[data-theme="light"] { --bg:#fbfaf8; --fg:#1a1a1a; --muted:#6b6b6b; --line:#dcd8d2;
-    --card:#ffffff; --accent:#2f6f4f; --warn:#b4531f; --wedge:#8c2f39; --slot-free:#eceae6; --tok:#2f6f4f; }
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfaf8;
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --line: #dcd8d2;
+        --card: #ffffff;
+        --accent: #2f6f4f;
+        --warn: #b4531f;
+        --wedge: #8c2f39;
+        --slot-free: #eceae6;
+        --tok: #2f6f4f;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16181a;
+          --fg: #e8e6e3;
+          --muted: #9a9a9a;
+          --line: #2e3236;
+          --card: #1d2023;
+          --accent: #6fbf8f;
+          --warn: #e08a4e;
+          --wedge: #e0616e;
+          --slot-free: #26292d;
+          --tok: #6fbf8f;
+        }
+      }
+      :root[data-theme="dark"] {
+        --bg: #16181a;
+        --fg: #e8e6e3;
+        --muted: #9a9a9a;
+        --line: #2e3236;
+        --card: #1d2023;
+        --accent: #6fbf8f;
+        --warn: #e08a4e;
+        --wedge: #e0616e;
+        --slot-free: #26292d;
+        --tok: #6fbf8f;
+      }
+      :root[data-theme="light"] {
+        --bg: #fbfaf8;
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --line: #dcd8d2;
+        --card: #ffffff;
+        --accent: #2f6f4f;
+        --warn: #b4531f;
+        --wedge: #8c2f39;
+        --slot-free: #eceae6;
+        --tok: #2f6f4f;
+      }
 
-  * { box-sizing: border-box; }
-  body { margin:0; padding:2rem 1.25rem 4rem; background:var(--bg); color:var(--fg);
-         font:15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 940px; margin: 0 auto; }
-  h1 { font-size:1.45rem; margin:0 0 .35rem; letter-spacing:-.01em; }
-  h2 { font-size:1rem; margin:2rem 0 .6rem; letter-spacing:-.005em; }
-  .sub { color:var(--muted); margin:0 0 1.5rem; }
-  code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:.87em; }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 2rem 1.25rem 4rem;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          15px/1.55 ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      main {
+        max-width: 940px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.45rem;
+        margin: 0 0 0.35rem;
+        letter-spacing: -0.01em;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 2rem 0 0.6rem;
+        letter-spacing: -0.005em;
+      }
+      .sub {
+        color: var(--muted);
+        margin: 0 0 1.5rem;
+      }
+      code,
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.87em;
+      }
 
-  .controls { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center;
-              padding:.85rem; border:1px solid var(--line); border-radius:10px;
-              background:var(--card); margin-bottom:1.25rem; }
-  button { font:inherit; font-size:.86rem; padding:.4rem .7rem; border-radius:7px;
-           border:1px solid var(--line); background:var(--bg); color:var(--fg); cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  button.danger { color:var(--wedge); border-color:var(--wedge); }
-  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-  @media (prefers-color-scheme: dark) { button.primary { color:#10120f; } }
-  .spacer { flex:1 1 auto; }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        align-items: center;
+        padding: 0.85rem;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--card);
+        margin-bottom: 1.25rem;
+      }
+      button {
+        font: inherit;
+        font-size: 0.86rem;
+        padding: 0.4rem 0.7rem;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button.danger {
+        color: var(--wedge);
+        border-color: var(--wedge);
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      @media (prefers-color-scheme: dark) {
+        button.primary {
+          color: #10120f;
+        }
+      }
+      .spacer {
+        flex: 1 1 auto;
+      }
 
-  .lane { border:1px solid var(--line); border-radius:10px; background:var(--card);
-          padding:.7rem .85rem; margin-bottom:.55rem; }
-  .lane-head { display:flex; align-items:baseline; gap:.5rem; flex-wrap:wrap; }
-  .lane-name { font-family:ui-monospace,monospace; font-weight:600; }
-  .lane-src { color:var(--muted); font-size:.78rem; margin-left:auto; }
-  .slots { display:flex; gap:4px; margin:.45rem 0 .3rem; flex-wrap:wrap; }
-  .slot { width:26px; height:26px; border-radius:6px; background:var(--slot-free);
-          border:1px solid var(--line); display:grid; place-items:center;
-          font-size:.7rem; font-family:ui-monospace,monospace; transition:background .18s; }
-  .slot.busy { background:var(--tok); color:#fff; border-color:transparent; }
-  @media (prefers-color-scheme: dark) { .slot.busy { color:#10120f; } }
-  .slot.wedged { background:var(--wedge); color:#fff; border-color:transparent; animation:pulse 1.4s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.55} }
-  .queue { display:flex; gap:3px; align-items:center; min-height:18px; flex-wrap:wrap; }
-  .q { width:16px; height:16px; border-radius:4px; border:1px dashed var(--line); }
-  .q.filled { background:var(--muted); border-style:solid; opacity:.5; }
-  .meta { color:var(--muted); font-size:.78rem; }
+      .lane {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--card);
+        padding: 0.7rem 0.85rem;
+        margin-bottom: 0.55rem;
+      }
+      .lane-head {
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .lane-name {
+        font-family: ui-monospace, monospace;
+        font-weight: 600;
+      }
+      .lane-src {
+        color: var(--muted);
+        font-size: 0.78rem;
+        margin-left: auto;
+      }
+      .slots {
+        display: flex;
+        gap: 4px;
+        margin: 0.45rem 0 0.3rem;
+        flex-wrap: wrap;
+      }
+      .slot {
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+        background: var(--slot-free);
+        border: 1px solid var(--line);
+        display: grid;
+        place-items: center;
+        font-size: 0.7rem;
+        font-family: ui-monospace, monospace;
+        transition: background 0.18s;
+      }
+      .slot.busy {
+        background: var(--tok);
+        color: #fff;
+        border-color: transparent;
+      }
+      @media (prefers-color-scheme: dark) {
+        .slot.busy {
+          color: #10120f;
+        }
+      }
+      .slot.wedged {
+        background: var(--wedge);
+        color: #fff;
+        border-color: transparent;
+        animation: pulse 1.4s infinite;
+      }
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.55;
+        }
+      }
+      .queue {
+        display: flex;
+        gap: 3px;
+        align-items: center;
+        min-height: 18px;
+        flex-wrap: wrap;
+      }
+      .q {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        border: 1px dashed var(--line);
+      }
+      .q.filled {
+        background: var(--muted);
+        border-style: solid;
+        opacity: 0.5;
+      }
+      .meta {
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
 
-  .verdict { border:1px solid var(--line); border-left:3px solid var(--accent);
-             border-radius:8px; padding:.8rem .95rem; background:var(--card); margin-top:1rem; }
-  .verdict.bad { border-left-color:var(--wedge); }
-  .verdict strong { display:block; margin-bottom:.2rem; }
-  table { border-collapse:collapse; width:100%; font-size:.86rem; margin:.5rem 0 0; }
-  th,td { text-align:left; padding:.35rem .5rem; border-bottom:1px solid var(--line); vertical-align:top; }
-  th { color:var(--muted); font-weight:600; }
-  .note { color:var(--muted); font-size:.85rem; }
-  .nest { display:grid; grid-template-columns:auto 1fr; gap:.4rem .7rem; align-items:center;
-          font-size:.86rem; margin:.4rem 0 1rem; }
-  .nest .box { border:1px solid var(--line); border-radius:8px; padding:.45rem .6rem; background:var(--card); }
-  .nest .inner { margin-left:1.4rem; border-left:2px solid var(--accent); }
-</style>
-</head>
-<body>
-<main>
-  <h1>Command lanes</h1>
-  <p class="sub">Why one stuck tab cannot freeze the others — and why the fix was a second, nested lane.</p>
+      .verdict {
+        border: 1px solid var(--line);
+        border-left: 3px solid var(--accent);
+        border-radius: 8px;
+        padding: 0.8rem 0.95rem;
+        background: var(--card);
+        margin-top: 1rem;
+      }
+      .verdict.bad {
+        border-left-color: var(--wedge);
+      }
+      .verdict strong {
+        display: block;
+        margin-bottom: 0.2rem;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.86rem;
+        margin: 0.5rem 0 0;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.35rem 0.5rem;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .note {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .nest {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.4rem 0.7rem;
+        align-items: center;
+        font-size: 0.86rem;
+        margin: 0.4rem 0 1rem;
+      }
+      .nest .box {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.45rem 0.6rem;
+        background: var(--card);
+      }
+      .nest .inner {
+        margin-left: 1.4rem;
+        border-left: 2px solid var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Command lanes</h1>
+      <p class="sub">
+        Why one stuck tab cannot freeze the others — and why the fix was a second, nested lane.
+      </p>
 
-  <h2>The nesting (this is the part people get backwards)</h2>
-  <div class="nest">
-    <div class="box mono">enqueueSession(<span class="meta">session:&lt;sessionKey&gt;</span>) &nbsp;— concurrency <strong>1</strong>, always</div>
-    <div class="box inner mono">→ enqueueGlobal(<span class="meta">sessions / main / cron / subagent</span>) — concurrency from config</div>
-  </div>
-  <p class="note">
-    <code>run.ts:321-323</code> is literally <code>enqueueSession(() =&gt; enqueueGlobal(work))</code>.
-    The <strong>session lane is the outer one</strong>, and a run <em>holds its session slot while it waits</em>
-    for a global slot. That is what makes per-tab ordering strict (one turn per session, ever) without
-    letting any single tab consume more than one unit of global capacity.
-  </p>
+      <h2>The nesting (this is the part people get backwards)</h2>
+      <div class="nest">
+        <div class="box mono">
+          enqueueSession(<span class="meta">session:&lt;sessionKey&gt;</span>) &nbsp;— concurrency
+          <strong>1</strong>, always
+        </div>
+        <div class="box inner mono">
+          → enqueueGlobal(<span class="meta">sessions / main / cron / subagent</span>) — concurrency
+          from config
+        </div>
+      </div>
+      <p class="note">
+        <code>run.ts:321-323</code> is literally
+        <code>enqueueSession(() =&gt; enqueueGlobal(work))</code>. The
+        <strong>session lane is the outer one</strong>, and a run
+        <em>holds its session slot while it waits</em>
+        for a global slot. That is what makes per-tab ordering strict (one turn per session, ever)
+        without letting any single tab consume more than one unit of global capacity.
+      </p>
 
-  <div class="controls">
-    <button class="primary" data-act="tab">Send a message (tab)</button>
-    <button data-act="system">System work (main lane)</button>
-    <button data-act="cron">Cron fires</button>
-    <button class="danger" data-act="wedge">Wedge a tab run</button>
-    <span class="spacer"></span>
-    <button data-act="reset">Reset</button>
-  </div>
+      <div class="controls">
+        <button class="primary" data-act="tab">Send a message (tab)</button>
+        <button data-act="system">System work (main lane)</button>
+        <button data-act="cron">Cron fires</button>
+        <button class="danger" data-act="wedge">Wedge a tab run</button>
+        <span class="spacer"></span>
+        <button data-act="reset">Reset</button>
+      </div>
 
-  <div id="lanes"></div>
+      <div id="lanes"></div>
 
-  <div class="verdict" id="verdict"><strong>Idle.</strong> Dispatch some work, then wedge a tab run.</div>
+      <div class="verdict" id="verdict">
+        <strong>Idle.</strong> Dispatch some work, then wedge a tab run.
+      </div>
 
-  <h2>Where each number comes from</h2>
-  <table>
-    <thead><tr><th>Lane</th><th>Concurrency</th><th>Set by</th><th>Who runs on it</th></tr></thead>
-    <tbody>
-      <tr><td class="mono">session:&lt;key&gt;</td><td>1</td>
-          <td>never set — <code>command-queue.ts:107</code> defaults every lane to 1</td>
-          <td>one per session; the per-tab ordering anchor</td></tr>
-      <tr><td class="mono">sessions</td><td>8</td>
-          <td><code>agents.defaults.sessions.maxConcurrent</code> → <code>DEFAULT_SESSIONS_MAX_CONCURRENT</code></td>
-          <td>every embedded tab/chat run (the default from <code>resolveGlobalLane</code>)</td></tr>
-      <tr><td class="mono">main</td><td>4</td>
-          <td><code>agents.defaults.maxConcurrent</code> → <code>DEFAULT_AGENT_MAX_CONCURRENT</code></td>
-          <td>only explicit main-lane callers, e.g. main-session-restart-recovery</td></tr>
-      <tr><td class="mono">cron</td><td>6</td>
-          <td><code>cron.maxConcurrentRuns</code></td><td>cron jobs</td></tr>
-      <tr><td class="mono">cron-nested</td><td>6</td>
-          <td>same key — <code>server-lanes.ts:14</code></td>
-          <td>the inner LLM work of a cron job, remapped by <code>resolveGlobalLane</code> so a cron cannot deadlock against its own slot</td></tr>
-      <tr><td class="mono">subagent</td><td>8</td>
-          <td><code>agents.defaults.subagents.maxConcurrent</code></td><td>spawned subagent runs</td></tr>
-    </tbody>
-  </table>
-  <p class="note">Live values on this machine at the time of writing: main 4, sessions 8 (unset → default), subagent 8, cron 6.</p>
+      <h2>Where each number comes from</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Lane</th>
+            <th>Concurrency</th>
+            <th>Set by</th>
+            <th>Who runs on it</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">session:&lt;key&gt;</td>
+            <td>1</td>
+            <td>never set — <code>command-queue.ts:107</code> defaults every lane to 1</td>
+            <td>one per session; the per-tab ordering anchor</td>
+          </tr>
+          <tr>
+            <td class="mono">sessions</td>
+            <td>8</td>
+            <td>
+              <code>agents.defaults.sessions.maxConcurrent</code> →
+              <code>DEFAULT_SESSIONS_MAX_CONCURRENT</code>
+            </td>
+            <td>every embedded tab/chat run (the default from <code>resolveGlobalLane</code>)</td>
+          </tr>
+          <tr>
+            <td class="mono">main</td>
+            <td>4</td>
+            <td>
+              <code>agents.defaults.maxConcurrent</code> → <code>DEFAULT_AGENT_MAX_CONCURRENT</code>
+            </td>
+            <td>only explicit main-lane callers, e.g. main-session-restart-recovery</td>
+          </tr>
+          <tr>
+            <td class="mono">cron</td>
+            <td>6</td>
+            <td><code>cron.maxConcurrentRuns</code></td>
+            <td>cron jobs</td>
+          </tr>
+          <tr>
+            <td class="mono">cron-nested</td>
+            <td>6</td>
+            <td>same key — <code>server-lanes.ts:14</code></td>
+            <td>
+              the inner LLM work of a cron job, remapped by <code>resolveGlobalLane</code> so a cron
+              cannot deadlock against its own slot
+            </td>
+          </tr>
+          <tr>
+            <td class="mono">subagent</td>
+            <td>8</td>
+            <td><code>agents.defaults.subagents.maxConcurrent</code></td>
+            <td>spawned subagent runs</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">
+        Live values on this machine at the time of writing: main 4, sessions 8 (unset → default),
+        subagent 8, cron 6.
+      </p>
 
-  <h2>The incident this shape exists to prevent</h2>
-  <p class="note">
-    Before <code>eba0911c7b</code> (2026-07-24) embedded session runs defaulted to the shared
-    <code>main</code> lane. On 2026-07-22 a hung compaction wedged a run there, the lane filled, and
-    <strong>every Tinker tab froze</strong> — including tabs doing nothing wrong. Splitting tab runs
-    onto <code>sessions</code> means a wedge consumes tab capacity only; system work on
-    <code>main</code> keeps its own four slots. Press <em>Wedge</em> above until
-    <code>sessions</code> is full, then press <em>System work</em>: it still runs.
-  </p>
-</main>
+      <h2>The incident this shape exists to prevent</h2>
+      <p class="note">
+        Before <code>eba0911c7b</code> (2026-07-24) embedded session runs defaulted to the shared
+        <code>main</code> lane. On 2026-07-22 a hung compaction wedged a run there, the lane filled,
+        and <strong>every Tinker tab froze</strong> — including tabs doing nothing wrong. Splitting
+        tab runs onto <code>sessions</code> means a wedge consumes tab capacity only; system work on
+        <code>main</code> keeps its own four slots. Press <em>Wedge</em> above until
+        <code>sessions</code> is full, then press <em>System work</em>: it still runs.
+      </p>
+    </main>
 
-<script>
-"use strict";
-// The model mirrors src/process/command-queue.ts: each lane is {maxConcurrent, active[], queue[]},
-// and the drain loop promotes queued entries while active < maxConcurrent (command-queue.ts:169).
-const LANES = [
-  { id: "session:tab-A", label: "session:tab-A", cap: 1, src: "default 1 — command-queue.ts:107" },
-  { id: "session:tab-B", label: "session:tab-B", cap: 1, src: "default 1" },
-  { id: "session:tab-C", label: "session:tab-C", cap: 1, src: "default 1" },
-  { id: "sessions", label: "sessions", cap: 8, src: "agents.defaults.sessions.maxConcurrent" },
-  { id: "main", label: "main", cap: 4, src: "agents.defaults.maxConcurrent" },
-  { id: "cron", label: "cron", cap: 6, src: "cron.maxConcurrentRuns" },
-];
-const state = new Map(LANES.map((l) => [l.id, { ...l, active: [], queue: [] }]));
-let nextId = 1;
-let tabCursor = 0;
+    <script>
+      "use strict";
+      // The model mirrors src/process/command-queue.ts: each lane is {maxConcurrent, active[], queue[]},
+      // and the drain loop promotes queued entries while active < maxConcurrent (command-queue.ts:169).
+      const LANES = [
+        {
+          id: "session:tab-A",
+          label: "session:tab-A",
+          cap: 1,
+          src: "default 1 — command-queue.ts:107",
+        },
+        { id: "session:tab-B", label: "session:tab-B", cap: 1, src: "default 1" },
+        { id: "session:tab-C", label: "session:tab-C", cap: 1, src: "default 1" },
+        {
+          id: "sessions",
+          label: "sessions",
+          cap: 8,
+          src: "agents.defaults.sessions.maxConcurrent",
+        },
+        { id: "main", label: "main", cap: 4, src: "agents.defaults.maxConcurrent" },
+        { id: "cron", label: "cron", cap: 6, src: "cron.maxConcurrentRuns" },
+      ];
+      const state = new Map(LANES.map((l) => [l.id, { ...l, active: [], queue: [] }]));
+      let nextId = 1;
+      let tabCursor = 0;
 
-/** A task holds its OUTER (session) slot for its whole life, and an INNER (global) slot once granted. */
-function dispatch(kind) {
-  const id = nextId++;
-  if (kind === "tab" || kind === "wedge") {
-    const tab = LANES[tabCursor++ % 3].id;              // round-robin across the three tabs
-    return admit({ id, outer: tab, inner: "sessions", wedged: kind === "wedge", ttl: rand(3, 6) });
-  }
-  if (kind === "system") return admit({ id, outer: null, inner: "main", wedged: false, ttl: rand(2, 4) });
-  return admit({ id, outer: null, inner: "cron", wedged: false, ttl: rand(3, 5) });
-}
-const rand = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+      /** A task holds its OUTER (session) slot for its whole life, and an INNER (global) slot once granted. */
+      function dispatch(kind) {
+        const id = nextId++;
+        if (kind === "tab" || kind === "wedge") {
+          const tab = LANES[tabCursor++ % 3].id; // round-robin across the three tabs
+          return admit({
+            id,
+            outer: tab,
+            inner: "sessions",
+            wedged: kind === "wedge",
+            ttl: rand(3, 6),
+          });
+        }
+        if (kind === "system")
+          return admit({ id, outer: null, inner: "main", wedged: false, ttl: rand(2, 4) });
+        return admit({ id, outer: null, inner: "cron", wedged: false, ttl: rand(3, 5) });
+      }
+      const rand = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
 
-function admit(task) {
-  const outer = task.outer ? state.get(task.outer) : null;
-  if (outer) {
-    if (outer.active.length < outer.cap) { outer.active.push(task); tryInner(task); }
-    else outer.queue.push(task);                       // strict per-session ordering
-  } else tryInner(task);
-  render();
-}
+      function admit(task) {
+        const outer = task.outer ? state.get(task.outer) : null;
+        if (outer) {
+          if (outer.active.length < outer.cap) {
+            outer.active.push(task);
+            tryInner(task);
+          } else outer.queue.push(task); // strict per-session ordering
+        } else tryInner(task);
+        render();
+      }
 
-function tryInner(task) {
-  const inner = state.get(task.inner);
-  if (inner.active.length < inner.cap) { inner.active.push(task); task.running = true; }
-  else { inner.queue.push(task); task.running = false; }
-}
+      function tryInner(task) {
+        const inner = state.get(task.inner);
+        if (inner.active.length < inner.cap) {
+          inner.active.push(task);
+          task.running = true;
+        } else {
+          inner.queue.push(task);
+          task.running = false;
+        }
+      }
 
-function tick() {
-  for (const lane of state.values()) {
-    for (const t of [...lane.active]) {
-      if (t.wedged || !t.running) continue;
-      if (lane.id !== t.inner) continue;               // count down once, on the inner lane
-      if (--t.ttl <= 0) finish(t);
-    }
-  }
-  render();
-}
+      function tick() {
+        for (const lane of state.values()) {
+          for (const t of [...lane.active]) {
+            if (t.wedged || !t.running) continue;
+            if (lane.id !== t.inner) continue; // count down once, on the inner lane
+            if (--t.ttl <= 0) finish(t);
+          }
+        }
+        render();
+      }
 
-function finish(task) {
-  const inner = state.get(task.inner);
-  inner.active = inner.active.filter((x) => x !== task);
-  if (inner.queue.length) { const n = inner.queue.shift(); inner.active.push(n); n.running = true; }
-  if (task.outer) {
-    const outer = state.get(task.outer);
-    outer.active = outer.active.filter((x) => x !== task);
-    if (outer.queue.length) { const n = outer.queue.shift(); outer.active.push(n); tryInner(n); }
-  }
-}
+      function finish(task) {
+        const inner = state.get(task.inner);
+        inner.active = inner.active.filter((x) => x !== task);
+        if (inner.queue.length) {
+          const n = inner.queue.shift();
+          inner.active.push(n);
+          n.running = true;
+        }
+        if (task.outer) {
+          const outer = state.get(task.outer);
+          outer.active = outer.active.filter((x) => x !== task);
+          if (outer.queue.length) {
+            const n = outer.queue.shift();
+            outer.active.push(n);
+            tryInner(n);
+          }
+        }
+      }
 
-function render() {
-  const host = document.getElementById("lanes");
-  host.innerHTML = "";
-  for (const lane of state.values()) {
-    const el = document.createElement("div");
-    el.className = "lane";
-    const slots = Array.from({ length: lane.cap }, (_, i) => {
-      const t = lane.active[i];
-      const cls = !t ? "slot" : t.wedged ? "slot wedged" : "slot busy";
-      return `<div class="${cls}" title="${t ? "run #" + t.id : "free"}">${t ? t.id : ""}</div>`;
-    }).join("");
-    const q = lane.queue.map(() => `<div class="q filled"></div>`).join("") ||
-              `<span class="meta">empty</span>`;
-    el.innerHTML =
-      `<div class="lane-head"><span class="lane-name">${lane.label}</span>` +
-      `<span class="meta">${lane.active.length}/${lane.cap} busy</span>` +
-      `<span class="lane-src">${lane.src}</span></div>` +
-      `<div class="slots">${slots}</div>` +
-      `<div class="queue"><span class="meta" style="margin-right:.4rem">queued:</span>${q}</div>`;
-    host.appendChild(el);
-  }
-  verdict();
-}
+      function render() {
+        const host = document.getElementById("lanes");
+        host.innerHTML = "";
+        for (const lane of state.values()) {
+          const el = document.createElement("div");
+          el.className = "lane";
+          const slots = Array.from({ length: lane.cap }, (_, i) => {
+            const t = lane.active[i];
+            const cls = !t ? "slot" : t.wedged ? "slot wedged" : "slot busy";
+            return `<div class="${cls}" title="${t ? "run #" + t.id : "free"}">${t ? t.id : ""}</div>`;
+          }).join("");
+          const q =
+            lane.queue.map(() => `<div class="q filled"></div>`).join("") ||
+            `<span class="meta">empty</span>`;
+          el.innerHTML =
+            `<div class="lane-head"><span class="lane-name">${lane.label}</span>` +
+            `<span class="meta">${lane.active.length}/${lane.cap} busy</span>` +
+            `<span class="lane-src">${lane.src}</span></div>` +
+            `<div class="slots">${slots}</div>` +
+            `<div class="queue"><span class="meta" style="margin-right:.4rem">queued:</span>${q}</div>`;
+          host.appendChild(el);
+        }
+        verdict();
+      }
 
-function verdict() {
-  const sessions = state.get("sessions"), main = state.get("main");
-  const wedged = [...state.values()].flatMap((l) => l.active).filter((t) => t.wedged).length;
-  const el = document.getElementById("verdict");
-  const sessionsFull = sessions.active.length >= sessions.cap;
-  if (!wedged && !sessions.active.length && !main.active.length) {
-    el.className = "verdict";
-    el.innerHTML = "<strong>Idle.</strong> Dispatch some work, then wedge a tab run.";
-    return;
-  }
-  if (sessionsFull && wedged) {
-    el.className = "verdict";
-    el.innerHTML =
-      `<strong>This is the whole point.</strong> <code>sessions</code> is saturated with ` +
-      `${wedged} wedged run(s) and tab work is queueing — but <code>main</code> still has ` +
-      `<strong>${main.cap - main.active.length} of ${main.cap}</strong> slots free. ` +
-      `System work is unaffected. Before 2026-07-24 both shared one lane and this froze every tab.`;
-    return;
-  }
-  el.className = "verdict";
-  el.innerHTML =
-    `<strong>Running.</strong> sessions ${sessions.active.length}/${sessions.cap} · ` +
-    `main ${main.active.length}/${main.cap} · wedged ${wedged}. ` +
-    (wedged ? "Keep dispatching tab work until <code>sessions</code> fills." :
-              "Now press <em>Wedge a tab run</em>.");
-}
+      function verdict() {
+        const sessions = state.get("sessions"),
+          main = state.get("main");
+        const wedged = [...state.values()].flatMap((l) => l.active).filter((t) => t.wedged).length;
+        const el = document.getElementById("verdict");
+        const sessionsFull = sessions.active.length >= sessions.cap;
+        if (!wedged && !sessions.active.length && !main.active.length) {
+          el.className = "verdict";
+          el.innerHTML = "<strong>Idle.</strong> Dispatch some work, then wedge a tab run.";
+          return;
+        }
+        if (sessionsFull && wedged) {
+          el.className = "verdict";
+          el.innerHTML =
+            `<strong>This is the whole point.</strong> <code>sessions</code> is saturated with ` +
+            `${wedged} wedged run(s) and tab work is queueing — but <code>main</code> still has ` +
+            `<strong>${main.cap - main.active.length} of ${main.cap}</strong> slots free. ` +
+            `System work is unaffected. Before 2026-07-24 both shared one lane and this froze every tab.`;
+          return;
+        }
+        el.className = "verdict";
+        el.innerHTML =
+          `<strong>Running.</strong> sessions ${sessions.active.length}/${sessions.cap} · ` +
+          `main ${main.active.length}/${main.cap} · wedged ${wedged}. ` +
+          (wedged
+            ? "Keep dispatching tab work until <code>sessions</code> fills."
+            : "Now press <em>Wedge a tab run</em>.");
+      }
 
-document.querySelector(".controls").addEventListener("click", (e) => {
-  const act = e.target.closest("button")?.dataset.act;
-  if (!act) return;
-  if (act === "reset") {
-    for (const l of state.values()) { l.active = []; l.queue = []; }
-    nextId = 1; tabCursor = 0; render(); return;
-  }
-  dispatch(act);
-});
+      document.querySelector(".controls").addEventListener("click", (e) => {
+        const act = e.target.closest("button")?.dataset.act;
+        if (!act) return;
+        if (act === "reset") {
+          for (const l of state.values()) {
+            l.active = [];
+            l.queue = [];
+          }
+          nextId = 1;
+          tabCursor = 0;
+          render();
+          return;
+        }
+        dispatch(act);
+      });
 
-setInterval(tick, 900);
-render();
-</script>
-</body>
+      setInterval(tick, 900);
+      render();
+    </script>
+  </body>
 </html>

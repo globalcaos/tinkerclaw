@@ -1226,8 +1226,12 @@ export default function register(api: OpenClawPluginApi) {
               composedFrom: outcome.composedFrom,
             });
           }
+          const xmlAttr = (s: string) =>
+            s.replace(/&/g, "\u0026amp;").replace(/"/g, "\u0026quot;").replace(/</g, "\u0026lt;");
+          const titleAttr = top?.title ? ` title="${xmlAttr(String(top.title))}"` : "";
+          const pathAttr = top?.path ? ` path="${xmlAttr(String(top.path))}"` : "";
           parts.push(
-            `<active_recipe kits="${kits.join(",")}" steps="${outcome.stepCount}">A plan was auto-seeded from the matched recipe(s). Follow its steps and keep the RECIPES panel honest via the recipe-state CLI: one \`--recipe <id> --step N\` call per transition, and \`--trail dispatch\`/\`--trail complete\` around each subagent.</active_recipe>`,
+            `<active_recipe kits="${kits.join(",")}" steps="${outcome.stepCount}"${titleAttr}${pathAttr}>A plan was auto-seeded from the matched recipe(s). Follow its steps and keep the RECIPES panel honest via the recipe-state CLI: one \`--recipe <id> --step N\` call per transition, and \`--trail dispatch\`/\`--trail complete\` around each subagent.</active_recipe>`,
           );
           // SS3: a WEAK/ambiguous match → advise composing a fresh recipe from the
           // skill stdlib instead of forcing the weak match. Gate on the LIVE MARGIN

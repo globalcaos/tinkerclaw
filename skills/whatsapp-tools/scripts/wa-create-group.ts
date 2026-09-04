@@ -3,6 +3,8 @@
  * Usage: npx tsx scripts/wa-create-group.ts "Group Name" "+phone1" "+phone2" ...
  */
 
+import os from "node:os";
+import path from "node:path";
 import {
   makeWASocket,
   useMultiFileAuthState,
@@ -10,33 +12,31 @@ import {
   fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
-import path from "node:path";
-import os from "node:os";
 
 const AUTH_DIR = path.join(os.homedir(), ".openclaw/credentials/whatsapp/default");
 
 async function main() {
   const args = process.argv.slice(2);
-  
+
   if (args.length < 2) {
-    console.error("Usage: npx tsx scripts/wa-create-group.ts \"Group Name\" \"+phone1\" \"+phone2\" ...");
+    console.error('Usage: npx tsx scripts/wa-create-group.ts "Group Name" "+phone1" "+phone2" ...');
     process.exit(1);
   }
-  
+
   const [name, ...rawParticipants] = args;
-  
+
   // Convert phone numbers to WhatsApp JIDs
-  const participants = rawParticipants.map(p => {
+  const participants = rawParticipants.map((p) => {
     const cleaned = p.replace(/[^0-9]/g, "");
     return `${cleaned}@s.whatsapp.net`;
   });
-  
+
   console.log(`🔌 Connecting to WhatsApp...`);
-  
+
   const logger = pino({ level: "silent" });
   const { state } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
-  
+
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
@@ -59,7 +59,7 @@ async function main() {
 
   console.log(`✅ Connected!`);
   console.log(`📱 Creating group "${name}" with ${participants.length} participants...`);
-  
+
   try {
     const result = await sock.groupCreate(name, participants);
     console.log(`\n✅ Group created!`);
@@ -75,7 +75,7 @@ async function main() {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error("Fatal:", err);
   process.exit(1);
 });

@@ -3,7 +3,7 @@
 // Refreshed daily by the model-rank-refresh cron (06:30). Prices move within DAYS:
 // glm-5.2 fell 27% and deepseek-v4-flash rose 56% inside 48h in August 2026, so a
 // hand-edited number here is wrong almost immediately.
-// Fetched: 2026-08-30T03:48:32.216Z
+// Fetched: 2026-09-03T03:56:07.510Z
 
 export interface CnProviderRow {
   out: number;
@@ -34,7 +34,7 @@ export interface CnProviderPrices {
 }
 
 export const CN_PROVIDER_PRICES: CnProviderPrices = {
-  fetchedAt: "2026-08-30T03:48:32.216Z",
+  fetchedAt: "2026-09-03T03:56:07.510Z",
   source: "openrouter.ai/api/v1/models/{id}/endpoints",
   unit: "USD per 1M tokens",
   note: "cheapest endpoint per provider; `out` is the headline figure the dossier ranks on",
@@ -87,21 +87,14 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
     "qwen/qwen3.8-2.4t-a95b": {
       lab: "Alibaba",
       providers: {
-        DeepInfra: {
-          out: 6,
-          in: 2,
-          cacheRead: 0.19999999999999998,
-          quant: "fp4",
-          ctx: 262144,
-        },
-        Modal: {
+        Novita: {
           out: 6,
           in: 2,
           cacheRead: 0.25,
           quant: "unknown",
           ctx: 1000000,
         },
-        Novita: {
+        Alibaba: {
           out: 6,
           in: 2,
           cacheRead: 0.25,
@@ -115,12 +108,19 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Alibaba: {
+        Modal: {
           out: 6,
           in: 2,
           cacheRead: 0.25,
           quant: "unknown",
           ctx: 1000000,
+        },
+        DeepInfra: {
+          out: 6,
+          in: 2,
+          cacheRead: 0.19999999999999998,
+          quant: "fp4",
+          ctx: 262144,
         },
         Together: {
           out: 6.25,
@@ -138,16 +138,44 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
       },
       cheapest: {
-        provider: "DeepInfra",
+        provider: "Novita",
         out: 6,
         in: 2,
-        quant: "fp4",
+        quant: "unknown",
       },
     },
     "qwen/qwen3.8-27b": {
       lab: "Alibaba",
       providers: {
+        Parasail: {
+          out: 2.2,
+          in: 0.25,
+          cacheRead: 0.049999999999999996,
+          quant: "fp8",
+          ctx: 262144,
+        },
+        Chutes: {
+          out: 2.5,
+          in: 0.32,
+          cacheRead: 0.032,
+          quant: "fp8",
+          ctx: 262144,
+        },
         AkashML: {
+          out: 2.5,
+          in: 0.32,
+          cacheRead: 0.032,
+          quant: "fp8",
+          ctx: 262144,
+        },
+        Ionstream: {
+          out: 2.5500000000000003,
+          in: 0.35,
+          cacheRead: 0.049999999999999996,
+          quant: "fp8",
+          ctx: 262144,
+        },
+        Reka: {
           out: 2.5500000000000003,
           in: 0.35,
           cacheRead: 0.049999999999999996,
@@ -160,20 +188,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.08499999999999999,
           quant: "unknown",
           ctx: 1000000,
-        },
-        Chutes: {
-          out: 2.75,
-          in: 0.35,
-          cacheRead: 0.035,
-          quant: "fp8",
-          ctx: 262144,
-        },
-        Reka: {
-          out: 3,
-          in: 0.25,
-          cacheRead: 0.024999999999999998,
-          quant: "fp8",
-          ctx: 262144,
         },
         Phala: {
           out: 3,
@@ -196,12 +210,12 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1000000,
         },
-        Parasail: {
-          out: 3.1999999999999997,
-          in: 0.35,
-          cacheRead: 0.049999999999999996,
+        "Io Net": {
+          out: 3.06,
+          in: 0.432,
+          cacheRead: 0.22499999999999998,
           quant: "fp8",
-          ctx: 262144,
+          ctx: 65536,
         },
         Cloudflare: {
           out: 3.1999999999999997,
@@ -217,18 +231,11 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 262144,
         },
-        "Io Net": {
-          out: 3.4,
-          in: 0.48,
-          cacheRead: 0.25,
-          quant: "fp8",
-          ctx: 65500,
-        },
       },
       cheapest: {
-        provider: "AkashML",
-        out: 2.5500000000000003,
-        in: 0.35,
+        provider: "Parasail",
+        out: 2.2,
+        in: 0.25,
         quant: "fp8",
       },
     },
@@ -260,6 +267,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
+        Wafer: {
+          out: 12.75,
+          in: 3,
+          cacheRead: 0.3,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         "Sail Research": {
           out: 13,
           in: 2.6,
@@ -288,6 +302,20 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
+        Phala: {
+          out: 15,
+          in: 3,
+          cacheRead: 0.3,
+          quant: "unknown",
+          ctx: 1048576,
+        },
+        Chutes: {
+          out: 15,
+          in: 3,
+          cacheRead: 0.3,
+          quant: "mxfp4",
+          ctx: 1048576,
+        },
         Parasail: {
           out: 15,
           in: 3,
@@ -295,28 +323,14 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
-        BaseTen: {
-          out: 15,
-          in: 3,
-          cacheRead: 0.3,
-          quant: "fp8",
-          ctx: 1048576,
-        },
-        Together: {
-          out: 15,
-          in: 3,
-          cacheRead: 0.3,
-          quant: "unknown",
-          ctx: 1048576,
-        },
-        "Moonshot AI": {
+        Modal: {
           out: 15,
           in: 3,
           cacheRead: 0.3,
           quant: "mxfp4",
           ctx: 1048576,
         },
-        Phala: {
+        Together: {
           out: 15,
           in: 3,
           cacheRead: 0.3,
@@ -330,14 +344,14 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
-        Modal: {
+        BaseTen: {
           out: 15,
           in: 3,
           cacheRead: 0.3,
-          quant: "mxfp4",
+          quant: "fp8",
           ctx: 1048576,
         },
-        Chutes: {
+        "Moonshot AI": {
           out: 15,
           in: 3,
           cacheRead: 0.3,
@@ -362,6 +376,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
     "moonshotai/kimi-k2.7-code": {
       lab: "Moonshot AI",
       providers: {
+        StreamLake: {
+          out: 3,
+          in: 0.7124999999999999,
+          cacheRead: 0.14250000000000002,
+          quant: "unknown",
+          ctx: 256000,
+        },
         Inceptron: {
           out: 3.4,
           in: 0.66,
@@ -397,13 +418,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "int4",
           ctx: 256000,
         },
-        Parasail: {
-          out: 3.5,
-          in: 0.76,
-          cacheRead: 0.16,
-          quant: "int4",
-          ctx: 262144,
-        },
         ModelRun: {
           out: 3.75,
           in: 0.85,
@@ -425,11 +439,32 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "int4",
           ctx: 262144,
         },
+        BaseTen: {
+          out: 4,
+          in: 0.95,
+          cacheRead: 0.16,
+          quant: "fp4",
+          ctx: 262000,
+        },
         GMICloud: {
           out: 4,
           in: 0.95,
           cacheRead: 0.19,
           quant: "fp8",
+          ctx: 262144,
+        },
+        Alibaba: {
+          out: 4,
+          in: 0.95,
+          cacheRead: 0.19,
+          quant: "fp8",
+          ctx: 262144,
+        },
+        Together: {
+          out: 4,
+          in: 0.95,
+          cacheRead: 0.19,
+          quant: "unknown",
           ctx: 262144,
         },
         Cloudflare: {
@@ -446,43 +481,29 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "int4",
           ctx: 262144,
         },
-        Together: {
-          out: 4,
-          in: 0.95,
-          cacheRead: 0.19,
-          quant: "unknown",
-          ctx: 262144,
-        },
-        Alibaba: {
-          out: 4,
-          in: 0.95,
-          cacheRead: 0.19,
-          quant: "fp8",
-          ctx: 262144,
-        },
       },
       cheapest: {
-        provider: "Inceptron",
-        out: 3.4,
-        in: 0.66,
-        quant: "int4",
+        provider: "StreamLake",
+        out: 3,
+        in: 0.7124999999999999,
+        quant: "unknown",
       },
     },
     "moonshotai/kimi-k2.6": {
       lab: "Moonshot AI",
       providers: {
-        Baidu: {
-          out: 2.228,
-          in: 0.52915,
-          cacheRead: 0.08912,
+        Decart: {
+          out: 2.4499999999999997,
+          in: 0.5194,
+          cacheRead: 0.098,
           quant: "fp4",
           ctx: 262144,
         },
-        Decart: {
-          out: 2.2618,
-          in: 0.5372,
-          cacheRead: 0.0905,
-          quant: "fp4",
+        Inceptron: {
+          out: 2.5,
+          in: 0.53,
+          cacheRead: 0.09999999999999999,
+          quant: "int4",
           ctx: 262144,
         },
         StreamLake: {
@@ -491,13 +512,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.1008,
           quant: "fp8",
           ctx: 256000,
-        },
-        Inceptron: {
-          out: 3.39,
-          in: 0.53,
-          cacheRead: 0.16999999999999998,
-          quant: "int4",
-          ctx: 262144,
         },
         Chutes: {
           out: 3.4,
@@ -569,6 +583,20 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 262144,
         },
+        Baidu: {
+          out: 4,
+          in: 0.95,
+          cacheRead: 0.16,
+          quant: "fp4",
+          ctx: 262144,
+        },
+        AtlasCloud: {
+          out: 4,
+          in: 0.95,
+          cacheRead: 0.16,
+          quant: "int4",
+          ctx: 262144,
+        },
         Cloudflare: {
           out: 4,
           in: 0.95,
@@ -583,12 +611,12 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "int4",
           ctx: 262144,
         },
-        AtlasCloud: {
+        BaseTen: {
           out: 4,
           in: 0.95,
           cacheRead: 0.16,
-          quant: "int4",
-          ctx: 262144,
+          quant: "fp4",
+          ctx: 262000,
         },
         Fireworks: {
           out: 4,
@@ -596,13 +624,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.16,
           quant: "unknown",
           ctx: 262144,
-        },
-        BaseTen: {
-          out: 4,
-          in: 0.95,
-          cacheRead: 0.16,
-          quant: "fp4",
-          ctx: 262000,
         },
         Phala: {
           out: 4.6,
@@ -613,20 +634,48 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
       },
       cheapest: {
-        provider: "Baidu",
-        out: 2.228,
-        in: 0.52915,
+        provider: "Decart",
+        out: 2.4499999999999997,
+        in: 0.5194,
         quant: "fp4",
       },
     },
     "z-ai/glm-5.3": {
       lab: "Z.AI",
       providers: {
+        Decart: {
+          out: 3.432,
+          in: 1.092,
+          cacheRead: 0.1794,
+          quant: "fp4",
+          ctx: 1048576,
+        },
+        Reka: {
+          out: 3.5,
+          in: 1.15,
+          cacheRead: 0.09999999999999999,
+          quant: "fp8",
+          ctx: 262144,
+        },
+        AkashML: {
+          out: 3.9600000000000004,
+          in: 1.17,
+          cacheRead: 0.234,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Friendli: {
+          out: 3.9600000000000004,
+          in: 1.26,
+          cacheRead: 0.234,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         DeepInfra: {
           out: 4,
           in: 1.2,
-          cacheRead: 0.24,
-          quant: "fp8",
+          cacheRead: 0.12,
+          quant: "fp4",
           ctx: 1048576,
         },
         "Io Net": {
@@ -636,6 +685,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 262144,
         },
+        Wafer: {
+          out: 4.4,
+          in: 1.19,
+          cacheRead: 0.26,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         Morph: {
           out: 4.4,
           in: 1.25,
@@ -643,56 +699,56 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
-        AkashML: {
+        Makora: {
           out: 4.4,
-          in: 1.3,
-          cacheRead: 0.26,
-          quant: "fp8",
-          ctx: 1048576,
+          in: 1.35,
+          cacheRead: 0.22999999999999998,
+          quant: "fp4",
+          ctx: 980000,
         },
-        AtlasCloud: {
+        "Sail Research": {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
           quant: "fp8",
-          ctx: 262144,
-        },
-        Cloudflare: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "unknown",
-          ctx: 1310720,
-        },
-        Friendli: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "unknown",
           ctx: 1048576,
         },
-        Fireworks: {
+        Inceptron: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
-          quant: "unknown",
-          ctx: 1048576,
-        },
-        BaseTen: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.14,
           quant: "fp4",
           ctx: 1048576,
         },
-        GMICloud: {
+        SiliconFlow: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
           quant: "fp8",
           ctx: 1048576,
         },
-        Modal: {
+        Phala: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "unknown",
+          ctx: 1048576,
+        },
+        Novita: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Together: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "unknown",
+          ctx: 1048575,
+        },
+        DigitalOcean: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
@@ -706,26 +762,40 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Novita: {
+        Modal: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "unknown",
+          ctx: 1048576,
+        },
+        GMICloud: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
           quant: "fp8",
           ctx: 1048576,
         },
-        DigitalOcean: {
+        BaseTen: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.14,
+          quant: "fp4",
+          ctx: 1048576,
+        },
+        Fireworks: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
           quant: "unknown",
           ctx: 1048576,
         },
-        Together: {
+        Cloudflare: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
           quant: "unknown",
-          ctx: 1048575,
+          ctx: 1310720,
         },
         "Z.AI": {
           out: 4.4,
@@ -734,25 +804,25 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
+        Venice: {
+          out: 5.5,
+          in: 1.75,
+          cacheRead: 0.325,
+          quant: "unknown",
+          ctx: 1000000,
+        },
       },
       cheapest: {
-        provider: "DeepInfra",
-        out: 4,
-        in: 1.2,
-        quant: "fp8",
+        provider: "Decart",
+        out: 3.432,
+        in: 1.092,
+        quant: "fp4",
       },
     },
     "z-ai/glm-5.3-flash": {
       lab: "Z.AI",
       providers: {
-        Relace: {
-          out: 0.25,
-          in: 0.075,
-          cacheRead: 0.015,
-          quant: "fp4",
-          ctx: 1048576,
-        },
-        "Z.AI": {
+        GMICloud: {
           out: 0.25,
           in: 0.075,
           cacheRead: 0.015,
@@ -773,18 +843,32 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        GMICloud: {
+        "Z.AI": {
           out: 0.25,
           in: 0.075,
           cacheRead: 0.015,
           quant: "fp8",
           ctx: 1048576,
         },
+        Wafer: {
+          out: 0.35,
+          in: 0.09999999999999999,
+          cacheRead: 0.02,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         Morph: {
-          out: 0.43,
-          in: 0.15,
-          cacheRead: 0.01,
+          out: 0.44999999999999996,
+          in: 0.13,
+          cacheRead: 0.02,
           quant: "fp8",
+          ctx: 1048576,
+        },
+        Makora: {
+          out: 0.47,
+          in: 0.14,
+          cacheRead: 0.024,
+          quant: "unknown",
           ctx: 1048576,
         },
         Modal: {
@@ -794,35 +878,42 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Parasail: {
+        "Sail Research": {
           out: 0.5,
           in: 0.15,
           cacheRead: 0.03,
           quant: "fp8",
           ctx: 1048576,
         },
-        Reka: {
-          out: 0.5,
-          in: 0.15,
-          cacheRead: 0.03,
-          quant: "fp8",
-          ctx: 262144,
-        },
-        Together: {
+        StreamLake: {
           out: 0.5,
           in: 0.15,
           cacheRead: 0.03,
           quant: "unknown",
-          ctx: 1048575,
+          ctx: 1024000,
         },
-        Wafer: {
+        NextBit: {
+          out: 0.5,
+          in: 0.15,
+          cacheRead: 0.03,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Fireworks: {
           out: 0.5,
           in: 0.15,
           cacheRead: 0.03,
           quant: "unknown",
           ctx: 1048576,
         },
-        DigitalOcean: {
+        Phala: {
+          out: 0.5,
+          in: 0.15,
+          cacheRead: 0.03,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Friendli: {
           out: 0.5,
           in: 0.15,
           cacheRead: 0.03,
@@ -836,40 +927,33 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Friendli: {
+        DigitalOcean: {
           out: 0.5,
           in: 0.15,
           cacheRead: 0.03,
           quant: "unknown",
           ctx: 1048576,
         },
-        Phala: {
-          out: 0.5,
-          in: 0.15,
-          cacheRead: 0.03,
-          quant: "fp8",
-          ctx: 1048576,
-        },
-        Fireworks: {
-          out: 0.5,
-          in: 0.15,
-          cacheRead: 0.029,
-          quant: "unknown",
-          ctx: 1048576,
-        },
-        Cloudflare: {
+        Together: {
           out: 0.5,
           in: 0.15,
           cacheRead: 0.03,
           quant: "unknown",
-          ctx: 1310720,
+          ctx: 1048575,
         },
-        "Io Net": {
+        Reka: {
           out: 0.5,
           in: 0.15,
           cacheRead: 0.03,
           quant: "fp8",
           ctx: 262144,
+        },
+        Parasail: {
+          out: 0.5,
+          in: 0.15,
+          cacheRead: 0.03,
+          quant: "fp8",
+          ctx: 1048576,
         },
         BaseTen: {
           out: 0.5,
@@ -885,44 +969,51 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
+        "Io Net": {
+          out: 0.5,
+          in: 0.15,
+          cacheRead: 0.03,
+          quant: "fp8",
+          ctx: 262144,
+        },
+        Cloudflare: {
+          out: 0.5,
+          in: 0.15,
+          cacheRead: 0.03,
+          quant: "unknown",
+          ctx: 1310720,
+        },
       },
       cheapest: {
-        provider: "Relace",
+        provider: "GMICloud",
         out: 0.25,
         in: 0.075,
-        quant: "fp4",
+        quant: "fp8",
       },
     },
     "z-ai/glm-5.2": {
       lab: "Z.AI",
       providers: {
-        StreamLake: {
-          out: 1.0296,
-          in: 0.3276,
-          cacheRead: 0.06083999999999999,
-          quant: "fp8",
-          ctx: 1024000,
-        },
-        Novita: {
-          out: 1.0735999999999999,
-          in: 0.3416,
-          cacheRead: 0.06344000000000001,
-          quant: "fp8",
-          ctx: 1048576,
-        },
-        Baidu: {
-          out: 1.1704,
-          in: 0.3724,
-          cacheRead: 0.06916,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         DeepInfra: {
           out: 1.56,
           in: 0.4875,
           cacheRead: 0.091,
           quant: "fp4",
           ctx: 1048576,
+        },
+        Novita: {
+          out: 1.7556,
+          in: 0.5586,
+          cacheRead: 0.10374,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        StreamLake: {
+          out: 1.76,
+          in: 0.56,
+          cacheRead: 0.10400000000000001,
+          quant: "fp8",
+          ctx: 1024000,
         },
         Ambient: {
           out: 2,
@@ -952,18 +1043,18 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
-        Makora: {
-          out: 2.38,
-          in: 0.72,
-          cacheRead: 0.12,
-          quant: "fp4",
-          ctx: 980000,
-        },
         CoreWeave: {
           out: 2.42,
           in: 0.76,
           cacheRead: 0.14,
           quant: "fp4",
+          ctx: 1048576,
+        },
+        AtlasCloud: {
+          out: 2.948,
+          in: 0.938,
+          cacheRead: 0.17420000000000002,
+          quant: "fp8",
           ctx: 1048576,
         },
         Phala: {
@@ -1008,11 +1099,11 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 262144,
         },
-        AtlasCloud: {
-          out: 3.9600000000000004,
-          in: 1.26,
-          cacheRead: 0.234,
-          quant: "fp8",
+        Mistral: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.14,
+          quant: "unknown",
           ctx: 1048576,
         },
         BaseTen: {
@@ -1022,17 +1113,52 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Mistral: {
+        Crusoe: {
           out: 4.4,
           in: 1.4,
-          cacheRead: 0.14,
+          cacheRead: 0.26,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Together: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
           quant: "unknown",
+          ctx: 512000,
+        },
+        Baidu: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "fp8",
           ctx: 1048576,
         },
         Fireworks: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.14,
+          quant: "unknown",
+          ctx: 1048576,
+        },
+        Venice: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "fp8",
+          ctx: 1000000,
+        },
+        Parasail: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "fp4",
+          ctx: 262144,
+        },
+        Friendli: {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
           quant: "unknown",
           ctx: 1048576,
         },
@@ -1050,59 +1176,17 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Parasail: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "fp4",
-          ctx: 262144,
-        },
-        Together: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "unknown",
-          ctx: 512000,
-        },
-        Crusoe: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "fp8",
-          ctx: 1048576,
-        },
-        Venice: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "fp8",
-          ctx: 1000000,
-        },
-        Friendli: {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "unknown",
-          ctx: 1048576,
-        },
       },
       cheapest: {
-        provider: "StreamLake",
-        out: 1.0296,
-        in: 0.3276,
-        quant: "fp8",
+        provider: "DeepInfra",
+        out: 1.56,
+        in: 0.4875,
+        quant: "fp4",
       },
     },
     "z-ai/glm-5.1": {
       lab: "Z.AI",
       providers: {
-        Baidu: {
-          out: 2.8556,
-          in: 0.9086,
-          cacheRead: 0.16874,
-          quant: "fp8",
-          ctx: 202752,
-        },
         GMICloud: {
           out: 2.8600000000000003,
           in: 0.9099999999999999,
@@ -1187,14 +1271,7 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 202752,
         },
-        "Z.AI": {
-          out: 4.4,
-          in: 1.4,
-          cacheRead: 0.26,
-          quant: "fp8",
-          ctx: 202752,
-        },
-        Parasail: {
+        Baidu: {
           out: 4.4,
           in: 1.4,
           cacheRead: 0.26,
@@ -1208,6 +1285,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 202752,
         },
+        "Z.AI": {
+          out: 4.4,
+          in: 1.4,
+          cacheRead: 0.26,
+          quant: "fp8",
+          ctx: 202752,
+        },
         Venice: {
           out: 4.84,
           in: 1.54,
@@ -1217,28 +1301,28 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
       },
       cheapest: {
-        provider: "Baidu",
-        out: 2.8556,
-        in: 0.9086,
+        provider: "GMICloud",
+        out: 2.8600000000000003,
+        in: 0.9099999999999999,
         quant: "fp8",
       },
     },
     "z-ai/glm-5": {
       lab: "Z.AI",
       providers: {
-        GMICloud: {
-          out: 1.92,
-          in: 0.6,
-          cacheRead: 0.12,
-          quant: "fp8",
-          ctx: 202752,
-        },
         StreamLake: {
           out: 1.92,
           in: 0.6,
           cacheRead: 0.12,
           quant: "fp8",
           ctx: 198000,
+        },
+        GMICloud: {
+          out: 1.92,
+          in: 0.6,
+          cacheRead: 0.12,
+          quant: "fp8",
+          ctx: 202752,
         },
         DeepInfra: {
           out: 2.08,
@@ -1261,11 +1345,18 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 204800,
         },
-        AtlasCloud: {
-          out: 3.15,
-          in: 0.95,
-          cacheRead: 0.19,
-          quant: "fp8",
+        DigitalOcean: {
+          out: 3.1999999999999997,
+          in: 1,
+          cacheRead: 0.19999999999999998,
+          quant: "unknown",
+          ctx: 64000,
+        },
+        "Amazon Bedrock": {
+          out: 3.1999999999999997,
+          in: 1,
+          cacheRead: null,
+          quant: "unknown",
           ctx: 202752,
         },
         Venice: {
@@ -1275,13 +1366,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 198000,
         },
-        "Z.AI": {
-          out: 3.1999999999999997,
-          in: 1,
-          cacheRead: 0.19999999999999998,
-          quant: "fp8",
-          ctx: 202752,
-        },
         Novita: {
           out: 3.1999999999999997,
           in: 1,
@@ -1289,23 +1373,16 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 202800,
         },
-        "Amazon Bedrock": {
-          out: 3.1999999999999997,
-          in: 1,
-          cacheRead: null,
-          quant: "unknown",
-          ctx: 202752,
-        },
-        DigitalOcean: {
+        "Z.AI": {
           out: 3.1999999999999997,
           in: 1,
           cacheRead: 0.19999999999999998,
-          quant: "unknown",
-          ctx: 64000,
+          quant: "fp8",
+          ctx: 202752,
         },
       },
       cheapest: {
-        provider: "GMICloud",
+        provider: "StreamLake",
         out: 1.92,
         in: 0.6,
         quant: "fp8",
@@ -1314,13 +1391,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
     "deepseek/deepseek-v4-pro-0813": {
       lab: "DeepSeek",
       providers: {
-        DeepSeek: {
-          out: 1.9800000000000002,
-          in: 0.66,
-          cacheRead: 0.022,
-          quant: "unknown",
-          ctx: 1048576,
-        },
         DeepInfra: {
           out: 2.6,
           in: 1.3,
@@ -1329,18 +1399,11 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           ctx: 1048576,
         },
         StreamLake: {
-          out: 3.36204,
-          in: 1.12068,
-          cacheRead: 0.037356,
+          out: 3.3461999999999996,
+          in: 1.1154,
+          cacheRead: 0.03718,
           quant: "unknown",
           ctx: 1024000,
-        },
-        GMICloud: {
-          out: 3.366,
-          in: 1.122,
-          cacheRead: 0.037399999999999996,
-          quant: "fp8",
-          ctx: 1048575,
         },
         Alibaba: {
           out: 3.366,
@@ -1349,10 +1412,24 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1000000,
         },
+        GMICloud: {
+          out: 3.366,
+          in: 1.122,
+          cacheRead: 0.037399999999999996,
+          quant: "fp8",
+          ctx: 1048575,
+        },
         CoreWeave: {
           out: 3.9600000000000004,
           in: 1.31,
           cacheRead: 0.044,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        NextBit: {
+          out: 3.9600000000000004,
+          in: 1.32,
+          cacheRead: 0.045,
           quant: "fp8",
           ctx: 1048576,
         },
@@ -1363,10 +1440,31 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
+        BaseTen: {
+          out: 3.9600000000000004,
+          in: 1.32,
+          cacheRead: 0.13199999999999998,
+          quant: "fp4",
+          ctx: 1048576,
+        },
+        Parasail: {
+          out: 3.9600000000000004,
+          in: 1.32,
+          cacheRead: 0.044,
+          quant: "fp8",
+          ctx: 1048576,
+        },
         Together: {
           out: 3.9600000000000004,
           in: 1.32,
           cacheRead: 0.13,
+          quant: "unknown",
+          ctx: 1048576,
+        },
+        DigitalOcean: {
+          out: 3.9600000000000004,
+          in: 1.32,
+          cacheRead: 0.044,
           quant: "unknown",
           ctx: 1048576,
         },
@@ -1377,32 +1475,11 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        Parasail: {
-          out: 3.9600000000000004,
-          in: 1.32,
-          cacheRead: 0.044,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         SiliconFlow: {
           out: 3.9600000000000004,
           in: 1.32,
           cacheRead: 0.44,
           quant: "fp8",
-          ctx: 1048576,
-        },
-        BaseTen: {
-          out: 3.9600000000000004,
-          in: 1.32,
-          cacheRead: 0.13199999999999998,
-          quant: "fp4",
-          ctx: 1048576,
-        },
-        DigitalOcean: {
-          out: 3.9600000000000004,
-          in: 1.32,
-          cacheRead: 0.044,
-          quant: "unknown",
           ctx: 1048576,
         },
         Cloudflare: {
@@ -1419,6 +1496,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
+        DeepSeek: {
+          out: 3.9600000000000004,
+          in: 1.32,
+          cacheRead: 0.044,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         Phala: {
           out: 4.359999999999999,
           in: 1.4500000000000002,
@@ -1428,34 +1512,20 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
         },
       },
       cheapest: {
-        provider: "DeepSeek",
-        out: 1.9800000000000002,
-        in: 0.66,
-        quant: "unknown",
+        provider: "DeepInfra",
+        out: 2.6,
+        in: 1.3,
+        quant: "fp8",
       },
     },
     "deepseek/deepseek-v4-flash-0731": {
       lab: "DeepSeek",
       providers: {
-        Baidu: {
-          out: 0.08988,
-          in: 0.04494,
-          cacheRead: 0.008988000000000001,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         OpenInference: {
           out: 0.16,
-          in: 0.03,
-          cacheRead: 0.01,
+          in: 0.049999999999999996,
+          cacheRead: 0.013000000000000001,
           quant: "fp8",
-          ctx: 1048576,
-        },
-        "Sail Research": {
-          out: 0.18,
-          in: 0.065,
-          cacheRead: 0.02,
-          quant: "fp4",
           ctx: 1048576,
         },
         Relace: {
@@ -1465,9 +1535,9 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
-        DeepInfra: {
+        AkashML: {
           out: 0.18,
-          in: 0.08,
+          in: 0.065,
           cacheRead: 0.016,
           quant: "fp8",
           ctx: 1048576,
@@ -1479,12 +1549,26 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
+        DeepInfra: {
+          out: 0.18,
+          in: 0.08,
+          cacheRead: 0.016,
+          quant: "fp8",
+          ctx: 1048576,
+        },
         Makora: {
           out: 0.195,
           in: 0.09,
           cacheRead: 0.0196,
           quant: "unknown",
           ctx: 1000000,
+        },
+        Wafer: {
+          out: 0.25,
+          in: 0.09999999999999999,
+          cacheRead: 0.049999999999999996,
+          quant: "unknown",
+          ctx: 1048576,
         },
         DigitalOcean: {
           out: 0.252,
@@ -1500,25 +1584,11 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 1048576,
         },
-        StreamLake: {
-          out: 0.26399999999999996,
-          in: 0.088,
-          cacheRead: 0.0028,
-          quant: "fp8",
-          ctx: 1024000,
-        },
         Morph: {
           out: 0.27799999999999997,
           in: 0.09874999999999999,
           cacheRead: 0.024999999999999998,
           quant: "bf16",
-          ctx: 1048576,
-        },
-        AkashML: {
-          out: 0.28,
-          in: 0.09999999999999999,
-          cacheRead: 0.02,
-          quant: "fp8",
           ctx: 1048576,
         },
         Inceptron: {
@@ -1535,18 +1605,25 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 262144,
         },
-        Parasail: {
-          out: 0.28,
-          in: 0.14,
-          cacheRead: 0.049999999999999996,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         Together: {
           out: 0.28,
           in: 0.14,
           cacheRead: 0.03,
           quant: "unknown",
+          ctx: 1048576,
+        },
+        Baidu: {
+          out: 0.28,
+          in: 0.14,
+          cacheRead: 0.028,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Parasail: {
+          out: 0.28,
+          in: 0.14,
+          cacheRead: 0.049999999999999996,
+          quant: "fp8",
           ctx: 1048576,
         },
         Venice: {
@@ -1556,26 +1633,26 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1000000,
         },
+        StreamLake: {
+          out: 0.396,
+          in: 0.13199999999999998,
+          cacheRead: 0.004200000000000001,
+          quant: "fp8",
+          ctx: 1024000,
+        },
         "Mancer 2": {
           out: 0.5,
-          in: 0.165,
+          in: 0.175,
           cacheRead: null,
           quant: "fp8",
           ctx: 1048576,
         },
-        Wafer: {
-          out: 0.56,
-          in: 0.28,
-          cacheRead: 0.07,
-          quant: "unknown",
-          ctx: 1048576,
-        },
-        DeepSeek: {
+        Reka: {
           out: 0.66,
-          in: 0.22,
+          in: 0.11,
           cacheRead: 0.007,
-          quant: "unknown",
-          ctx: 1048576,
+          quant: "fp4",
+          ctx: 262144,
         },
         Fireworks: {
           out: 0.66,
@@ -1584,26 +1661,12 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1048576,
         },
-        Reka: {
-          out: 0.66,
-          in: 0.22,
-          cacheRead: 0.007,
-          quant: "fp4",
-          ctx: 262144,
-        },
         SiliconFlow: {
           out: 0.66,
           in: 0.22,
           cacheRead: 0.028,
           quant: "fp8",
           ctx: 1048576,
-        },
-        GMICloud: {
-          out: 1.0559999999999998,
-          in: 0.352,
-          cacheRead: 0.0112,
-          quant: "fp8",
-          ctx: 1048575,
         },
         Alibaba: {
           out: 1.0559999999999998,
@@ -1612,17 +1675,31 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1000000,
         },
+        GMICloud: {
+          out: 1.0559999999999998,
+          in: 0.352,
+          cacheRead: 0.0112,
+          quant: "fp8",
+          ctx: 1048575,
+        },
+        NextBit: {
+          out: 1.2,
+          in: 0.39999999999999997,
+          cacheRead: 0.01,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        Phala: {
+          out: 1.32,
+          in: 0.44,
+          cacheRead: 0.028,
+          quant: "unknown",
+          ctx: 1048576,
+        },
         Novita: {
           out: 1.32,
           in: 0.44,
           cacheRead: 0.028,
-          quant: "fp8",
-          ctx: 1048576,
-        },
-        NextBit: {
-          out: 1.32,
-          in: 0.44,
-          cacheRead: 0.016,
           quant: "fp8",
           ctx: 1048576,
         },
@@ -1633,13 +1710,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp4",
           ctx: 1048576,
         },
-        Phala: {
-          out: 1.32,
-          in: 0.44,
-          cacheRead: 0.028,
-          quant: "unknown",
-          ctx: 1048576,
-        },
         Cloudflare: {
           out: 1.32,
           in: 0.44,
@@ -1647,27 +1717,48 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "unknown",
           ctx: 1310720,
         },
+        DeepSeek: {
+          out: 1.32,
+          in: 0.44,
+          cacheRead: 0.014,
+          quant: "unknown",
+          ctx: 1048576,
+        },
       },
       cheapest: {
-        provider: "Baidu",
-        out: 0.08988,
-        in: 0.04494,
+        provider: "OpenInference",
+        out: 0.16,
+        in: 0.049999999999999996,
         quant: "fp8",
       },
     },
     "deepseek/deepseek-v4-flash-vision-exp": {
       lab: "DeepSeek",
       providers: {
-        DeepSeek: {
+        Fireworks: {
           out: 0.66,
           in: 0.22,
           cacheRead: 0.007,
           quant: "unknown",
           ctx: 1048576,
         },
+        Novita: {
+          out: 1.32,
+          in: 0.44,
+          cacheRead: 0.028,
+          quant: "unknown",
+          ctx: 1048576,
+        },
+        DeepSeek: {
+          out: 1.32,
+          in: 0.44,
+          cacheRead: 0.014,
+          quant: "unknown",
+          ctx: 1048576,
+        },
       },
       cheapest: {
-        provider: "DeepSeek",
+        provider: "Fireworks",
         out: 0.66,
         in: 0.22,
         quant: "unknown",
@@ -1690,27 +1781,6 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "fp8",
           ctx: 524288,
         },
-        AtlasCloud: {
-          out: 1.2,
-          in: 0.3,
-          cacheRead: 0.06,
-          quant: "fp8",
-          ctx: 524300,
-        },
-        Parasail: {
-          out: 1.2,
-          in: 0.3,
-          cacheRead: 0.06,
-          quant: "fp8",
-          ctx: 1048576,
-        },
-        Novita: {
-          out: 1.2,
-          in: 0.3,
-          cacheRead: 0.06,
-          quant: "fp8",
-          ctx: 1000000,
-        },
         StreamLake: {
           out: 1.2,
           in: 0.3,
@@ -1724,6 +1794,27 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           cacheRead: 0.06,
           quant: "fp8",
           ctx: 524288,
+        },
+        Parasail: {
+          out: 1.2,
+          in: 0.3,
+          cacheRead: 0.06,
+          quant: "fp8",
+          ctx: 1048576,
+        },
+        AtlasCloud: {
+          out: 1.2,
+          in: 0.3,
+          cacheRead: 0.06,
+          quant: "fp8",
+          ctx: 524300,
+        },
+        Novita: {
+          out: 1.2,
+          in: 0.3,
+          cacheRead: 0.06,
+          quant: "fp8",
+          ctx: 1000000,
         },
         Minimax: {
           out: 1.2,
@@ -1771,24 +1862,10 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "bf16",
           ctx: 262144,
         },
-        Baidu: {
-          out: 0.527472,
-          in: 0.131868,
-          cacheRead: 0.032967,
-          quant: "fp8",
-          ctx: 262144,
-        },
         Tencent: {
           out: 0.5279999999999999,
           in: 0.13199999999999998,
           cacheRead: 0.032999999999999995,
-          quant: "fp8",
-          ctx: 262144,
-        },
-        DeepInfra: {
-          out: 0.58,
-          in: 0.14,
-          cacheRead: 0.035,
           quant: "fp8",
           ctx: 262144,
         },
@@ -1797,6 +1874,13 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           in: 0.14,
           cacheRead: 0.035,
           quant: "unknown",
+          ctx: 262144,
+        },
+        DeepInfra: {
+          out: 0.58,
+          in: 0.14,
+          cacheRead: 0.035,
+          quant: "fp8",
           ctx: 262144,
         },
         Phala: {
@@ -1831,19 +1915,19 @@ export const CN_PROVIDER_PRICES: CnProviderPrices = {
           quant: "bf16",
           ctx: 1050000,
         },
-        Xiaomi: {
-          out: 0.87,
-          in: 0.435,
-          cacheRead: 0.0036,
-          quant: "fp8",
-          ctx: 1048576,
-        },
         AtlasCloud: {
           out: 0.87,
           in: 0.435,
           cacheRead: 0.0036,
           quant: "fp8",
           ctx: 1024000,
+        },
+        Xiaomi: {
+          out: 0.87,
+          in: 0.435,
+          cacheRead: 0.0036,
+          quant: "fp8",
+          ctx: 1048576,
         },
         Novita: {
           out: 0.96048,

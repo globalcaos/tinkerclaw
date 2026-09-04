@@ -8,17 +8,17 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 
 ### 1. Core Python Scripts (Complete ✓)
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `fork_scanner.py` | 235 | Main executable with CLI interface |
-| `config.py` | 134 | Configuration management |
-| `database.py` | 371 | SQLite database operations |
-| `rate_limiter.py` | 158 | GitHub API rate limit handling |
-| `tier1_metadata.py` | 194 | Tier 1: Metadata filtering |
-| `tier2_commits.py` | 173 | Tier 2: Commit analysis |
-| `tier3_diff.py` | 256 | Tier 3: Diff analysis |
-| `watchlist.py` | 156 | Watchlist management |
-| `reporter.py` | 257 | Report generation (MD/CSV/JSON/PDF) |
+| File                | Lines | Purpose                             |
+| ------------------- | ----- | ----------------------------------- |
+| `fork_scanner.py`   | 235   | Main executable with CLI interface  |
+| `config.py`         | 134   | Configuration management            |
+| `database.py`       | 371   | SQLite database operations          |
+| `rate_limiter.py`   | 158   | GitHub API rate limit handling      |
+| `tier1_metadata.py` | 194   | Tier 1: Metadata filtering          |
+| `tier2_commits.py`  | 173   | Tier 2: Commit analysis             |
+| `tier3_diff.py`     | 256   | Tier 3: Diff analysis               |
+| `watchlist.py`      | 156   | Watchlist management                |
+| `reporter.py`       | 257   | Report generation (MD/CSV/JSON/PDF) |
 
 **Total Code**: ~1,934 lines of production Python
 
@@ -27,6 +27,7 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 **File**: `schema.sql` (62 lines)
 
 **Tables**:
+
 - `forks` - Stores metadata for all discovered forks
 - `commits` - Analyzed commits from Tier 2
 - `gems` - Confirmed valuable changes from Tier 3
@@ -34,6 +35,7 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 - `run_history` - Execution history for incremental processing
 
 **Features**:
+
 - Proper indexing for performance
 - Foreign key constraints
 - Incremental update support
@@ -41,20 +43,20 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 
 ### 3. Documentation (Complete ✓)
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `README.md` | 434 | Comprehensive user guide |
-| `ARCHITECTURE.md` | 277 | System design documentation |
-| `QUICKSTART.md` | 155 | 5-minute quick start guide |
+| File              | Lines | Purpose                     |
+| ----------------- | ----- | --------------------------- |
+| `README.md`       | 434   | Comprehensive user guide    |
+| `ARCHITECTURE.md` | 277   | System design documentation |
+| `QUICKSTART.md`   | 155   | 5-minute quick start guide  |
 
 ### 4. Automation & Setup (Complete ✓)
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `setup_cron.sh` | 103 | Automated cron job setup |
-| `example_usage.sh` | 112 | Usage examples and workflows |
-| `requirements.txt` | 13 | Python dependencies |
-| `.gitignore` | 35 | Git ignore rules |
+| File               | Lines | Purpose                      |
+| ------------------ | ----- | ---------------------------- |
+| `setup_cron.sh`    | 103   | Automated cron job setup     |
+| `example_usage.sh` | 112   | Usage examples and workflows |
+| `requirements.txt` | 13    | Python dependencies          |
+| `.gitignore`       | 35    | Git ignore rules             |
 
 ### 5. Testing (Complete ✓)
 
@@ -68,6 +70,7 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 ### Three-Tier Funnel Strategy
 
 #### Tier 1: Metadata Filter
+
 - **Input**: 28,000+ forks
 - **Output**: ~2,000 candidates
 - **Method**: GitHub API pagination + comparison
@@ -76,6 +79,7 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 - **API Calls**: ~2,300
 
 #### Tier 2: Commit Analysis
+
 - **Input**: ~2,000 forks
 - **Output**: ~200 top candidates
 - **Method**: Commit message scoring
@@ -84,6 +88,7 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 - **API Calls**: ~2,000
 
 #### Tier 3: Shallow Clone + Diff
+
 - **Input**: ~200 forks
 - **Output**: ~20 confirmed gems
 - **Method**: `git clone --depth 1` + diff analysis
@@ -106,14 +111,15 @@ Complete implementation of a GitHub fork analysis system using a three-tier funn
 
 **Keyword-based scoring** with configurable weights:
 
-| Category | Keywords | Score |
-|----------|----------|-------|
-| Security | CVE, vulnerability, XSS, injection | 10 |
-| Features | feature, implement, add, new | 5 |
-| Optimization | optimize, performance, cache | 4 |
-| Fixes | fix, bug, crash, memory leak | 3 |
+| Category     | Keywords                           | Score |
+| ------------ | ---------------------------------- | ----- |
+| Security     | CVE, vulnerability, XSS, injection | 10    |
+| Features     | feature, implement, add, new       | 5     |
+| Optimization | optimize, performance, cache       | 4     |
+| Fixes        | fix, bug, crash, memory leak       | 3     |
 
 **Multipliers**:
+
 - Stars > 10: ×1.5
 - Recent activity (< 30 days): ×1.2
 - Many commits ahead (> 50): ×1.3
@@ -185,13 +191,13 @@ All settings in `config.py`:
 
 ### Resource Usage
 
-| Metric | Value |
-|--------|-------|
-| Total API Calls | ~4,300 (under 5,000/hour limit) |
-| Total Duration | 4-5 hours for complete analysis |
-| Permanent Storage | ~100MB (database + reports) |
-| Temporary Storage | ~10GB (Tier 3, auto-cleaned) |
-| Memory Usage | < 500MB |
+| Metric            | Value                           |
+| ----------------- | ------------------------------- |
+| Total API Calls   | ~4,300 (under 5,000/hour limit) |
+| Total Duration    | 4-5 hours for complete analysis |
+| Permanent Storage | ~100MB (database + reports)     |
+| Temporary Storage | ~10GB (Tier 3, auto-cleaned)    |
+| Memory Usage      | < 500MB                         |
 
 ### Scalability
 
@@ -264,6 +270,7 @@ Before production use:
 ### Modular Design
 
 Each tier is a separate module with clear interfaces:
+
 - Easy to test individual components
 - Simple to extend or modify scoring
 - Can run tiers independently
@@ -271,6 +278,7 @@ Each tier is a separate module with clear interfaces:
 ### Database-Centric
 
 All state stored in SQLite:
+
 - Crash recovery via run_history
 - Incremental processing via last_checked
 - No data loss on interruption
@@ -279,6 +287,7 @@ All state stored in SQLite:
 ### Rate Limit Aware
 
 Sophisticated rate limiting:
+
 - Tracks remaining requests
 - Auto-sleeps when low
 - Exponential backoff on errors
@@ -287,6 +296,7 @@ Sophisticated rate limiting:
 ### Cron-Ready
 
 Designed for automation:
+
 - Incremental updates
 - Batch commits
 - Comprehensive logging

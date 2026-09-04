@@ -658,6 +658,16 @@ describe("normalizeCronJobCreate", () => {
 });
 
 describe("normalizeCronJobPatch", () => {
+  it("preserves payload.model null so cron.update can clear the override", () => {
+    const normalized = normalizeCronJobPatch({
+      model: "openai/gpt-5.4",
+      payload: { kind: "agentTurn", model: null },
+    });
+
+    expect(normalized?.payload).toEqual({ kind: "agentTurn", model: null });
+    expect(validateCronUpdateParams({ id: "job-1", patch: normalized })).toBe(true);
+  });
+
   it("infers agentTurn payloads from top-level model-only patch hints", () => {
     const normalized = normalizeCronJobPatch({
       model: "openrouter/deepseek/deepseek-r1",

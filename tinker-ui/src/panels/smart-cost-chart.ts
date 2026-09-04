@@ -28,11 +28,15 @@
 // Intelligence Index rows — Opus 5 low 52.46 / medium 58.64 / high 61.48 /
 // xhigh 62.52 / max 63.05, live scrape 2026-08-27. The 2026-08-25 flattening was
 // the right answer to an invented 0.9…1.12 curve, and the wrong answer once a
-// real table existed. A stop is now plotted only when BOTH are true: the vendor
-// documents that effort, AND AA published a number for it. Missing AA → the stop
-// is omitted, never filled with the model's headline index. That is the rule
-// the architect wrote: "If you did not find the intelligence index of a particular
-// model-effort level do not approximate."
+// real table existed. A stop is plotted when the vendor documents that effort; its
+// Y is AA's number when AA published one (solid), an ESTIMATE from other public
+// per-effort benchmark runs fitted to AA's scale when not (dotted, ±1σ, since
+// 2026-09-02 — see aa-effort-estimate.ts), and the headline index on a dashed rail
+// when neither exists. The rule the architect wrote on 2026-08-27 — "If you did not find
+// the intelligence index of a particular model-effort level do not approximate" —
+// forbade an INVENTED number; on 2026-09-02 he asked for the derived kind ("find
+// other benchmarks … even if you have to approximate"), on condition it is never
+// mistakable for a measurement.
 //
 // TOKENS-PER-TASK: Opus 5 and Kimi K3 are benchmark-anchored (OckBench,
 // arXiv:2511.05722); everything else is a labelled estimate from family
@@ -40,9 +44,24 @@
 
 import { resolveProviderEffortLadder } from "../../../src/shared/provider-effort-ladders.js";
 import type { EffortLadderKind } from "../../../src/shared/provider-effort-ladders.js";
-import { aaScoreAt } from "./aa-effort-index.js";
+import { REL_COST_TABLE, relCostKey } from "../../../src/shared/rel-cost-table.js";
+import {
+  COST_CEILING_MULTIPLIER,
+  thalamusCandidates,
+} from "../../../src/shared/thalamus-candidates.js";
+import {
+  biasPick,
+  biasTarget,
+  clampBiasIdx,
+  frontierRungsFor,
+  paretoFrontier,
+  thalamusRoutesByDomain,
+  type FrontierRung,
+} from "../../../src/shared/thalamus-frontier.js";
+import { aaEstimateAt, aaScoreAt } from "./aa-effort-index.js";
 import { EEG_EFFORT_MULT } from "./eeg-trace.js";
 import { getRoutedLogoSvg } from "./provider-logos.js";
+import { BIAS_STOPS } from "./routing-rationale.js";
 
 export interface ScModel {
   /** Full model ref ("openrouter/qwen/qwen3.8-max"). */
@@ -95,6 +114,292 @@ export const SC_COPILOT_PROVIDERS = new Set(["github-copilot", "copilot", "copil
 /** Pink, per the architect — the one non-identity colour on the chart. Now marks the
  *  Copilot ROUTE TAG on Copilot's own label, not a note on the vendor's. */
 export const SC_COPILOT_PINK = "#ff7ac6";
+
+// ─── THALAMUS ENVELOPE (the architect 2026-08-30; REDRAWN 2026-09-02/03) ───
+// "take a distinct color and mark an envelope on the models thalamus is going to
+//  use (envelope means bigger circle plus lines connecting them), this will
+//  indicate me, upon a new best frontier model appearing, whether or not thalamus
+//  is taking it into consideration or not."
+//
+// FORK 2026-09-02 (the architect): "the yellow envelope … is a complete disaster. They are
+// supposed to be picked as up-left as possible, basically defining the top-left
+// outline" — and "make sure to use the graph in €/task to make the envelope, not
+// the €/token". Until then the path ran through the ANCHOR stop of EVERY model in
+// `thalamusCandidates(...).considered`, x ascending. That is the ladder's EXTENT —
+// everything under the cost ceiling — and it zig-zagged by construction, because a
+// membership set is not a frontier.
+//
+// WHAT IS DRAWN NOW, in the order src/shared/thalamus-frontier.ts computes it —
+// the SAME module the reply-path router calls, so the line and the routing cannot
+// disagree:
+//   RUNGS    — every (model, effort) of every CONSIDERED model, priced in €/TASK
+//              (`frontierRungsFor`: relCost x EFFORT_COST_MULT x tokenRatioFor — the
+//              identical number the task axis plots as `p.cost * scTokenRatio`).
+//   FRONTIER — `paretoFrontier`: cost non-decreasing, intelligence STRICTLY
+//              increasing. The top-left outline. Nothing else.
+//   RING     — a larger ring on every FRONTIER RUNG (one model may carry several).
+//   PATH     — an OPEN polyline through the frontier rungs in frontier order.
+//              Deliberately NOT a hull: an enclosed region would imply that a point
+//              inside it is reachable, and membership here is a SET, not an area.
+//   PICK     — a heavier ring on `biasPick(frontier, biasIdx)`: the cheapest
+//              frontier rung within THALAMUS_BIAS_GAP[bias] AA points of the best,
+//              so the BIAS dial (0 fast … 6 smart) walks the outline.
+//
+// THE SET IS IMPORTED, NEVER LISTED. `thalamusCandidates` says which models can be
+// REACHED (quota predicate + ceiling); `thalamus-frontier` says which rungs are
+// worth reaching. A literal array here with a comment claiming it matches the
+// router is the PRECISE failure this feature exists to detect: the comment keeps
+// reading true forever while the ladder moves underneath it.
+//
+// WHAT THE PATH'S SHAPE CAN AND CANNOT TELL YOU. The envelope is DEFINED on the
+// €/task axis, so on the TASK copy a dip (a vertex dearer AND dumber than its left
+// neighbour) is IMPOSSIBLE by construction — the frontier is strictly increasing in
+// intelligence as task cost rises. The COST copy joins the SAME rungs at their €/Mtok
+// positions and MAY zig-zag: a verbose model sits left per token and right per task,
+// so the €/Mtok view only shows where the chosen rungs happen to sit per token. Read
+// a backtrack there as "cheaper per token, dearer per task", never as a router smell.
+
+/** The THALAMUS ENVELOPE mark — the one colour on this chart that belongs to a
+ *  DECISION rather than to a vendor, which is exactly why it may not be any
+ *  vendor's hue.
+ *
+ *  DERIVED, NOT CHOSEN. The repo's own OKLab farthest-point sampler
+ *  (tinker-ui/scripts/pick-trace-colors.mjs — same math, same seed 20260804, same
+ *  200,000 samples, same L 0.55–0.85 / chroma 0.10–0.24 register gates), run
+ *  against the union of everything already on this paper: all 11
+ *  EEG_PROVIDER_COLORS (eeg-trace.ts:82-101), the #f0e6d8 relationship cream,
+ *  SC_COPILOT_PINK, and the three sc-bg backdrop stops (#221b13 / #191410 /
+ *  #120e0b) — 16 occupied points. Winner h=84, L=0.823, chroma 0.168,
+ *  SEPARATION 0.181, nearest neighbours the cream (0.181) and glm (0.189), both
+ *  clear of the sampler's own 0.15 collision flag. Recorded here the way
+ *  eeg-trace.ts:85-96 records h=337 / separation 0.255, so the next editor re-runs
+ *  the sampler instead of re-arguing the hue.
+ *
+ *  TO REPRODUCE: the committed script carries the EEG paper's OWN occupied set
+ *  (8 points, #2a2318 background) and four hue-windowed slots, so running it
+ *  UNCHANGED does not return this hex — swap its TAKEN map for the 16 points above
+ *  and drop the hue window (this mark answers to no brand, so it is not windowed).
+ *  The PRNG is seeded, so the answer is reproducible rather than a lottery: same
+ *  seed, same occupied set, same hex, every run.
+ *
+ *  0.181 is BELOW the 0.255 the Copilot pink got, and that is not a regression:
+ *  that run faced 8 occupied points, this one faces 16. It is the most separable
+ *  point the space still offers — and 14 of the 16 incumbents sit CLOSER to their
+ *  own nearest neighbour than this does (11 of the 13 that are not backdrop stops:
+ *  anthropic/mistral 0.056, deepseek/meta 0.066, cream/xai 0.142). Only glm (0.189)
+ *  and github-copilot (0.209) are better separated than the new mark.
+ *
+ *  A SIBLING UNIT IMPORTS THIS NAME. Do not rename it. */
+export const SC_THALAMUS = "#F7BA08";
+
+/** Resting stroke-opacity of the envelope polyline. ONE constant, because the
+ *  €/task copy's value also lives in a CSS rule this same file emits (the <style>
+ *  block in renderSmartCostChart) — two literals would let the line change
+ *  brightness on a toggle that is meant to change nothing but position. */
+export const SC_ENV_PATH_OPACITY = 0.5;
+
+/** Air between a model's own ring and the envelope ring outside it. Kept UNDER the
+ *  label's `scRadius(ctx) + 5` gap (see labelCands) so the envelope mark can never
+ *  land beneath a model name. An OFFSET, never a scaling: scRadius's invariant —
+ *  "never scale this at a call site", because size means context window and nothing
+ *  else — is about `.sc-ring`. This is a different element whose size means only
+ *  "a ring sits outside the dot", and it is the same offset for every model. */
+export const SC_ENV_RING_GAP = 4;
+
+/** The predicate's own parameter object, read off its signature, so this browser
+ *  file never has to import a gateway type (`UsageSnapshot` lives in src/infra). */
+type ScThalamusParams = Parameters<typeof thalamusCandidates>[0];
+/** Likewise for the payload — no second import, and it cannot drift from the fn. */
+type ScThalamusResult = ReturnType<typeof thalamusCandidates>;
+
+/**
+ * `relCostFor` for the thalamus predicate, WITH THE FALLBACK REMOVED.
+ *
+ * rel-cost-table's exported `relCostFor` CANNOT MISS — it returns DEFAULT_REL_COST
+ * (2.58) for anything no row claims (rel-cost-table.ts:384-390), and
+ * `ThalamusCandidatesParams.relCostFor` bans passing that through by name. Measured
+ * against the live ceiling of 0.3348, an invented 2.58 would COST-VETO a brand-new
+ * frontier model straight out of the envelope for a price nobody published —
+ * precisely the blindness this envelope exists to remove. A miss must stay a miss
+ * so `costVerified` reports the hole instead of hiding it.
+ *
+ * It RE-WALKS the table rather than comparing the answer against DEFAULT_REL_COST,
+ * because a row priced at exactly 2.58 would then be discarded as a miss. No row is
+ * 2.58 today; that is not a property worth depending on. ORDER IS LOAD-BEARING —
+ * first match wins, exactly as the table's own lookup does (rel-cost-table.ts:17-32).
+ * No row carries /g, so `.test` here is stateless.
+ */
+export function scThalamusRelCost(key: string): number | undefined {
+  const k = relCostKey(key);
+  for (const row of REL_COST_TABLE) {
+    if (row.modelMatch.test(k)) return row.relCost;
+  }
+  return undefined;
+}
+
+/** The chart's emit precision, at module scope so the path dedupe below rounds on
+ *  exactly the coordinates that reach the markup. Identical to the renderer's local
+ *  `fx`; deduping on unrounded values would keep two vertices that print the same. */
+const scFx2 = (n: number): number => Number(n.toFixed(2));
+
+/**
+ * The polyline's vertices, or [] when there is no honest line to draw.
+ *
+ * Takes points ALREADY IN TRAVERSAL ORDER and drops CONSECUTIVE rounded duplicates,
+ * then requires at least two. That covers three of the four degenerate cases at
+ * once: 0 members and 1 member both yield [] (a one-point polyline draws nothing
+ * but claims a ladder), and two members that round to the same pixel collapse to
+ * one, so no zero-length segment can assert a difference the data does not contain
+ * — the same rule `twinSpread: false` already enforces for the twin connectors.
+ *
+ * CONSECUTIVE, not global: a repeat that is NOT adjacent is a genuine revisit of a
+ * position, and deleting it would re-route the path around a vertex it really
+ * passes through. (The emitter also leaves stroke-linecap at its `butt` default, so
+ * a zero-length segment that ever did slip past this draws nothing rather than a
+ * dot.)
+ */
+export function scEnvPathPoints(pts: readonly { x: number; y: number }[]): string[] {
+  const out: string[] = [];
+  for (const p of pts) {
+    const key = `${scFx2(p.x)},${scFx2(p.y)}`;
+    if (out.length > 0 && out[out.length - 1] === key) continue;
+    out.push(key);
+  }
+  return out.length < 2 ? [] : out;
+}
+
+/** One copy of the envelope path, or "" when there are fewer than two vertices. */
+function scEnvPolylineSvg(cls: string, pts: readonly string[], strokeOpacity: number): string {
+  if (pts.length === 0) return "";
+  return (
+    `<polyline class="${cls}" points="${pts.join(" ")}" fill="none" stroke="${SC_THALAMUS}"` +
+    ` stroke-opacity="${strokeOpacity}" stroke-width="1.4" stroke-linejoin="round"` +
+    ` vector-effect="non-scaling-stroke"/>`
+  );
+}
+
+/** The frontier the renderer computed, handed to the footer so every figure there is
+ *  read off the same objects the rings and the path were drawn from. */
+export interface ScThalamusFrontier {
+  /** Every rung of every considered model, in €/task (frontierRungsFor). */
+  rungs: readonly FrontierRung[];
+  /** paretoFrontier(rungs) — cost ascending, intelligence strictly increasing. */
+  frontier: readonly FrontierRung[];
+  /** Already clamped (clampBiasIdx). */
+  biasIdx: number;
+}
+
+/** `key@effort`, or the bare key for a ladderless rung — the address the rings,
+ *  the tests and the footer all use, so one string names one circle. */
+export function scRungTag(r: { key: string; effort: string }): string {
+  return r.effort ? `${r.key}@${r.effort}` : r.key;
+}
+
+/** The same address with the vendor prefix dropped, for the domain-route clause
+ *  only — eight of those on one footer row would not fit at full length. */
+function scShortRungTag(r: { key: string; effort: string }): string {
+  const model = r.key.split("/").pop() ?? r.key;
+  return r.effort ? `${model}@${r.effort}` : model;
+}
+
+/**
+ * The one line that stops SILENCE from reading as a render failure.
+ *
+ * An empty envelope is a legitimate answer and is indistinguishable on screen from
+ * a broken layer; a NON-empty one still has to say what was drawn, what the dial
+ * chose and whether the veto could actually be applied. So every figure is read off
+ * the payload and the frontier — never a literal. (The 2026-08-30 brief predicted
+ * "considers 0 of 39"; the measured answer was 14, because cost comes from
+ * REL_COST_TABLE, not config. A hardcoded count would have been the second stale
+ * list this feature exists to detect.)
+ *
+ * REWRITTEN 2026-09-03 for the frontier: the ceiling clause is gone — the frontier
+ * already encodes it (a vetoed model has no rungs) — and in its place the line says
+ * how many rungs survived, where the BIAS dial put the floor, which rung it picked
+ * and, per task domain, where `thalamusRoute` would switch away from that pick
+ * (the Fugu step — only domains that actually differ are listed).
+ *
+ * `caveats` names the checks that did NOT run, and shrinks to nothing on its own
+ * when a later unit wires a snapshot and an allowed-key set — an honesty note that
+ * cannot go stale, rather than prose that can.
+ */
+export function scThalamusFooterLine(
+  env: ScThalamusResult,
+  fr: ScThalamusFrontier,
+  caveats: readonly string[],
+): string {
+  const reasons = new Map<string, number>();
+  for (const e of env.excluded) reasons.set(e.reason, (reasons.get(e.reason) ?? 0) + 1);
+  const biasIdx = clampBiasIdx(fr.biasIdx);
+  const pick = biasPick(fr.frontier, biasIdx);
+  let choice: string;
+  if (pick === undefined) {
+    choice = " → picks NOTHING";
+  } else {
+    const routes = thalamusRoutesByDomain(fr.rungs, biasIdx);
+    const switched: string[] = [];
+    for (const [domain, route] of Object.entries(routes)) {
+      if (domain === "general" || !route) continue;
+      if (scRungTag(route.rung) === scRungTag(route.biasRung)) continue;
+      switched.push(`${domain}→${scShortRungTag(route.rung)}`);
+    }
+    choice =
+      ` floor idx ${biasTarget(fr.frontier, biasIdx).toFixed(1)}` +
+      ` → pick ${scRungTag(pick)} idx ${pick.smart.toFixed(1)}` +
+      ` €${Number(pick.cost.toPrecision(3))}/task` +
+      ` · ${switched.length ? `domain routes: ${switched.join(", ")}` : "no domain switches at this bias"}`;
+  }
+  return (
+    `THALAMUS frontier ${fr.frontier.length} rungs (€/task) of ${fr.rungs.length}` +
+    ` across ${env.considered.length}/${env.catalogSize} models` +
+    ` · bias ${biasIdx} (${BIAS_STOPS[biasIdx].label})${choice}` +
+    ` · cost ${env.costVerified ? "verified" : "UNVERIFIED"}` +
+    ` · out ${reasons.size === 0 ? "0" : [...reasons].map(([r, n]) => `${n} ${r}`).join(", ")}` +
+    (caveats.length === 0 ? "" : ` · upper bound: ${caveats.join(", ")}`)
+  );
+}
+
+/** Characters per footer row. 836 plot units (W − ML) at font-size 7 monospace
+ *  (~4.2 units per glyph) is ~199; 190 leaves the last glyph inside the frame. */
+export const SC_FOOTER_ROW_CHARS = 190;
+/** Row pitch in plot units for the 7px footer font. */
+const SC_FOOTER_ROW_H = 9;
+
+/**
+ * Wrap the footer on its own " · " separators, greedily, so a clause is never cut
+ * mid-word and joining the rows back with " · " reproduces the exact line. Rows are
+ * stacked UPWARD from the bottom edge (see the emitter): the axis caption sits at
+ * H − 24, so two rows (H − 7, H − 16) are free space and a third would touch it —
+ * that is the bound the short domain tags exist to stay under.
+ */
+export function scWrapFooter(line: string, maxChars = SC_FOOTER_ROW_CHARS): string[] {
+  const rows: string[] = [];
+  let cur = "";
+  for (const part of line.split(" · ")) {
+    if (cur !== "" && cur.length + 3 + part.length > maxChars) {
+      rows.push(cur);
+      cur = part;
+    } else {
+      cur = cur === "" ? part : `${cur} · ${part}`;
+    }
+  }
+  if (cur !== "") rows.push(cur);
+  return rows;
+}
+
+/** The hover explanation behind the footer line — the part that does not fit on
+ *  one row of an 900-unit viewBox, and the part a reader needs exactly once. */
+export const SC_THALAMUS_FOOTER_TITLE =
+  "The envelope is the Pareto frontier, on the €/task axis, of the effort rungs of the models" +
+  " src/shared/thalamus-candidates.ts can reach, computed by src/shared/thalamus-frontier.ts —" +
+  " the same module the reply-path router calls, never a list in this file. A rung is on the" +
+  " frontier when no other rung is both cheaper-or-equal per task AND smarter-or-equal; the" +
+  " BIAS dial picks the cheapest frontier rung within its gap of the best. A model with NO ring" +
+  " is either unreachable (no AA index, dearer than" +
+  ` ${COST_CEILING_MULTIPLIER}x the anchor's effective cost, or its provider's token window is` +
+  " spent) or reachable but dominated on every rung. 'cost UNVERIFIED' means at least one" +
+  " reachable model carried no published price, so the veto could prove it neither cheap nor" +
+  " expensive.";
 
 /** Vendor-neutral identity for a model ref: the last path segment, with the
  *  punctuation that differs between routes removed — "claude-code/claude-opus-4-7"
@@ -207,6 +512,12 @@ export function scSyncTwinContext<T extends ScModel>(models: T[]): T[] {
 //     per-effort ones are not.
 export type { EffortLadderKind };
 
+export interface ScEstimateTag {
+  sd: number;
+  method: string;
+  basis: string[];
+}
+
 export interface ScEffortStop {
   lvl: string;
   label: string;
@@ -216,6 +527,10 @@ export interface ScEffortStop {
   smart: number;
   /** True when `smart` is AA's named per-effort measurement, not the headline. */
   measured: boolean;
+  /** Present when `smart` is an ESTIMATE from other public benchmarks
+   *  (aa-effort-estimate.ts, the architect 2026-09-02) — never on a measured rung, never on
+   *  the rail. Carries the 1σ and the basis so the tooltip can say so. */
+  estimate?: ScEstimateTag;
   /** The stop carrying the model's published (unmultiplied) price — drawn at
    *  full STROKE strength (never at a different size: see SC_NONANCHOR_STROKE),
    *  and the attach point for twin connectors. */
@@ -273,88 +588,85 @@ export function scEffortsFor(m: { id: string; provider: string; index: number })
           : "Effort ladder unknown";
     return { kind: ladder.kind, note: ladder.note, stops: [scSoleStop(label, m.index)] };
   }
-  const measured: ScEffortStop[] = [];
-  for (const lvl of ladder.levels) {
+  // FORK 2026-08-30 (the architect: "Fable appears only as one bubble, break it down into
+  // different thinking efforts"). Until now an effort AA had not scored was DROPPED,
+  // so a model's constellation showed only the rungs AA happened to publish. Fable 5
+  // has exactly one AA row (max) against a five-rung Anthropic ladder, so it drew as
+  // a single dot — and the census says Fable is not special: 60 of 99 plotted models
+  // have a vendor ladder wider than AA's coverage, 26 of them with no per-effort row
+  // at all.
+  //
+  // Dropping them threw away something we DO know. The cost of every rung is real:
+  // it is the model's published price times the documented EEG burn multiplier. Only
+  // the SCORE is missing. So every rung is now plotted, and the two kinds of rung are
+  // told apart rather than blended:
+  //   · MEASURED  — AA published a score for this effort. Solid ring, real y.
+  //   · COST RAIL — AA did not. The x is real; the y is the model's headline index,
+  //                 which is a POSITION TO HANG THE RUNG ON, not a claim that the
+  //                 model is equally smart at that effort (it is not: Opus 5 falls
+  //                 10.6 points from max to low). Drawn dashed, on a dashed rail,
+  //                 and the tooltip says so in words.
+  //
+  // This is deliberately NOT the 2026-08-25 defect coming back. That was an INVENTED
+  // per-effort curve — a fabricated number on the y axis. This adds no number: the
+  // unscored rungs carry the one index AA did publish, flagged `measured:false`, and
+  // the styling makes the difference visible before the tooltip is even opened.
+  //
+  // THIRD KIND OF RUNG (the architect 2026-09-02 evening: "you must certainly be able to find
+  // other benchmarks … even if you have to approximate"). Between MEASURED and COST
+  // RAIL now sits ESTIMATED: the y comes from other public per-effort benchmark runs
+  // fitted to AA's scale (aa-effort-estimate.ts), it carries a 1σ, it is drawn
+  // DOTTED (finer than the rail's dashes) and the tooltip says ESTIMATE. The order of
+  // preference is fixed and one-way: measurement → estimate → rail. An estimate never
+  // replaces a measurement, and a rung with neither still hangs on the rail.
+  const stops: ScEffortStop[] = ladder.levels.map((lvl) => {
     const smart = aaScoreAt(m.id, lvl);
-    if (smart === undefined) continue;
-    measured.push({
+    const est = smart === undefined ? aaEstimateAt(m.id, lvl) : undefined;
+    return {
       lvl,
       label: SC_EFFORT_LABELS[lvl] ?? lvl,
       costMult: EEG_EFFORT_MULT[lvl] ?? 1,
-      smart,
-      measured: true,
+      smart: smart ?? est?.v ?? m.index,
+      measured: smart !== undefined,
+      estimate: est ? { sd: est.sd, method: est.method, basis: est.basis } : undefined,
       anchor: false,
-    });
-  }
-  if (measured.length === 0) {
-    return {
-      kind: ladder.kind,
-      note: `${ladder.note} · AA published no per-effort score, so one headline-index dot`,
-      // Label is Headline, not the last ladder name: attaching "Max" to a number AA
-      // did not publish for Max is the approximation this function exists to refuse.
-      stops: [scSoleStop("Headline", m.index)],
     };
-  }
-  scAnchorStops(measured);
-  const dropped = ladder.levels.filter((l) => !measured.some((s) => s.lvl === l));
+  });
+  scAnchorStops(stops);
+  const unscored = stops.filter((x) => !x.measured);
+  const estimated = unscored.filter((x) => x.estimate).map((x) => x.lvl);
+  const railed = unscored.filter((x) => !x.estimate).map((x) => x.lvl);
+  const scored = stops.length - unscored.length;
   const note =
-    dropped.length === 0
+    unscored.length === 0
       ? ladder.note
-      : `${ladder.note} · AA has no score for ${dropped.join(", ")} — omitted, not guessed`;
-  return { kind: ladder.kind, note, stops: measured };
+      : `${ladder.note} · AA scored ${scored} of ${stops.length} efforts` +
+        (estimated.length
+          ? ` — ${estimated.join(", ")} ESTIMATED from other public benchmarks (±1σ in the tooltip)`
+          : "") +
+        (railed.length
+          ? ` — ${railed.join(", ")} drawn on the cost rail at the headline index, never as a measurement`
+          : "");
+  return { kind: ladder.kind, note, stops };
 }
 
 // ─── Tokens per average task ───
-// Base = average OUTPUT tokens (thinking + visible) to complete one reasoning
-// task at MEDIUM effort. Per-effort value = base × EEG_EFFORT_MULT — the same
-// documented burn ladder the cost axis uses, because tokens ARE the cost.
-//
-// PROVENANCE PER ROW:
-//   claude-opus-5     MEASURED — OckBench: high=6,745 · xhigh=1.44× · max=1.95×
-//                     of high (200 tasks, math+coding+science). 4,497 = 6,745/1.5.
-//   kimi-k3           BENCHMARK-ANCHORED — OckBench: high=12,250 (1.8× Opus 5
-//                     high, rank-13 first open-weight entry). 8,167 = 12,250/1.5.
-//   claude-opus-4-8   ANCHORED ESTIMATE — Anthropic: "Opus 5 generates 26%
-//                     fewer tokens than Opus 4.8 at max reasoning" → 4.8 ≈
-//                     Opus5 ÷ 0.74 ≈ 1.35×.
-//   claude-*          ESTIMATES from the Opus 5 anchor + class (flagship bigger,
-//                     sonnet leaner, haiku pays the Overthinking Tax — OckBench:
-//                     small models over-generate to compensate for capacity).
-//   deepseek-v4-flash ANCHORED ESTIMATE — OckBench puts DeepSeek-V4-PRO at
-//                     ≈3.6× Kimi (~29k medium); FLASH is the efficiency-tuned
-//                     sibling → ~0.4× of Pro.
-//   qwen / glm        ESTIMATES — OckBench's Qwen3.5 flagship ran ~17.6k medium
-//                     at 67.5% accuracy; newer/smarter flagships are leaner,
-//                     open-weight reasoning stays verbose (open-vs-closed gap up
-//                     to 26× on OckBench, 1.8× at the frontier).
-//   grok-4.5          ESTIMATE — proprietary frontier class, no public per-task
-//                     measurement found.
-export const SC_TOKEN_RULES: { match: RegExp; base: number }[] = [
-  { match: /claude-opus-5|opus-5/i, base: 4497 },
-  { match: /claude-fable/i, base: 5900 },
-  { match: /claude-opus-4-8|opus-4\.8/i, base: 6071 },
-  { match: /claude-opus-4-7|opus-4\.7/i, base: 5500 },
-  { match: /claude-sonnet/i, base: 3500 },
-  { match: /claude-haiku/i, base: 2200 },
-  { match: /kimi/i, base: 8167 },
-  { match: /deepseek.*flash/i, base: 11600 },
-  { match: /deepseek/i, base: 29300 },
-  { match: /qwen3\.8/i, base: 13400 },
-  { match: /qwen/i, base: 14700 },
-  { match: /glm/i, base: 12000 },
-  { match: /grok/i, base: 4800 },
-];
-const SC_TOKEN_DEFAULT = 8000;
-
-/**
- * The normalization anchor the architect chose: Opus 5 at its HIGHEST REAL effort.
- *
- * Kept at `high` — Anthropic's documented DEFAULT for Opus 5 (effort.md,
- * 2026-08-27), not the top of the ladder. `max` is real on this model now; it is
- * just not the operating point the €/task view is pinned to. Changing this
- * would slide every task-mode dot.
- */
-export const SC_REFERENCE = { match: /claude-opus-5|opus-5/i, effort: "high" };
+// MOVED 2026-09-03 to src/shared/tokens-per-task.ts so the THALAMUS router prices
+// rungs in €/task from the same table this chart draws. Re-exported under the names
+// the rest of this file and its tests use.
+export {
+  TOKENS_PER_TASK_RULES as SC_TOKEN_RULES,
+  TASK_REFERENCE as SC_REFERENCE,
+  baseTokensFor as scBaseTokens,
+  tokensPerTaskFor as scTokensPerTask,
+  tokenRatioFor as scTokenRatio,
+} from "../../../src/shared/tokens-per-task.js";
+import {
+  TASK_REFERENCE,
+  tokensPerTaskFor as scTokensPerTask,
+  tokenRatioFor as scTokenRatio,
+} from "../../../src/shared/tokens-per-task.js";
+const SC_REFERENCE = TASK_REFERENCE;
 
 // Context windows for models that are NOT in openclaw.json (the chart shows the
 // whole reachable catalog, not only configured models). Family defaults from
@@ -362,10 +674,20 @@ export const SC_REFERENCE = { match: /claude-opus-5|opus-5/i, effort: "high" };
 export const SC_CTX_RULES: { match: RegExp; ctx: number }[] = [
   // FORK 2026-08-30 — the 2026-08-30 arrivals, context windows read off the live
   // OpenRouter catalog. These sit ABOVE the family rules because first match wins:
-  // `claude-opus-5-fast` would otherwise take the generic /claude/i 200k when the
-  // route actually serves 1M, and circle AREA is proportional to context window, so
-  // a wrong ctx draws a visibly wrong dot.
-  { match: /claude-opus-5-fast/i, ctx: 1_000_000 },
+  // a route that actually serves 1M would otherwise take the generic /claude/i 200k,
+  // and circle AREA is proportional to context window, so a wrong ctx draws a
+  // visibly wrong dot.
+  // FORK 2026-09-02 — a `claude-opus-5-fast` 1M row used to head this block and was
+  // the original reason the ordering rule above was written down. The architect
+  // banned OpenRouter routes that duplicate a vendor we hold a direct subscription
+  // with, so `openrouter/anthropic/claude-opus-5-fast` left the catalog and its
+  // override became dead data. The rule outlived the row: Fable 5.1 below is now the
+  // one that depends on it.
+  // Fable 5.1 serves a 1M window (live OpenRouter catalog 2026-09-02). Without this
+  // the generic /claude/i rule below gives it 200k, and since circle AREA is
+  // proportional to context window the chart's highest-scoring model would draw
+  // 2.24x too small — wrong on the one channel a reader cannot check by hovering.
+  { match: /claude-fable-5[.-]1/i, ctx: 1_000_000 },
   { match: /longcat-2\.0/i, ctx: 1_048_756 },
   { match: /nemotron-3\.5-lightning|ling-3\.0-flash/i, ctx: 262_144 },
   { match: /gemini/i, ctx: 1_000_000 }, // Gemini 2.x+ ship 1M windows
@@ -384,18 +706,6 @@ export function scDefaultCtx(modelId: string): number {
   return SC_CTX_DEFAULT;
 }
 
-export function scBaseTokens(modelId: string): number {
-  for (const row of SC_TOKEN_RULES) {
-    if (row.match.test(modelId)) return row.base;
-  }
-  return SC_TOKEN_DEFAULT;
-}
-
-/** Average tokens to complete one task at the given effort level. */
-export function scTokensPerTask(modelId: string, effortLvl: string): number {
-  return scBaseTokens(modelId) * (EEG_EFFORT_MULT[effortLvl] ?? 1);
-}
-
 /** Horizontal SHIFT in decades for per-task mode: log10 of the dot's
  *  tokens-per-task relative to the reference. The reference is 0 by
  *  construction; positive = burns more tokens per task than Opus@max. */
@@ -410,7 +720,9 @@ export function scTaskShiftDecades(modelId: string, effortLvl: string): number {
 // IS the published price, so one number answers both questions. For the four
 // Anthropic families, the OpenAI prepaid rows, Grok and the Copilot re-sells it is
 // NOT: those carry a subscription divisor (Anthropic Max 20x amortises Opus 5's $25
-// sticker down to €0.2232 — a factor of 112).
+// sticker down to ~€0.073 — a factor of ~340 as re-derived 2026-09-02 from the
+// live quota reading and measured burn; see EEG_COST_TABLE for the whole derivation.
+// That factor is an OUTPUT of the arithmetic and must never be used as a shortcut).
 //
 // That single fact is the whole reconciliation the architect asked for. Comparing an
 // amortised Anthropic dot against a metered Kimi dot makes Claude look ~67x cheaper
@@ -441,11 +753,14 @@ export function scTaskShiftDecades(modelId: string, effortLvl: string): number {
 export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   // Anthropic — anthropic.com/pricing. Opus 5 re-verified on AA 2026-08-27 ($5/$25).
   { match: /fable/i, out: 50 },
-  // FORK 2026-08-30: fast mode is sold METERED at $50 out, so its list price IS
-  // what the dot already plots and it correctly gets NO triangle. Without this row
-  // the generic /opus/i below would hand it Opus 5's $25 and draw a triangle to the
-  // LEFT of its own circle — rendering a 2x SURCHARGE as a 50% discount.
-  { match: /claude-opus-5-fast/i, out: 50 },
+  // FORK 2026-09-02: a `claude-opus-5-fast` row sat here at $50 out, deliberately
+  // ABOVE the generic /opus/i $25 — a metered Anthropic route handed the amortised
+  // subscription sticker draws its triangle to the LEFT of its own circle, rendering
+  // a 2x SURCHARGE as a 50% discount. The architect banned OpenRouter routes that
+  // duplicate a vendor we hold a direct subscription with, so
+  // `openrouter/anthropic/claude-opus-5-fast` left the catalog and the row with it.
+  // The hazard did not leave with it: any future Anthropic route sold METERED above
+  // $25 needs its own entry ABOVE /opus/i, or it inherits the wrong basis silently.
   { match: /opus/i, out: 25 },
   { match: /sonnet-5(?![.\d])/i, out: 10 }, // Sonnet 5 $2/$10
   { match: /sonnet/i, out: 15 }, // Sonnet 4.5/4.6 $3/$15
@@ -508,6 +823,7 @@ export function scApiPointsFor(m: ScModel): {
   cost: number;
   smart: number;
   measured: boolean;
+  estimate?: ScEstimateTag;
   anchor: boolean;
 }[] {
   const list = scApiPrice(m.id);
@@ -519,6 +835,7 @@ export function scApiPointsFor(m: ScModel): {
     cost: list * e.costMult,
     smart: e.smart,
     measured: e.measured,
+    estimate: e.estimate,
     anchor: e.anchor,
   }));
 }
@@ -579,7 +896,7 @@ export function scComputeScales(models: ScModel[], xScale: ScXScale = "log"): Sc
       maxTaskCost = Math.max(maxTaskCost, cost * (scTokensPerTask(m.id, e.lvl) / refTokens));
     }
     // FORK 2026-08-27 (the architect): the API-price triangles are real marks and must be
-    // inside the plot on BOTH axes. Opus 5's list price is 112x its plan price, so
+    // inside the plot on BOTH axes. Opus 5's list price is ~340x its plan price, so
     // omitting them here would push every triangle past the right edge, where
     // scCostX clamps — a pile of marks on the boundary reading as one price.
     // maxCost feeds the LINEAR c1 too, so the linear axis grows to the dearest
@@ -785,10 +1102,6 @@ export function scTaskShiftPx(shiftDecades: number, s: ScScales): number {
 }
 
 /** Tokens-per-task relative to the Opus 5 @ max reference (>1 = more verbose). */
-export function scTokenRatio(modelId: string, effortLvl: string): number {
-  const ref = scTokensPerTask("claude-code/claude-opus-5", SC_REFERENCE.effort);
-  return scTokensPerTask(modelId, effortLvl) / ref;
-}
 
 const fmt = (n: number): string => (n >= 10 ? n.toFixed(0) : n >= 1 ? n.toFixed(1) : n.toFixed(2));
 export function scFmtCtx(tokens: number): string {
@@ -834,6 +1147,7 @@ export function scPointsFor(m: ScModel): {
   cost: number;
   smart: number;
   measured: boolean;
+  estimate?: ScEstimateTag;
   anchor: boolean;
 }[] {
   return scEffortsFor(m).stops.map((e) => ({
@@ -842,8 +1156,25 @@ export function scPointsFor(m: ScModel): {
     cost: m.relCost * e.costMult,
     smart: e.smart,
     measured: e.measured,
+    estimate: e.estimate,
     anchor: e.anchor,
   }));
+}
+
+/** The "idx …" clause of a rung's tooltip. Three honest states, one function, so the
+ *  circle and its API triangle can never disagree about what a number is. */
+export function scIdxTag(
+  p: { smart: number; measured: boolean; label: string; estimate?: ScEstimateTag },
+  measuredSuffix = "",
+): string {
+  if (p.measured) return `idx ${p.smart.toFixed(1)} at ${p.label}${measuredSuffix}`;
+  if (p.estimate) {
+    return (
+      `idx ≈${p.smart.toFixed(1)} ±${p.estimate.sd.toFixed(1)} at ${p.label}` +
+      ` (ESTIMATE, ${p.estimate.method}: ${p.estimate.basis.join("; ")} — not an AA measurement)`
+    );
+  }
+  return `idx ${p.smart.toFixed(1)} (headline — AA published no per-effort split)`;
 }
 
 /**
@@ -916,11 +1247,74 @@ function scLogoFor(m: ScModel): string {
 
 export function renderSmartCostChart(
   models: (ScModel & ScTwinInfo)[],
-  opts?: { xScale?: ScXScale },
+  opts?: {
+    xScale?: ScXScale;
+    /** CLOCK DISCIPLINE. Read ONLY by the thalamus provider-exhaustion check, and
+     *  inert while `thalamusSnapshot` is undefined — `providerQuotaExhaustion`
+     *  returns null before it reads the clock when the snapshot is absent
+     *  (quota-aware-auto-model.ts), which is the only reason a 0 default is safe
+     *  today. This module is PURE and has never had a clock of its own, so it must
+     *  not call Date.now() to fill this in: a hidden clock would let the chart and
+     *  the gateway disagree about the same window, and would make the render
+     *  non-deterministic for nothing. WHEN A SNAPSHOT IS WIRED, DELETE THE 0
+     *  DEFAULT and make the two travel together. */
+    nowMs?: number;
+    /** Quota snapshot for the envelope. Omitted => no provider can read as spent,
+     *  so the envelope is an UPPER BOUND and the footer says so out loud. */
+    thalamusSnapshot?: ScThalamusParams["snapshot"];
+    /** The router's own `allowedModelKeys`. Omitted => this chart cannot reproduce
+     *  the router's not-routable rule and may claim a model the gateway holds no
+     *  auth profile for. Also an UPPER BOUND, also named in the footer. Fabricating
+     *  one here (`new Set(models.map(m => m.id))`) would be worse than passing none,
+     *  because it would look like a filter ran. */
+    thalamusAllowedModelKeys?: ScThalamusParams["allowedModelKeys"];
+    /** The session's BIAS dial (routing-rationale.ts BIAS_STOPS index, 0 fast … 6
+     *  smart). Picks WHICH frontier rung carries the heavy ring. Omitted =>
+     *  clampBiasIdx(undefined) = 3, balanced — the dial's own default. */
+    biasIdx?: number;
+  },
 ): string {
   const xScale: ScXScale = opts?.xScale ?? "log";
   const s = scComputeScales(models, xScale);
   const fx = (n: number) => Number(n.toFixed(2));
+
+  // The thalamus envelope, computed ONCE, from the router's own module — see the
+  // SC_THALAMUS block above for what the three marks mean and why the set is never
+  // a literal. The catalog is keyed by ROUTE (m.id), not by brain: github-copilot/
+  // claude-opus-5 and claude-code/claude-opus-5 are two keys the router can route
+  // to, at two prices, so a twin pair can legitimately land on opposite sides of
+  // the ceiling and `catalogSize` counts routes.
+  const thalCatalog: Record<string, { intelligenceIndex?: number }> = {};
+  for (const m of models) thalCatalog[m.id] = { intelligenceIndex: m.index };
+  const thal = thalamusCandidates({
+    catalog: thalCatalog,
+    snapshot: opts?.thalamusSnapshot,
+    nowMs: opts?.nowMs ?? 0,
+    relCostFor: scThalamusRelCost,
+    ...(opts?.thalamusAllowedModelKeys ? { allowedModelKeys: opts.thalamusAllowedModelKeys } : {}),
+  });
+  const thalConsidered = new Set(thal.considered.map((c) => c.key));
+  // THE FRONTIER (the architect 2026-09-02: "picked as up-left as possible, basically defining
+  // the top-left outline"). Every rung of every considered model, priced in €/TASK by
+  // the shared module — `m.relCost` and `m.index` are the SAME inputs scPointsFor
+  // draws from, so a rung's cost equals `p.cost * scTokenRatio(m.id, p.lvl)` and its
+  // ring lands on the dot it names (the envelope test asserts that equivalence).
+  // Nothing about the frontier is derived here: paretoFrontier and biasPick are the
+  // router's own functions, called with the chart's data.
+  const thalRungs: FrontierRung[] = [];
+  for (const m of models) {
+    if (!thalConsidered.has(m.id)) continue;
+    thalRungs.push(...frontierRungsFor(m.id, m.index, m.relCost));
+  }
+  const thalFrontier = paretoFrontier(thalRungs);
+  const thalFrontierSet = new Set(thalFrontier.map(scRungTag));
+  const thalBiasIdx = clampBiasIdx(opts?.biasIdx);
+  const thalPickRung = biasPick(thalFrontier, thalBiasIdx);
+  const thalPickTag = thalPickRung ? scRungTag(thalPickRung) : undefined;
+  // Pixel position of every FRONTIER rung, keyed by scRungTag. Filled inside the
+  // dots loop, where each rung's coordinates are resolved; joined into the PATH
+  // after, in FRONTIER order (task cost ascending), never re-sorted.
+  const envAt = new Map<string, { x: number; y: number; dx: number }>();
 
   let defs =
     `<defs>` +
@@ -938,7 +1332,31 @@ export function renderSmartCostChart(
     `<stop offset="0%" stop-color="#f0e6d8" stop-opacity="0.0"/>` +
     `<stop offset="12%" stop-color="#f0e6d8" stop-opacity="0.5"/>` +
     `<stop offset="100%" stop-color="#f0e6d8" stop-opacity="0.5"/></linearGradient>` +
-    `</defs>`;
+    `</defs>` +
+    // THE ENVELOPE CROSSFADE, emitted here rather than added to base.css because
+    // that file is outside this unit's writes. This is NOT optional polish: the
+    // €/Mtok↔€/task crossfade is driven by PER-CLASS rules (base.css:10117-10127 for
+    // .sc-line-*, :10081-10098 for .sc-bridge-*), and a CSS rule beats an SVG
+    // presentation attribute — which is precisely how the task copy's inline
+    // stroke-opacity="0" gets lifted in task mode. With no rule for .sc-env-*,
+    // sc-env-task stays invisible forever while sc-env-cost stays lit, and the
+    // envelope detaches from its dots the instant the toggle flips: invisible in the
+    // DEFAULT view, so the break would ship unseen. An inline `style=` ATTRIBUTE
+    // cannot express it (the toggle is a class on the <svg> root), but a <style>
+    // ELEMENT can, so the rules ride inside the drawing.
+    // Scoped under .sc-svg so nothing leaks past this chart, and written with
+    // descendant combinators only — a ">" inside an SVG <style> would be parsed as
+    // markup by the HTML fragment parser this chart is injected through (see
+    // scSvgSafeMark). <style> is NOT on that parser's foreign-content breakout list,
+    // so unlike an <img> it cannot truncate the chart; the "can never break its own
+    // <svg>" test covers exactly that list. FOLD THESE THREE RULES INTO
+    // base.css:10117-10127, beside the .sc-line-cost/.sc-line-task pair they mirror,
+    // in whatever wave owns that file next — it is a pure move, no behaviour change.
+    `<style>` +
+    `.sc-svg .sc-env-cost,.sc-svg .sc-env-task{transition:stroke-opacity 1.3s ease}` +
+    `.sc-svg.sc-taskmode .sc-env-cost{stroke-opacity:0}` +
+    `.sc-svg.sc-taskmode .sc-env-task{stroke-opacity:${SC_ENV_PATH_OPACITY}}` +
+    `</style>`;
 
   const bg =
     `<rect x="0" y="0" width="${W}" height="${H}" rx="10" fill="url(#sc-bg)"/>` +
@@ -971,12 +1389,17 @@ export function renderSmartCostChart(
   const axes =
     `<line x1="${ML}" y1="${MT + PH}" x2="${ML + PW}" y2="${MT + PH}" stroke="url(#sc-axis)" stroke-width="1"/>` +
     `<line x1="${ML}" y1="${MT}" x2="${ML}" y2="${MT + PH}" stroke="#f0e6d8" stroke-opacity="0.4"/>` +
-    `<text class="sc-xcap-cost" x="${ML + PW / 2}" y="${H - 24}" text-anchor="middle" font-size="9.5" letter-spacing="2.5" fill="#f0e6d8" fill-opacity="0.62"` +
+    `<text class="sc-xcap-cost" x="${ML + PW / 2}" y="${MT + PH + 30}" text-anchor="middle" font-size="9.5" letter-spacing="2.5" fill="#f0e6d8" fill-opacity="0.62"` +
     ` font-family="'SF Mono',ui-monospace,monospace">EFFECTIVE COST · €/Mtok OUTPUT · ${xScale}</text>` +
-    `<text class="sc-xcap-task" x="${ML + PW / 2}" y="${H - 24}" text-anchor="middle" font-size="9.5" letter-spacing="2.5" fill="#f0e6d8" fill-opacity="0"` +
+    `<text class="sc-xcap-task" x="${ML + PW / 2}" y="${MT + PH + 30}" text-anchor="middle" font-size="9.5" letter-spacing="2.5" fill="#f0e6d8" fill-opacity="0"` +
     ` font-family="'SF Mono',ui-monospace,monospace">EFFECTIVE COST PER AVERAGE TASK · €/task · ${xScale}</text>` +
     `<text x="16" y="${MT + PH / 2}" text-anchor="middle" font-size="9.5" letter-spacing="2.5" fill="#f0e6d8" fill-opacity="0.62"` +
     ` font-family="'SF Mono',ui-monospace,monospace" transform="rotate(-90 16 ${MT + PH / 2})">AA INTELLIGENCE INDEX</text>` +
+    // The caption sits at MT + PH + 30 = 564: under the tick labels (MT + PH + 16) and
+    // above the THALAMUS footer, which since 2026-09-03 wraps to up to three rows
+    // stacked upward from H - 7 (rows at 575/584/593). At its old y = H - 24 = 576 the
+    // caption printed straight through the footer's first row — seen on the live
+    // 2026-09-03 screenshot, not predicted.
     // corner brackets — the futuristic frame
     [
       `M ${ML + 10} ${MT} h -10 v 10`,
@@ -996,6 +1419,8 @@ export function renderSmartCostChart(
   // mark where each dot lands — faint, dashed, "targeting reticle" style.
   let linesCost = "";
   let linesTask = "";
+  // dashed COST rail through vendor efforts AA never scored (the architect 2026-08-30)
+  let rails = "";
   let ghosts = "";
   let dots = "";
   // FORK 2026-08-27 (the architect): the API-price layer. `apiMarks` holds the triangles and
@@ -1036,6 +1461,10 @@ export function renderSmartCostChart(
     // be index 2, because ladders now vary in length (Grok has ONE stop, so
     // coords[2] would be undefined and the connector would crash).
     const anchorC = coords.find((c) => c.p.anchor) ?? coords[0];
+    // The ENVELOPE no longer attaches here (2026-09-03). It used to take the anchor
+    // stop of every considered model; it now marks FRONTIER RUNGS, resolved per
+    // coordinate in the dots loop below — the router picks a (model, effort), so a
+    // ring per rung is the only count that matches what the mark claims.
     if (m.twinKey && m.twinSpread) {
       twinAnchors.push({
         key: m.twinKey,
@@ -1045,12 +1474,46 @@ export function renderSmartCostChart(
         color: m.color,
       });
     }
-    linesCost +=
-      `<polyline class="sc-line-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${coords.map((c) => `${c.x},${c.y}`).join(" ")}"` +
-      ` fill="none" stroke="${m.color}" stroke-opacity="0.34" stroke-width="1.1"/>`;
-    linesTask +=
-      `<polyline class="sc-line-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${coords.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
-      ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="1.1"/>`;
+    // TWO lines, because the constellation now carries two kinds of rung
+    // (the architect 2026-08-30). The SOLID polyline joins only the rungs AA actually
+    // scored — it is the measured intelligence curve and must not be diluted by
+    // points that carry no measurement. The DASHED RAIL runs through every rung
+    // the vendor exposes and is a COST ladder: it says "these settings exist and
+    // cost this much", nothing about how smart they are. A model with full AA
+    // coverage (only Opus 5 today) draws no rail at all, so nothing changes for it.
+    const measuredC = coords.filter((c) => c.p.measured);
+    // ESTIMATED rungs (the architect 2026-09-02) get a third line, DOTTED, through every rung
+    // that carries a number we stand behind at ±1σ — measured or estimated. It is the
+    // best available shape of the curve and is visibly not the solid measured line.
+    // The dashed rail below is kept only while some rung has neither.
+    const knownC = coords.filter((c) => c.p.measured || c.p.estimate);
+    if (measuredC.length > 1) {
+      linesCost +=
+        `<polyline class="sc-line-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${measuredC.map((c) => `${c.x},${c.y}`).join(" ")}"` +
+        ` fill="none" stroke="${m.color}" stroke-opacity="0.34" stroke-width="1.1"/>`;
+      linesTask +=
+        `<polyline class="sc-line-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${measuredC.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
+        ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="1.1"/>`;
+    }
+    if (knownC.length > 1 && knownC.length > measuredC.length) {
+      linesCost +=
+        `<polyline class="sc-line-est-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${knownC.map((c) => `${c.x},${c.y}`).join(" ")}"` +
+        ` fill="none" stroke="${m.color}" stroke-opacity="0.3" stroke-width="1"` +
+        ` stroke-dasharray="1.6 2.4" vector-effect="non-scaling-stroke"/>`;
+      linesTask +=
+        `<polyline class="sc-line-est-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${knownC.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
+        ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="1"` +
+        ` stroke-dasharray="1.6 2.4" vector-effect="non-scaling-stroke"/>`;
+    }
+    if (coords.length > 1 && knownC.length < coords.length) {
+      rails +=
+        `<polyline class="sc-rail-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${coords.map((c) => `${c.x},${c.y}`).join(" ")}"` +
+        ` fill="none" stroke="${m.color}" stroke-opacity="0.2" stroke-width="0.9"` +
+        ` stroke-dasharray="3 2.6" vector-effect="non-scaling-stroke"/>` +
+        `<polyline class="sc-rail-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${coords.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
+        ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="0.9"` +
+        ` stroke-dasharray="3 2.6" vector-effect="non-scaling-stroke"/>`;
+    }
 
     // ─── API-PRICE CONSTELLATION (the architect 2026-08-27) ───
     // "draw a bunch of triangles connected by lines to describe the same model but
@@ -1097,7 +1560,7 @@ export function renderSmartCostChart(
           (mult
             ? ` · ${mult >= 10 ? mult.toFixed(0) : mult.toFixed(1)}x what this plan pays`
             : "") +
-          ` · idx ${c.p.smart.toFixed(1)}${c.p.measured ? ` at ${c.p.label}` : " (headline — AA published no per-effort split)"}` +
+          ` · ${scIdxTag(c.p)}` +
           ` · official published price, not our effective cost`;
         apiMarks +=
           `<g class="sc-apipos" transform="translate(${c.x}, ${c.y})"${vAttr}${tAttr}${mAttr}>` +
@@ -1124,6 +1587,13 @@ export function renderSmartCostChart(
     }
     for (let i = 0; i < coords.length; i++) {
       const c = coords[i];
+      // Is THIS rung on the thalamus frontier, and is it the dial's pick? Addressed
+      // by (model, effort) — the same key frontierRungsFor produced, so the ring can
+      // only land on the circle whose numbers the frontier was computed from.
+      const rungTag = scRungTag({ key: m.id, effort: c.p.lvl });
+      const onFrontier = thalFrontierSet.has(rungTag);
+      const isPick = onFrontier && rungTag === thalPickTag;
+      if (onFrontier) envAt.set(rungTag, { x: c.x, y: c.y, dx: c.dx });
       // ONE MODEL, ONE CIRCLE SIZE (the architect 2026-08-30: "opus 5 seems to have different
       // sizes in the same model, impossible, must be a bug"). He was right: this used
       // to multiply the radius by 0.82 on every non-anchor stop, so Opus 5 — one
@@ -1132,7 +1602,18 @@ export function renderSmartCostChart(
       const r = fx(scRadius(m.ctx, s));
       // The published-price stop is told apart by ring WEIGHT, not by being bigger:
       // 0.95 at the anchor, 0.57 at the derived stops (SC_NONANCHOR_STROKE).
-      const ringSo = fx(0.95 * (c.p.anchor ? 1 : SC_NONANCHOR_STROKE));
+      let ringSo = fx(0.95 * (c.p.anchor ? 1 : SC_NONANCHOR_STROKE));
+      // A rung AA never scored is drawn DASHED and fainter. This is the whole
+      // safeguard: its y is the model's headline index, so it must never be
+      // mistakable for a measured point at a glance.
+      // An ESTIMATED rung is DOTTED (finer than the rail's dashes) and a touch fainter
+      // than measured; a rail rung keeps its dashes and drops further.
+      const railDash = c.p.measured
+        ? ""
+        : c.p.estimate
+          ? ` stroke-dasharray="1.2 1.7"`
+          : ` stroke-dasharray="2.6 2.2"`;
+      if (!c.p.measured) ringSo = fx(Number(ringSo) * (c.p.estimate ? 0.8 : 0.6));
       // ghost at the landing spot — visible only in task mode (CSS)
       ghosts +=
         `<g class="sc-ghostpos"${vAttr}${tAttr}${mAttr} transform="translate(${fx(c.x + c.dx)}, ${c.y})">` +
@@ -1145,14 +1626,14 @@ export function renderSmartCostChart(
       const tip =
         `${m.name} · ${c.p.label} — €${fmt(c.p.cost)}/Mtok` +
         ` · ~${scFmtTokens(tokens)}/task · ${scFmtCtx(m.ctx)} ctx` +
-        ` · idx ${c.p.smart.toFixed(1)}${c.p.measured ? ` at ${c.p.label} (AA)` : " (headline — AA published no per-effort split)"}` +
+        ` · ${scIdxTag(c.p, " (AA)")}` +
         // Two dots with the same name are two SELLERS of one brain — say which
         // this is, and whether the other routes cost the same.
         (m.twinN
           ? ` · via ${scRouteTag(m)} · ${m.twinN} routes${m.twinSpread ? "" : ", same price"}`
           : "") +
         // The plan-vs-list gap, stated on the circle itself. Without it the only way
-        // to read the discount is to eyeball the dashed bridge, and a 112x gap on a
+        // to read the discount is to eyeball the dashed bridge, and a ~340x gap on a
         // log axis is easy to under-read by an order of magnitude.
         (() => {
           const list = scApiPrice(m.id);
@@ -1189,13 +1670,64 @@ export function renderSmartCostChart(
         utilDrag && listAtEffort !== undefined
           ? ` data-util-drag="1" data-home-x="${c.x}" data-home-y="${c.y}" data-home-cost="${c.p.cost}" data-list-cost="${listAtEffort}" data-list-x="${fx(scCostX(listAtEffort, s))}"`
           : "";
+      // data-effort names the rung (2026-09-03) so a test or the app can address ONE
+      // circle as (model, effort) — the frontier's own key — without parsing the tip.
+      const eAttr = ` data-effort="${esc(c.p.lvl)}"`;
       dots +=
-        `<g class="sc-dotpos" transform="translate(${c.x}, ${c.y})"${vAttr}${tAttr}${mAttr}${dragAttr}>` +
+        `<g class="sc-dotpos" transform="translate(${c.x}, ${c.y})"${vAttr}${tAttr}${mAttr}${eAttr}${dragAttr}>` +
         `<g class="sc-dotg" style="--sc-x:${c.x}px;--sc-y:${c.y}px;--sc-dx:${c.dx}px;transition-delay:${delay}">` +
-        `<circle class="sc-ring" r="${r}" fill="${m.color}" fill-opacity="0.07" stroke="${m.color}"` +
+        // THALAMUS RING — "bigger circle" (the architect). Emitted FIRST so it paints UNDER
+        // the model's own ring and logo, this file's twice-stated rule that a
+        // relationship mark goes under the thing it relates.
+        //
+        // It lives INSIDE .sc-dotg deliberately: that group carries BOTH the €/task
+        // glide (--sc-dx) and the --sc-k inverse-zoom counter-scale. Outside it the
+        // ring would grow on zoom while its own dot did not, and would detach from
+        // the dot the instant the toggle flipped.
+        //
+        // `c === anchorC`, NOT `c.p.anchor`: a ladder whose stops carry no anchor
+        // flag falls back to coords[0], and testing the flag would emit no ring at
+        // all for it — the same identity check envPts is gated on above, so the ring
+        // count and the vertex count cannot disagree.
+        //
+        // THE PICK IS HEAVIER, NOT BIGGER. Weight and opacity only: size on this
+        // chart is spoken for (area ∝ context window — scRadius), and a second
+        // radius for the pick would re-introduce the exact two-radii bug scRadius
+        // documents. Colour is spoken for too (model identity), which is why the
+        // envelope needed a hue no vendor owns.
+        //
+        // NO data-* attribute, DELIBERATELY: applyFocus (app.ts:17866) only ever
+        // toggles .sc-hl on [data-vendor],[data-twin],[data-model], and every dim
+        // rule in base.css names its classes one by one, so nothing dims the
+        // envelope BY NAME — "can thalamus reach this model" is not a question a
+        // vendor latch changes. THE RING IS THE ONE PARTIAL CASE, stated rather than
+        // hidden: its ancestor <g class="sc-dotpos"> IS dimmed to opacity 0.13 under
+        // a latch (base.css:9957-9964), and CSS group opacity is a compositing floor
+        // a descendant cannot climb back out of, so a ring fades with the dot it
+        // belongs to. Mechanic 2 (inside .sc-dotg) and "stays lit" cannot both hold
+        // for the ring; mechanic 2 wins because its failure — a ring that grows on
+        // zoom and detaches on the toggle — is a concrete visible defect, and
+        // because a ring arguably belongs to its dot. The PATH is a top-level layer
+        // and is fully independent: it stays lit under any latch.
+        //
+        // `onFrontier`, NOT the anchor (2026-09-03): the ring marks a FRONTIER RUNG,
+        // so one model may carry several rings (Opus 5 carries five when every rung
+        // is up-left of everything cheaper) and a considered-but-dominated model
+        // carries none. The pick is the rung biasPick chose for the session's dial.
+        (onFrontier
+          ? `<circle class="sc-env-ring${isPick ? " sc-env-pick" : ""}"` +
+            ` r="${fx(r + SC_ENV_RING_GAP)}" fill="none" stroke="${SC_THALAMUS}"` +
+            ` stroke-opacity="${isPick ? "0.95" : "0.6"}"` +
+            ` stroke-width="${isPick ? "2.2" : "1.2"}" vector-effect="non-scaling-stroke"/>`
+          : "") +
+        `<circle class="sc-ring" r="${r}" fill="${m.color}" fill-opacity="${c.p.measured ? 0.07 : c.p.estimate ? 0.045 : 0.02}" stroke="${m.color}"${railDash}` +
         ` stroke-opacity="${ringSo}" stroke-width="1.5" vector-effect="non-scaling-stroke"/>` +
         `<g class="sc-logo" pointer-events="none">${logo}</g>` +
         `<circle r="${fx(r + 4)}" fill="transparent"><title>${esc(tip)}</title></circle>` +
+        // PER RUNG, deliberately. `.sc-util-pct` is opacity:0 until its own dot
+        // carries .sc-util-sliding, so exactly ONE is ever visible — the one being
+        // dragged. Gating this to the anchor (tried and reverted 2026-08-30) would
+        // leave a non-anchor rung with no readout while you drag it.
         (utilDrag
           ? `<text class="sc-util-pct" y="${fx(-(r + 10))}" text-anchor="middle" dominant-baseline="alphabetic"` +
             ` font-family="'SF Mono',ui-monospace,monospace" fill="#f0e6d8" fill-opacity="0.95"` +
@@ -1243,6 +1775,80 @@ export function renderSmartCostChart(
         ` stroke="#f0e6d8" stroke-opacity="0" stroke-width="0.9" stroke-dasharray="3.5 3"` +
         ` vector-effect="non-scaling-stroke"/>`;
     }
+  }
+
+  // ─── thalamus envelope PATH + footer ───
+  // ONE traversal order — the FRONTIER's own (task cost ascending, intelligence
+  // strictly increasing) — reused by BOTH copies. Nothing is re-sorted here: the
+  // order is paretoFrontier's, computed on €/task, which is the axis the architect defined
+  // the envelope on (2026-09-02).
+  //
+  // THE TASK COPY IS THE HONEST ONE. Its vertices are the frontier at their per-task
+  // positions, so x is non-decreasing and y is STRICTLY decreasing (smarter = higher
+  // on the plot) by construction — a dip there is impossible and a test pins it.
+  // The COST copy joins the SAME rungs at their €/Mtok positions and MAY zig-zag: a
+  // verbose model is cheap per token and dear per task, so per-token it sits left of
+  // a frontier neighbour it is right of per task. That is not a defect to smooth — it
+  // is exactly the fact the task toggle exists to show.
+  //
+  // EQUAL X IS COMMON AND IS NOT A DEFECT: same price, different intelligence is a
+  // vertical segment, and collapsing it would hide a real fact.
+  //
+  // DOUBLE EMIT, like every other positional layer here (sc-line-*, sc-bridge-*,
+  // sc-twin-*): the cost copy at x, the task copy at x + dx, CSS cross-fading the
+  // pair (the <style> block in `defs`). One copy alone detaches from its dots the
+  // moment the toggle flips — invisible in the DEFAULT view, so it would ship
+  // unseen. scEnvPathPoints handles the four degenerate cases: 0 rungs and 1 rung
+  // emit NO path (the footer still speaks), 2 rungs are one segment, and coincident
+  // points are deduped before joining. A frontier rung with no resolved pixel (a
+  // ladder the chart did not draw) is skipped rather than invented.
+  const envOrdered: { x: number; y: number; dx: number }[] = [];
+  for (const r of thalFrontier) {
+    const at = envAt.get(scRungTag(r));
+    if (at) envOrdered.push(at);
+  }
+  const envCost = scEnvPolylineSvg("sc-env-cost", scEnvPathPoints(envOrdered), SC_ENV_PATH_OPACITY);
+  const envTask = scEnvPolylineSvg(
+    "sc-env-task",
+    scEnvPathPoints(envOrdered.map((p) => ({ x: p.x + p.dx, y: p.y }))),
+    0,
+  );
+
+  // THE FOOTER IS MANDATORY, NOT DECORATION. An empty envelope and a broken layer
+  // look identical on screen, and the whole point of the mark is that a brand-new
+  // frontier model with NO ring reads as "thalamus cannot reach it" rather than as
+  // "the chart failed". Every figure comes off the payload — see
+  // scThalamusFooterLine for why a literal count would itself be the stale list
+  // this feature exists to detect. The caveat suffix names the checks that did NOT
+  // run and disappears on its own once a later unit wires them.
+  //
+  // No data-* here either, same reason as the path: the footer must survive a latch.
+  // The LAST row is drawn at y = H - 7 = 593 — below the axis caption at MT + PH + 30 = 564
+  // and far below the plot floor at MT + PH = 534, so it lands in genuinely free
+  // space; earlier rows stack upward by SC_FOOTER_ROW_H (scWrapFooter says why the
+  // line wraps on its own separators). The text is itself in SC_THALAMUS, which IS
+  // the legend (the same trick scCtxLegendSvg uses) and buys back the width a drawn
+  // swatch would have cost the longest line. Every row carries the full line in its
+  // <title> behind the standing explanation, so a clipped row loses nothing on hover.
+  const envCaveats = [
+    opts?.thalamusSnapshot === undefined ? "no quota snapshot" : "",
+    opts?.thalamusAllowedModelKeys === undefined ? "no auth filter" : "",
+  ].filter((c) => c !== "");
+  const envLine = scThalamusFooterLine(
+    thal,
+    { rungs: thalRungs, frontier: thalFrontier, biasIdx: thalBiasIdx },
+    envCaveats,
+  );
+  const envRows = scWrapFooter(envLine);
+  let envFooter = "";
+  for (let i = 0; i < envRows.length; i++) {
+    const y = H - 7 - (envRows.length - 1 - i) * SC_FOOTER_ROW_H;
+    envFooter +=
+      `<text class="sc-env-foot" x="${ML}" y="${y}" text-anchor="start" font-size="7"` +
+      ` fill="${SC_THALAMUS}" fill-opacity="0.85"` +
+      ` font-family="'SF Mono',ui-monospace,monospace">` +
+      `${esc(envRows[i])}` +
+      `<title>${esc(`${SC_THALAMUS_FOOTER_TITLE}\n\n${envLine}`)}</title></text>`;
   }
 
   // labels at the MAX-effort point, de-collided greedily by y; labels glide
@@ -1363,11 +1969,23 @@ export function renderSmartCostChart(
     // below the triangles for the same reason a twin connector goes below its dots.
     `${defs}${bg}${grid}${axes}<g class="sc-bridgelayer">${bridges}</g>` +
     `<g class="sc-apilayer">${apiMarks}</g>` +
-    `<g class="sc-twinlayer">${twins}</g>${linesTask}${linesCost}${ghosts}` +
+    `<g class="sc-twinlayer">${twins}</g>` +
+    // The envelope PATH sits between the twin connectors and the constellations,
+    // by this file's own rule stated twice above: a relationship layer goes UNDER
+    // the things it relates. It describes which models thalamus reaches; it must
+    // never draw over the models themselves. Task copy before cost copy, matching
+    // the ${linesTask}${linesCost} order right after it.
+    `<g class="sc-envlayer">${envTask}${envCost}</g>` +
+    // The dashed COST rail sits directly under the measured curve it qualifies: it
+    // is the weaker claim of the two and must never draw over the line that carries
+    // real measurements. Below the envelope for the same reason the envelope is
+    // below the dots — each layer sits under the thing it describes.
+    `<g class="sc-raillayer">${rails}</g>` +
+    `${linesTask}${linesCost}${ghosts}` +
     // FORK 2026-08-06 #9 (the architect: "make the load and the zoom faster"): the neon
     // bloom was `filter="url(#sc-glow)"` on EVERY ring — 132 separate Gaussian
     // blur passes, re-run on each viewBox change, which is what made zooming
     // crawl. One filter on the dot LAYER renders the same bloom in a single pass.
-    `<g class="sc-dotlayer" filter="url(#sc-glow)">${dots}</g>${labels}</svg>`
+    `<g class="sc-dotlayer" filter="url(#sc-glow)">${dots}</g>${labels}${envFooter}</svg>`
   );
 }

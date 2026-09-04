@@ -38,6 +38,114 @@ export interface InjectedSplit {
   kind: InjectedKind;
   /** Human-facing label for the fold, e.g. "recipe instructions". */
   label: string;
+  /** When kind is recipe, the matched kit's title — from `<active_recipe title="…">`. */
+  recipeTitle?: string;
+  /** Absolute path of the matched recipe.md — from `<active_recipe path="…">`. */
+  recipePath?: string;
+}
+
+export type SkillNotice = { name: string; path: string; source: "read" | "skill" };
+
+/** The matcher writes this tag into the appended block. Title + path survive a reload; the trail event does not. */
+const ACTIVE_RECIPE_TAG = /<active_recipe\b([^>]*)>/i;
+
+function attr(attrs: string, name: string): string {
+  const m = attrs.match(new RegExp(`\\b${name}\\s*=\\s*"([^"]*)"`, "i"));
+  if (m) return decodeXml(m[1]);
+  const s = attrs.match(new RegExp(`\\b${name}\\s*=\\s*'([^']*)'`, "i"));
+  return s ? decodeXml(s[1]) : "";
+}
+
+function decodeXml(s: string): string {
+  return s
+    .replace(/\u0026quot;/g, '"')
+    .replace(/\u0026lt;/g, "<")
+    .replace(/\u0026gt;/g, ">")
+    .replace(/\u0026amp;/g, "&");
+}
+
+/** Pull title + path off a recipe injection so the chat chip can be reconstructed after a reload. */
+export function recipeNoticeFromInjected(injected: string): { title: string; path: string } | null {
+  const m = injected.match(ACTIVE_RECIPE_TAG);
+  if (!m) return null;
+  const title = attr(m[1], "title");
+  const path = attr(m[1], "path");
+  if (title && path) return { title, path };
+  const kits = attr(m[1], "kits");
+  const slug = (kits.split(",")[0] ?? "").replace(/^.*\//, "").trim();
+  if (!slug) return title || path ? { title: title || slug, path } : null;
+  return {
+    title: title || slug,
+    path: path || `~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/${slug}/recipe.md`,
+  };
+}
+
+/** The harness prints this as the first line of a skill body (and, on some harnesses, the tool result). */
+const SKILL_BASE_DIR_RE = /^\s*Base directory for this skill:\s*(.+?)\s*$/m;
+
+/**
+ * FORK 2026-09-02 — the third structural producer, and on Claude Code the only one that carries
+ * the real path. After a `Skill` tool call the harness injects the skill's whole body as a
+ * USER-role turn whose first line is `Base directory for this skill: <dir>`. Rendered naively
+ * that turn paints as one of the architect's own bubbles (his 13:45 note: "I can see the recipe
+ * itself, which is not correct"). It is machine-authored: fold it into the chip.
+ *
+ * Name: `<plugin>:<skill>` when the dir sits in a plugin cache
+ * (`…/plugins/cache/<marketplace>/<plugin>/<version>/skills/<skill>`), else the dir's last segment.
+ */
+export function skillNoticeFromInjectedBody(raw: unknown): SkillNotice | null {
+  if (typeof raw !== "string" || !raw) return null;
+  const firstLine = raw.trimStart().split("\n", 1)[0] ?? "";
+  const m = firstLine.match(SKILL_BASE_DIR_RE);
+  if (!m) return null;
+  const dir = m[1].replace(/[\\/]+$/, "");
+  const seg = dir.split(/[\\/]/);
+  const skill = seg[seg.length - 1] ?? "";
+  if (!skill) return null;
+  const plugin = dir.match(
+    /[\\/]plugins[\\/]cache[\\/][^\\/]+[\\/]([^\\/]+)[\\/][^\\/]+[\\/]skills[\\/][^\\/]+$/,
+  );
+  const name = plugin ? `${plugin[1]}:${skill}` : skill;
+  return { name, path: `${dir}/SKILL.md`, source: "skill" };
+}
+
+/**
+ * Two structural producers for the skill chip, and only these two — never regex skill names out
+ * of prose. Which skill applies is judgment; announcing that it was used is consistency (#22).
+ *
+ * 1. `read` (or equivalent) of …/skills/<name>/SKILL.md → `source: "read"`.
+ * 2. The harness's own `Skill` tool (`input.skill`) → `source: "skill"`. Its path is read off
+ *    the tool RESULT's "Base directory for this skill:" line (plugin-cache skills live under a
+ *    versioned dir the UI cannot guess); without a result it falls back to the workspace skills
+ *    dir, stripping any `plugin:` prefix. FORK 2026-09-02 — the architect saw the plain narration
+ *    row and the whole skill body; he wants the icon, the outline, and a click-to-open link.
+ */
+export function skillNoticeFromTool(
+  name: unknown,
+  input: unknown,
+  resultText?: unknown,
+): SkillNotice | null {
+  const tool = typeof name === "string" ? name.toLowerCase() : "";
+  const rec = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  if (tool === "skill") {
+    const skill = typeof rec.skill === "string" ? rec.skill.trim() : "";
+    if (!skill) return null;
+    const base =
+      typeof resultText === "string" ? resultText.match(SKILL_BASE_DIR_RE)?.[1] : undefined;
+    // No base-directory line → no chip here. Claude Code's tool result is only "Launching
+    // skill: …"; the body (and the real path) arrives as the NEXT user-role turn, which
+    // `skillNoticeFromInjectedBody` owns. A guessed workspace path would be a confidently
+    // wrong link for every plugin-cache skill — worse than no chip (same call as §5.8N).
+    if (!base) return null;
+    return { name: skill, path: `${base.replace(/[\\/]+$/, "")}/SKILL.md`, source: "skill" };
+  }
+  if (tool !== "read" && tool !== "read_file" && tool !== "view") return null;
+  const raw = rec.path ?? rec.file_path ?? rec.filePath ?? rec.target;
+  if (typeof raw !== "string" || !raw) return null;
+  const path = raw.trim();
+  const m = path.match(/(?:^|[\\/])skills[\\/]([^\\/]+)[\\/]SKILL\.md$/i);
+  if (!m) return null;
+  return { name: m[1], path, source: "read" };
 }
 
 /**
@@ -143,11 +251,13 @@ export function splitInjectedPrompt(raw: unknown): InjectedSplit | null {
     const block = raw.slice(cut.index + cut.length);
     const hit = classify(block);
     if (hit) {
+      const notice = hit.kind === "recipe" ? recipeNoticeFromInjected(block) : null;
       return {
         visible: raw.slice(0, cut.index).trim(),
         injected: block,
         kind: hit.kind,
         label: hit.label,
+        ...(notice ? { recipeTitle: notice.title, recipePath: notice.path } : {}),
       };
     }
   }

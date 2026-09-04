@@ -16,6 +16,7 @@
 // ACTUALLY ran at (the executed level) — no "requested vs actual" halo overlay
 // and no "forced" dashing: the EEG shows what happened (the architect 2026-06-18).
 
+import { EFFORT_COST_MULT } from "../../../src/shared/effort-cost-mult.js";
 import { buildEegSpendClock } from "./eeg-spend-clock.js";
 import { vendorOfModel } from "./vendor-marks.js";
 
@@ -144,17 +145,31 @@ export function eegProviderPaint(
       return { stroke: EEG_PROVIDER_COLORS[vendor], isRainbow: false };
     }
   }
-  // anthropic — provider key OR a claude model name (cc-bridge = claude CLI)
-  if (p === "claude-code" || p === "anthropic" || /claude|fable|opus|sonnet|haiku/.test(p)) {
+  // FORK 2026-09-02 (the architect: "the color of the trace of fable 5.1 should be the one
+  // assigned to claude, the orange one"). These branches tested `p` — the PROVIDER
+  // string — while the vendor branch above tests provider AND model. For a model we
+  // reach THROUGH a router the brand lives in the model id's middle segment, so
+  // `openrouter/anthropic/claude-fable-5.1` arrived with p="openrouter", matched
+  // nothing, and fell to the neutral gray at the bottom. The class is wider than
+  // Fable: every openrouter/{anthropic,openai,x-ai,meta,mistral}/* route painted gray.
+  // They now test `vendorKey` (provider + model), the same haystack the vendor branch
+  // uses. Copilot still resolves FIRST above, so a github-copilot/claude-* id keeps
+  // its own blue lane and does not leak into the orange one.
+  if (
+    p === "claude-code" ||
+    p === "anthropic" ||
+    /claude|fable|opus|sonnet|haiku/.test(vendorKey)
+  ) {
     return { stroke: EEG_PROVIDER_COLORS.anthropic, isRainbow: false };
   }
-  if (p === "openai" || /gpt|codex|(^|[^a-z])o\d/.test(p)) {
+  if (p === "openai" || /gpt|codex|(^|[^a-z])o\d/.test(vendorKey)) {
     return { stroke: EEG_PROVIDER_COLORS.openai, isRainbow: false };
   }
-  if (/grok|xai/.test(p)) return { stroke: EEG_PROVIDER_COLORS.xai, isRainbow: false };
-  if (/deepseek/.test(p)) return { stroke: EEG_PROVIDER_COLORS.deepseek, isRainbow: false };
-  if (/mistral|mixtral/.test(p)) return { stroke: EEG_PROVIDER_COLORS.mistral, isRainbow: false };
-  if (/llama|meta/.test(p)) return { stroke: EEG_PROVIDER_COLORS.meta, isRainbow: false };
+  if (/grok|xai|x-ai/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.xai, isRainbow: false };
+  if (/deepseek/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.deepseek, isRainbow: false };
+  if (/mistral|mixtral/.test(vendorKey))
+    return { stroke: EEG_PROVIDER_COLORS.mistral, isRainbow: false };
+  if (/llama|meta/.test(vendorKey)) return { stroke: EEG_PROVIDER_COLORS.meta, isRainbow: false };
   return { stroke: EEG_PROVIDER_COLORS[p] ?? EEG_PROVIDER_COLORS.unknown, isRainbow: false };
 }
 
@@ -340,10 +355,10 @@ export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // FORK 2026-08-18: added with the model itself. No generic /qwen/ row exists, so
   // without this the 27B would have fallen through to EEG_DEFAULT_REL_COST (2.58)
   // and drawn 19% thin — the "dot with no cost row" failure the block above warns of.
-  { modelMatch: /qwen3\.8-27b/i, relCost: 2.55 }, // $0.425/$2.550 — re-checked 2026-08-25 (was 3.0; -15%)
-  { modelMatch: /deepseek-v4-pro-0813/i, relCost: 1.98 }, // $0.660/$1.980 — re-checked 2026-08-29 live endpoints (-41%; DeepSeek direct cheapest, was DeepInfra $1.122/$3.366)
-  { modelMatch: /deepseek.*v4-pro/i, relCost: 1.3993 }, // $0.6997/$1.3993 — re-checked 2026-08-29 live endpoints (undated slug; was 1.74; -20%)
-  { modelMatch: /minimax/i, relCost: 1.2 }, // $0.300/$1.200
+  { modelMatch: /qwen3\.8-27b/i, relCost: 2.55 }, // $0.425/$2.550 OR list — cheapest Chutes $2.50 as of 2026-09-02 (−2%, not baked)
+  { modelMatch: /deepseek-v4-pro-0813/i, relCost: 2.6 }, // $1.300/$2.600 — re-checked 2026-08-31 live endpoints (+31%; DeepInfra cheapest, DeepSeek direct came off a 50% dip $0.660/$1.980 -> $1.320/$3.960)
+  { modelMatch: /deepseek.*v4-pro/i, relCost: 1.74 }, // $0.870/$1.740 — re-checked 2026-09-01 live endpoints (undated slug; DigitalOcean cheapest; was 1.3993, +24%)
+  { modelMatch: /minimax/i, relCost: 0.96 }, // $0.230/$0.960 — re-checked 2026-08-31 live endpoints (-20%; CoreWeave cheapest)
   { modelMatch: /muse-spark/i, relCost: 4.25 }, // $1.250/$4.250
   // PROVIDER-SCOPED ON PURPOSE. The native `google/*` rows further down sit on an
   // AMORTIZED scale (3.5 Flash = 0.0804 for a $9 sticker, i.e. ÷112), left over from
@@ -352,39 +367,44 @@ export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // scales in one column, which is exactly the 43× lie of [eeg-cost-table-amortized].
   // Only the metered OpenRouter route gets the raw number.
   { modelMatch: /openrouter\/.*gemini-3\.7.*flash/i, relCost: 1.875 }, // $0.375/$1.875 OR
-  { modelMatch: /mimo/i, relCost: 0.87 }, // $0.435/$0.870
+  { modelMatch: /mimo/i, relCost: 0.609 }, // $0.3045/$0.609 — re-checked 2026-08-31 live endpoints (-30%; GMICloud cheapest)
   { modelMatch: /inkling-small/i, relCost: 1.2 }, // $0.450/$1.200
   { modelMatch: /inkling/i, relCost: 4.05 }, // $0.950/$4.050
-  { modelMatch: /tencent|hy3/i, relCost: 0.528 }, // $0.132/$0.528
+  { modelMatch: /tencent|hy3/i, relCost: 0.522 }, // $0.126/$0.522 — re-checked 2026-08-31 live endpoints (-1.1%; GMICloud cheapest)
   // FORK 2026-08-15 (regex-leak audit): `/nex-n2/i` also claimed `nex-n2-mini`
   // ($0.100), drawing it 10× too thick. Specific row first.
   { modelMatch: /nex-n2-mini/i, relCost: 0.1 }, // $0.025/$0.100
   { modelMatch: /nex-n2/i, relCost: 1.0 }, // nex-n2-pro $0.250/$1.000
   { modelMatch: /solar-pro/i, relCost: 0.12 }, // $0.030/$0.120
-  { modelMatch: /glm-5\.3-flash/i, relCost: 0.25 }, // $0.075/$0.250 — re-checked 2026-08-29 live (Relace, unchanged; was Z.AI)
-  { modelMatch: /glm-5\.3/i, relCost: 4.0 }, // $1.200/$4.000 — re-checked 2026-08-30 live (+1%; DeepInfra now cheapest, AtlasCloud raised $3.96→$4.40)
-  { modelMatch: /glm-5\.1/i, relCost: 2.856 }, // $0.9086/$2.8556 — re-checked 2026-08-29 live (-28%; Baidu cheapest, was GMICloud $1.260/$3.960)
-  { modelMatch: /glm-5\.2/i, relCost: 1.0296 }, // $0.3276/$1.0296 — re-checked 2026-08-30 live (-8.6%; StreamLake still cheapest)
+  { modelMatch: /glm-5\.3-flash/i, relCost: 0.25 }, // $0.075/$0.250 — re-checked 2026-09-02 live endpoints (Z.AI took cheapest from Relace; +5%)
+  { modelMatch: /glm-5\.3/i, relCost: 3.96 }, // $1.170/$3.960 — re-checked 2026-09-01 live (-1%; AkashML took cheapest from DeepInfra)
+  { modelMatch: /glm-5\.1/i, relCost: 2.86 }, // $0.910/$2.860 — re-checked 2026-08-31 live endpoints (+0.2%; GMICloud cheapest, was Baidu)
+  { modelMatch: /glm-5\.2/i, relCost: 1.56 }, // $0.4875/$1.560 — re-checked 2026-08-31 live endpoints (+52%; DeepInfra cheapest, StreamLake gone)
   // FORK 2026-08-15: `/glm-5(?![.\d])/i` blocks a following digit or dot, but NOT a
   // letter or hyphen — so it also claimed `glm-5-turbo` and `glm-5v-turbo`, both
   // $4.000, and drew them at 1.92 (2.1× too thin). Both turbos get their own row.
   { modelMatch: /glm-5v?-turbo/i, relCost: 4.0 }, // $1.200/$4.000
   { modelMatch: /glm-5(?![.\d])/i, relCost: 1.92 }, // $0.600/$1.920
-  { modelMatch: /kimi-k2\.6/i, relCost: 2.228 }, // $0.5292/$2.228 — re-checked 2026-08-29 live (-44%; Baidu cheapest, was StreamLake $0.950/$4.000)
+  { modelMatch: /kimi-k2\.6/i, relCost: 2.2618 }, // $0.5372/$2.2618 — re-checked 2026-08-31 live endpoints (+1.5%; Decart cheapest, was Baidu)
   { modelMatch: /kimi-k2\.7/i, relCost: 3.4 }, // $0.670/$3.400 — re-checked 2026-08-22 (was 3.5)
   { modelMatch: /qwen3\.6-max-preview/i, relCost: 6.162 }, // $1.027/$6.162 — added 2026-08-22
   { modelMatch: /qwen3\.6-plus/i, relCost: 1.95 }, // $0.325/$1.950
-  // RE-CHECKED 2026-08-29 live endpoints: DeepSeek now serves deepseek-v4-flash-vision-exp-20260821
-  // at $0.220/$0.660 — confirmed via /api/v1/models/deepseek/deepseek-v4-flash-vision-exp/endpoints.
-  // The 2026-08-27 "correction" to $1.32 was wrong; the $0.66 this pass wrote is real.
-  { modelMatch: /deepseek-v4-flash-vision/i, relCost: 0.66 }, // $0.220/$0.660 — re-checked 2026-08-29 live (-50% vs $1.320; new model ID with date suffix)
-  { modelMatch: /deepseek-v4-flash-0731/i, relCost: 0.0899 }, // $0.0449/$0.0899 — re-checked 2026-08-29 live (-25%; Baidu cheapest, was OpenInference $0.060/$0.120)
+  // DEEPSEEK PRICES OSCILLATE — do not read a single day as a trend. This row has
+  // measured $1.32 (08-27), $0.66 (08-29/08-30) and $1.32 again (08-31), each time
+  // from the live /api/v1/models/deepseek/deepseek-v4-flash-vision-exp/endpoints call.
+  // Neither reading was a mistake: DeepSeek discounts its OWN endpoint by ~50%
+  // intermittently, and the 08-29 note calling $1.32 "wrong" was itself reading one
+  // sample as a correction. The same 2x flip hit deepseek-v4-pro-0813 on 08-30/08-31.
+  // Treat any single DeepSeek snapshot as +/-2x, and re-check before citing it.
+  { modelMatch: /deepseek-v4-flash-vision/i, relCost: 0.66 }, // $0.220/$0.660 — re-checked 2026-09-02 live endpoints (−50%; Fireworks took cheapest from DeepSeek — see oscillation note above)
+  { modelMatch: /deepseek-v4-flash-0731/i, relCost: 0.16 }, // $0.030/$0.160 — re-checked 2026-08-31 live endpoints (+78%; OpenInference cheapest, Baidu gone)
   { modelMatch: /deepseek-v4-flash(?!-)/i, relCost: 0.168 }, // $0.0679/$0.168 — re-checked 2026-08-29 live (undated slug, DigitalOcean cheapest; was 0.159)
-  // FORK 2026-08-23: openrouter/openai/gpt-5.3-codex is metered at $1.75/$14.00.
-  // Without this row the generic /gpt-5/i catch-all (0.0893) would underprice it by
-  // 157× against the actual metered rate. Must be scoped to the openrouter/ prefix so
-  // the github-copilot/gpt-5.3-codex row above keeps its Copilot-adjusted price.
-  { modelMatch: /openrouter\/openai\/gpt-5\.3-codex/i, relCost: 14.0 }, // $1.75/$14.00
+  // FORK 2026-09-02 (the architect banned OpenRouter routes for vendors we hold a
+  // direct subscription with): the openrouter/openai/gpt-5.3-codex row that sat here
+  // since 2026-08-23 is gone with its catalog id. It existed to keep that metered
+  // $1.75/$14.00 route off the generic /gpt-5/i catch-all (0.0893, a 157× underprice);
+  // with the id deleted it matched nothing. The github-copilot/gpt-5.3-codex row above
+  // is a different route on the Copilot-adjusted scale and is unaffected.
   { modelMatch: /kimi/i, relCost: 15 }, // $3/$15, cache read $0.30
   { modelMatch: /qwen3\.8-max/i, relCost: 6.0 }, // $2/$6, cache read $0.25
   { modelMatch: /qwen3\.7-max/i, relCost: 4.425 }, // $1.475/$4.425, cache read $0.295
@@ -397,14 +417,33 @@ export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // never a price page. That is the rule the Kimi K3 miss bought ($2.90/$14 on
   // every price page, $3.00/$15 actually billed).
   //
-  // claude-opus-5-fast MUST STAY IN THIS BLOCK, above the native `/opus/i` row.
-  // Anthropic's fast mode is sold METERED at $10/$50 — 2x regular Opus 5, per
-  // OpenRouter's own description ("identical capabilities with higher output speed
-  // at 2x pricing"). The native row prices an Opus token at the Max 20x amortized
-  // €0.2232, so if `/opus/i` won here a CASH route would draw at a subscription
-  // rate and understate it by 224x — the same regex-order failure class as the
+  // FORK 2026-09-02 (the architect banned OpenRouter routes for vendors we hold a
+  // direct subscription with): claude-opus-5-fast is gone from the catalog, so its
+  // row here is removed. It was pinned ABOVE the native `/opus/i` row because the
+  // metered $10/$50 fast mode would otherwise have been drawn at the Max 20x
+  // amortized €0.2232 and understated 224x — the regex-order trap still applies to
+  // the openrouter fable row below, which keeps that pinning.
+  //
+  // MUST STAY ABOVE the native `/fable/i` row: this is the METERED OpenRouter route
+  // at $10/$50, and if `/fable/i` won here a CASH route would draw at the Max 20x
+  // amortized €0.4464 and understate it by 112× — same regex-order class as the
   // glm-5-turbo and nex-n2-mini leaks above.
-  { modelMatch: /claude-opus-5-fast/i, relCost: 50.0 }, // $10.000/$50.000 OR, ctx 1M
+  //
+  // FORK 2026-09-02 (the architect: "the cost of Fable 5.1 is not correct... claude models
+  // cost us about 112 times less"). This row read `/fable-5\.1/i` and was introduced
+  // on the premise that Claude Code did not serve the model. TWO THINGS WERE WRONG.
+  //  (a) The id was probed as `claude-fable-5.1` — AA's DOTTED display name. Every
+  //      claude-code id is HYPHENATED (`claude-opus-4-8`, `claude-sonnet-4-6`), so
+  //      the real id is `claude-fable-5-1` and the probe asked for a model that never
+  //      existed under any version. Claude Code 2.1.258 serves it (verified against
+  //      two bogus-id controls, which fail loudly). It is a subscription model.
+  //  (b) Keying on the DOT is what made (a) invisible: `/fable-5\.1/i` happens not to
+  //      match the hyphenated subscription id, so the two routes were told apart by a
+  //      punctuation accident rather than by what actually differs — the BILLING
+  //      ROUTE. A future `claude-fable-5.2` id would have re-broken it silently.
+  // Keyed on the provider prefix now, the same convention the Copilot block above
+  // uses. The native subscription route falls through to `/fable/i` = €0.4464.
+  { modelMatch: /openrouter\/.*fable/i, relCost: 50.0 }, // $10.000/$50.000 OR, ctx 1M
   { modelMatch: /nemotron-3\.5-lightning/i, relCost: 0.2 }, // $0.080/$0.200 OR, ctx 262k
   { modelMatch: /ling-3\.0-flash/i, relCost: 0.063 }, // $0.021/$0.063 OR, ctx 262k
   { modelMatch: /longcat-2\.0/i, relCost: 1.2 }, // $0.300/$1.200 OR, ctx 1.05M
@@ -435,10 +474,57 @@ export const EEG_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // €0 until the cap. Dividing a flat fee by usage measures how well a seat is used,
   // not what a model costs — see the OpenAI rows below, where the same arithmetic
   // makes Sol look 48× Opus purely because that seat sits idle.
-  { modelMatch: /fable/i, relCost: 0.4464 },
-  { modelMatch: /opus/i, relCost: 0.2232 },
-  { modelMatch: /sonnet/i, relCost: 0.0893 },
-  { modelMatch: /haiku/i, relCost: 0.0446 },
+  // ── RE-DERIVED 2026-09-02 (the architect: "do not just divide the $50 sticker by 112,
+  //    find the proper model cost"). He was right, and for two separate reasons.
+  //
+  // (1) THE BLEND WAS COUNTING CACHE READS AT 10x THEIR PRICE. The old figure used
+  //     `output + 0.2·input` with `input` = cache_read + cache_creation. But 0.2 is
+  //     the FRESH-input ratio, and a cache read is not fresh input: read off the live
+  //     catalog for all four models, Anthropic prices cache read at 10% of input and
+  //     cache write at 1.25x input, uniformly (Fable 5.1: in $10 / out $50 /
+  //     cacheRead $0.25 / cacheWrite $12.50). In OUTPUT-equivalent units that is
+  //     out 1.0 · in 0.20 · cacheRead 0.02 · cacheWrite 0.25 — NOT 0.2 for all input.
+  //     Our traffic is ~99% cache read (2,137 Mtok read vs 12 Mtok written out in the
+  //     current window), so the wrong weight did not shade the answer, it DOMINATED
+  //     it: measured burn came out 5.3x too high.
+  //
+  // (2) THE PLAN'S CEILING MOVED. Same measurement on the window the 2026-08-13 note
+  //     used gives 166.8 eq-Mtok against Anthropic's reported 70% utilisation; the
+  //     current window gives 158.8 eq against a reported **7%**. Nearly identical real
+  //     burn, a tenth of the quota — Anthropic raised the Max 20x weekly allowance
+  //     ~10x between 08-13 and now. The old constant could only ever age one way and
+  //     it did.
+  //
+  // DERIVATION, end to end, every input live or published — no sticker was divided:
+  //   · `budget.usage` 2026-09-02 10:17 UTC: seven_day utilisation = **7%**, window
+  //     opened 2026-08-27 16:00 UTC.
+  //   · our burn inside exactly that window, from anatomy_events, weighted with the
+  //     PUBLISHED price ratios above and split by the public sticker ladder
+  //     (haiku $5 / sonnet-5 $10 / opus-5 $25 / fable $50 -> 0.5 / 1 / 2.5 / 5):
+  //     **158.77 sonnet-eq Mtok**. Cross-check, previous COMPLETE week: 163.56 eq,
+  //     also ~7% — two independent windows agree, so this is not one noisy sample.
+  //   · ceiling = 158.77 / 0.07 = **2,268 eq-Mtok/week**.
+  //   · at the architect's stated 75% average utilisation = 1,701 eq-Mtok consumed/week.
+  //   · unit = EUR 50/week (EUR 200/mo over ~4 weeks) / 1,701 = **EUR 0.0294 per
+  //     sonnet-eq Mtok**. Every row below is that unit times the model's sticker ratio.
+  //
+  // PRECISION: the 7% is Anthropic's own integer percent, so +/-0.5pp puts the unit in
+  // EUR 0.0273-0.0315 and Fable in EUR 0.136-0.157 — about +/-7%. Quote it as ~EUR 0.15,
+  // not as four significant figures.
+  //
+  // Fable 5.1 carries the SAME $10/$50 sticker as Fable 5 (live OpenRouter catalog,
+  // 2026-09-02, http=200/421 models), so it shares the ratio-5 row rather than getting
+  // an assumed one. The implied plan-vs-sticker factor is now **340x**, not the 112x
+  // this block used to imply — that number was an OUTPUT of the old arithmetic, never
+  // an input, and it must never be used as a shortcut to price a new model.
+  //
+  // RE-DERIVE when the fee changes, when `budget.usage` utilisation moves materially,
+  // or when the sticker ladder changes. Do not hand-edit a single row: the four move
+  // together or the chart starts claiming Fable is cheaper than Opus.
+  { modelMatch: /fable/i, relCost: 0.147 },
+  { modelMatch: /opus/i, relCost: 0.0735 },
+  { modelMatch: /sonnet/i, relCost: 0.0294 },
+  { modelMatch: /haiku/i, relCost: 0.0147 },
   // OpenAI gpt-5.6 trio (ChatGPT Business seat, codex provider) — sticker out ÷ 4.65.
   // FORK 2026-08-12: Terra is $12 out (not $15) and Luna is $1.20 (not $6) per
   // developers.openai.com/api/docs/pricing. Luna being 5× wrong mattered most —
@@ -563,15 +649,9 @@ const EEG_DEFAULT_REL_COST = 2.58;
 
 // Effort multiplier per stop. Auto ("") = UNCAPPED — the model picks its own
 // budget, so it costs more than medium on average (§5.8g: Auto is never tier 0).
-export const EEG_EFFORT_MULT: Record<string, number> = {
-  "": 1.2,
-  minimal: 0.5,
-  low: 0.75,
-  medium: 1,
-  high: 1.5,
-  xhigh: 2,
-  max: 3,
-};
+// MOVED 2026-09-02 to src/shared/effort-cost-mult.ts (the THALAMUS router prices effort
+// rungs from the same table). Re-exported under the panel's historical name.
+export const EEG_EFFORT_MULT: Record<string, number> = EFFORT_COST_MULT;
 
 // FORK 2026-06-20 (the architect): the model's effective €/Mtok-output (EEG_COST_TABLE
 // value, or the default for an unrecognized model). Shared by BOTH the stroke
@@ -694,24 +774,24 @@ export const EEG_COST_COMPARE_LABEL = "Grok";
  */
 export const EEG_COST_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["claude-haiku-4-5", 0.35], // floor (raw 0.26)
+  ["claude-sonnet-5", 0.35],
   ["codex/gpt-5.6-luna", 0.35], // floor (raw 0.06)
   ["xai/grok-4.5", 0.35], // floor (raw 0.31)
-  ["deepseek/deepseek-v4-flash-0731", 0.52], // 0.0899 × 5.814 — re-checked 2026-08-29 live (-25%; was 0.7)
-  ["claude-sonnet-5", 0.52],
+  ["claude-opus-4-8", 0.43],
   ["codex/gpt-5.6-terra", 0.62],
-  ["claude-opus-4-8", 1.3],
-  ["z-ai/glm-5.3-flash", 1.45], // 0.25 × 5.814 — added 2026-08-27 OR catalog ($0.075/$0.250, ctx 1.31M)
+  ["claude-fable-5", 0.85],
+  ["deepseek/deepseek-v4-flash-0731", 0.93], // 0.16 — re-checked 2026-08-31 live (+78%; OpenInference cheapest, Baidu gone)
+  ["z-ai/glm-5.3-flash", 1.45], // 0.25 — re-checked 2026-09-02 live (Z.AI took cheapest from Relace)
   ["openai-codex/gpt-5.5", 1.56],
-  ["claude-fable-5", 2.6],
-  ["tencent/hy3", 3.07], // 0.528 × 5.814 — added 2026-08-25 ($0.132/$0.528 OR catalog)
-  ["deepseek/deepseek-v4-flash-vision-exp", 3.84], // 0.66 × 5.814 — re-checked 2026-08-29 live (-50%; was 7.67)
-  ["z-ai/glm-5.2", 5.99], // 1.0296 × 5.814 — re-checked 2026-08-30 live (-8.6%; was 6.55)
-  ["minimax/minimax-m3", 6.98],
-  ["deepseek/deepseek-v4-pro-0813", 11.51], // 1.98 × 5.814 — re-checked 2026-08-29 live (-41%; was 19.57)
-  ["moonshotai/kimi-k2.6", 12.95], // 2.228 × 5.814 — re-checked 2026-08-29 live (-44%; was 23.26)
+  ["tencent/hy3", 3.03], // 0.522 — re-checked 2026-08-31 live (-1.1%; GMICloud cheapest)
+  ["deepseek/deepseek-v4-flash-vision-exp", 3.84], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest, DeepSeek still 1.32)
+  ["minimax/minimax-m3", 5.58], // 0.96 — re-checked 2026-08-31 live (-20%; CoreWeave cheapest)
+  ["z-ai/glm-5.2", 9.07], // 1.56 — re-checked 2026-08-31 live (+52%; DeepInfra cheapest, StreamLake gone)
+  ["moonshotai/kimi-k2.6", 13.15], // 2.2618 — re-checked 2026-08-31 live (+1.5%; Decart cheapest, was Baidu)
   ["qwen/qwen3.8-27b", 14.83], // 2.55 × 5.814 — re-checked 2026-08-25 OR catalog (was 17.44; -15%)
+  ["deepseek/deepseek-v4-pro-0813", 15.12], // 2.6 — re-checked 2026-08-31 live (+31%; DeepInfra cheapest)
   ["google/gemini-3.7-flash", 21.8],
-  ["z-ai/glm-5.3", 23.26], // 4.00 × 5.814 — re-checked 2026-08-30 live (+1%; DeepInfra took cheapest from AtlasCloud)
+  ["z-ai/glm-5.3", 23.02], // 3.96 × 5.814 — re-checked 2026-09-01 live (-1%; AkashML took cheapest from DeepInfra)
   ["qwen/qwen3.7-max", 25.73],
   ["qwen/qwen3.8-max", 34.88],
   ["github-copilot/gpt-5.4", 48.61],
@@ -834,27 +914,27 @@ export const EEG_COST_LOG_PX_FLOOR = 0.375; // tool:local + anything under the r
 export const EEG_COST_LOG_LADDER_DOC: readonly (readonly [string, number])[] = [
   ["tool:local", 0.38],
   ["codex/gpt-5.6-luna", 1.0],
-  ["claude-haiku-4-5", 5.73],
+  ["claude-haiku-4-5", 2.05],
+  ["claude-sonnet-5", 4.35],
   ["xai/grok-4.5", 6.34],
-  ["claude-sonnet-5", 8.03],
-  ["deepseek/deepseek-v4-flash-0731", 8.05],
+  ["claude-opus-4-8", 7.38],
   ["codex/gpt-5.6-terra", 8.63],
-  ["claude-opus-4-8", 11.06],
-  ["z-ai/glm-5.3-flash", 11.44],
+  ["claude-fable-5", 9.68],
+  ["deepseek/deepseek-v4-flash-0731", 9.96], // 0.16 — re-checked 2026-08-31 live (+78%; OpenInference cheapest, Baidu gone)
+  ["z-ai/glm-5.3-flash", 11.44], // 0.25 — re-checked 2026-09-02 live (Z.AI took cheapest from Relace)
   ["openai-codex/gpt-5.5", 11.67],
-  ["claude-fable-5", 13.36],
-  ["tencent/hy3", 13.91],
-  ["deepseek/deepseek-v4-flash-vision-exp", 14.65],
-  ["z-ai/glm-5.2", 16.13],
-  ["minimax/minimax-m3", 16.63],
-  ["deepseek/deepseek-v4-pro", 17.14],
-  ["deepseek/deepseek-v4-pro-0813", 18.29],
-  ["moonshotai/kimi-k2.6", 18.68],
+  ["tencent/hy3", 13.88], // 0.522 — re-checked 2026-08-31 live (-1.1%; GMICloud cheapest)
+  ["deepseek/deepseek-v4-flash-vision-exp", 14.65], // 0.66 — re-checked 2026-09-02 live (−50%; Fireworks cheapest)
+  ["minimax/minimax-m3", 15.89], // 0.96 — re-checked 2026-08-31 live (-20%; CoreWeave cheapest)
+  ["z-ai/glm-5.2", 17.5], // 1.56 — re-checked 2026-08-31 live (+52%; DeepInfra cheapest, StreamLake gone)
+  ["deepseek/deepseek-v4-pro", 17.86], // 1.74 — re-checked 2026-09-01 live endpoints (undated slug; DigitalOcean cheapest; was 1.3993)
+  ["moonshotai/kimi-k2.6", 18.73], // 2.2618 — re-checked 2026-08-31 live (+1.5%; Decart cheapest, was Baidu)
   ["qwen/qwen3.8-27b", 19.13],
-  ["z-ai/glm-5.1", 19.51],
+  ["deepseek/deepseek-v4-pro-0813", 19.19], // 2.6 — re-checked 2026-08-31 live (+31%; DeepInfra cheapest)
+  ["z-ai/glm-5.1", 19.51], // 2.86 — re-checked 2026-08-31 live (+0.2%; GMICloud cheapest, was Baidu)
   ["moonshotai/kimi-k2.7-code", 20.08],
   ["google/gemini-3.7-flash", 20.41],
-  ["z-ai/glm-5.3", 20.62],
+  ["z-ai/glm-5.3", 20.59], // 3.96 — re-checked 2026-09-01 live (-1%; AkashML took cheapest from DeepInfra)
   ["meta/muse-spark-1.2", 20.82],
   ["qwen/qwen3.7-max", 20.96],
   ["qwen/qwen3.8-2.4t-a95b", 21.96],

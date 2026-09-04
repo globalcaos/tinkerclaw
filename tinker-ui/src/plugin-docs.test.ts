@@ -13,7 +13,13 @@
  * measurement; a row rendering no breakdown is an honest absence. Prefer the second.
  */
 import { describe, it, expect } from "vitest";
-import { documentedPluginIds, pluginDisplayName, pluginDocFor, phaseDocFor } from "./phase-docs.js";
+import {
+  documentedPluginIds,
+  pluginDisplayName,
+  pluginDocFor,
+  phaseDocFor,
+  stageOwner,
+} from "./phase-docs.js";
 import { readTurnPhaseEvent } from "./turn-phase.js";
 
 // ─── content ─────────────────────────────────────────────────────────────────
@@ -229,5 +235,54 @@ describe("readTurnPhaseEvent: the plugin breakdown", () => {
     );
     expect(p?.plugins?.[0].id).toBe("tinkerclaw-total-recall");
     expect(pluginDocFor(p?.plugins?.[0].id).title).toContain("Total Recall");
+  });
+});
+
+// ─── stage ownership ─────────────────────────────────────────────────────────
+
+/**
+ * FORK 2026-08-24 — the architect: "'Total Recall' is still not itemized".
+ *
+ * Total Recall emits two stages of its own, but every stage was being attached to the
+ * client-measured "preparing context" bracket, so the largest plugin on the pre-model path was
+ * the one plugin that could not show the breakdown it was already producing. Ownership is what
+ * routes a stage to the right row, and getting it wrong in either direction is visible: an
+ * unowned stage attributed to a plugin inflates that plugin, and an owned one left in the
+ * bracket double-counts it against its own row.
+ */
+describe("stage ownership routes a stage to the row that produced it", () => {
+  it("claims the two Total Recall stages even from a gateway that sends no tag", () => {
+    // The deploy window where the browser has the new UI and the gateway has not restarted yet.
+    expect(stageOwner({ id: "engram-store-load" })).toBe("tinkerclaw-total-recall");
+    expect(stageOwner({ id: "engram-search-rank" })).toBe("tinkerclaw-total-recall");
+  });
+
+  it("leaves RUNNER stages unowned, so they stay in the preparing-context bracket", () => {
+    for (const stage of ["tools-build", "mcp-tools", "skills-load", "sandbox", "lsp-runtime"]) {
+      expect(stageOwner({ id: stage })).toBeUndefined();
+    }
+  });
+
+  it("prefers the gateway's tag over the local fallback table", () => {
+    // The tag is a fact from the emitter; the table is a guess about someone else's code. When
+    // a plugin is renamed, the tag is right and the table is stale.
+    expect(stageOwner({ id: "engram-search-rank", plugin: "some-other-plugin" })).toBe(
+      "some-other-plugin",
+    );
+  });
+
+  it("owns a stage it has never heard of when the gateway tags it", () => {
+    // This is the whole point of the tag: a new plugin gets an itemized row without a UI change.
+    expect(stageOwner({ id: "brand-new-stage", plugin: "tinkerclaw-prefrontal" })).toBe(
+      "tinkerclaw-prefrontal",
+    );
+  });
+
+  it("names an owner that actually has a doc — an owned stage must reach a real row", () => {
+    const owners = ["engram-store-load", "engram-search-rank"].map((id) => stageOwner({ id }));
+    for (const owner of owners) {
+      expect(owner).toBeTruthy();
+      expect(documentedPluginIds()).toContain(owner as string);
+    }
   });
 });

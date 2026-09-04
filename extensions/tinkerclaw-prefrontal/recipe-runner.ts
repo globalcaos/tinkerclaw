@@ -34,6 +34,7 @@ import { deriveCombinatorFanOut, deriveUsesDepthBudget } from "./combinator-budg
 import { deriveOverseerLoopBudget } from "./overseer-budget.js";
 import type { PlanStore } from "./plan-store.js";
 import type { RecipeParamSpec } from "./recipe-author.js";
+import { findRecipeFile } from "./recipe-locate.js";
 import {
   resolveStepRefs,
   parseStepIoDirectives,
@@ -1375,6 +1376,13 @@ export async function loadRecipeText(
       // try next
     }
   }
+  // FORK 2026-09-02: the library also stores recipes as `<category>/<name>.md`
+  // and `<category>/<subdivision>/<name>.md`. `feature` composes four `coding/`
+  // recipes via `uses:`, so a slug-dir-only loader made the matcher select
+  // recipes the runner then could not load. Same class as the 2026-08-22
+  // scanner blind spot; resolved through the one shared layout owner.
+  const located = await findRecipeFile(ownRecipesDir, slug);
+  if (located) return await fs.readFile(located, "utf-8");
   throw new Error(`recipe-runner: recipe ${kitRef} not found in ${candidates.join(" or ")}`);
 }
 

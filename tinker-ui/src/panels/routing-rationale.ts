@@ -100,6 +100,18 @@ export interface RoutingSignals {
    *  renderer ships, whether or not the caller is updated in the same breath, and an explicit
    *  value still wins when app.ts has a better answer than "the model is pinned". */
   biasEnabled?: boolean;
+  /** FORK 2026-09-03: what THALAMUS would route to at this session's BIAS — the cheapest
+   *  rung on the €/task Pareto frontier within the dial's gap of the best, computed by
+   *  src/shared/thalamus-frontier.ts (the module the reply-path router and the chart's
+   *  yellow envelope both call). `model` is the friendly label; `effort` may be "" for a
+   *  ladderless model; `cost` is €/TASK, not €/Mtok. Absent ⇒ no line is drawn. */
+  frontierPick?: {
+    model: string;
+    effort: string;
+    smart: number;
+    cost: number;
+    frontierSize: number;
+  };
 }
 
 export interface BurnExplanation {
@@ -360,7 +372,27 @@ export function policyLink(policyPath?: string): string {
   );
 }
 
-/** The ORCA card: the fast↔smart dial, then this turn's three choices, then the policy link. */
+/** ONE line under the dial (2026-09-03): where the dial's position lands on the frontier.
+ *  Not a `routing-why-row` — those are the three fixed sections the tests count — and not
+ *  the MODEL line, which states the model IN FORCE; this states what THALAMUS WOULD do,
+ *  which is the only thing the dial changes. Empty when the caller had no priced rungs. */
+export function frontierLine(s: RoutingSignals): string {
+  const p = s.frontierPick;
+  if (!p) {
+    return "";
+  }
+  return (
+    '<div class="routing-why-frontier">THALAMUS would route → <b>' +
+    esc(p.model) +
+    "</b>" +
+    (p.effort ? ` @${esc(p.effort)}` : "") +
+    ` · idx ${p.smart.toFixed(1)} · €${Number(p.cost.toPrecision(3))}/task` +
+    ` (frontier of ${p.frontierSize} rungs)</div>`
+  );
+}
+
+/** The ORCA card: the fast↔smart dial, the frontier line, then this turn's three choices,
+ *  then the policy link. */
 export function renderRoutingRationale(s: RoutingSignals): string {
   const row = (key: string, text: string): string =>
     `<div class="routing-why-row"><span class="routing-why-key">${key}</span>` +
@@ -368,6 +400,7 @@ export function renderRoutingRationale(s: RoutingSignals): string {
   return (
     renderBiasSlider(s) +
     '<div class="routing-why">' +
+    frontierLine(s) +
     row("MODEL", modelLine(s)) +
     row("EFFORT", effortLine(s)) +
     row("FAN-OUT", fanOutLine(s)) +

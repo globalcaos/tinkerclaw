@@ -27,6 +27,72 @@ afterEach(() => {
   clearClientRowsForTest();
 });
 
+/**
+ * FORK 2026-08-24 — the split-key bug, in the exact shape it happened.
+ *
+ * The architect: "One with a fresh window only shows 'sending', nothing else."
+ *
+ * A new tab mints `tinker:abc` and sends under it; the gateway answers with
+ * `agent:main:tinker:abc` and the tab rebinds MID-TURN. So `sending` — written the instant
+ * `chat.send` resolves — went into one bucket and every later row into another, and a restore
+ * showed whichever side it happened to ask for.
+ */
+describe("one session, two spellings of its key", () => {
+  it("reads back a row written under the short key when asked for the canonical one", () => {
+    expect(recordClientRow("tinker:abc", row("sending"), 1, 1000)).toBeTruthy();
+    expect(readClientRows("agent:main:tinker:abc").map((r) => r.row._phaseLabel)).toEqual([
+      "sending",
+    ]);
+  });
+
+  it("reads back a row written under the canonical key when asked for the short one", () => {
+    expect(
+      recordClientRow("agent:main:tinker:abc", row("preparing context"), 1, 1000),
+    ).toBeTruthy();
+    expect(readClientRows("tinker:abc").map((r) => r.row._phaseLabel)).toEqual([
+      "preparing context",
+    ]);
+  });
+
+  it("MERGES the two buckets in time order — this is the reported bug", () => {
+    // Exactly the real sequence: `sending` under the freshly minted key, everything after the
+    // gateway's rename under the canonical one.
+    recordClientRow("tinker:abc", row("sending"), 1, 1000);
+    recordClientRow("agent:main:tinker:abc", row("preparing context"), 1, 2000);
+    recordClientRow("agent:main:tinker:abc", row("Total Recall · ENGRAM"), 1, 3000);
+
+    for (const spelling of ["tinker:abc", "agent:main:tinker:abc"]) {
+      expect(readClientRows(spelling).map((r) => r.row._phaseLabel)).toEqual([
+        "sending",
+        "preparing context",
+        "Total Recall · ENGRAM",
+      ]);
+    }
+  });
+
+  it("does NOT merge sessions that merely look similar", () => {
+    // The normaliser strips ONE `agent:<id>:` prefix and nothing else. Over-merging would splice
+    // two people's transcripts together, which is worse than the bug being fixed.
+    recordClientRow("tinker:abc", row("mine"), 1, 1000);
+    recordClientRow("tinker:abcd", row("not mine"), 1, 1001);
+    recordClientRow("agent:other:tinker:zzz", row("another agent"), 1, 1002);
+
+    expect(readClientRows("tinker:abc").map((r) => r.row._phaseLabel)).toEqual(["mine"]);
+    expect(readClientRows("tinker:abcd").map((r) => r.row._phaseLabel)).toEqual(["not mine"]);
+    expect(readClientRows("tinker:zzz").map((r) => r.row._phaseLabel)).toEqual(["another agent"]);
+  });
+
+  it("survives the fold running twice — no row is duplicated by being migrated", () => {
+    recordClientRow("tinker:abc", row("sending"), 1, 1000);
+    // Each read re-folds and each write re-persists the folded shape; a fold that was not
+    // idempotent would grow the transcript by one copy per reload.
+    readClientRows("agent:main:tinker:abc");
+    recordClientRow("agent:main:tinker:abc", row("preparing context"), 1, 2000);
+    readClientRows("tinker:abc");
+    expect(readClientRows("tinker:abc")).toHaveLength(2);
+  });
+});
+
 describe("client rows persist", () => {
   it("stores a row and reads it back", () => {
     const id = recordClientRow(KEY, row("recalling memories"), 3, 1000);

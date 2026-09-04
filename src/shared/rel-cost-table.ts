@@ -87,7 +87,7 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /github-copilot\/.*gemini.*pro/i, relCost: 6.69 }, // $12
   // GitHub docs 2026-08-28: 3.6/3.7 Flash promo $0.75/$3.75 through 2026-12-31.
   // The $7.50 / $9 rows were last year's stickers. 3.75 × 0.5571 = 2.09.
-  { modelMatch: /github-copilot\/.*gemini-3\.[67].*flash/i, relCost: 2.09 }, // $3.75 promo
+  { modelMatch: /github-copilot\/.*gemini-3\.[678].*flash/i, relCost: 2.09 }, // $3.75 promo (3.6/3.7/3.8 through 2026-12-31)
   { modelMatch: /github-copilot\/.*gemini.*flash/i, relCost: 5.01 }, // 3.5 Flash $9
   { modelMatch: /github-copilot\/.*haiku/i, relCost: 2.79 }, // $5
   { modelMatch: /github-copilot\/.*gpt-5\.4-mini/i, relCost: 2.51 }, // $4.50
@@ -154,6 +154,7 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // would win by regex order and price a NATIVE google dot at raw metered rate — two
   // scales in one column, which is exactly the 43× lie of [eeg-cost-table-amortized].
   // Only the metered OpenRouter route gets the raw number.
+  { modelMatch: /openrouter\/.*gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.750/$3.750 OR
   { modelMatch: /openrouter\/.*gemini-3\.7.*flash/i, relCost: 1.875 }, // $0.375/$1.875 OR
   { modelMatch: /mimo/i, relCost: 0.87 }, // $0.435/$0.870
   { modelMatch: /inkling-small/i, relCost: 1.2 }, // $0.450/$1.200
@@ -165,7 +166,7 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /nex-n2/i, relCost: 1.0 }, // nex-n2-pro $0.250/$1.000
   { modelMatch: /solar-pro/i, relCost: 0.12 }, // $0.030/$0.120
   { modelMatch: /glm-5\.3-flash/i, relCost: 0.25 }, // $0.075/$0.250 — re-checked 2026-08-29 live (Relace, unchanged; was Z.AI)
-  { modelMatch: /glm-5\.3/i, relCost: 4.0 }, // $1.200/$4.000 — re-checked 2026-08-30 live (+1%; DeepInfra now cheapest, AtlasCloud raised $3.96→$4.40)
+  { modelMatch: /glm-5\.3/i, relCost: 3.432 }, // $1.144/$3.432 — re-checked 2026-09-03 live endpoints (−14%; Decart took cheapest from DeepInfra)
   { modelMatch: /glm-5\.1/i, relCost: 2.856 }, // $0.9086/$2.8556 — re-checked 2026-08-29 live (-28%; Baidu cheapest, was GMICloud $1.260/$3.960)
   { modelMatch: /glm-5\.2/i, relCost: 1.0296 }, // $0.3276/$1.0296 — re-checked 2026-08-30 live (-8.6%; StreamLake still cheapest)
   // FORK 2026-08-15: `/glm-5(?![.\d])/i` blocks a following digit or dot, but NOT a
@@ -327,10 +328,11 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // metered API key as of tonight. A metered model priced on a subscription divisor
   // understates its cost by two orders of magnitude — the same defect recorded in
   // [eeg-cost-table-amortized], pointing the other way.
-  // Prices from ai.google.dev/gemini-api/docs/pricing, output $/Mtok. The 3.7/3.6
+  // Prices from ai.google.dev/gemini-api/docs/pricing, output $/Mtok. The 3.8/3.7/3.6
   // rate is promotional through 2026-12-31; re-check it in January.
-  // 3.7 BEFORE 3.6 BEFORE the generic flash row — regex order decides.
+  // 3.8 BEFORE 3.7 BEFORE 3.6 BEFORE the generic flash row — regex order decides.
   { modelMatch: /gemini.*pro/i, relCost: 12.0 }, // 3.1 Pro $12 out ≤200k (doubles above)
+  { modelMatch: /gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
   { modelMatch: /gemini-3\.7.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
   { modelMatch: /gemini-3\.6.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
   { modelMatch: /gemini.*flash/i, relCost: 9.0 }, // 3.5 Flash $1.50/$9.00
@@ -382,9 +384,32 @@ export function relCostKey(model: string, provider?: string): string {
  * the file header before touching REL_COST_TABLE.
  */
 export function relCostFor(model: string, provider?: string): number {
+  return relCostLookup(model, provider) ?? DEFAULT_REL_COST;
+}
+
+/**
+ * The SAME table walk as `relCostFor`, but a MISS STAYS A MISS.
+ *
+ * FORK 2026-09-02 — added for the THALAMUS router, which places every reachable
+ * (model, effort) pair on a smart x cost plane. `relCostFor` answers
+ * DEFAULT_REL_COST (2.58) for a model no row claims, which is the right answer for
+ * a THICKNESS (draw something rather than nothing) and the wrong one for a
+ * ROUTING DECISION: a rung placed at an invented price would be ranked, could win
+ * the bias pick, and could cost-veto a genuinely cheaper model — all on a number
+ * nobody published. Against a live ceiling near 0.33 that invented 2.58 is a 7.7x
+ * error in the direction that silently deletes a new frontier model from the
+ * envelope. `thalamus-candidates.ts` already documents this exact trap on its
+ * `relCostFor` parameter ("Wrap it so a miss stays a miss") and the chart's
+ * `scThalamusRelCost` already does this walk in the browser; this is the gateway's
+ * copy of that wrapper, living NEXT TO THE TABLE so there is one walk and not two.
+ *
+ * ORDER IS LOAD-BEARING here for the same reason it is in `relCostFor` — this IS
+ * `relCostFor`'s body now, so read the header note before touching REL_COST_TABLE.
+ */
+export function relCostLookup(model: string, provider?: string): number | undefined {
   const key = relCostKey(model, provider);
   for (const row of REL_COST_TABLE) {
     if (row.modelMatch.test(key)) return row.relCost;
   }
-  return DEFAULT_REL_COST;
+  return undefined;
 }

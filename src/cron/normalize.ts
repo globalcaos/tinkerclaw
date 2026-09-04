@@ -21,6 +21,7 @@ type UnknownRecord = Record<string, unknown>;
 
 type NormalizeOptions = {
   applyDefaults?: boolean;
+  allowModelClear?: boolean;
   /** Session context for resolving "current" sessionTarget or auto-binding when not specified */
   sessionContext?: { sessionKey?: string };
 };
@@ -159,7 +160,7 @@ function inferTopLevelSchedule(next: UnknownRecord): UnknownRecord | null {
   return Object.keys(schedule).length > 0 ? coerceSchedule(schedule) : null;
 }
 
-function coercePayload(payload: UnknownRecord) {
+function coercePayload(payload: UnknownRecord, options: NormalizeOptions) {
   const next: UnknownRecord = { ...payload };
   const kindRaw = normalizeLowercaseStringOrEmpty(next.kind);
   if (kindRaw === "agentturn") {
@@ -194,11 +195,15 @@ function coercePayload(payload: UnknownRecord) {
     }
   }
   if ("model" in next) {
-    const model = parseOptionalField(TrimmedNonEmptyStringFieldSchema, next.model);
-    if (model !== undefined) {
-      next.model = model;
+    if (options.allowModelClear && next.model === null) {
+      next.model = null;
     } else {
-      delete next.model;
+      const model = parseOptionalField(TrimmedNonEmptyStringFieldSchema, next.model);
+      if (model !== undefined) {
+        next.model = model;
+      } else {
+        delete next.model;
+      }
     }
   }
   if ("thinking" in next) {
@@ -362,7 +367,7 @@ function normalizeWakeMode(raw: unknown) {
 
 function copyTopLevelAgentTurnFields(next: UnknownRecord, payload: UnknownRecord) {
   const copyString = (field: "model" | "thinking") => {
-    if (normalizeOptionalString(payload[field])) {
+    if (field === "model" ? field in payload : normalizeOptionalString(payload[field])) {
       return;
     }
     const value = next[field];
@@ -524,7 +529,7 @@ export function normalizeCronJobInput(
   }
 
   if (isRecord(base.payload)) {
-    next.payload = coercePayload(base.payload);
+    next.payload = coercePayload(base.payload, options);
   }
 
   if (isRecord(base.delivery)) {
@@ -654,6 +659,7 @@ export function normalizeCronJobPatch(
 ): CronJobPatch | null {
   return normalizeCronJobInput(raw, {
     applyDefaults: false,
+    allowModelClear: true,
     ...options,
   }) as CronJobPatch | null;
 }

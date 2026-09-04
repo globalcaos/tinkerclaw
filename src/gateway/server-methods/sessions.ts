@@ -832,9 +832,9 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     });
     respond(true, result, undefined);
   },
-  // FORK 2026-06-25: one-shot cc-bridge Sonnet title suggester. Read params
-  // manually (no params-schema validator), like forensic.summarize.
-  // SUBSCRIPTION-billed via the claude-code provider — not the metered API.
+  // FORK 2026-06-25: one-shot title suggester. Read params manually (no
+  // params-schema validator), like forensic.summarize. Model path since
+  // 2026-09-01: xAI Grok 4.6 (was cc-bridge Sonnet).
   "sessions.suggestTitle": async ({ params, respond, context }) => {
     const prompt =
       params && typeof (params as { prompt?: unknown }).prompt === "string"

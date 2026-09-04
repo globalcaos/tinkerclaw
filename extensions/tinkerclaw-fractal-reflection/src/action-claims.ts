@@ -39,6 +39,41 @@ export interface ActionClaimCheck {
   keys: string[];
   /** Keys the file was expected to contain but does not (empty when exists=false). */
   missingKeys: string[];
+  /**
+   * The claim is an APPEND to a file that already existed, named with no `[entry-key]` —
+   * so `exists` proved nothing. Not "the write failed"; "nothing was checked".
+   * See the append-verb gap note below.
+   */
+  unverifiable: boolean;
+}
+
+/**
+ * FORK 2026-08-15 — the gap this closes, which the original entry called out as a
+ * deliberate limit and which then bit for the third time.
+ *
+ * `[fractal-action-unbacked-claims]` shipped a path check plus a bracketed-key check,
+ * and documented: *"a path-only check passes trivially for 'I appended to bug-log.md'"*.
+ * The key check was the mitigation — but nothing REQUIRED a key, so a reflection that
+ * wrote "Filed a repro in `~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/bug-log.md`" with no
+ * key sailed through: the file has existed for months, `exists` was true, zero warnings.
+ * That exact sentence was emitted on 2026-08-15 for a repro that was never filed.
+ *
+ * A creation claim is self-verifying (the path is either there or it is not). An APPEND
+ * claim is not, because the target predates the claim. So: append-shaped verb + existing
+ * file + no key ⇒ say so out loud. The remedy is one character of discipline — name the
+ * entry key — and the warning asks for exactly that.
+ */
+const APPEND_VERB =
+  /\b(appended|appends|filed|files|logged|recorded|noted|indexed|amended|updated|amends)\b/i;
+
+/**
+ * Verb matching runs over PROSE ONLY — backtick spans are blanked first.
+ * Learned immediately: `/a/index.ts` made `\bindexed?\b`-style patterns fire on the path
+ * itself, so a claim that merely WIRED a module into an existing index was reported as an
+ * unverifiable append. A path is the object of the sentence, never its verb.
+ */
+function proseOf(region: string): string {
+  return region.replace(/`[^`\n]*`/g, " ");
 }
 
 /** Marker that opens a claim region. Kept as a constant so the test and the prompt agree. */
@@ -122,7 +157,8 @@ export function checkActionClaims(reflection: string, probe: ClaimProbe): Action
         const body = probe.read(resolved);
         missingKeys = keys.filter((k) => !body.includes(k));
       }
-      checks.push({ path: p, resolved, exists, keys, missingKeys });
+      const unverifiable = exists && keys.length === 0 && APPEND_VERB.test(proseOf(region));
+      checks.push({ path: p, resolved, exists, keys, missingKeys, unverifiable });
     }
   }
   return checks;
@@ -138,6 +174,11 @@ export function claimWarnings(checks: ActionClaimCheck[]): string[] {
       out.push(
         `FRACTAL ACTION claimed ${c.missingKeys.map((k) => `[${k}]`).join(", ")} in ${c.path} — ` +
           `the file exists but does not contain ${c.missingKeys.length > 1 ? "those keys" : "that key"}`,
+      );
+    } else if (c.unverifiable) {
+      out.push(
+        `FRACTAL ACTION claimed an append to ${c.path} with no [entry-key] — the file ` +
+          `predates the claim, so its existence verified NOTHING. Name the entry key.`,
       );
     }
   }

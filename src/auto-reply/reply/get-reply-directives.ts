@@ -41,6 +41,24 @@ import type { TypingController } from "./typing.js";
 
 type AgentDefaults = NonNullable<OpenClawConfig["agents"]>["defaults"];
 
+/**
+ * The efforts a provider ladder can name that the `ThinkLevel` union actually
+ * carries (see src/auto-reply/thinking.shared.ts).
+ *
+ * `resolveProviderEffortLadder` transcribes VENDOR pages, so it can legitimately
+ * produce a level this codebase has no think level for — OpenAI's GPT-5.6 ladder
+ * starts at "none". Such a rung is SKIPPED, not coerced: the turn simply keeps the
+ * effort it would otherwise have had. "off" and "adaptive" are excluded on purpose
+ * even though they ARE ThinkLevels — no provider ladder emits them as a rung, and a
+ * router that could silently turn thinking off is not a router the architect asked
+ * for.
+ */
+const THALAMUS_THINK_LEVELS = new Set<string>(["minimal", "low", "medium", "high", "xhigh", "max"]);
+
+function asThalamusThinkLevel(effort: string | undefined): ThinkLevel | undefined {
+  return effort && THALAMUS_THINK_LEVELS.has(effort) ? (effort as ThinkLevel) : undefined;
+}
+
 let commandsRegistryPromise: Promise<typeof import("../commands-registry.runtime.js")> | null =
   null;
 let skillCommandsPromise: Promise<typeof import("../skill-commands.runtime.js")> | null = null;
@@ -515,10 +533,30 @@ export async function resolveReplyDirectives(params: {
         model,
         hasModelDirective: directives.hasModelDirective,
         hasResolvedHeartbeatModelOverride,
+        // THALAMUS classifies the task domain from the SAME text `chooseAutoEffort`
+        // reads a few lines above, so "what task is this?" cannot be answered two
+        // different ways inside one turn.
+        promptText: commandText,
       });
   provider = modelState.provider;
   model = modelState.model;
+  // THALAMUS EFFORT — the router picked a (model, EFFORT) RUNG, not a model.
+  //
+  // It chose e.g. Opus 5 @max because that POINT is on the intelligence/price
+  // frontier at the dial's position; running the same model at some other effort is
+  // a different, unpriced decision, and the disclosure the user sees would then name
+  // a rung the turn did not run. So the rung's effort outranks `chooseAutoEffort` —
+  // a prompt-shape heuristic that knows nothing about which model won — but NEVER a
+  // human pin: an inline `!think` or a persisted session level hard-stops it, the
+  // same way an inline `!model` hard-stops the routing itself.
+  const thinkLevelPinned =
+    directives.thinkLevel !== undefined ||
+    (targetSessionEntry?.thinkingLevel !== undefined && targetSessionEntry?.thinkingLevel !== null);
+  const thalamusThinkLevel = thinkLevelPinned
+    ? undefined
+    : asThalamusThinkLevel(modelState.thalamusRoute?.effort);
   const resolvedThinkLevelWithDefault =
+    thalamusThinkLevel ??
     resolvedThinkLevel ??
     (await modelState.resolveDefaultThinkingLevel()) ??
     (agentCfg?.thinkingDefault as ThinkLevel | undefined);

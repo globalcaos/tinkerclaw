@@ -66,6 +66,25 @@ export interface SupersedeApplyResult {
  * candidate itself is excluded by id so re-indexing an unchanged chunk is never treated
  * as a self-contradiction.
  *
+ * FORK 2026-09-03 — PRIOR means STRICTLY EARLIER (`validity_start < candidate.validityStart`).
+ * Without that clause the (source, path, span, model) tuple is NOT a unique fact identity, and
+ * the writer cannibalised its own siblings:
+ * `enforceEmbeddingMaxInputTokens()` splits an over-long chunk into N fragments that all
+ * INHERIT the parent's startLine/endLine (only the content hash differs), and a session
+ * .jsonl record is one line — so a single long assistant message routinely produced ~30
+ * fragments at the identical span. Persisted in order inside ONE indexing pass, fragment 2
+ * closed fragment 1, fragment 3 closed fragment 2, … leaving only the LAST fragment
+ * currently-valid. Two consequences, both observed live on 2026-09-03:
+ *   - CORRECTNESS: 20,279 of 24,019 session chunks (84%) sat closed, invisible to every
+ *     default 'current'-mode read. Memory had silently invalidated most of its own corpus.
+ *   - LIVENESS: N-1 invalidate() UPDATEs + 2 log lines + 1 trailEvent broadcast per split
+ *     chunk per re-index pass, on a 4.9 GB store — ~15/s sustained. The gateway event loop
+ *     never yielded, so every WS RPC (control-panel.tasks.list among them) hit its 60s
+ *     client timeout and the Tinker task panel rendered "Failed to load tasks: timeout: …".
+ * Fragments of one split share the pass timestamp `now` as their validity_start, so the
+ * strict `<` excludes exactly the siblings while leaving a genuine earlier revision (always
+ * stamped in an earlier pass) superseded as designed.
+ *
  * Read-only. Uses the idx_chunks_validity / idx_chunks_path indexes already on the table.
  */
 export function findSupersededChunkIds(
@@ -78,6 +97,8 @@ export function findSupersededChunkIds(
     endLine: number;
     model: string;
     hash: string;
+    /** The candidate's validity_start — the boundary that makes a match genuinely PRIOR. */
+    validityStart: number;
   },
 ): string[] {
   const rows = db
@@ -90,6 +111,7 @@ export function findSupersededChunkIds(
           AND model = ?
           AND hash <> ?
           AND id <> ?
+          AND validity_start < ?
           AND validity_end IS NULL`,
     )
     .all(
@@ -100,6 +122,7 @@ export function findSupersededChunkIds(
       candidate.model,
       candidate.hash,
       candidate.id,
+      candidate.validityStart,
     ) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
@@ -122,6 +145,8 @@ export function decideSupersede(
     endLine: number;
     model: string;
     hash: string;
+    /** See findSupersededChunkIds — only strictly-earlier rows are candidates to close. */
+    validityStart: number;
   },
   mode: SupersedeMode = "supersede",
 ): WriteDecision {

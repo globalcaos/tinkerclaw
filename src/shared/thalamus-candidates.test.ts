@@ -56,7 +56,7 @@ const REAL_COST: Record<string, number> = {
   [SOL]: 0.2679,
   [GROK]: 0.0536,
   [KIMI]: 15,
-  [GLM]: 3.96,
+  [GLM]: 3.432,
   [GEMINI_FLASH]: 3.75,
   [SONNET]: 0.0893,
   [DEEPSEEK]: 0.0899,

@@ -136,3 +136,35 @@ describe("OpenRouter forwards a named lab's vendor ladder", () => {
     expect(resolveProviderEffortLadder("openrouter", "qwen/qwen3.8-max").kind).toBe("unknown");
   });
 });
+
+// FORK 2026-09-02 — point releases of the 5 class. The `(?![.\d])` lookahead is there
+// so `opus-4-7` cannot swallow an `opus-4-70`, but it also blocked every POINT
+// RELEASE, sending Claude Fable 5.1 to the minimal→high base. That cost it `xhigh`
+// and `max` — the two rungs AA scores highest on the entire board (64.8016, 65.6529)
+// — and handed it a `minimal` rung Anthropic does not expose for this class.
+describe("Anthropic point releases keep their class ladder", () => {
+  it("gives Claude Fable 5.1 the 5-class ladder, xhigh and max included", () => {
+    const l = resolveProviderEffortLadder("anthropic", "claude-fable-5.1");
+    expect(l.kind).toBe("graded");
+    expect(l.levels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(l.levels).not.toContain("minimal");
+  });
+
+  it("resolves the same through the OpenRouter route we actually reach it on", () => {
+    const l = resolveProviderEffortLadder("openrouter", "openrouter/anthropic/claude-fable-5.1");
+    expect(l.levels).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
+  it("leaves Fable 5 and the 4.6 class exactly as they were", () => {
+    expect(resolveProviderEffortLadder("claude-code", "claude-fable-5").levels).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(resolveProviderEffortLadder("claude-code", "claude-sonnet-4-6").levels).not.toContain(
+      "xhigh",
+    );
+  });
+});

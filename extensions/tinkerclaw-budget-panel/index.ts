@@ -33,6 +33,34 @@ const usageCache: Record<string, { data: Record<string, any> | null; ts: number 
 const CACHE_TTL_MS = 30 * 60_000;
 // Shorter TTL for failed fetches — allows quick recovery after boot-time token races.
 const CACHE_TTL_FAILED_MS = 2 * 60_000;
+/** How long a COLD `budget.usage` (no snapshot published yet) may wait on the first poll.
+ *  Only the very first call after a gateway start can hit this; every later call is answered
+ *  from the cached snapshot. Sized well inside the browser's 60s REQ_TIMEOUT_MS so the handler
+ *  always answers — with partial data if need be — rather than letting the tab time out. */
+const COLD_START_WAIT_MS = 10_000;
+
+/**
+ * Wall-clock ceiling for ANY upstream quota fetch in this file.
+ *
+ * FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+ * node's `fetch` has NO default timeout, and two fetches here shipped without one. Every
+ * quota fetch in this file runs inside `refreshUsageSnapshot()`'s single shared in-flight
+ * promise, so one unbounded socket does not degrade one provider's row — it wedges the
+ * whole promise, and with it every `budget.usage` response, for the life of the process.
+ *
+ * 8s matches the Anthropic usage fetches, which already had it right.
+ */
+const FETCH_TIMEOUT_MS = 8_000;
+
+/**
+ * Hard ceiling on one whole snapshot refresh.
+ *
+ * The per-fetch timeout above removes the two KNOWN unbounded legs; this removes the
+ * FAILURE MODE, so the next leg added without a timeout costs a slow poll instead of a
+ * dead panel. Sized well above the sum of the individual fetch timeouts so it only fires
+ * when something is genuinely stuck rather than merely slow.
+ */
+const SNAPSHOT_REFRESH_TIMEOUT_MS = 60_000;
 
 /** Per-profile "already warned" guard for resolveToken failures.
  *  Anthropic OAuth refresh can fail every poll cycle (e.g. a stale refresh token on a
@@ -761,6 +789,17 @@ async function fetchCopilotQuota(
         "X-Github-Api-Version": "2025-04-01",
         Accept: "application/json",
       },
+      // FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+      // This fetch carried NO timeout, and node's fetch has no default one — a socket that
+      // opens and never answers hangs for ever. It runs inside refreshUsageSnapshot()'s
+      // shared in-flight promise, so hanging here wedged that promise permanently: every
+      // later `budget.usage` awaited a promise that could no longer settle, the UI's
+      // budgetUsageData stayed null, and getModelUsage() returned null at its top gate for
+      // EVERY model — which is why all the usage bars vanished at once while the model rows
+      // (which have a localStorage snapshot) kept rendering. Observed live: the recurring
+      // "Copilot: Premium 100%" log line and the last `budget.usage` response stop on the
+      // very same poll (2026-09-02 21:14:47) and neither returns for hours.
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {
       log(`[budget-panel] Copilot usage HTTP ${res.status}`);
@@ -872,6 +911,10 @@ async function fetchXaiQuota(
         "x-grok-client-identifier": "grok-pager",
         "x-grok-client-version": "0.2.116",
       },
+      // FORK 2026-09-03: the second of the two unbounded fetches in this file (see the
+      // Copilot one above for the full failure story). Same leg, same shared promise, same
+      // consequence — an unbounded fetch here takes every usage bar in the UI down with it.
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
     if (!res.ok) {
       log(`[budget-panel] xAI billing: HTTP ${res.status}; skipping`);
@@ -1004,17 +1047,60 @@ export default function register(api: OpenClawPluginApi) {
     // Collapse overlapping refreshes (a timer tick landing on top of an RPC) onto one poll.
     if (refreshInFlight) return refreshInFlight;
     const run = (async (): Promise<RefreshResult | null> => {
+      // FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+      //
+      // THE SHARED PROMISE MUST ALWAYS SETTLE. `refreshInFlight` is the memo every caller
+      // waits on, and it is cleared only in the `finally` below — i.e. only when this async
+      // body settles. On 2026-09-02 an unbounded Copilot/xAI fetch (both now carry
+      // FETCH_TIMEOUT_MS) never returned, so this body never settled, `refreshInFlight` was
+      // never cleared, and from 21:14:47 onward EVERY `budget.usage` awaited a promise that
+      // could not complete: 9+ requests outstanding, no response and no error, until the
+      // gateway was restarted. Downstream, the UI's budgetUsageData stayed null and
+      // getModelUsage() returned null at its top gate for every model, so all the usage bars
+      // disappeared at once — while the model rows kept rendering from their localStorage
+      // snapshot, which is exactly what made it look like "the models load but the bars
+      // don't" rather than like a dead socket.
+      //
+      // The per-fetch timeouts fix the two legs we know about. This deadline fixes the CLASS:
+      // whatever is added below, this promise settles and clears itself, so the worst a new
+      // unbounded call can cost is one slow poll — never a permanently dead panel.
+      // The timer is unref'd the same way usageSnapshotTimer is below, so a pending deadline
+      // can never hold the process open on shutdown.
+      let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+      const deadline = new Promise<"timeout">((resolve) => {
+        deadlineTimer = setTimeout(() => resolve("timeout"), SNAPSHOT_REFRESH_TIMEOUT_MS);
+        if (deadlineTimer && typeof deadlineTimer.unref === "function") {
+          deadlineTimer.unref();
+        }
+      });
       try {
-        const [liveProfiles, extras] = await Promise.all([
+        const work = Promise.all([
           fetchAllClaudeUsage(log),
           collectExtraUsage(log, readChatgptFile),
         ]);
-        publishUsageSnapshot(liveProfiles, extras);
-        lastRefresh = { liveProfiles, extras };
+        const outcome = await Promise.race([work, deadline]);
+        if (outcome === "timeout") {
+          // Deliberately NOT fatal, and deliberately does not poison `lastRefresh`: the
+          // stranded work may still settle later and publish. Serving the previous snapshot
+          // beats serving nothing — a stale bar is readable, a missing bar is not.
+          log(
+            `[budget-panel] usage snapshot refresh exceeded ${SNAPSHOT_REFRESH_TIMEOUT_MS}ms — serving last known snapshot`,
+          );
+        } else {
+          const [liveProfiles, extras] = outcome;
+          publishUsageSnapshot(liveProfiles, extras);
+          lastRefresh = { liveProfiles, extras };
+        }
       } catch (e) {
         // best-effort — the allocator falls back to task-weighted when the snapshot is absent
         log(`[budget-panel] usage snapshot refresh failed: ${e}`);
       } finally {
+        // Clear the deadline when the work wins the race, so a completed refresh leaves no
+        // pending timer behind (unref'd already, but a 10-minute poll would still accumulate
+        // one per cycle over a long-lived gateway).
+        if (deadlineTimer) {
+          clearTimeout(deadlineTimer);
+        }
         refreshInFlight = null;
       }
       return lastRefresh;
@@ -1082,12 +1168,44 @@ export default function register(api: OpenClawPluginApi) {
     // (`geminiData` used to be read here from usageFiles.gemini and was never referenced —
     //  verified zero uses 2026-08-29 — so the disk read is gone with it.)
 
-    // FORK 2026-08-29: the poller owns every fetch now (see refreshUsageSnapshot). This awaits
-    // the SAME refresh the 10-minute timer runs — every fetcher underneath is cache-backed, so
-    // it costs no extra upstream calls — and then RENDERS what the snapshot was built from,
-    // instead of fetching a second, private copy here. That is the fix for "non-Anthropic quota
-    // only exists while a browser is open": both paths now read one poll.
-    const refreshed = await refreshUsageSnapshot();
+    // FORK 2026-08-29: the poller owns every fetch now (see refreshUsageSnapshot). This RENDERS
+    // what the snapshot was built from instead of fetching a second, private copy here. That is
+    // the fix for "non-Anthropic quota only exists while a browser is open": both paths read
+    // one poll.
+    //
+    // FORK 2026-09-03 (the architect: "I cannot see the budget graphs") — but it used to `await` that
+    // refresh, which put a live multi-provider network fan-out ON THE RPC'S RESPONSE PATH. The
+    // browser gives every RPC 60s (REQ_TIMEOUT_MS); a refresh routinely takes longer, so
+    // `budget.usage` rejected, `budgetUsageData` stayed null, and every consumer of it — the
+    // per-model quota gauges, util7d, the weekly-reset countdown — rendered empty while the
+    // rest of the panel (fed by the fast `budget.status`) drew fine. Exactly the "graphs are
+    // missing but the panel is there" shape.
+    //
+    // A cached snapshot is ALWAYS the right thing to answer with: the poller refreshes it every
+    // 10 minutes and quota windows move on the hour, so a snapshot minutes old is materially
+    // identical to one fetched now — and it is unconditionally better than the nothing a
+    // timeout returns. So: serve what we have, and keep the refresh warm off the response path.
+    // Only a genuine cold start (no snapshot ever published) waits, and even then under a
+    // deadline well inside the browser's budget, so this handler can no longer hang.
+    //
+    // MERGE NOTE 2026-09-03 — this and SNAPSHOT_REFRESH_TIMEOUT_MS above are complementary, not
+    // redundant: that one bounds the POLL (the shared promise always settles), this one bounds
+    // how long a REQUEST is willing to wait for a poll it does not need. Together the steady
+    // state costs one cache read and the cold start is capped twice over.
+    if (lastRefresh) {
+      // Already collapsed by refreshInFlight when a poll is in progress — never a second fetch.
+      void refreshUsageSnapshot();
+    }
+    const refreshed =
+      lastRefresh ??
+      (await Promise.race([
+        refreshUsageSnapshot(),
+        new Promise<RefreshResult | null>((r) => {
+          // unref: losing this race must not keep the gateway's event loop alive.
+          const t = setTimeout(() => r(null), COLD_START_WAIT_MS);
+          if (typeof t.unref === "function") t.unref();
+        }),
+      ]));
     const liveProfiles = refreshed?.liveProfiles ?? {};
     const geminiLive = refreshed?.extras.gemini ?? null;
     // Fall back to a direct read if the very first poll threw: the file is local and free, and

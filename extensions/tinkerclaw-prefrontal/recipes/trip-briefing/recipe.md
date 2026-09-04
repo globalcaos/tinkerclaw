@@ -191,7 +191,7 @@ Visually verify page 1 (`pdftoppm -png -r 90 -f 1 -l 1 00-itinerary.pdf _p` → 
 
 **Done when:** Text is delivered with a real messageId, and the PDF reached his phone (or a documented fallback did).
 
-the architect's own number / Note-to-Self = **+34600000000**.
+The architect's own number / Note-to-Self = **+34600000000**.
 
 ```bash
 # 1) text itinerary (WORKS — returns a real messageId)
