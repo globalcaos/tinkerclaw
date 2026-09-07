@@ -2,7 +2,7 @@
 file: canonical-derivations.md
 purpose: The register of concepts that must have exactly ONE implementation — and an executable ratchet that fails the build when one gains another
 audience: AI + maintainer
-last_verified: 2026-08-04
+last_verified: 2026-09-07
 last_verified_commit: HEAD
 single_owner: yes — duplicate-derivation policy lives here. design-principles.md #18 states the RULE; this file holds the LEDGER and the gate.
 see_also: design-principles.md#18 (one canonical derivation per concept), design-principles.md#20 (a measurement carries provenance), FOUNDATION.md ("Three different jobs, three different homes" — why the gates below are one-line pointers), bug-log.md (every entry below cost a real incident), failures.md
@@ -109,6 +109,33 @@ concrete
 consumer, so it is worth counting on its own even though the broader `estimateTokens` row overlaps
 it. The overlap is deliberate: the wide row tracks sprawl, the narrow row tracks the pair that is
 already wrong.
+
+### The row that came back — 2026-09-04 to 2026-09-07
+
+`estimateTokens` had been collapsed to 12. On 2026-09-04 `src/shared/thalamus-plan.ts` grew a
+private 13th (`Math.ceil(promptText.length / 4)`, feeding the M1 capacity veto) and the ratchet went
+red. Collapsed again on 2026-09-07 by **inlining** the explicit-value short-circuit at its single
+call site and calling the canonical `estimateTokensFromChars` from `src/utils/cjk-chars.ts`. The cap
+did not move and must not: it was already 12: the TREE regressed away from the ledger, the ledger
+did not go stale. The counts table above needed no edit for the same reason.
+
+**Two things a maintainer needs before reaching for the obvious fix**, both learned the hard way
+here, because both look correct and neither works:
+
+- **A "thin wrapper" that keeps the name does not lower the count.** This row's pattern is an
+  unanchored prefix (`^\s*(export )?(function|const) estimateTokens`): no word boundary, no `(`.
+  Any definition whose name merely STARTS with `estimateTokens` is still a hit, which is also why
+  `estimateTokensFromChars` is counted inside the wide row at all. Delegating from a same-named
+  wrapper removes the duplicated arithmetic and leaves the gate exactly as red as it was.
+- **Renaming the wrapper is worse.** A differently-named passthrough would pass, and it is
+  indistinguishable from the evasion the concept-keyed `retrieval-pack assembler` row was added to
+  catch: the rename needs no intent to do the damage. The honest collapse deletes the arithmetic
+  outright: inline the guard, call the canonical derivation, and keep the comment that justifies the
+  coarse resolution so the next reader does not "improve" the estimator back into existence.
+
+The alternative rejected was raising the cap to 13. The ratchet's own failure text already names
+that one: it is the bug being recorded as policy. A cap is a record of what a collapse cost, not a
+budget to spend.
 
 ## Already collapsed
 
