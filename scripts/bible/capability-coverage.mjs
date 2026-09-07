@@ -98,13 +98,13 @@ const OPENCLAW = process.env.OPENCLAW_DIR || path.join(homedir(), ".openclaw");
  * machine happened to have three days of logs would be switched off the first time it flapped.
  * The journal makes the REPORT sharper; it must never make the GATE non-deterministic.
  */
-export const BLIND_CAP = 145;
+export const BLIND_CAP = 144;
 // 2026-08-05: 377 -> 358, pulled down in the same session that earned it. What moved it:
 // fractal-reflection's first instruments and per-hook liveness at the registerTypedHook seam.
-// 2026-09-07: 358 -> 145 after the scorer was taught about noteRpcDispatch(req.method), the
+// 2026-09-07: 358 -> 144 after the scorer was taught about noteRpcDispatch(req.method), the
 // central signal already covering every enabled core and plugin RPC. The code had been watching
-// those methods since 2026-08-04; the old derivation had forgotten that fact and mislabeled 237
-// enabled RPCs BLIND. The remaining 145 are the measured context after that correction.
+// those methods since 2026-08-04; the old derivation had forgotten that fact and mislabeled ~237
+// enabled RPCs BLIND. The remaining 144 are the measured context on this tree after that correction.
 
 /** Directories that must never be walked. A recursive glob over an extension tree hung the bible gate once. */
 const PRUNE = new Set([
