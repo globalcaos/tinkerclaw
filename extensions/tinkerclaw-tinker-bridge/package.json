@@ -15,6 +15,12 @@
     "release": {
       "publishToClawHub": true,
       "publishToNpm": false
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "build": {
+      "openclawVersion": "2026.4.25"
     }
   }
 }
