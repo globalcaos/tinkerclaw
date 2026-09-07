@@ -15,8 +15,57 @@ verify:
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","debug.tail.lastN","--params",json.dumps({"sessionKey":"agent:main:main","n":3})],capture_output=True,text=True); assert ("events" in r.stdout) or ("error" in r.stdout), r.stdout[-500:]'
   - name: cron.lastRun probe is live
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","cron.lastRun","--params",json.dumps({"jobId":"morning-briefing"})],capture_output=True,text=True); assert "receiptPath" in r.stdout, r.stdout[-500:]'
-  - name: cron.listJobs probe is live
-    cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","cron.listJobs"],capture_output=True,text=True); assert "jobCount" in r.stdout, r.stdout[-500:]'
+  - name: cron.listJobs probe is live (budgeted retries; reports a per-attempt trail with exit + stdout + stderr)
+    cmd: |
+      python3 << 'PYEOF'
+      # 2026-09-07 flake fix. cron.listJobs needs ~14s end-to-end, but the CLI's
+      # own RPC deadline defaults to 10000ms, so roughly half of all runs died on
+      # "gateway timeout after 10000ms" -- written to STDERR, which the old assert
+      # threw away (it reported r.stdout[-500:], and on that path stdout is EMPTY).
+      # The push gate therefore printed a NAKED AssertionError, indistinguishable
+      # from a real contract regression. Three-part fix: size the RPC deadline
+      # ourselves via --timeout, retry inside a wall-clock budget that stays under
+      # the runner's 30s SIGTERM (test-invariants.mjs TIMEOUT_MS), and report a
+      # per-attempt trail so a flake can never again look like a broken contract.
+      # Do NOT "simplify" this into 3 blind attempts: a failing attempt costs
+      # ~18s of wall clock, so three of them are killed by the runner mid-flight
+      # and print nothing at all -- which is the exact bug being fixed here.
+      import subprocess, time
+      RPC = "cron.listJobs"
+      NEEDLE = "jobCount"        # the contract. Unchanged, and deliberately not broadened.
+      BUDGET = 27.0              # runner SIGTERMs at 30s; keep 3s of headroom
+      MIN_ATTEMPT = 12.0         # measured: connect ~5-10s + RPC ~14s. Below this a retry cannot finish, so do not burn budget pretending.
+      def trim(s, n=200):
+          s = (s or "").strip().replace("\n", " | ")
+          return s[:n] + ("..." if len(s) > n else "")
+      deadline = time.monotonic() + BUDGET
+      trail, attempts, rpc_ms, ok = [], 0, 0, False
+      while attempts < 3 and not ok:
+          remaining = deadline - time.monotonic()
+          if remaining < MIN_ATTEMPT:
+              trail.append("#%d skipped: only %.1fs of budget left" % (attempts + 1, remaining))
+              break
+          attempts += 1
+          # --timeout bounds the RPC but NOT the connect/handshake, which measured
+          # 4.6s-10s here, so reserve 9s for it. Sizing the RPC deadline under the
+          # remaining budget lets the CLI's OWN error ("gateway timeout after Nms")
+          # fire first and reach the trail; the subprocess timeout is the backstop.
+          rpc_ms = int(max(5.0, min(18.0, remaining - 9.0)) * 1000)
+          t0 = time.monotonic()
+          try:
+              r = subprocess.run(["openclaw", "gateway", "call", RPC, "--timeout", str(rpc_ms)], capture_output=True, text=True, timeout=remaining)
+              ok = NEEDLE in r.stdout
+              trail.append("#%d %.1fs exit=%s stdout=%r stderr=%r" % (attempts, time.monotonic() - t0, r.returncode, trim(r.stdout), trim(r.stderr)))
+          except subprocess.TimeoutExpired as ex:
+              # Say "gateway timeout after Nms" literally: it is true (we waited N
+              # ms and got no reply) and it is what test-invariants.mjs
+              # GATEWAY_DOWN_PATTERNS matches, so a wedged gateway is filed as a
+              # SKIP instead of a red contract regression. Carry any partial output.
+              trail.append("#%d %.1fs KILLED -- gateway timeout after %dms (wall-clock budget, no reply) stdout=%r stderr=%r" % (attempts, time.monotonic() - t0, int((time.monotonic() - t0) * 1000), trim(ex.stdout if isinstance(ex.stdout, str) else ""), trim(ex.stderr if isinstance(ex.stderr, str) else "")))
+          if not ok and deadline - time.monotonic() > 6.0:
+              time.sleep(0.5)
+      assert ok, "%s: %r never appeared in stdout after %d attempt(s) (rpc deadline %dms each, %.0fs total budget, runner kills at 30s):\n  %s" % (RPC, NEEDLE, attempts, rpc_ms, BUDGET, "\n  ".join(trail))
+      PYEOF
   - name: debug.dumpUiSnapshot probe is wired (accepts ok:true OR ok:false with "html required" — both prove the handler is loaded)
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","debug.dumpUiSnapshot"],capture_output=True,text=True); assert "\"ok\":" in r.stdout or "\"ok\" :" in r.stdout, r.stdout[-500:]'
   - name: wa.recentOutbound probe is live
@@ -39,12 +88,90 @@ verify:
     cmd: python3 -c 'import subprocess; r=subprocess.run(["openclaw","gateway","call","fork.strategy.switch.list"],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
   - name: fork.skill.search probe is live (U6, query required)
     cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","fork.skill.search","--params",json.dumps({"query":"probe-self-test"})],capture_output=True,text=True); assert "\"ok\"" in r.stdout, r.stdout[-400:]'
-  - name: fork.memory.search probe is live + echoes temporalMode (U3, query required)
-    cmd: python3 -c 'import subprocess,json; r=subprocess.run(["openclaw","gateway","call","fork.memory.search","--params",json.dumps({"query":"probe-self-test"})],capture_output=True,text=True); assert "\"temporalMode\"" in r.stdout, r.stdout[-400:]'
+  - name: fork.memory.search probe is live + echoes temporalMode (U3, query required; budgeted retries)
+    cmd: |
+      python3 << 'PYEOF'
+      # Same 2026-09-07 flake fix as the cron.listJobs block above -- read that one
+      # for the full reasoning. `query` stays REQUIRED (omitting it returns
+      # INVALID_REQUEST and a non-zero exit), and the asserted contract is still
+      # the echoed temporalMode, matched on exactly the same string as before.
+      # READ THIS BEFORE SUSPECTING THE CONTRACT: on a loaded box this call was
+      # measured at 38-44s end-to-end, which does not fit the runner's 30s
+      # SIGTERM at all. A red here with a "gateway timeout after Nms" stderr in
+      # the trail below is a LATENCY verdict, not a broken RPC -- check gateway
+      # latency first. Raising test-invariants.mjs TIMEOUT_MS is the real fix.
+      import json, subprocess, time
+      RPC = "fork.memory.search"
+      PARAMS = json.dumps({"query": "probe-self-test"})   # query is REQUIRED
+      NEEDLE = '"temporalMode"'  # the contract. Unchanged, and deliberately not broadened.
+      BUDGET = 27.0              # runner SIGTERMs at 30s; keep 3s of headroom
+      MIN_ATTEMPT = 12.0         # measured: connect ~5-10s + RPC ~14s. Below this a retry cannot finish, so do not burn budget pretending.
+      def trim(s, n=200):
+          s = (s or "").strip().replace("\n", " | ")
+          return s[:n] + ("..." if len(s) > n else "")
+      deadline = time.monotonic() + BUDGET
+      trail, attempts, rpc_ms, ok = [], 0, 0, False
+      while attempts < 3 and not ok:
+          remaining = deadline - time.monotonic()
+          if remaining < MIN_ATTEMPT:
+              trail.append("#%d skipped: only %.1fs of budget left" % (attempts + 1, remaining))
+              break
+          attempts += 1
+          # This RPC is far dearer than the table's "~1s": measured 8s-44s on
+          # 2026-09-07 (it runs an embedding pass). Reserve only ~7s for connect
+          # and hand the rest to the RPC, since no retry can rescue a 40s call.
+          rpc_ms = int(max(5.0, min(20.0, remaining - 7.0)) * 1000)
+          t0 = time.monotonic()
+          try:
+              r = subprocess.run(["openclaw", "gateway", "call", RPC, "--params", PARAMS, "--timeout", str(rpc_ms)], capture_output=True, text=True, timeout=remaining)
+              ok = NEEDLE in r.stdout
+              trail.append("#%d %.1fs exit=%s stdout=%r stderr=%r" % (attempts, time.monotonic() - t0, r.returncode, trim(r.stdout), trim(r.stderr)))
+          except subprocess.TimeoutExpired as ex:
+              # Say "gateway timeout after Nms" literally: it is true (we waited N
+              # ms and got no reply) and it is what test-invariants.mjs
+              # GATEWAY_DOWN_PATTERNS matches, so a wedged gateway is filed as a
+              # SKIP instead of a red contract regression. Carry any partial output.
+              trail.append("#%d %.1fs KILLED -- gateway timeout after %dms (wall-clock budget, no reply) stdout=%r stderr=%r" % (attempts, time.monotonic() - t0, int((time.monotonic() - t0) * 1000), trim(ex.stdout if isinstance(ex.stdout, str) else ""), trim(ex.stderr if isinstance(ex.stderr, str) else "")))
+          if not ok and deadline - time.monotonic() > 6.0:
+              time.sleep(0.5)
+      assert ok, "%s (params=%s): %s never appeared in stdout after %d attempt(s) (rpc deadline %dms each, %.0fs total budget, runner kills at 30s):\n  %s" % (RPC, PARAMS, NEEDLE, attempts, rpc_ms, BUDGET, "\n  ".join(trail))
+      PYEOF
   - name: post-deploy smoke self-test passes (pure helpers, no live system touched)
     cmd: python3 -c 'import os,subprocess; p=os.path.expanduser("~/src/tinkerclaw/scripts/post-deploy-smoke.mjs"); r=subprocess.run(["node",p,"--self-test"],capture_output=True,text=True,timeout=60); assert r.returncode==0, r.stdout[-1200:]+r.stderr[-1200:]'
   - name: post-deploy smoke emits all six checks WITH evidence in --json (gates the probe, not the system health — verdicts are deliberately not asserted)
     cmd: python3 -c 'import os,json,subprocess; p=os.path.expanduser("~/src/tinkerclaw/scripts/post-deploy-smoke.mjs"); r=subprocess.run(["node",p,"--json"],capture_output=True,text=True,timeout=60); d=json.loads(r.stdout); ids=[c["id"] for c in d["checks"]]; assert ids==["gateway-live","deployed-build","cron-not-skipped","engram-stores","instrument-liveness","algorithm-metrics"], ids; blind=[c["id"] for c in d["checks"] if not c["evidence"]]; assert not blind, f"check(s) reported a verdict with no evidence: {blind}"'
+  - name: every gateway-call probe reports stderr on failure (ratchet at 11 legacy blind probes; never add a 12th)
+    cmd: |
+      python3 << 'PYEOF'
+      # 2026-09-07. The bug this gate exists to catch, stated as a check rather
+      # than as prose: a probe that shells out to the openclaw CLI and asserts on
+      # stdout ALONE. When the CLI's RPC deadline fires it explains itself on
+      # STDERR and leaves stdout EMPTY, so such a probe raises a NAKED
+      # AssertionError. That is not merely unhelpful -- it actively defeats the
+      # runner: test-invariants.mjs classifyGatewayDown() files a failure as a
+      # SKIP when it can see "Gateway call failed" / "gateway timeout after Nms",
+      # and a probe that swallows stderr hides exactly those strings, so a
+      # gateway outage is reported as a red contract regression. Reporting stderr
+      # is the fix. RATCHET, not a wall: 11 legacy probes are still blind and are
+      # grandfathered, but the count may only ever go DOWN.
+      import os, re
+      p = os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE/probes.md")
+      fm = open(p).read().split("\n---\n")[0]
+      # Split across a concatenation on purpose, so this gate never counts
+      # ITSELF; \s* because probes spell the argv list both ways.
+      PAT = re.compile(r'"gate' + r'way"\s*,\s*"call"')
+      entries = re.split(r"^  - name: ", fm, flags=re.M)[1:]
+      calls = [e for e in entries if PAT.search(e)]
+      assert len(calls) >= 16, f"expected >=16 gateway-call probes, found {len(calls)} -- did the frontmatter shape change?"
+      blind = [e.split("\n")[0][:70] for e in calls if "stderr" not in e]
+      assert len(blind) <= 11, "ratchet broken: %d gateway-call probes assert without stderr (max 11). A new probe must report exit + stdout + stderr:\n  %s" % (len(blind), "\n  ".join(blind))
+      budgeted = [e for e in calls if "cron.listJobs" in e or "fork.memory.search" in e]
+      assert len(budgeted) == 2, f"expected the 2 budgeted probes, found {len(budgeted)}"
+      for e in budgeted:
+          head = e.split("\n")[0][:70]
+          for token in ("BUDGET", "--timeout", "stderr"):
+              assert token in e, f"{head}: lost its {token} -- the 2026-09-07 flake fix was reverted"
+      PYEOF
 ---
 
 # Probes — inspection primitives registry
