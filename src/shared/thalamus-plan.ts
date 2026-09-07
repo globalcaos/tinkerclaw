@@ -29,6 +29,7 @@
 // selector beside the first; and the chain is built from the SAME band as the primary, so a
 // fallback is never a model the dial would have refused.
 
+import { estimateTokensFromChars } from "../utils/cjk-chars.js";
 import {
   classifySubject,
   feasibility,
@@ -129,17 +130,6 @@ const BUILDISH: ReadonlySet<TaskDomain> = new Set<TaskDomain>(["code", "agentic"
  *  produced the blind spot, so their agreement is not evidence. */
 export const CONTESTED_MARGIN = 1.5;
 
-function estimateTokens(
-  promptText: string | undefined,
-  explicit: number | undefined,
-): number | undefined {
-  if (typeof explicit === "number" && Number.isFinite(explicit)) return explicit;
-  if (!promptText) return undefined;
-  // ~4 chars per token is the standard rough rule; this number only ever decides a CAPACITY
-  // veto, which has its own 20% headroom, so a coarse estimate is the honest resolution here.
-  return Math.ceil(promptText.length / 4);
-}
-
 /**
  * The plan.
  *
@@ -152,7 +142,17 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
   const biasIdx = clampBiasIdx(params.biasIdx);
   const domain = params.domain ?? classifyTaskDomain(params.promptText ?? "");
   const subject = params.subject ?? classifySubject(params.promptText ?? "");
-  const estimatedTokens = estimateTokens(params.promptText, params.estimatedTokens);
+  // An explicit count wins; otherwise the ONE canonical ~4-chars-per-token estimator
+  // (`estimateTokensFromChars`, src/utils/cjk-chars.ts). This number only ever decides a CAPACITY
+  // veto, which has its own 20% headroom, so a coarse estimate is the honest resolution here.
+  // Inlined rather than wrapped: a private `estimateTokens` here was the 13th implementation of a
+  // concept the canonical-derivations ratchet caps at 12.
+  const estimatedTokens =
+    typeof params.estimatedTokens === "number" && Number.isFinite(params.estimatedTokens)
+      ? params.estimatedTokens
+      : params.promptText
+        ? estimateTokensFromChars(params.promptText.length)
+        : undefined;
   const ballistic = [...params.supplies.values()].some((s) => s.ballistic);
 
   const fctx: FeasibilityContext = {
