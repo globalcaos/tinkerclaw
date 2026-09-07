@@ -61,15 +61,15 @@ verify:
   # three different homes". The assertions, their remediation text and their own negative
   # test live in scripts/bible/failures-silence-guards.mjs, where they can be linted and run.
   - name: S6 — the vec0 table's shape is READ BACK from sqlite_master, never assumed from persisted meta
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/failures-silence-guards.mjs --check=S6
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/failures-silence-guards.mjs --check=S6
   - name: S7 — a failed task-flow registration stays distinguishable from a healthy not-eligible
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/failures-silence-guards.mjs --check=S7
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/failures-silence-guards.mjs --check=S7
   - name: S8 — every registered fork.* RPC is classified, and a scope denial is distinguishable from a healthy no-op
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/failures-silence-guards.mjs --check=S8
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/failures-silence-guards.mjs --check=S8
   - name: S9 — a conversation hook refused at registration reaches the JOURNAL, not only pushDiagnostic
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/failures-silence-guards.mjs --check=S9
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/failures-silence-guards.mjs --check=S9
   - name: S6–S9 self-test — each guard goes RED when the thing it guards is removed (a guard that cannot fail is not a guard)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/failures-silence-guards.mjs --self-test
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/failures-silence-guards.mjs --self-test
   - name: PROP — this optic still ships its propagation graphs and its silence section
     cmd: python3 -c "s=open('TINKER_UI_DESIGN_BIBLE/failures.md').read(); assert s.count('flowchart') >= 2, 'a propagation diagram is gone — this file answers where does the symptom appear, which is a graph question, and every far-from-origin edge is lost the moment it goes back to prose'; assert 'Faults that surface as silence' in s, 'the silence class is gone — those are exactly the faults a propagation graph cannot draw, because their edge is MISSING rather than mis-aimed'"
 ---

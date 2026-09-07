@@ -30,12 +30,25 @@
  *   - Standard exit codes: 0 = all pass, 1 = at least one fail,
  *     2 = runner internal error (bible folder missing, parse error, etc.).
  */
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const BIBLE_DIR = path.resolve(os.homedir(), "src/tinkerclaw/TINKER_UI_DESIGN_BIBLE");
+function resolveRepoRoot() {
+  try {
+    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      encoding: "utf8",
+      cwd: path.dirname(fileURLToPath(import.meta.url)),
+    }).trim();
+  } catch {
+    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  }
+}
+
+const REPO_ROOT = resolveRepoRoot();
+const BIBLE_DIR = path.join(REPO_ROOT, "TINKER_UI_DESIGN_BIBLE");
 
 const TIMEOUT_MS = 30_000;
 
@@ -159,6 +172,7 @@ function runShell(cmd) {
     const existing = env.PATH ?? "";
     env.PATH = existing ? `${systemPath}:${existing}` : systemPath;
     const child = spawn("bash", ["-lc", cmd], {
+      cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
       env,
     });

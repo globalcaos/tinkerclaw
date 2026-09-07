@@ -22,17 +22,17 @@ verify:
   # can be linted, reviewed and — the reason this one moved — TESTED. The ratchet is the most
   # load-bearing gate the bible has, and it had no test for as long as it lived in this frontmatter.
   - name: no concept in the ledger gains another implementation (ratchet — counts may fall, never rise)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-ledger-ratchet.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-ledger-ratchet.mjs
   - name: the ratchet itself trips — a simulated extra implementation fails every ledger row, and no ledger regex has rotted into matching nothing
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-ledger-ratchet.mjs --self-test
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-ledger-ratchet.mjs --self-test
   - name: the counts table in this file and the enforced LEDGER caps say the same thing (one fact, two readable homes)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-ledger-ratchet.mjs --check-table
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-ledger-ratchet.mjs --check-table
   - name: the leak-grep pattern has exactly one definition (collapsed 3 -> 1 on 2026-08-03)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-singletons.mjs --check=pii-re
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-singletons.mjs --check=pii-re
   - name: the chrome extension has exactly one tree (collapsed 2 -> 1 on 2026-08-03)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-singletons.mjs --check=chrome-extension
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-singletons.mjs --check=chrome-extension
   - name: the ENGRAM library is not vendored back into an extension, and its sanctioned crossing still exists (collapsed 2 -> 1 on 2026-08-03)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/canonical-singletons.mjs --check=engram
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-singletons.mjs --check=engram
 ---
 
 # Canonical derivations — the ledger and the ratchet

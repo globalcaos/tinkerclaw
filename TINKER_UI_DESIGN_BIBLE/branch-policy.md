@@ -8,9 +8,9 @@ single_owner: yes — branch policy lives here. Migrated from bible.md §5.78 on
 see_also: pii-boundary.md (the topology check that gates every push), topology.md (where the public/private repos sit)
 verify:
   - name: develop branch exists locally
-    cmd: bash -c 'cd ~/src/tinkerclaw && git rev-parse --verify develop >/dev/null 2>&1'
+    cmd: bash -c 'cd "$(git rev-parse --show-toplevel)" && git rev-parse --verify develop >/dev/null 2>&1'
   - name: README.md is merge=ours-protected (matches the policy in §3)
-    cmd: bash -c 'cd ~/src/tinkerclaw && grep -q "README.md merge=ours" .gitattributes'
+    cmd: bash -c 'cd "$(git rev-parse --show-toplevel)" && grep -q "README.md merge=ours" .gitattributes'
   - name: pre-push hook exists (PII guard)
     cmd: test -x ~/src/tinkerclaw/git-hooks/pre-push
   - name: synthetic 3-way merge helper exists and is executable (§4)

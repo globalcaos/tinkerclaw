@@ -15,7 +15,7 @@ note: |
   is right and the prose is the bug. Every measured table below carries a date for that reason.
 verify:
   - name: capability coverage — the BLIND count never rises (ratchet; a new capability arrives instrumented or not at all)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/capability-coverage.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/capability-coverage.mjs
 ---
 
 # Observability — what we can prove is working

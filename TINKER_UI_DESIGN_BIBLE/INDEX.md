@@ -13,7 +13,7 @@ verify:
   # so eleven optics could have been deleted and it would still have passed (design-principles.md
   # #19, #20). The script header carries the rest.
   - name: every optic on disk has a row in the Files table, and every row names a real optic
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/index-files-table.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/index-files-table.mjs
   # NOTE: the previous "gateway is reachable" check was removed 2026-08-02. The validity of a
   # documentation index must not depend on a daemon being up, and it shelled out to
   # `openclaw gateway call`, measured at 4-18 s — a large share of the whole suite's runtime for a

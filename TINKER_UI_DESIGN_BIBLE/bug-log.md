@@ -20,11 +20,11 @@ verify:
   # different homes". The checks themselves live in scripts/bible/bug-log-entry-integrity.mjs
   # where they can be linted, reviewed, and negative-tested (--self-test does exactly that).
   - name: every failure-class chip used in an entry header is defined in the taxonomy table
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/bug-log-entry-integrity.mjs --check=chips
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/bug-log-entry-integrity.mjs --check=chips
   - name: every commit SHA cited by an entry still resolves to a real commit
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/bug-log-entry-integrity.mjs --check=shas
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/bug-log-entry-integrity.mjs --check=shas
   - name: the entry-integrity gate's own negative tests still fail on purpose
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/bug-log-entry-integrity.mjs --self-test
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/bug-log-entry-integrity.mjs --self-test
 ---
 
 # Bug Fix Log

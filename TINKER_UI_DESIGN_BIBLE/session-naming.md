@@ -26,7 +26,7 @@ verify:
   # STAYS removed. The script header carries the full history of why it had to be flipped on
   # 2026-08-03: it had outlived the decision and was demanding the reverted behaviour back.
   - name: u4 — a clone KEEPS its parent title (no kick on creation); the client titles via the RPC
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/session-naming-clone-title.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/session-naming-clone-title.mjs
   - name: u4 — client collapses an exact doubled title + dedups generation via a runtime (non-persisted) set
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "collapseDoubled" in t, "collapseDoubled (doubled-title guard) missing"; assert "titleInFlight" in t, "titleInFlight (runtime generation dedup) missing"'
 ---
@@ -150,4 +150,4 @@ The doubled-title guard and shimmer-dedup live in `tinker-ui/src/app.ts` (HMR-li
 
 The executable invariants for this optic live in this file's YAML **frontmatter** `verify:` block (run by `pnpm bible:invariants`): the lazy-mint skips `cookiePhraseUserSet`; `SessionEntry` + the `sessions.patch` schema carry the flag; the webchat guard exempts only display-name-only patches; and the Tinker UI persists deliberate names server-side.
 
-One of them is a **pointer, not a program**: the u4 clone-title check is `cd ~/src/tinkerclaw && node scripts/bible/session-naming-clone-title.mjs`. Per `FOUNDATION.md` § "Three different jobs, three different homes" (2026-08-04), a check that the bible still matches the code belongs in `scripts/bible/*.mjs` — where it can be linted, reviewed and tested — and never as a multi-line program pasted into YAML frontmatter. That script carries the full history of the 2026-06-26 kick removal and the 2026-08-03 inversion of the check that had outlived it, and it fails if `pendingTitleKickTabId` reappears in `app.ts` or if `cloneTab()` titles the clone it just made. Both arms were negative-tested on 2026-08-04.
+One of them is a **pointer, not a program**: the u4 clone-title check is `cd "$(git rev-parse --show-toplevel)" && node scripts/bible/session-naming-clone-title.mjs`. Per `FOUNDATION.md` § "Three different jobs, three different homes" (2026-08-04), a check that the bible still matches the code belongs in `scripts/bible/*.mjs` — where it can be linted, reviewed and tested — and never as a multi-line program pasted into YAML frontmatter. That script carries the full history of the 2026-06-26 kick removal and the 2026-08-03 inversion of the check that had outlived it, and it fails if `pendingTitleKickTabId` reappears in `app.ts` or if `cloneTab()` titles the clone it just made. Both arms were negative-tested on 2026-08-04.

@@ -21,13 +21,13 @@ verify:
   # §"What the four checks defend" (below) says in words what each one protects, so a reader of
   # this optic never has to open a script to learn the invariant.
   - name: layering ratchet — src/ must not import from extensions/; the known-violator SET may only shrink, and a retired violator must leave it
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/architecture-layering-ratchet.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/architecture-layering-ratchet.mjs
   - name: every canonical module named in the central-mechanisms table still exists on disk
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/architecture-central-mechanisms.mjs --rung=1
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/architecture-central-mechanisms.mjs --rung=1
   - name: each named mechanism still exposes the entry point this file claims for it
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/architecture-central-mechanisms.mjs --rung=2
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/architecture-central-mechanisms.mjs --rung=2
   - name: the cron wake target stays reachable ONLY through the injected resolver (the shape-2 guard, see canonical-derivations.md)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/architecture-cron-wake-injection.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/architecture-cron-wake-injection.mjs
 ---
 
 # Architecture — the blueprint
