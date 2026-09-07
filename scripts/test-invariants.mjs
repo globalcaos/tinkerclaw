@@ -30,24 +30,16 @@
  *   - Standard exit codes: 0 = all pass, 1 = at least one fail,
  *     2 = runner internal error (bible folder missing, parse error, etc.).
  */
-import { spawn, execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-function resolveRepoRoot() {
-  try {
-    return execFileSync("git", ["rev-parse", "--show-toplevel"], {
-      encoding: "utf8",
-      cwd: path.dirname(fileURLToPath(import.meta.url)),
-    }).trim();
-  } catch {
-    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  }
-}
-
-const REPO_ROOT = resolveRepoRoot();
+// File-relative, never git-relative. A pre-push hook sets GIT_DIR, which makes
+// `git rev-parse --show-toplevel` treat scripts/ as the worktree and look for
+// TINKER_UI_DESIGN_BIBLE next to this file. That is the exact class this runner
+// exists to catch: scoring the wrong tree and calling it green.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BIBLE_DIR = path.join(REPO_ROOT, "TINKER_UI_DESIGN_BIBLE");
 
 const TIMEOUT_MS = 30_000;
@@ -171,6 +163,11 @@ function runShell(cmd) {
     const env = { ...process.env };
     const existing = env.PATH ?? "";
     env.PATH = existing ? `${systemPath}:${existing}` : systemPath;
+    // A hook sets GIT_DIR to .git/ and GIT_WORK_TREE may be absent, so any
+    // `git rev-parse --show-toplevel` inside a verify: command would resolve
+    // to scripts/ (this file's directory) instead of the repo. Drop both.
+    delete env.GIT_DIR;
+    delete env.GIT_WORK_TREE;
     const child = spawn("bash", ["-lc", cmd], {
       cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
