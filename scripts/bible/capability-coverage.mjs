@@ -88,20 +88,23 @@ const OPENCLAW = process.env.OPENCLAW_DIR || path.join(homedir(), ".openclaw");
  * scripts/check-broken-relative-imports.mjs and canonical-ledger-ratchet.mjs, and for the same
  * reason: a gate that demanded zero on day one would be switched off by Friday.
  *
- * Raising this number is not a fix. If a genuinely unobservable capability arrives, say why in
- * TINKER_UI_DESIGN_BIBLE/observability.md and add it to JUDGEMENTS below WITH ITS REASON.
+ * A SILENT raise is not a fix. A red result is evidence, not a verdict: first ask whether the
+ * capability is truly unwatched or whether the scorer lost the context of a central signal. Fix
+ * the capability in the first case; fix the derivation in the second. Whichever changed, record
+ * why in TINKER_UI_DESIGN_BIBLE/observability.md and reset this cap to the new measured value.
  *
  * IT IS MEASURED ON THE STRUCTURAL PASS ONLY — the tree and the filesystem, never the journal —
  * so it is identical on this host, on CI and on a fresh clone. A ratchet that moved because a
  * machine happened to have three days of logs would be switched off the first time it flapped.
  * The journal makes the REPORT sharper; it must never make the GATE non-deterministic.
  */
-export const BLIND_CAP = 358;
-// 2026-08-05: 377 -> 358, pulled down in the same session that earned it. A ratchet only means
-// something if the number moves the moment the work lands; a cap left above the measured value is
-// slack that silently absorbs the next regression. What moved it: fractal-reflection's first
-// instruments, the gateway RPC dispatch/refusal counters covering 337 methods at one chokepoint,
-// and per-hook liveness wrapped at the registerTypedHook seam (19 fork hooks BLIND -> DECLARED).
+export const BLIND_CAP = 145;
+// 2026-08-05: 377 -> 358, pulled down in the same session that earned it. What moved it:
+// fractal-reflection's first instruments and per-hook liveness at the registerTypedHook seam.
+// 2026-09-07: 358 -> 145 after the scorer was taught about noteRpcDispatch(req.method), the
+// central signal already covering every enabled core and plugin RPC. The code had been watching
+// those methods since 2026-08-04; the old derivation had forgotten that fact and mislabeled 237
+// enabled RPCs BLIND. The remaining 145 are the measured context after that correction.
 
 /** Directories that must never be walked. A recursive glob over an extension tree hung the bible gate once. */
 const PRUNE = new Set([
@@ -149,10 +152,10 @@ const JUDGEMENTS = [
       "a deliberate off must not read as a defect (that is what byConfig is for) but it must not read as WORKING either. The reason is READ FROM THE JOURNAL, not written here, so it cannot go stale against the code.",
   },
   {
-    id: "signal:wire-evidence-understates",
-    rule: "RPC methods with no `res` line are BLIND, and the footer says every run that this OVERSTATES the gap.",
+    id: "signal:rpc-central-dispatch",
+    rule: "An enabled RPC with no `res` line is DECLARED when the central noteRpcDispatch seam exists; the journal may promote it to OBSERVED.",
     reason:
-      "`⇄ res ✓/✗` is [ws]-transport-only; in-process dispatch emits nothing. Reporting the caveat every run is honest; silently narrowing the number would let a real gap hide behind a caveat nobody re-reads.",
+      "`⇄ res ✓/✗` is [ws]-transport-only, but every transport reaches handleGatewayRequest, which fires gateway:rpc-dispatch with the resolved method name before invoking its handler. That proves dispatch, not successful work. The scorer detects the seam from source and fails closed if it disappears.",
   },
 ];
 
@@ -689,6 +692,20 @@ function build(opts) {
           });
     }
   }
+  // FORK 2026-09-07 — credit CENTRAL RPC DISPATCH WRAPPING, the same move dc64e51e436 made for
+  // hooks (BLIND 377 -> 358 by crediting the registerTypedHook seam). `handleGatewayRequest` in
+  // src/gateway/server-methods.ts calls `noteRpcDispatch(req.method)` once per request, AFTER the
+  // handler is resolved and BEFORE it runs, so every method that reaches its handler is recorded
+  // BY NAME through one seam — core and plugin alike, on every transport, including in-process
+  // calls that dispatch back into the gateway. Scoring those as BLIND said "nothing is watching
+  // this" about a surface that a central instrument names on every call.
+  //
+  // Detected, never assumed: if the seam is deleted the credit disappears and the methods go back
+  // to BLIND, so this fails CLOSED. Credit lands on DECLARED, not OBSERVED — dispatch proves the
+  // handler was REACHED, not that it did work, exactly as the hook seam's own note says.
+  const rpcCentralSeam = readText(path.join(repoRoot, "src/gateway/server-methods.ts")).includes(
+    "noteRpcDispatch(req.method)",
+  );
   for (const [m, meta] of [...rpcOwner].sort()) {
     const ok = wire?.ok.get(m) ?? 0;
     const err = wire?.err.get(m) ?? 0;
@@ -696,23 +713,26 @@ function build(opts) {
     if (meta.gated) {
       status = "BLIND";
       evidence = `registered in dist but owner '${meta.owner}' is NOT in plugins.allow — no signal is possible and nothing warns`;
-    } else if (!wire) {
-      status = "BLIND";
-      evidence = "no journal — wire evidence unavailable";
-    } else if (ok > 0) {
+    } else if (wire && ok > 0) {
       status = "OBSERVED";
       const ratio = err / (ok + err);
       evidence =
         ratio > 0.2
           ? `${ok}✓/${err}✗ — ${Math.round(ratio * 100)}% FAILING and indistinguishable from healthy, because it does return successes`
           : `${ok}✓/${err}✗ on the wire in window`;
-    } else if (err > 0) {
+    } else if (wire && err > 0) {
       status = "DECLARED";
       evidence = `${err}✗ and ZERO ✓ in window — called and never once succeeded`;
+    } else if (rpcCentralSeam) {
+      status = "DECLARED";
+      evidence = wire
+        ? "no res line in window, but wrapped at the noteRpcDispatch seam -> gateway:rpc-dispatch fires with this method name on every call. Proves the handler was REACHED, not that it did work"
+        : "no journal, but wrapped at the noteRpcDispatch seam -> gateway:rpc-dispatch fires with this method name on every call. Proves the handler was REACHED, not that it did work";
     } else {
       status = "BLIND";
-      evidence =
-        "no res line in window; note in-process dispatch emits none, so this is an upper bound on death, not a proof of it";
+      evidence = wire
+        ? "no res line in window AND the noteRpcDispatch seam is gone — nothing names this method anywhere"
+        : "no journal and the noteRpcDispatch seam is gone — wire evidence unavailable";
     }
     add({
       id: `rpc:${m}`,
@@ -720,7 +740,9 @@ function build(opts) {
       subsystem: meta.kind === "core" ? "gateway-core" : "gateway-plugin",
       query: meta.kind === "core" ? "R5⋈R7" : "R6⋈R7",
       source: meta.src,
-      signal: "⇄ res ✓/✗ (ws transport only)",
+      signal: rpcCentralSeam
+        ? "central gateway:rpc-dispatch by method; ⇄ res ✓/✗ can promote ws calls"
+        : "⇄ res ✓/✗ (ws transport only; central dispatch seam missing)",
       status,
       evidence,
       lastSeen: null,
@@ -1111,17 +1133,17 @@ function main() {
     );
   for (const n of notes) console.log(`  note: ${n}`);
   console.log(
-    `  caveat: '⇄ res' is ws-transport-only — in-process gateway dispatch emits nothing, so BLIND on the RPC surface is an UPPER BOUND on death, not a proof of it.`,
+    `  RPC context: '⇄ res' is ws-only, but noteRpcDispatch(req.method) covers every transport at the central handler seam; central dispatch earns DECLARED, never OBSERVED.`,
   );
   console.log(`  derivations: node ${path.relative(process.cwd(), process.argv[1])} --queries\n`);
 
   if (structural > BLIND_CAP) {
     console.error(
       `FAIL: structural BLIND rose to ${structural}, above the ratchet of ${BLIND_CAP}.\n` +
-        `A capability arrived with nothing watching it. Instrument it — declareInstrument plus\n` +
-        `noteInstrumentFired where the WORK happens, not where it registers and not behind the same\n` +
-        `condition that decides whether it registers — then lower BLIND_CAP in the same commit.\n` +
-        `Raising the cap is not a fix. See what changed:\n` +
+        `The measured context changed. First decide whether a capability truly arrived unwatched,\n` +
+        `or whether the scorer forgot an existing central signal. Instrument the work in the first\n` +
+        `case; repair the derivation in the second; then set BLIND_CAP to the measured result.\n` +
+        `A silent cap raise is not a fix. See what changed:\n` +
         `  node scripts/bible/capability-coverage.mjs --blind\n`,
     );
     process.exit(1);
