@@ -19,7 +19,7 @@ const dir = mkdtempSync(join(tmpdir(), "anatomy-tree-"));
 let testSeq = 0;
 
 let clock = 1_000_000;
-function insert(sessionKey: string): void {
+function insert(sessionKey: string, durationMs?: number): void {
   const ev = {
     turn: 1,
     roundNumber: 0,
@@ -33,6 +33,7 @@ function insert(sessionKey: string): void {
     contextSent: {},
     contextWindow: {},
     memoriesInjected: { autoRecall: [], searched: [] },
+    ...(durationMs === undefined ? {} : { durationMs }),
   } as unknown as ContextAnatomyEvent;
   insertAnatomyEvent(ev);
 }
@@ -89,6 +90,43 @@ describe("querySessionTree — subagent family expansion", () => {
     const tree = querySessionTree("temp:title-suggest", 500);
     expect(tree.every((e) => e.sessionKey === "temp:title-suggest")).toBe(true);
     expect(tree.length).toBe(1);
+  });
+
+  // FORK 2026-08-17 (bug-log [eeg-anatomy-duration-never-written]): duration_ms existed from
+  // schema v1 and NOTHING ever wrote it — 38.5k rows, all NULL. The EEG turns a row into a
+  // strand spanning [timestampMs - durationMs, timestampMs]; with no duration every strand is
+  // zero-length, zero-length strands can never overlap, and overlap is the ONLY thing the
+  // renderer treats as parallelism. So a 10-way fan-out restored as ten instants in a row and
+  // the EEG showed a sequence. This locks the column's round-trip: a duration that goes in
+  // must come back out, on the same query the EEG actually calls.
+  test("durationMs round-trips through the tree query (a row is an interval, not an instant)", () => {
+    const tab = "agent:main:tinker:mq123";
+    insert(tab);
+    insert("agent:main:subagent:dur1", 90_000);
+    insert("agent:main:subagent:dur2", 90_000);
+
+    const tree = querySessionTree(tab, 500);
+    const subs = tree.filter((e) => e.sessionKey?.includes(":subagent:"));
+    expect(subs.length).toBe(2);
+    for (const s of subs) {
+      expect((s as { durationMs?: number }).durationMs).toBe(90_000);
+    }
+
+    // The property the renderer depends on: reconstructed intervals actually overlap.
+    // (Both legs are 90s long and their end stamps are ~1ms apart — they ran together.)
+    const [a, b] = subs.map((s) => {
+      const end = s.timestampMs;
+      return [end - ((s as { durationMs?: number }).durationMs ?? 0), end] as const;
+    });
+    expect(a[0] < b[1] && b[0] < a[1]).toBe(true);
+  });
+
+  test("a row written without a duration stays NULL rather than defaulting to zero", () => {
+    // Legacy rows must be distinguishable from "ran for 0ms" so the UI can decline to
+    // draw a shape it cannot know — never invent a duration for history.
+    insert("agent:main:subagent:legacy");
+    const [row] = querySessionTree("agent:main:subagent:legacy", 500);
+    expect((row as { durationMs?: number }).durationMs).toBeUndefined();
   });
 
   test("a subagent key itself does not expand (no self-family)", () => {

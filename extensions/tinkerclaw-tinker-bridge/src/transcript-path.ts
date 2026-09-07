@@ -41,3 +41,28 @@ export function isTranscriptOversized(filePath: string, maxBytes: number): boole
     return false;
   }
 }
+
+/**
+ * FORK 2026-07-27 (dead-resume guard): true iff the transcript file is present.
+ *
+ * `claude --resume <id>` on an id whose .jsonl is gone exits code=1 with
+ * `No conversation found with session ID: <id>` BEFORE emitting a single
+ * stream event. The bridge then surfaces "ended with an incomplete terminal
+ * response" and — because nothing purges the dead binding — every retry
+ * re-derives the same id from session-map.json. That is a PERMANENT wedge of
+ * one tab, immune to changing model or effort (observed live 2026-07-27 on
+ * `agent:main:tinker:mqqfw691`, resume id 04f52934-…, transcript absent from
+ * every ~/.claude/projects/* dir).
+ *
+ * Deliberately the inverse fail-direction of `isTranscriptOversized`: a stat
+ * failure here returns FALSE (treat as missing → start fresh). Starting fresh
+ * costs the claude-cli-side context; resuming a dead id costs the whole turn,
+ * every turn, forever. Fresh is strictly the safer failure.
+ */
+export function transcriptExists(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}

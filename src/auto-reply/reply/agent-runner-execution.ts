@@ -24,6 +24,11 @@ import {
   isTransientHttpError,
 } from "../../agents/embedded-agent-helpers.js";
 import { sanitizeUserFacingText } from "../../agents/embedded-agent-helpers/sanitize-user-facing-text.js";
+import { resolveEmbeddedSessionLane } from "../../agents/embedded-agent-runner/lanes.js";
+import {
+  isUserAbortFailoverError,
+  USER_ABORT_SURFACE_MESSAGE,
+} from "../../agents/embedded-agent-runner/run/failover-policy.js";
 import { isLikelyExecutionAckPrompt } from "../../agents/embedded-agent-runner/run/incomplete-turn.js";
 import { runEmbeddedPiAgent } from "../../agents/embedded-agent.js";
 import { LiveSessionModelSwitchError } from "../../agents/live-model-switch-error.js";
@@ -40,11 +45,15 @@ import {
   type SessionEntry,
   updateSessionStore,
 } from "../../config/sessions.js";
-import { buildErrorEnvelope } from "../../fork/error-envelope.js";
+import { buildErrorEnvelope, classifyRawErrorMessage } from "../../fork/error-envelope.js";
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
-import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
+import {
+  CommandLaneClearedError,
+  GatewayDrainingError,
+  getQueueSize,
+} from "../../process/command-queue.js";
 import { isSubagentSessionKey } from "../../routing/session-key.js";
 import { defaultRuntime } from "../../runtime.js";
 import {
@@ -80,6 +89,11 @@ import {
 import { type BlockReplyPipeline } from "./block-reply-pipeline.js";
 import { resolveOriginMessageProvider } from "./origin-routing.js";
 import type { FollowupRun } from "./queue.js";
+import {
+  dispatchRateLimitRetryThroughGateway,
+  parseRateLimitReset,
+  scheduleRateLimitRetry,
+} from "./rate-limit-retry.js";
 import { createBlockReplyDeliveryHandler } from "./reply-delivery.js";
 import type { ReplyMediaContext } from "./reply-media-paths.js";
 import { createReplyMediaContext } from "./reply-media-paths.runtime.js";
@@ -761,13 +775,53 @@ function applyOpenAIGptChatReplyGuard(params: {
   }
 }
 
-function buildRestartLifecycleReplyText(): string {
+function buildRestartLifecycleReplyText(params: {
+  /** Triggering error, recorded in `details.errorName` for provenance. */
+  err?: unknown;
+  /** Call-site tag recorded in `details.source` so the emitting branch is identifiable. */
+  source: "reply_operation_restart_abort" | "gateway_draining" | "command_lane_cleared";
+  sessionKey?: string;
+  sessionId?: string;
+}): string {
   // FORK 2026-05-09: emit as `__ERR_ENV__:` envelope (bible §5.69) so the
   // Tinker UI renders it as an orange centered warning chip, not as raw
-  // assistant text. Category `lane_busy` (fatal=false) maps to the right
-  // visual treatment + icon. Headline + explanation come from the lookup
-  // entry in error-envelope.ts so wording stays consistent across surfaces.
-  const envelope = buildErrorEnvelope({ code: "lane_busy" });
+  // assistant text. Headline + explanation come from the lookup entry in
+  // error-envelope.ts so wording stays consistent across surfaces.
+  //
+  // FORK 2026-07-22: two fixes, proven by a user message queued behind a
+  // 46-minute stuck turn that got the lane_busy "clears within a few seconds"
+  // text with no way to tell which call site emitted it:
+  //  1. Provenance — every envelope now carries `details.source` (call-site
+  //     tag) and `details.errorName`.
+  //  2. When the session's command lane still has active/queued work (the
+  //     same lane run.ts enqueues embedded runs into), "a few seconds" is a
+  //     lie: the message is queued behind a running turn. Emit the
+  //     `queued_behind_turn` variant instead; `lane_busy` stays for the
+  //     genuinely-transient no-queue case.
+  const errorName = params.err instanceof Error ? params.err.name : undefined;
+  const details: Record<string, unknown> = { source: params.source };
+  if (errorName) {
+    details.errorName = errorName;
+  }
+  const laneKey = params.sessionKey?.trim() || params.sessionId?.trim() || "";
+  const laneDepth = laneKey ? getQueueSize(resolveEmbeddedSessionLane(laneKey)) : 0;
+  if (laneDepth > 0) {
+    // Envelope JSON has no top-level code field, so mirror it into details
+    // for machine consumers (headline alone is not a stable identifier).
+    details.code = "queued_behind_turn";
+    details.laneDepth = laneDepth;
+    const envelope = buildErrorEnvelope({
+      code: "queued_behind_turn",
+      sessionKey: params.sessionKey,
+      details,
+    });
+    return `__ERR_ENV__:${JSON.stringify(envelope)}`;
+  }
+  const envelope = buildErrorEnvelope({
+    code: "lane_busy",
+    sessionKey: params.sessionKey,
+    details,
+  });
   return `__ERR_ENV__:${JSON.stringify(envelope)}`;
 }
 
@@ -1738,7 +1792,12 @@ export async function runAgentTurnWithFallback(params: {
         return {
           kind: "final",
           payload: {
-            text: buildRestartLifecycleReplyText(),
+            text: buildRestartLifecycleReplyText({
+              err,
+              source: "reply_operation_restart_abort",
+              sessionKey: params.sessionKey,
+              sessionId: params.getActiveSessionEntry()?.sessionId,
+            }),
           },
         };
       }
@@ -1758,7 +1817,12 @@ export async function runAgentTurnWithFallback(params: {
         return {
           kind: "final",
           payload: {
-            text: buildRestartLifecycleReplyText(),
+            text: buildRestartLifecycleReplyText({
+              err: restartLifecycleError,
+              source: "gateway_draining",
+              sessionKey: params.sessionKey,
+              sessionId: params.getActiveSessionEntry()?.sessionId,
+            }),
           },
         };
       }
@@ -1768,7 +1832,36 @@ export async function runAgentTurnWithFallback(params: {
         return {
           kind: "final",
           payload: {
-            text: buildRestartLifecycleReplyText(),
+            text: buildRestartLifecycleReplyText({
+              err: restartLifecycleError,
+              source: "command_lane_cleared",
+              sessionKey: params.sessionKey,
+              sessionId: params.getActiveSessionEntry()?.sessionId,
+            }),
+          },
+        };
+      }
+
+      // FORK 2026-09-03 (the user pressed Stop; the chat answered "⚠️ Agent failed
+      // before reply: LLM request timed out.", transcript 12a0e0c4). The runner
+      // stamps USER_ABORT_FAILOVER_CODE on an externally-aborted run. A Stop is
+      // NOT a failure, so it must not take the funnel below:
+      //   - no `Embedded agent failed before reply` error log,
+      //   - no `markFailedOnSurfaceError` — `chat.abort` already persisted the
+      //     correct terminal state (`abortedLastRun = true`, `status = "done"`,
+      //     src/gateway/server-methods/chat.ts:1810); marking FAILED here would
+      //     overwrite a correct terminal state with a wrong one,
+      //   - no "⚠️ … Logs: openclaw logs --follow" bubble.
+      // Placed AFTER the restart/draining/lane-cleared checks so those
+      // lifecycle aborts keep their own (more specific) copy, and after the
+      // replyOperation user-abort check whose SILENT_REPLY_TOKEN it mirrors for
+      // external surfaces. The control UI still gets a visible acknowledgement
+      // that the Stop landed.
+      if (isUserAbortFailoverError(err)) {
+        return {
+          kind: "final",
+          payload: {
+            text: shouldSurfaceToControlUi ? USER_ABORT_SURFACE_MESSAGE : SILENT_REPLY_TOKEN,
           },
         };
       }
@@ -1869,6 +1962,30 @@ export async function runAgentTurnWithFallback(params: {
       }
 
       defaultRuntime.error(`Embedded agent failed before reply: ${message}`);
+      // FORK 2026-07-30 (the user: "Grok is firing without stop. I stop its thinking
+      // indicator and it starts again") — THE run ended with no reply, and every
+      // retry/fallback above has already been exhausted (transient-HTTP retries
+      // `continue` before reaching here). If we leave without a terminal status on
+      // disk, `sessions.json` keeps `status:"running"` with no `endedAt`, and
+      // tinker-ui/src/run-state.ts resolves "server-running" on every sessions.list
+      // poll — so the thinking indicator re-lights the instant the user stops it,
+      // forever, until the boot sweep (`markRunningMainSessionsAsInterrupted`)
+      // clears it. The 2026-05-12 fix wired only the `stage:"prompt"` throw site;
+      // a `stage:"assistant"` timeout (live: xai/grok-4.5, runId 755f5fd8) bypassed
+      // it. This funnel is the single exit for ALL pre-reply failures, so marking
+      // here closes the class, not the instance. Best-effort — awaited so the write
+      // lands before the error payload returns, but it can never throw. failures.md M10.
+      await (
+        await import("../../fork/attempt-hooks.js")
+      ).markFailedOnSurfaceError({
+        sessionKey: params.sessionKey,
+        reason: message,
+        storePath: params.storePath,
+        // The provider failed; the user did not abort. Without this, body.ts
+        // prefixes the next turn with "aborted by the user … ask for
+        // clarification" and Jarvis opens the following turn confused.
+        abortedLastRun: false,
+      });
       // Only classify as rate-limit when we have concrete evidence from the
       // underlying error. FallbackSummaryError messages embed per-attempt
       // reason labels like `(rate_limit)`, so string-matching the summary text
@@ -1880,6 +1997,45 @@ export async function runAgentTurnWithFallback(params: {
       const isRateLimit = isFallbackSummary
         ? isPureTransientSummary
         : isRateLimitErrorMessage(message);
+      // FORK 2026-09-03 — the rate-limit envelope PROMISED an automatic retry
+      // that did not exist; two tabs sat unanswered for hours past their stated
+      // reset. `agents.defaults.model.fallbacks` is deliberately empty, so there
+      // is nothing to fail over TO: the only honest recovery is to wait out the
+      // provider's own reset and re-send the same prompt. Bounded on purpose —
+      // one retry per turn, 6 h horizon, 15-45 s jitter.
+      //
+      // The gate is NOT `isRateLimit` alone, and that is the whole point.
+      // `isRateLimitErrorMessage` has no "session limit" pattern (see
+      // ERROR_PATTERNS.rateLimit in agents/embedded-agent-helpers/failover-matches.ts),
+      // while "You have hit your session limit — resets 11:20am (Europe/Madrid)"
+      // is EXACTLY the shape that caused this bug. `classifyRawErrorMessage` owns
+      // the session-limit branch; gating on `isRateLimit` alone would have
+      // shipped a silent no-op that reads green in review.
+      //
+      // Scheduling is limited to control-UI sessions: the retry dispatches with
+      // `deliver:false` (mirroring resumeMainSession), so a channel-originated
+      // session would run the retry invisibly. Heartbeats recur on their own, and
+      // a subagent's turns are owned by a parent that would double-drive them.
+      const isRateLimitEnvelope =
+        isRateLimit || classifyRawErrorMessage(message) === "rate_limited";
+      const rateLimitResetAt =
+        isRateLimitEnvelope && !isOverloadedErrorMessage(message)
+          ? parseRateLimitReset(message)
+          : undefined;
+      const retryScheduledAt =
+        rateLimitResetAt !== undefined &&
+        params.sessionKey &&
+        shouldSurfaceToControlUi &&
+        !params.isHeartbeat &&
+        !isSubagentSessionKey(params.sessionKey)
+          ? scheduleRateLimitRetry({
+              sessionKey: params.sessionKey,
+              runId,
+              prompt: params.commandBody,
+              resetAt: rateLimitResetAt,
+              dispatch: dispatchRateLimitRetryThroughGateway,
+            })
+          : undefined;
       const rateLimitOrOverloadedCopy =
         !isFallbackSummary || isPureTransientSummary
           ? formatRateLimitOrOverloadedErrorCopy(message)
@@ -1899,6 +2055,29 @@ export async function runAgentTurnWithFallback(params: {
               includeDetails: isVerboseFailureDetailEnabled(params.resolvedVerboseLevel),
             })
           : undefined;
+      // FORK 2026-09-03: when a retry is ACTUALLY armed, the control UI gets a
+      // structured envelope carrying `details.retryScheduledAt` (epoch ms) so the
+      // bubble can say WHEN it will retry instead of "please try again". The
+      // `shouldSurfaceToControlUi` check is deliberately repeated here even though
+      // the schedule above already requires it: this one guards a different
+      // concern — a non-UI surface has no envelope renderer and would show the raw
+      // `__ERR_ENV__:` prefix to the user verbatim.
+      const rateLimitRetryEnvelopeText =
+        retryScheduledAt !== undefined && shouldSurfaceToControlUi
+          ? `__ERR_ENV__:${JSON.stringify(
+              buildErrorEnvelope({
+                code: "rate_limited",
+                raw: message,
+                sessionKey: params.sessionKey,
+                details: {
+                  code: "rate_limited",
+                  source: "agent_runner_rate_limit_retry",
+                  runId,
+                  retryScheduledAt,
+                },
+              }),
+            )}`
+          : undefined;
       const fallbackText = isBilling
         ? BILLING_ERROR_USER_MESSAGE
         : isRateLimit && !isOverloadedErrorMessage(message)
@@ -1913,7 +2092,7 @@ export async function runAgentTurnWithFallback(params: {
                   ? `⚠️ Agent failed before reply: ${trimmedMessage}.\nLogs: openclaw logs --follow`
                   : (externalRunFailureReply?.text ?? GENERIC_EXTERNAL_RUN_FAILURE_TEXT);
       const userVisibleFallbackText = resolveExternalRunFailureTextForConversation({
-        text: fallbackText,
+        text: rateLimitRetryEnvelopeText ?? fallbackText,
         sessionCtx: params.sessionCtx,
         isGenericRunnerFailure: externalRunFailureReply?.isGenericRunnerFailure ?? false,
       });
@@ -1923,6 +2102,11 @@ export async function runAgentTurnWithFallback(params: {
         kind: "final",
         payload: {
           text: userVisibleFallbackText,
+          // FORK 2026-07-22: mark the pre-reply failure payload as an error so
+          // downstream renderers treat it as an error bubble instead of a
+          // normal assistant reply — matching the other error envelopes (e.g.
+          // get-reply-run-queue.ts's queue busy banner).
+          isError: true,
         },
       };
     }

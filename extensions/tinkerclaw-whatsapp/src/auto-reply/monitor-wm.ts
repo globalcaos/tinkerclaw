@@ -182,6 +182,16 @@ export async function monitorWebChannelWm(
         session = socket as typeof session;
       } catch (error) {
         const errText = formatError(error);
+        // FORK 2026-08-29: reap the Go subprocess before bailing out.
+        //
+        // createWmMonitorSocket spawns whatsmeow-node and only THEN connects, so
+        // a connect failure lands here with the child already running. This path
+        // used to `break` without terminating it, orphaning one Go process per
+        // attempt — each holding the store's SQLite file open. With the channel
+        // failing every ~40s that reached 25 live processes in a single session.
+        // disconnectWmClient() falls back to the module-level active client,
+        // which is what we need since `socket` was never assigned.
+        await disconnectWmClient().catch(() => {});
         reconnectLogger.error(
           { connectionId, accountId: account.accountId, error: errText },
           "wm monitor: failed to create whatsmeow socket; treating as terminal",
@@ -192,9 +202,13 @@ export async function monitorWebChannelWm(
           reconnectAttempts,
           healthState: "stopped",
         });
-        runtime.error(
-          `WhatsApp (whatsmeow) failed to start: ${errText}. Use the Relink button to scan a new QR code.`,
-        );
+        // Only suggest relinking when a QR would actually help. WhatsApp refuses
+        // to issue one to an outdated client, so telling the architect to scan
+        // was a month of misdirection.
+        const relinkHint = errText.includes("err-client-outdated")
+          ? "Relinking will NOT help: WhatsApp is rejecting this client build as outdated."
+          : "Use the Relink button to scan a new QR code.";
+        runtime.error(`WhatsApp (whatsmeow) failed to start: ${errText}. ${relinkHint}`);
         terminal = true;
         break;
       }

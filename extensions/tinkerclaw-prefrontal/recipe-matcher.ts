@@ -23,6 +23,7 @@
 import fs from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { collectRecipeTargets, type RecipeFileTarget } from "./recipe-locate.js";
 import { parseKitStepsAndParallelism } from "./recipe-runner.js";
 import type { EmbedFn } from "./semantic-matcher.js";
 
@@ -46,7 +47,8 @@ export interface RecipeIndexEntry {
    * (e.g. `code-review-5pass` anti-triggering "quick look" to yield to `code-review`).
    * Matching is exact-only (no fuzzy) so an anti-trigger never fires by accident.
    */
-  antiTriggers: string[];
+  /** Optional: an entry built elsewhere (tests, older producers) may omit it. */
+  antiTriggers?: string[];
   /** Other kit slugs this kit composes (frontmatter `composes:`). */
   composes: string[];
   /** Absolute path to the kit.md, for lazy step parsing on a match. */
@@ -193,20 +195,17 @@ export function invalidateRecipeIndexCache(): void {
  * recipe.md FIRST per slug-dir, then fall back to kit.md, so newly authored
  * recipes win and old kit.md definitions keep loading without an on-disk move.
  */
-async function scanRecipeDir(dir: string): Promise<RecipeIndexEntry[]> {
-  const RECIPE_FILENAMES = ["recipe.md", "kit.md"] as const;
+async function scanRecipeTargets(targets: RecipeFileTarget[]): Promise<RecipeIndexEntry[]> {
+  // The library layout (which files are recipes, what slug each carries, how
+  // deep to look) is owned by recipe-locate.ts and shared with the runner's
+  // loader and the read RPC — FORK 2026-09-02, after the third sighting of the
+  // "resolver stops at <slug>/recipe.md" class (scanner 2026-08-22, then the
+  // runner's loadRecipeText and prefrontal.recipe.read on 2026-09-02).
   const index: RecipeIndexEntry[] = [];
-  let slugs: string[];
-  try {
-    slugs = await fs.readdir(dir);
-  } catch {
-    return index; // dir absent (e.g. no bridged imports yet) — not an error
-  }
-  for (const slug of slugs) {
+  for (const { slug, candidates } of targets) {
     let path = "";
     let text: string | null = null;
-    for (const fname of RECIPE_FILENAMES) {
-      const candidate = join(dir, slug, fname);
+    for (const candidate of candidates) {
       try {
         text = await fs.readFile(candidate, "utf8");
         path = candidate;
@@ -227,9 +226,13 @@ async function scanRecipeDir(dir: string): Promise<RecipeIndexEntry[]> {
       continue;
     }
     if (!parsed || typeof parsed !== "object") continue;
-    const tags = Array.isArray(parsed.tags)
-      ? (parsed.tags as unknown[]).filter((t): t is string => typeof t === "string")
-      : [];
+    // FORK 2026-09-02: recipe/1.0 playbooks declare their matchable phrases as
+    // `triggers:` (kit/1.0 says `tags:`). Only `tags` was scored, so `feature`,
+    // `debug` and `refactor` matched on title+summary alone and every coding
+    // prompt came back confidence:"low". Fold both lists into the scored tags.
+    const strings = (v: unknown): string[] =>
+      Array.isArray(v) ? (v as unknown[]).filter((t): t is string => typeof t === "string") : [];
+    const tags = [...new Set([...strings(parsed.tags), ...strings(parsed.triggers)])];
     const composes = Array.isArray(parsed.composes)
       ? (parsed.composes as unknown[]).filter((t): t is string => typeof t === "string")
       : [];
@@ -273,13 +276,26 @@ export async function loadRecipeIndex(
   extraDirs: string[] = [],
 ): Promise<RecipeIndexEntry[]> {
   const dirs = [ownRecipesDir, ...extraDirs];
+  // FORK 2026-09-02: the cache key used to be the ROOT dir's mtime, which does not
+  // move when a file INSIDE a category folder is rewritten — the live gateway kept
+  // scoring the old text of `coding/feature.md` until the root was touched. Key
+  // the cache on every recipe file's (path, mtime, size) instead; the walk is a
+  // few dozen readdir/stat calls, cheap next to a model turn.
+  const scans: Array<{ dir: string; targets: RecipeFileTarget[] }> = [];
   const sigParts: string[] = [];
   for (const d of dirs) {
-    try {
-      const st = await fs.stat(d);
-      sigParts.push(`${d}:${st.mtimeMs}`);
-    } catch {
-      sigParts.push(`${d}:x`);
+    const targets = await collectRecipeTargets(d);
+    scans.push({ dir: d, targets });
+    for (const t of targets) {
+      for (const c of t.candidates) {
+        try {
+          const st = await fs.stat(c);
+          sigParts.push(`${c}:${st.mtimeMs}:${st.size}`);
+          break;
+        } catch {
+          // try next filename
+        }
+      }
     }
   }
   const sig = sigParts.join("|");
@@ -289,8 +305,8 @@ export async function loadRecipeIndex(
 
   // own-recipes first so a bridged import cannot shadow a curated recipe.
   const bySlug = new Map<string, RecipeIndexEntry>();
-  for (const d of dirs) {
-    for (const entry of await scanRecipeDir(d)) {
+  for (const { targets } of scans) {
+    for (const entry of await scanRecipeTargets(targets)) {
       if (!bySlug.has(entry.slug)) bySlug.set(entry.slug, entry);
     }
   }
@@ -408,7 +424,7 @@ export function scoreRecipe(
   // recipe can yield to a better-fit sibling on look-alike prompts. Symmetric with
   // the positive tag weights (phrase −5, single word −3). Part of the lexical floor,
   // applied BEFORE the feedback/rating deltas (which only ever add ≥0).
-  for (const anti of kit.antiTriggers) {
+  for (const anti of kit.antiTriggers ?? []) {
     const al = anti.toLowerCase();
     if (al.includes(" ")) {
       if (lowPrompt.includes(al)) score -= 5; // exact phrase anti-trigger
@@ -579,7 +595,12 @@ export interface SeedPlanOutcome {
   kitRefs?: string[];
   composedFrom?: string[];
   /** All scored matches (for provenance trail). */
-  matches: Array<{ slug: string; score: number }>;
+  /**
+   * All scored matches. FORK 2026-08-28: `title` + `path` ride along so the turn hook can tell the
+   * architect WHICH recipe is being used and link its .md — the index already resolves the absolute
+   * path for lazy step parsing, so this carries an existing fact through rather than re-deriving it.
+   */
+  matches: Array<{ slug: string; score: number; title?: string; path?: string }>;
   confidence: MatchConfidence;
   /** Total kits scanned this turn (catalog size). */
   catalogSize: number;
@@ -675,7 +696,12 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
       );
     }
   }
-  const matchSummary = matches.map((m) => ({ slug: m.entry.slug, score: m.score }));
+  const matchSummary = matches.map((m) => ({
+    slug: m.entry.slug,
+    score: m.score,
+    title: m.entry.title,
+    path: m.entry.path,
+  }));
 
   if (matches.length === 0) {
     deps.log?.warn?.(

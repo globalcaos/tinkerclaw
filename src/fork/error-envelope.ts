@@ -36,6 +36,15 @@ export type ErrorCategory =
   | "tool"
   | "compaction"
   | "busy"
+  // FORK 2026-09-03: a turn that was CUT — a user Stop, a deliberate
+  // sessions_yield, a budget stop, or an interruption whose cause was not
+  // recorded. These were filed as `provider_error`, which re-commits the very
+  // lie this fork removes one field lower: the headline stops blaming the
+  // gateway while the machine-readable field starts blaming the provider.
+  // `category` ships to the DOM as `data-env-category` (tinker-ui app.ts) with
+  // no exhaustive switch and no CSS keyed on its value, so a new member is
+  // purely additive.
+  | "interrupted"
   | "generic";
 
 export interface LlmCallMeta {
@@ -173,10 +182,16 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // NOTE: when `raw` is available, buildErrorEnvelope() replaces this with the
     // precise window (5-hour / weekly / short-term peak) via rateLimitDetail().
     // This static text is only the fallback when the cause can't be pinned down.
+    //
+    // FORK 2026-09-03: the action used to read "automatic retry is in progress".
+    // Nothing on this path schedules a retry, so that was a promise the system
+    // could not keep — the user waits for a resumption that never comes.
+    // buildErrorEnvelope prepends "Retrying automatically at HH:MM" if and only
+    // if the caller supplies `retryScheduledAt`.
     explanation:
       "The provider is rate-limiting requests. The exact window (5-hour, weekly, or short-term peak) is named from the error when the provider includes it.",
     suggestedActions: [
-      "Wait for the limit to reset — automatic retry is in progress",
+      "Wait for the limit to reset, then send your message again",
       "Switch to a different auth profile temporarily",
     ],
     // 🚦 traffic-light — slow down, auto-recovers
@@ -234,6 +249,16 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 🔄 cyclic-arrow — cycle still draining
     icon: "🔄",
   },
+  queued_behind_turn: {
+    category: "busy",
+    fatal: false,
+    headline: "Message queued behind the current turn",
+    explanation:
+      "A previous turn is still running in this session. Your message is queued and will start automatically when it ends (even if it ends in an error).",
+    suggestedActions: [],
+    // ⏳ hourglass — parked until the running turn releases the lane
+    icon: "⏳",
+  },
   reply_run_already_active: {
     category: "busy",
     fatal: false,
@@ -276,6 +301,21 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
   // subprocess exit got classified as generic "Provider error" which made it
   // impossible to tell a benign gateway-restart kill (SIGTERM) from a real
   // Anthropic rejection. Now we name each exit path.
+  //
+  // FORK (2026-09-03) — SIGTERM CAUSE ATTRIBUTION. `signal=SIGTERM` on its own
+  // says NOTHING about why a turn ended: at least seven unrelated causes produce
+  // the identical signal (see SIGTERM_CAUSE_CODES for the verified producer
+  // strings). Until today ALL of them rendered as "Gateway restarted … I'm
+  // resuming it automatically", and for every one but the restart BOTH halves
+  // are false — nothing restarted, nothing resumes, and the user types "keep
+  // going". The entries below are selected by the cause the worker stamps into
+  // its exit message.
+  //
+  // INVARIANT: exactly ONE entry — `tinker_bridge_sigterm`, the real restart,
+  // whose resume is the M17 recovery path in failures.md — may promise a resume.
+  // An unknown or absent cause MUST land on `tinker_bridge_interrupted`, which
+  // promises nothing. Adding a "we'll retry" line to any other entry here
+  // reintroduces the exact defect this block exists to remove.
   tinker_bridge_sigterm: {
     category: "provider_error",
     fatal: false,
@@ -285,6 +325,76 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     suggestedActions: [],
     // 🔌 plug — interrupted externally
     icon: "🔌",
+  },
+  tinker_bridge_stopped: {
+    category: "interrupted",
+    fatal: false,
+    headline: "Stopped.",
+    explanation:
+      "You stopped this turn. Nothing failed and nothing is retrying — send a new message whenever you are ready. Any partial text above is what streamed before you stopped it.",
+    suggestedActions: [],
+    // ✋ raised-hand — you asked for this one
+    icon: "✋",
+  },
+  tinker_bridge_idle_timeout: {
+    category: "timeout",
+    fatal: false,
+    headline: "No response from the model — the turn was cut",
+    explanation:
+      "The model produced nothing for longer than the idle window allows, so the turn was cut. Nothing restarted and nothing is resuming on its own — send the message again, or ask me to keep going.",
+    suggestedActions: [],
+    // ⏱️ stopwatch — the idle clock ran out
+    icon: "⏱️",
+  },
+  tinker_bridge_run_deadline: {
+    category: "timeout",
+    fatal: false,
+    headline: "The turn hit its time limit",
+    explanation:
+      "The turn ran past the wall-clock deadline configured for a run and was cut. Nothing restarted and nothing is resuming on its own — send the message again.",
+    suggestedActions: ["Raise `agents.defaults.timeoutSeconds` if long turns are normal here"],
+    // ⌛ hourglass-done — the whole budget of time is spent
+    icon: "⌛",
+  },
+  tinker_bridge_budget_exhausted: {
+    category: "interrupted",
+    fatal: false,
+    headline: "The run hit its budget",
+    explanation:
+      "The turn was stopped because the run reached the budget it was given (tokens or tool calls), not because anything failed. Nothing restarted and nothing is resuming on its own.",
+    suggestedActions: [],
+    // 🧮 abacus — a count ran out
+    icon: "🧮",
+  },
+  tinker_bridge_yielded: {
+    category: "interrupted",
+    fatal: false,
+    headline: "Turn paused to wait for a subagent",
+    explanation:
+      "This turn ended on purpose (`sessions_yield`) while waiting for a subagent — not a failure and not an interruption. Any partial text above is what streamed before the pause.",
+    suggestedActions: [],
+    // ⏸️ pause — deliberate, not a fault
+    icon: "⏸️",
+  },
+  tinker_bridge_fast_fail_init: {
+    category: "timeout",
+    fatal: false,
+    headline: "The model never started replying (gateway busy)",
+    explanation:
+      "The turn was cut during start-up: no text, no thinking and almost no protocol traffic inside the init window — the signature of a wedged or contended start rather than a provider fault. Nothing is resuming on its own; sending the message again usually works.",
+    suggestedActions: [],
+    // 🐌 snail — it never got moving
+    icon: "🐌",
+  },
+  tinker_bridge_interrupted: {
+    category: "interrupted",
+    fatal: false,
+    headline: "The turn was interrupted",
+    explanation:
+      "The turn ended early and the cause was not recorded. Nothing restarted and nothing is resuming on its own — send the message again, or ask me to keep going.",
+    suggestedActions: [],
+    // ⏹️ stop-button — ended early, cause unrecorded
+    icon: "⏹️",
   },
   tinker_bridge_sigkill: {
     category: "provider_error",
@@ -316,6 +426,16 @@ const ERROR_LOOKUP: Record<string, ErrorLookupEntry> = {
     // 💥 collision — process crashed
     icon: "💥",
   },
+  spawn_e2big: {
+    category: "provider_error",
+    fatal: true,
+    headline: "The Overseer briefing was too large to start",
+    explanation:
+      "Linux refused to start the child (`spawn E2BIG`): one argument exceeded the 128 KB argv cap. This is not a provider outage and retrying the same payload cannot succeed. The briefing now goes by file, not on the command line — if you still see this, the spawn path is stuffing a transcript into argv again.",
+    suggestedActions: [],
+    // 📦 package — payload too big for the slot it was put in
+    icon: "📦",
+  },
 };
 
 /** Generate a short stable id. */
@@ -331,6 +451,123 @@ function lookup(code: string): ErrorLookupEntry {
   return ERROR_LOOKUP[code] ?? GENERIC;
 }
 
+/**
+ * FORK 2026-09-03 — the causes of a tinker-bridge SIGTERM, and the envelope each
+ * one gets. This module is the SINGLE owner of the taxonomy:
+ * `extensions/tinkerclaw-tinker-bridge/src/worker.ts` transports the cause text
+ * verbatim inside `reason=[…]` and classifies nothing, so there is no duplicate
+ * enum across the extension boundary to drift.
+ *
+ * The patterns below are matched against the REAL producer strings, read off
+ * disk on 2026-09-03. This matters: an earlier draft of this change invented the
+ * strings, and three of its five classifications were unreachable while its
+ * tests stayed green (they fed the parser hand-written tokens and never
+ * exercised the mapping).
+ *
+ *   user Stop      `AbortError: Reply operation aborted by user`
+ *                  src/auto-reply/reply/reply-run-registry.ts:107-111, :373
+ *   gateway drain  `Reply operation aborted for restart`            …:382-386
+ *   run deadline   `TimeoutError: request timed out`
+ *                  src/agents/embedded-agent-runner/run/attempt.ts:2170-2174
+ *   idle timeout   `LLM idle timeout (300s): no response from model`
+ *                  src/agents/embedded-agent-runner/run/llm-idle-timeout.ts:107
+ *   budget         `budget-exhausted`                        attempt.ts:2175
+ *   yield          `sessions_yield` (a bare string)          attempt.ts:795
+ *   fast-fail      `fast-fail-init-stall` (literal at the call site)
+ *                  extensions/tinkerclaw-tinker-bridge/src/stream.ts
+ *
+ * Reword one of those upstream and the table test in error-envelope.test.ts
+ * fails — which is the whole point of testing the strings and not the parser.
+ */
+export type SigtermCause =
+  | "gateway-shutdown"
+  | "user-abort"
+  | "idle-timeout"
+  | "run-deadline"
+  | "budget-exhausted"
+  | "session-yield"
+  | "fast-fail-init-stall"
+  | "unknown";
+
+const SIGTERM_CAUSE_CODES: Record<SigtermCause, string> = {
+  "gateway-shutdown": "tinker_bridge_sigterm",
+  "user-abort": "tinker_bridge_stopped",
+  "idle-timeout": "tinker_bridge_idle_timeout",
+  "run-deadline": "tinker_bridge_run_deadline",
+  "budget-exhausted": "tinker_bridge_budget_exhausted",
+  "session-yield": "tinker_bridge_yielded",
+  "fast-fail-init-stall": "tinker_bridge_fast_fail_init",
+  unknown: "tinker_bridge_interrupted",
+};
+
+/** Classify a raw abort-cause string into one of the known causes. */
+export function classifyAbortCause(cause: string): SigtermCause {
+  const s = cause.toLowerCase();
+  if (!s.trim()) {
+    return "unknown";
+  }
+  // "aborted for restart" FIRST: it also contains "abort", which the user-stop
+  // pattern below would otherwise claim.
+  if (/aborted for restart|gateway[-\s]?(?:shutdown|restart|drain)|shutting down/.test(s)) {
+    return "gateway-shutdown";
+  }
+  if (/aborted by user|user[-\s]?abort|stopped by (?:the )?user/.test(s)) {
+    return "user-abort";
+  }
+  // idle BEFORE the deadline patterns: the idle message also says "timeout".
+  if (/idle timeout|no response from model/.test(s)) {
+    return "idle-timeout";
+  }
+  if (/request timed out|timeouterror|run[-\s]?deadline|deadline exceeded/.test(s)) {
+    return "run-deadline";
+  }
+  if (/budget[-\s]?exhausted/.test(s)) {
+    return "budget-exhausted";
+  }
+  if (/sessions?_yield/.test(s)) {
+    return "session-yield";
+  }
+  if (/fast[-\s]?fail|init[-\s]?stall/.test(s)) {
+    return "fast-fail-init-stall";
+  }
+  return "unknown";
+}
+
+/**
+ * Read the abort cause out of a worker exit message. Anchored on the
+ * `reason=[…]` delimiter, which worker.ts emits BEFORE the `stderr=` tail; `exec`
+ * returns the FIRST match, so a `reason=[…]` printed by the child into its own
+ * stderr can never hijack the classification. An exit message with no
+ * `reason=[…]` at all (an older bundle, a replayed transcript) is "unknown" —
+ * the honest answer, not a licence to claim a gateway restart.
+ */
+export function killCauseFromRaw(raw: string): { cause: SigtermCause; text: string } {
+  const m = /\breason=\[([^\]]*)\]/.exec(raw);
+  const text = m?.[1] ?? "";
+  return { cause: classifyAbortCause(text), text };
+}
+
+/**
+ * Seconds of silence named by an idle-timeout cause ("LLM idle timeout (300s):
+ * no response from model"). The number exists ONLY in that string, which is why
+ * the cause text is carried verbatim instead of being collapsed to an enum at
+ * the worker.
+ */
+function idleSecondsFromCause(cause: string): number | null {
+  const secs = /idle timeout \((\d+)\s*s\)/i.exec(cause);
+  if (secs) {
+    return Number(secs[1]);
+  }
+  const ms = /\bidle_?ms=(\d+)/i.exec(cause);
+  return ms ? Math.round(Number(ms[1]) / 1000) : null;
+}
+
+/** Local wall-clock HH:MM for an epoch-ms instant. */
+function hhmm(epochMs: number): string {
+  const d = new Date(epochMs);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 /** Opportunistically classify a raw error message into one of the known codes. */
 export function classifyRawErrorMessage(raw: string): string {
   const s = raw.toLowerCase();
@@ -339,12 +576,13 @@ export function classifyRawErrorMessage(raw: string): string {
   // about Anthropic, but its raw string contains words like "exit" that
   // shouldn't be miscategorised as provider_generic.
   // Shapes we see in worker.ts::onExit:
-  //   "claude subprocess exited (code=143 signal=null) stderr=…"
-  //   "claude subprocess exited (code=137 signal=null) stderr=…"
-  //   "claude subprocess exited (code=null signal=SIGTERM) stderr=…"
+  //   "claude subprocess exited (code=143 signal=null reason=[…]) stderr=…"
+  //   "claude subprocess exited (code=137 signal=null reason=[…]) stderr=…"
+  //   "claude subprocess exited (code=null signal=SIGTERM reason=[…]) stderr=…"
   if (/claude subprocess exited/.test(s)) {
     if (/code=143\b|signal=sigterm/.test(s)) {
-      return "tinker_bridge_sigterm";
+      // FORK 2026-09-03: classify BY CAUSE, never by the signal alone.
+      return SIGTERM_CAUSE_CODES[killCauseFromRaw(s).cause];
     }
     if (/code=137\b|signal=sigkill/.test(s)) {
       return "tinker_bridge_sigkill";
@@ -397,6 +635,9 @@ export function classifyRawErrorMessage(raw: string): string {
   }
   if (/incomplete turn|turn ended without/.test(s)) {
     return "incomplete_turn";
+  }
+  if (/\be2big\b/.test(s)) {
+    return "spawn_e2big";
   }
   return "provider_generic";
 }
@@ -479,9 +720,13 @@ export function rateLimitDetail(raw: string): {
     ? (raw.match(/(?:retry|try again)[^0-9]{0,12}(\d+)\s*s/i)?.[1] ?? "")
     : "";
   const when = reset || (retrySecs ? ` (provider says retry in ${retrySecs}s)` : "");
+  // FORK 2026-09-03: no retry PROMISE here. Nothing on this path schedules a
+  // retry, so "automatic retry is in progress" was a claim the system could not
+  // keep. buildErrorEnvelope prepends "Retrying automatically at HH:MM" if and
+  // only if the caller supplies `retryScheduledAt`.
   const waitAction = reset
-    ? "Wait until the reset time shown above"
-    : "Wait for the window to reset — automatic retry is in progress";
+    ? "Wait until the reset time shown above, then send your message again"
+    : "Wait for the window to reset, then send your message again";
 
   // Claude Code surfaces the rolling 5-hour window as a "session limit".
   if (/session limit|hit your session/.test(s)) {
@@ -506,7 +751,7 @@ export function rateLimitDetail(raw: string): {
     return {
       explanation: `Short-term PEAK rate limit: too many requests or tokens per minute. This is a burst limit (your peak consumption, not your overall 5-hour or weekly quota) and clears within about a minute.${when}`,
       suggestedActions: [
-        "Wait ~60s — automatic retry is in progress",
+        "Wait ~60s, then send your message again",
         "Reduce concurrent requests if this keeps happening",
       ],
     };
@@ -534,6 +779,18 @@ export interface BuildEnvelopeInput {
   llm?: LlmCallMeta;
   /** Session key for persistence / retry targeting. */
   sessionKey?: string;
+  /**
+   * FORK 2026-09-03 — a "retrying automatically" line is a PROMISE, and several
+   * entries used to make it unconditionally while nothing anywhere scheduled a
+   * retry. Set this to the epoch-ms instant at which a retry is ACTUALLY
+   * scheduled and the envelope renders "Retrying automatically at HH:MM" as its
+   * first suggested action. Leave it undefined (the default) and the envelope
+   * promises nothing. A sibling change supplies it at the sites that really do
+   * schedule one; until then the correct rendering is silence, not a guess.
+   */
+  retryScheduledAt?: number;
+  /** As `retryScheduledAt`, when a retry is scheduled but its time is unknown. */
+  retryScheduled?: boolean;
   /** Free-form extra context. */
   details?: Record<string, unknown>;
 }
@@ -550,6 +807,7 @@ export function buildErrorEnvelope(input: BuildEnvelopeInput): ErrorEnvelope {
   // For a genuine user rate-limit, name the precise window (5-hour / weekly /
   // peak) from the raw message rather than the generic static text. Skipped when
   // the caller supplied its own explanation.
+  let headline = input.headline ?? entry.headline;
   let explanation = input.explanation ?? entry.explanation;
   let suggestedActions = input.suggestedActions ?? entry.suggestedActions;
   if (code === "rate_limited" && input.explanation === undefined && raw) {
@@ -557,19 +815,56 @@ export function buildErrorEnvelope(input: BuildEnvelopeInput): ErrorEnvelope {
     explanation = detail.explanation;
     if (input.suggestedActions === undefined) suggestedActions = detail.suggestedActions;
   }
+  // FORK 2026-09-03: surface the parsed SIGTERM cause. MERGED into any caller
+  // `details` (real callers pass `source`, `code`, `laneDepth`, `runId`), and
+  // only when a cause was actually stamped — never invent a `details` object.
+  let details = input.details;
+  const killed =
+    raw !== "" && /claude subprocess exited/i.test(raw) && /\breason=\[/.test(raw)
+      ? killCauseFromRaw(raw)
+      : null;
+  if (killed) {
+    details = { ...(details ?? {}), killCause: killed.cause, killCauseText: killed.text };
+    // Name the silence the producer measured: "for 300 s" is what turns a vague
+    // cut into something the user can act on. The number lives only in the
+    // cause text, which is why worker.ts forwards it verbatim.
+    if (code === "tinker_bridge_idle_timeout" && input.headline === undefined) {
+      const secs = idleSecondsFromCause(killed.text);
+      if (secs !== null) {
+        headline = `No response from the model for ${secs} s — the turn was cut`;
+      }
+    }
+  }
+  // FORK 2026-09-03: the ONLY place a "retrying automatically" promise may be
+  // made, and only because the caller passed evidence that a retry exists.
+  // Default (no flag) = no promise. Do not move this into the lookup table.
+  if (
+    input.suggestedActions === undefined &&
+    !suggestedActions.some((a) => /^retrying automatically/i.test(a))
+  ) {
+    const retryAction =
+      typeof input.retryScheduledAt === "number" && Number.isFinite(input.retryScheduledAt)
+        ? `Retrying automatically at ${hhmm(input.retryScheduledAt)}`
+        : input.retryScheduled === true
+          ? "Retrying automatically"
+          : null;
+    if (retryAction) {
+      suggestedActions = [retryAction, ...suggestedActions];
+    }
+  }
   return {
     kind: "error",
     id: makeId(),
     fatal: input.fatal ?? entry.fatal,
     category: entry.category,
-    headline: input.headline ?? entry.headline,
+    headline,
     explanation,
     suggestedActions,
     icon: entry.icon,
     llm: input.llm,
     sessionKey: input.sessionKey,
     raw: raw || undefined,
-    details: input.details,
+    details,
     timestamp: new Date().toISOString(),
   };
 }

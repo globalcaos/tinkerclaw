@@ -53,6 +53,51 @@ function isOneTaskFlowEligible(task: TaskRecord): boolean {
   return task.runtime === "acp" || task.runtime === "subagent";
 }
 
+export type SingleTaskFlowRegistrationFailure = {
+  taskId: string;
+  runId?: string;
+  failedAt: number;
+  message: string;
+  code?: string;
+};
+
+let singleTaskFlowFailureCount = 0;
+let lastSingleTaskFlowFailure: SingleTaskFlowRegistrationFailure | null = null;
+
+/**
+ * A failed registration used to be indistinguishable from "not eligible": both
+ * returned the bare task, and neither told any caller anything. That is exactly
+ * why a four-month flow-registry outage went unnoticed while `openclaw flows list`
+ * looked merely empty. Health probes and the flows CLI read this to tell "no flows"
+ * apart from "flow registration is broken".
+ */
+export function getSingleTaskFlowRegistrationHealth(): {
+  failureCount: number;
+  lastFailure: SingleTaskFlowRegistrationFailure | null;
+} {
+  return {
+    failureCount: singleTaskFlowFailureCount,
+    lastFailure: lastSingleTaskFlowFailure,
+  };
+}
+
+function recordSingleTaskFlowFailure(
+  task: TaskRecord,
+  error: unknown,
+): SingleTaskFlowRegistrationFailure {
+  const rawCode = (error as { code?: unknown } | null)?.code;
+  const failure: SingleTaskFlowRegistrationFailure = {
+    taskId: task.taskId,
+    ...(task.runId ? { runId: task.runId } : {}),
+    failedAt: Date.now(),
+    message: error instanceof Error ? error.message : String(error),
+    ...(typeof rawCode === "string" ? { code: rawCode } : {}),
+  };
+  singleTaskFlowFailureCount += 1;
+  lastSingleTaskFlowFailure = failure;
+  return failure;
+}
+
 function ensureSingleTaskFlow(params: {
   task: TaskRecord;
   requesterOrigin?: TaskDeliveryState["requesterOrigin"];
@@ -79,9 +124,19 @@ function ensureSingleTaskFlow(params: {
     }
     return linked;
   } catch (error) {
-    log.warn("Failed to create one-task flow for detached run", {
-      taskId: params.task.taskId,
+    // The task IS eligible and the flow could NOT be created. Returning the bare
+    // task is byte-identical to the "not eligible" result, so the fault has to be
+    // recorded and logged on the error channel — a warn into the void is what let
+    // this run silently for four months. Deliberately NOT rethrown: the task row is
+    // already persisted, and every caller wraps this in catch + warn, so throwing
+    // would surface no better while orphaning the record as permanently running.
+    const failure = recordSingleTaskFlowFailure(params.task, error);
+    log.error("Task-flow registration FAILED for an eligible detached run", {
+      taskId: failure.taskId,
       runId: params.task.runId,
+      failureCount: singleTaskFlowFailureCount,
+      ...(failure.code ? { code: failure.code } : {}),
+      message: failure.message,
       error,
     });
     return params.task;

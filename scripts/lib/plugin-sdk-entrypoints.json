@@ -292,5 +292,18 @@
   "web-media",
   "zod",
   "config-contracts",
-  "text-utility-runtime"
+  "text-utility-runtime",
+  "memory-engram",
+  "fork-instrumentation",
+  "fork-error-envelope",
+  "fork-message-hooks",
+  "fork-inflight-steer",
+  "fork-prefrontal-schema",
+  "fork-recipe-engine",
+  "fork-usage-metrics",
+  "fork-auth-admin",
+  "fork-secret-refs",
+  "fork-gateway-broadcast",
+  "fork-browser-relay",
+  "fork-overseer-budget"
 ]

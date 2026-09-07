@@ -465,7 +465,11 @@ describe("gateway server chat", () => {
       const serialized = JSON.stringify(messages);
       const bytes = Buffer.byteLength(serialized, "utf8");
       expect(bytes).toBeLessThanOrEqual(historyMaxBytes);
-      expect(serialized).toContain("[chat.history omitted: message too large]");
+      // FORK 2026-08-28: the cap still fires, but the omission is now a per-BLOCK stub instead of a
+      // whole-message placeholder, so the tool row keeps its type and toolUseId and still renders.
+      expect(serialized).not.toContain("[chat.history omitted: message too large]");
+      expect(serialized).toContain("tool-1");
+      expect(serialized).toMatch(/omitted: \d+ bytes/);
       expect(serialized.includes(hugeNestedText.slice(0, 256))).toBe(false);
     });
   });
@@ -522,7 +526,11 @@ describe("gateway server chat", () => {
       expect(bytes).toBeLessThanOrEqual(historyMaxBytes);
       expect(messages.length).toBeGreaterThan(1);
       expect(serialized).toContain("small-29:");
-      expect(serialized).toContain("[chat.history omitted: message too large]");
+      // FORK 2026-08-28: see the sibling test above — the oversized tool_result survives as an
+      // identified stub rather than being replaced whole and disappearing from the transcript.
+      expect(serialized).not.toContain("[chat.history omitted: message too large]");
+      expect(serialized).toContain("tool-1");
+      expect(serialized).toMatch(/omitted: \d+ bytes/);
       expect(serialized.includes(hugeNestedText.slice(0, 256))).toBe(false);
     });
   });

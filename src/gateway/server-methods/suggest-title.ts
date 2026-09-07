@@ -1,11 +1,14 @@
 /**
  * One-shot session-title suggester.
  *
- * Runs a SINGLE cc-bridge Sonnet completion (SUBSCRIPTION-billed via the
- * claude-code provider — NOT the metered Anthropic API, NOT ollama) and
- * returns the suggested title text. Modeled on the shape of
- * src/hooks/llm-slug-generator.ts but with the provider/model/options
- * hardcoded for the title-suggest use case.
+ * Runs a SINGLE xAI Grok 4.6 completion (the tab auto-namer — NOT cc-bridge
+ * Sonnet, NOT the metered Anthropic API, NOT ollama) and returns the suggested
+ * title text. Modeled on the shape of src/hooks/llm-slug-generator.ts but with
+ * the provider/model/options hardcoded for the title-suggest use case.
+ *
+ * 2026-09-01: switched off claude-code/claude-sonnet-4-6. Title gen is a 4-word
+ * one-shot that was burning Claude subscription tokens (and a full `claude` CLI
+ * cold-spawn per rename). Grok 4.6 is the surplus-token lane.
  */
 
 import fs from "node:fs/promises";
@@ -23,8 +26,8 @@ import { createSubsystemLogger } from "../../logging/subsystem.js";
 const log = createSubsystemLogger("suggest-title");
 
 /**
- * Generate a short session title from a prompt via a one-shot cc-bridge
- * Sonnet completion. Returns the trimmed title text, or null on any failure.
+ * Generate a short session title from a prompt via a one-shot xAI Grok 4.6
+ * completion. Returns the trimmed title text, or null on any failure.
  */
 export async function suggestTitleViaBridge({
   prompt,
@@ -54,20 +57,22 @@ export async function suggestTitleViaBridge({
       agentDir,
       config: cfg,
       prompt,
-      // Subscription-billed via the claude-code provider (cc-bridge), NOT the
-      // metered Anthropic API and NOT ollama. The provider carries the route,
-      // so the model id is the bare Sonnet tag.
-      provider: "claude-code",
-      model: "claude-sonnet-4-6",
+      // FORK 2026-09-01 — xAI Grok 4.6 (surplus-token lane). Was cc-bridge
+      // claude-sonnet-4-6, which burned Claude subscription tokens and cold-spawned
+      // a full `claude` CLI worker per rename. Grok is an HTTP completions call.
+      provider: "xai",
+      model: "grok-4.6",
       disableTools: true,
-      // FORK 2026-06-25 — was 15_000, which the cc-bridge one-shot routinely BLEW under load:
-      // the bridge COLD-SPAWNS a full `claude` CLI worker per title (persona + plugins), so most
-      // of the wall-clock is worker startup, not generation (observed: ~3.4s gen but ~11s spawn →
-      // 14.4s success vs 15s timeouts in the gateway log). On timeout runEmbeddedPiAgent throws
-      // FailoverError, this fn returns null, and the tab silently fails to rename — which is the
-      // real reason CLONES (titled at clone-time, when the bridge is mid-cold-spawn) never renamed
-      // while NEW tabs (titled at turn-end, when a worker just freed) did. 45s clears the cold
-      // spawn with margin. (Deeper latency fix = a lighter/persona-less title spawn — tracked.)
+      // Probe-style: no persona, no workspace bootstrap, no reasoning trace.
+      // A 4-word tab name does not need SOUL.md or a thinking block.
+      modelRun: true,
+      promptMode: "none",
+      thinkLevel: "off",
+      reasoningLevel: "off",
+      verboseLevel: "off",
+      // FORK 2026-06-25 — was 15_000 when this was a cc-bridge cold-spawn (~14–19s).
+      // Grok HTTP is typically 1–3s; 45s stays as a generous cap so a slow call
+      // still returns a title instead of silently leaving the fortune-cookie name.
       timeoutMs: 45_000,
       runId: `title-suggest-${stamp}`,
       cleanupBundleMcpOnRunEnd: true,

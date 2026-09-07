@@ -21,8 +21,9 @@ import { resolveCronStorePath } from "../cron/store.js";
 import type { CronJob } from "../cron/types.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { runHeartbeatOnce } from "../infra/heartbeat-runner.js";
-import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
-import { enqueueSystemEvent } from "../infra/system-events.js";
+import { requestCronWake, requestHeartbeatNow, runCronWakeOnce } from "../infra/heartbeat-wake.js";
+import type { HeartbeatRunResult } from "../infra/heartbeat-wake.js";
+import { enqueueSystemEvent, peekSystemEventEntries } from "../infra/system-events.js";
 import { getChildLogger } from "../logging.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import type {
@@ -43,6 +44,51 @@ export type GatewayCronState = {
   storePath: string;
   cronEnabled: boolean;
 };
+
+/**
+ * FORK 2026-07-26 (a dead cron fleet reported "ok" for six days). A heartbeat
+ * result of "ran" proves only that SOME turn executed — never that the turn
+ * received THIS cron's payload. While the wake-key bug routed wakes to the
+ * generic heartbeat session, every job enqueued its brief onto the main session
+ * queue, woke a different session that peeked an empty queue, answered a bare
+ * "[OpenClaw heartbeat poll]" in ~8s, and logged status "ok". The whole fleet
+ * looked green while producing nothing, so nobody noticed until it was asked.
+ *
+ * The event queue is the ground truth: the woken turn DRAINS the payload it
+ * receives. So if this job's own event is still pending after the wake
+ * returned, the payload was never delivered — that is a failed run, not an ok
+ * one. Reported as "failed" so the run log and cron panel show it red on day
+ * one instead of after a week of silence.
+ */
+export function resolveCronWakeOutcome(params: {
+  result: HeartbeatRunResult;
+  payloadStillQueued: boolean;
+}): HeartbeatRunResult {
+  if (params.result.status !== "ran" || !params.payloadStillQueued) {
+    return params.result;
+  }
+  return {
+    status: "failed",
+    reason:
+      "cron payload was still queued after the wake returned — the woken turn never received it (phantom run)",
+  };
+}
+
+/**
+ * True when the cron event tagged for `reason` is still sitting on the session
+ * queue. Matches on the job's own contextKey (`cron:<jobId>`, which is exactly
+ * the wake `reason`) so a DIFFERENT job enqueuing during a long-running turn
+ * cannot be mistaken for this job's undelivered payload.
+ */
+export function isCronPayloadStillQueued(sessionKey: string, reason?: string): boolean {
+  const contextKey = reason?.trim().toLowerCase();
+  if (!contextKey || !contextKey.startsWith("cron:")) {
+    return false;
+  }
+  return peekSystemEventEntries(sessionKey).some(
+    (event) => (event.contextKey ?? "") === contextKey,
+  );
+}
 
 /** Pick only the keys whose values are not `undefined` from an object. */
 function pickDefined<T extends Record<string, unknown>>(
@@ -188,15 +234,21 @@ export function buildGatewayCronService(params: {
       derivedAgentId !== undefined
         ? mergeRuntimeAgentConfig(runtimeConfigBase, derivedAgentId)
         : runtimeConfigBase;
-    const agentId = derivedAgentId || undefined;
-    const sessionKey =
-      opts?.sessionKey && agentId
-        ? resolveCronSessionKey({
-            runtimeConfig,
-            agentId,
-            requestedSessionKey: opts.sessionKey,
-          })
-        : undefined;
+    // FORK 2026-07-25: always resolve a CONCRETE wake session key, mirroring the
+    // enqueueSystemEvent path above. Previously this returned sessionKey=undefined
+    // whenever a job carried no explicit sessionKey (the normal case for main-target
+    // crons). enqueueSystemEvent still fell back to the agent's MAIN session key, but
+    // runHeartbeatOnce received forcedSessionKey=undefined and therefore resolved the
+    // generic configured heartbeat session instead. The woken turn peeked an empty
+    // queue and answered "no task in flight" while the cron's payload sat unread on
+    // the main session queue — every main-target cron silently no-op'd (status "ok",
+    // ~6s, 15 output tokens). Both paths must resolve the SAME key.
+    const agentId = derivedAgentId ?? resolveDefaultAgentId(runtimeConfig);
+    const sessionKey = resolveCronSessionKey({
+      runtimeConfig,
+      agentId,
+      requestedSessionKey: opts?.sessionKey,
+    });
     return { runtimeConfig, agentId, sessionKey };
   };
 
@@ -240,11 +292,17 @@ export function buildGatewayCronService(params: {
         agentId,
         requestedSessionKey: opts?.sessionKey,
       });
-      enqueueSystemEvent(text, {
+      const accepted = enqueueSystemEvent(text, {
         sessionKey,
         contextKey: opts?.contextKey,
         trusted: opts?.trusted,
       });
+      // FORK 2026-07-26: the delivery boundary was completely unlogged, which is
+      // why a week of silent no-op crons looked green. Log the key the payload
+      // was queued ON so it can be diffed against the key the wake peeks.
+      console.error(
+        `[cron-diag] payload enqueued sessionKey=${sessionKey} contextKey=${opts?.contextKey} accepted=${accepted} queueDepth=${peekSystemEventEntries(sessionKey).length} chars=${text.trim().length}`,
+      );
     },
     requestHeartbeatNow: (opts) => {
       const { agentId, sessionKey } = resolveCronWakeTarget(opts);
@@ -257,6 +315,12 @@ export function buildGatewayCronService(params: {
     },
     runHeartbeatOnce: async (opts) => {
       const { runtimeConfig, agentId, sessionKey } = resolveCronWakeTarget(opts);
+      // FORK 2026-07-26: pair of the "cron payload enqueued" line above. If these
+      // two keys ever differ, or queueDepth is 0 here after a successful enqueue,
+      // the woken turn will get a bare heartbeat poll instead of the cron brief.
+      console.error(
+        `[cron-diag] wake target sessionKey=${sessionKey} reason=${opts?.reason} queueDepth=${peekSystemEventEntries(sessionKey).length}`,
+      );
       // Merge cron-supplied heartbeat overrides (e.g. target: "last") with the
       // fully resolved agent heartbeat config so cron-triggered heartbeats
       // respect agent-specific overrides (agents.list[].heartbeat) before
@@ -276,13 +340,53 @@ export function buildGatewayCronService(params: {
       const heartbeatOverride = opts?.heartbeat
         ? { ...baseHeartbeat, ...opts.heartbeat }
         : undefined;
-      return await runHeartbeatOnce({
+      const result = await runHeartbeatOnce({
         cfg: runtimeConfig,
         reason: opts?.reason,
         agentId,
         sessionKey,
         heartbeat: heartbeatOverride,
         deps: { ...params.deps, runtime: defaultRuntime },
+      });
+      return resolveCronWakeOutcome({
+        result,
+        payloadStillQueued: isCronPayloadStillQueued(sessionKey, opts?.reason),
+      });
+    },
+    // ── CRON LANE ───────────────────────────────────────────────────────────────────
+    // Same resolution as the two heartbeat deps above, on purpose. The timer must never
+    // import the wake functions directly: a main-target cron carries no explicit
+    // job.sessionKey, so without resolveCronWakeTarget the wake goes out with
+    // sessionKey=undefined, lands on the generic configured heartbeat session, and the
+    // payload sits unread on the main queue. That is the 2026-07-25 defect; it was
+    // re-introduced on 2026-08-03 by calling runCronWakeOnce directly and is fixed here by
+    // routing the cron lane through the SAME resolver (design-principles #18).
+    requestCronWakeNow: (opts) => {
+      const { agentId, sessionKey } = resolveCronWakeTarget(opts);
+      requestCronWake({
+        reason: opts?.reason,
+        agentId,
+        sessionKey,
+        heartbeat: opts?.heartbeat,
+      });
+    },
+    runCronWakeOnce: async (opts) => {
+      const { agentId, sessionKey } = resolveCronWakeTarget(opts);
+      // Pair of the "cron payload enqueued" line. If these two keys ever differ, or
+      // queueDepth is 0 here after a successful enqueue, the woken turn gets a bare poll
+      // instead of the cron brief.
+      console.error(
+        `[cron-diag] wake target lane=cron sessionKey=${sessionKey} reason=${opts?.reason} queueDepth=${peekSystemEventEntries(sessionKey).length}`,
+      );
+      const result = await runCronWakeOnce({
+        reason: opts?.reason,
+        agentId,
+        sessionKey,
+        heartbeat: opts?.heartbeat,
+      });
+      return resolveCronWakeOutcome({
+        result,
+        payloadStillQueued: isCronPayloadStillQueued(sessionKey, opts?.reason),
       });
     },
     runIsolatedAgentJob: async ({ job, message, abortSignal, onExecutionStarted }) => {

@@ -219,17 +219,64 @@ export function derivePromptTokens(usage?: {
   return sum > 0 ? sum : undefined;
 }
 
+/**
+ * FORK 2026-07-28 — THE PLAUSIBILITY CHOKEPOINT.
+ *
+ * Every "how full is the context?" answer in the fork funnels through here. The inputs are
+ * NOT trustworthy: on the cc-bridge lane a message's persisted `usage` is a TURN AGGREGATE
+ * (input + cacheRead + cacheCreation summed across every internal API call of the turn), and
+ * `promptTokens` overrides are themselves derived from it (auto-reply/reply/agent-runner.ts →
+ * derivePromptTokens). Measured live 2026-07-28: 6,448,106 and 1,029,656 "context" tokens on
+ * 1,000,000-token windows whose real context was 52,116 — up to a 19.8x over-read.
+ *
+ * A context size LARGER THAN THE CONTEXT WINDOW is definitionally not a context size; it is an
+ * accumulator that leaked into a field meant to hold a snapshot. When `contextWindow` is known
+ * we therefore REJECT such a value (return undefined = "unknown") instead of passing it on.
+ * Callers already treat undefined as not-fresh (`totalTokensFresh:false`), which is the safe
+ * outcome: a decider that knows it does not know will not compact a 5%-full session.
+ *
+ * This is the fork-local stand-in for upstream's typed `Usage.contextUsage`
+ * ({state:"available"|"unavailable"}), which makes "a sum masquerading as a context size"
+ * unrepresentable at the type level. We cannot adopt that union wholesale — pi 0.70.5 is a
+ * pinned `dist/` dependency and `normalizeUsage` below is a fixed-shape projection — but the
+ * plausibility test gets the same protection for every one of OUR consumers at one site.
+ *
+ * NOTE the override is checked too, deliberately: it is the arm that fires first on the
+ * embedded lane, and it carries exactly the same poison.
+ */
 export function deriveContextPromptTokens(params: {
   lastCallUsage?: NormalizedUsage;
   promptTokens?: number;
   usage?: NormalizedUsage;
+  /** The model's context window. When known, any candidate above it is rejected. */
+  contextWindow?: number;
 }): number | undefined {
-  const promptOverride = params.promptTokens;
-  if (typeof promptOverride === "number" && Number.isFinite(promptOverride) && promptOverride > 0) {
+  const window =
+    typeof params.contextWindow === "number" &&
+    Number.isFinite(params.contextWindow) &&
+    params.contextWindow > 0
+      ? params.contextWindow
+      : undefined;
+
+  const plausible = (value: number | undefined): number | undefined => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+      return undefined;
+    }
+    if (window !== undefined && value > window) {
+      return undefined;
+    }
+    return value;
+  };
+
+  const promptOverride = plausible(params.promptTokens);
+  if (promptOverride !== undefined) {
     return promptOverride;
   }
 
-  return derivePromptTokens(params.lastCallUsage) ?? derivePromptTokens(params.usage);
+  return (
+    plausible(derivePromptTokens(params.lastCallUsage)) ??
+    plausible(derivePromptTokens(params.usage))
+  );
 }
 
 export function deriveSessionTotalTokens(params: {
@@ -254,9 +301,14 @@ export function deriveSessionTotalTokens(params: {
 
   // NOTE: SessionEntry.totalTokens is used as a prompt/context snapshot.
   // It intentionally excludes completion/output tokens.
+  // FORK 2026-07-28: `contextTokens` (the model's window) was accepted here but never used.
+  // Passing it into the chokepoint is what stops a turn-aggregate from being persisted as a
+  // context snapshot — SessionEntry.totalTokens feeds the memory-flush gate and the CLI
+  // compaction lane, both of which were reading millions of tokens on ~5%-full sessions.
   const promptTokens = deriveContextPromptTokens({
     promptTokens: hasPromptOverride ? promptOverride : undefined,
     usage,
+    contextWindow: params.contextTokens,
   });
 
   if (!(typeof promptTokens === "number") || !Number.isFinite(promptTokens) || promptTokens <= 0) {

@@ -15,9 +15,9 @@
  * Pure orchestration: all I/O (archive read, apply, env) is injected for testability.
  */
 
-import type { Plan } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
-import type { MutationProposal } from "../../src/memory/engram/recipe-evolution.js";
-import { proposeStepRewrites } from "../../src/memory/engram/recipe-evolution.js";
+import type { Plan } from "openclaw/plugin-sdk/fork-prefrontal-schema";
+import type { MutationProposal } from "openclaw/plugin-sdk/fork-recipe-engine";
+import { proposeStepRewrites } from "openclaw/plugin-sdk/fork-recipe-engine";
 import type { ApplyProposalInput, ApplyResult } from "./recipe-apply.js";
 import { isApplyEnabled } from "./recipe-apply.js";
 import { readStepStruggle, type StruggleReport } from "./step-struggle.js";

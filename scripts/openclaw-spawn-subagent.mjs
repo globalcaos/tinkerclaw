@@ -16,9 +16,16 @@
  *
  * Usage:
  *   openclaw-spawn-subagent --task "Research X" [--model claude-code/claude-opus-4-7]
- *     [--label short-name] [--parent agent:main:main] [--thinking medium]
+ *     [--label short-name] [--parent <sessionKey>] [--thinking medium]
  *     [--timeout 600] [--json]
  *     [--allow-tools Read,Grep,Glob] [--max-tokens 8000] [--max-tool-calls 40]
+ *
+ * --parent is OPTIONAL and has NO default (2026-08-04). Omit it and this CLI
+ * sends NO `parentSessionKey` at all, so the RPC boundary picks the requester
+ * (src/fork/subagents-rpc.ts reads `parentSessionKey ?? sessionKey`) and the
+ * child lands on the headless sink instead of silently claiming the human Main
+ * tab. Pass --parent only when you really mean to attribute the child to a
+ * specific live session.
  *
  * Environment:
  *   OPENCLAW_GATEWAY_URL     default: http://127.0.0.1:18789 (WS derived)
@@ -51,7 +58,13 @@ if (!TASK) {
 const MODEL = flag("model");
 const LABEL = flag("label");
 const THINKING = flag("thinking");
-const PARENT = flag("parent") ?? flag("parentSessionKey") ?? "agent:main:main";
+// NO default parent (2026-08-04). The old literal "agent:main:main" made every
+// unattended spawn claim the human Main tab: ORCA
+// (docs/superpowers/parallel-implement.workflow.js) shells this CLI with only
+// --task/--label/--model/--json and never passes --parent, so every critic/panel
+// child hung off Main. Leaving PARENT undefined omits the field from the RPC
+// payload entirely and lets the gateway boundary apply the headless sink.
+const PARENT = flag("parent") ?? flag("parentSessionKey");
 const TIMEOUT = flag("timeout");
 const ALLOW_TOOLS = flag("allow-tools");
 const MAX_TOKENS = flag("max-tokens") != null ? Number.parseInt(flag("max-tokens"), 10) : undefined;
@@ -150,7 +163,10 @@ ws.on("message", (buf) => {
           model: MODEL,
           label: LABEL,
           thinking: THINKING,
-          parentSessionKey: PARENT,
+          // Omit the field entirely when no --parent was given: the RPC boundary
+          // (`parentSessionKey ?? sessionKey`) then applies the headless sink
+          // instead of inheriting the human Main tab.
+          ...(PARENT ? { parentSessionKey: PARENT } : {}),
           runTimeoutSeconds: TIMEOUT ? Number(TIMEOUT) : undefined,
           ...(ALLOW_TOOLS
             ? {

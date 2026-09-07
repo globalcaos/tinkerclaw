@@ -4,7 +4,16 @@ export const CHARS_PER_TOKEN_ESTIMATE = 4;
 export const TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE = 2;
 const IMAGE_CHAR_ESTIMATE = 8_000;
 
-export type MessageCharEstimateCache = WeakMap<AgentMessage, number>;
+/**
+ * Two separate estimate spaces, deliberately never mixed:
+ *  - `raw`      : characters that actually go on the wire (uniform 4 chars/token).
+ *  - `weighted` : conservative 2-chars/token tool-result weighting + `details`.
+ * Keeping them in distinct maps makes cross-contamination impossible.
+ */
+export type MessageCharEstimateCache = {
+  readonly weighted: WeakMap<AgentMessage, number>;
+  readonly raw: WeakMap<AgentMessage, number>;
+};
 
 function isTextBlock(block: unknown): block is { type: "text"; text: string } {
   return (
@@ -76,7 +85,14 @@ export function getToolResultText(msg: AgentMessage): string {
   return chunks.join("\n");
 }
 
-function estimateMessageChars(msg: AgentMessage): number {
+/**
+ * RAW estimate: the characters that actually reach the provider, under ONE uniform
+ * 4-chars/token convention. `toolResult.details` is EXCLUDED because it is stripped
+ * at the LLM boundary (`normalizeMessagesForLlmBoundary` -> `stripToolResultDetails`),
+ * and tool-result text is NOT re-weighted. This is the input to the whole-context
+ * overflow predicate, so it stays directly comparable to a `contextWindow * 4` budget.
+ */
+function estimateMessageRawChars(msg: AgentMessage): number {
   if (!msg || typeof msg !== "object") {
     return 0;
   }
@@ -125,46 +141,88 @@ function estimateMessageChars(msg: AgentMessage): number {
   }
 
   if (isToolResultMessage(msg)) {
-    const content = getToolResultContent(msg);
-    let chars = estimateContentBlockChars(content);
-    const details = (msg as { details?: unknown }).details;
-    chars += estimateUnknownChars(details);
-    const weightedChars = Math.ceil(
-      chars * (CHARS_PER_TOKEN_ESTIMATE / TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE),
-    );
-    return Math.max(chars, weightedChars);
+    return estimateContentBlockChars(getToolResultContent(msg));
   }
 
   return 256;
 }
 
-export function createMessageCharEstimateCache(): MessageCharEstimateCache {
-  return new WeakMap<AgentMessage, number>();
+/**
+ * WEIGHTED estimate: intentionally pessimistic. Tool results are scored at
+ * 2 chars/token and `toolResult.details` is counted. Used ONLY to decide whether a
+ * SINGLE tool result must be truncated (`maxSingleToolResultChars`) — never for the
+ * whole-context overflow predicate, whose budget is denominated in 4 chars/token.
+ */
+function estimateMessageWeightedChars(msg: AgentMessage): number {
+  if (!msg || typeof msg !== "object") {
+    return 0;
+  }
+
+  if (!isToolResultMessage(msg)) {
+    return estimateMessageRawChars(msg);
+  }
+
+  const content = getToolResultContent(msg);
+  let chars = estimateContentBlockChars(content);
+  const details = (msg as { details?: unknown }).details;
+  chars += estimateUnknownChars(details);
+  const weightedChars = Math.ceil(
+    chars * (CHARS_PER_TOKEN_ESTIMATE / TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE),
+  );
+  return Math.max(chars, weightedChars);
 }
 
-export function estimateMessageCharsCached(
+export function createMessageCharEstimateCache(): MessageCharEstimateCache {
+  return {
+    weighted: new WeakMap<AgentMessage, number>(),
+    raw: new WeakMap<AgentMessage, number>(),
+  };
+}
+
+/** Truncation semantics: `details` counted, tool results weighted x2. */
+export function estimateMessageWeightedCharsCached(
   msg: AgentMessage,
   cache: MessageCharEstimateCache,
 ): number {
-  const hit = cache.get(msg);
+  const hit = cache.weighted.get(msg);
   if (hit !== undefined) {
     return hit;
   }
-  const estimated = estimateMessageChars(msg);
-  cache.set(msg, estimated);
+  const estimated = estimateMessageWeightedChars(msg);
+  cache.weighted.set(msg, estimated);
   return estimated;
 }
 
-export function estimateContextChars(
+/** Wire semantics: `details` excluded, uniform 4 chars/token, no weighting. */
+export function estimateMessageRawCharsCached(
+  msg: AgentMessage,
+  cache: MessageCharEstimateCache,
+): number {
+  const hit = cache.raw.get(msg);
+  if (hit !== undefined) {
+    return hit;
+  }
+  const estimated = estimateMessageRawChars(msg);
+  cache.raw.set(msg, estimated);
+  return estimated;
+}
+
+/**
+ * Whole-context total consumed by the preemptive-overflow predicate. Raw chars only,
+ * so `estimateRawContextChars(msgs) > contextWindowTokens * 4 * 0.9` really means
+ * "past ~90% of the window".
+ */
+export function estimateRawContextChars(
   messages: AgentMessage[],
   cache: MessageCharEstimateCache,
 ): number {
-  return messages.reduce((sum, msg) => sum + estimateMessageCharsCached(msg, cache), 0);
+  return messages.reduce((sum, msg) => sum + estimateMessageRawCharsCached(msg, cache), 0);
 }
 
 export function invalidateMessageCharsCacheEntry(
   cache: MessageCharEstimateCache,
   msg: AgentMessage,
 ): void {
-  cache.delete(msg);
+  cache.weighted.delete(msg);
+  cache.raw.delete(msg);
 }

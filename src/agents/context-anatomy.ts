@@ -10,6 +10,13 @@
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { SessionSystemPromptReport } from "../config/sessions/types.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
+// FORK 2026-07-28: single owner of "is this a tool result?" — it handles the production
+// `"toolResult"` role plus the `"tool"` / `type:"toolResult"` variants. Reusing it is the point:
+// this file previously carried its own, differently-wrong role test.
+import { isToolResultMessage } from "./embedded-agent-runner/tool-result-char-estimator.js";
+
+const log = createSubsystemLogger("agents/context-anatomy");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -356,6 +363,8 @@ export function buildContextAnatomy(params: {
   let conversationHistoryChars = 0;
   let toolResultsChars = 0;
   let userMessageChars = 0;
+  /** Chars matching no slab. Non-zero means the composition under-reads the real context. */
+  let unattributedChars = 0;
 
   const messages = params.messagesSnapshot;
   for (let i = 0; i < messages.length; i++) {
@@ -370,13 +379,39 @@ export function buildContextAnatomy(params: {
     const chars = content.length;
     const isLast = i === messages.length - 1;
 
+    // FORK 2026-07-28 — THIS CHAIN SILENTLY DROPPED EVERY TOOL RESULT.
+    //
+    // It tested `msg.role === ("tool" as string)`, but the production role literal is
+    // `"toolResult"` (@mariozechner/pi-ai `types.d.ts:154`). A tool-result message therefore
+    // matched NO branch and contributed ZERO to `totalChars` — and the `as string` cast is what
+    // silenced the TypeScript error that would have caught it, which is the whole lesson.
+    //
+    // Consequence, and it reached published figures: the decoded composition read
+    // "tool results 0", which was taken as "no tool results resident" when it actually meant
+    // "tool results were not counted". Anything derived from that total under-reads the real
+    // context. The correct predicate already existed three directories away, so we now use it
+    // rather than re-deriving a second, differently-wrong role test.
+    //
+    // The terminal `else` is the other half: an unclassified message is ACCUMULATED and
+    // reported rather than dropped, so the next role the union grows shows up as a visible
+    // unattributed slab instead of silently shrinking the total.
     if (msg.role === "user" && isLast) {
       userMessageChars = chars;
-    } else if (msg.role === ("tool" as string)) {
+    } else if (isToolResultMessage(msg as never)) {
       toolResultsChars += chars;
     } else if (msg.role === "user" || msg.role === "assistant") {
       conversationHistoryChars += chars;
+    } else {
+      unattributedChars += chars;
     }
+  }
+
+  if (unattributedChars > 0) {
+    // Loud on purpose: a slab nobody can attribute is exactly how "tool results 0" happened.
+    log.warn(
+      `[context-anatomy] ${unattributedChars} chars did not match any composition slab — ` +
+        `a message role is unaccounted for, so the reported total UNDER-reads the real context`,
+    );
   }
 
   const totalChars =
@@ -390,7 +425,25 @@ export function buildContextAnatomy(params: {
 
   const totalTokens = estimateTokens(totalChars);
   const maxTokens = params.contextWindowTokens;
-  const usedTokens = params.totalTokensUsed ?? totalTokens;
+  // FORK 2026-07-28 — `totalTokensUsed` is RUN-CUMULATIVE, not a context snapshot.
+  //
+  // It arrives from `embedded-agent-subscribe.ts` `usageTotals.total`, which accumulates
+  // input+output+cacheRead+cacheWrite across EVERY committed assistant message of the run and
+  // never resets — not even on compaction. Preferring it over the char estimate published an
+  // accumulator as context fill, and this event is the SOURCE the timeline, the treemap and the
+  // persisted anatomy DB all read, so one bad number reached three consumers.
+  //
+  // A used-figure larger than the whole window cannot be a context size. When that happens we
+  // fall back to the honest local char estimate rather than clamping to 100%: clamping would
+  // hide the same poison one layer down and still report a fabricated fill. Same rule as the
+  // `deriveContextPromptTokens` chokepoint — reject, do not fabricate.
+  const reportedUsed = params.totalTokensUsed;
+  const reportedIsPlausible =
+    typeof reportedUsed === "number" &&
+    Number.isFinite(reportedUsed) &&
+    reportedUsed > 0 &&
+    (maxTokens <= 0 || reportedUsed <= maxTokens);
+  const usedTokens = reportedIsPlausible ? (reportedUsed as number) : totalTokens;
 
   // Auto-recalled memories = injected workspace files that look like memory paths
   const autoRecall = report.injectedWorkspaceFiles

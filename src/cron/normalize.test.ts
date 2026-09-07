@@ -499,7 +499,7 @@ describe("normalizeCronJobCreate", () => {
     expect(validateCronAddParams(normalized)).toBe(true);
   });
 
-  it("prunes agentTurn-only payload fields from systemEvent create jobs", () => {
+  it("keeps timeoutSeconds on systemEvent create jobs but prunes the agentTurn-only fields", () => {
     const normalized = normalizeCronJobCreate({
       name: "system-event-prune",
       schedule: { kind: "every", everyMs: 60_000 },
@@ -519,7 +519,9 @@ describe("normalizeCronJobCreate", () => {
     }) as unknown as Record<string, unknown>;
 
     const payload = normalized.payload as Record<string, unknown>;
-    expect(payload).toEqual({ kind: "systemEvent", text: "hello" });
+    // timeoutSeconds survives: a main-session systemEvent wakes a real agent turn and needs
+    // to be able to raise its own ceiling above DEFAULT_JOB_TIMEOUT_MS.
+    expect(payload).toEqual({ kind: "systemEvent", text: "hello", timeoutSeconds: 45 });
     expect(validateCronAddParams(normalized)).toBe(true);
   });
 
@@ -656,6 +658,16 @@ describe("normalizeCronJobCreate", () => {
 });
 
 describe("normalizeCronJobPatch", () => {
+  it("preserves payload.model null so cron.update can clear the override", () => {
+    const normalized = normalizeCronJobPatch({
+      model: "openai/gpt-5.4",
+      payload: { kind: "agentTurn", model: null },
+    });
+
+    expect(normalized?.payload).toEqual({ kind: "agentTurn", model: null });
+    expect(validateCronUpdateParams({ id: "job-1", patch: normalized })).toBe(true);
+  });
+
   it("infers agentTurn payloads from top-level model-only patch hints", () => {
     const normalized = normalizeCronJobPatch({
       model: "openrouter/deepseek/deepseek-r1",
@@ -845,7 +857,7 @@ describe("normalizeCronJobPatch", () => {
     expect((normalized.payload as Record<string, unknown>).threadId).toBeUndefined();
   });
 
-  it("prunes agentTurn-only payload fields from systemEvent patch payloads", () => {
+  it("keeps timeoutSeconds on systemEvent patch payloads but prunes the agentTurn-only fields", () => {
     const normalized = normalizeCronJobPatch({
       payload: {
         kind: "systemEvent",
@@ -861,7 +873,7 @@ describe("normalizeCronJobPatch", () => {
     }) as unknown as Record<string, unknown>;
 
     const payload = normalized.payload as Record<string, unknown>;
-    expect(payload).toEqual({ kind: "systemEvent", text: "hi" });
+    expect(payload).toEqual({ kind: "systemEvent", text: "hi", timeoutSeconds: 15 });
     expect(validateCronUpdateParams({ id: "job-1", patch: normalized })).toBe(true);
   });
 

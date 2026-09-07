@@ -46,4 +46,21 @@ describe("timeout-policy", () => {
     );
     expect(timeout).toBe(1_900);
   });
+
+  it("applies explicit timeoutSeconds on systemEvent jobs too", () => {
+    // A main-session systemEvent wakes a real agent turn (memory-consolidation spawns a
+    // subagent and awaits it), so it must be able to outlive DEFAULT_JOB_TIMEOUT_MS.
+    const timeout = resolveCronJobTimeoutMs(
+      makeJob({ kind: "systemEvent", text: "wake", timeoutSeconds: 2_700 }),
+    );
+    expect(timeout).toBe(2_700_000);
+    expect(timeout).toBeGreaterThan(DEFAULT_JOB_TIMEOUT_MS);
+  });
+
+  it("disables the timeout for a systemEvent with timeoutSeconds <= 0", () => {
+    const timeout = resolveCronJobTimeoutMs(
+      makeJob({ kind: "systemEvent", text: "wake", timeoutSeconds: 0 }),
+    );
+    expect(timeout).toBeUndefined();
+  });
 });

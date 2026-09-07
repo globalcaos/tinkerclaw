@@ -41,6 +41,23 @@ export function resolveModelFallbackOptions(
       agentId: run.agentId,
       hasSessionModelOverride: run.hasSessionModelOverride === true,
       modelOverrideSource: run.modelOverrideSource,
+      // THE ROUTER'S RECOVERY LADDER REACHES THE RUNTIME HERE. `runWithModelFallback` has always
+      // been able to move a failing turn to another supply; what it lacked was an INPUT, because
+      // `agents.defaults.model.fallbacks` is `[]`. This is the one seam where the per-turn chain
+      // THALAMUS computed becomes the `fallbacksOverride` that machinery actually reads.
+      //
+      // Passed unconditionally, on purpose. `resolveEffectiveModelFallbacks` owns the whole
+      // precedence rule (user pin > agent-level fallbacks, including an explicit `[]` > a
+      // configured default ladder > this chain), so filtering here would put half of that rule
+      // in a second place. `undefined` and `[]` both mean "Thalamus found no alternative" and
+      // resolve to exactly today's value.
+      //
+      // THE PRODUCER IS `get-reply-run.ts`, which sets `run.thalamusChain` from
+      // `modelState.thalamusRoute?.chain`; the field is declared on `FollowupRun["run"]` in
+      // `queue/types.ts`. If either is missing this reads `undefined` on every turn and looks
+      // healthy while doing nothing — which is why `thalamus-chain.test.ts` asserts the value
+      // arriving through this seam rather than trusting the wiring.
+      thalamusChain: run.thalamusChain,
     }),
   };
 }

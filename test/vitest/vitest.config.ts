@@ -11,6 +11,13 @@ export { resolveDefaultVitestPool, resolveLocalVitestMaxWorkers, resolveLocalVit
 
 export const rootVitestProjects = [
   "test/vitest/vitest.unit.config.ts",
+  // FORK 2026-08-17 — joins the gate at last. It was held out with a written unblock condition
+  // ("some of these specs are stale ... Re-anchor those specs, THEN add this line"), and that
+  // condition is now met: the whole project runs 27/27 files, 1191/1191 green in ~5s. Holding it
+  // out had a measurable cost — six thinking-indicator regressions shipped between 2026-07-29 and
+  // 2026-08-17 while the unit tests that would have caught several of them existed, passed, and
+  // were executed by nothing.
+  "test/vitest/vitest.tinker-ui.config.ts",
   "test/vitest/vitest.unit-ui.config.ts",
   "test/vitest/vitest.infra.config.ts",
   "test/vitest/vitest.boundary.config.ts",

@@ -19,6 +19,7 @@ import type { ProcessToolDefaults } from "./bash-tools.process.js";
 import { execSchema, processSchema } from "./bash-tools.schemas.js";
 import { listChannelAgentTools } from "./channel-tools.js";
 import { shouldSuppressManagedWebSearchTool } from "./codex-native-web-search.js";
+import { markSpan, turnSpanSync } from "./embedded-agent-runner/run/turn-span.js";
 import { resolveImageSanitizationLimits } from "./image-sanitization.js";
 import type { ModelAuthMode } from "./model-auth.js";
 import { createOpenClawTools } from "./openclaw-tools.js";
@@ -343,6 +344,11 @@ export function createOpenClawCodingTools(options?: {
   /** Callback invoked when sessions_yield tool is called. */
   onYield?: (message: string) => Promise<void> | void;
 }): AnyAgentTool[] {
+  // FORK 2026-08-24 — bracketing the 3.4s. The three spans added first (run-context, upstream
+  // factory, tools-allow) ALL measured 0ms against a 7,219ms parent, which localises the cost to
+  // this function's own body and to nothing else. These two marks split that body at the upstream
+  // factory call: everything before it is policy resolution, everything after is our wrapping.
+  const factoryStartedAt = Date.now();
   const execToolName = "exec";
   const sandbox = options?.sandbox?.enabled ? options.sandbox : undefined;
   const isMemoryFlushRun = options?.trigger === "memory";
@@ -453,7 +459,29 @@ export function createOpenClawCodingTools(options?: {
   }
   const imageSanitization = resolveImageSanitizationLimits(options?.config);
 
-  const base = (createCodingTools(workspaceRoot) as unknown as AnyAgentTool[]).flatMap((tool) => {
+  // FORK 2026-08-24 — the innermost split of `tools-build` (p50 3.4s, synchronous, every turn).
+  // This is the only call in the factory that reaches outside the process's own memory: it takes
+  // the workspace root, and the workspace it is handed carries thousands of files. Spanned so the
+  // question "is it the upstream factory or our wrapping?" is answered by a number.
+  markSpan(options?.runId, "tools-policy", Date.now() - factoryStartedAt);
+  const wrapStartedAt = Date.now();
+  // FORK 2026-08-24 — bisecting the 6,101ms. Measured, `tools-wrap` is 98% of `tools-build`
+  // (6,101 of 6,221ms) while policy resolution is 2ms and the upstream factory is 1ms. That
+  // localises the entire cost to this region, which is eight sequential steps over the tool array.
+  // These marks TILE it, so the expensive step names itself instead of being guessed at — two
+  // hypotheses about this cost have already been refuted by measurement (the per-tool
+  // loop-invariant config resolve is 0.005ms/call; resolveModelAuthMode is 10ms).
+  let stepStartedAt = wrapStartedAt;
+  const step = (name: string): void => {
+    const now = Date.now();
+    markSpan(options?.runId, name, now - stepStartedAt);
+    stepStartedAt = now;
+  };
+  const base = (
+    turnSpanSync(options?.runId, "tools-upstream-factory", () =>
+      createCodingTools(workspaceRoot),
+    ) as unknown as AnyAgentTool[]
+  ).flatMap((tool) => {
     if (tool.name === "read") {
       if (sandboxRoot) {
         const sandboxed = createSandboxedReadTool({
@@ -497,6 +525,7 @@ export function createOpenClawCodingTools(options?: {
     return [tool];
   });
   const { cleanupMs: cleanupMsOverride, ...execDefaults } = options?.exec ?? {};
+  step("wrap-base");
   const execTool = createLazyExecTool({
     ...execDefaults,
     host: options?.exec?.host ?? execConfig.host,
@@ -551,6 +580,65 @@ export function createOpenClawCodingTools(options?: {
               : undefined,
           workspaceOnly: applyPatchWorkspaceOnly,
         });
+  // FORK 2026-08-24 — hoisted out of the array literal so each gets its own mark. Measured,
+  // `wrap-toolset` is 213,969ms of a 214,009ms `tools-wrap` (99.98%) on a direct local call, and
+  // ~7s of the same region inside the gateway. These two spreads are the only non-trivial work in
+  // it; everything else in the array is an already-constructed tool object.
+  const channelAgentTools = listChannelAgentTools({ cfg: options?.config });
+  step("wrap-channel-tools");
+  const openClawTools = createOpenClawTools({
+    sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
+    allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
+    agentSessionKey: options?.sessionKey,
+    agentChannel: resolveGatewayMessageChannel(options?.messageProvider),
+    agentAccountId: options?.agentAccountId,
+    agentTo: options?.messageTo,
+    agentThreadId: options?.messageThreadId,
+    agentGroupId: options?.groupId ?? null,
+    agentGroupChannel: options?.groupChannel ?? null,
+    agentGroupSpace: options?.groupSpace ?? null,
+    agentMemberRoleIds: options?.memberRoleIds,
+    agentDir: options?.agentDir,
+    sandboxRoot,
+    sandboxContainerWorkdir: sandbox?.containerWorkdir,
+    sandboxFsBridge,
+    fsPolicy,
+    workspaceDir: workspaceRoot,
+    spawnWorkspaceDir: options?.spawnWorkspaceDir
+      ? resolveWorkspaceRoot(options.spawnWorkspaceDir)
+      : undefined,
+    sandboxed: !!sandbox,
+    config: options?.config,
+    pluginToolAllowlist: collectExplicitAllowlist([
+      profilePolicy,
+      providerProfilePolicy,
+      globalPolicy,
+      globalProviderPolicy,
+      agentPolicy,
+      agentProviderPolicy,
+      groupPolicy,
+      sandboxToolPolicy,
+      subagentPolicy,
+    ]),
+    currentChannelId: options?.currentChannelId,
+    currentThreadTs: options?.currentThreadTs,
+    currentMessageId: options?.currentMessageId,
+    modelProvider: options?.modelProvider,
+    modelId: options?.modelId,
+    replyToMode: options?.replyToMode,
+    hasRepliedRef: options?.hasRepliedRef,
+    modelHasVision: options?.modelHasVision,
+    requireExplicitMessageTarget: options?.requireExplicitMessageTarget,
+    disableMessageTool: options?.disableMessageTool,
+    requesterAgentIdOverride: agentId,
+    requesterSenderId: options?.senderId,
+    senderIsOwner: options?.senderIsOwner,
+    sessionId: options?.sessionId,
+    onYield: options?.onYield,
+    allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
+  });
+  step("wrap-openclaw-tools");
+
   const tools: AnyAgentTool[] = [
     ...base,
     ...(sandboxRoot
@@ -581,59 +669,10 @@ export function createOpenClawCodingTools(options?: {
     execTool as unknown as AnyAgentTool,
     processTool as unknown as AnyAgentTool,
     // Channel docking: include channel-defined agent tools (login, etc.).
-    ...listChannelAgentTools({ cfg: options?.config }),
-    ...createOpenClawTools({
-      sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
-      allowHostBrowserControl: sandbox ? sandbox.browserAllowHostControl : true,
-      agentSessionKey: options?.sessionKey,
-      agentChannel: resolveGatewayMessageChannel(options?.messageProvider),
-      agentAccountId: options?.agentAccountId,
-      agentTo: options?.messageTo,
-      agentThreadId: options?.messageThreadId,
-      agentGroupId: options?.groupId ?? null,
-      agentGroupChannel: options?.groupChannel ?? null,
-      agentGroupSpace: options?.groupSpace ?? null,
-      agentMemberRoleIds: options?.memberRoleIds,
-      agentDir: options?.agentDir,
-      sandboxRoot,
-      sandboxContainerWorkdir: sandbox?.containerWorkdir,
-      sandboxFsBridge,
-      fsPolicy,
-      workspaceDir: workspaceRoot,
-      spawnWorkspaceDir: options?.spawnWorkspaceDir
-        ? resolveWorkspaceRoot(options.spawnWorkspaceDir)
-        : undefined,
-      sandboxed: !!sandbox,
-      config: options?.config,
-      pluginToolAllowlist: collectExplicitAllowlist([
-        profilePolicy,
-        providerProfilePolicy,
-        globalPolicy,
-        globalProviderPolicy,
-        agentPolicy,
-        agentProviderPolicy,
-        groupPolicy,
-        sandboxToolPolicy,
-        subagentPolicy,
-      ]),
-      currentChannelId: options?.currentChannelId,
-      currentThreadTs: options?.currentThreadTs,
-      currentMessageId: options?.currentMessageId,
-      modelProvider: options?.modelProvider,
-      modelId: options?.modelId,
-      replyToMode: options?.replyToMode,
-      hasRepliedRef: options?.hasRepliedRef,
-      modelHasVision: options?.modelHasVision,
-      requireExplicitMessageTarget: options?.requireExplicitMessageTarget,
-      disableMessageTool: options?.disableMessageTool,
-      requesterAgentIdOverride: agentId,
-      requesterSenderId: options?.senderId,
-      senderIsOwner: options?.senderIsOwner,
-      sessionId: options?.sessionId,
-      onYield: options?.onYield,
-      allowGatewaySubagentBinding: options?.allowGatewaySubagentBinding,
-    }),
+    ...channelAgentTools,
+    ...openClawTools,
   ];
+  step("wrap-toolset");
   const toolsForMemoryFlush =
     isMemoryFlushRun && memoryFlushWritePath
       ? tools.flatMap((tool) => {
@@ -656,6 +695,7 @@ export function createOpenClawCodingTools(options?: {
           return [tool];
         })
       : tools;
+  step("wrap-memflush");
   const toolsForMessageProvider = filterToolsByMessageProvider(
     toolsForMemoryFlush,
     options?.messageProvider,
@@ -671,6 +711,7 @@ export function createOpenClawCodingTools(options?: {
   // Security: treat unknown/undefined as unauthorized (opt-in, not opt-out)
   const senderIsOwner = options?.senderIsOwner === true;
   const toolsByAuthorization = applyOwnerOnlyToolPolicy(toolsForModelProvider, senderIsOwner);
+  step("wrap-provider-policy");
   const subagentFiltered = applyToolPolicyPipeline({
     tools: toolsByAuthorization,
     toolMeta: (tool) => getPluginToolMeta(tool),
@@ -697,6 +738,7 @@ export function createOpenClawCodingTools(options?: {
   // Always normalize tool JSON Schemas before handing them to pi-agent/pi-ai.
   // Without this, some providers (notably OpenAI) will reject root-level union schemas.
   // Provider-specific cleaning: Gemini needs constraint keywords stripped, but Anthropic expects them.
+  step("wrap-policy-pipeline");
   const normalized = subagentFiltered.map((tool) =>
     normalizeToolParameters(tool, {
       modelProvider: options?.modelProvider,
@@ -704,6 +746,7 @@ export function createOpenClawCodingTools(options?: {
       modelCompat: options?.modelCompat,
     }),
   );
+  step("wrap-normalize");
   const withHooks = normalized.map((tool) =>
     wrapToolWithBeforeToolCallHook(tool, {
       agentId,
@@ -714,12 +757,15 @@ export function createOpenClawCodingTools(options?: {
       loopDetection: resolveToolLoopDetectionConfig({ cfg: options?.config, agentId }),
     }),
   );
+  step("wrap-hooks");
   const withAbort = options?.abortSignal
     ? withHooks.map((tool) => wrapToolWithAbortSignal(tool, options.abortSignal))
     : withHooks;
   const withDeferredFollowupDescriptions = applyDeferredFollowupToolDescriptions(withAbort, {
     agentId,
   });
+
+  markSpan(options?.runId, "tools-wrap", Date.now() - wrapStartedAt);
 
   // NOTE: Keep canonical (lowercase) tool names here.
   // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names

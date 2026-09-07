@@ -32,6 +32,14 @@ const CHANNEL_RESTART_POLICY: BackoffPolicy = {
 };
 const MAX_RESTART_ATTEMPTS = 10;
 const CHANNEL_STOP_ABORT_TIMEOUT_MS = 5_000;
+/**
+ * Hard budget for the per-attempt account teardown hook.
+ *
+ * The crash / auto-restart chain must never wedge behind a plugin whose
+ * `stopAccount` fails to return, so the wait is capped and the restart
+ * continues after a warning rather than stalling the account forever.
+ */
+const CHANNEL_TEARDOWN_TIMEOUT_MS = 5_000;
 
 type SubsystemLogger = ReturnType<typeof createSubsystemLogger>;
 
@@ -40,6 +48,15 @@ type ChannelRuntimeStore = {
   starting: Map<string, Promise<void>>;
   tasks: Map<string, Promise<unknown>>;
   runtimes: Map<string, ChannelAccountSnapshot>;
+  /**
+   * Once-guarded teardown closure for the account's CURRENT attempt.
+   *
+   * Registered at task hand-off and dropped with the task. Both the crash /
+   * auto-restart chain and the manual `stopChannel` path resolve through this
+   * entry so the plugin teardown executes exactly once per attempt even when a
+   * manual stop races a clean exit.
+   */
+  teardowns: Map<string, () => Promise<void>>;
 };
 
 type HealthMonitorConfig = {
@@ -62,6 +79,7 @@ function createRuntimeStore(): ChannelRuntimeStore {
     starting: new Map(),
     tasks: new Map(),
     runtimes: new Map(),
+    teardowns: new Map(),
   };
 }
 
@@ -104,6 +122,36 @@ async function waitForChannelStopGracefully(task: Promise<unknown> | undefined, 
       resolve(true);
     };
     void task.then(resolveSettled, resolveSettled);
+  });
+}
+
+/**
+ * Runs `run()` under a hard time budget.
+ *
+ * Resolves `true` when `run()` settles inside `timeoutMs`, `false` when the
+ * budget expires first — in which case the pending work is abandoned and never
+ * awaited again. A rejection counts as "settled": callers own their error
+ * handling inside `run()`, and a throwing hook must not wedge the caller.
+ */
+async function runBounded(run: () => Promise<void>, timeoutMs: number): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(false);
+      }
+    }, timeoutMs);
+    timer.unref?.();
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve(true);
+    };
+    void Promise.resolve().then(run).then(finish, finish);
   });
 }
 
@@ -493,6 +541,57 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             lastError: null,
             reconnectAttempts: preserveRestartAttempts ? (restartAttempts.get(rKey) ?? 0) : 0,
           });
+          // FORK 2026-08-26: the crash / clean-exit path never ran the plugin's own
+          // account teardown — `gateway.stopAccount` was reachable ONLY from the
+          // manual `stopChannel`. Everything the previous attempt allocated
+          // out-of-process (for WhatsApp: the `whatsmeow-node` Go sidecar) stayed
+          // alive while attempt N+1 spawned a fresh one, so a long-running gateway
+          // accumulated one orphan child per retry (181 orphans / ~4 GB RSS measured
+          // over a single 5 h uptime). Teardown now runs on EVERY exit, exactly once
+          // per attempt, under a hard budget, and is awaited BEFORE the account is
+          // published as `running: false` and before the restart is scheduled — so
+          // attempt N+1 cannot spawn while attempt N's child is still up.
+          let teardownRun: Promise<void> | null = null;
+          const teardownAccount = (): Promise<void> => {
+            teardownRun ??= (async () => {
+              const stopAccountHook = plugin.gateway?.stopAccount;
+              if (!stopAccountHook) {
+                // Not a silent no-op: a channel that owns out-of-process work and
+                // ships no `stopAccount` cannot be reaped from here, and that gap
+                // must be readable in the journal rather than inferred later from
+                // a pile of orphaned pids.
+                log.debug?.(
+                  `[${id}] no gateway.stopAccount hook; manager cannot reap out-of-process children on exit`,
+                );
+                return;
+              }
+              const settled = await runBounded(async () => {
+                try {
+                  const teardownCfg = getRuntimeConfig();
+                  await stopAccountHook({
+                    cfg: teardownCfg,
+                    accountId: id,
+                    account: plugin.config.resolveAccount(teardownCfg, id),
+                    runtime: channelRuntimeEnvs[channelId],
+                    abortSignal: abort.signal,
+                    log,
+                    getStatus: () => getRuntime(channelId, id),
+                    setStatus: (next) => setRuntime(channelId, id, next),
+                  });
+                } catch (error) {
+                  log.error?.(`[${id}] channel teardown failed: ${formatErrorMessage(error)}`);
+                }
+              }, CHANNEL_TEARDOWN_TIMEOUT_MS);
+              if (!settled) {
+                log.warn?.(
+                  `[${id}] channel teardown exceeded ${CHANNEL_TEARDOWN_TIMEOUT_MS}ms; ` +
+                    "continuing restart (a child process may be orphaned)",
+                );
+              }
+            })();
+            return teardownRun;
+          };
+          const startAccountStartedAt = Date.now();
           const task = Promise.resolve().then(() =>
             measureStartup(`channels.${channelId}.start-account`, () =>
               startAccount({
@@ -514,8 +613,14 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                 return;
               }
               const message = "channel exited without an error";
+              const status = getRuntime(channelId, id);
+              const lifetimeMs = Date.now() - startAccountStartedAt;
               setRuntime(channelId, id, { accountId: id, lastError: message });
-              log.error?.(`[${id}] ${message}`);
+              log.error?.(
+                `[${id}] ${message} ` +
+                  `(lifetimeMs=${lifetimeMs}, running=${String(status.running)}, ` +
+                  `connected=${String(status.connected)}, lastError=${String(status.lastError)})`,
+              );
             })
             .catch((err) => {
               const message = formatErrorMessage(err);
@@ -524,6 +629,11 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
             })
             .finally(async () => {
               await cleanupTaskScopedApprovalRuntime("channel cleanup failed");
+              // Reap this attempt's out-of-process children BEFORE the account is
+              // published as stopped and before the restart continuation runs.
+              // Ordering is the whole point: it is what stops attempt N+1 from
+              // spawning on top of a still-live attempt N.
+              await teardownAccount();
               setRuntime(channelId, id, {
                 accountId: id,
                 running: false,
@@ -562,6 +672,9 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
                 if (store.tasks.get(id) === trackedPromise) {
                   store.tasks.delete(id);
                 }
+                if (store.teardowns.get(id) === teardownAccount) {
+                  store.teardowns.delete(id);
+                }
                 if (store.aborts.get(id) === abort) {
                   store.aborts.delete(id);
                 }
@@ -577,11 +690,15 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               if (store.tasks.get(id) === trackedPromise) {
                 store.tasks.delete(id);
               }
+              if (store.teardowns.get(id) === teardownAccount) {
+                store.teardowns.delete(id);
+              }
               if (store.aborts.get(id) === abort) {
                 store.aborts.delete(id);
               }
             });
           handedOffTask = true;
+          store.teardowns.set(id, teardownAccount);
           store.tasks.set(id, trackedPromise);
         } catch (error) {
           if (!handedOffTask) {
@@ -642,7 +759,15 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         manuallyStopped.add(restartKey(channelId, id));
         abort?.abort();
         const log = channelLogs[channelId];
-        if (plugin?.gateway?.stopAccount) {
+        // FORK 2026-08-26: a live attempt owns a once-guarded teardown closure that
+        // the crash path also drives. Route the manual stop through it so a manual
+        // stop racing a clean exit runs the plugin teardown exactly once instead of
+        // twice. Fall back to a direct call when no attempt is live (the account is
+        // already down, or was never started in this process).
+        const registeredTeardown = store.teardowns.get(id);
+        if (registeredTeardown) {
+          await registeredTeardown();
+        } else if (plugin?.gateway?.stopAccount) {
           const account = plugin.config.resolveAccount(cfg, id);
           await plugin.gateway.stopAccount({
             cfg,
@@ -673,6 +798,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
         }
         store.aborts.delete(id);
         store.tasks.delete(id);
+        store.teardowns.delete(id);
         setRuntime(channelId, id, {
           accountId: id,
           running: false,

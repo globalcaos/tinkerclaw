@@ -14,4 +14,4 @@
 export {
   deriveOverseerLoopBudget,
   type OverseerLoopSignals,
-} from "../../src/fork/overseer-budget.js";
+} from "openclaw/plugin-sdk/fork-overseer-budget";

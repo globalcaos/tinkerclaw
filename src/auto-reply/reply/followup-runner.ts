@@ -3,7 +3,6 @@ import {
   hasOutboundReplyContent,
   resolveSendableOutboundReplyParts,
 } from "openclaw/plugin-sdk/reply-payload";
-import { resolveRunModelFallbacksOverride } from "../../agents/agent-scope.js";
 import { resolveBootstrapWarningSignaturesSeen } from "../../agents/bootstrap-budget.js";
 import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
@@ -26,6 +25,7 @@ import { runPreflightCompactionIfNeeded } from "./agent-runner-memory.js";
 import {
   resolveQueuedReplyExecutionConfig,
   resolveQueuedReplyRuntimeConfig,
+  resolveModelFallbackOptions,
   resolveRunAuthProfile,
 } from "./agent-runner-utils.js";
 import { resolveFollowupDeliveryPayloads } from "./followup-delivery.js";
@@ -199,16 +199,8 @@ export function createFollowupRunner(params: {
       replyOperation.setPhase("running");
       try {
         const fallbackResult = await runWithModelFallback({
-          cfg: runtimeConfig,
-          provider: run.provider,
-          model: run.model,
+          ...resolveModelFallbackOptions(run, runtimeConfig),
           runId,
-          agentDir: run.agentDir,
-          fallbacksOverride: resolveRunModelFallbacksOverride({
-            cfg: runtimeConfig,
-            agentId: run.agentId,
-            sessionKey: run.sessionKey,
-          }),
           // FORK: Emit per-model fallback-error lifecycle events for Tinker UI
           onError: async ({ provider: fp, model: fm, error: err, attempt, total, nextModel }) => {
             const described = isFailoverError(err)

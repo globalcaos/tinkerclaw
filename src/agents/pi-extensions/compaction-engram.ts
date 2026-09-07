@@ -17,6 +17,8 @@ import { join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
+import { recordCompactionOutcome } from "../../infra/algorithm-metrics.js";
+import { declareInstrument, noteInstrumentFired } from "../../infra/instrument-liveness.js";
 import { createEventStore } from "../../memory/engram/event-store.js";
 import type { EventKind, MemoryEvent } from "../../memory/engram/event-types.js";
 import { createMetricsCollector } from "../../memory/engram/metrics.js";
@@ -70,6 +72,33 @@ function estimateTokens(text: string): number {
 }
 
 /**
+ * Session id for the metrics ledger. Deliberately total: this runs on the serving path, and
+ * telemetry must never be able to break the compaction it observes.
+ */
+function resolveSessionKey(ctx: {
+  sessionManager?: { getSessionId?: () => string };
+}): string | undefined {
+  try {
+    return ctx.sessionManager?.getSessionId?.();
+  } catch {
+    return undefined;
+  }
+}
+
+// FORK 2026-07-28 — LIVENESS + EFFECTIVENESS. This extension is the arm that actually runs under
+// the live `agents.defaults.compaction.mode = "engram"` config, which makes its numbers the ONLY
+// real data we have on compaction effectiveness. The compaction-safeguard hook next door was
+// fully implemented and entirely dead under that same config for weeks with every structural
+// check green. So: DECLARED here at registration, FIRED below at the two places where the
+// handler genuinely decides — the return that hands pi a summary, and the early decline.
+// Declaration is not liveness; keeping the two calls apart is the entire point.
+declareInstrument({
+  id: "compaction:engram-executor",
+  kind: "extension",
+  description: "engram pointer/marker compaction — the live compaction executor",
+});
+
+/**
  * Create the compaction engram extension factory.
  * Accepts the OpenClaw config to resolve feature flags at registration time.
  */
@@ -83,14 +112,39 @@ export default function compactionEngramExtension(
       const turnPrefixMessages = preparation.turnPrefixMessages ?? [];
       const allMessages = [...messagesToCompact, ...turnPrefixMessages];
 
+      // FORK 2026-07-28 — instrumentation state, resolved ABOVE the early return so the decline
+      // path can still say which arm was configured. `cfg` is closure-constant, so hoisting
+      // pointerMode here costs nothing and keeps a single owner for the flag.
+      const startedAtMs = Date.now();
+      const sessionKey = resolveSessionKey(ctx);
+      const pointerMode =
+        (cfg?.agents?.defaults?.compaction as Record<string, unknown> | undefined)?.pointerMode ===
+        true;
+      const configuredVariant = pointerMode ? "engram-pointer" : "engram-marker";
+
+      // Nothing to summarize means there is nothing to replace the dropped
+      // history with. Committing a compaction here would still honour
+      // firstKeptEntryId and silently discard everything before it, which
+      // reads to the user as "the conversation was wiped". Decline instead.
       if (allMessages.length === 0) {
-        return {
-          compaction: {
-            summary: "[No messages to compact]",
-            firstKeptEntryId: preparation.firstKeptEntryId,
-            tokensBefore: preparation.tokensBefore,
-          },
-        };
+        // FORK 2026-07-28 — a decline is NOT a non-event. Returning undefined hands compaction
+        // back to pi, which then makes the direct summarisation HTTP call that hangs ~9 minutes
+        // and is discarded — so the DECLINE RATE is itself the diagnostic, and an invisible
+        // decline is exactly the blindness this instrumentation exists to remove. The detail
+        // string is distinct on purpose: "fired but declined" must never read as "compacted".
+        noteInstrumentFired(
+          "compaction:engram-executor",
+          `declined/no-messages ${configuredVariant}`,
+        );
+        recordCompactionOutcome({
+          variant: configuredVariant,
+          outcome: "skipped",
+          tokensBefore: preparation.tokensBefore,
+          durationMs: Date.now() - startedAtMs,
+          sessionKey,
+          note: "declined: no messages to summarize; pi falls through to its own summarisation",
+        });
+        return undefined;
       }
 
       // 1. Persist all messages to ENGRAM event store
@@ -134,13 +188,14 @@ export default function compactionEngramExtension(
         }
       }
 
-      // 2. Choose compaction summary strategy based on feature flag
-      const pointerMode =
-        (cfg?.agents?.defaults?.compaction as Record<string, unknown> | undefined)?.pointerMode ===
-        true;
+      // 2. Choose compaction summary strategy based on feature flag (pointerMode resolved above)
       const ptrHandler = pointerMode ? getPointerCompactionRuntime(ctx.sessionManager) : null;
 
       let rendered: string;
+      // The variant is only KNOWN once this branch resolves: pointerMode can be on while the
+      // pointer runtime is absent, in which case the marker arm runs. Assigned in both branches
+      // so the ledger records the arm that actually executed, not the one that was configured.
+      let variant: "engram-pointer" | "engram-marker";
 
       if (pointerMode && ptrHandler) {
         // Pointer mode: build a manifest from the persisted events and store it
@@ -155,6 +210,7 @@ export default function compactionEngramExtension(
           metadata: { tags: ["pointer_compaction", "engram_compact"] },
         });
         rendered = renderManifest(manifest);
+        variant = "engram-pointer";
 
         metrics.record("compaction", "engram_pointer_compaction", 1, {
           eventsStored: events.length,
@@ -176,6 +232,7 @@ export default function compactionEngramExtension(
           tokenCount: totalTokens,
         });
         rendered = renderMarker(marker);
+        variant = "engram-marker";
 
         metrics.record("compaction", "engram_compaction", 1, {
           eventsStored: events.length,
@@ -212,6 +269,19 @@ export default function compactionEngramExtension(
             console.error("[ENGRAM][reflection] error:", err);
           });
       }
+
+      // FORK 2026-07-28 — the executor genuinely ran. Fire AFTER the strategy branch so `variant`
+      // names the arm that actually produced the summary, and record the outcome in the algorithm
+      // ledger. `tokensBefore` comes from pi, so it is third-party-reported — recordCompactionOutcome
+      // assigns that provenance itself and it must not be restated or overridden here.
+      noteInstrumentFired("compaction:engram-executor", `${variant} events=${events.length}`);
+      recordCompactionOutcome({
+        variant,
+        outcome: "fired",
+        tokensBefore: preparation.tokensBefore,
+        durationMs: Date.now() - startedAtMs,
+        sessionKey,
+      });
 
       return {
         compaction: {

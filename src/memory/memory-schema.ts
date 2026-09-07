@@ -102,6 +102,31 @@ export function ensureMemoryIndexSchema(params: {
   // Covering index so the hot-path "current" filter (validity_end IS NULL OR >now)
   // does not table-scan.
   params.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_validity ON chunks(validity_end);`);
+  // FACT-IDENTITY index (2026-09-03). The supersede-writer's hot SELECT
+  // (engram/supersede-writer.ts findSupersededChunkIds) pins source + path + start_line +
+  // end_line and then filters validity_end IS NULL. With only the single-column indexes
+  // above, the planner picks idx_chunks_source and effectively scans every row of that
+  // source — measured 56-66 ms per call against ~25.9k session rows, once PER CHUNK,
+  // ~2,800 chunks per session re-index. That is the bulk of the 130-180 s gateway
+  // main-thread freeze (eventLoopDelayMaxMs up to 212_700 ms) this index removes.
+  //
+  // COLUMN ORDER IS LOad-BEARING: the four equality columns come first so the seek uses
+  // all of them, validity_end last (IS NULL is usable as an equality constraint). The
+  // (source, path) prefix also serves the once-per-file prior-open probe in
+  // manager-embedding-ops.indexFile(), so one index serves both queries.
+  //
+  // ALTERNATIVE REJECTED: adding `model` to the index. It would cover one more conjunct of
+  // the supersede SELECT, but the four equality columns already narrow to a handful of
+  // rows, and every extra column is paid on every INSERT — the write path is exactly what
+  // is being unblocked here.
+  //
+  // Idempotent by IF NOT EXISTS, this file's existing idiom (lines 54, 88-91, 104, 113,
+  // 133-134), so it is a verified no-op on a store that already has it. It builds once, on
+  // the first ensureMemoryIndexSchema after deploy; on the live multi-GB store that is a
+  // one-time blocking cost at open.
+  params.db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_chunks_fact_identity ON chunks(source, path, start_line, end_line, validity_end);`,
+  );
 
   // Upgrade 6: Retrieve verified code by embedding. Each chunk carries a trust
   // dimension so retrieval can weight battle-tested code above unreviewed snippets.

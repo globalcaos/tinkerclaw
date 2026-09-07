@@ -1,54 +1,161 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-<head>
-  <title>Tinkerclaw Browser Relay</title>
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: system-ui, -apple-system, sans-serif; background: #1a1510; color: #e8e0d4; padding: 32px; max-width: 500px; margin: 0 auto; }
-    h1 { color: #c19a6b; font-size: 20px; margin: 0 0 8px 0; }
-    h1 span { font-size: 24px; }
-    .subtitle { color: #9a8e7a; font-size: 13px; margin-bottom: 24px; }
-    .card { padding: 16px; background: #2a2318; border-radius: 8px; border: 1px solid #4a3f2e; margin-bottom: 16px; }
-    .card h2 { font-size: 14px; color: #c19a6b; margin: 0 0 8px 0; }
-    label { display: block; margin-bottom: 6px; color: #9a8e7a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-    input { width: 100%; padding: 10px; background: #1a1510; border: 1px solid #4a3f2e; color: #e8e0d4; border-radius: 4px; font-family: monospace; font-size: 13px; }
-    input:focus { border-color: #c19a6b; outline: none; }
-    .btn { display: inline-block; padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 13px; transition: all 0.15s; }
-    .btn-primary { background: #c19a6b; color: #1a1510; }
-    .btn-primary:hover { background: #d4b07e; }
-    .btn-secondary { background: #4a3f2e; color: #c19a6b; }
-    .btn-secondary:hover { background: #5a4f3e; }
-    .actions { display: flex; gap: 8px; margin-top: 12px; }
-    .status { margin-top: 12px; padding: 10px; border-radius: 6px; font-size: 12px; display: none; }
-    .status.ok { display: block; background: rgba(107,142,35,0.15); color: #6b8e23; border: 1px solid rgba(107,142,35,0.3); }
-    .status.err { display: block; background: rgba(239,68,68,0.15); color: #fca5a5; border: 1px solid rgba(239,68,68,0.3); }
-    .status.info { display: block; background: rgba(193,154,107,0.15); color: #c19a6b; border: 1px solid rgba(193,154,107,0.3); }
-    .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-    .indicator.green { background: #6b8e23; }
-    .indicator.red { background: #ef4444; }
-    .indicator.yellow { background: #f59e0b; }
-  </style>
-</head>
-<body>
-  <h1><span>🧾</span> Tinkerclaw Browser Relay</h1>
-  <p class="subtitle">Share browser tabs with Jarvis</p>
+  <head>
+    <title>Tinkerclaw Browser Relay</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #1a1510;
+        color: #e8e0d4;
+        padding: 32px;
+        max-width: 500px;
+        margin: 0 auto;
+      }
+      h1 {
+        color: #c19a6b;
+        font-size: 20px;
+        margin: 0 0 8px 0;
+      }
+      h1 span {
+        font-size: 24px;
+      }
+      .subtitle {
+        color: #9a8e7a;
+        font-size: 13px;
+        margin-bottom: 24px;
+      }
+      .card {
+        padding: 16px;
+        background: #2a2318;
+        border-radius: 8px;
+        border: 1px solid #4a3f2e;
+        margin-bottom: 16px;
+      }
+      .card h2 {
+        font-size: 14px;
+        color: #c19a6b;
+        margin: 0 0 8px 0;
+      }
+      label {
+        display: block;
+        margin-bottom: 6px;
+        color: #9a8e7a;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      input {
+        width: 100%;
+        padding: 10px;
+        background: #1a1510;
+        border: 1px solid #4a3f2e;
+        color: #e8e0d4;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      input:focus {
+        border-color: #c19a6b;
+        outline: none;
+      }
+      .btn {
+        display: inline-block;
+        padding: 10px 24px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 13px;
+        transition: all 0.15s;
+      }
+      .btn-primary {
+        background: #c19a6b;
+        color: #1a1510;
+      }
+      .btn-primary:hover {
+        background: #d4b07e;
+      }
+      .btn-secondary {
+        background: #4a3f2e;
+        color: #c19a6b;
+      }
+      .btn-secondary:hover {
+        background: #5a4f3e;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .status {
+        margin-top: 12px;
+        padding: 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        display: none;
+      }
+      .status.ok {
+        display: block;
+        background: rgba(107, 142, 35, 0.15);
+        color: #6b8e23;
+        border: 1px solid rgba(107, 142, 35, 0.3);
+      }
+      .status.err {
+        display: block;
+        background: rgba(239, 68, 68, 0.15);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+      .status.info {
+        display: block;
+        background: rgba(193, 154, 107, 0.15);
+        color: #c19a6b;
+        border: 1px solid rgba(193, 154, 107, 0.3);
+      }
+      .indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+      }
+      .indicator.green {
+        background: #6b8e23;
+      }
+      .indicator.red {
+        background: #ef4444;
+      }
+      .indicator.yellow {
+        background: #f59e0b;
+      }
+    </style>
+  </head>
+  <body>
+    <h1><span>🧾</span> Tinkerclaw Browser Relay</h1>
+    <p class="subtitle">Share browser tabs with Jarvis</p>
 
-  <div class="card">
-    <h2>Connection Status</h2>
-    <div id="conn-status" class="status info">Checking...</div>
-  </div>
-
-  <div class="card">
-    <h2>Gateway Token</h2>
-    <label>Paste from ~/.openclaw/openclaw.json → gateway.auth.token</label>
-    <input type="text" id="token" placeholder="paste-your-shared-token-here" spellcheck="false">
-    <div class="actions">
-      <button class="btn btn-primary" id="save-btn">Save & Test</button>
-      <button class="btn btn-secondary" id="test-btn">Test Connection</button>
+    <div class="card">
+      <h2>Connection Status</h2>
+      <div id="conn-status" class="status info">Checking...</div>
     </div>
-    <div id="status"></div>
-  </div>
 
-  <script src="options.js"></script>
-</body>
+    <div class="card">
+      <h2>Gateway Token</h2>
+      <label>Paste from ~/.openclaw/openclaw.json → gateway.auth.token</label>
+      <input type="text" id="token" placeholder="paste-your-shared-token-here" spellcheck="false" />
+      <div class="actions">
+        <button class="btn btn-primary" id="save-btn">Save & Test</button>
+        <button class="btn btn-secondary" id="test-btn">Test Connection</button>
+      </div>
+      <div id="status"></div>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
 </html>

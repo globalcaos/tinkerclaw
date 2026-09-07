@@ -653,7 +653,7 @@ export function mountResponseTreemap(
     try {
       const sk = getSessionKey();
       const data = await reqFn("forensic.getResponseLive", { sessionKey: sk || undefined });
-      currentRunData = data;
+      _currentRunData = data;
       if (data.pricing) {
         outputPricePerMTok = data.pricing.output ?? 15;
       }

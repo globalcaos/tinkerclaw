@@ -26,6 +26,26 @@ export const bundledPluginDependentUnitTestFiles = [
   "src/infra/matrix-plugin-helper.test.ts",
   "src/plugin-sdk/facade-runtime.test.ts",
   "src/plugins/loader.test.ts",
+  // FORK 2026-07-29 — tinker-bridge specs, enrolled so they RUN.
+  // `extensions/**` is in unitTestAdditionalExcludePatterns, so these 10 files
+  // existed and passed only when named explicitly on the command line — never in a
+  // full-suite run. That left claude-cli worker-pool keying, dedup, steering and
+  // dead-resume with no gate at all, on the lane Jarvis actually serves. Listing
+  // them here lifts the extensions/** exclusion for exactly these paths (see
+  // vitest.bundled.config.ts, which filters out any exclude pattern that would
+  // match an included file). Verified 70/70 green before enrolling.
+  "extensions/tinkerclaw-tinker-bridge/__tests__/orchestration-disposition.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/inflight-worker-registry.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/stream.dedup.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/stream.fast-fail.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/stream.flatten.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/thinking-budget.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/transcript-path.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/worker-pool.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/worker.dead-resume.test.ts",
+  "extensions/tinkerclaw-tinker-bridge/src/worker.steer.test.ts",
+  // FORK 2026-08-19 — the NUL-argv quarantine (27 fatal spawn deaths on 2026-08-18).
+  "extensions/tinkerclaw-tinker-bridge/src/worker.nul-argv.test.ts",
 ];
 
 export const unitTestAdditionalExcludePatterns = [

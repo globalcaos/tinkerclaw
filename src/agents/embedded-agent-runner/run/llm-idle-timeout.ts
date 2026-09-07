@@ -26,6 +26,10 @@ export function resolveLlmIdleTimeoutMs(params?: {
   modelRequestTimeoutMs?: number;
 }): number {
   const clampTimeoutMs = (valueMs: number) => Math.min(Math.floor(valueMs), MAX_SAFE_TIMEOUT_MS);
+  // The default is not only the final fallback at the bottom of this function -- it is
+  // also the CEILING for *implicit* bounds, i.e. a run/agent timeout the operator set
+  // as a wall-clock budget and never intended as an idle watchdog. Raising the default
+  // therefore widens this ceiling too (FORK 2026-09-03: 120s -> 600s).
   const clampImplicitTimeoutMs = (valueMs: number) =>
     clampTimeoutMs(Math.min(valueMs, DEFAULT_LLM_IDLE_TIMEOUT_MS));
 
@@ -82,12 +86,14 @@ export function resolveLlmIdleTimeoutMs(params?: {
  * @param baseFn - The base stream function to wrap
  * @param timeoutMs - Idle timeout in milliseconds
  * @param onIdleTimeout - Optional callback invoked when idle timeout triggers
+ * @param onEvent - Optional callback invoked on every stream event (wherever the idle timer resets)
  * @returns A wrapped stream function with idle timeout detection
  */
 export function streamWithIdleTimeout(
   baseFn: StreamFn,
   timeoutMs: number,
   onIdleTimeout?: (error: Error) => void,
+  onEvent?: () => void,
 ): StreamFn {
   return (model, context, options) => {
     const maybeStream = baseFn(model, context, options);
@@ -129,10 +135,12 @@ export function streamWithIdleTimeout(
 
                 if (result.done) {
                   clearTimer();
+                  onEvent?.();
                   return result;
                 }
 
                 clearTimer();
+                onEvent?.();
                 return result;
               } catch (error) {
                 clearTimer();

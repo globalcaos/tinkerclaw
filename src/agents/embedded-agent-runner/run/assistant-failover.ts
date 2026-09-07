@@ -10,8 +10,12 @@ import {
 } from "../../embedded-agent-helpers.js";
 import { FailoverError, resolveFailoverStatus } from "../../failover-error.js";
 import {
+  isUserAbortFailoverReason,
   mergeRetryFailoverReason,
   resolveRunFailoverDecision,
+  toProviderFailoverReason,
+  USER_ABORT_FAILOVER_CODE,
+  USER_ABORT_SURFACE_MESSAGE,
   type AssistantFailoverDecision,
 } from "./failover-policy.js";
 
@@ -81,7 +85,10 @@ export async function handleAssistantFailover(params: {
   let decision = params.initialDecision;
   const sameModelIdleTimeoutRetry = (): AssistantFailoverOutcome => {
     params.warn(
-      `[llm-idle-timeout] ${sanitizeForLog(params.provider)}/${sanitizeForLog(params.modelId)} produced no reply before the idle watchdog; retrying same model`,
+      // FORK 2026-09-04: "produced no reply" was only ever true of the thinking-only stall
+      // this retry used to be restricted to. It now also covers a turn cut mid tool-loop
+      // after real output, so the message says what actually happened instead.
+      `[llm-idle-timeout] ${sanitizeForLog(params.provider)}/${sanitizeForLog(params.modelId)} stalled before the idle watchdog; retrying same model (the partial turn is already in the transcript)`,
     );
     return {
       action: "retry",
@@ -225,6 +232,28 @@ export async function handleAssistantFailover(params: {
     if (!params.externalAbort && params.idleTimedOut && params.allowSameModelIdleTimeoutRetry) {
       return sameModelIdleTimeoutRetry();
     }
+    // FORK 2026-09-03 (user Stop reported as a provider timeout): an external
+    // abort is a HUMAN pressing Stop, not a failed request. Surface a short
+    // neutral line — no warning emoji, no "timed out", no "Logs:" line — and
+    // stamp `code` so the reply layer can skip the failure bookkeeping.
+    //
+    // `reason` stays a real FailoverReason ("unknown"): FailoverError.reason
+    // feeds cooldown and HTTP-status mapping, so "aborted" must not leak into
+    // it. The abort signal travels on `code`, which nothing else consumes.
+    if (isUserAbortFailoverReason(decision.reason)) {
+      params.logAssistantFailoverDecision("surface_error");
+      return {
+        action: "throw",
+        overloadProfileRotations,
+        error: new FailoverError(USER_ABORT_SURFACE_MESSAGE, {
+          reason: "unknown",
+          code: USER_ABORT_FAILOVER_CODE,
+          provider: params.activeErrorContext.provider,
+          model: params.activeErrorContext.model,
+          profileId: params.lastProfileId,
+        }),
+      };
+    }
     // FORK: surface_error used to fall through to continue_normal, which swallowed
     // timeouts silently — the UI saw nothing when no profile rotation and no
     // fallback model were available. Now it throws a FailoverError mirroring the
@@ -251,8 +280,11 @@ export async function handleAssistantFailover(params: {
             : params.authFailure
               ? "LLM request unauthorized."
               : "LLM request failed.");
+    // `toProviderFailoverReason` strips the user-Stop reason defensively — the
+    // guard above already returned for it, so this can only ever see a real
+    // provider reason or null.
     const surfaceErrorReason: FailoverReason =
-      decision.reason ?? (params.timedOut ? "timeout" : "unknown");
+      toProviderFailoverReason(decision.reason) ?? (params.timedOut ? "timeout" : "unknown");
     const status =
       resolveFailoverStatus(surfaceErrorReason) ??
       (isTimeoutErrorMessage(message) ? 408 : undefined);

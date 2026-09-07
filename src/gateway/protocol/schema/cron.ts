@@ -1,12 +1,16 @@
 import { Type, type TSchema } from "typebox";
 import { NonEmptyString } from "./primitives.js";
 
-function cronAgentTurnPayloadSchema(params: { message: TSchema; toolsAllow: TSchema }) {
+function cronAgentTurnPayloadSchema(params: {
+  message: TSchema;
+  model: TSchema;
+  toolsAllow: TSchema;
+}) {
   return Type.Object(
     {
       kind: Type.Literal("agentTurn"),
       message: params.message,
-      model: Type.Optional(Type.String()),
+      model: Type.Optional(params.model),
       fallbacks: Type.Optional(Type.Array(Type.String())),
       thinking: Type.Optional(Type.String()),
       timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
@@ -135,11 +139,15 @@ export const CronPayloadSchema = Type.Union([
     {
       kind: Type.Literal("systemEvent"),
       text: NonEmptyString,
+      // A main-session systemEvent wakes a real agent turn, so it needs the same escape
+      // hatch as an agentTurn payload from the generic 10-minute job ceiling.
+      timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
     },
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({
     message: NonEmptyString,
+    model: Type.String(),
     toolsAllow: Type.Array(Type.String()),
   }),
 ]);
@@ -149,11 +157,13 @@ export const CronPayloadPatchSchema = Type.Union([
     {
       kind: Type.Literal("systemEvent"),
       text: Type.Optional(NonEmptyString),
+      timeoutSeconds: Type.Optional(Type.Number({ minimum: 0 })),
     },
     { additionalProperties: false },
   ),
   cronAgentTurnPayloadSchema({
     message: Type.Optional(NonEmptyString),
+    model: Type.Union([Type.String(), Type.Null()]),
     toolsAllow: Type.Union([Type.Array(Type.String()), Type.Null()]),
   }),
 ]);

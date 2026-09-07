@@ -165,6 +165,9 @@ export const PrefrontalKitOrchestrateParamsSchema = Type.Object(
     script: Type.String({ minLength: 1, maxLength: 100000 }),
     args: Type.Optional(Type.Unknown()),
     label: Type.Optional(Type.String({ maxLength: 120 })),
+    // Per-agent run ceiling. The 300s default starves real investigation/fix
+    // agents (2026-07-20: both dup-answer repair agents timed out at 300s).
+    runTimeoutSeconds: Type.Optional(Type.Integer({ minimum: 30, maximum: 7200 })),
   },
   { additionalProperties: false },
 );

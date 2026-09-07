@@ -7,6 +7,8 @@ import {
   parseOverseerVerdict,
   buildOverseerContext,
   maybeRunOverseer,
+  overseerSpawnTask,
+  isOverseerSpawnE2Big,
   overseerWorkingBound,
   OVERSEER_LOOP_HARD_CEILING,
   _resetOverseerState,
@@ -154,7 +156,7 @@ describe("maybeRunOverseer — the loop", () => {
     expect(getOverseerSession("lo")!.active).toBe(false);
   });
 
-  it("spawn error → reported, no injection, stays active for retry next turn", async () => {
+  it("spawn error → reported, no injection, consumes one budget slot, stays active for retry", async () => {
     activateOverseer("s", "t");
     const deps: OverseerDeps = {
       spawnOverseer: vi.fn().mockRejectedValue(new Error("boom")),
@@ -162,7 +164,35 @@ describe("maybeRunOverseer — the loop", () => {
     };
     const out = await maybeRunOverseer("s", "t", msgs, deps);
     expect(out.reason).toBe("spawn-error");
+    expect(out.iteration).toBe(1);
     expect(deps.injectPrompt).not.toHaveBeenCalled();
     expect(getOverseerSession("s")!.active).toBe(true);
+    expect(getOverseerSession("s")!.iteration).toBe(1);
+  });
+
+  it("E2BIG spawn → non-retryable, deactivates immediately, no injection", async () => {
+    activateOverseer("s", "t");
+    const deps: OverseerDeps = {
+      spawnOverseer: vi.fn().mockRejectedValue(new Error("spawn E2BIG")),
+      injectPrompt: vi.fn(),
+    };
+    const out = await maybeRunOverseer("s", "t", msgs, deps);
+    expect(out.reason).toBe("spawn-e2big");
+    expect(deps.injectPrompt).not.toHaveBeenCalled();
+    expect(getOverseerSession("s")!.active).toBe(false);
+  });
+});
+
+describe("overseerSpawnTask", () => {
+  it("keeps the spawn task small and points at the briefing file", () => {
+    const task = overseerSpawnTask("You are THE OVERSEER.", "/tmp/tinkerclaw-overseer/abc.md");
+    expect(task).toContain("/tmp/tinkerclaw-overseer/abc.md");
+    expect(task).toContain("Read that file in full");
+    expect(Buffer.byteLength(task, "utf8")).toBeLessThan(8_000);
+  });
+  it("isOverseerSpawnE2Big matches the kernel error and ignores others", () => {
+    expect(isOverseerSpawnE2Big(new Error("spawn E2BIG"))).toBe(true);
+    expect(isOverseerSpawnE2Big("Error: spawn E2BIG")).toBe(true);
+    expect(isOverseerSpawnE2Big(new Error("boom"))).toBe(false);
   });
 });

@@ -33,9 +33,16 @@ Before reading the whole paper, decide whether it even needs revising. Locate th
 
 - **actionable** — concrete pending items NOT yet reflected in the latest version → proceed to Step 1.
 - **seed-only** — placeholder text, e.g. "none logged from a formal review pass yet" → STOP, report `skipped: no actionable notes`.
-- **cleared** — notes exist but the latest version already incorporates them → STOP, report `skipped: already addressed`.
+- **cleared** — notes exist but the latest version already incorporates them →
+  do not revise the manuscript. If `improvement_notes.md` still contains the
+  incorporated entries, archive it and replace it with the Step-7 cleared stub
+  naming the existing version; then report `skipped: already addressed`.
 
 Run solo, this prevents wasting a deep pass on a paper with nothing pending. In the batch pipeline (`revise-publish-batch`) this gate is the fan-out filter — only `actionable` papers enter revision.
+
+Normalizing a stale notes file for a `cleared` paper is housekeeping, not a new
+paper revision. It prevents the next nonblank-file check from reopening work that
+the manuscript already contains.
 
 ### 1. Full Read
 
@@ -59,6 +66,7 @@ First pick the **genuinely latest** version to revise: it is NOT always the high
 Evaluate the architecture:
 
 - Does the abstract accurately reflect the content?
+- Does the abstract work as a one-page doorway rather than a miniature paper? Target 300–450 words in 3–5 visibly separated paragraphs: the problem, what the paper does, how it was tested or reasoned about, and the outcome. Use plain vocabulary a non-specialist can follow; explain necessary technical terms in the sentence where they appear. Remove section-number tours, revision history, and long keyword inventories. Date claims that can go stale ("using information available in July 2026"). If PDF is the deliverable, render and inspect the abstract page—successful compilation does not prove readable fit.
 - Is the introduction hook strong enough?
 - Do sections follow a logical progression?
 - Are there sections that should be merged, split, or reordered?

@@ -38,7 +38,7 @@ const NUDGE_PATH = join(COGNITIVE_DIR, "personality-nudge.json");
 const TOTAL_RECALL_STATE_PATH = join(COGNITIVE_DIR, "total-recall.json");
 const OBSERVATION_LOG_PATH = join(CORTEX_LOG_DIR, "observations.jsonl");
 const SYNC_SCORE_LOG_PATH = join(CORTEX_LOG_DIR, "sync-score-log.jsonl");
-const DEFAULT_SOUL_PATH = join(OPENCLAW_DIR, "SOUL.md");
+const DEFAULT_SOUL_PATH = join(OPENCLAW_DIR, "workspace", "SOUL.md");
 
 // ---------------------------------------------------------------------------
 // Helpers

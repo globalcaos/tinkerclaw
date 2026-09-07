@@ -1107,6 +1107,7 @@ Current builds no longer include the TCP bridge. Nodes connect over the Gateway 
   cron: {
     enabled: true,
     maxConcurrentRuns: 2, // cron dispatch + isolated cron agent-turn execution
+    defaultModel: "openai/gpt-5.4", // isolated jobs inherit this unless payload.model is set
     webhook: "https://example.invalid/legacy", // deprecated fallback for stored notify:true jobs
     webhookToken: "replace-with-dedicated-token", // optional bearer token for outbound webhook auth
     sessionRetention: "24h", // duration string or false
@@ -1118,6 +1119,7 @@ Current builds no longer include the TCP bridge. Nodes connect over the Gateway 
 }
 ```
 
+- `defaultModel`: default model for isolated cron agent turns. Must resolve through the configured model catalog and `agents.defaults.models` allowlist. A job's `payload.model` override always wins.
 - `sessionRetention`: how long to keep completed isolated cron run sessions before pruning from `sessions.json`. Also controls cleanup of archived deleted cron transcripts. Default: `24h`; set `false` to disable.
 - `runLog.maxBytes`: max size per run log file (`cron/runs/<jobId>.jsonl`) before pruning. Default: `2_000_000` bytes.
 - `runLog.keepLines`: newest lines retained when run-log pruning is triggered. Default: `2000`.

@@ -134,8 +134,8 @@ function getOpenClawDir(): string {
 
 export function loadPersonaFromFiles(options: CortexRuntimeOptions): PersonaState {
   const openclawDir = getOpenClawDir();
-  const soulPath = options.soulPath ?? join(openclawDir, "SOUL.md");
-  const identityPath = options.identityPath ?? join(openclawDir, "IDENTITY.md");
+  const soulPath = options.soulPath ?? join(openclawDir, "workspace", "SOUL.md");
+  const identityPath = options.identityPath ?? join(openclawDir, "workspace", "IDENTITY.md");
   const personaJsonPath = join(openclawDir, "persona.json");
 
   // persona.json takes priority -- already structured and validated

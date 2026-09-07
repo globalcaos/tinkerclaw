@@ -495,10 +495,200 @@ describe("readSessionMessages", () => {
       timestamp?: number;
     };
     expect(marker.role).toBe("system");
-    expect(marker.content?.[0]?.text).toBe("Compaction");
+    // FORK 2026-07-28: the marker SURFACES the compaction summary when the entry carries one,
+    // falling back to the literal "Compaction" only when it does not (session-utils.fs.ts:157
+    // and :209, `summary?.trim() || "Compaction"`, which also store it on __openclaw.summary).
+    // This expectation still asserted the old always-literal behaviour and so failed against the
+    // fixture's own `summary: "Compacted history"`. Both branches are now covered — see the
+    // sibling case below — because pinning only one of them is how the stale half survived.
+    expect(marker.content?.[0]?.text).toBe("Compacted history");
     expect(marker.__openclaw?.kind).toBe("compaction");
     expect(marker.__openclaw?.id).toBe("comp-1");
     expect(typeof marker.timestamp).toBe("number");
+  });
+
+  // FORK 2026-09-07 (the user: "I clicked compact ... nothing seem to have happened") — an
+  // ENGRAM-mode compaction writes a POINTER MANIFEST, not an LLM summary, and its record has a
+  // shape neither branch of this mapper read: `details.tokensEvicted` carries the saving, and
+  // there is NO `tokensAfter` at all. The chat banner needs before+after to draw "x → y", so it
+  // fell through to printing `tokensBefore` on its own — and `tokensBefore` is NOT this session's
+  // size. The fixture below is the verbatim record from the live incident: a session whose
+  // conversation was 175,850 tokens produced `tokensBefore: 7855029` (a store-wide running
+  // total), so the banner would have announced "7855k tok compacted" for a compaction that freed
+  // 128,260. Pin the real counter through BOTH mapper branches — flat and tree — because the file
+  // duplicates the block and fixing one is how half a bug survives.
+  const ENGRAM_COMPACTION_RECORD = {
+    type: "compaction",
+    id: "comp-engram",
+    timestamp: "2026-09-07T08:15:31.465Z",
+    summary:
+      "[Pointer manifest: events 01M1XEZKKR0000RM..01M1XEZKM60001T6 (48 events, ~128260 tokens). Use recall(query) to retrieve.]",
+    firstKeptEntryId: "comp-engram",
+    tokensBefore: 7855029,
+    details: { engramEventsStored: 48, tokensEvicted: 128260 },
+    fromHook: true,
+  } as const;
+
+  test("surfaces details.tokensEvicted as evictedTokens on the compaction marker (flat transcript)", () => {
+    const sessionId = "test-session-compaction-engram-flat";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({ message: { role: "user", content: "Hello" } }),
+      JSON.stringify(ENGRAM_COMPACTION_RECORD),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    const marker = out.find(
+      (m) => (m as { __openclaw?: { kind?: string } }).__openclaw?.kind === "compaction",
+    ) as { __openclaw?: { evictedTokens?: number; tokensBefore?: number; tokensAfter?: number } };
+    expect(marker).toBeDefined();
+    expect(marker.__openclaw?.evictedTokens).toBe(128260);
+    // The misleading pair is still passed through unchanged — the renderer decides which to
+    // prefer, and it can only do that if it can see both.
+    expect(marker.__openclaw?.tokensBefore).toBe(7855029);
+    expect(marker.__openclaw?.tokensAfter).toBeUndefined();
+  });
+
+  // FORK 2026-09-07 (the user: "I can see a message like it was me prompting it but with some
+  // strange html code") — OpenClaw injects runtime events (a finished subagent, a cron result)
+  // into the conversation as a role:"user" message wrapped in
+  // <<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>> … <<<END_OPENCLAW_INTERNAL_CONTEXT>>>. The LIVE stream
+  // hides it — live-chat-projector.ts:53 calls stripInternalRuntimeContext — but this reader,
+  // which serves chat.history, never did. So the block was invisible while it happened and
+  // reappeared, wearing the user's own bubble, the moment the tab was reloaded or switched to.
+  // 3,249 such entries were sitting in 273 transcripts when this was found.
+  const INTERNAL_CONTEXT_BLOCK = [
+    "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
+    "OpenClaw runtime context (internal):",
+    "This context is runtime-generated, not user-authored. Keep internal details private.",
+    "",
+    "[Internal task completion event]",
+    "source: subagent",
+    "task: saica-video-audit",
+    "status: completed successfully",
+    "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
+  ].join("\n");
+
+  function markerTexts(messages: unknown[]): string[] {
+    return messages.map((m) => {
+      const msg = m as { content?: unknown };
+      const c = msg.content;
+      if (typeof c === "string") {
+        return c;
+      }
+      if (Array.isArray(c)) {
+        return c.map((b) => (b as { text?: string })?.text ?? "").join("\n");
+      }
+      return "";
+    });
+  }
+
+  test("chat.history strips the internal runtime-context envelope the live stream already hides", () => {
+    const sessionId = "test-session-internal-context";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({ message: { role: "user", content: "what is the plan?" } }),
+      // A message that is ONLY the envelope: the user never wrote it, so it must not survive
+      // as an empty bubble either — it has to disappear entirely.
+      JSON.stringify({ message: { role: "user", content: INTERNAL_CONTEXT_BLOCK } }),
+      JSON.stringify({ message: { role: "assistant", content: "here it is" } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    const texts = markerTexts(out);
+    expect(texts.join("\n")).not.toContain("BEGIN_OPENCLAW_INTERNAL_CONTEXT");
+    expect(texts.join("\n")).not.toContain("saica-video-audit");
+    // The real conversation is untouched.
+    expect(texts).toContain("what is the plan?");
+    expect(texts).toContain("here it is");
+    expect(out).toHaveLength(2);
+  });
+
+  test("keeps the user's own words when the envelope is only appended to them", () => {
+    const sessionId = "test-session-internal-context-mixed";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `check the cameras\n\n${INTERNAL_CONTEXT_BLOCK}` }],
+        },
+      }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    expect(out).toHaveLength(1);
+    const text = markerTexts(out)[0] ?? "";
+    expect(text).toContain("check the cameras");
+    expect(text).not.toContain("BEGIN_OPENCLAW_INTERNAL_CONTEXT");
+  });
+
+  test("surfaces details.tokensEvicted as evictedTokens on the compaction marker (tree transcript)", () => {
+    const sessionId = "test-session-compaction-engram-tree";
+    const sessionFile = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      {
+        type: "session",
+        version: 3,
+        id: sessionId,
+        cwd: tmpDir,
+        timestamp: "2026-09-07T08:00:00.000Z",
+      },
+      {
+        type: "message",
+        id: "ask",
+        parentId: null,
+        timestamp: "2026-09-07T08:00:01.000Z",
+        message: { role: "user", content: "Hello", timestamp: 1 },
+      },
+      { ...ENGRAM_COMPACTION_RECORD, parentId: "ask" },
+    ];
+    fs.writeFileSync(sessionFile, lines.map((line) => JSON.stringify(line)).join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath, sessionFile);
+    const marker = out.find(
+      (m) => (m as { __openclaw?: { kind?: string } }).__openclaw?.kind === "compaction",
+    ) as { __openclaw?: { evictedTokens?: number } } | undefined;
+    expect(marker).toBeDefined();
+    expect(marker?.__openclaw?.evictedTokens).toBe(128260);
+  });
+
+  // FORK 2026-07-28 — the fallback half of the branch above. A compaction entry with no summary
+  // (or a whitespace-only one) must still render a readable marker rather than an empty bubble.
+  test("falls back to the literal 'Compaction' when the entry carries no summary", () => {
+    const sessionId = "test-session-compaction-nosummary";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({ message: { role: "user", content: "Hello" } }),
+      JSON.stringify({
+        type: "compaction",
+        id: "comp-2",
+        timestamp: "2026-02-07T00:00:00.000Z",
+        summary: "   ",
+        firstKeptEntryId: "x",
+        tokensBefore: 123,
+      }),
+      JSON.stringify({ message: { role: "assistant", content: "World" } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    const marker = out[1] as {
+      role: string;
+      content?: Array<{ text?: string }>;
+      __openclaw?: { kind?: string; summary?: string };
+    };
+    expect(marker.role).toBe("system");
+    expect(marker.content?.[0]?.text).toBe("Compaction");
+    // A blank summary must not be stored as if it were real content.
+    expect(marker.__openclaw?.summary).toBeUndefined();
   });
 
   test("reads only the active branch when transcript rewrites abandon older entries", () => {

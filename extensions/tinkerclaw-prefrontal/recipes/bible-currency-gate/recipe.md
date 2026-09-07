@@ -60,9 +60,12 @@ Keep the project's design docs (`{{design_docs_dir}}`) current with what the tas
 
 **Done when:** every changed fact is reflected in the ONE bible file that owns it.
 
+- A **new design principle, feature, or requirement** → annotate the owning optic in this same task. The architect does not have to ask (design-principles #21, ORCA `DOC_REQUIREMENT`). A chat-visible feature with only a bug-log aside is unfinished.
 - A bug fix → append a tagged entry to `bug-log.md` (root-cause line required).
 - A structural/behavioral fact → update the OWNING optic per `INDEX.md` (single-owner-per-fact) AND add/adjust an executable `verify:` block so the new behavior is gated.
 - A decision / intent / don't-regress → a `bible.md` §sub-letter next to what it supersedes.
+- **Old entries this change makes wrong or incomplete → update them now.** A stale optic is worse than a missing one. This is a duty, not an also-consider.
+- **Code vs prompt:** if the change is user-visible behavior, record which you chose (framework vs md prompt) and why (design-principles #22). Code buys consistency, prompt buys plasticity; prefer code whenever possible. The bible entry is the WANT even if RUN is later dead (#23).
 - Judgment-edit only: write the correct fact in the correct place. NEVER auto-dump a changelog into the bible.
 
 ### 4. Run the invariants gate
@@ -85,3 +88,4 @@ Run `{{invariants_cmd}}` from `{{repo_root}}`. Fix any verify block your change 
 ## Failures Overcome
 
 - 2026-06-19: a chat-rendering fix changed the §5.8 grouping behavior, but the owning optic (`tinker-ui.md`) still described the old position-only collapse — drift caught only on review. This gate makes the bible update a REQUIRED completion step of any code-changing BROCA task.
+- 2026-08-28 / 2026-09-01: a chat-visible recipe notice shipped as a bug-log aside; the skill line never made the bible; the architect had to ask where the spec was. ORCA's `DOC_REQUIREMENT` treated stale-entry updates as "also consider". Widened to a duty (annotate new principles/features/requirements; update old entries in the same run) and added `MECHANISM_REQUIREMENT` — programmatic rules beat prompting for chat consistency. design-principles #21/#22.

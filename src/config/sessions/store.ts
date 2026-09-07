@@ -18,6 +18,10 @@ import { getFileStatSnapshot } from "../cache-utils.js";
 import { enforceSessionDiskBudget, type SessionDiskBudgetSweepResult } from "./disk-budget.js";
 import { deriveSessionMetaPatch } from "./metadata.js";
 import {
+  externalizeSessionStoreSkillsSnapshots,
+  hydrateSessionStoreSkillsSnapshots,
+} from "./skills-snapshot-store.js";
+import {
   dropSessionStoreObjectCache,
   getSerializedSessionStore,
   isSessionStoreCacheEnabled,
@@ -25,7 +29,11 @@ import {
   writeSessionStoreCache,
 } from "./store-cache.js";
 import { normalizeStoreSessionKey, resolveSessionStoreEntry } from "./store-entry.js";
-import { loadSessionStore, normalizeSessionStore } from "./store-load.js";
+import {
+  type LoadSessionStoreOptions,
+  loadSessionStore as loadSessionStoreRaw,
+  normalizeSessionStore,
+} from "./store-load.js";
 import {
   clearSessionStoreCacheForTest,
   drainSessionStoreLockQueuesForTest,
@@ -54,7 +62,6 @@ export {
   drainSessionStoreLockQueuesForTest,
   getSessionStoreLockQueueSizeForTest,
 } from "./store-lock-state.js";
-export { loadSessionStore } from "./store-load.js";
 export { normalizeStoreSessionKey, resolveSessionStoreEntry } from "./store-entry.js";
 
 const log = createSubsystemLogger("sessions/store");
@@ -100,6 +107,32 @@ export async function withSessionStoreLockForTest<T>(
   opts: SessionStoreLockOptions = {},
 ): Promise<T> {
   return await withSessionStoreLock(storePath, fn, opts);
+}
+
+/**
+ * FORK 2026-09-03 — hydrating loader (replaces the former pass-through re-export
+ * of `store-load.js`).
+ *
+ * `store-load.ts` returns sessions.json exactly as persisted, and skills
+ * snapshots are persisted as content-addressed refs (see
+ * skills-snapshot-store.ts). Every reader that comes through the session store
+ * must therefore get `skillsSnapshot.prompt` / `.resolvedSkills` back as plain
+ * values. Hydration is idempotent and an identity no-op for legacy inline
+ * entries, and it stays on even when externalisation is disabled so a rollback
+ * never strands data written by an earlier run.
+ *
+ * NOTE: modules that import `loadSessionStore` from `./store-load.js` DIRECTLY
+ * bypass this wrapper — that is why externalisation is still opt-in. See
+ * `isSkillsSnapshotExternalizationEnabled`.
+ */
+export function loadSessionStore(
+  storePath: string,
+  opts: LoadSessionStoreOptions = {},
+): Record<string, SessionEntry> {
+  return hydrateSessionStoreSkillsSnapshots({
+    storePath,
+    store: loadSessionStoreRaw(storePath, opts),
+  });
 }
 
 export function readSessionUpdatedAt(params: {
@@ -382,7 +415,13 @@ async function saveSessionStoreUnlocked(
   }
 
   await fs.promises.mkdir(path.dirname(storePath), { recursive: true });
-  const json = JSON.stringify(store, null, 2);
+  // FORK 2026-09-03 — externalise skills snapshots to content-addressed sidecars
+  // before serialising: 7.02 MB of a 10.32 MB sessions.json was duplicated
+  // snapshot text, and the whole file is rewritten under the lock on every
+  // update. `store` itself stays hydrated, so the in-memory object cache and
+  // every live reader are unaffected — only the bytes on disk shrink.
+  const persisted = await externalizeSessionStoreSkillsSnapshots({ storePath, store });
+  const json = JSON.stringify(persisted, null, 2);
   if (getSerializedSessionStore(storePath) === json) {
     updateSessionStoreWriteCaches({ storePath, store, serialized: json });
     return;

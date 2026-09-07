@@ -45,15 +45,15 @@ uvicorn api:app --port 8765
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/status` | GET | Overall budget status (for agent) |
-| `/budgets` | GET | All budget configurations |
-| `/budgets` | POST | Set/update a budget |
-| `/usage` | POST | Record a usage event |
-| `/manus/task` | POST | Record Manus task |
-| `/summary/monthly` | GET | Monthly usage summary |
-| `/summary/daily/{provider}` | GET | Daily breakdown |
+| Endpoint                    | Method | Description                       |
+| --------------------------- | ------ | --------------------------------- |
+| `/status`                   | GET    | Overall budget status (for agent) |
+| `/budgets`                  | GET    | All budget configurations         |
+| `/budgets`                  | POST   | Set/update a budget               |
+| `/usage`                    | POST   | Record a usage event              |
+| `/manus/task`               | POST   | Record Manus task                 |
+| `/summary/monthly`          | GET    | Monthly usage summary             |
+| `/summary/daily/{provider}` | GET    | Daily breakdown                   |
 
 ## Configuration
 
@@ -129,6 +129,7 @@ curl http://localhost:8765/status
 ## Independence from OpenClaw
 
 This service is **completely standalone**:
+
 - Own codebase in `~/src/budget-collector/`
 - Own SQLite database
 - Own systemd service

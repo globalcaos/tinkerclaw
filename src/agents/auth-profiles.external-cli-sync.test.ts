@@ -267,7 +267,34 @@ describe("external cli oauth resolution", () => {
     ]);
   });
 
-  it("keeps any existing default codex oauth over Codex CLI bootstrap credentials", () => {
+  it("keeps usable default codex oauth over Codex CLI bootstrap credentials", () => {
+    mocks.readCodexCliCredentialsCached.mockReturnValue(
+      makeOAuthCredential({
+        provider: "openai-codex",
+        access: "codex-cli-fresh-access",
+        refresh: "codex-cli-fresh-refresh",
+        expires: Date.now() + 5 * 24 * 60 * 60_000,
+        accountId: "acct-codex",
+      }),
+    );
+
+    const profiles = resolveExternalCliAuthProfiles(
+      makeStore(
+        OPENAI_CODEX_DEFAULT_PROFILE_ID,
+        makeOAuthCredential({
+          provider: "openai-codex",
+          access: "local-live-access",
+          refresh: "local-canonical-refresh",
+          expires: Date.now() + 10 * 60_000,
+          accountId: "acct-codex",
+        }),
+      ),
+    );
+
+    expect(profiles).toEqual([]);
+  });
+
+  it("replaces expired default codex oauth with Codex CLI credentials", () => {
     mocks.readCodexCliCredentialsCached.mockReturnValue(
       makeOAuthCredential({
         provider: "openai-codex",
@@ -291,7 +318,53 @@ describe("external cli oauth resolution", () => {
       ),
     );
 
-    expect(profiles).toEqual([]);
+    expect(profiles).toEqual([
+      {
+        profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
+        credential: expect.objectContaining({
+          provider: "openai-codex",
+          access: "codex-cli-fresh-access",
+          refresh: "codex-cli-fresh-refresh",
+          accountId: "acct-codex",
+        }),
+      },
+    ]);
+  });
+
+  it("replaces expired default codex oauth even when Codex CLI account id changed", () => {
+    mocks.readCodexCliCredentialsCached.mockReturnValue(
+      makeOAuthCredential({
+        provider: "openai-codex",
+        access: "codex-cli-plus-access",
+        refresh: "codex-cli-plus-refresh",
+        expires: Date.now() + 5 * 24 * 60 * 60_000,
+        accountId: "acct-plus",
+      }),
+    );
+
+    const profiles = resolveExternalCliAuthProfiles(
+      makeStore(
+        OPENAI_CODEX_DEFAULT_PROFILE_ID,
+        makeOAuthCredential({
+          provider: "openai-codex",
+          access: "local-team-access",
+          refresh: "local-team-refresh",
+          expires: Date.now() - 5_000,
+          accountId: "acct-team",
+        }),
+      ),
+    );
+
+    expect(profiles).toEqual([
+      {
+        profileId: OPENAI_CODEX_DEFAULT_PROFILE_ID,
+        credential: expect.objectContaining({
+          provider: "openai-codex",
+          access: "codex-cli-plus-access",
+          accountId: "acct-plus",
+        }),
+      },
+    ]);
   });
 
   it("returns null when the profile id/provider do not map to the same external source", () => {

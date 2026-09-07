@@ -6,6 +6,7 @@ import {
   encodeProjectDir,
   isTranscriptOversized,
   resolveTranscriptPath,
+  transcriptExists,
 } from "./transcript-path.js";
 
 describe("encodeProjectDir", () => {
@@ -66,5 +67,39 @@ describe("isTranscriptOversized", () => {
 
   it("returns false (fail-open) for a missing file", () => {
     expect(isTranscriptOversized(path.join(tmpDir, "nope.jsonl"), 1)).toBe(false);
+  });
+});
+
+describe("transcriptExists (dead-resume guard)", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tp-exists-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns true for a present transcript", () => {
+    const f = path.join(tmpDir, "live.jsonl");
+    fs.writeFileSync(f, "{}\n");
+    expect(transcriptExists(f)).toBe(true);
+  });
+
+  it("returns true for an empty-but-present transcript", () => {
+    const f = path.join(tmpDir, "empty.jsonl");
+    fs.writeFileSync(f, "");
+    expect(transcriptExists(f)).toBe(true);
+  });
+
+  // The live wedge: `claude --resume <id>` on a deleted transcript exits 1 with
+  // "No conversation found with session ID" and mutes the brain permanently.
+  it("returns false for a missing transcript (fail-fresh, NOT fail-open)", () => {
+    expect(transcriptExists(path.join(tmpDir, "deleted.jsonl"))).toBe(false);
+  });
+
+  it("returns false for a directory standing where the transcript should be", () => {
+    const d = path.join(tmpDir, "weird.jsonl");
+    fs.mkdirSync(d);
+    expect(transcriptExists(d)).toBe(false);
   });
 });

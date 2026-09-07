@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import { SessionManager, type SessionEntry } from "@mariozechner/pi-coding-agent";
+import {
+  hasInternalRuntimeContext,
+  stripInternalRuntimeContext,
+} from "../agents/internal-runtime-context.js";
 import { deriveSessionTotalTokens, hasNonzeroUsage, normalizeUsage } from "../agents/usage.js";
 import { jsonUtf8Bytes } from "../infra/json-utf8-bytes.js";
 import { hasInterSessionUserProvenance } from "../sessions/input-provenance.js";
@@ -91,6 +95,93 @@ export function attachOpenClawTranscriptMeta(
   };
 }
 
+/**
+ * FORK 2026-09-07 — the ONLY trustworthy saving on an engram-mode compaction record.
+ *
+ * A pointer-manifest compaction writes `{ summary, tokensBefore, details:{ tokensEvicted } }` and
+ * NO `tokensAfter`, so the chat banner's `tokensBefore → tokensAfter` pair never forms and it
+ * falls back to printing `tokensBefore` alone. That number is not this session's size: measured
+ * live, a session whose conversation was 175,850 tokens produced `tokensBefore: 7,855,029` (a
+ * store-wide running total), so the banner read "7855k tok compacted" for a compaction that
+ * actually freed 128,260. Surface the explicit counter and let the renderer prefer it.
+ */
+function readEvictedTokens(entry: { details?: unknown }): number | undefined {
+  const details = entry.details;
+  if (!details || typeof details !== "object") {
+    return undefined;
+  }
+  const evicted = (details as { tokensEvicted?: unknown }).tokensEvicted;
+  return typeof evicted === "number" && Number.isFinite(evicted) && evicted > 0
+    ? evicted
+    : undefined;
+}
+
+/**
+ * FORK 2026-09-07 (the user: "I can see a message like it was me prompting it but with some strange
+ * html code") — hide the internal runtime-context envelope on the HISTORY path too.
+ *
+ * OpenClaw injects runtime events (a finished subagent, a cron result) into the conversation as a
+ * role:"user" message wrapped in `<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>> … <<<END…>>>`. That is how
+ * the runtime talks to the agent, which is why it wears the USER's role — and therefore the user's
+ * own bubble. The live stream already hides it (live-chat-projector.ts calls
+ * stripInternalRuntimeContext on every assistant event), but this reader — which serves
+ * `chat.history` — never did. Net effect: invisible while it happened, and back on screen as
+ * "something you apparently typed" the moment the tab was reloaded or switched to. 3,249 such
+ * entries were sitting in 273 transcripts when this was found.
+ *
+ * Returns null when nothing survives, so a pure-envelope message disappears instead of leaving an
+ * empty bubble. Non-text blocks (tool_use, images) are preserved and keep a message alive.
+ */
+function stripRuntimeContextFromMessage(message: unknown): unknown | null {
+  if (!message || typeof message !== "object") {
+    return message;
+  }
+  const content = (message as { content?: unknown }).content;
+
+  if (typeof content === "string") {
+    if (!hasInternalRuntimeContext(content)) {
+      return message;
+    }
+    const stripped = stripInternalRuntimeContext(content);
+    return stripped.trim() ? { ...(message as object), content: stripped } : null;
+  }
+
+  if (!Array.isArray(content)) {
+    return message;
+  }
+  if (
+    !content.some(
+      (block) =>
+        typeof (block as { text?: unknown })?.text === "string" &&
+        hasInternalRuntimeContext((block as { text: string }).text),
+    )
+  ) {
+    return message;
+  }
+
+  let sawOtherBlock = false;
+  let sawText = false;
+  const nextContent: unknown[] = [];
+  for (const block of content) {
+    const text = (block as { text?: unknown })?.text;
+    if (typeof text !== "string") {
+      sawOtherBlock = true;
+      nextContent.push(block);
+      continue;
+    }
+    const stripped = stripInternalRuntimeContext(text);
+    if (!stripped.trim()) {
+      continue;
+    }
+    sawText = true;
+    nextContent.push({ ...(block as object), text: stripped });
+  }
+  if (!sawText && !sawOtherBlock) {
+    return null;
+  }
+  return { ...(message as object), content: nextContent };
+}
+
 export function readSessionMessages(
   sessionId: string,
   storePath: string | undefined,
@@ -129,9 +220,15 @@ export function readSessionMessages(
     let messageSeq = 0;
     for (const entry of branchEntries) {
       if (entry.type === "message" && entry.message) {
+        // Strip BEFORE the seq bump: a message that is nothing but runtime context was never on
+        // screen live, so it must not consume a sequence number here either.
+        const visible = stripRuntimeContextFromMessage(entry.message);
+        if (!visible) {
+          continue;
+        }
         messageSeq += 1;
         messages.push(
-          attachOpenClawTranscriptMeta(entry.message, {
+          attachOpenClawTranscriptMeta(visible, {
             ...(typeof entry.id === "string" ? { id: entry.id } : {}),
             seq: messageSeq,
           }),
@@ -152,6 +249,7 @@ export function readSessionMessages(
           typeof entry.tokensAfter === "number" && Number.isFinite(entry.tokensAfter)
             ? entry.tokensAfter
             : undefined;
+        const evictedTokens = readEvictedTokens(entry);
         messages.push({
           role: "system",
           content: [{ type: "text", text: summary?.trim() || "Compaction" }],
@@ -163,6 +261,7 @@ export function readSessionMessages(
             ...(summary?.trim() ? { summary: summary.trim() } : {}),
             ...(typeof tokensBefore === "number" ? { tokensBefore } : {}),
             ...(typeof tokensAfter === "number" ? { tokensAfter } : {}),
+            ...(typeof evictedTokens === "number" ? { evictedTokens } : {}),
           },
         });
       }
@@ -179,9 +278,14 @@ export function readSessionMessages(
     try {
       const parsed = JSON.parse(line);
       if (parsed?.message) {
+        // Same rule as the tree branch above — strip before the seq bump.
+        const visible = stripRuntimeContextFromMessage(parsed.message);
+        if (!visible) {
+          continue;
+        }
         messageSeq += 1;
         messages.push(
-          attachOpenClawTranscriptMeta(parsed.message, {
+          attachOpenClawTranscriptMeta(visible, {
             ...(typeof parsed.id === "string" ? { id: parsed.id } : {}),
             seq: messageSeq,
           }),
@@ -204,6 +308,7 @@ export function readSessionMessages(
           typeof parsed.tokensAfter === "number" && Number.isFinite(parsed.tokensAfter)
             ? parsed.tokensAfter
             : undefined;
+        const evictedTokens = readEvictedTokens(parsed);
         messages.push({
           role: "system",
           content: [{ type: "text", text: summary?.trim() || "Compaction" }],
@@ -215,6 +320,7 @@ export function readSessionMessages(
             ...(summary?.trim() ? { summary: summary.trim() } : {}),
             ...(typeof tokensBefore === "number" ? { tokensBefore } : {}),
             ...(typeof tokensAfter === "number" ? { tokensAfter } : {}),
+            ...(typeof evictedTokens === "number" ? { evictedTokens } : {}),
           },
         });
       }
@@ -811,6 +917,15 @@ function resolvePositiveUsageNumber(value: unknown): number | undefined {
 
 function extractLatestUsageFromTranscriptChunk(
   chunk: string,
+  /**
+   * FORK 2026-07-28 — the model's context window, threaded solely to ARM the plausibility
+   * guard in `deriveSessionTotalTokens`. That guard rejects a value larger than the window
+   * (it cannot be a context size), but it is OPT-IN BY ARGUMENT: called without a window it
+   * silently does nothing. This was the one call site of five that omitted it, so a transcript
+   * line carrying the cc-bridge turn aggregate was laundered into a "fresh" session total —
+   * defeating the fix everywhere else. Omitting it again re-opens that path.
+   */
+  contextWindow?: number,
 ): SessionTranscriptUsageSnapshot | null {
   const lines = chunk.split(/\r?\n/).filter((line) => line.trim().length > 0);
   const snapshot: SessionTranscriptUsageSnapshot = {};
@@ -847,7 +962,9 @@ function extractLatestUsageFromTranscriptChunk(
             ? parsed.usage
             : undefined;
       const usage = normalizeUsage(usageRaw);
-      const totalTokens = resolvePositiveUsageNumber(deriveSessionTotalTokens({ usage }));
+      const totalTokens = resolvePositiveUsageNumber(
+        deriveSessionTotalTokens({ usage, contextTokens: contextWindow }),
+      );
       const costUsd = extractTranscriptUsageCost(usageRaw);
       const modelProvider =
         typeof message.provider === "string"
@@ -861,7 +978,25 @@ function extractLatestUsageFromTranscriptChunk(
           : typeof parsed.model === "string"
             ? parsed.model.trim()
             : undefined;
-      const isDeliveryMirror = modelProvider === "openclaw" && model === "delivery-mirror";
+      // FORK 2026-07-31 — TRANSCRIPT-ONLY SENTINELS. `provider:"openclaw"` assistant entries with
+      // model `delivery-mirror` (channel delivery mirror, src/config/sessions/transcript.ts) or
+      // `gateway-injected` (restart warnings / abort envelopes, see
+      // src/gateway/server-methods/chat-transcript-inject.ts) are records the gateway wrote into
+      // the transcript ITSELF, not model output. This scan feeds the SESSION ROW, so a sentinel
+      // that reaches `snapshot.model` poisons every downstream reader of that row: the Tinker UI
+      // thinking indicator loses its provider colour (a grey dot reading "gatewa..." while opus
+      // was answering) and the Models panel counts live runs under "gateway-injected". Only
+      // `delivery-mirror` was excluded here before; `gateway-injected` leaked. NOTE the real
+      // injected envelope carries `usage.cost.total: 0`, which makes `hasMeaningfulUsage` true —
+      // so the zero-usage early-continue below never catches it and this guard is the only stop.
+      // KEEP IN SYNC — no shared module owns this list yet; the other copies are:
+      //   - src/agents/embedded-agent-runner/replay-history.ts (TRANSCRIPT_ONLY_OPENCLAW_MODELS)
+      //   - src/agents/embedded-agent-subscribe.handlers.messages.ts
+      //     (isTranscriptOnlyOpenClawAssistantMessage)
+      //   - tinker-ui/src/transcript-only-models.ts (UI-side filter)
+      const isTranscriptOnlySentinel =
+        modelProvider === "openclaw" &&
+        (model === "delivery-mirror" || model === "gateway-injected");
       const hasMeaningfulUsage =
         hasNonzeroUsage(usage) ||
         typeof totalTokens === "number" ||
@@ -870,12 +1005,12 @@ function extractLatestUsageFromTranscriptChunk(
       if (!hasMeaningfulUsage && !hasModelIdentity) {
         continue;
       }
-      if (isDeliveryMirror && !hasMeaningfulUsage) {
+      if (isTranscriptOnlySentinel && !hasMeaningfulUsage) {
         continue;
       }
 
       sawSnapshot = true;
-      if (!isDeliveryMirror) {
+      if (!isTranscriptOnlySentinel) {
         if (modelProvider) {
           snapshot.modelProvider = modelProvider;
         }
@@ -938,6 +1073,12 @@ export function readLatestSessionUsageFromTranscript(
   storePath: string | undefined,
   sessionFile?: string,
   agentId?: string,
+  /**
+   * FORK 2026-07-28 — pass the session's context window whenever the caller knows it, so the
+   * plausibility guard downstream is ARMED. Optional to keep existing call sites valid, but a
+   * caller that has the window and omits it silently re-opens the turn-aggregate path.
+   */
+  contextWindow?: number,
 ): SessionTranscriptUsageSnapshot | null {
   const filePath = findExistingTranscriptPath(sessionId, storePath, sessionFile, agentId);
   if (!filePath) {
@@ -950,7 +1091,7 @@ export function readLatestSessionUsageFromTranscript(
       return null;
     }
     const chunk = fs.readFileSync(fd, "utf-8");
-    return extractLatestUsageFromTranscriptChunk(chunk);
+    return extractLatestUsageFromTranscriptChunk(chunk, contextWindow);
   });
 }
 

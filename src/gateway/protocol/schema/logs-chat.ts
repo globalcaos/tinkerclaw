@@ -101,6 +101,17 @@ export const ChatEventSchema = Type.Object(
       Type.Literal("error"),
     ]),
     message: Type.Optional(Type.Unknown()),
+    // FORK 2026-09-06 (duprep III): present, and always literally `true`, ONLY when the
+    // cumulative delta buffer was RE-BASED (src/gateway/server-chat.ts:838-855). The client
+    // re-anchors its bubble offsets into the new coordinate space instead of slicing at stale
+    // ones — which is how the answer used to render twice.
+    //
+    // Declared here because this object is additionalProperties:false. `validateChatEvent`
+    // (protocol/index.ts:586) is compiled but currently has NO call site, so the field reached
+    // the client regardless; the moment anyone wires that validator up, an undeclared `replace`
+    // would be stripped or rejected and the fix would silently stop working with no error.
+    // The server comment at server-chat.ts:849-853 asked for exactly this line.
+    replace: Type.Optional(Type.Literal(true)),
     errorMessage: Type.Optional(Type.String()),
     errorKind: Type.Optional(
       Type.Union([

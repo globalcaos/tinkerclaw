@@ -3,6 +3,7 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { configureSqliteWalMaintenance, type SqliteWalMaintenance } from "../infra/sqlite-wal.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
+import { describeArchivedStateTwin, guardArchivedStateFile } from "./state-file-guard.js";
 import {
   resolveTaskFlowRegistryDir,
   resolveTaskFlowRegistrySqlitePath,
@@ -222,43 +223,148 @@ function createStatements(db: DatabaseSync): FlowRegistryStatements {
   };
 }
 
-function hasFlowRunsColumn(db: DatabaseSync, columnName: string): boolean {
+type FlowRunsColumn = { name: string; ddl: string };
+type FlowRunsIndex = { name: string; columns: string };
+
+// Single source of truth for the flow_runs shape. The fresh-install DDL, the
+// legacy-rebuild target table and the rebuild's INSERT column list all read from
+// here, so they can never drift apart the way they did for owner_session_key.
+const FLOW_RUNS_COLUMNS: readonly FlowRunsColumn[] = [
+  { name: "flow_id", ddl: "flow_id TEXT PRIMARY KEY" },
+  { name: "shape", ddl: "shape TEXT" },
+  { name: "sync_mode", ddl: "sync_mode TEXT NOT NULL DEFAULT 'managed'" },
+  { name: "owner_key", ddl: "owner_key TEXT NOT NULL" },
+  { name: "requester_origin_json", ddl: "requester_origin_json TEXT" },
+  { name: "controller_id", ddl: "controller_id TEXT" },
+  { name: "revision", ddl: "revision INTEGER NOT NULL DEFAULT 0" },
+  { name: "status", ddl: "status TEXT NOT NULL" },
+  { name: "notify_policy", ddl: "notify_policy TEXT NOT NULL" },
+  { name: "goal", ddl: "goal TEXT NOT NULL" },
+  { name: "current_step", ddl: "current_step TEXT" },
+  { name: "blocked_task_id", ddl: "blocked_task_id TEXT" },
+  { name: "blocked_summary", ddl: "blocked_summary TEXT" },
+  { name: "state_json", ddl: "state_json TEXT" },
+  { name: "wait_json", ddl: "wait_json TEXT" },
+  { name: "cancel_requested_at", ddl: "cancel_requested_at INTEGER" },
+  { name: "created_at", ddl: "created_at INTEGER NOT NULL" },
+  { name: "updated_at", ddl: "updated_at INTEGER NOT NULL" },
+  { name: "ended_at", ddl: "ended_at INTEGER" },
+];
+
+const FLOW_RUNS_INDEXES: readonly FlowRunsIndex[] = [
+  { name: "idx_flow_runs_status", columns: "status" },
+  { name: "idx_flow_runs_owner_key", columns: "owner_key" },
+  { name: "idx_flow_runs_updated_at", columns: "updated_at" },
+];
+
+// Replaced by owner_key. Still present — and still NOT NULL — on every database
+// created before the rename, while nothing has written it since.
+const LEGACY_OWNER_COLUMN = "owner_session_key";
+const FLOW_RUNS_REBUILD_TABLE = "flow_runs_schema_rebuild";
+
+function createFlowRunsTableSql(tableName: string, options?: { ifNotExists?: boolean }): string {
+  const columns = FLOW_RUNS_COLUMNS.map((column) => `      ${column.ddl}`).join(",\n");
+  return `
+    CREATE TABLE ${options?.ifNotExists ? "IF NOT EXISTS " : ""}${tableName} (
+${columns}
+    );
+  `;
+}
+
+function listFlowRunsColumns(db: DatabaseSync): Set<string> {
   const rows = db.prepare(`PRAGMA table_info(flow_runs)`).all() as Array<{ name?: string }>;
-  return rows.some((row) => row.name === columnName);
+  const names = new Set<string>();
+  for (const row of rows) {
+    if (typeof row.name === "string") {
+      names.add(row.name);
+    }
+  }
+  return names;
+}
+
+function hasFlowRunsColumn(db: DatabaseSync, columnName: string): boolean {
+  return listFlowRunsColumns(db).has(columnName);
+}
+
+function ensureFlowRunsIndexes(db: DatabaseSync) {
+  for (const index of FLOW_RUNS_INDEXES) {
+    db.exec(`CREATE INDEX IF NOT EXISTS ${index.name} ON flow_runs(${index.columns});`);
+  }
+}
+
+// Legacy databases predate several columns and lack the NOT NULL/DEFAULT
+// guarantees of the current DDL, so every target column is carried across through
+// an expression over whatever the legacy table actually has.
+function legacyFlowRunsColumnSource(column: string, present: ReadonlySet<string>): string {
+  if (column === "owner_key") {
+    if (present.has("owner_key")) {
+      return present.has(LEGACY_OWNER_COLUMN)
+        ? `COALESCE(owner_key, ${LEGACY_OWNER_COLUMN})`
+        : "owner_key";
+    }
+    return present.has(LEGACY_OWNER_COLUMN) ? LEGACY_OWNER_COLUMN : "NULL";
+  }
+  if (column === "sync_mode") {
+    const derived = present.has("shape")
+      ? "CASE WHEN shape = 'single_task' THEN 'task_mirrored' ELSE 'managed' END"
+      : "'managed'";
+    return present.has("sync_mode") ? `COALESCE(sync_mode, ${derived})` : derived;
+  }
+  if (column === "revision") {
+    return present.has("revision") ? "COALESCE(revision, 0)" : "0";
+  }
+  return present.has(column) ? column : "NULL";
+}
+
+/**
+ * `owner_session_key` was replaced by `owner_key`, but the migration only ADDed
+ * the new column. SQLite cannot drop a column or relax NOT NULL in place, so on
+ * every pre-existing database the legacy `owner_session_key TEXT NOT NULL` column
+ * survived while nothing wrote it: every insert built from the current column list
+ * died with SQLITE_CONSTRAINT_NOTNULL (errcode 1299) and task-flow registration was
+ * silently dead for months. Rebuilding the table is the only way out.
+ */
+function rebuildLegacyFlowRunsTable(db: DatabaseSync): boolean {
+  const present = listFlowRunsColumns(db);
+  if (!present.has(LEGACY_OWNER_COLUMN)) {
+    return false;
+  }
+  const targetColumns = FLOW_RUNS_COLUMNS.map((column) => column.name);
+  const selectList = targetColumns.map(
+    (column) => `${legacyFlowRunsColumnSource(column, present)} AS ${column}`,
+  );
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(`DROP TABLE IF EXISTS ${FLOW_RUNS_REBUILD_TABLE};`);
+    db.exec(createFlowRunsTableSql(FLOW_RUNS_REBUILD_TABLE));
+    db.exec(`
+      INSERT INTO ${FLOW_RUNS_REBUILD_TABLE} (${targetColumns.join(", ")})
+      SELECT ${selectList.join(", ")}
+      FROM flow_runs
+    `);
+    // Dropping the old table drops its indexes too, including the legacy
+    // idx_flow_runs_owner_session_key that points at the column being removed.
+    db.exec(`DROP TABLE flow_runs;`);
+    db.exec(`ALTER TABLE ${FLOW_RUNS_REBUILD_TABLE} RENAME TO flow_runs;`);
+    ensureFlowRunsIndexes(db);
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // Already unwound by SQLite; keep the original failure as the thrown one.
+    }
+    throw error;
+  }
+  console.warn(`[flow-registry] rebuilt flow_runs to drop legacy ${LEGACY_OWNER_COLUMN} column`);
+  return true;
 }
 
 function ensureSchema(db: DatabaseSync) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS flow_runs (
-      flow_id TEXT PRIMARY KEY,
-      shape TEXT,
-      sync_mode TEXT NOT NULL DEFAULT 'managed',
-      owner_key TEXT NOT NULL,
-      requester_origin_json TEXT,
-      controller_id TEXT,
-      revision INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL,
-      notify_policy TEXT NOT NULL,
-      goal TEXT NOT NULL,
-      current_step TEXT,
-      blocked_task_id TEXT,
-      blocked_summary TEXT,
-      state_json TEXT,
-      wait_json TEXT,
-      cancel_requested_at INTEGER,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      ended_at INTEGER
-    );
-  `);
-  if (!hasFlowRunsColumn(db, "owner_key") && hasFlowRunsColumn(db, "owner_session_key")) {
-    db.exec(`ALTER TABLE flow_runs ADD COLUMN owner_key TEXT;`);
-    db.exec(`
-      UPDATE flow_runs
-      SET owner_key = owner_session_key
-      WHERE owner_key IS NULL
-    `);
-  }
+  db.exec(createFlowRunsTableSql("flow_runs", { ifNotExists: true }));
+  // Runs before the additive migrations below: after a rebuild they are no-ops,
+  // and databases that never had the legacy column still take the ALTER path.
+  rebuildLegacyFlowRunsTable(db);
   if (!hasFlowRunsColumn(db, "shape")) {
     db.exec(`ALTER TABLE flow_runs ADD COLUMN shape TEXT;`);
   }
@@ -313,9 +419,7 @@ function ensureSchema(db: DatabaseSync) {
   if (!hasFlowRunsColumn(db, "cancel_requested_at")) {
     db.exec(`ALTER TABLE flow_runs ADD COLUMN cancel_requested_at INTEGER;`);
   }
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_flow_runs_status ON flow_runs(status);`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_flow_runs_owner_key ON flow_runs(owner_key);`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_flow_runs_updated_at ON flow_runs(updated_at);`);
+  ensureFlowRunsIndexes(db);
 }
 
 function ensureFlowRegistryPermissions(pathname: string) {
@@ -342,6 +446,10 @@ function openFlowRegistryDatabase(): FlowRegistryDatabase {
     cachedDatabase = null;
   }
   ensureFlowRegistryPermissions(pathname);
+  const restored = guardArchivedStateFile(pathname);
+  if (restored) {
+    console.warn(`[flow-registry] ${describeArchivedStateTwin(restored)}`);
+  }
   const { DatabaseSync } = requireNodeSqlite();
   const db = new DatabaseSync(pathname);
   const walMaintenance = configureSqliteWalMaintenance(db);

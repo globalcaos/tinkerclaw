@@ -24,6 +24,7 @@ npx tsx skills/whatsapp-tools/scripts/wa-fetch-contacts.ts
 **Output:** `~/.openclaw/workspace/bank/whatsapp-contacts-full.json`
 
 Contains:
+
 - All groups with participant counts
 - All contacts with phone numbers (LID-resolved)
 - Group membership per contact
@@ -39,34 +40,36 @@ npx tsx skills/whatsapp-tools/scripts/wa-create-group.ts "Group Name" "+phone1" 
 ```
 
 **Notes:**
+
 - Phone numbers in E.164 format (+countrycode...)
 - Creator (linked account) auto-added as admin
 - Returns group JID for further operations
 
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/wa-fetch-contacts.ts` | Sync all contacts from all groups |
-| `scripts/wa-create-group.ts` | Create new group with participants |
+| Script                         | Purpose                            |
+| ------------------------------ | ---------------------------------- |
+| `scripts/wa-fetch-contacts.ts` | Sync all contacts from all groups  |
+| `scripts/wa-create-group.ts`   | Create new group with participants |
 
 ## How It Works
 
 Scripts connect directly to WhatsApp via Baileys using existing OpenClaw credentials. This bypasses the gateway listener, so:
+
 - Works even if gateway WhatsApp listener is down
 - Does not affect active message monitoring
 - Uses same auth state (no re-linking needed)
 
 ## Key Baileys Methods
 
-| Method | Description |
-|--------|-------------|
-| `groupFetchAllParticipating()` | Get all groups + participants |
-| `groupMetadata(jid)` | Get single group details |
-| `groupCreate(name, participants)` | Create new group |
-| `groupUpdateSubject(jid, name)` | Rename group |
-| `groupUpdateDescription(jid, desc)` | Update group description |
-| `groupParticipantsUpdate(jid, participants, action)` | Add/remove/promote/demote |
+| Method                                               | Description                   |
+| ---------------------------------------------------- | ----------------------------- |
+| `groupFetchAllParticipating()`                       | Get all groups + participants |
+| `groupMetadata(jid)`                                 | Get single group details      |
+| `groupCreate(name, participants)`                    | Create new group              |
+| `groupUpdateSubject(jid, name)`                      | Rename group                  |
+| `groupUpdateDescription(jid, desc)`                  | Update group description      |
+| `groupParticipantsUpdate(jid, participants, action)` | Add/remove/promote/demote     |
 
 ## LID Resolution
 

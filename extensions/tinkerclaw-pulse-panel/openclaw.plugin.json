@@ -1,0 +1,22 @@
+{
+  "id": "tinkerclaw-pulse-panel",
+  "name": "Pulse Panel",
+  "description": "Exec-mode Pulse tab: KPI pollers + metric graphs (sparklines) served over pulsepanel.* RPCs. Split from tinkerclaw-control-panel 2026-07-24.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dataDir": {
+        "type": "string",
+        "description": "Directory holding the shared control-panel SQLite store. Defaults to ~/.openclaw/data/control-panel/"
+      }
+    }
+  },
+  "uiHints": {
+    "dataDir": { "label": "Data dir", "help": "Where the shared SQLite store lives." }
+  }
+}

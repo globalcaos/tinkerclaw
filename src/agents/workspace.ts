@@ -137,6 +137,7 @@ export type WorkspaceBootstrapFileName =
   | typeof DEFAULT_USER_FILENAME
   | typeof DEFAULT_HEARTBEAT_FILENAME
   | typeof DEFAULT_BOOTSTRAP_FILENAME
+  | typeof DEFAULT_VOICE_FILENAME
   | typeof DEFAULT_MEMORY_FILENAME;
 
 export type WorkspaceBootstrapFile = {
@@ -173,6 +174,7 @@ const VALID_BOOTSTRAP_NAMES: ReadonlySet<string> = new Set([
   DEFAULT_USER_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
+  DEFAULT_VOICE_FILENAME,
   DEFAULT_MEMORY_FILENAME,
 ]);
 
@@ -635,6 +637,10 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
     {
       name: DEFAULT_BOOTSTRAP_FILENAME,
       filePath: path.join(resolvedDir, DEFAULT_BOOTSTRAP_FILENAME),
+    },
+    {
+      name: DEFAULT_VOICE_FILENAME,
+      filePath: path.join(resolvedDir, DEFAULT_VOICE_FILENAME),
     },
     {
       name: DEFAULT_MEMORY_FILENAME,

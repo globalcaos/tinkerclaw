@@ -1,3 +1,5 @@
+import { runCommandWithTimeout } from "openclaw/plugin-sdk/process-runtime";
+
 export {
   DEFAULT_AI_SNAPSHOT_MAX_CHARS,
   DEFAULT_UPLOAD_DIR,
@@ -113,3 +115,39 @@ export type {
   NodeSession,
   OpenClawPluginService,
 } from "./sdk-node-runtime.js";
+
+// FORK 2026-08-03: `openclaw browser extension install|path` moved into this package (its old
+// home, src/cli/browser-cli-extension.ts, had zero importers, never reached dist/, and its
+// command group was never registered — the capability had silently stopped existing). Two of
+// the symbols it needs are not on the surface this package already imports through, so they
+// are added here instead of reaching back into src/, which is exactly what stranded the old
+// copy: an import of ../browser/trash.js that stopped resolving when that file moved.
+export { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
+
+/**
+ * Copy `value` to the system clipboard, returning false when no clipboard helper is available.
+ *
+ * Mirrors src/infra/clipboard.ts, which the plugin SDK does not export; the spawn helper it
+ * uses IS exported, so this is the same fallback ladder rather than a second implementation of
+ * process handling.
+ */
+export async function copyToClipboard(value: string): Promise<boolean> {
+  const attempts: string[][] = [
+    ["pbcopy"],
+    ["xclip", "-selection", "clipboard"],
+    ["wl-copy"],
+    ["clip.exe"], // WSL / Windows
+    ["powershell", "-NoProfile", "-Command", "Set-Clipboard"],
+  ];
+  for (const argv of attempts) {
+    try {
+      const result = await runCommandWithTimeout(argv, { timeoutMs: 3_000, input: value });
+      if (result.code === 0 && !result.killed) {
+        return true;
+      }
+    } catch {
+      // keep trying the next fallback
+    }
+  }
+  return false;
+}

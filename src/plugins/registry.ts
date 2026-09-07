@@ -51,6 +51,7 @@ import {
   getRegisteredCompactionProvider,
   registerCompactionProvider,
 } from "./compaction-provider.js";
+import { wrapHookForLiveness } from "./hook-liveness.js";
 import {
   clearPluginRunContext,
   getPluginRunContext,
@@ -1857,32 +1858,53 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     }
     if (isConversationHookName(hookName)) {
       const explicitConversationAccess = policy?.allowConversationAccess;
+      // FORK 2026-08-04 — MAKE THE REFUSAL VISIBLE WHERE PEOPLE LOOK.
+      // A dropped conversation hook silently disables a whole feature: `llm_output` is how
+      // ENGRAM ingests what the architect says, so losing it means nothing reaches long-term
+      // memory — with no error, because the hook simply never fires. That is precisely the
+      // failure class FOUNDATION #5 forbids ("a producer is only wired when it is verified
+      // firing at a real call site").
+      //
+      // pushDiagnostic() alone is not enough: it collects into an array surfaced over an RPC
+      // nobody polls, so a three-day journal grep for this refusal returns NOTHING while the
+      // feature is dead. Log it as well, so `journalctl -u openclaw-gateway` shows it.
+      const refuse = (why: string) => {
+        pushDiagnostic({ level: "warn", pluginId: record.id, source: record.source, message: why });
+        registryParams.logger.warn(`[plugins] conversation hook DROPPED — ${record.id}: ${why}`);
+      };
       if (record.origin !== "bundled" && explicitConversationAccess !== true) {
-        pushDiagnostic({
-          level: "warn",
-          pluginId: record.id,
-          source: record.source,
-          message:
-            `typed hook "${hookName}" blocked because non-bundled plugins must set ` +
+        refuse(
+          `typed hook "${hookName}" blocked because non-bundled plugins must set ` +
             `plugins.entries.${record.id}.hooks.allowConversationAccess=true`,
-        });
+        );
         return;
       }
       if (record.origin === "bundled" && explicitConversationAccess === false) {
-        pushDiagnostic({
-          level: "warn",
-          pluginId: record.id,
-          source: record.source,
-          message: `typed hook "${hookName}" blocked by plugins.entries.${record.id}.hooks.allowConversationAccess=false`,
-        });
+        refuse(
+          `typed hook "${hookName}" blocked by plugins.entries.${record.id}.hooks.allowConversationAccess=false`,
+        );
         return;
       }
+      registryParams.logger.debug?.(
+        `[plugins] conversation hook granted — ${record.id}.${hookName} (origin=${record.origin})`,
+      );
     }
     record.hookCount += 1;
+    // FORK 2026-08-05 — per-hook liveness at the ONE seam every api.on() passes through.
+    // The fork's hook surface measured 2 of 22 observed, and hooks are where two features died
+    // silently (total-recall's llm_output returned early on every turn for eleven days;
+    // fractal-reflection's agent_end ran 2,466 times with no instruments at all). Instrumenting
+    // per-plugin is how you get 2 of 22; instrumenting here cannot be forgotten and has no list
+    // to drift from. Dispatch only — see hook-liveness.ts for why there is deliberately no
+    // "success" counterpart at this layer.
     registry.typedHooks.push({
       pluginId: record.id,
       hookName,
-      handler: effectiveHandler,
+      handler: wrapHookForLiveness(
+        record.id,
+        hookName,
+        effectiveHandler as never,
+      ) as typeof effectiveHandler,
       priority: opts?.priority,
       source: record.source,
     } as TypedPluginHookRegistration);

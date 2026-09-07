@@ -9,6 +9,20 @@ export type SessionState = {
   toolCallHistory?: ToolCallRecord[];
   toolLoopWarningBuckets?: Map<string, number>;
   commandPollCounts?: Map<string, { count: number; lastPollAt: number }>;
+  /**
+   * Last time this session's turn demonstrably moved forward (a recorded tool
+   * call, a streamed block, an explicit markDiagnosticSessionProgress call).
+   * Distinct from lastActivity, which tracks state-machine transitions: a long
+   * turn can be progressing (stream growing) while lastActivity stays frozen
+   * at the transition into "processing".
+   */
+  lastProgressAt?: number;
+  /**
+   * Liveness of the session's LLM client process, when a supervisor knows it.
+   * false = confirmed dead (a stuck warning is always justified);
+   * true/undefined = alive/unknown, so progress recency decides.
+   */
+  clientAlive?: boolean;
 };
 
 export type ToolCallRecord = {
@@ -102,6 +116,60 @@ export function getDiagnosticSessionState(ref: SessionRef): SessionState {
   diagnosticSessionStates.set(key, created);
   pruneDiagnosticSessionStates(Date.now(), true);
   return created;
+}
+
+function findDiagnosticSessionState(ref: SessionRef): SessionState | undefined {
+  const key = resolveSessionKey(ref);
+  return (
+    diagnosticSessionStates.get(key) ??
+    (ref.sessionId ? findStateBySessionId(ref.sessionId) : undefined)
+  );
+}
+
+/**
+ * Record evidence that a session's turn is moving forward (streamed block,
+ * tool call, run attempt). Lookup-only on purpose: a progress mark for a
+ * session we are not tracking has nothing to keep alive, and creating state
+ * here would resurrect pruned sessions and leak entries when diagnostics are
+ * disabled.
+ */
+export function markDiagnosticSessionProgress(ref: SessionRef, at = Date.now()): void {
+  const state = findDiagnosticSessionState(ref);
+  if (!state) {
+    return;
+  }
+  if (state.lastProgressAt === undefined || at > state.lastProgressAt) {
+    state.lastProgressAt = at;
+  }
+}
+
+/** Record whether the session's LLM client process is alive (lookup-only, see above). */
+export function setDiagnosticSessionClientLiveness(
+  ref: SessionRef,
+  alive: boolean | undefined,
+): void {
+  const state = findDiagnosticSessionState(ref);
+  if (!state) {
+    return;
+  }
+  state.clientAlive = alive;
+}
+
+/**
+ * Best-known "last forward progress" for a session: the explicit progress mark
+ * or the newest recorded tool call, whichever is later. Command polls are
+ * deliberately excluded — a wedged turn's client can keep polling forever.
+ */
+export function resolveDiagnosticSessionLastProgressAt(state: SessionState): number | undefined {
+  let last = state.lastProgressAt ?? 0;
+  if (state.toolCallHistory) {
+    for (const call of state.toolCallHistory) {
+      if (call.timestamp > last) {
+        last = call.timestamp;
+      }
+    }
+  }
+  return last > 0 ? last : undefined;
 }
 
 export function getDiagnosticSessionStateCountForTest(): number {

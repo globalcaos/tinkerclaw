@@ -37,6 +37,20 @@ export type AgentModelEntryConfig = {
   streaming?: boolean;
   /** Display rank for UI ordering (lower = higher position). */
   rank?: number;
+  /** Artificial Analysis Intelligence Index (higher = smarter). */
+  intelligenceIndex?: number;
+  /**
+   * Cost-veto input for fallback selection: EUR per Mtok of OUTPUT under the
+   * operator's ACTUAL billing. A prepaid-subscription token is near-zero; a
+   * metered API token is real cash. This is NOT the vendor's sticker price and
+   * NOT weighted by tokens-per-task.
+   *
+   * The canonical values live in tinker-ui/src/panels/eeg-trace.ts
+   * EEG_COST_TABLE (order-sensitive regex rows serving the SMART x COST chart);
+   * this config field is the exact-key subset the gateway needs. Do NOT import
+   * or duplicate that table here.
+   */
+  relCost?: number;
 };
 
 export type AgentModelListConfig = {
@@ -323,6 +337,18 @@ export type AgentDefaultsConfig = {
   /** Human-like delay between block replies. */
   humanDelay?: HumanDelayConfig;
   timeoutSeconds?: number;
+  /**
+   * Sliding activity grace window in seconds for agent run timeouts. When the run
+   * deadline (timeoutSeconds) is reached but the agent produced a stream/tool event
+   * within this window, the deadline extends instead of aborting an actively-working
+   * turn. Set 0 to disable (legacy fixed wall-clock abort). Default: 600.
+   */
+  activityGraceSeconds?: number;
+  /**
+   * Hard cap in seconds on total agent run duration measured from run start.
+   * Activity-based extensions never push a run past this cap. Default: 172800 (48h).
+   */
+  maxRunSeconds?: number;
   /** Max inbound media size in MB for agent-visible attachments (text note or future image attach). */
   mediaMaxMb?: number;
   /**
@@ -412,6 +438,11 @@ export type AgentDefaultsConfig = {
     announceTimeoutMs?: number;
     /** Require explicit agentId in sessions_spawn (no default same-as-caller). Default: false. */
     requireAgentId?: boolean;
+  };
+  /** Embedded session run defaults. */
+  sessions?: {
+    /** Max concurrent embedded session runs (global lane: "sessions"). Default: 8. */
+    maxConcurrent?: number;
   };
   /** Optional sandbox settings for non-main sessions. */
   sandbox?: AgentSandboxConfig;

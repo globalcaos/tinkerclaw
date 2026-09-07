@@ -62,6 +62,7 @@ This system implements a **tiered funnel strategy** to efficiently analyze 28,00
 ### 2. Core Processing Pipeline
 
 #### **Tier 1: Metadata Filter** (API-based)
+
 - **Input**: Repository name (e.g., "openclaw/openclaw")
 - **Process**:
   1. Paginate through all forks using GitHub API
@@ -73,6 +74,7 @@ This system implements a **tiered funnel strategy** to efficiently analyze 28,00
 - **Estimated Time**: ~30 minutes (with rate limiting)
 
 #### **Tier 2: Commit Analysis** (API-based)
+
 - **Input**: Forks from Tier 1 with score potential
 - **Process**:
   1. Fetch commit list for each fork (last 100 commits)
@@ -89,6 +91,7 @@ This system implements a **tiered funnel strategy** to efficiently analyze 28,00
 - **Estimated Time**: ~1 hour (with rate limiting)
 
 #### **Tier 3: Shallow Clone + Diff** (Git-based)
+
 - **Input**: Top 200 forks from Tier 2
 - **Process**:
   1. Clone with `--depth 1 --single-branch`
@@ -109,6 +112,7 @@ This system implements a **tiered funnel strategy** to efficiently analyze 28,00
 ### 3. Scoring Algorithm
 
 **Commit Message Scoring:**
+
 ```python
 KEYWORDS = {
     'security': 10,
@@ -133,6 +137,7 @@ KEYWORDS = {
 ```
 
 **Fork Scoring:**
+
 - Base score = sum of commit scores
 - Multipliers:
   - Stars > 10: ×1.5
@@ -171,6 +176,7 @@ KEYWORDS = {
 ### 7. Reporting
 
 **Daily Report (Markdown/PDF):**
+
 - Summary statistics
 - Top 10 forks by score
 - New gems discovered
@@ -178,6 +184,7 @@ KEYWORDS = {
 - Rate limit status
 
 **Export Formats:**
+
 - CSV: Fork rankings
 - JSON: Complete data dump
 - PDF: Executive summary

@@ -1,3 +1,4 @@
+import type { AgentCompactionMode } from "../config/types.agent-defaults.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { ContextEngineInfo } from "../context-engine/types.js";
 import { MIN_PROMPT_BUDGET_RATIO, MIN_PROMPT_BUDGET_TOKENS } from "./pi-compaction-constants.js";
@@ -11,6 +12,7 @@ type PiSettingsManagerLike = {
     compaction: {
       reserveTokens?: number;
       keepRecentTokens?: number;
+      enabled?: boolean;
     };
   }) => void;
   setCompactionEnabled?: (enabled: boolean) => void;
@@ -122,25 +124,64 @@ export function applyPiCompactionSettingsFromConfig(params: {
   };
 }
 
-/** Decide whether Pi's internal auto-compaction should be disabled for this run. */
+/**
+ * Decide whether Pi's internal auto-compaction should be disabled for this run.
+ *
+ * FORK 2026-07-28 — WHY THE `ownsCompaction` CHECK ALONE WAS NOT ENOUGH.
+ * Pi runs its own compaction decider (`AgentSession._checkCompaction`). It reads
+ * `calculateContextTokens(assistantMessage.usage)` on the threshold path and
+ * `usage.input + usage.cacheRead` on the overflow path. On the cc-bridge lane that
+ * field is a TURN AGGREGATE (summed across every internal API call), so pi routinely
+ * sees millions of "context" tokens on a session holding a few percent of its window.
+ * Measured live 2026-07-28: pi reported 6,448,106 tokens (644.8% of a 1M window) and
+ * 1,029,656 (103%) on sessions whose real context was 52,116 — a 19.8x over-read.
+ *
+ * We cannot teach pi to read a better field: it is a pinned `dist/` dependency. The only
+ * lever is to switch its decider OFF and let OUR gates own compaction — which is exactly
+ * what upstream openclaw does host-side (`src/agents/agent-settings.ts`
+ * shouldDisableAgentAutoCompaction, three disjuncts vs our original one).
+ *
+ * The second disjunct is a DELIBERATE DIVERGENCE from upstream, recorded in the bible:
+ * upstream tests `compactionMode === "safeguard"` against its own two-value enum; our enum
+ * is "default" | "safeguard" | "engram" and our live mode is "engram". Both non-default
+ * modes register a `session_before_compact` extension that supplies the compaction, so
+ * "not default" is the faithful translation of upstream's "an extension owns this".
+ */
 export function shouldDisablePiAutoCompaction(params: {
   contextEngineInfo?: ContextEngineInfo;
+  compactionMode?: AgentCompactionMode;
 }): boolean {
-  return params.contextEngineInfo?.ownsCompaction === true;
+  if (params.contextEngineInfo?.ownsCompaction === true) {
+    return true;
+  }
+  return params.compactionMode !== undefined && params.compactionMode !== "default";
 }
 
-/** Disable Pi auto-compaction via settings when a context engine owns compaction. */
+/**
+ * Disable Pi auto-compaction when a context engine or a compaction extension owns it.
+ *
+ * Uses `applyOverrides` rather than `setCompactionEnabled`. Both take effect immediately
+ * (pi's `save()` recomputes the merged snapshot synchronously before enqueuing its async
+ * write), but `setCompactionEnabled` ALSO persists `compaction.enabled:false` into the
+ * user's GLOBAL pi settings file, which would outlive this run and suppress manual
+ * `/compact` everywhere. `applyOverrides` mutates only the in-memory merged settings, so
+ * the guard stays scoped to the run that asked for it.
+ *
+ * MANDATORY: re-call this after any `resourceLoader.reload()`. `reload()` recomputes
+ * `settings` from disk and discards `applyOverrides` mutations.
+ */
 export function applyPiAutoCompactionGuard(params: {
   settingsManager: PiSettingsManagerLike;
   contextEngineInfo?: ContextEngineInfo;
+  compactionMode?: AgentCompactionMode;
 }): { supported: boolean; disabled: boolean } {
   const disable = shouldDisablePiAutoCompaction({
     contextEngineInfo: params.contextEngineInfo,
+    compactionMode: params.compactionMode,
   });
-  const hasMethod = typeof params.settingsManager.setCompactionEnabled === "function";
-  if (!disable || !hasMethod) {
-    return { supported: hasMethod, disabled: false };
+  if (!disable) {
+    return { supported: true, disabled: false };
   }
-  params.settingsManager.setCompactionEnabled!(false);
+  params.settingsManager.applyOverrides({ compaction: { enabled: false } });
   return { supported: true, disabled: true };
 }

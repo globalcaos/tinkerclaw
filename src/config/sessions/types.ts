@@ -173,6 +173,14 @@ export type SessionEntry = {
   pluginOwnerId?: string;
   systemSent?: boolean;
   abortedLastRun?: boolean;
+  /**
+   * toolCallId of the dangling tinker-bridge tool call this session has already
+   * been sent ONE restart-recovery resume for. A dangling `start` record is
+   * never paired retroactively, so without this marker the same stuck call
+   * forces a fresh resume on every gateway boot (measured 2026-09-04: six Opus
+   * turns from one stuck Bash call).
+   */
+  restartResumeToolCallId?: string;
   /** Timestamp (ms) when the current sessionId first became active. */
   sessionStartedAt?: number;
   /** Timestamp (ms) of the last user/channel interaction that should extend idle lifetime. */
@@ -550,6 +558,22 @@ export type SessionSkillSnapshot = {
   skillFilter?: string[];
   resolvedSkills?: Skill[];
   version?: number;
+  /**
+   * FORK 2026-09-03 — PERSISTENCE ONLY; readers never see these.
+   *
+   * `skillsSnapshot` was 7.02 MB of a 10.32 MB sessions.json, duplicated across
+   * 106 entries that held only 13 distinct values, and the whole file is
+   * rewritten under `sessions.json.lock` on every update. The store now drops the
+   * two heavy fields from the file and replaces them with a 16-hex sha256 content
+   * address of a sidecar under `<agentDir>/skills-snapshots/` (`<ref>.txt` for
+   * the prompt, `<ref>.json` for resolvedSkills). `loadSessionStore` hydrates
+   * `prompt`/`resolvedSkills` back before any reader sees the entry, so the
+   * in-memory contract above is unchanged.
+   *
+   * See sessions/skills-snapshot-store.ts.
+   */
+  promptRef?: string;
+  resolvedSkillsRef?: string;
 };
 
 export type SessionSystemPromptReport = {

@@ -10,7 +10,7 @@ import {
 
 describe("modelForRole — cross-provider mapping (F2)", () => {
   it("maps each profile role to its concrete configured cross-provider ref", () => {
-    expect(modelForRole("architect")).toBe("claude-code/claude-opus-4-8");
+    expect(modelForRole("architect")).toBe("claude-code/claude-opus-5");
     expect(modelForRole("critic")).toBe("openai/gpt-5.3-codex");
     expect(modelForRole("pragmatist")).toBe("google/gemini-3.1-pro-preview");
     expect(modelForRole("researcher")).toBe("openai/o3");
@@ -48,7 +48,7 @@ describe("modelForRole — 7B per-role overrides", () => {
     expect(modelForRole("nonsense", { architect: "x/y" })).toBe("claude-code/claude-sonnet-4-6");
   });
   it("an empty-string override is ignored (treated as unset)", () => {
-    expect(modelForRole("architect", { architect: "  " })).toBe("claude-code/claude-opus-4-8");
+    expect(modelForRole("architect", { architect: "  " })).toBe("claude-code/claude-opus-5");
   });
 });
 
@@ -119,7 +119,7 @@ describe("createRealParticipant", () => {
     const out = await part.propose("task X", "architect");
     expect(callModel).toHaveBeenCalledTimes(1);
     const [{ model, prompt }] = callModel.mock.calls[0];
-    expect(model).toBe("claude-code/claude-opus-4-8"); // architect → opus-4-8 (F2)
+    expect(model).toBe("claude-code/claude-opus-5"); // architect → opus-4-8 (F2)
     expect(prompt).toContain("task X");
     expect(out).toBe("opus says: cache it");
   });

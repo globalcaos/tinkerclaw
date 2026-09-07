@@ -109,7 +109,7 @@ describe("CDI: edge cases", () => {
 
 describe("7C: providerOf derives vendor from the resolved ref", () => {
   it("splits 'provider/model' on the first slash", () => {
-    expect(providerOf("claude-code/claude-opus-4-8")).toBe("claude-code");
+    expect(providerOf("claude-code/claude-opus-5")).toBe("claude-code");
     expect(providerOf("openai/o3")).toBe("openai");
     expect(providerOf("google/gemini-3.1-pro-preview")).toBe("google");
   });
@@ -163,7 +163,7 @@ describe("7C: provider-diversity LOCK on the default catalog", () => {
     // ref must count as claude-code (the label must not win over the ref).
     const trickProfile: ProviderProfile = {
       ...DEFAULT_PROVIDER_PROFILES[1], // modelId "gpt-o3"
-      role: "architect", // architect -> claude-code/claude-opus-4-8
+      role: "architect", // architect -> claude-code/claude-opus-5
     };
     expect(providerOf(resolveRef(trickProfile))).toBe("claude-code");
   });

@@ -19,9 +19,8 @@ export default definePluginEntry({
     api.on("gateway_start", async () => {
       try {
         // Dynamic import to avoid bundling the full relay at parse time
-        const { ensureChromeExtensionRelayServer } = await import(
-          "../../src/browser/extension-relay.js"
-        );
+        const { ensureChromeExtensionRelayServer } =
+          await import("openclaw/plugin-sdk/fork-browser-relay");
         relayServer = await ensureChromeExtensionRelayServer({
           cdpUrl: `http://127.0.0.1:${RELAY_PORT}`,
           bindHost: "127.0.0.1",
@@ -30,9 +29,7 @@ export default definePluginEntry({
           `[tinkerclaw-browser-relay] Extension relay listening on ws://127.0.0.1:${RELAY_PORT}/extension`,
         );
       } catch (err) {
-        api.logger.warn(
-          `[tinkerclaw-browser-relay] Failed to start relay: ${String(err)}`,
-        );
+        api.logger.warn(`[tinkerclaw-browser-relay] Failed to start relay: ${String(err)}`);
       }
     });
 

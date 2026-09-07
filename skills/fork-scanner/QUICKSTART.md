@@ -100,6 +100,7 @@ Set up automatic daily runs:
 ### "GITHUB_TOKEN not set"
 
 Set the environment variable:
+
 ```bash
 export GITHUB_TOKEN="your_token"
 ```
@@ -107,6 +108,7 @@ export GITHUB_TOKEN="your_token"
 ### "Rate limit exceeded"
 
 The system will automatically wait. To check manually:
+
 ```bash
 curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/rate_limit
 ```
@@ -114,6 +116,7 @@ curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/rate_limit
 ### "Database locked"
 
 Only one instance can run at a time. Kill any running processes:
+
 ```bash
 pkill -f fork_scanner.py
 ```
@@ -133,21 +136,21 @@ pkill -f fork_scanner.py
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `fork_scanner.py` | Main executable script |
-| `config.py` | Configuration settings |
-| `data/forks.db` | SQLite database |
-| `reports/` | Generated reports |
-| `fork_scanner.log` | Execution logs |
+| File               | Purpose                |
+| ------------------ | ---------------------- |
+| `fork_scanner.py`  | Main executable script |
+| `config.py`        | Configuration settings |
+| `data/forks.db`    | SQLite database        |
+| `reports/`         | Generated reports      |
+| `fork_scanner.log` | Execution logs         |
 
 ## Performance Expectations
 
-| Tier | Duration | API Calls | Storage |
-|------|----------|-----------|---------|
-| 1 | 30-45 min | ~2,300 | Minimal |
-| 2 | ~1 hour | ~2,000 | Minimal |
-| 3 | 2-3 hours | Minimal | ~10GB temp |
+| Tier      | Duration      | API Calls  | Storage    |
+| --------- | ------------- | ---------- | ---------- |
+| 1         | 30-45 min     | ~2,300     | Minimal    |
+| 2         | ~1 hour       | ~2,000     | Minimal    |
+| 3         | 2-3 hours     | Minimal    | ~10GB temp |
 | **Total** | **4-5 hours** | **~4,300** | **~100MB** |
 
 ---

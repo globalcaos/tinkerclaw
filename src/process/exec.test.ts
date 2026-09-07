@@ -212,10 +212,17 @@ describe("attachChildProcessBridge", () => {
     const beforeSigterm = new Set(process.listeners("SIGTERM"));
     const { child, kill } = createFakeChild();
     const observedSignals: NodeJS.Signals[] = [];
+    // FORK 2026-08-18: the bridge now performs the death it stole. Attaching a listener
+    // for a terminating signal removes Node's default "terminate", so after forwarding
+    // SIGTERM the bridge exits 128+signum once the child is gone — without that, a
+    // `timeout`-wrapped parent hangs forever (measured: 13h55m). The seam is injected
+    // here so the assertion runs instead of taking the test runner down with a real exit.
+    const exits: number[] = [];
 
     const { detach } = attachChildProcessBridge(child, {
       signals: ["SIGTERM"],
       onSignal: (signal) => observedSignals.push(signal),
+      exitProcess: (code) => exits.push(code),
     });
 
     const afterSigterm = process.listeners("SIGTERM");
@@ -228,11 +235,30 @@ describe("attachChildProcessBridge", () => {
     addedSigterm("SIGTERM");
     expect(observedSignals).toEqual(["SIGTERM"]);
     expect(kill).toHaveBeenCalledWith("SIGTERM");
+    // Still alive at this point: the parent waits for the child rather than arming a
+    // grace-period timer, so nothing has exited yet.
+    expect(exits).toEqual([]);
 
     child.emit("exit");
     expect(process.listeners("SIGTERM")).toHaveLength(beforeSigterm.size);
+    expect(exits).toEqual([143]);
 
     // Detached already via exit; should remain a safe no-op.
+    detach();
+  });
+
+  it("does not exit the parent when the child exits without a forwarded signal", () => {
+    const { child } = createFakeChild();
+    const exits: number[] = [];
+
+    const { detach } = attachChildProcessBridge(child, {
+      signals: ["SIGTERM"],
+      exitProcess: (code) => exits.push(code),
+    });
+
+    // An ordinary child exit — nobody signalled us — must leave the parent running.
+    child.emit("exit");
+    expect(exits).toEqual([]);
     detach();
   });
 });

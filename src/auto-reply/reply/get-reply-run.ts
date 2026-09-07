@@ -514,13 +514,14 @@ export async function runPreparedReply(
   const effectiveBaseBody = hasUserBody
     ? baseBodyForPrompt
     : [inboundUserContext, "[User sent media without caption]"].filter(Boolean).join("\n\n");
-  const transcriptBodyBase = isHeartbeat
-    ? HEARTBEAT_TRANSCRIPT_PROMPT
-    : isBareSessionReset
-      ? softResetTail || `[OpenClaw session ${startupAction}]`
-      : hasUserBody
-        ? baseBodyFinal
-        : "[User sent media without caption]";
+  const transcriptBodyBase =
+    isHeartbeat && opts?.heartbeatCarriesCronPayload !== true
+      ? HEARTBEAT_TRANSCRIPT_PROMPT
+      : isBareSessionReset
+        ? softResetTail || `[OpenClaw session ${startupAction}]`
+        : hasUserBody
+          ? baseBodyFinal
+          : "[User sent media without caption]";
   let prefixedBodyBase = await applySessionHints({
     baseBody: effectiveBaseBody,
     abortedLastRun,
@@ -846,6 +847,9 @@ export async function runPreparedReply(
       modelOverrideSource: runHasSessionModelOverride
         ? preparedSessionState.sessionEntry?.modelOverrideSource
         : undefined,
+      // The router already chose this turn's ladder; the run is what carries it to the failover
+      // machinery. Undefined on a pinned turn because THALAMUS does not route one at all.
+      thalamusChain: modelState.thalamusRoute?.chain,
       authProfileId,
       authProfileIdSource,
       thinkLevel: resolvedThinkLevel,

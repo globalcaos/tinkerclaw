@@ -50,24 +50,36 @@ export interface AegisRule {
  * pre-execution hook snapshot both derive from this array.
  */
 export const AEGIS_RULES: AegisRule[] = [
+  // DELIBERATELY BROAD — do not "fix" this by narrowing it to `/` and the
+  // top-level system directories. The trailing `\/` means "any ABSOLUTE path",
+  // so `rm -rf /tmp/scratch` is blocked too, on purpose: a recursive delete of
+  // an absolute path is a confirm-with-the-user action, and the agent can always
+  // use a relative path or ask. Locked by the "still blocks recursive deletes of
+  // absolute paths" test (commit 5f57107d1a8). The rule id says ROOT for
+  // historical reasons; the explanations below say what is actually matched,
+  // because reading "root filesystem" after deleting a scratch dir looks like a
+  // false positive and invites exactly that narrowing.
   {
-    pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)?\//,
+    // The -r group is REQUIRED: with it optional this matched `rm -f /tmp/x`,
+    // i.e. any non-recursive delete of an absolute path. `rm -rf /` and `rm -fr /`
+    // are still covered by the two combined-flag rules below.
+    pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?(-[a-zA-Z]*r[a-zA-Z]*\s+)\//,
     rule: "FS_DESTRUCTIVE_ROOT",
-    explanation: "Recursive delete from root filesystem",
+    explanation: "Recursive delete of an absolute path",
     enforce: true,
     scope: "exec",
   },
   {
     pattern: /rm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\//,
     rule: "FS_DESTRUCTIVE_ROOT",
-    explanation: "Recursive force delete from root filesystem",
+    explanation: "Recursive force delete of an absolute path",
     enforce: true,
     scope: "exec",
   },
   {
     pattern: /rm\s+-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+\//,
     rule: "FS_DESTRUCTIVE_ROOT",
-    explanation: "Recursive force delete from root filesystem",
+    explanation: "Recursive force delete of an absolute path",
     enforce: true,
     scope: "exec",
   },
@@ -79,7 +91,9 @@ export const AEGIS_RULES: AegisRule[] = [
     scope: "exec",
   },
   {
-    pattern: /dd\s+.*of=\/dev\//i,
+    // /dev/null and /dev/zero are sinks, not devices to destroy — exempt them
+    // so decompressor/throughput sanity checks are not flagged as device writes.
+    pattern: /dd\s+.*of=\/dev\/(?!null\b|zero\b)/i,
     rule: "FS_DD_DEVICE",
     explanation: "Direct device write via dd",
     enforce: true,

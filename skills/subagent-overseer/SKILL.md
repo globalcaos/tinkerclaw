@@ -43,21 +43,21 @@ cat /tmp/overseer/status.json
 
 ### 3. Interpret the status
 
-| Field | Meaning |
-|---|---|
-| `subagents.count` | Active sub-agent sessions |
-| `subagents.details[].stale` | Consecutive cycles with no filesystem changes |
-| `subagents.details[].status` | `active` / `idle` / `warning` / `stuck` |
-| `gateway.health.alive` | Is `openclaw-gateway` running? |
-| `filesystem.changes_since_last` | Files modified since last check |
+| Field                           | Meaning                                       |
+| ------------------------------- | --------------------------------------------- |
+| `subagents.count`               | Active sub-agent sessions                     |
+| `subagents.details[].stale`     | Consecutive cycles with no filesystem changes |
+| `subagents.details[].status`    | `active` / `idle` / `warning` / `stuck`       |
+| `gateway.health.alive`          | Is `openclaw-gateway` running?                |
+| `filesystem.changes_since_last` | Files modified since last check               |
 
 ### 4. Staleness thresholds (at 180s interval)
 
-| stale count | Time | Status | Action |
-|---|---|---|---|
-| 0-1 | 0-3 min | `active`/`idle` | Normal |
-| 2-3 | 6-9 min | `warning` | Voice alert (if --voice) |
-| ≥4 | ≥12 min | `stuck` | Agent should investigate/kill |
+| stale count | Time    | Status          | Action                        |
+| ----------- | ------- | --------------- | ----------------------------- |
+| 0-1         | 0-3 min | `active`/`idle` | Normal                        |
+| 2-3         | 6-9 min | `warning`       | Voice alert (if --voice)      |
+| ≥4          | ≥12 min | `stuck`         | Agent should investigate/kill |
 
 ## Heartbeat Handler Protocol
 
@@ -71,13 +71,13 @@ When HEARTBEAT.md fires:
 
 ## Flags
 
-| Flag | Default | Description |
-|---|---|---|
-| `--interval` | 180 | Seconds between checks |
-| `--workdir` | cwd | Directory to watch for file changes |
-| `--labels` | (all) | Comma-separated labels to filter |
-| `--max-stale` | 4 | Cycles before marking `stuck` |
-| `--voice` | off | Local TTS alerts via `jarvis` command |
+| Flag          | Default | Description                           |
+| ------------- | ------- | ------------------------------------- |
+| `--interval`  | 180     | Seconds between checks                |
+| `--workdir`   | cwd     | Directory to watch for file changes   |
+| `--labels`    | (all)   | Comma-separated labels to filter      |
+| `--max-stale` | 4       | Cycles before marking `stuck`         |
+| `--voice`     | off     | Local TTS alerts via `jarvis` command |
 
 ## How It Works (No AI Tokens)
 

@@ -54,8 +54,10 @@ export interface OrchestrationDeps {
   onPhase?: (title: string) => void;
 }
 
-/** Concurrency cap for parallel(): min(16, cores-2), at least 1. */
-function concurrencyCap(): number {
+/** Concurrency cap for parallel(): min(16, cores-2), at least 1.
+ *  Exported so `prefrontal.status` can REPORT the real cap to the Models-panel routing
+ *  card (FORK 2026-07-25) instead of re-deriving it and drifting. */
+export function concurrencyCap(): number {
   const cores = os.cpus?.().length ?? 4;
   return Math.max(1, Math.min(16, cores - 2));
 }

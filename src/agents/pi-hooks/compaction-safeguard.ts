@@ -17,8 +17,10 @@ import path from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ExtensionAPI, ExtensionContext, FileOperations } from "@mariozechner/pi-coding-agent";
 import { extractSections } from "../../auto-reply/reply/post-compaction-context.js";
+import { recordCompactionOutcome } from "../../infra/algorithm-metrics.js";
 import { openBoundaryFile } from "../../infra/boundary-file-read.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { declareInstrument, noteInstrumentFired } from "../../infra/instrument-liveness.js";
 import { isAbortError } from "../../infra/unhandled-rejections.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import {
@@ -65,6 +67,22 @@ import {
 } from "./compaction-safeguard-runtime.js";
 
 const log = createSubsystemLogger("compaction-safeguard");
+
+// FORK 2026-07-28 — instrument-liveness enrollment (case #3 in instrument-liveness.ts). This
+// extension is KNOWN-DEAD under the live config, and that is exactly why it declares itself:
+// silence has to be a STATED FACT rather than an assumption. Module scope is deliberate —
+// extensions.ts imports this module unconditionally, so the declaration runs even while the
+// engram mode keeps the handler below unreachable. Do NOT move this inside the factory or the
+// handler: that would re-create the "registered means running" blind spot.
+declareInstrument({
+  id: "compaction:safeguard-extension",
+  kind: "extension",
+  description: "LLM-summary compaction safeguard (the narrative-summary arm)",
+  conditional:
+    "live agents.defaults.compaction.mode is 'engram', which routes compaction to " +
+    "compaction-engram.ts; this path is unreachable until the mode flips to 'safeguard' " +
+    "or a compaction provider registers",
+});
 
 // Track session managers that have already logged the missing-model warning to avoid log spam.
 const missedModelWarningSessions = new WeakSet<object>();
@@ -789,7 +807,27 @@ async function readWorkspaceContextForSummary(): Promise<string> {
 }
 
 export default function compactionSafeguardExtension(api: ExtensionAPI): void {
+  // FORK 2026-07-28 — invocation here means the live config actually routed compaction to this
+  // extension (extensions.ts wires it only when resolveCompactionMode() === "safeguard"; a
+  // direct consumer registering it is equally on the traffic path). From this moment silence is
+  // NO LONGER explained by configuration, so clear the module-scope `conditional`: leaving it
+  // set would classify a genuinely dead safeguard path as "silent by configuration" forever —
+  // the exact masking the liveness registry exists to prevent. declareInstrument re-declaration
+  // keeps the accumulated counters and Object.assign overwrites the stored conditional key.
+  declareInstrument({
+    id: "compaction:safeguard-extension",
+    kind: "extension",
+    description: "LLM-summary compaction safeguard (the narrative-summary arm)",
+    conditional: undefined,
+  });
   api.on("session_before_compact", async (event, ctx) => {
+    // FORK 2026-07-28 — liveness fires HERE, on the first statement of the handler BODY, not
+    // at registration above: registering is precisely what stayed green while this was dead.
+    noteInstrumentFired(
+      "compaction:safeguard-extension",
+      `tokensBefore=${event.preparation.tokensBefore ?? "unknown"}`,
+    );
+    const handlerStartedAtMs = Date.now();
     const { preparation, customInstructions: eventInstructions, signal } = event;
     const rawTurnPrefixMessages = preparation.turnPrefixMessages ?? [];
     const baseMessagesToSummarize = stripRuntimeContextCustomMessages(
@@ -820,6 +858,13 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         "Compaction safeguard: no real conversation messages to summarize; writing compaction boundary to suppress re-trigger loop.",
       );
       const fallbackSummary = buildStructuredFallbackSummary(preparation.previousSummary);
+      recordCompactionOutcome({
+        variant: "llm-summary",
+        outcome: "no-op",
+        tokensBefore: preparation.tokensBefore,
+        durationMs: Date.now() - handlerStartedAtMs,
+        note: "boundary-write: no real conversation messages to summarize",
+      });
       return {
         compaction: {
           summary: fallbackSummary,
@@ -895,6 +940,13 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
               workspaceContext,
             });
             const summary = capCompactionSummaryPreservingSuffix(providerResult, suffix);
+            recordCompactionOutcome({
+              variant: "llm-summary",
+              outcome: "fired",
+              tokensBefore: preparation.tokensBefore,
+              durationMs: Date.now() - handlerStartedAtMs,
+              note: `path=compaction-provider:${providerId}`,
+            });
             return {
               compaction: {
                 summary,
@@ -910,6 +962,16 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
           // tryProviderSummarize rethrows abort/timeout — if we reach here it is
           // an unexpected error from the assembly step. Fall through to LLM path.
           if (isAbortError(err) || isTimeoutError(err)) {
+            // The rethrow escapes the whole handler (the LLM-path try has not begun), so this
+            // terminal must record its own ledger row or a provider timeout becomes "handler
+            // fired, no outcome" — the exact ambiguity this instrumentation removes.
+            recordCompactionOutcome({
+              variant: "llm-summary",
+              outcome: "failed",
+              tokensBefore: preparation.tokensBefore,
+              durationMs: Date.now() - handlerStartedAtMs,
+              note: `provider-path abort/timeout: ${formatErrorMessage(err).slice(0, 200)}`,
+            });
             throw err;
           }
           log.warn(
@@ -940,12 +1002,28 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
         ctx.sessionManager,
         "Compaction safeguard could not resolve a summarization model.",
       );
+      recordCompactionOutcome({
+        variant: "llm-summary",
+        outcome: "skipped",
+        tokensBefore: preparation.tokensBefore,
+        durationMs: Date.now() - handlerStartedAtMs,
+        note: "cancel: no summarization model",
+      });
       return { cancel: true };
     }
 
     const authResult = await resolveModelAuth(ctx, model);
     if (!authResult.ok) {
       setCompactionSafeguardCancelReason(ctx.sessionManager, authResult.reason);
+      recordCompactionOutcome({
+        variant: "llm-summary",
+        outcome: "skipped",
+        tokensBefore: preparation.tokensBefore,
+        durationMs: Date.now() - handlerStartedAtMs,
+        model: model.id,
+        provider: model.provider,
+        note: "cancel: auth unavailable",
+      });
       return { cancel: true };
     }
     const apiKey = authResult.apiKey ?? "";
@@ -1181,6 +1259,15 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       const bodyToCap = lastHistorySummary || summary;
       summary = capCompactionSummaryPreservingSuffix(bodyToCap, suffix);
 
+      recordCompactionOutcome({
+        variant: "llm-summary",
+        outcome: "fired",
+        tokensBefore: preparation.tokensBefore,
+        durationMs: Date.now() - handlerStartedAtMs,
+        model: model.id,
+        provider: model.provider,
+        note: "path=llm",
+      });
       return {
         compaction: {
           summary,
@@ -1194,6 +1281,15 @@ export default function compactionSafeguardExtension(api: ExtensionAPI): void {
       log.warn(
         `Compaction summarization failed; cancelling compaction to preserve history: ${message}`,
       );
+      recordCompactionOutcome({
+        variant: "llm-summary",
+        outcome: "failed",
+        tokensBefore: preparation.tokensBefore,
+        durationMs: Date.now() - handlerStartedAtMs,
+        model: model.id,
+        provider: model.provider,
+        note: `error: ${message.slice(0, 200)}`,
+      });
       setCompactionSafeguardCancelReason(
         ctx.sessionManager,
         `Compaction safeguard could not summarize the session: ${message}`,

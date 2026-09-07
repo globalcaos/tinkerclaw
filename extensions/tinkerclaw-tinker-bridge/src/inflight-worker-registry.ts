@@ -10,11 +10,15 @@
  * (non-tinker-bridge provider, or between turns), the hook returns false and the
  * dispatch falls back to the pi-agent-core steeringQueue (next-round delivery).
  *
- * Importing src from an extension mirrors the existing tinkerclaw-learned-intuition
- * pattern; this is a fork-internal coupling (tinker-bridge IS the provider the steer
- * targets), kept to a single narrow typed hook.
+ * The coupling to core is real — tinker-bridge IS the provider the steer targets —
+ * and it is kept to a single narrow typed hook. It crosses through a DECLARED
+ * plugin-sdk subpath, not a relative reach into `src/`: this extension is
+ * `publishToClawHub: true`, so under FOUNDATION #9 its tarball must be able to
+ * resolve every import it makes, and `../../../src/**` cannot resolve on a user's
+ * disk. See `src/plugin-sdk/fork-inflight-steer.ts` for why a BIDIRECTIONAL
+ * core <-> plugin seam still has to be DECLARED rather than hidden.
  */
-import { registerInflightSteerHook } from "../../../src/agents/embedded-agent-runner/inflight-steer-hook.js";
+import { registerInflightSteerHook } from "openclaw/plugin-sdk/fork-inflight-steer";
 import type { ClaudeCodeWorker } from "./worker.js";
 
 // openclawSessionId -> the worker running its CURRENT turn (live only during

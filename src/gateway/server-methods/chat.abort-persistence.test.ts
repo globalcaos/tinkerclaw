@@ -18,6 +18,30 @@ const sessionEntryState = vi.hoisted(() => ({
   sessionId: "",
 }));
 
+vi.mock("../../auto-reply/reply/abort.js", () => ({
+  stopSubagentsForRequester: vi.fn(() => ({ stopped: 0 })),
+}));
+vi.mock("../../auto-reply/reply/queue.js", () => ({
+  clearSessionQueues: vi.fn(() => ({ followupCleared: 0, laneCleared: 0, keys: [] })),
+}));
+vi.mock("../../auto-reply/reply/reply-run-registry.js", () => ({
+  replyRunRegistry: {
+    abort: vi.fn(() => false),
+    resolveSessionId: vi.fn(() => undefined),
+  },
+}));
+vi.mock("../../agents/embedded-agent-runner/runs.js", () => ({
+  abortEmbeddedPiRun: vi.fn(() => false),
+}));
+vi.mock("../../config/sessions.js", async () => {
+  const original = await vi.importActual<typeof import("../../config/sessions.js")>(
+    "../../config/sessions.js",
+  );
+  return {
+    ...original,
+    updateSessionStore: vi.fn(async () => undefined),
+  };
+});
 vi.mock("../session-utils.js", async () => {
   const original =
     await vi.importActual<typeof import("../session-utils.js")>("../session-utils.js");
@@ -98,7 +122,7 @@ describe("chat abort transcript persistence", () => {
       ]),
       broadcast: vi.fn(),
       nodeSendToSession: vi.fn(),
-      logGateway: { warn: vi.fn() },
+      logGateway: { warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
     });
 
     await invokeChatAbortHandler({

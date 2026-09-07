@@ -624,6 +624,34 @@ export function projectChatDisplayMessages(
   );
 }
 
+// FORK 2026-08-26: a served chat.history window must NEVER be able to contain
+// zero real turns. The merged history interleaves the local OpenClaw store (ONE
+// coalesced message per completed turn) with imported claude-cli transcripts
+// (one message per tool-loop STEP), so a single tool-heavy turn floods the tail
+// with hundreds of import records carrying the newest timestamps. The old blind
+// tail slice (`messages.slice(-maxMessages)`) then served windows that were
+// 95-100% tool-loop import at every requested limit while the user's genuine
+// conversation was entirely absent (measured live: 24 real turns on disk, ~0
+// served from limit 5 through 1000). LOCAL_TAIL_FLOOR guarantees the newest N
+// LOCAL messages — those carrying no `__openclaw.importedFrom` provenance —
+// survive limitChatDisplayMessages; imported messages only fill whatever budget
+// remains. The byte-budget passes downstream in server-methods/chat.ts are
+// deliberately untouched: this floor applies ON TOP of them, and where honouring
+// it costs bytes the floor still wins for local messages — a slower, larger
+// window holding the real conversation beats a fast empty one.
+export const LOCAL_TAIL_FLOOR = 24;
+
+function isImportedChatDisplayMessage(message: unknown): boolean {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+  const meta = (message as { __openclaw?: unknown }).__openclaw;
+  if (!meta || typeof meta !== "object") {
+    return false;
+  }
+  return (meta as { importedFrom?: unknown }).importedFrom != null;
+}
+
 export function limitChatDisplayMessages<T>(messages: T[], maxMessages?: number): T[] {
   if (
     typeof maxMessages !== "number" ||
@@ -633,7 +661,35 @@ export function limitChatDisplayMessages<T>(messages: T[], maxMessages?: number)
   ) {
     return messages;
   }
-  return messages.slice(-Math.floor(maxMessages));
+  const limit = Math.floor(maxMessages);
+  const localIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (!isImportedChatDisplayMessage(messages[i])) {
+      localIndices.push(i);
+    }
+  }
+  // Pure inputs (all-local or all-imported) keep the exact legacy behaviour — a
+  // plain tail slice. The floor only arbitrates when the two populations compete
+  // for the same window.
+  if (limit <= 0 || localIndices.length === 0 || localIndices.length === messages.length) {
+    return messages.slice(-limit);
+  }
+  // Reserve the newest local messages first (the reservation is capped at the
+  // window size, so maxMessages is always honoured), then fill the remaining
+  // budget from the newest end of the merged array. The input is already
+  // timestamp-ordered upstream (the merge layer sorts), so index order IS
+  // chronological order — emitting selected indices in ascending order keeps
+  // the output chronological.
+  const selected = new Set<number>();
+  const guaranteed = Math.min(localIndices.length, LOCAL_TAIL_FLOOR, limit);
+  for (let k = localIndices.length - guaranteed; k < localIndices.length; k++) {
+    selected.add(localIndices[k]);
+  }
+  for (let i = messages.length - 1; i >= 0 && selected.size < limit; i--) {
+    selected.add(i);
+  }
+  const ordered = [...selected].sort((a, b) => a - b);
+  return ordered.map((index) => messages[index]);
 }
 
 export function projectRecentChatDisplayMessages(

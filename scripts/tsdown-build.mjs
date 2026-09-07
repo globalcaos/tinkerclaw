@@ -23,6 +23,9 @@ const DEFAULT_HEARTBEAT_MS = 30_000;
 const TERMINATION_GRACE_MS = 5_000;
 const TSDOWN_OUTPUT_ROOTS = ["dist", "dist-runtime"];
 const DIST_RUNTIME_DEPS_ROOT = "extensions";
+const LIVE_OUTPUT_ROOT_OVERRIDE_ENV = "OPENCLAW_BUILD_ALLOW_LIVE_GATEWAY";
+const LIVE_OUTPUT_ROOT_OVERRIDE_VALUES = new Set(["1", "true", "yes"]);
+const PID_DIR_RE = /^\d+$/u;
 
 function removeDistPluginNodeModulesSymlinks(rootDir) {
   const extensionsDir = path.join(rootDir, "extensions");
@@ -43,6 +46,100 @@ function removeDistPluginNodeModulesSymlinks(rootDir) {
       // Skip missing or unreadable paths so the build can proceed.
     }
   }
+}
+
+function resolveGuardedEntryPaths(cwd) {
+  return TSDOWN_OUTPUT_ROOTS.map((root) => path.join(cwd, root, "index.js"));
+}
+
+// A build deletes the output roots before compiling, so a process already running
+// from them dies on its next lazy content-hashed chunk import. Match on the
+// resolved entry path only: a detached-worktree deploy builds under a different
+// root and must stay unblocked, or people fall back to the dangerous in-place build.
+export function findProcessesRunningOutputRoots(params = {}) {
+  const cwd = params.cwd ?? process.cwd();
+  const procRoot = params.procRoot ?? "/proc";
+  const selfPid = params.selfPid ?? process.pid;
+  const ppid = params.ppid ?? process.ppid;
+  const guardedEntryPaths = new Set(resolveGuardedEntryPaths(cwd));
+
+  let procEntries = [];
+  try {
+    procEntries = fs.readdirSync(procRoot, { withFileTypes: true });
+  } catch {
+    // No readable /proc (non-Linux, container, sandbox): degrade to a no-op.
+    return [];
+  }
+
+  const matches = [];
+  for (const entry of procEntries) {
+    if (!entry.isDirectory() || !PID_DIR_RE.test(entry.name)) {
+      continue;
+    }
+    const pid = Number(entry.name);
+    if (pid === selfPid || pid === ppid) {
+      continue;
+    }
+    let argv = [];
+    try {
+      argv = fs
+        .readFileSync(path.join(procRoot, entry.name, "cmdline"), "utf8")
+        .split("\0")
+        .filter((arg) => arg !== "");
+    } catch {
+      // Processes vanish mid-scan and some are unreadable; neither is an error.
+      continue;
+    }
+    if (argv.some((arg) => guardedEntryPaths.has(path.resolve(arg)))) {
+      matches.push({ pid, argv });
+    }
+  }
+
+  return matches;
+}
+
+export function assertNoLiveProcessOnOutputRoots(params = {}) {
+  const cwd = params.cwd ?? process.cwd();
+  const env = params.env ?? process.env;
+  const exit = params.exit ?? process.exit;
+  const logger = params.logger ?? console;
+  const matches = findProcessesRunningOutputRoots(params);
+  if (matches.length === 0) {
+    return matches;
+  }
+
+  const guardedEntryPaths = new Set(resolveGuardedEntryPaths(cwd));
+  const offenders = matches
+    .map(({ pid, argv }) => {
+      const entry = argv.find((arg) => guardedEntryPaths.has(path.resolve(arg)));
+      return `  pid ${pid} -> ${entry ?? argv[0] ?? ""}\n      ${argv.join(" ")}`;
+    })
+    .join("\n");
+  const roots = TSDOWN_OUTPUT_ROOTS.map((root) => path.join(cwd, root)).join(", ");
+  const message = [
+    "Refusing to build: a live process is running from this checkout's build output.",
+    offenders,
+    `This build DELETES ${roots} before compiling.`,
+    "That process imports content-hashed chunks lazily, so removing them crashes it",
+    "mid-request with ERR_MODULE_NOT_FOUND (this took the gateway down on 2026-07-29).",
+    "Do one of:",
+    "  (a) deploy from a clean detached worktree: scripts/deploy-worktree.sh",
+    "      (builds elsewhere, then swaps with the gateway stopped)",
+    "  (b) stop the live process first: systemctl --user stop openclaw-gateway",
+    `Last resort: ${LIVE_OUTPUT_ROOT_OVERRIDE_ENV}=1 builds anyway and will break that process.`,
+  ].join("\n");
+
+  const override = String(env[LIVE_OUTPUT_ROOT_OVERRIDE_ENV] ?? "")
+    .trim()
+    .toLowerCase();
+  if (LIVE_OUTPUT_ROOT_OVERRIDE_VALUES.has(override)) {
+    logger.warn(`${message}\nContinuing anyway: ${LIVE_OUTPUT_ROOT_OVERRIDE_ENV} is set.`);
+    return matches;
+  }
+
+  logger.error(message);
+  exit(1);
+  return matches;
 }
 
 function pruneStaleRuntimeSymlinks() {
@@ -415,6 +512,7 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
+  assertNoLiveProcessOnOutputRoots();
   pruneSourceCheckoutBundledPluginNodeModules();
   pruneStaleRuntimeSymlinks();
   cleanTsdownOutputRoots();

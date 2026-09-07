@@ -1,0 +1,20 @@
+{
+  "name": "@globalcaos/tinkerclaw-cron-panel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FORK-ONLY: exec-mode Crons tab — read-only cron job board over jobs.json + delta report files.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": false
+    }
+  }
+}

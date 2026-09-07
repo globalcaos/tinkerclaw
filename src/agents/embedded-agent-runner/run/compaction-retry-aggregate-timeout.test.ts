@@ -37,6 +37,7 @@ function buildAggregateTimeoutParams(
     abortable: overrides.abortable ?? (async (promise) => await promise),
     aggregateTimeoutMs: overrides.aggregateTimeoutMs ?? 60_000,
     isCompactionStillInFlight: overrides.isCompactionStillInFlight,
+    inflightHardCapMs: overrides.inflightHardCapMs,
     onTimeout,
   };
 }
@@ -80,6 +81,55 @@ describe("waitForCompactionRetryWithAggregateTimeout", () => {
       const result = await resultPromise;
 
       expect(result.timedOut).toBe(false);
+      expectClearedTimeoutState(params.onTimeout, false);
+    });
+  });
+
+  it("gives up at the in-flight hard cap when a hung compaction never leaves in-flight", async () => {
+    await withFakeTimers(async () => {
+      const waitForCompactionRetry = vi.fn(async () => await new Promise<void>(() => {}));
+      const params = buildAggregateTimeoutParams({
+        waitForCompactionRetry,
+        isCompactionStillInFlight: () => true,
+        inflightHardCapMs: 180_000,
+      });
+
+      const resultPromise = waitForCompactionRetryWithAggregateTimeout(params);
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      const result = await resultPromise;
+
+      expect(result.timedOut).toBe(true);
+      expect(result.timedOutWhileInFlight).toBe(true);
+      expectClearedTimeoutState(params.onTimeout, true);
+    });
+  });
+
+  it("does not fire the hard cap when in-flight compaction completes under it", async () => {
+    await withFakeTimers(async () => {
+      let compactionInFlight = true;
+      const waitForCompactionRetry = vi.fn(
+        async () =>
+          await new Promise<void>((resolve) => {
+            setTimeout(() => {
+              compactionInFlight = false;
+              resolve();
+            }, 170_000);
+          }),
+      );
+      const params = buildAggregateTimeoutParams({
+        waitForCompactionRetry,
+        isCompactionStillInFlight: () => compactionInFlight,
+        inflightHardCapMs: 540_000,
+      });
+
+      const resultPromise = waitForCompactionRetryWithAggregateTimeout(params);
+
+      await vi.advanceTimersByTimeAsync(170_000);
+      const result = await resultPromise;
+
+      expect(result.timedOut).toBe(false);
+      expect(result.timedOutWhileInFlight).toBe(false);
       expectClearedTimeoutState(params.onTimeout, false);
     });
   });

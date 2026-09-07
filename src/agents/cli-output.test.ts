@@ -316,6 +316,89 @@ describe("parseCliJsonl", () => {
     });
   });
 
+  it("captures the last assistant step's usage separately from the turn aggregate", () => {
+    const result = parseCliJsonl(
+      [
+        JSON.stringify({ type: "init", session_id: "session-steps" }),
+        JSON.stringify({
+          type: "assistant",
+          session_id: "session-steps",
+          message: {
+            role: "assistant",
+            usage: {
+              input_tokens: 10,
+              output_tokens: 1,
+              cache_read_input_tokens: 100,
+              cache_creation_input_tokens: 5,
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          session_id: "session-steps",
+          message: {
+            role: "assistant",
+            usage: {
+              input_tokens: 20,
+              output_tokens: 2,
+              cache_read_input_tokens: 180,
+              cache_creation_input_tokens: 7,
+            },
+          },
+        }),
+        JSON.stringify({
+          type: "result",
+          session_id: "session-steps",
+          result: "steps done",
+          usage: {
+            input_tokens: 30,
+            output_tokens: 3,
+            cache_read_input_tokens: 280,
+            cache_creation_input_tokens: 12,
+          },
+        }),
+      ].join("\n"),
+      {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result).toMatchObject({
+      text: "steps done",
+      sessionId: "session-steps",
+      // Aggregate stays the result event's turn-summed usage (cost accounting).
+      usage: { input: 30, output: 3, cacheRead: 280, cacheWrite: 12 },
+      // lastStepUsage is the SECOND assistant step — the real final context.
+      lastStepUsage: { input: 20, output: 2, cacheRead: 180, cacheWrite: 7 },
+    });
+  });
+
+  it("leaves lastStepUsage undefined when no assistant step carries usage", () => {
+    const result = parseCliJsonl(
+      [
+        JSON.stringify({ type: "init", session_id: "session-nostep" }),
+        JSON.stringify({
+          type: "result",
+          session_id: "session-nostep",
+          result: "no steps",
+          usage: { input_tokens: 5, output_tokens: 2 },
+        }),
+      ].join("\n"),
+      {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result?.text).toBe("no steps");
+    expect(result?.lastStepUsage).toBeUndefined();
+  });
+
   it("preserves Claude session metadata even when the final result text is empty", () => {
     const result = parseCliJsonl(
       [

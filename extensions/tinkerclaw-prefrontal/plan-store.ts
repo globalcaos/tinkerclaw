@@ -1,8 +1,8 @@
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { Plan, PlanStep } from "openclaw/plugin-sdk/fork-prefrontal-schema";
 import lockfile from "proper-lockfile";
-import type { Plan, PlanStep } from "../../src/gateway/protocol/schema/prefrontal-plan.js";
 
 export interface PlanStoreOptions {
   rootDir: string; // ~/.openclaw/workspace/state/prefrontal/plans

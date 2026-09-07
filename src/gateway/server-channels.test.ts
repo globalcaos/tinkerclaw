@@ -52,6 +52,7 @@ function createTestPlugin(params?: {
   order?: number;
   account?: TestAccount;
   startAccount?: NonNullable<ChannelPlugin<TestAccount>["gateway"]>["startAccount"];
+  stopAccount?: NonNullable<ChannelPlugin<TestAccount>["gateway"]>["stopAccount"];
   listAccountIds?: ChannelPlugin<TestAccount>["config"]["listAccountIds"];
   includeDescribeAccount?: boolean;
   describeAccount?: ChannelPlugin<TestAccount>["config"]["describeAccount"];
@@ -79,6 +80,9 @@ function createTestPlugin(params?: {
   const gateway: NonNullable<ChannelPlugin<TestAccount>["gateway"]> = {};
   if (params?.startAccount) {
     gateway.startAccount = params.startAccount;
+  }
+  if (params?.stopAccount) {
+    gateway.stopAccount = params.stopAccount;
   }
   return {
     id,
@@ -304,6 +308,80 @@ describe("server-channels auto restart", () => {
     expect(account?.running).toBe(true);
     expect(account?.restartPending).toBe(false);
     expect(account?.lastError).toContain("channel stop timed out");
+  });
+
+  // REGRESSION 2026-08-26: the crash / auto-restart chain never invoked the
+  // plugin's account teardown (`gateway.stopAccount` was reachable only from the
+  // manual stop), so every retry left the previous attempt's out-of-process child
+  // alive — 181 orphaned `whatsmeow-node` processes / ~4 GB RSS over one 5 h
+  // gateway uptime. This gate fails on the pre-fix code (maxLive climbs with the
+  // attempt count) and is the check that would have caught the leak.
+  it("reaps the previous attempt's child before the next auto-restart spawn", async () => {
+    type FakeChild = { id: number; terminated: boolean };
+    const children: FakeChild[] = [];
+    const timeline: Array<{ event: "spawn" | "terminate"; id: number }> = [];
+    let liveChild: FakeChild | null = null;
+    let maxLive = 0;
+    const countLive = () => children.filter((child) => !child.terminated).length;
+
+    // Stands in for the `whatsmeow-node` Go sidecar. startAccount resolves
+    // immediately, which is exactly the "channel exited without an error" shape
+    // that produced the orphan herd on the live gateway.
+    const startAccount = vi.fn(async () => {
+      const child: FakeChild = { id: children.length, terminated: false };
+      children.push(child);
+      liveChild = child;
+      timeline.push({ event: "spawn", id: child.id });
+      maxLive = Math.max(maxLive, countLive());
+    });
+    const stopAccount = vi.fn(async () => {
+      const child = liveChild;
+      liveChild = null;
+      // Idempotent, and safe when the child already exited on its own — the
+      // common case, and precisely what emitted the clean-exit log line.
+      if (!child || child.terminated) {
+        return;
+      }
+      child.terminated = true;
+      timeline.push({ event: "terminate", id: child.id });
+    });
+
+    installTestRegistry(createTestPlugin({ startAccount, stopAccount }));
+    const manager = createManager();
+
+    await manager.startChannels();
+    await vi.advanceTimersByTimeAsync(200);
+
+    // The crash loop runs to the restart cap, so this covers well over the five
+    // exit-and-restart cycles the leak needs to become visible.
+    expect(children.length).toBeGreaterThanOrEqual(6);
+    expect(maxLive).toBe(1);
+    expect(countLive()).toBe(0);
+
+    for (let i = 1; i < children.length; i += 1) {
+      const spawnIdx = timeline.findIndex((entry) => entry.event === "spawn" && entry.id === i);
+      const terminateIdx = timeline.findIndex(
+        (entry) => entry.event === "terminate" && entry.id === i - 1,
+      );
+      expect(terminateIdx).toBeGreaterThanOrEqual(0);
+      expect(terminateIdx).toBeLessThan(spawnIdx);
+    }
+  });
+
+  it("does not wedge auto-restart when the account teardown hook hangs", async () => {
+    const startAccount = vi.fn(async () => {});
+    // Never settles: the teardown budget, not the hook, must decide when the
+    // restart chain moves on.
+    const stopAccount = vi.fn(async () => await new Promise<void>(() => {}));
+
+    installTestRegistry(createTestPlugin({ startAccount, stopAccount }));
+    const manager = createManager();
+
+    await manager.startChannels();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(stopAccount).toHaveBeenCalled();
+    expect(startAccount.mock.calls.length).toBeGreaterThan(1);
   });
 
   it("marks enabled/configured when account descriptors omit them", () => {

@@ -515,6 +515,9 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     expect(callGateway).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "agent",
+        // No internalEvents means no completion fallback text, so the gateway
+        // response is never inspected and the call waits for admission only.
+        expectFinal: false,
         params: expect.objectContaining({
           deliver: true,
           channel: "slack",
@@ -566,6 +569,10 @@ describe("deliverSubagentAnnouncement completion delivery", () => {
     expect(callGateway).toHaveBeenCalledWith(
       expect.objectContaining({
         method: "agent",
+        // There IS completion fallback text here, so the double-send guard has to
+        // read `result.payloads` -- an `accepted` ack carries none. This is the
+        // one case that still waits for the final response.
+        expectFinal: true,
         params: expect.objectContaining({
           deliver: true,
           channel: "slack",

@@ -227,6 +227,95 @@ function esc(s: string): string {
   );
 }
 
+// FORK 2026-08-21 — bug "the Pulse hover tooltip hides under the chat panel".
+// The tip used to be a position:absolute child of .pg-body, and .exec-panel
+// (base.css:4527) is `overflow-y:auto; overflow-x:hidden` — so every descendant
+// is CLIPPED at the panel's 360px right edge. No z-index escapes an ancestor
+// overflow clip; the chat is merely what lies beyond that edge. Fix = the idiom
+// this app already uses for #global-hint (app.ts) and .sd-tip (base.css:9671):
+// ONE position:fixed node on <body>, outside every clipping ancestor, placed in
+// VIEWPORT coordinates and clamped to the viewport.
+const TIP_ID = "pg-tip-floating";
+let TIP_EL: HTMLElement | null = null;
+// clearHover() of the chart that currently owns the tooltip, so a scroll, a
+// resize or a re-render can drop that chart's crosshair + dimming as well.
+let ACTIVE_HOVER: (() => void) | null = null;
+
+/** Hide the tip WITHOUT creating it — safe to call before anyone has hovered. */
+function hideFloatingTip(): void {
+  const el = TIP_EL ?? document.getElementById(TIP_ID);
+  if (el && el.style.display !== "none") el.style.display = "none";
+}
+
+/** Drop the whole hover state (tip + crosshair + dimming) of the owning chart. */
+function clearPresenceGraphHover(): void {
+  const f = ACTIVE_HOVER;
+  ACTIVE_HOVER = null;
+  if (f) f();
+  else hideFloatingTip();
+}
+
+/**
+ * The singleton tip node: created once, lazily, and re-found by id (never
+ * duplicated) if the module-level cache is ever reset by a Vite HMR swap.
+ */
+function floatingTip(): HTMLElement {
+  let el: HTMLElement | null = TIP_EL;
+  if (!el || !el.isConnected) el = document.getElementById(TIP_ID);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = TIP_ID;
+    el.className = "pg-tip";
+    el.style.display = "none";
+  }
+  if (!el.isConnected) document.body.appendChild(el);
+  if (el.dataset.pgWired !== "1") {
+    el.dataset.pgWired = "1";
+    // A fixed tip does NOT scroll with the exec panel, so any scroll drops the
+    // hover (capture: `scroll` does not bubble, and the scroller is .exec-panel,
+    // not window). One pointermove brings it straight back, correctly placed.
+    window.addEventListener("scroll", clearPresenceGraphHover, true);
+    window.addEventListener("resize", clearPresenceGraphHover);
+    // Safety net for every exit a chart's own pointerleave cannot see: the panel
+    // re-rendering under a motionless cursor, an exec-tab switch, exec mode going
+    // off, the KPI error path replacing #exec-graphs-body. Costs one truthiness
+    // test per pointermove whenever no tip is up.
+    document.addEventListener(
+      "pointermove",
+      (ev) => {
+        if (!ACTIVE_HOVER) return;
+        const t = ev.target as Element | null;
+        if (!t || typeof t.closest !== "function" || !t.closest(".pg-body")) {
+          clearPresenceGraphHover();
+        }
+      },
+      true,
+    );
+  }
+  TIP_EL = el;
+  return el;
+}
+
+/**
+ * Show the tip with its top-left at (vx, vy) in VIEWPORT coordinates, clamped to
+ * the viewport by the tip's MEASURED size. The old clamp,
+ * `Math.min(r.width - 118, …)`, was chart-relative and assumed a 118px-wide
+ * tooltip — which is why a long series label ran past the panel edge to begin
+ * with. Measure-then-place is #global-hint's own shape (app.ts positionHint()).
+ */
+function showFloatingTip(html: string, vx: number, vy: number): void {
+  const el = floatingTip();
+  el.innerHTML = html;
+  el.style.display = "";
+  // Measure AFTER display:"" (a display:none node measures 0). left/top are
+  // written in the same task, so the browser never paints the pre-clamp spot.
+  const tw = el.offsetWidth,
+    th = el.offsetHeight,
+    pad = 6;
+  el.style.left = `${Math.max(pad, Math.min(vx, window.innerWidth - pad - tw))}px`;
+  el.style.top = `${Math.max(pad, Math.min(vy, window.innerHeight - pad - th))}px`;
+}
+
 // FORK 2026-06-07 — bug task-mq3ghvqy (Zooming into graphs): a series whose only points sit
 // OUTSIDE the zoomed window (e.g. clawhub with one reading far-left and one far-right) used to
 // vanish, because the render/domain code only looked at in-window points. These helpers return the
@@ -363,7 +452,7 @@ function chartHtml(g: GGroup): string {
       <div class="pg-head" draggable="true" title="Drag to reorder · click to collapse">
         <span class="pg-grip">⠿</span><span class="pg-icon">${icon(g.key)}</span><span class="pg-name">${esc(g.title)}</span>${g.accent ? `<span class="pg-accent">${esc(g.accent)}</span>` : ""}
       </div>
-      <div class="pg-body">${renderSvg(g)}<div class="pg-tip" style="display:none"></div></div>
+      <div class="pg-body">${renderSvg(g)}</div>
     </div>`;
 }
 
@@ -380,6 +469,10 @@ export function renderPresenceGraphsHtml(groups: GGroup[]): string {
 }
 
 export function attachPresenceGraphs(container: HTMLElement): void {
+  // The caller has just replaced every .pg-chart via innerHTML, so a tooltip
+  // still up belongs to charts that no longer exist — and it now lives on
+  // <body>, where no pointerleave can ever reach it.
+  clearPresenceGraphHover();
   if (container.dataset.pgDnd !== "1") {
     container.dataset.pgDnd = "1";
     let dragEl: HTMLElement | null = null;
@@ -417,14 +510,15 @@ export function attachPresenceGraphs(container: HTMLElement): void {
     const key = chart.dataset.group || "";
     const head = chart.querySelector(".pg-head") as HTMLElement;
     const body = chart.querySelector(".pg-body") as HTMLElement;
-    const tip = chart.querySelector(".pg-tip") as HTMLElement;
     const svgEl = () => body.querySelector("svg") as SVGSVGElement;
     const rerender = () => {
       const g = DATA.get(key);
       if (g) {
-        const t = tip;
+        // The crosshair and the dimming live in the SVG about to be thrown away,
+        // and the tip is now a body-level singleton — so drop the hover instead
+        // of re-appending a tip that still shows the pre-zoom value.
+        clearHover();
         body.innerHTML = renderSvg(g);
-        body.appendChild(t);
       }
     };
     const full = () => fullRange(DATA.get(key)!);
@@ -525,6 +619,16 @@ export function attachPresenceGraphs(container: HTMLElement): void {
         e.style.opacity = on ? "1" : "0.1";
         if (e.tagName === "path") e.style.strokeWidth = hi != null && on ? "2.4" : "";
       });
+    // Drop this chart's whole hover state: tooltip + crosshair + series dimming.
+    const clearHover = () => {
+      ACTIVE_HOVER = null;
+      hideFloatingTip();
+      const svg = svgEl();
+      if (!svg) return;
+      const c = svg.querySelector(".pg-cross") as SVGLineElement | null;
+      if (c) c.style.display = "none";
+      dimSeries(svg, null);
+    };
     body.addEventListener("pointermove", (ev) => {
       if (dragX != null) return;
       const g = DATA.get(key);
@@ -534,12 +638,7 @@ export function attachPresenceGraphs(container: HTMLElement): void {
       const r = svg.getBoundingClientRect();
       const frac = plotFrac(ev.clientX);
       const cross = svg.querySelector(".pg-cross") as SVGLineElement | null;
-      const hide = () => {
-        tip.style.display = "none";
-        if (cross) cross.style.display = "none";
-        dimSeries(svg, null);
-      };
-      if (frac < 0 || frac > 1) return hide();
+      if (frac < 0 || frac > 1) return clearHover();
       const v = win(),
         ts = v.t0 + frac * (v.t1 - v.t0);
       const L = domainOf(g, "left", v.t0, v.t1),
@@ -567,7 +666,7 @@ export function attachPresenceGraphs(container: HTMLElement): void {
           hp = bp;
         }
       });
-      if (hi == null || !hp) return hide();
+      if (hi == null || !hp) return clearHover();
       dimSeries(svg, hi);
       const s = g.series[hi],
         col = s.color ?? colorAt(hi);
@@ -579,18 +678,17 @@ export function attachPresenceGraphs(container: HTMLElement): void {
       }
       const dd = new Date(hp.ts),
         xpix = (ML / W) * r.width + frac * (PW / W) * r.width;
-      tip.innerHTML = `<div class="pg-tipdate">${dd.getDate()} ${MON[dd.getMonth()]} ${dd.getFullYear()}</div><span class="pg-tiprow"><i style="background:${col}"></i>${esc(s.label)}: <b>${fmtNum(hp.value)}</b></span>`;
-      tip.style.display = "";
-      tip.style.left = Math.min(r.width - 118, Math.max(0, xpix + 8)) + "px";
+      // VIEWPORT coordinates now — the same anchor as before (8px right of the
+      // crosshair, 2px below the chart's top edge, and .pg-svg's box is flush
+      // with .pg-body's), but absolute, because the tip lives on <body> and is
+      // clamped against the viewport rather than against the chart.
+      ACTIVE_HOVER = clearHover;
+      showFloatingTip(
+        `<div class="pg-tipdate">${dd.getDate()} ${MON[dd.getMonth()]} ${dd.getFullYear()}</div><span class="pg-tiprow"><i style="background:${col}"></i>${esc(s.label)}: <b>${fmtNum(hp.value)}</b></span>`,
+        r.left + xpix + 8,
+        r.top + 2,
+      );
     });
-    body.addEventListener("pointerleave", () => {
-      tip.style.display = "none";
-      const svg = svgEl();
-      if (svg) {
-        const c = svg.querySelector(".pg-cross") as SVGLineElement | null;
-        if (c) c.style.display = "none";
-        dimSeries(svg, null);
-      }
-    });
+    body.addEventListener("pointerleave", clearHover);
   });
 }

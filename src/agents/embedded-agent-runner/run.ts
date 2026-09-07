@@ -152,7 +152,50 @@ import { createUsageAccumulator, mergeUsageIntoAccumulator } from "./usage-accum
 
 type ApiKeyInfo = ResolvedProviderAuth;
 
-const MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES = 1;
+const MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES = 2;
+
+/**
+ * Should a turn killed by the LLM idle watchdog be retried on the SAME model?
+ *
+ * FORK 2026-09-04. This used to reuse `canRestartForLiveSwitch`, which demands
+ * `toolMetas.length === 0 && assistantTexts.length === 0` — a correct guard for its own
+ * purpose (switching model mid-turn would discard work) but wrong here, and in fact
+ * self-contradictory when combined with `!producedNoContent`: that requires text OR
+ * thinking, while the other requires no text. Only a thinking-only stall satisfied both.
+ * Measured consequence over one week: 1 retry against 77 surfaced idle timeouts, and the
+ * architect typed "keep going" after ~40 of them.
+ *
+ * Retrying the same model after an idle stall loses nothing — the partial tool results and
+ * assistant text are already persisted to the transcript, so the retry re-prompts with that
+ * context. That is precisely what typing "continue" does by hand.
+ *
+ * What DOES still block a retry are the two side effects that must never happen twice:
+ * a message already sent through a messaging tool, and an approval prompt already shown.
+ * `producedNoContent` stays out because an empty attempt belongs to the empty-response
+ * retry path (run/incomplete-turn.ts), not here.
+ */
+export function allowIdleTimeoutRetry(params: {
+  timedOut: boolean;
+  idleTimedOut: boolean;
+  timedOutDuringCompaction: boolean;
+  fallbackConfigured: boolean;
+  producedNoContent: boolean;
+  didSendViaMessagingTool: boolean;
+  didSendDeterministicApprovalPrompt: boolean;
+  retriesSoFar: number;
+  maxRetries?: number;
+}): boolean {
+  return (
+    params.timedOut &&
+    params.idleTimedOut &&
+    !params.timedOutDuringCompaction &&
+    !params.fallbackConfigured &&
+    !params.producedNoContent &&
+    !params.didSendViaMessagingTool &&
+    !params.didSendDeterministicApprovalPrompt &&
+    params.retriesSoFar < (params.maxRetries ?? MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES)
+  );
+}
 type EmbeddedRunAttemptForRunner = Awaited<ReturnType<typeof runEmbeddedAttemptWithBackend>>;
 
 function normalizeEmbeddedRunAttemptResult(
@@ -1117,7 +1160,7 @@ export async function runEmbeddedPiAgent(
           // ── Timeout-triggered compaction ──────────────────────────────────
           // When the LLM times out with high context usage, compact before
           // retrying to break the death spiral of repeated timeouts.
-          if (timedOut && !timedOutDuringCompaction) {
+          if (timedOut && !timedOutDuringCompaction && !aborted && !externalAbort) {
             // Only consider prompt-side tokens here. API totals include output
             // tokens, which can make a long generation look like high context
             // pressure even when the prompt itself was small.
@@ -1833,14 +1876,18 @@ export async function runEmbeddedPiAgent(
             timedOut,
             idleTimedOut,
             timedOutDuringCompaction,
-            allowSameModelIdleTimeoutRetry:
-              timedOut &&
-              idleTimedOut &&
-              !timedOutDuringCompaction &&
-              !fallbackConfigured &&
-              canRestartForLiveSwitch &&
-              !producedNoContent &&
-              sameModelIdleTimeoutRetries < MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES,
+            allowSameModelIdleTimeoutRetry: allowIdleTimeoutRetry({
+              timedOut,
+              idleTimedOut,
+              timedOutDuringCompaction,
+              fallbackConfigured,
+              producedNoContent,
+              didSendViaMessagingTool: Boolean(attempt.didSendViaMessagingTool),
+              didSendDeterministicApprovalPrompt: Boolean(
+                attempt.didSendDeterministicApprovalPrompt,
+              ),
+              retriesSoFar: sameModelIdleTimeoutRetries,
+            }),
             assistantProfileFailureReason,
             lastProfileId,
             modelId,

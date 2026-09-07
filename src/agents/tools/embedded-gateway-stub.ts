@@ -11,6 +11,8 @@ interface EmbeddedGatewayRuntime {
   getRuntimeConfig: () => OpenClawConfig;
   augmentChatHistoryWithCliSessionImports: (opts: {
     entry: unknown;
+    /** Attribution for the import flood-valve warn log only; never affects what is served. */
+    sessionKey?: string;
     provider: string | undefined;
     localMessages: unknown[];
   }) => unknown[];
@@ -115,6 +117,8 @@ async function handleChatHistory(params: Record<string, unknown>): Promise<{
       : [];
 
   const rawMessages = rt.augmentChatHistoryWithCliSessionImports({
+    // Attribution for the flood-valve warn only; never affects what is served.
+    sessionKey,
     entry,
     provider: resolvedSessionModel.provider,
     localMessages,

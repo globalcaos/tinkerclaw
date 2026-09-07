@@ -135,10 +135,13 @@ Cron jobs can also carry payload-level `fallbacks`. When present, that list repl
 
 Model-selection precedence for isolated jobs is:
 
-1. Gmail hook model override (when the run came from Gmail and that override is allowed)
-2. Per-job payload `model`
-3. User-selected stored cron session model override
-4. Agent/default model selection
+1. Per-job payload `model`
+2. Gmail hook model override (when the run came from Gmail and that override is allowed)
+3. Global `cron.defaultModel`
+4. User-selected stored cron session model override
+5. Agent/default model selection
+
+`cron.defaultModel` and payload `model` use the same configured alias, catalog, and `agents.defaults.models` allowlist validation. An invalid selection fails the cron run with a field-specific error instead of silently falling through.
 
 Fast mode follows the resolved live selection too. If the selected model config has `params.fastMode`, isolated cron uses that by default. A stored session `fastMode` override still wins over config in either direction.
 
@@ -394,6 +397,7 @@ Model override note:
     enabled: true,
     store: "~/.openclaw/cron/jobs.json",
     maxConcurrentRuns: 1,
+    defaultModel: "openai/gpt-5.4",
     retry: {
       maxAttempts: 3,
       backoffMs: [60000, 120000, 300000],

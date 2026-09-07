@@ -1,3 +1,4 @@
+import { resolveHeadlessRequesterSessionKey } from "../agents/headless-requester-session-key.js";
 /**
  * FORK: fork.subagents.spawn -- provider-agnostic subagent-spawn RPC.
  *
@@ -42,6 +43,22 @@ const log = createSubsystemLogger("fork-subagents");
 function readStr(params: Record<string, unknown>, key: string): string | undefined {
   const v = params[key];
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
+}
+
+/**
+ * The requester session key for a spawn, or the headless sink when the caller
+ * has no tab identity to offer.
+ *
+ * Exported so the boundary is directly testable: the whole point of applying the
+ * default HERE rather than in the two CLIs is that it cannot be bypassed, and an
+ * assertion on this function is what keeps that true.
+ */
+export function resolveRpcRequesterSessionKey(params: Record<string, unknown>): string {
+  const supplied = readStr(params, "parentSessionKey") ?? readStr(params, "sessionKey");
+  if (supplied) {
+    return supplied;
+  }
+  return resolveHeadlessRequesterSessionKey(readStr(params, "requesterAgentId"));
 }
 
 function readNum(params: Record<string, unknown>, key: string): number | undefined {
@@ -154,11 +171,27 @@ export const forkSubagentsHandlers: GatewayRequestHandlers = {
     }
 
     const ctx: SpawnSubagentContext = {
-      // Parent session defaults to main if not provided. This is the key lever
-      // for "keep it provider-agnostic": the RPC caller can be a tinker-bridge CLI
-      // (which knows its own sessionKey), the Tinker UI (which knows the
-      // current tab), a plugin, etc. -- they all supply the requester.
-      agentSessionKey: readStr(p, "parentSessionKey") ?? readStr(p, "sessionKey"),
+      // FORK 2026-08-04. The old comment here said "Parent session defaults to
+      // main if not provided ... they all supply the requester". The second half
+      // was the assumption that failed: a Claude Code session driving ORCA has no
+      // OpenClaw session key to supply, so it supplied nothing -- and "defaults to
+      // main" was not a harmless lane. `agent:main:main` is a LIVE Tinker UI
+      // webchat tab (sessions.json origin.label "Tinker UI"). Subagent completion
+      // announcements are delivered to `requesterSessionKey`, so every unattended
+      // spawn's announcement was injected into the human's Main tab as a user
+      // turn: 64 of them in one 6-day session, each minting a model turn on a
+      // single serialized lane and starving the announce deadline.
+      //
+      // Fixing only the two CLI literals was NOT enough -- with them removed this
+      // forwarded `undefined` and `subagent-spawn.ts` independently fell back to
+      // `alias` (= "main"), which the UI matches as the protected Main tab just as
+      // readily (`keySuffix === "main"` beside `endsWith(":main")`). Two
+      // independent defaults, so the sink has to be applied HERE, at the boundary
+      // every caller crosses. A CLI literal can be reintroduced by anyone; this
+      // cannot be silently bypassed.
+      //
+      // An explicitly supplied key always wins untouched.
+      agentSessionKey: resolveRpcRequesterSessionKey(p),
       requesterAgentIdOverride: readStr(p, "requesterAgentId"),
       workspaceDir: readStr(p, "workspaceDir"),
     };

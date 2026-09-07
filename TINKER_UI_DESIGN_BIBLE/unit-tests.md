@@ -13,6 +13,10 @@ verify:
     cmd: python3 -c 'import json,os; p = json.load(open(os.path.expanduser("~/src/tinkerclaw/package.json"))); t = p["scripts"]["test"]; assert "test-invariants" in t or "bible:invariants" in t, f"upstream merge wiped the bible:invariants chain from the test script — current value: {t!r}. Restore it so every pnpm test run gates the bible contracts."'
   - name: git-hooks/pre-push runs the bible:invariants gate (catches hook-removal regression)
     cmd: python3 -c 'import os; p = os.path.expanduser("~/src/tinkerclaw/git-hooks/pre-push"); assert os.path.isfile(p), "pre-push hook missing"; t = open(p).read(); assert "bible:invariants" in t, "pre-push hook no longer runs bible:invariants"'
+  - name: no production module imports a relative path that does not exist (ratchet)
+    cmd: cd ~/src/tinkerclaw && node scripts/check-broken-relative-imports.mjs
+  - name: the broken-import guard is wired into check:architecture (not merely present on disk)
+    cmd: python3 -c 'import json,os; p=json.load(open(os.path.expanduser("~/src/tinkerclaw/package.json"))); a=p["scripts"]["check:architecture"]; assert "lint:no-broken-relative-imports" in a, f"guard exists but nothing runs it — check:architecture is {a!r}"'
 ---
 
 # Unit tests — fork-side strategy
@@ -37,6 +41,40 @@ We DO NOT test upstream's code. Upstream has its own tests; running them here is
 - `tinker-ui/src/app.ts` for fork-added UI behaviors
 
 Tests for any path outside this list need an explicit reason in the test file's header.
+
+## A test is only a gate if something collects it
+
+`src/**/*.test.ts` is the unit project's include pattern and `src/memory/**` is **not** in
+`unitTestAdditionalExcludePatterns` — so `src/memory/integration.test.ts` was collected on every
+run, and it failed on import with `Cannot find module './cortex/behavioral-probes.js'`. Its module,
+a 517-line "Cognitive Orchestrator", imported seven files from `src/memory/{cortex,limbic,synapse}/`
+— directories deleted when those subsystems were extracted into `extensions/tinkerclaw-*`. Nothing
+had constructed it outside its own test, ever.
+
+Three separate gates each had a reason not to see it:
+
+- **`tsdown`** bundles only what a declared entry point reaches, so an orphan never breaks a build;
+- **`tsgo`** ran against tsconfigs that did not include the path;
+- the **unit suite** did fail — but as one red file among others, in a tail nobody read.
+
+Two rules follow, and they generalise past this incident:
+
+1. **A red test that has been red for a while has stopped being a gate.** It has become noise that
+   trains people to skip the tail of the output. Fix it or delete it the day it goes red; there is
+   no third state.
+2. **Check that a test is COLLECTED, not merely that it exists.** The repo exports its own
+   predicate — `isUnitConfigTestFile()` in `test/vitest/vitest.unit-paths.mjs`. Ask it. The same
+   file already records the last time this bit: ten tinker-bridge specs "existed and passed only
+   when named explicitly on the command line — never in a full-suite run."
+
+`scripts/check-broken-relative-imports.mjs` now gates the underlying defect directly, because an
+unresolvable relative import is the one form of dead code needing no judgement — no plugin
+manifest, tsconfig alias, string dispatch or host convention can rescue a path that is not there.
+It is a **ratchet** at 28, not a wall: the remaining offenders are upstream-derived
+(`src/line/index.ts` imports fifteen modules that do not exist; `src/media-understanding/providers/*`
+import a `../image.js` and `../shared.js` never brought across a merge), and deleting upstream files
+is the architect's call, not a gate's. See `canonical-derivations.md` for the same ratchet
+discipline applied to duplicate implementations.
 
 ## Framework
 
@@ -148,3 +186,59 @@ That ordering minimizes setup cost (small files first) while addressing the bugs
 4. Run `pnpm test <test-file>` locally; iterate until green.
 5. Run `pnpm test:fork` (or whatever the eventual fork-filtered script ends up named) to confirm no regression.
 6. Commit with the convention `test(<module>): <what it asserts>`.
+
+---
+
+## Liveness instrumentation is a SECOND testing axis, orthogonal to unit tests (2026-07-28)
+
+**The discovery (the architect, 2026-07-28):** the instrument-liveness registry turned out to be much more
+than a fix for six inert components. It is a **complementary axis of verification that unit tests
+structurally cannot cover**, and it detects a class of decay no test suite will ever catch —
+including STALENESS, where code that used to run silently stops.
+
+**Why unit tests cannot see this.** A unit test proves a function _can_ behave correctly when
+called. It says nothing about whether anything _calls it in production_. All six dead components
+found on this deployment had passing tests and green structural checks:
+
+| component                      | status on paper           | reality                                                                                                          |
+| ------------------------------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| headroom compression proxy     | enabled + running         | **6 requests LIFETIME, 0 tokens saved**                                                                          |
+| CLI cache-telemetry producer   | correct per-call logic    | bound to an unconfigured backend — **never fired once**, while its own comment claimed it served "the MAIN pipe" |
+| compaction-safeguard extension | ~1,240 lines, implemented | **dead code** under the live `compaction.mode`                                                                   |
+| EEG anatomy hook               | complete function         | **orphaned** — zero callers                                                                                      |
+| ORCA lease hook                | working RPCs              | enforcement bound only via project-scoped settings                                                               |
+| amygdala nudge injection       | implemented               | inert                                                                                                            |
+
+The two axes answer different questions; neither substitutes for the other:
+
+|          | unit test                             | liveness instrument                  |
+| -------- | ------------------------------------- | ------------------------------------ |
+| question | "does this work when called?"         | "**is anything calling it?**"        |
+| fails    | at merge, loudly                      | at runtime, and today SILENTLY       |
+| catches  | logic defects                         | dead wiring, config drift, STALENESS |
+| blind to | whether the code is reachable in prod | whether the logic is correct         |
+
+**Staleness is the part with no other detector.** A test suite is a snapshot of intent; it keeps
+passing while the world moves underneath it. A config flips a mode and an extension arm goes dark;
+a provider is re-registered as a plugin rather than a backend and a producer stops firing; an
+upstream event is renamed and a hook stops receiving. In every case the tests stay green and the
+component stops running. The registry is the only thing that reports **"declared, fired 0 times"**
+and **"used to fire, now silent past its own tolerance"**.
+
+**How to apply.** For any component whose failure would be SILENT — a hook, a fallback, a retry
+path, a cache, a producer, an extension gated on config — add BOTH:
+
+1. a unit test for its logic, and
+2. a `declareInstrument` + `noteInstrumentFired` pair (`src/infra/instrument-liveness.ts`), with the
+   firing placed where the WORK happens and never behind the same condition that decides
+   registration — otherwise you rebuild the bug.
+
+Set `expectFireWithinMs` honestly (a rarely-exercised path must not alarm hourly) and use
+`conditional` WITH A WRITTEN REASON when the live config legitimately explains silence. Otherwise
+the honest silences train everyone to ignore the report, which is how liveness checks usually die.
+
+**The rule this earns:** a component that is _tested but not instrumented_ is only half-verified —
+proven correct, unproven live. On this deployment "unproven live" was the more expensive half. Six
+components were doing nothing while every structural check was green.
+
+See `design-principles.md` #20 (provenance / denominator / proof-it-ran) and `failures.md` M15.

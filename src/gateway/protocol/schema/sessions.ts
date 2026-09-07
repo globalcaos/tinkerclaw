@@ -232,6 +232,11 @@ export const SessionsCompactParamsSchema = Type.Object(
   {
     key: NonEmptyString,
     maxLines: Type.Optional(Type.Integer({ minimum: 1 })),
+    // FORK 2026-08-28: selects EVICTION instead of narrative compaction — the fraction of the
+    // transcript's MESSAGE entries to KEEP (newest first). No model call: the oldest turns are
+    // dropped outright and the previous transcript is archived. Unlike `maxLines` this is
+    // transcript-aware (see the handler) and safe to expose on a button.
+    keepFraction: Type.Optional(Type.Number({ exclusiveMinimum: 0, exclusiveMaximum: 1 })),
   },
   { additionalProperties: false },
 );

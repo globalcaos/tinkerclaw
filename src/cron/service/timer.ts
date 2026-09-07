@@ -1,6 +1,16 @@
 import { resolveFailoverReasonFromError } from "../../agents/failover-error.js";
 import type { CronConfig, CronRetryOn } from "../../config/types.cron.js";
-import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
+// NOTE: `requestCronWake` / `runCronWakeOnce` are deliberately NOT imported here. The timer
+// reaches the cron lane only through the injected deps (state.deps.requestCronWakeNow /
+// state.deps.runCronWakeOnce), because the gateway's dep carries the wake-target resolution
+// that a main-target cron needs. Importing them directly is what re-broke this on 2026-08-03.
+// `hasCronWakeHandler` stays: it answers "is a handler registered?", not "how do I wake".
+import {
+  hasCronWakeHandler,
+  type HeartbeatRunResult,
+  type HeartbeatWakeRequest,
+} from "../../infra/heartbeat-wake.js";
+import { declareInstrument, noteInstrumentFired } from "../../infra/instrument-liveness.js";
 import { DEFAULT_AGENT_ID } from "../../routing/session-key.js";
 import { normalizeOptionalLowercaseString } from "../../shared/string-coerce.js";
 import {
@@ -55,6 +65,85 @@ const DEFAULT_MISSED_JOB_STAGGER_MS = 5_000;
 const DEFAULT_MAX_MISSED_JOBS_PER_RESTART = 5;
 const DEFAULT_FAILURE_ALERT_AFTER = 2;
 const DEFAULT_FAILURE_ALERT_COOLDOWN_MS = 60 * 60_000; // 1 hour
+
+/**
+ * FORK 2026-08-03 — CRON DELIVERY IS ITS OWN CONCERN, NOT A HEARTBEAT.
+ *
+ * Every wake on this path used to be `state.deps.requestHeartbeatNow(...)`, so the one
+ * switch that stops the periodic self-poll also stopped ALL cron work: the heartbeat
+ * runner answers `{status:"skipped", reason:"disabled"}` before it ever looks at the
+ * payload this file already enqueued, and the verdict block at the bottom of
+ * `executeMainSessionCronJob` copied that answer into the CRON's own outcome. Measured
+ * here: 18 jobs fired on schedule and delivered nothing for four days, and the only
+ * evidence was the word "disabled" in a run-log nobody reads.
+ *
+ * Two things change:
+ *   1. wakes go out on the CRON LANE (`requestCronWake` / `runCronWakeOnce`) whenever a
+ *      cron wake handler is registered — that path never consults the heartbeat flag.
+ *      Until it is registered, behavior is byte-identical to before (the legacy
+ *      `state.deps.requestHeartbeatNow` dep is still used), so this is a safe landing.
+ *   2. a skip the operator did not choose is LOUD: a structured warn naming the job, plus
+ *      enrollment in the instrument-liveness registry so a cron delivery path that stops
+ *      firing is reported as a declared-but-silent DEFECT instead of looking like calm.
+ */
+const CRON_WAKE_INSTRUMENT_ID = "cron:wake-delivery";
+
+declareInstrument({
+  id: CRON_WAKE_INSTRUMENT_ID,
+  kind: "integration",
+  description:
+    "cron → session wake delivery (main-session payload handoff). Silence here means crons are firing and doing no work.",
+  // Cron cadences on this deployment are hours apart; 6 h of total silence across every
+  // job is the point where "nothing was due" stops being a plausible schedule.
+  expectFireWithinMs: 6 * 60 * 60 * 1000,
+});
+
+/**
+ * Skip reasons that are a decision about THIS job at THIS moment — the operator asked for
+ * them. Anything else ("disabled" above all) is a verdict about the heartbeat, and a cron
+ * must never inherit it silently.
+ */
+const OPERATOR_CHOSEN_CRON_SKIP_REASONS: ReadonlySet<string> = new Set(["quiet-hours", "not-due"]);
+
+/**
+ * Request a cron wake. Prefers the cron lane; falls back to the legacy heartbeat dep so
+ * nothing changes until a cron wake handler is registered by the gateway.
+ */
+function requestCronDelivery(state: CronServiceState, opts: HeartbeatWakeRequest): void {
+  // Injected dep, not the imported wake function — see the note on wakeOnce above: the dep
+  // carries the shared wake-target resolution that turns a main-target cron's absent
+  // job.sessionKey into the agent's concrete main session key.
+  const cronDep = state.deps.requestCronWakeNow;
+  const lane = hasCronWakeHandler() && cronDep ? "cron" : "heartbeat";
+  if (lane === "cron" && cronDep) {
+    cronDep(opts);
+  } else {
+    state.deps.requestHeartbeatNow(opts);
+  }
+  noteInstrumentFired(
+    CRON_WAKE_INSTRUMENT_ID,
+    `lane=${lane} reason=${opts.reason ?? ""} sessionKey=${opts.sessionKey ?? ""}`,
+  );
+}
+
+/** A cron that stops working must be loud. This is the line that was missing for four days. */
+function warnUnchosenCronSkip(
+  state: CronServiceState,
+  params: { job: CronJob; reason: string; lane: "cron" | "heartbeat" },
+): void {
+  state.deps.log.warn(
+    {
+      jobId: params.job.id,
+      jobName: params.job.name,
+      sessionTarget: params.job.sessionTarget,
+      wakeMode: params.job.wakeMode,
+      wakeLane: params.lane,
+      skipReason: params.reason,
+      instrument: CRON_WAKE_INSTRUMENT_ID,
+    },
+    "cron: wake refused for a reason the operator did not choose for THIS job — the job ran and delivered nothing",
+  );
+}
 
 type ResolvedFailureAlert = {
   after: number;
@@ -398,7 +487,7 @@ function emitFailureAlert(
 
   state.deps.enqueueSystemEvent(text, { agentId: params.job.agentId });
   if (params.job.wakeMode === "now") {
-    state.deps.requestHeartbeatNow({ reason: `cron:${params.job.id}:failure-alert` });
+    requestCronDelivery(state, { reason: `cron:${params.job.id}:failure-alert` });
   }
 }
 
@@ -1275,7 +1364,17 @@ async function executeMainSessionCronJob(
     sessionKey: targetMainSessionKey,
     contextKey: `cron:${job.id}`,
   });
-  if (job.wakeMode === "now" && state.deps.runHeartbeatOnce) {
+  // Prefer the cron lane: it delivers the queued payload without asking whether the
+  // periodic self-poll happens to be switched on. `state.deps.runHeartbeatOnce` stays the
+  // fallback so nothing changes until the cron wake handler is wired up.
+  // Use the INJECTED cron-lane dep, never the imported wake function: the gateway's dep
+  // resolves the wake target with the same helper the enqueue path uses, and a main-target
+  // cron has no explicit job.sessionKey to resolve from. Calling runCronWakeOnce directly
+  // here is what re-introduced the 2026-07-25 wrong-session bug on 2026-08-03.
+  const cronLaneWired = hasCronWakeHandler() && Boolean(state.deps.runCronWakeOnce);
+  const wakeOnce: ((opts: HeartbeatWakeRequest) => Promise<HeartbeatRunResult>) | undefined =
+    cronLaneWired ? state.deps.runCronWakeOnce : state.deps.runHeartbeatOnce;
+  if (job.wakeMode === "now" && wakeOnce) {
     const reason = `cron:${job.id}`;
     const isRecurringJob = job.schedule.kind !== "at";
     const maxWaitMs = state.deps.wakeNowHeartbeatBusyMaxWaitMs ?? 2 * 60_000;
@@ -1287,7 +1386,7 @@ async function executeMainSessionCronJob(
       if (abortSignal?.aborted) {
         return { status: "error", error: timeoutErrorMessage() };
       }
-      heartbeatResult = await state.deps.runHeartbeatOnce({
+      heartbeatResult = await wakeOnce({
         reason,
         agentId: job.agentId,
         sessionKey: targetMainSessionKey,
@@ -1300,7 +1399,7 @@ async function executeMainSessionCronJob(
         // Recurring main-session cron jobs should not hold the cron lane open
         // while the main lane is busy, or their measured duration starts to
         // reflect queue wait instead of cron bookkeeping (#58833).
-        state.deps.requestHeartbeatNow({
+        requestCronDelivery(state, {
           reason,
           agentId: job.agentId,
           sessionKey: targetMainSessionKey,
@@ -1315,7 +1414,7 @@ async function executeMainSessionCronJob(
         if (abortSignal?.aborted) {
           return { status: "error", error: timeoutErrorMessage() };
         }
-        state.deps.requestHeartbeatNow({
+        requestCronDelivery(state, {
           reason,
           agentId: job.agentId,
           sessionKey: targetMainSessionKey,
@@ -1327,10 +1426,40 @@ async function executeMainSessionCronJob(
     }
 
     if (heartbeatResult.status === "ran") {
+      noteInstrumentFired(
+        CRON_WAKE_INSTRUMENT_ID,
+        `lane=${cronLaneWired ? "cron" : "heartbeat"} ran reason=${reason}`,
+      );
       return { status: "ok", summary: text };
     }
     if (heartbeatResult.status === "skipped") {
-      return { status: "skipped", error: heartbeatResult.reason, summary: text };
+      if (OPERATOR_CHOSEN_CRON_SKIP_REASONS.has(heartbeatResult.reason)) {
+        return { status: "skipped", error: heartbeatResult.reason, summary: text };
+      }
+      // The wake was refused for a reason that is about the WAKE LAYER, not about this
+      // job — "disabled" above all. Never launder that into a quiet cron skip: say it
+      // loudly, and prefix the recorded reason so `wake-refused:` is greppable in
+      // the cron run logs and cannot be confused with a job-level skip.
+      warnUnchosenCronSkip(state, {
+        job,
+        reason: heartbeatResult.reason,
+        lane: cronLaneWired ? "cron" : "heartbeat",
+      });
+      if (cronLaneWired) {
+        // The cron lane is wired but still refused right now: queue the wake so the
+        // already-enqueued payload is retried on the cron's own lane instead of dropped.
+        requestCronDelivery(state, {
+          reason,
+          agentId: job.agentId,
+          sessionKey: targetMainSessionKey,
+          heartbeat: { target: "last" },
+        });
+      }
+      return {
+        status: "skipped",
+        error: `wake-refused:${heartbeatResult.reason}`,
+        summary: text,
+      };
     }
     return { status: "error", error: heartbeatResult.reason, summary: text };
   }
@@ -1338,7 +1467,7 @@ async function executeMainSessionCronJob(
   if (abortSignal?.aborted) {
     return { status: "error", error: timeoutErrorMessage() };
   }
-  state.deps.requestHeartbeatNow({
+  requestCronDelivery(state, {
     reason: `cron:${job.id}`,
     agentId: job.agentId,
     sessionKey: targetMainSessionKey,
@@ -1488,7 +1617,7 @@ export function wake(
   }
   state.deps.enqueueSystemEvent(text);
   if (opts.mode === "now") {
-    state.deps.requestHeartbeatNow({ reason: "wake" });
+    requestCronDelivery(state, { reason: "wake" });
   }
   return { ok: true } as const;
 }

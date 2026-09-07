@@ -77,4 +77,65 @@ describe("applyGatewayLaneConcurrency", () => {
     releaseRuns.resolve();
     await Promise.all([first, second]);
   });
+
+  it("defaults the sessions lane to parallel embedded session runs", async () => {
+    applyGatewayLaneConcurrency({} as OpenClawConfig);
+
+    let activeRuns = 0;
+    let peakActiveRuns = 0;
+    const bothRunsStarted = createDeferred<void>();
+    const releaseRuns = createDeferred<void>();
+
+    const run = async () => {
+      activeRuns += 1;
+      peakActiveRuns = Math.max(peakActiveRuns, activeRuns);
+      if (peakActiveRuns >= 2) {
+        bothRunsStarted.resolve();
+      }
+      try {
+        await releaseRuns.promise;
+      } finally {
+        activeRuns -= 1;
+      }
+    };
+
+    const first = enqueueCommandInLane(CommandLane.Sessions, run, { warnAfterMs: 10_000 });
+    const second = enqueueCommandInLane(CommandLane.Sessions, run, { warnAfterMs: 10_000 });
+    const timeout = setTimeout(() => {
+      bothRunsStarted.reject(
+        new Error("timed out waiting for embedded session runs to run in parallel"),
+      );
+    }, 250);
+
+    try {
+      await bothRunsStarted.promise;
+      expect(peakActiveRuns).toBe(2);
+    } finally {
+      clearTimeout(timeout);
+      releaseRuns.resolve();
+      await Promise.all([first, second]);
+    }
+  });
+
+  it("applies configured sessions maxConcurrent to the sessions lane", async () => {
+    applyGatewayLaneConcurrency({
+      agents: { defaults: { sessions: { maxConcurrent: 1 } } },
+    } as OpenClawConfig);
+
+    let startedRuns = 0;
+    const releaseRuns = createDeferred<void>();
+    const run = async () => {
+      startedRuns += 1;
+      await releaseRuns.promise;
+    };
+
+    const first = enqueueCommandInLane(CommandLane.Sessions, run, { warnAfterMs: 10_000 });
+    const second = enqueueCommandInLane(CommandLane.Sessions, run, { warnAfterMs: 10_000 });
+    await Promise.resolve();
+
+    expect(startedRuns).toBe(1);
+
+    releaseRuns.resolve();
+    await Promise.all([first, second]);
+  });
 });

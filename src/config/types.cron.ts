@@ -32,6 +32,8 @@ export type CronConfig = {
   enabled?: boolean;
   store?: string;
   maxConcurrentRuns?: number;
+  /** Default model for isolated cron agent turns when a job has no payload-level override. */
+  defaultModel?: string;
   /** Override default retry policy for one-shot jobs on transient errors. */
   retry?: CronRetryConfig;
   /**

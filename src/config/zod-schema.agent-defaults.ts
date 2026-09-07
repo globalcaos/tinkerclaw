@@ -67,6 +67,15 @@ export const AgentDefaultsSchema = z
             streaming: z.boolean().optional(),
             /** Display rank for UI ordering (lower = higher position). Models without rank sort alphabetically after ranked ones. */
             rank: z.number().int().positive().optional(),
+            /** Artificial Analysis Intelligence Index (higher = smarter). */
+            intelligenceIndex: z.number().finite().optional(),
+            /**
+             * Cost-veto input: EUR per Mtok of OUTPUT under the operator's ACTUAL billing
+             * (prepaid-subscription token ~ 0, metered API token = real cash). Not the
+             * vendor sticker price, not weighted by tokens-per-task. Canonical values live
+             * in tinker-ui/src/panels/eeg-trace.ts EEG_COST_TABLE; see AgentModelEntryConfig.
+             */
+            relCost: z.number().finite().optional(),
           })
           .strict(),
       )
@@ -242,12 +251,39 @@ export const AgentDefaultsSchema = z
     blockStreamingCoalesce: BlockStreamingCoalesceSchema.optional(),
     humanDelay: HumanDelaySchema.optional(),
     timeoutSeconds: z.number().int().positive().optional(),
+    activityGraceSeconds: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Sliding activity grace window in seconds for agent run timeouts. When the run deadline (agents.defaults.timeoutSeconds) fires but the agent produced a stream or tool event within this window, the deadline extends instead of aborting an actively-working turn. Set 0 to disable sliding extension and restore the legacy fixed wall-clock abort. Default: 600.",
+      ),
+    maxRunSeconds: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe(
+        "Hard cap in seconds on total agent run duration measured from run start. Activity-based timeout extensions never push a run past this cap. Default: 172800 (48 hours).",
+      ),
     mediaMaxMb: z.number().positive().optional(),
     imageMaxDimensionPx: z.number().int().positive().optional(),
     typingIntervalSeconds: z.number().int().positive().optional(),
     typingMode: TypingModeSchema.optional(),
     heartbeat: HeartbeatSchema,
     maxConcurrent: z.number().int().positive().optional(),
+    sessions: z
+      .object({
+        maxConcurrent: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe('Max concurrent embedded session runs (global lane: "sessions"). Default: 8.'),
+      })
+      .strict()
+      .optional(),
     subagents: z
       .object({
         allowAgents: z.array(z.string()).optional(),

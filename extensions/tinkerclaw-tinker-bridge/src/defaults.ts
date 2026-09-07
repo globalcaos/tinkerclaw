@@ -133,6 +133,13 @@ export const RESUME_MAX_TRANSCRIPT_LINES = 50_000;
 // Anthropic raises a model's output limit — single source of truth.
 export const DEFAULT_MODELS = [
   {
+    id: "claude-opus-5",
+    name: "Claude Opus 5",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 32_000,
+  },
+  {
     id: "claude-opus-4-8",
     name: "Claude Opus 4.8",
     reasoning: true,
@@ -170,7 +177,7 @@ export const DEFAULT_MODELS = [
 ] as const;
 
 export const MODEL_ALIASES: Record<string, string> = {
-  opus: "claude-opus-4-8",
+  opus: "claude-opus-5",
   sonnet: "claude-sonnet-4-6",
   haiku: "claude-haiku-4-5",
 };
