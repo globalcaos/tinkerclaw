@@ -2,8 +2,8 @@
 file: memory-layout.md
 purpose: Where memory lives under the workspace + the ENGRAM root, who writes it, retention policy
 audience: AI
-last_verified: 2026-08-04
-last_verified_commit: b5d18a37b46
+last_verified: 2026-09-07
+last_verified_commit: bbb34ec2530
 single_owner: yes — directory map + writer + retention + the W/R path diagrams (WHERE a turn's data lands, sync vs deferred, evictable vs not) live here (both workspace/memory/ AND ~/.openclaw/engram/). Call ORDER is flows.md; state machines are lifecycles.md; the duplicate-implementation ledger is canonical-derivations.md.
 see_also: topology.md (workspace symlinks), flows.md (sequence-of-calls — this optic owns WHERE data lands, not the call order), canonical-derivations.md (duplicate ledger + the plugin-SDK boundary crossing), crons.md (engram-consolidate writer), subagents-and-recipes.md (recipe/skill BEHAVIOR — selection, fitness scoring, never-delete), pii-boundary.md (everything under workspace/memory is PRIVATE), failures.md (what a dead vector index looks like from outside — "Faults that surface as silence")
 verify:
@@ -19,6 +19,8 @@ verify:
     cmd: test -d ~/.openclaw/engram/links
   - name: U6 ENGRAM skill-library dir exists
     cmd: test -d ~/.openclaw/engram/skill-library
+  - name: ENGRAM packs dir exists (persisted retrieval packs; the cold-session seed, FORK 2026-09-03)
+    cmd: test -d ~/.openclaw/engram/packs
   # NOTE this one asserts the PLUGIN copy (memory_search tool + `openclaw memory` CLI). The
   # 2026-08-04 verify-the-shape work landed in the FORK copy, asserted by the three VECTOR
   # CONTRACT gates below. Two live trees — see "Two live trees own this table".
@@ -39,9 +41,9 @@ verify:
   - name: DIAGRAM W — the deferred writers still fire from onTurnComplete
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/src/fork/attempt-hooks.ts")).read(); missing=[n for n in ("consumeToolEventsForRun", "insertAnatomyEvent", "ingestionRuntime", "extractAndIndex", "onCuriosityScan", "reasoning_tree_state") if n not in t]; assert not missing, "onTurnComplete lost deferred writers -> " + repr(missing) + " — update diagram W in memory-layout.md"'
   - name: DIAGRAM W+R — every symbol named in the two diagrams still exists at the named path
-    cmd: python3 -c 'import os; root=os.path.expanduser("~/src/tinkerclaw"); want=["src/memory/engram/retrieval-integration.ts|export function assembleRetrievalPack(", "src/memory/engram/retrieval-integration.ts|DEFAULT_RETRIEVAL_MAX_TOKENS = 4096", "src/memory/engram/retrieval-integration.ts|FTS_TOP_N = 50", "src/memory/engram/search-index.ts|export function ftsSearch(", "src/memory/engram/search-index.ts|export async function vectorSearch(", "src/memory/engram/search-index.ts|applyFilters(store.readAll(), filters)", "src/memory/engram/event-store.ts|export function createEventStore(", "src/memory/engram/event-store.ts|appendFileSync(filePath", "src/memory/engram/ingestion.ts|export function createIngestionPipeline(", "src/memory/engram/ingestion.ts|DEFAULT_ARTIFACT_THRESHOLD_BYTES = 1024", "src/memory/engram/ingestion.ts|ingestedCount", "src/memory/engram/pointer-compaction.ts|export function pointerCompact(", "src/memory/engram/pointer-compaction.ts|export function estimateCacheTokens(", "src/memory/engram/pointer-compaction.ts|MARKER_TOKEN_ESTIMATE = 40", "src/memory/engram/task-conditioned-scoring.ts|export function taskConditionedScore(", "src/memory/engram/global-fts-bridge.ts|export function globalFtsSearch(", "src/memory/engram/global-fts-bridge.ts|export function globalFtsMultiSearch(", "src/memory/engram/daily-log-cache.ts|export function loadTodayDailyLog(", "src/memory/engram/entity-extraction.ts|export function extractEntities(", "src/memory/engram/entity-extraction.ts|export function entitiesToQueries(", "src/memory/engram/contradiction-gate.ts|export function hasWriteIntent(", "src/memory/engram/contradiction-gate.ts|export function findContradictions(", "src/memory/mmr.ts|export function mmrRerank", "src/fork/curiosity-store.ts|export function appendGap(", "src/fork/attempt-hooks.ts|export async function injectRetrievalPack(", "src/fork/attempt-hooks.ts|RETRIEVAL_PACK_MAX_TOKENS = 4096", "src/fork/attempt-hooks.ts|engram:retrieval-pack-inject", "src/agents/pi-extensions/retrieval-runtime.ts|function buildDefaultAssemble(", "src/agents/pi-extensions/retrieval-runtime.ts|export const getRetrievalRuntime", "src/agents/embedded-agent-runner/extensions.ts|searchIndex", "src/agents/embedded-agent-runner/extensions.ts|globalFtsSearch"]; bad=[w for w in want if w.split("|",1)[1] not in open(os.path.join(root, w.split("|",1)[0])).read()]; assert not bad, "the W/R diagrams in memory-layout.md name symbols that no longer exist -> " + repr(bad)'
+    cmd: python3 -c 'import os; root=os.path.expanduser("~/src/tinkerclaw"); want=["src/memory/engram/retrieval-integration.ts|export function assembleRetrievalPack(", "src/memory/engram/retrieval-integration.ts|export async function assembleRetrievalPackAsync(", "src/memory/engram/retrieval-integration.ts|async function ftsSearchChunked(", "src/memory/engram/retrieval-integration.ts|setImmediate as yieldToEventLoop", "extensions/tinkerclaw-total-recall/index.ts|function schedulePackRefresh(", "extensions/tinkerclaw-total-recall/index.ts|function loadPersistedPack(", "extensions/tinkerclaw-total-recall/index.ts|function persistPack(", "src/memory/engram/retrieval-integration.ts|DEFAULT_RETRIEVAL_MAX_TOKENS = 4096", "src/memory/engram/retrieval-integration.ts|FTS_TOP_N = 50", "src/memory/engram/search-index.ts|export function ftsSearch(", "src/memory/engram/search-index.ts|export async function vectorSearch(", "src/memory/engram/search-index.ts|applyFilters(store.readAll(), filters)", "src/memory/engram/event-store.ts|export function createEventStore(", "src/memory/engram/event-store.ts|appendFileSync(filePath", "src/memory/engram/ingestion.ts|export function createIngestionPipeline(", "src/memory/engram/ingestion.ts|DEFAULT_ARTIFACT_THRESHOLD_BYTES = 1024", "src/memory/engram/ingestion.ts|ingestedCount", "src/memory/engram/pointer-compaction.ts|export function pointerCompact(", "src/memory/engram/pointer-compaction.ts|export function estimateCacheTokens(", "src/memory/engram/pointer-compaction.ts|MARKER_TOKEN_ESTIMATE = 40", "src/memory/engram/task-conditioned-scoring.ts|export function taskConditionedScore(", "src/memory/engram/global-fts-bridge.ts|export function globalFtsSearch(", "src/memory/engram/global-fts-bridge.ts|export function globalFtsMultiSearch(", "src/memory/engram/daily-log-cache.ts|export function loadTodayDailyLog(", "src/memory/engram/entity-extraction.ts|export function extractEntities(", "src/memory/engram/entity-extraction.ts|export function entitiesToQueries(", "src/memory/engram/contradiction-gate.ts|export function hasWriteIntent(", "src/memory/engram/contradiction-gate.ts|export function findContradictions(", "src/memory/mmr.ts|export function mmrRerank", "src/fork/curiosity-store.ts|export function appendGap(", "src/fork/attempt-hooks.ts|export async function injectRetrievalPack(", "src/fork/attempt-hooks.ts|RETRIEVAL_PACK_MAX_TOKENS = 4096", "src/fork/attempt-hooks.ts|engram:retrieval-pack-inject", "src/agents/pi-extensions/retrieval-runtime.ts|function buildDefaultAssemble(", "src/agents/pi-extensions/retrieval-runtime.ts|export const getRetrievalRuntime", "src/agents/embedded-agent-runner/extensions.ts|searchIndex", "src/agents/embedded-agent-runner/extensions.ts|globalFtsSearch"]; bad=[w for w in want if w.split("|",1)[1] not in open(os.path.join(root, w.split("|",1)[0])).read()]; assert not bad, "the W/R diagrams in memory-layout.md name symbols that no longer exist -> " + repr(bad)'
   - name: DIAGRAM R — the LIVE injector is the memory PLUGIN via before_prompt_build, reaching ENGRAM through the plugin-SDK crossing
-    cmd: python3 -c 'import os; root=os.path.expanduser("~/src/tinkerclaw"); p=open(os.path.join(root,"extensions/tinkerclaw-total-recall/index.ts")).read(); need=["openclaw/plugin-sdk/memory-engram", "before_prompt_build", "assembleRetrievalPack(query, store", "prependSystemContext", "CC_EXPERIENCE_BUDGET_SHARE = 0.35"]; miss=[n for n in need if n not in p]; assert not miss, "the LIVE read path drawn in diagram R changed -> " + repr(miss); sdk=open(os.path.join(root,"src/plugin-sdk/memory-engram.ts")).read(); assert "assembleRetrievalPack" in sdk and "memory/engram/retrieval-integration.js" in sdk, "the plugin-SDK crossing no longer re-exports assembleRetrievalPack from src/memory/engram — diagram R in memory-layout.md is stale"'
+    cmd: python3 -c 'import os; root=os.path.expanduser("~/src/tinkerclaw"); p=open(os.path.join(root,"extensions/tinkerclaw-total-recall/index.ts")).read(); need=["openclaw/plugin-sdk/memory-engram", "before_prompt_build", "assembleRetrievalPackAsync(query, store", "assembleRetrievalPackAsync(query, ccStore", "prependSystemContext", "CC_EXPERIENCE_BUDGET_SHARE = 0.35"]; miss=[n for n in need if n not in p]; assert not miss, "the LIVE read path drawn in diagram R changed -> " + repr(miss); sdk=open(os.path.join(root,"src/plugin-sdk/memory-engram.ts")).read(); assert "assembleRetrievalPackAsync" in sdk and "memory/engram/retrieval-integration.js" in sdk, "the plugin-SDK crossing no longer re-exports assembleRetrievalPackAsync from src/memory/engram — diagram R in memory-layout.md is stale"'
   - name: DIAGRAM R — the inline retrieval lane stays DEAD (injectRetrievalPack uncalled, pushPack unread)
     cmd: python3 -c 'import os; root=os.path.expanduser("~/src/tinkerclaw/src"); files=[os.path.join(dp,f) for dp,dn,fn in os.walk(root) for f in fn if f.endswith(".ts") and not f.endswith(".test.ts")]; texts=dict((q, open(q, errors="ignore").read()) for q in files); hooks=os.path.join(root,"fork/attempt-hooks.ts"); rt=os.path.join(root,"agents/pi-extensions/retrieval-runtime.ts"); callers=sorted(os.path.relpath(q,root) for q,t in texts.items() if "injectRetrievalPack(" in t and q != hooks); readers=sorted(os.path.relpath(q,root) for q,t in texts.items() if "pushPack" in t and q != rt); assert not callers and not readers, "an inline-retrieval DEAD SEAM came alive -> callers " + repr(callers) + " readers " + repr(readers) + " — the DEAD-SEAM note under diagram R in memory-layout.md must be re-derived"'
   - name: DIAGRAM R — the vendored ENGRAM twin stays collapsed and the SDK crossing still exists
@@ -129,50 +131,68 @@ flowchart TD
 
 ### R. Read path — query → retrieval pack → prompt
 
-**The live injector is the memory PLUGIN, not the inline runtime.** `tinkerclaw-total-recall` registers a `before_prompt_build` hook (`extensions/tinkerclaw-total-recall/index.ts:354`, priority 50) and returns `{ prependSystemContext }`; the plugin host merges it (`src/plugins/hooks.ts:291`) and `attempt.ts:2474` composes it onto the system prompt. The pack itself is built by `assembleRetrievalPack` (`src/memory/engram/retrieval-integration.ts:136`), reached across the sanctioned boundary crossing `openclaw/plugin-sdk/memory-engram` → `src/plugin-sdk/memory-engram.ts:61`.
+**The live injector is the memory PLUGIN, not the inline runtime.** `tinkerclaw-total-recall` registers a `before_prompt_build` hook (`extensions/tinkerclaw-total-recall/index.ts:643`, priority 50) and returns `{ prependSystemContext }`; the plugin host merges it (`src/plugins/hooks.ts:292`) and `attempt.ts:2563` composes it onto the system prompt (`resolvePromptBuildHookResult` → `resolveAttemptPrependSystemContext` at `:2592`). The pack itself is built by **`assembleRetrievalPackAsync`** (`src/memory/engram/retrieval-integration.ts:377`) — the YIELDING variant introduced 2026-09-03 — reached across the sanctioned boundary crossing `openclaw/plugin-sdk/memory-engram` → `src/plugin-sdk/memory-engram.ts:87`.
+
+**Why the drawing names the Async twin (FORK 2026-09-03).** `assembleRetrievalPack` (`retrieval-integration.ts:236`) is SYNCHRONOUS — it returns a string, not a promise — so the `await Promise.all([…])` the plugin wrapped around it resolved values that had already been computed, and handed the event loop back exactly never. `assembleRetrievalPackAsync` (`:377`) chunks the one unbounded loop (`ftsSearchChunked` `:303`, which still delegates each slice to `ftsSearch`) and awaits `setImmediate as yieldToEventLoop` (`:9`) between slices (`:338`) and around the bounded stages (`:400`, `:405`). The synchronous variant still exists and is still re-exported by the SDK, but it has NO production caller left inside the gateway — anything running in-process must call the Async one.
+
+**And the build is no longer on the critical path at all.** All three branches of the hook return in the SAME TICK: fresh → the cached pack verbatim; stale-but-held → the held pack plus a scheduled rebuild (`:744`); cold → the pack this session last PERSISTED to disk (`~/.openclaw/engram/packs/`, max age 24 h) or an empty seed, plus a scheduled rebuild (`:795`). The assembled pack therefore lands in the CACHE, never in the prompt of the turn that triggered it — the freshest a turn can be is one turn behind. The latency policy behind that trade is owned by turn-latency.md; what this optic owns is WHERE the pack lands, which is the `packs/` store below.
 
 ```mermaid
 flowchart TD
   Q["turn query — payload.query or userMessage or prompt"]
-  HOOK["before_prompt_build hook runner<br/>attempt.ts:2416 · attempt.prompt-helpers.ts:147"]
-  PL["total-recall plugin hook, priority 50<br/>extensions/tinkerclaw-total-recall/index.ts:354"]
+  HOOK["before_prompt_build hook runner<br/>attempt.ts:2563 · attempt.prompt-helpers.ts:147"]
+  PL["total-recall plugin hook, priority 50<br/>extensions/tinkerclaw-total-recall/index.ts:643"]
   SKIP{"sessionKey contains heartbeat or cron?"}
-  DROP["return — automated sessions get no pack<br/>index.ts:363"]
-  FRESH{"pack cache still fresh?<br/>packIsStillFresh index.ts:301<br/>under 20 new events AND under 30 min"}
+  DROP["return — automated sessions get no pack<br/>index.ts:656"]
+  FRESH{"pack cache still fresh?<br/>packIsStillFresh index.ts:492<br/>under 20 new events AND under 30 min"}
   REUSE["return the PREVIOUS pack VERBATIM<br/>byte-identical prompt keeps the worker<br/>and the prompt-cache prefix alive"]
+  STALE["a pack IS held but is stale — serve it ANYWAY<br/>index.ts:744 · stale-while-revalidate"]
+  SEED["cold session — serve the pack last PERSISTED to disk<br/>loadPersistedPack index.ts:288 · max age 24h at :277<br/>or an EMPTY seed · index.ts:795"]
+  REFRESH["schedulePackRefresh index.ts:605<br/>then refreshPackInBackground index.ts:522 — OFF the critical path<br/>the hook returns in the SAME TICK; the fresh pack lands NEXT turn<br/>the latency policy is owned by turn-latency.md"]
 
-  subgraph budget["two sources, separate budgets — index.ts:398"]
-    SB["session budget<br/>budgetTokens 2000 minus cc share"]
-    CB["cc-experience budget<br/>CC_EXPERIENCE_BUDGET_SHARE 0.35 · index.ts:293"]
+  subgraph budget["two sources, separate budgets — index.ts:539"]
+    SB["session budget<br/>budgetTokens 2000 minus cc share · index.ts:621"]
+    CB["cc-experience budget<br/>CC_EXPERIENCE_BUDGET_SHARE 0.35 · index.ts:375"]
   end
 
-  subgraph asm["assembleRetrievalPack — retrieval-integration.ts:136"]
-    FT["ftsSearch, FTS_TOP_N 50 · retrieval-integration.ts:150<br/>search-index.ts:52 — linear TF scan over store.readAll"]
+  subgraph asm["assembleRetrievalPackAsync — the YIELDING assembler, FORK 2026-09-03<br/>retrieval-integration.ts:377 · called at index.ts:548 session and :551 cc"]
+    FT["ftsSearchChunked, FTS_TOP_N 50 · retrieval-integration.ts:303<br/>slices the corpus, each slice through ftsSearch<br/>search-index.ts:52 — linear TF scan over store.readAll"]
     TC["taskConditionedScore<br/>task-conditioned-scoring.ts:132"]
     MM["MMR dedup, lambda 0.7"]
+    YD["setImmediate as yieldToEventLoop · retrieval-integration.ts:9<br/>awaited between slices :338 and around the bounded stages :400 :405"]
     PKT["token-bounded lines under header Retrieved Context<br/>budget DEFAULT_RETRIEVAL_MAX_TOKENS 4096"]
   end
 
   subgraph src2["WHAT IT READS — both are per-store JSONL scans"]
-    SESS[("engram/events/SESSION_KEY.jsonl<br/>this session · getOrCreateStore index.ts:99")]
-    CCS[("engram/events/cc-experience.jsonl<br/>distilled Claude Code experience<br/>getCcExperienceStore index.ts:262")]
+    SESS[("engram/events/SESSION_KEY.jsonl<br/>this session · getOrCreateStore index.ts:101")]
+    CCS[("engram/events/cc-experience.jsonl<br/>distilled Claude Code experience<br/>getCcExperienceStore index.ts:344")]
   end
 
   OUT["sections — Retrieved Memory Context<br/>plus Learned From Claude Code Sessions"]
-  MERGE["prependSystemContext merged<br/>src/plugins/hooks.ts:291"]
-  SP["composed onto the system prompt<br/>attempt.ts:2474"]
+  CACHE[("packCache index.ts:574 + persistPack index.ts:316<br/>~/.openclaw/engram/packs/SESSION_KEY.json<br/>the assembled pack lands HERE, never in THIS turn prompt")]
+  MERGE["prependSystemContext merged<br/>src/plugins/hooks.ts:292"]
+  SP["composed onto the system prompt<br/>attempt.ts:2592"]
 
   Q --> HOOK --> PL --> SKIP
   SKIP -->|yes| DROP
   SKIP -->|no| FRESH
   FRESH -->|yes| REUSE --> MERGE
-  FRESH -->|no| SB
-  FRESH -->|no| CB
+  FRESH -->|"no, a pack is held"| STALE --> MERGE
+  FRESH -->|"no, nothing in memory"| SEED
+  SEED -->|"only if a persisted pack existed"| MERGE
+  STALE --> REFRESH
+  SEED --> REFRESH
+  REFRESH --> SB
+  REFRESH --> CB
   SB --> FT
   CB --> FT
   FT -.->|reads| SESS
   FT -.->|reads| CCS
-  FT --> TC --> MM --> PKT --> OUT --> MERGE --> SP
+  FT -.->|yields| YD
+  MM -.->|yields| YD
+  FT --> TC --> MM --> PKT --> OUT --> CACHE
+  CACHE -.->|"read by the NEXT turn"| FRESH
+  MERGE --> SP
 ```
 
 **⚠️ The whole INLINE retrieval lane is DEAD — and its instrument reads NEVER by construction** (verified at HEAD `e57d22f5fcf`). This is exactly the "registered means running" conflation `src/infra/instrument-liveness.ts` exists to catch, so read it carefully before touching retrieval:
@@ -184,7 +204,7 @@ flowchart TD
 
 **Consequence — `engram-fts.db` is on the dead lane.** `globalFtsSearch` / `globalFtsMultiSearch` (`src/memory/engram/global-fts-bridge.ts:22` / `:93`) are the only readers of `~/.openclaw/engram/engram-fts.db` (`:16`), and they are wired only into the inline runtime (`extensions.ts:185` and `:262`, `retrieval-runtime.ts:197`, plus `contradiction-gate.ts:128` which is itself reached only from `buildDefaultAssemble`). Nothing in the repo WRITES that file either. The pack the model actually gets comes from a linear scan of two JSONL stores, so **recall today is lexical TF over this session plus the cc-experience store — there is no cross-session semantic recall on the live path.** `vectorSearch` (`search-index.ts:120`) exists and is session-local (`applyFilters(store.readAll(), filters)` at `:137`) but sits behind the same dead runtime.
 
-**Twin collapse — done, do not redraw it.** The 26-file vendored copy under `extensions/tinkerclaw-total-recall/src/` was deleted at HEAD `e57d22f5fcf`; `assembleRetrievalPack` now has ONE implementation and the plugin reaches it through the plugin-SDK surface. The duplicate ledger and the "boundary rule with no crossing launders coupling into duplication" reasoning are owned by canonical-derivations.md — see there, not here.
+**Twin collapse — done, do not redraw it.** The 26-file vendored copy under `extensions/tinkerclaw-total-recall/src/` was deleted at HEAD `e57d22f5fcf`; `assembleRetrievalPack` now has ONE implementation — plus the `assembleRetrievalPackAsync` yielding twin beside it in the same file (FORK 2026-09-03), which is the one the live path calls — and the plugin reaches it through the plugin-SDK surface. The duplicate ledger and the "boundary rule with no crossing launders coupling into duplication" reasoning are owned by canonical-derivations.md — see there, not here.
 
 ## Directory map
 
@@ -322,6 +342,15 @@ Convention shared by these stores: **atomic write = write-temp-then-rename** (`f
 - **Layout:** `links/<sessionKey>.jsonl` — append-only `LinkRecord` rows (`{ id, sourceId, targetKey, mentionText, kind, createdAt }`); two in-memory `Map`s (`forward` / `backward`) rebuilt from the JSONL on first read.
 - **Atomic-write:** `appendFileSync` (single append); never a blind whole-file overwrite.
 - **On-disk now:** the `links/` dir EXISTS (per-session files appear once a turn writes a mention).
+
+### `packs/<sessionKey>.json` — persisted retrieval packs (FORK 2026-09-03)
+
+- **Writer:** `persistPack()` (`extensions/tinkerclaw-total-recall/index.ts:316`), called from `refreshPackInBackground` (`:576`) every time an OFF-PATH rebuild finishes. Root is `PACK_CACHE_DIR = ~/.openclaw/engram/packs` (`:270`).
+- **Reader:** `loadPersistedPack()` (`:288`), on the COLD branch of the `before_prompt_build` hook only (`:777`). A pack older than `PERSISTED_PACK_MAX_AGE_MS` = 24 h (`:277`) is not served at all — a pack from the previous run is a fair seed for one turn, a pack from last week is just wrong text in the prompt.
+- **Layout:** one whole-file JSON per session, `{ sessionKey, pack, eventCount, ccEventCount, builtAtMs }` (plus the transient `seeded: true` marker on a cold placeholder). The FILENAME is the session key with every character outside `[A-Za-z0-9._-]` collapsed to `_`, and the REAL key is stored INSIDE the file, so two keys that collapse to the same filename are detected on read instead of silently swapping packs (`packCachePath` `:281`).
+- **Atomic-write:** `writeFileSync` to `<target>.<pid>.tmp` then `renameSync` (`:320`-`:322`) — a reader never sees a half-written pack. A failed persist is never fatal; the only thing lost is the next cold start's warm seed.
+- **Retention:** nothing prunes this directory today — unbounded on disk, bounded only on READ by the 24 h age gate. 235 files (2026-09-07 snapshot).
+- **Why it exists:** a cold session must return from the hook in the same tick (diagram R). Serving what this session last persisted is the closest thing to the real pack that costs nothing; the rebuild is scheduled either way.
 
 ### `failure-state.json` — U4 failure→strategy-switch durable store (J5)
 
@@ -464,7 +493,7 @@ The duplicate ledger and the collapse policy are owned by `canonical-derivations
 - Whole-file JSON stores here (`failure-state.json`, `reconciliation-ledger.json`, `skill-library/library.json`, `recipe-archive/index.json`) must use temp-then-rename and re-read-before-write — never blind `writeFileSync` of an in-memory snapshot onto a shared file (`feedback_atomic_store_writes`).
 - Nothing that MUST survive a crash may be written from `onTurnComplete` — the turn has already returned and the hook is fire-and-forget (`attempt.ts:3539`). If a new fact needs a durability guarantee, write it ON the turn or accept that it is best-effort.
 - Eviction is a CONTEXT operation, never a disk operation: `pointerCompact` must never delete from `engram/events/*.jsonl`. The store-readback guard (`pointer-compaction.ts:182`) is what enforces losslessness — do not weaken it to "skip missing events".
-- The pack the model actually receives is built by `assembleRetrievalPack` and injected by the `tinkerclaw-total-recall` `before_prompt_build` hook. Before "fixing" retrieval, confirm which path you are on: the inline `retrieval-runtime.ts` lane (`buildDefaultAssemble`, `injectRetrievalPack`, `pushPack`, the `globalFts*` bridge) is DEAD, and its `engram:retrieval-pack-inject` instrument reads NEVER by construction. Fixing a bug there ships nothing.
+- The pack the model actually receives is built by `assembleRetrievalPackAsync` (the YIELDING variant, FORK 2026-09-03) and injected by the `tinkerclaw-total-recall` `before_prompt_build` hook; the synchronous `assembleRetrievalPack` still exists but has no in-gateway caller, and calling it in-process is exactly what blocked the event loop for the whole build on every cold session. Before "fixing" retrieval, confirm which path you are on: the inline `retrieval-runtime.ts` lane (`buildDefaultAssemble`, `injectRetrievalPack`, `pushPack`, the `globalFts*` bridge) is DEAD, and its `engram:retrieval-pack-inject` instrument reads NEVER by construction. Fixing a bug there ships nothing.
 - `chunks_vec`'s `dims` is frozen at CREATE and must equal the live embedder's output width. **Never trust `meta.vectorDims`** — read the declared `FLOAT[N]` back from `sqlite_master` before any fast path may be taken, AND again after every `CREATE VIRTUAL TABLE IF NOT EXISTS` (which is a NO-OP when a wrong-shaped table survived). Changing the embedding model means DROP + recreate + full reindex; vectors from another model must be discarded, never migrated.
 - A `vec0` drop is not done until its shadow tables (`chunks_vec_{chunks,info,rowids,vector_chunks00}`) are gone — they survive a partial drop and can make the next CREATE fail. `dropVectorTable()` must keep RETURNING whether the table is actually gone; a failed drop that logs at debug is the first domino of a permanently broken index.
 - A vector-index fault must DISABLE vector search loudly (`log.error` + `vector.available = false`) rather than throw on every insert at warn level. Keyword search keeps answering either way, so the only user-visible signal is quietly worse recall — the class `failures.md` calls a plausible non-error.
