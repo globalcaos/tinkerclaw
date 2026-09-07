@@ -8,9 +8,9 @@ single_owner: yes — cross-session file-leasing facts (lease-core primitives, t
 see_also: subagents-and-recipes.md (ORCA workflow / parallel-implement; in-run union-find leasing is a DIFFERENT, in-memory thing), topology.md (tinkerclaw-orca plugin), ownership.md (who may edit which file), branch-policy.md (one branch, no merges)
 verify:
   - name: lease-core primitives + CLI + concurrency tests pass (the mutual-exclusion guarantee)
-    cmd: bash -lc 'cd ~/src/tinkerclaw && node --test extensions/tinkerclaw-orca/lease-core.test.mjs'
+    cmd: bash -lc 'cd "$(git rev-parse --show-toplevel)" && node --test extensions/tinkerclaw-orca/lease-core.test.mjs'
   - name: the Edit/Write lease hook passes its end-to-end behavioural tests
-    cmd: bash -lc 'cd ~/src/tinkerclaw && bash extensions/tinkerclaw-orca/enforce-file-lease.test.sh'
+    cmd: bash -lc 'cd "$(git rev-parse --show-toplevel)" && bash extensions/tinkerclaw-orca/enforce-file-lease.test.sh'
   - name: lease writes are ATOMIC (linkSync claim + renameSync replace) — a plain writeFileSync would torn-read and let a live lease be stolen
     cmd: python3 -c 'import os; s=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-orca/lease-core.mjs")).read(); assert "fs.linkSync" in s and "fs.renameSync" in s and "withLeaseLock" in s, "lease-core lost its atomic-write primitives or the per-lease steal lock — the double-grant / torn-read defenses regressed"'
   - name: the hook ships in the TRACKED extension dir (not gitignored .claude/) so it is public + co-located with lease-core

@@ -12,7 +12,7 @@ verify:
   - name: workspace symlinks present (skills NOT symlinked per design)
     cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
   - name: every fork-owned plugin dir uses the tinkerclaw- prefix
-    cmd: bash -lc 'cd ~/src/tinkerclaw && violators=$(for d in extensions/*/; do d=${d%/}; if grep -q "FORK\|fork-owned\|@tinkerclaw" "$d/openclaw.plugin.json" "$d/index.ts" "$d/README.md" 2>/dev/null && [[ "$(basename $d)" != tinkerclaw-* ]]; then echo "$d"; fi; done); test -z "$violators" || (echo "fork plugins missing tinkerclaw- prefix: $violators"; exit 1)'
+    cmd: bash -lc 'cd "$(git rev-parse --show-toplevel)" && violators=$(for d in extensions/*/; do d=${d%/}; if grep -q "FORK\|fork-owned\|@tinkerclaw" "$d/openclaw.plugin.json" "$d/index.ts" "$d/README.md" 2>/dev/null && [[ "$(basename $d)" != tinkerclaw-* ]]; then echo "$d"; fi; done); test -z "$violators" || (echo "fork plugins missing tinkerclaw- prefix: $violators"; exit 1)'
   - name: U3/U4/U6 fork RPC bundles registered in coreGatewayHandlers (source-only — liveness is probes.md's)
     cmd: node ~/src/tinkerclaw/scripts/bible/topology-fork-rpc-registration.mjs
   - name: SS3 fork.skill.put RPC + semantic fork.skill.search wired (resolveSkillEmbedFn, DRY with the consolidation cron)

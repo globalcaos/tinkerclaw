@@ -14,7 +14,7 @@ verify:
   - name: git-hooks/pre-push runs the bible:invariants gate (catches hook-removal regression)
     cmd: python3 -c 'import os; p = os.path.expanduser("~/src/tinkerclaw/git-hooks/pre-push"); assert os.path.isfile(p), "pre-push hook missing"; t = open(p).read(); assert "bible:invariants" in t, "pre-push hook no longer runs bible:invariants"'
   - name: no production module imports a relative path that does not exist (ratchet)
-    cmd: cd ~/src/tinkerclaw && node scripts/check-broken-relative-imports.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/check-broken-relative-imports.mjs
   - name: the broken-import guard is wired into check:architecture (not merely present on disk)
     cmd: python3 -c 'import json,os; p=json.load(open(os.path.expanduser("~/src/tinkerclaw/package.json"))); a=p["scripts"]["check:architecture"]; assert "lint:no-broken-relative-imports" in a, f"guard exists but nothing runs it — check:architecture is {a!r}"'
 ---

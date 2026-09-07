@@ -29,13 +29,13 @@ verify:
   # VECTOR CONTRACT (2026-08-04) — pointers, not programs: FOUNDATION.md, "Three different
   # jobs, three different homes". Assertions + their negative test live in the script.
   - name: VECTOR CONTRACT — the FORK copy reads the vec0 shape back from sqlite_master BEFORE the fast path, and again after every CREATE
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/memory-vector-contract.mjs --check=shape
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/memory-vector-contract.mjs --check=shape
   - name: VECTOR CONTRACT — an unfixable dim mismatch DISABLES vector search loudly instead of throwing on every insert
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/memory-vector-contract.mjs --check=degrade
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/memory-vector-contract.mjs --check=degrade
   - name: VECTOR CONTRACT — chunks_vec is still derived in two live trees and the count has not grown (ratchet; the LEDGER is owned by canonical-derivations.md)
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/memory-vector-contract.mjs --check=derivations
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/memory-vector-contract.mjs --check=derivations
   - name: VECTOR CONTRACT self-test — each of the three checks goes RED when the thing it guards is broken
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/memory-vector-contract.mjs --self-test
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/memory-vector-contract.mjs --self-test
   - name: DIAGRAM W — onTurnComplete is still dispatched fire-and-forget, so every ENGRAM write stays inside the crash window
     cmd: python3 -c 'import os; t=open(os.path.expanduser("~/src/tinkerclaw/src/agents/embedded-agent-runner/run/attempt.ts")).read(); i=t.find(".onTurnComplete("); assert i > 0, "attempt.ts no longer calls onTurnComplete — diagram W in memory-layout.md is stale"; assert ".catch(" in t[i:i+1400], "onTurnComplete is no longer .catch()-chained fire-and-forget. If it is awaited now, the durability split drawn in diagram W (transcript survives a crash, ENGRAM writes do not) MUST be rewritten."'
   - name: DIAGRAM W — the deferred writers still fire from onTurnComplete

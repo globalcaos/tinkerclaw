@@ -12,7 +12,7 @@ verify:
   # cannot hold ambiguity, so keeping them in one artefact lets the narrower one quietly become the
   # rule. The script also gets what YAML cannot give it: linting, review, and a test.
   - name: "#9 bounded — published artefacts resolve standalone (axis 1) and the fork is backed up (axis 2)"
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/check-foundation-bounded.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/check-foundation-bounded.mjs
 ---
 
 # TinkerClaw FOUNDATION

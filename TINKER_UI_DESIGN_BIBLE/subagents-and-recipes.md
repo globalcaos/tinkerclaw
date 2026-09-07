@@ -27,7 +27,7 @@ verify:
     cmd: python3 -c 'import os,re,yaml,sys; r1=os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/kits"); r2=os.path.expanduser("~/.openclaw/workspace/kits"); bad=[]; [bad.append(f+" (parse/field err)") if not all(yaml.safe_load(re.search(r"^---\n(.+?)\n---",open(f).read(),re.DOTALL).group(1)).get(k) for k in ["slug","title","summary"]) else None for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]; sys.exit(1) if bad else print("ok "+str(len([f for root in [r1,r2] if os.path.isdir(root) for a in os.listdir(root) for f in ([os.path.join(root,a,"kit.md")] if os.path.isfile(os.path.join(root,a,"kit.md")) else [os.path.join(root,a,b,"kit.md") for b in os.listdir(os.path.join(root,a)) if os.path.isdir(os.path.join(root,a,b)) and os.path.isfile(os.path.join(root,a,b,"kit.md"))])]))+" kits")'
   - name: every parallelism.groups in our kits is a valid step-index covering exit=2
     cmd: |
-      cd ~/src/tinkerclaw && python3 << 'PYEOF'
+      cd "$(git rev-parse --show-toplevel)" && python3 << 'PYEOF'
       import os, glob, sys
       try:
           import yaml
@@ -188,7 +188,7 @@ verify:
   # where the invariant HELD — both CLIs mention the literal inside a COMMENT that documents its
   # removal. The script strips comments before matching; see its header.
   - name: announce-misdelivery fix pinned (2026-08-04) — headless sink, no default main-tab parent in CLI code, RPC-boundary substitution wired
-    cmd: cd ~/src/tinkerclaw && node scripts/bible/subagents-announce-sink.mjs
+    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/subagents-announce-sink.mjs
   - name: ORCA Phase-A injects DOC_REQUIREMENT (bible annotate + update old entries) AND MECHANISM_REQUIREMENT (code vs prompt) — 2026-09-01
     cmd: python3 -c 'import os; w=open(os.path.expanduser("~/src/jarvis-icu/docs/superpowers/parallel-implement.workflow.js")).read(); g=open(os.path.expanduser("~/src/.claude_global/workflows/parallel-implement.js")).read(); assert "const DOC_REQUIREMENT" in w and "const MECHANISM_REQUIREMENT" in w; i=w.index("const draftPrompt"); src=w[i:i+2000]; assert "DOC_REQUIREMENT" in src and "MECHANISM_REQUIREMENT" in src, "a standing ORCA rule is declared but not injected into draftPrompt"; assert "promptly UPDATE" in w and "plasticity" in w.lower() and "prefer code whenever it is possible" in w.lower(); gi=g.index("const draftPrompt"); assert "const DOC_REQUIREMENT" in g and "MECHANISM_REQUIREMENT" in g[gi:gi+2000], "the .claude_global copy drifted — it is a second firing surface, not a backup"'
 ---
