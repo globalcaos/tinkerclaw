@@ -56,8 +56,15 @@ export const LEDGER = [
     pattern: String.raw`^\s*(export )?(function|const) estimateTokens`,
   },
   {
+    // 1 -> 2 on 2026-09-07. The second definition is `assembleRetrievalPackAsync` (added
+    // 2026-09-03), the YIELDING twin of the synchronous assembler. This is NOT the divergence
+    // this ledger exists to catch: the two are pinned to identical output by a test, the file
+    // documents why they cannot merge (the sync one has a caller whose type says `string`), and
+    // the pattern matches the twin only because `...PackAsync` is a NAME PREFIX of `...Pack`.
+    // Renaming it to dodge the regex would be exactly the evasion the row below warns about, so
+    // the cap moves instead and this comment carries the reason.
     concept: "assembleRetrievalPack",
-    cap: 1,
+    cap: 2,
     pattern: String.raw`^\s*export (async )?function assembleRetrievalPack`,
   },
   {
@@ -77,8 +84,11 @@ export const LEDGER = [
     //   src/agents/pi-extensions/retrieval-runtime.ts buildDefaultAssemble  (live via injectRetrievalPack)
     // A name-keyed ratchet cannot see a concept re-derived under a NEW NAME — the rename IS the
     // evasion and it needs no intent. Keyed on the concept, matching both spellings.
+    // 2 -> 3 on 2026-09-07, same cause as the row above: assembleRetrievalPackAsync. The
+    // concept still has TWO independent derivations (engram + pi-extensions); the third match
+    // is the pinned async twin of the first, not a new way of assembling a pack.
     concept: "retrieval-pack assembler",
-    cap: 2,
+    cap: 3,
     pattern: String.raw`^\s*(export )?(async )?function (assembleRetrievalPack|buildDefaultAssemble)`,
   },
   {

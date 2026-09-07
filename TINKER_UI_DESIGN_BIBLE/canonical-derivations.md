@@ -10,7 +10,8 @@ note: |
   #18 has existed since 2026-05-16 and is correct. It could not fail a build, so the codebase kept
   growing second implementations anyway — 10 of cosineSimilarity, 13 of estimateTokens. This file is
   the missing half: a counted ledger plus a RATCHET. The counts below are the measured status quo,
-  not a target. The gate does not demand you fix them; it demands you never make them worse.
+  not a target. The gate asks a question whenever a count rises: did silent-divergence risk rise too?
+  Usually yes; sometimes the new match is deliberately equivalent and more useful. Context decides.
   The counts table in the prose is the readable copy. The ENFORCED numbers are the LEDGER constant
   at the top of scripts/bible/canonical-ledger-ratchet.mjs — move both in the same commit, and the
   --check-table gate below fails the build if you don't. If they ever disagree, THIS FILE is the
@@ -46,16 +47,52 @@ This file is the half that bites.
 
 The measured status quo on 2026-08-03, after the ENGRAM collapse:
 
-| Concept                    | Implementations |       Was |
-| -------------------------- | --------------: | --------: |
-| `estimateTokens`           |          **12** |        13 |
-| `cosineSimilarity`         |           **8** |        10 |
-| `deliverWebReply`          |               3 |         3 |
-| `mmrRerank`                |               3 |         3 |
-| `retrieval-pack assembler` |               2 |         2 |
-| `movePathToTrash`          |               2 |         2 |
-| `estimateTokensFromChars`  |               2 |         2 |
-| `assembleRetrievalPack`    |           **1** | 2 ✅ done |
+| Concept                    | Implementations | Was |
+| -------------------------- | --------------: | --: |
+| `estimateTokens`           |          **12** |  13 |
+| `cosineSimilarity`         |           **8** |  10 |
+| `deliverWebReply`          |               3 |   3 |
+| `mmrRerank`                |               3 |   3 |
+| `retrieval-pack assembler` |           **3** |   2 |
+| `movePathToTrash`          |               2 |   2 |
+| `estimateTokensFromChars`  |               2 |   2 |
+| `assembleRetrievalPack`    |           **2** |   1 |
+
+### The 2026-09-07 raise, and why a ratchet is allowed to move up
+
+Two caps went UP on 2026-09-07 — `assembleRetrievalPack` 1→2 and `retrieval-pack assembler`
+2→3 — which reads like the thing this file forbids. It is not, and the distinction is the
+whole point of the ledger.
+
+**What it is for.** This ledger does not track _how many copies exist_; a bare count is cheap
+and the ledger would drown in them. It tracks copies that can **silently disagree** — the
+`estimateTokensFromChars` pair that part company at `chars=5` is the archetype. The harm is a
+divergence nobody notices.
+
+**The invariant that replaced the cap.** Both new matches are one function:
+`assembleRetrievalPackAsync`, the yielding twin added 2026-09-03 so a gateway-side caller stops
+holding the event loop. `retrieval-integration.ts` states the contract — equal output, different
+scheduling — and `index.cold-pack.test.ts` tests byte identity on a production-shaped 2,000-event
+tie-order corpus plus the empty and no-match edges. That is stronger evidence for the risk this
+row actually protects than a name-prefix count. Asked FOUNDATION §9's question — _which axis is
+this protecting here?_ — the answer is "none": these are not two uncoordinated derivations; they
+are an intentional pair with an explicit equivalence contract and a regression test.
+
+**Alternatives rejected.**
+
+- _Collapse them._ The file already considered and rejected it, with the reason written down:
+  `assembleRetrievalPack` has a synchronous caller whose type says `string`, so it cannot simply
+  become async.
+- _Rename the twin_ so the prefix stops matching. This is the cheapest green and the worst
+  answer — the sibling row's own comment calls a rename "the evasion, and it needs no intent."
+- _Leave it red._ A permanently-red gate teaches everyone the bypass (`BIBLE_GUARD=off`), which
+  costs all 373 checks to protect one stale number.
+
+**The general rule this establishes.** A ratchet is a fixed threshold, and FOUNDATION principle
+2 calls fixed thresholds "legacy artifacts of the programmatic era" that go stale. So a ratchet
+rising is a QUESTION, not a verdict: does the new implementation introduce the divergence risk
+this row exists to catch? If yes, collapse it. If no — as here — the cap moves and the commit
+carries the reason. What is never allowed is moving it _silently_.
 
 **Which of these numbers is the gate?** Not this table. The table is the readable copy, kept here
 because a reader must be able to see the ledger without opening a script. The numbers the build
@@ -69,9 +106,11 @@ them. `node scripts/bible/canonical-ledger-ratchet.mjs --list` prints the measur
 failing, so settling any of this takes one command.
 
 Collapsing 13 token estimators is not a session's work, and a gate that demands it on day one gets
-switched off — which is how you end up with 13. So the gate asserts only that **the count never
-rises**. Adding a ninth `cosineSimilarity` fails the build; collapsing two and lowering the cap
-in the same commit passes. The numbers only move one way.
+switched off — which is how you end up with 13. So the automated gate stops whenever **the count
+rises**. That stop is a demand for context, not a permanent veto: a ninth independent
+`cosineSimilarity` is sprawl and should collapse; a tested sync/async pair with different scheduling
+constraints may justify moving the recorded baseline. The number normally falls. When it rises,
+the same commit must explain why the protected risk did not.
 
 `estimateTokens` is the worst of them and deserves naming: it is a **measurement**, and #20 requires
 a measurement to carry its provenance. Thirteen estimators that disagree, none declaring whether it

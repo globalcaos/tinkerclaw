@@ -2,7 +2,7 @@
 file: observability.md
 purpose: What this fork can PROVE it is doing — the derived capability registry, the measured coverage, and the instrument-placement rules that came from features dying silently
 audience: AI + maintainer
-last_verified: 2026-08-04
+last_verified: 2026-09-07
 last_verified_commit: HEAD
 single_owner: yes — capability coverage policy, the OBSERVED/DECLARED/BLIND vocabulary, and the instrument-placement rules live here. probes.md owns inspection PRIMITIVES (how to look); slos.md owns objectives (how good is good enough); this file owns WHAT IS WATCHED AT ALL.
 see_also: probes.md (the primitives you inspect with), failures.md (how a failure propagates once you can see it), slos.md (the three cron-scoped objectives), canonical-derivations.md (the sibling ratchet, same discipline), design-principles.md#20 (a measurement carries its provenance), bug-log.md (every rule below cost a real incident)
@@ -41,6 +41,21 @@ looking for an unrelated reason.
 **plausible non-error**: an empty result set, a healthy-looking no-op, a `warn` nobody reads, a
 `status: ok` on a run that produced nothing. Every one of those is also exactly what a correctly
 working, currently-idle feature produces.
+
+### Why this check is a lens, not a wall
+
+The coverage ratchet exists to stop that silence recurring. It does **not** exist to make a fixed
+number sovereign over the system. `exit 1` deliberately buys attention: it says _the measured
+context changed; explain why_. Usually a rising BLIND count means a capability arrived unwatched.
+Sometimes it means the scorer forgot that one central seam already watches hundreds of methods.
+Those are opposite situations wearing the same bit.
+
+The decision rule comes from FOUNDATION, not from the literal cap: ask what observability axis the
+row protects **here**. If nothing would change when the capability dies, add a signal. If a real
+signal already changes — as `noteRpcDispatch(req.method)` does for every enabled RPC — fix the
+measurement and lower the cap to the newly honest count. Leaving a known false positive red is not
+prudence; it trains maintainers to bypass the whole gate and sacrifices the true alarms with it.
+The only forbidden move is changing the number without carrying the context that justifies it.
 
 Note what the four share and what they do not. They were not badly written — ENGRAM's bug was two
 field names, and both fields were typed optional, so it type-checked perfectly, forever. They were
@@ -166,7 +181,38 @@ independent saves on 2026-08-04, both while writing this file:
 not in `dist/` is worth nothing, and the fork has the scar — fractal's own instruments were
 source-only for part of 2026-08-04. `grep -rl '<id>' dist/` is the check and it takes one second.
 
-## 5. Measured coverage — dated snapshot, 2026-08-04
+## 5. Measured coverage
+
+### Current dated snapshot — 2026-09-07
+
+After teaching the scorer about the central RPC dispatch seam:
+
+```
+749 capabilities derived — OBSERVED 199 (27%) · DECLARED 405 (54%) · BLIND 145 (19%)
+RATCHET  structural BLIND 145 / cap 145
+```
+
+| Subsystem      | Total | OBSERVED | DECLARED | BLIND |
+| -------------- | ----: | -------: | -------: | ----: |
+| gateway-core   |   188 |       27 |      161 |     0 |
+| gateway-plugin |   138 |       10 |       39 |    89 |
+| stores         |   228 |       76 |      152 |     0 |
+| OBS            |    66 |       51 |       15 |     0 |
+| tinker-ui      |    45 |        4 |        0 |    41 |
+| plugins        |    32 |       15 |       16 |     1 |
+| hooks          |    26 |        2 |       20 |     4 |
+| crons          |    18 |       14 |        1 |     3 |
+| tools          |     8 |        0 |        1 |     7 |
+
+The 213-row structural drop, 358→145, was **not 213 new instruments**. The gateway had already
+called `noteRpcDispatch(req.method)` centrally since 2026-08-04. The scorer still treated missing
+WS `res` lines as blindness, forgetting that in-process and other transports pass through the same
+handler seam. The correction credits enabled RPCs as DECLARED — proof of dispatch, never proof of
+successful work — and fails closed if that source seam disappears. Eighty-nine plugin RPCs remain
+BLIND because their owner plugin is not enabled; the central seam cannot watch code that never
+registers.
+
+### Historical snapshot — 2026-08-04
 
 **These numbers are a reading, not the source of truth.** The live figure comes from the command,
 and it moved twice during the writing of this file. If prose and command disagree, **the command
@@ -226,15 +272,18 @@ pain, not present risk, and the BLIND column is where the _next_ eight-week outa
 
 ### 5b. Reading the RPC numbers honestly
 
-**Two facts gate the whole RPC section.** (U1) The `http server listening (N plugins: …)` line is
-**not** the complete loaded set — `tinkerclaw-tinker-bridge` has 8,635 journal hits in three days
-and is absent from it. (U2) `⇄ res ✓/✗` is emitted **only on the `[ws]` transport**; in-process
-`callGatewayLeastPrivilege` emits nothing, proven when `fork.curiosity.topGaps` succeeded six times
-with zero `res` lines.
+**Corrected 2026-09-07.** Two facts gate the whole RPC section. (U1) The `http server listening
+(N plugins: …)` line is **not** the complete loaded set, so plugin enablement comes from the live
+allow-list rather than that line. (U2) `⇄ res ✓/✗` is emitted only on the `[ws]` transport, but
+in-process calls still reach `handleGatewayRequest`, which fires `noteRpcDispatch(req.method)`
+after resolving the handler and before invoking it.
 
-So **"never on the wire" ≠ "never invoked"**, and the 283 BLIND RPC rows are an **upper bound on
-death, not a proof of it**. The script prints that caveat on every run rather than silently
-narrowing the number — a real gap must not get to hide behind a caveat nobody re-reads.
+So **"never on the wire" ≠ "never invoked"**, but it also no longer means BLIND. An enabled RPC
+without a WS response line is DECLARED by the central dispatch mechanism; live journal evidence may
+promote it to OBSERVED. This settles only _was the handler reached?_ It does not settle whether the
+handler succeeded, returned useful data, or bailed on line one — those require success/outcome
+signals at the work site. The old 283-BLIND reading was an upper bound produced by a stale scorer,
+not the state of the running system.
 
 The inverse error is live too, and it is the more dangerous one: **a method can be OBSERVED and
 badly broken.** `rpc:forensic.getResponseLive` runs 35✓/40✗ and `rpc:sessions.patch` runs 52✓/41✗
@@ -288,29 +337,26 @@ independently in the UI persistence registry. The script resolves them and says 
 Ranked by (how much it matters) × (how broken it already is). Every proposed signal is a **counter
 or an artefact, never a log line** — §1 is what log lines are worth.
 
-| #   | Gap                                                                                                                                                                                                                  | Cheapest signal that settles it                                                                                                                                                                                                                                                                                                                   |
-| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **RPC dispatch has no purpose-built signal at all** — 315 methods, 283 BLIND, and in-process calls emit nothing whatsoever (U2). _Being implemented as of 2026-08-04, see below._                                    | Count at the single dispatch chokepoint (`handleGatewayRequest`), never per method — so it **cannot drift out of sync with the method list, because it does not have one**. The measure worth having is not call counts but **NEVER-CALLED-since-boot**: a registered method nobody calls is either dead code or a broken caller. Makes #12 free. |
-| 2   | **Agent-tool observability is an accident of one plugin** — all 1,726 `tool=` lines in 3 days are `[prefrontal] HOOK …`                                                                                              | A `tool-invoke` family in `algorithm-metrics` at the tool seam: one `recordAlgorithmOutcome({tool, outcome})` per call. Ledger, not log.                                                                                                                                                                                                          |
-| 3   | **Optional tools are silently stripped** — `recall`, `synapse_debate`, `budget_check` are registered and then removed by the empty-allowlist gate. Three papers' worth of mechanism unreachable, and nothing says so | At agent start, write the RESOLVED tool-name list into the anatomy row and assert expected-vs-resolved. One field on a table that already gets a row per turn.                                                                                                                                                                                    |
-| 4   | **Silent prompt mutation** — persona injection, humor calibration, prefrontal rules and the ENGRAM pack all mutate the prompt and return nothing observable. A flag flipped off is identical to working              | `eeg:anatomy-write` already writes a per-turn row. Add `contributors: {id: injectedChars}`. A zero-char contributor for N turns is the alarm. **One field covers J1, J4, J7, J13 and J18 at once.**                                                                                                                                               |
-| 5   | **The UI is structurally invisible** — `grep -rn 'declareInstrument(' tinker-ui/src` → **0**. The report cannot see any UI feature, ever                                                                             | A `fork.ui.note({id,count})` RPC calling `noteInstrumentFired`, plus one declaration per UI capability. Rides the existing report unchanged.                                                                                                                                                                                                      |
-| 6   | **Crons that report success and prove nothing** — 5 of 18                                                                                                                                                            | Two asserts over data that already exists: alarm when `enabled && lastError === "disabled"`; require an artefact per `ok` run. Both are `jq` over `jobs-state.json` ⋈ `ls reports/`.                                                                                                                                                              |
-| 7   | **Semantic memory integrity** — 5,258 chunks, 0 vectors, every freshness proxy green                                                                                                                                 | `SELECT count(*) FROM chunks WHERE vector IS NOT NULL` vs `count(*)`; assert equality. The same query shape settles 0 backlinks and 0 anchors.                                                                                                                                                                                                    |
-| 8   | **An instrument on a dead path** — `engram:retrieval-pack-inject` (rule 1)                                                                                                                                           | Move the `noteInstrumentFired` call to the path that has callers. One line; turns a false `pending` into a true signal.                                                                                                                                                                                                                           |
-| 9   | **Fractal: 2,466 rows, 0 successes, 8 weeks** — and the ledger proving it is read by nobody                                                                                                                          | A success-rate floor in `post-deploy-smoke`: `successes/rows < 0.05 → FAIL`. The data is already on disk; only the assert is missing.                                                                                                                                                                                                             |
-| 10  | **The hook-payload contract class** — `payload.text` vs `assistantTexts` killed ENGRAM for a week, and **the identical bug is still live in CORTEX** (`~/.openclaw/cortex/` empty, dir mtime 2026-03-30)             | At the hook dispatcher, declare each hook's expected payload keys and count reads that miss. A generic detector for a bug class that has now bitten **twice in two extensions**.                                                                                                                                                                  |
-| 11  | **82 live methods are unclassified** — default-deny client-side, silently ADMIN server-side; the exact two-sided trap that killed `fork.*` and produced 188 refusals / 0 nudges                                      | Persist the unclassified set once per boot as an artefact, and put the existing (currently RED) `method-scopes` test into the merge gate.                                                                                                                                                                                                         |
-| 12  | **High-error-rate RPCs with no alarm** — `forensic.getResponseLive` 35✓/40✗ and `sessions.patch` 52✓/41✗ (53% and 44% failing), both firing today. Indistinguishable from healthy because they _do_ return successes | Per-method success ratio on the registry from #1, with a threshold. Free once #1 exists.                                                                                                                                                                                                                                                          |
+| #   | Gap                                                                                                                                                                                                                                                                                                         | Cheapest signal that settles it                                                                                                                                                                                                         |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **DONE 2026-08-04; scorer corrected 2026-09-07 — RPC dispatch has a purpose-built central signal.** Every enabled method crosses `handleGatewayRequest`; `noteRpcDispatch(req.method)` names it before execution. The prior 283-BLIND reading survived because the scorer looked only at WS response lines. | Keep the one chokepoint rather than per-method edits. Dispatch earns DECLARED; the journal earns OBSERVED; useful completion still needs an outcome signal at the work site. NEVER-CALLED-since-boot remains the valuable runtime list. |
+| 2   | **Agent-tool observability is an accident of one plugin** — all 1,726 `tool=` lines in 3 days are `[prefrontal] HOOK …`                                                                                                                                                                                     | A `tool-invoke` family in `algorithm-metrics` at the tool seam: one `recordAlgorithmOutcome({tool, outcome})` per call. Ledger, not log.                                                                                                |
+| 3   | **Optional tools are silently stripped** — `recall`, `synapse_debate`, `budget_check` are registered and then removed by the empty-allowlist gate. Three papers' worth of mechanism unreachable, and nothing says so                                                                                        | At agent start, write the RESOLVED tool-name list into the anatomy row and assert expected-vs-resolved. One field on a table that already gets a row per turn.                                                                          |
+| 4   | **Silent prompt mutation** — persona injection, humor calibration, prefrontal rules and the ENGRAM pack all mutate the prompt and return nothing observable. A flag flipped off is identical to working                                                                                                     | `eeg:anatomy-write` already writes a per-turn row. Add `contributors: {id: injectedChars}`. A zero-char contributor for N turns is the alarm. **One field covers J1, J4, J7, J13 and J18 at once.**                                     |
+| 5   | **The UI is structurally invisible** — `grep -rn 'declareInstrument(' tinker-ui/src` → **0**. The report cannot see any UI feature, ever                                                                                                                                                                    | A `fork.ui.note({id,count})` RPC calling `noteInstrumentFired`, plus one declaration per UI capability. Rides the existing report unchanged.                                                                                            |
+| 6   | **Crons that report success and prove nothing** — 5 of 18                                                                                                                                                                                                                                                   | Two asserts over data that already exists: alarm when `enabled && lastError === "disabled"`; require an artefact per `ok` run. Both are `jq` over `jobs-state.json` ⋈ `ls reports/`.                                                    |
+| 7   | **Semantic memory integrity** — 5,258 chunks, 0 vectors, every freshness proxy green                                                                                                                                                                                                                        | `SELECT count(*) FROM chunks WHERE vector IS NOT NULL` vs `count(*)`; assert equality. The same query shape settles 0 backlinks and 0 anchors.                                                                                          |
+| 8   | **An instrument on a dead path** — `engram:retrieval-pack-inject` (rule 1)                                                                                                                                                                                                                                  | Move the `noteInstrumentFired` call to the path that has callers. One line; turns a false `pending` into a true signal.                                                                                                                 |
+| 9   | **Fractal: 2,466 rows, 0 successes, 8 weeks** — and the ledger proving it is read by nobody                                                                                                                                                                                                                 | A success-rate floor in `post-deploy-smoke`: `successes/rows < 0.05 → FAIL`. The data is already on disk; only the assert is missing.                                                                                                   |
+| 10  | **The hook-payload contract class** — `payload.text` vs `assistantTexts` killed ENGRAM for a week, and **the identical bug is still live in CORTEX** (`~/.openclaw/cortex/` empty, dir mtime 2026-03-30)                                                                                                    | At the hook dispatcher, declare each hook's expected payload keys and count reads that miss. A generic detector for a bug class that has now bitten **twice in two extensions**.                                                        |
+| 11  | **82 live methods are unclassified** — default-deny client-side, silently ADMIN server-side; the exact two-sided trap that killed `fork.*` and produced 188 refusals / 0 nudges                                                                                                                             | Persist the unclassified set once per boot as an artefact, and put the existing (currently RED) `method-scopes` test into the merge gate.                                                                                               |
+| 12  | **High-error-rate RPCs with no alarm** — `forensic.getResponseLive` 35✓/40✗ and `sessions.patch` 52✓/41✗ (53% and 44% failing), both firing today. Indistinguishable from healthy because they _do_ return successes                                                                                        | Per-method success ratio on the registry from #1, with a threshold. Free once #1 exists.                                                                                                                                                |
 
-> **#1 is in flight.** A concurrent session is adding `src/gateway/rpc-observability.ts` — one
-> chokepoint in `handleGatewayRequest`, counters in a single Map bounded by the handler table,
-> summarised into the journal _next to_ `[instrument-liveness]` rather than into a new surface
-> nobody reads. It classifies refusals (`auth` / `unavailable` / `rate-limit` / `unknown-method`)
-> because each is a different failure with a different fix — the §4 rule 2 shape applied to
-> dispatch. **It is uncommitted working-tree code at the time of writing: do not treat it as
-> landed, and do not build or deploy it on its author's behalf.** Re-run the coverage script to
-> see whether it has taken effect; a fix that exists only in `src/` is not a fix (rule 7).
+> **#1 landed in `d629fc1eacc` on 2026-08-04.** `src/gateway/rpc-observability.ts` counts at
+> `handleGatewayRequest`, keeps its Map bounded by the handler table, reports next to
+> `[instrument-liveness]`, and classifies refusals (`auth` / `unavailable` / `rate-limit` /
+> `unknown-method`). The scorer failed to credit that mechanism until 2026-09-07. That month-long
+> mismatch is why this optic now says explicitly: observation outranks a stored scoring rule.
 
 ## 7. The machinery, and its one missing change
 
@@ -385,29 +431,22 @@ instrument; never substitute it for one.
 
 ## 8. The ratchet
 
-`BLIND_CAP` in `scripts/bible/capability-coverage.mjs` is the measured status quo — **377**, equal
-to the current structural measurement — and it may only ever be edited **downward**, in the same
-commit that instruments something. A new capability that arrives with nothing watching it fails the
-build.
+`BLIND_CAP` in `scripts/bible/capability-coverage.mjs` is the measured structural status quo —
+**145 on 2026-09-07** — and the build stops when that measurement rises. The stop is intentionally
+cheap and binary; the diagnosis is neither. It asks whether a capability arrived with nothing
+watching it, or whether the scorer lost context about a signal that already exists.
 
-The cap is deliberately **not zero and not a target**. Several hundred blind capabilities is not a
-session's work, and a gate demanding zero on day one is a gate that gets switched off by Friday —
-which is precisely how a codebase arrives here. Same shape and same reasoning as the ledger in
-[`canonical-derivations.md`](canonical-derivations.md). **The number only moves one way.**
+The cap is deliberately **not zero and not a target**. Hundreds of blind capabilities are not a
+session's work, and a gate demanding zero on day one gets switched off by Friday. Keep the cap equal
+to the honest measurement: slack hides regressions, while a knowingly-low cap leaves the gate
+permanently red and teaches bypass. Normally the number falls as signals land. It may move upward
+only when the protected risk genuinely did not rise and the same commit records why; changing it
+silently is never a fix.
 
-**Keep the cap equal to the measurement.** A cap above the measured value has stopped being a
-ratchet — it is headroom for regressions to hide in, and every unit of slack is a capability that
-can quietly go dark before anything complains. Lowering it is free whenever the two agree; do it in
-the same commit.
-
-**The cap is measured with the journal ignored, and that is deliberate.** Gating on the
-journal-informed number would make the build depend on whether this host happened to receive
-traffic for a method this week — a gate that passes or fails on log history is not a gate, and it
-would go green on a fresh clone that has no journal at all.
-
-**Raising the cap is not a fix.** If a genuinely unobservable capability arrives, leave the cap
-alone and say why here — the exception belongs in prose where a human reads it, not in a number
-that silently buys slack for everything else.
+The cap is measured with the journal ignored so CI and a fresh clone get the same answer. Static
+central mechanisms count as DECLARED only when their source seam is detected; live evidence may
+promote them to OBSERVED in the report but never changes the gate. This preserves the reason the
+ratchet exists — no silent capability death — without confusing one frozen arithmetic with reality.
 
 ## 9. What this measure deliberately is not
 
