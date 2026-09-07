@@ -56,15 +56,12 @@ export const LEDGER = [
     pattern: String.raw`^\s*(export )?(function|const) estimateTokens`,
   },
   {
-    // 1 -> 2 on 2026-09-07. The second definition is `assembleRetrievalPackAsync` (added
-    // 2026-09-03), the YIELDING twin of the synchronous assembler. This is NOT the divergence
-    // this ledger exists to catch: the two are pinned to identical output by a test, the file
-    // documents why they cannot merge (the sync one has a caller whose type says `string`), and
-    // the pattern matches the twin only because `...PackAsync` is a NAME PREFIX of `...Pack`.
-    // Renaming it to dodge the regex would be exactly the evasion the row below warns about, so
-    // the cap moves instead and this comment carries the reason.
+    // Cap stays at 1 on this tree: only the synchronous assembler ships. A yielding twin is
+    // allowed to raise this to 2 IF it is pinned to identical output by a test and the same
+    // commit records why they cannot merge. A silent raise, or a rename that dodges this regex,
+    // is the evasion the row below exists to catch.
     concept: "assembleRetrievalPack",
-    cap: 2,
+    cap: 1,
     pattern: String.raw`^\s*export (async )?function assembleRetrievalPack`,
   },
   {
@@ -84,11 +81,11 @@ export const LEDGER = [
     //   src/agents/pi-extensions/retrieval-runtime.ts buildDefaultAssemble  (live via injectRetrievalPack)
     // A name-keyed ratchet cannot see a concept re-derived under a NEW NAME — the rename IS the
     // evasion and it needs no intent. Keyed on the concept, matching both spellings.
-    // 2 -> 3 on 2026-09-07, same cause as the row above: assembleRetrievalPackAsync. The
-    // concept still has TWO independent derivations (engram + pi-extensions); the third match
-    // is the pinned async twin of the first, not a new way of assembling a pack.
+    // Two independent derivations (engram + pi-extensions). A tested yielding twin of the first
+    // is a scheduling change, not a third assembler, and may raise this to 3 with the reason in
+    // the same commit. This tree does not have that twin, so the cap stays 2.
     concept: "retrieval-pack assembler",
-    cap: 3,
+    cap: 2,
     pattern: String.raw`^\s*(export )?(async )?function (assembleRetrievalPack|buildDefaultAssemble)`,
   },
   {

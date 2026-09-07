@@ -47,21 +47,20 @@ This file is the half that bites.
 
 The measured status quo on 2026-08-03, after the ENGRAM collapse:
 
-| Concept                    | Implementations | Was |
-| -------------------------- | --------------: | --: |
-| `estimateTokens`           |          **12** |  13 |
-| `cosineSimilarity`         |           **8** |  10 |
-| `deliverWebReply`          |               3 |   3 |
-| `mmrRerank`                |               3 |   3 |
-| `retrieval-pack assembler` |           **3** |   2 |
-| `movePathToTrash`          |               2 |   2 |
-| `estimateTokensFromChars`  |               2 |   2 |
-| `assembleRetrievalPack`    |           **2** |   1 |
+| Concept                    | Implementations |       Was |
+| -------------------------- | --------------: | --------: |
+| `estimateTokens`           |          **12** |        13 |
+| `cosineSimilarity`         |           **8** |        10 |
+| `deliverWebReply`          |               3 |         3 |
+| `mmrRerank`                |               3 |         3 |
+| `retrieval-pack assembler` |               2 |         2 |
+| `movePathToTrash`          |               2 |         2 |
+| `estimateTokensFromChars`  |               2 |         2 |
+| `assembleRetrievalPack`    |           **1** | 2 ✅ done |
 
-### The 2026-09-07 raise, and why a ratchet is allowed to move up
+### When a ratchet is allowed to move up
 
-Two caps went UP on 2026-09-07 — `assembleRetrievalPack` 1→2 and `retrieval-pack assembler`
-2→3 — which reads like the thing this file forbids. It is not, and the distinction is the
+A rising count reads like the thing this file forbids. It is not, and the distinction is the
 whole point of the ledger.
 
 **What it is for.** This ledger does not track _how many copies exist_; a bare count is cheap
@@ -69,30 +68,23 @@ and the ledger would drown in them. It tracks copies that can **silently disagre
 `estimateTokensFromChars` pair that part company at `chars=5` is the archetype. The harm is a
 divergence nobody notices.
 
-**The invariant that replaced the cap.** Both new matches are one function:
-`assembleRetrievalPackAsync`, the yielding twin added 2026-09-03 so a gateway-side caller stops
-holding the event loop. `retrieval-integration.ts` states the contract — equal output, different
-scheduling — and `index.cold-pack.test.ts` tests byte identity on a production-shaped 2,000-event
-tie-order corpus plus the empty and no-match edges. That is stronger evidence for the risk this
-row actually protects than a name-prefix count. Asked FOUNDATION §9's question — _which axis is
-this protecting here?_ — the answer is "none": these are not two uncoordinated derivations; they
-are an intentional pair with an explicit equivalence contract and a regression test.
+**The question a red result asks.** Does the new match introduce that divergence risk? If yes,
+collapse it. If no — a tested sync/async pair with an explicit equivalence contract, for example —
+the cap moves and the same commit carries the reason. Asked FOUNDATION §9's question — _which
+axis is this protecting here?_ — a pair that a test forbids from disagreeing answers "none".
+What is never allowed is moving the number _silently_.
 
-**Alternatives rejected.**
+**Alternatives rejected when the match is a yielding twin of an existing assembler.**
 
-- _Collapse them._ The file already considered and rejected it, with the reason written down:
-  `assembleRetrievalPack` has a synchronous caller whose type says `string`, so it cannot simply
+- _Collapse them._ The sync function has a caller whose type says `string`, so it cannot simply
   become async.
 - _Rename the twin_ so the prefix stops matching. This is the cheapest green and the worst
   answer — the sibling row's own comment calls a rename "the evasion, and it needs no intent."
 - _Leave it red._ A permanently-red gate teaches everyone the bypass (`BIBLE_GUARD=off`), which
   costs all 373 checks to protect one stale number.
 
-**The general rule this establishes.** A ratchet is a fixed threshold, and FOUNDATION principle
-2 calls fixed thresholds "legacy artifacts of the programmatic era" that go stale. So a ratchet
-rising is a QUESTION, not a verdict: does the new implementation introduce the divergence risk
-this row exists to catch? If yes, collapse it. If no — as here — the cap moves and the commit
-carries the reason. What is never allowed is moving it _silently_.
+This tree currently has one `assembleRetrievalPack` and two retrieval-pack assemblers. If a
+yielding twin lands, the caps move in that commit — they do not pre-empt it.
 
 **Which of these numbers is the gate?** Not this table. The table is the readable copy, kept here
 because a reader must be able to see the ledger without opening a script. The numbers the build

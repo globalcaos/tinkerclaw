@@ -188,23 +188,23 @@ source-only for part of 2026-08-04. `grep -rl '<id>' dist/` is the check and it 
 After teaching the scorer about the central RPC dispatch seam:
 
 ```
-749 capabilities derived — OBSERVED 199 (27%) · DECLARED 405 (54%) · BLIND 145 (19%)
-RATCHET  structural BLIND 145 / cap 145
+748 capabilities derived — OBSERVED 204 (27%) · DECLARED 400 (53%) · BLIND 144 (19%)
+RATCHET  structural BLIND 144 / cap 144
 ```
 
 | Subsystem      | Total | OBSERVED | DECLARED | BLIND |
 | -------------- | ----: | -------: | -------: | ----: |
-| gateway-core   |   188 |       27 |      161 |     0 |
+| gateway-core   |   188 |       29 |      159 |     0 |
 | gateway-plugin |   138 |       10 |       39 |    89 |
-| stores         |   228 |       76 |      152 |     0 |
-| OBS            |    66 |       51 |       15 |     0 |
-| tinker-ui      |    45 |        4 |        0 |    41 |
+| stores         |   228 |       82 |      146 |     0 |
+| OBS            |    66 |       48 |       18 |     0 |
+| tinker-ui      |    44 |        4 |        0 |    40 |
 | plugins        |    32 |       15 |       16 |     1 |
 | hooks          |    26 |        2 |       20 |     4 |
 | crons          |    18 |       14 |        1 |     3 |
 | tools          |     8 |        0 |        1 |     7 |
 
-The 213-row structural drop, 358→145, was **not 213 new instruments**. The gateway had already
+The structural drop, 358→144, was **not 214 new instruments**. The gateway had already
 called `noteRpcDispatch(req.method)` centrally since 2026-08-04. The scorer still treated missing
 WS `res` lines as blindness, forgetting that in-process and other transports pass through the same
 handler seam. The correction credits enabled RPCs as DECLARED — proof of dispatch, never proof of
@@ -432,7 +432,7 @@ instrument; never substitute it for one.
 ## 8. The ratchet
 
 `BLIND_CAP` in `scripts/bible/capability-coverage.mjs` is the measured structural status quo —
-**145 on 2026-09-07** — and the build stops when that measurement rises. The stop is intentionally
+**144 on 2026-09-07** — and the build stops when that measurement rises. The stop is intentionally
 cheap and binary; the diagnosis is neither. It asks whether a capability arrived with nothing
 watching it, or whether the scorer lost context about a signal that already exists.
 
