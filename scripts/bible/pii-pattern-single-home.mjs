@@ -11,8 +11,9 @@
  * The INTENT lives in TINKER_UI_DESIGN_BIBLE/pii-boundary.md and is the authority. The
  * program lives here per FOUNDATION.md, "Three different jobs, three different homes".
  *
- * The pruned directories are all git-ignored build/coverage output, so pruning them cannot
- * hide a TRACKED second definition — checked, not assumed.
+ * The pruned directories are all git-ignored — build/coverage output, plus `.claude/` agent
+ * scratch, which can hold a whole clone of this repo. Pruning them cannot hide a TRACKED
+ * second definition — checked, not assumed.
  *
  * WHAT CHANGED WHEN IT MOVED (2026-08-04). The inline version was
  * `grep -rl '^PII_RE=' --include='*.sh' … | wc -l`, and `-l` counts FILES THAT MATCH, not
@@ -28,7 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PRUNE = new Set(["node_modules", "dist", "dist-runtime", ".git", "coverage"]);
+const PRUNE = new Set(["node_modules", "dist", "dist-runtime", ".git", "coverage", ".claude"]); // .claude: git-ignored agent scratch/worktrees; a scratch clone of the repo would otherwise register as a duplicate of every singleton
 const DEFINITION = /^PII_RE=/gm;
 
 function shellScripts(dir, out = []) {

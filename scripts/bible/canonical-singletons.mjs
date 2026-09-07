@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const PRUNE = new Set(["node_modules", "dist", "dist-runtime", "coverage", ".git"]);
+const PRUNE = new Set(["node_modules", "dist", "dist-runtime", "coverage", ".git", ".claude"]); // .claude: git-ignored agent scratch/worktrees; a scratch clone of the repo would otherwise register as a duplicate of every singleton
 
 /** Depth-first over real directories only — a symlinked dist/node_modules must not be followed. */
 function walk(dir, visit) {
