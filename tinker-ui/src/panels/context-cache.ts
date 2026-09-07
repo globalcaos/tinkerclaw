@@ -26,15 +26,21 @@ import { EEG_GOOGLE_GLOW, eegProviderPaint } from "./eeg-trace.js";
  * have gone white").
  *
  * The outline used to take provider-logos.ts's PROVIDER_COLORS, which is the CHIP-FILL table:
- * there xai is "#111", the true brand black, drawn as a background behind a white logo. As a
- * 1px STROKE on a dark rail that is invisible — switching to Grok looked like nothing had
- * happened even once the width was right.
+ * there xai is the true brand black, drawn as a background behind a white logo. As a 1px STROKE
+ * on a dark rail that is invisible — switching to Grok looked like nothing had happened even
+ * once the width was right.
  *
- * eeg-trace.ts already solved exactly this, and its comment says so: xai is "#B7BBC2" because
- * "black brand is invisible on the #2a2318 paper". That table is the rail's identity-as-a-LINE
- * palette, which is what this outline is, so the panel now shares it with the seismograph
- * instead of borrowing the fill palette. It also resolves by model id as well as provider, so
- * the OpenRouter vendors (all of whom report provider "openrouter") keep their own colours.
+ * eeg-trace.ts already solved exactly this, and its comment says so: `EEG_PROVIDER_COLORS.xai`
+ * is a light grey precisely because the true brand black is invisible on the rail's `--surface`
+ * paper. That table is the rail's identity-as-a-LINE palette, which is what this outline is, so
+ * the panel now shares it with the seismograph instead of borrowing the fill palette. It also
+ * resolves by model id as well as provider, so the OpenRouter vendors (all of whom report
+ * provider "openrouter") keep their own colours.
+ *
+ * Both colours are NAMED here and never re-quoted: `EEG_PROVIDER_COLORS` (eeg-trace.ts) owns the
+ * stroke, `--surface` (base.css) owns the paper. A hex pasted into this file — even into prose —
+ * is a second copy of a value neither module would touch on a theme change, which is exactly why
+ * right-rail-cache-palette.mjs scans the comments too (right-rail-interaction.md §7).
  *
  * Google resolves to an SVG gradient url() that means nothing to a CSS border, so the rainbow
  * is flattened to the same solid the SMART x COST chart uses.
@@ -439,6 +445,24 @@ export function renderCachePanelHtml(s: CachePanelState): string {
       "ESTIMATE. Evicted tokens multiplied by the turns since — roughly what resending that context would have cost had it stayed. Indicative only, not a billed figure.",
     );
 
+  // FORK 2026-09-07 — THIS CALL carries its OWN legend. right-rail-interaction.md §7: the two
+  // sections have DIFFERENT denominators, so each states its own; one legend serving both is how
+  // the reader carries the bar's scale onto figures that are not on it. The bar above divides by
+  // the fixed CONTEXT_SCALE_TOKENS ruler, everything under THIS CALL divides by this one call's
+  // billed prompt.
+  //
+  // That rule OUTLIVED the split bar (removed 2026-08-29: an unbounded value must not be drawn as
+  // a width) because its reason did not go anywhere — numbers printed under a bar are read against
+  // that bar unless something says otherwise. So this legend names the scale in words instead of
+  // keying colours: there is no bar below this line, so a `cache-legend-item` swatch here would be
+  // a dot pointing at nothing, and it would inflate a count that measures the WINDOW bar's
+  // segments.
+  const splitLegend =
+    promptTokens > 0
+      ? `cached + written + new = ${fmtTokens(promptTokens)} billed on this call` +
+        ` · not the ${fmtTokens(scale)} ruler above`
+      : "nothing billed on this call yet";
+
   // The frame and the excess are appended AFTER the flex spans: both are absolutely positioned by
   // the stylesheet, so they are out of flow and paint on top in source order.
   return (
@@ -448,6 +472,7 @@ export function renderCachePanelHtml(s: CachePanelState): string {
     `<div class="cache-legend cache-legend--window">${windowLegend}</div>` +
     title("THIS CALL", promptTokens > 0 ? `${fmtTokens(promptTokens)} billed` : "") +
     `<div class="cache-stats cache-stats--call">${thisCall}</div>` +
+    `<div class="cache-legend cache-legend--split">${splitLegend}</div>` +
     title("THIS SESSION", "") +
     `<div class="cache-stats cache-stats--session">${thisSession}</div>`
   );
