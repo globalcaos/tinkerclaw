@@ -10,7 +10,7 @@
 #
 # Usage:
 #   gateway-full-restart.sh                          # Just restart
-#   gateway-full-restart.sh --note "resume X work"   # Write wake note, then restart
+#   gateway-full-restart.sh --note "deploy X"        # Same restart, note echoed into the log
 
 set -euo pipefail
 
@@ -18,7 +18,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
-# Handle --note flag: write HEARTBEAT.md so agent resumes after restart
+# --note is accepted for interface compatibility (scripts/deploy-worktree.sh passes it)
+# and is echoed into the log so the deploy annotation stays visible.
 WAKE_NOTE=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,31 +28,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-STATE_DIR="${HOME}/.openclaw"
-RESUME_FILE="${STATE_DIR}/session-resume.json"
-
-# If wake note provided, use stop-write-start pattern to prevent heartbeat overwriting sentinel
+# FORK 2026-07-31 — the wake-note sentinel was REMOVED.
+# It used to write $HOME/.openclaw/session-resume.json with a hardcoded main-agent session
+# key, so a restart triggered by ANY other session (e.g. a Tinker UI dashboard tab that
+# deployed the gateway) pointed the resume at the wrong session. It also wrote the v1
+# single-payload shape with `cat >`, clobbering the v2 multi-session file owned by
+# src/infra/session-resume.ts. And nothing ever read it: writeSessionResume /
+# consumeAllSessionResumes have zero callers in src/.
+# Per-session resume is owned by src/agents/main-session-restart-recovery.ts, which at boot
+# enumerates every status:"running" session and resumes each one on its own key — no
+# sentinel, no hardcoded key. --note is retained for log legibility only.
+# The stop-then-start dance stays: a full stop/start (not SIGUSR1) is the whole point of
+# this script after a dist rebuild.
 if [ -n "$WAKE_NOTE" ]; then
-  log "Stop-write-start with wake note: $WAKE_NOTE"
-  
-  # Stop first (kills all in-flight get-reply calls that could overwrite sentinel)
+  log "Stop-start with note: $WAKE_NOTE"
+
   systemctl --user stop openclaw-gateway 2>/dev/null || true
-  sleep 1
-  
-  # Write sentinel while gateway is dead
-  cat > "$RESUME_FILE" << EOF
-{
-  "version": 1,
-  "payload": {
-    "ts": $(date +%s000),
-    "sessionKey": "agent:main:main",
-    "userMessage": "$WAKE_NOTE",
-    "deliveryContext": { "channel": "webchat" }
-  }
-}
-EOF
-  log "Sentinel written"
-  
+
   # Start fresh
   systemctl --user start openclaw-gateway
   sleep 3
@@ -64,8 +57,25 @@ EOF
 fi
 
 # No wake note — simple restart
-if systemctl --user is-active openclaw-gateway >/dev/null 2>&1; then
+#
+# FORK 2026-08-24 — this asked `is-active`, which is the WRONG QUESTION, and it took the gateway
+# down three times in one afternoon.
+#
+# `is-active` asks "is the service running RIGHT NOW". The only caller that matters —
+# deploy-worktree.sh phase 4 — reaches here immediately after phase 3 has DELIBERATELY stopped the
+# service to swap dist underneath it. So the answer is always "no", this branch was always skipped,
+# and the direct-process fallback below started an unsupervised gateway that grabbed :18789.
+# systemd then could not start its own: EADDRINUSE, unit fails, Restart= kicks in, and the unit
+# thrashes in a restart loop while a stray process serves the port. The deploy's own phase-4 check
+# then correctly reports `is-active=inactive` and exits rc=40.
+#
+# The question this branch actually wants is "does a systemd unit EXIST" — if one does, systemd
+# must own the process. `is-active` and "exists" only agree when the service happens to be up,
+# which is precisely the case this script is never called in.
+if systemctl --user cat openclaw-gateway.service >/dev/null 2>&1; then
   log "Restarting via systemctl..."
+  # `restart` and not `start`: it is correct for a unit that is already up AND for one that phase 3
+  # just stopped, so this single call covers both callers.
   systemctl --user restart openclaw-gateway
   sleep 3
   if systemctl --user is-active openclaw-gateway >/dev/null 2>&1; then

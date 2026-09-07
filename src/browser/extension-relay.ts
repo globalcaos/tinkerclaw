@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import WebSocket, { WebSocketServer } from "ws";
 import { isLoopbackAddress, isLoopbackHost } from "../gateway/net.js";
+import { declareInstrument, noteInstrumentFired } from "../infra/instrument-liveness.js";
 import { rawDataToString } from "../infra/ws.js";
 import {
   probeAuthenticatedOpenClawRelay,
@@ -232,6 +233,18 @@ export async function ensureChromeExtensionRelayServer(opts: {
   }
   const bindHost = opts.bindHost ?? info.host;
 
+  // Liveness enrollment (see infra/instrument-liveness.ts). Declared HERE — where a relay is
+  // actually wired up — not at module load, so a deployment that never starts the relay does
+  // not report a false "never fired". Fires only when a CDP frame genuinely crosses the relay
+  // (either direction); browsing is bursty, so tolerate a full day of silence before calling
+  // it broken.
+  declareInstrument({
+    id: "browser:relay-forward",
+    kind: "integration",
+    description: "CDP frames forwarded between the extension socket and a CDP client",
+    expectFireWithinMs: 24 * 60 * 60 * 1000,
+  });
+
   const existing = relayRuntimeByPort.get(info.port);
   if (existing) {
     if (existing.server.bindHost !== bindHost) {
@@ -352,6 +365,10 @@ export async function ensureChromeExtensionRelayServer(opts: {
         throw new Error("Chrome extension not connected");
       }
       ws.send(JSON.stringify(payload));
+      // Liveness: a forwardCDPCommand frame genuinely left for the extension. One site covers
+      // both dispatch paths (the /cdp client socket and the /json/activate|close HTTP routes).
+      // In-memory counter only — this path must never write a metrics row per frame.
+      noteInstrumentFired("browser:relay-forward", "client->ext");
       return await new Promise<unknown>((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingExtension.delete(payload.id);
@@ -703,11 +720,7 @@ export async function ensureChromeExtensionRelayServer(opts: {
       const origin = headerValue(req.headers.origin);
       // FORK: Only enforce origin check on /extension path — authenticated /cdp
       // connections from Node.js (ws library) send a non-chrome-extension origin.
-      if (
-        pathname === "/extension" &&
-        origin &&
-        !origin.startsWith("chrome-extension://")
-      ) {
+      if (pathname === "/extension" && origin && !origin.startsWith("chrome-extension://")) {
         rejectUpgrade(socket, 403, "Forbidden: invalid origin");
         return;
       }
@@ -817,6 +830,10 @@ export async function ensureChromeExtensionRelayServer(opts: {
           if (!method || typeof method !== "string") {
             return;
           }
+          // Liveness: a CDP event frame from the extension is on the forward path (the
+          // branches below broadcast it to CDP clients). HIGH-FREQUENCY path: in-memory
+          // counter only — never write a metrics row per frame.
+          noteInstrumentFired("browser:relay-forward", "ext->client");
 
           if (method === "Target.attachedToTarget") {
             const attached = (params ?? {}) as AttachedToTargetEvent;

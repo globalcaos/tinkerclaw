@@ -305,7 +305,36 @@ function buildStoreBySessionId(
   return storeBySessionId;
 }
 
-async function discoverAllSessionsForUsage(params: {
+/**
+ * FORK 2026-08-16 — the OTHER half of what makes `sessions.usage` the gateway's largest consumer
+ * (340 calls / 133s median / 30.5h of a 54h daily RPC budget). This walks every agent's session
+ * directory to find which transcripts fall in the window; the per-transcript parse is memoised
+ * separately on file identity (`loadSessionCostSummary`).
+ *
+ * A short TTL is the right shape HERE, unlike the parse cache: the answer is "which files exist
+ * and when were they touched", which cannot be keyed on any single file's identity, and which
+ * only changes when a session is created or written. 15s is well under the panel's own polling
+ * cadence, so a poll storm collapses to one scan while a genuinely new session still appears
+ * within one refresh.
+ *
+ * Single-flight matters more than the TTL: concurrent identical scans are what turn a slow call
+ * into a pile-up, and the panels ask several times per minute from every open tab.
+ */
+const SESSION_DISCOVERY_TTL_MS = 15_000;
+const SESSION_DISCOVERY_CACHE_MAX = 32;
+type SessionDiscoveryEntry = {
+  sessions?: DiscoveredSessionWithAgent[];
+  updatedAt?: number;
+  inFlight?: Promise<DiscoveredSessionWithAgent[]>;
+};
+const sessionDiscoveryCache = new Map<string, SessionDiscoveryEntry>();
+
+/** Test seam: drop the discovery cache so a test that creates a session mid-run is not fooled. */
+export function resetSessionDiscoveryCacheForTest(): void {
+  sessionDiscoveryCache.clear();
+}
+
+async function discoverAllSessionsUncached(params: {
   config: OpenClawConfig;
   startMs: number;
   endMs: number;
@@ -322,6 +351,56 @@ async function discoverAllSessionsForUsage(params: {
     }),
   );
   return results.flat().toSorted((a, b) => b.mtime - a.mtime);
+}
+
+async function discoverAllSessionsForUsage(params: {
+  config: OpenClawConfig;
+  startMs: number;
+  endMs: number;
+}): Promise<DiscoveredSessionWithAgent[]> {
+  const cacheKey = `${params.startMs}-${params.endMs}`;
+  const now = Date.now();
+  const cached = sessionDiscoveryCache.get(cacheKey);
+  if (cached?.sessions && cached.updatedAt && now - cached.updatedAt < SESSION_DISCOVERY_TTL_MS) {
+    return cached.sessions;
+  }
+  // Coalesce: a second caller joins the running scan instead of starting its own.
+  if (cached?.inFlight) {
+    return await cached.inFlight;
+  }
+
+  const entry: SessionDiscoveryEntry = cached ?? {};
+  const inFlight = discoverAllSessionsUncached(params)
+    .then((sessions) => {
+      entry.sessions = sessions;
+      entry.updatedAt = Date.now();
+      return sessions;
+    })
+    .catch((err) => {
+      // Serve the previous answer rather than failing the whole panel on a transient FS error.
+      if (entry.sessions) {
+        return entry.sessions;
+      }
+      throw err;
+    })
+    .finally(() => {
+      if (entry.inFlight === inFlight) {
+        entry.inFlight = undefined;
+      }
+    });
+
+  entry.inFlight = inFlight;
+  if (
+    !sessionDiscoveryCache.has(cacheKey) &&
+    sessionDiscoveryCache.size >= SESSION_DISCOVERY_CACHE_MAX
+  ) {
+    const oldest = sessionDiscoveryCache.keys().next().value;
+    if (oldest !== undefined) {
+      sessionDiscoveryCache.delete(oldest);
+    }
+  }
+  sessionDiscoveryCache.set(cacheKey, entry);
+  return await inFlight;
 }
 
 async function loadCostUsageSummaryCached(params: {

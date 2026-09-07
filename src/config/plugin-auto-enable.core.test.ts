@@ -580,7 +580,7 @@ describe("applyPluginAutoEnable core", () => {
     expect(validateConfigObject(result.config).ok).toBe(true);
   });
 
-  it("appends built-in WhatsApp to restrictive plugins.allow during auto-enable", () => {
+  it("appends the WhatsApp channel's real plugin id to restrictive plugins.allow", () => {
     const result = applyPluginAutoEnable({
       config: {
         channels: {
@@ -596,7 +596,12 @@ describe("applyPluginAutoEnable core", () => {
     });
 
     expect(result.config.channels?.whatsapp?.enabled).toBe(true);
-    expect(result.config.plugins?.allow).toEqual(["telegram", "whatsapp"]);
+    // This fork serves the "whatsapp" channel from tinkerclaw-whatsapp and
+    // parks the stock "whatsapp" plugin, so no plugin by that name registers.
+    // Allowlisting the bare channel id would add an entry resolving to nothing
+    // and make config validation warn "plugin not found: whatsapp" on every
+    // start. Upstream, where the plugin id IS "whatsapp", this stays "whatsapp".
+    expect(result.config.plugins?.allow).toEqual(["telegram", "tinkerclaw-whatsapp"]);
     expect(validateConfigObject(result.config).ok).toBe(true);
   });
 

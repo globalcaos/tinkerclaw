@@ -35,11 +35,23 @@ function buildClaudeUsageWindows(data: ClaudeUsageResponse): UsageWindow[] {
     });
   }
 
-  const modelWindow = data.seven_day_sonnet || data.seven_day_opus;
-  if (modelWindow?.utilization !== undefined) {
+  // FORK 2026-08-12: was `seven_day_sonnet || seven_day_opus` — ONE window, Sonnet
+  // preferred, so the Opus figure was silently discarded whenever both were present.
+  // That drops the BINDING constraint: the per-model windows are separate allowances
+  // and Opus is the one that runs out first on an Opus-heavy account (the old test
+  // fixture showed it exactly — sonnet 40, opus 90, and the panel reported 40).
+  // A `{utilization: undefined}` sonnet object also swallowed a valid opus reading,
+  // because the truthy check ran on the object rather than on the number. Emit both.
+  if (data.seven_day_sonnet?.utilization !== undefined) {
     windows.push({
-      label: data.seven_day_sonnet ? "Sonnet" : "Opus",
-      usedPercent: clampPercent(modelWindow.utilization),
+      label: "Sonnet",
+      usedPercent: clampPercent(data.seven_day_sonnet.utilization),
+    });
+  }
+  if (data.seven_day_opus?.utilization !== undefined) {
+    windows.push({
+      label: "Opus",
+      usedPercent: clampPercent(data.seven_day_opus.utilization),
     });
   }
 

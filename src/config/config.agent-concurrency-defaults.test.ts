@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_AGENT_MAX_CONCURRENT,
+  DEFAULT_SESSIONS_MAX_CONCURRENT,
   DEFAULT_SUBAGENT_MAX_CONCURRENT,
   resolveAgentMaxConcurrent,
+  resolveSessionsMaxConcurrent,
   resolveSubagentMaxConcurrent,
 } from "./agent-limits.js";
 import { applyAgentDefaults } from "./defaults.js";
@@ -12,6 +14,17 @@ describe("agent concurrency defaults", () => {
   it("resolves defaults when unset", () => {
     expect(resolveAgentMaxConcurrent({})).toBe(DEFAULT_AGENT_MAX_CONCURRENT);
     expect(resolveSubagentMaxConcurrent({})).toBe(DEFAULT_SUBAGENT_MAX_CONCURRENT);
+    expect(resolveSessionsMaxConcurrent({})).toBe(DEFAULT_SESSIONS_MAX_CONCURRENT);
+    expect(DEFAULT_SESSIONS_MAX_CONCURRENT).toBe(8);
+  });
+
+  it("resolves sessions maxConcurrent overrides and floors fractional values", () => {
+    expect(
+      resolveSessionsMaxConcurrent({ agents: { defaults: { sessions: { maxConcurrent: 3 } } } }),
+    ).toBe(3);
+    expect(
+      resolveSessionsMaxConcurrent({ agents: { defaults: { sessions: { maxConcurrent: 2.9 } } } }),
+    ).toBe(2);
   });
 
   it("clamps invalid values to at least 1", () => {
@@ -20,11 +33,13 @@ describe("agent concurrency defaults", () => {
         defaults: {
           maxConcurrent: 0,
           subagents: { maxConcurrent: -3 },
+          sessions: { maxConcurrent: 0 },
         },
       },
     };
     expect(resolveAgentMaxConcurrent(cfg)).toBe(1);
     expect(resolveSubagentMaxConcurrent(cfg)).toBe(1);
+    expect(resolveSessionsMaxConcurrent(cfg)).toBe(1);
   });
 
   it("accepts subagent spawn depth and per-agent child limits", () => {

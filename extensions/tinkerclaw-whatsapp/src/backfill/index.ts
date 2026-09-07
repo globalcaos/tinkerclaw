@@ -11,7 +11,7 @@
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
-import { getChildLogger } from "../../../../src/logging.js";
+import { getChildLogger } from "openclaw/plugin-sdk/logging-core";
 import { getDb } from "../history/db.js";
 
 const logger = getChildLogger({ module: "whatsapp-backfill" });
@@ -129,42 +129,83 @@ export function requestBackfill(client: WhatsmeowLikeClient, jid: string): void 
         oldestChat: staleChats[staleChats.length - 1]?.chat,
       });
 
-      let delay = 0;
-      for (const chat of staleChats) {
+      // FORK 2026-08-04 — CIRCUIT BREAKER + COLLAPSED FAILURE LOG.
+      //
+      // Every chat used to get its own setTimeout, its own send, and its own failure
+      // line. When the socket is down every one of the 50 fails identically, and the
+      // caller re-invokes on each rebind: 256,809 "websocket not connected" lines in
+      // three days, 66% of the whole gateway journal, drowning every other signal.
+      //
+      // A dropped link is a BATCH-level fact, not a per-chat one. The first transport
+      // failure aborts the rest of the batch and reports once. Per-chat failures that
+      // are NOT transport-level (a malformed id, say) do not abort — those are genuinely
+      // per-chat and worth seeing individually.
+      const isTransportDown = (e: string) =>
+        /websocket not connected|websocket disconnected|not connected|Go process exited|connection (closed|timed out)/i.test(
+          e,
+        );
+
+      // SEQUENTIAL, not 50 pre-scheduled timers. The first version of this fix kept the
+      // fan-out of setTimeout(…, i*200) and aborted from inside the shared catch — which
+      // measured 356 failures across 8 batches (~44 of 50 each) because a send takes longer
+      // to fail than 200 ms, so nearly every timer had already fired before the first error
+      // came back. Awaiting each send makes the circuit breaker actually immediate, and is
+      // gentler on the socket besides.
+      let sent = 0;
+      let failed = 0;
+      let skipped = 0;
+      const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+      for (let i = 0; i < staleChats.length; i++) {
+        const chat = staleChats[i]!;
         const ageHours = (nowEpoch - chat.lastTs) / 3600;
-        delay += 200;
-        setTimeout(() => {
-          const isGroup = chat.chat.includes("@g.us");
-          logger.info(
-            { chat: chat.chat, ageHours: Math.round(ageHours), isGroup },
-            "Backfill request for chat",
+        if (i > 0) await sleep(200);
+
+        const isGroup = chat.chat.includes("@g.us");
+        logger.info(
+          { chat: chat.chat, ageHours: Math.round(ageHours), isGroup },
+          "Backfill request for chat",
+        );
+        try {
+          const historyMsg = await client.buildHistorySyncRequest(
+            {
+              chat: chat.chat,
+              sender: chat.lastSender || jid,
+              id: chat.lastId,
+              timestamp: Math.floor(Date.now() / 1000),
+            },
+            50,
           );
-          void client
-            .buildHistorySyncRequest(
-              {
-                chat: chat.chat,
-                sender: chat.lastSender || jid,
-                id: chat.lastId,
-                timestamp: Math.floor(Date.now() / 1000),
-              },
-              50,
-            )
-            .then((historyMsg) => {
-              if (historyMsg) {
-                return client.sendPeerMessage(historyMsg as Record<string, unknown>);
-              }
-              logger.warn({ chat: chat.chat }, "buildHistorySyncRequest returned null");
-            })
-            .then(() => {
-              logger.info({ chat: chat.chat }, "Backfill request sent");
-              visible("backfill request sent", { chat: chat.chat });
-            })
-            .catch((err: unknown) => {
-              logger.warn({ chat: chat.chat, error: String(err) }, "Backfill request failed");
-              visible("backfill request failed", { chat: chat.chat, error: String(err) });
+          if (historyMsg) {
+            await client.sendPeerMessage(historyMsg as Record<string, unknown>);
+          } else {
+            logger.warn({ chat: chat.chat }, "buildHistorySyncRequest returned null");
+          }
+          sent += 1;
+          logger.info({ chat: chat.chat }, "Backfill request sent");
+          visible("backfill request sent", { chat: chat.chat });
+        } catch (err: unknown) {
+          const msg = String(err);
+          if (isTransportDown(msg)) {
+            skipped = staleChats.length - i - 1;
+            logger.warn(
+              { sent, failed, skipped, error: msg },
+              "Backfill batch aborted — transport down",
+            );
+            visible("backfill batch aborted — transport down", {
+              sent,
+              failed,
+              skipped,
+              error: msg,
             });
-        }, delay);
+            return;
+          }
+          failed += 1;
+          logger.warn({ chat: chat.chat, error: msg }, "Backfill request failed");
+          visible("backfill request failed", { chat: chat.chat, error: msg });
+        }
       }
+      visible("backfill batch complete", { sent, failed });
     } catch (err) {
       logger.warn({ error: String(err) }, "Failed to run backfill");
     }

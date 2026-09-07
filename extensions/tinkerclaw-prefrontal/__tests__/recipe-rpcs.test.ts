@@ -158,6 +158,27 @@ describe("BROCA recipe.read", () => {
     expect(res.recipe.steps[0]).toMatchObject({ n: 1, title: "One" });
   });
 
+  // FORK 2026-09-02: `<own>/<category>/<slug>.md` recipes were listed by
+  // recipe.list and matched by the scanner but unreadable by slug here — the UI's
+  // recipe page 404'd on `feature`, `debug`, `refactor`, `code-review`.
+  it("resolves a category-folder recipe by slug (own/<category>/<slug>.md)", async () => {
+    const md = buildRecipeMd({
+      slug: "feature",
+      title: "Build Feature",
+      summary: "demo",
+      tags: ["build"],
+      category: "coding",
+      steps: [{ title: "Explore", body: "read the code" }],
+    });
+    await fs.mkdir(path.join(ownRecipesDir, "coding"), { recursive: true });
+    await fs.writeFile(path.join(ownRecipesDir, "coding", "feature.md"), md, "utf8");
+    invalidateRecipeIndexCache();
+    const rpcs = createRecipeRpcs(baseDeps());
+    const res: any = await rpcs["prefrontal.recipe.read"]({ slug: "feature" });
+    expect(res.recipe.slug).toBe("feature");
+    expect(res.recipe.steps[0]).toMatchObject({ n: 1, title: "Explore" });
+  });
+
   it("falls back to Journey recipe.get when not a local recipe", async () => {
     const fetchJsonImpl = vi.fn().mockResolvedValue({ slug: "remote", title: "Remote", steps: [] });
     const rpcs = createRecipeRpcs(baseDeps({ fetchJsonImpl }));

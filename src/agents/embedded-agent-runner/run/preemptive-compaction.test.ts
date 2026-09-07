@@ -6,6 +6,11 @@ import { estimateToolResultReductionPotential } from "../tool-result-truncation.
 let PREEMPTIVE_OVERFLOW_ERROR_TEXT: typeof import("./preemptive-compaction.js").PREEMPTIVE_OVERFLOW_ERROR_TEXT;
 let estimatePrePromptTokens: typeof import("./preemptive-compaction.js").estimatePrePromptTokens;
 let shouldPreemptivelyCompactBeforePrompt: typeof import("./preemptive-compaction.js").shouldPreemptivelyCompactBeforePrompt;
+// Imported dynamically (not statically) so these resolve to the SAME mocked
+// instances the module under test sees, after vi.resetModules().
+let piEstimateTokens: typeof import("@mariozechner/pi-coding-agent").estimateTokens;
+let estimateMessagesTokens: typeof import("../../compaction.js").estimateMessagesTokens;
+let SAFETY_MARGIN: number;
 
 beforeAll(async () => {
   vi.resetModules();
@@ -14,6 +19,8 @@ beforeAll(async () => {
     estimatePrePromptTokens,
     shouldPreemptivelyCompactBeforePrompt,
   } = await import("./preemptive-compaction.js"));
+  ({ estimateTokens: piEstimateTokens } = await import("@mariozechner/pi-coding-agent"));
+  ({ SAFETY_MARGIN, estimateMessagesTokens } = await import("../../compaction.js"));
 });
 
 let timestamp = 1;
@@ -227,5 +234,117 @@ describe("preemptive-compaction", () => {
     expect(potential.maxReducibleChars).toBeGreaterThan(desiredOverflowTokens * 4);
     expect(result.route).toBe("truncate_tool_results_only");
     expect(result.shouldCompact).toBe(false);
+  });
+
+  it("counts the system prompt itself instead of handing it to pi (pi scores it 0)", () => {
+    // REGRESSION (2026-07-27): estimatePrePromptTokens used to wrap the system
+    // prompt in a synthetic {role:"system"} AgentMessage and call pi's
+    // estimateTokens(). That function switches on role, has NO `system` case, and
+    // returns 0 — a ~15k-token system prompt was scored as ZERO in production.
+    // NOTE: this repo's pi-coding-agent token mock counts ANY message's content,
+    // which is exactly what masked the bug, so a "the total went up" assertion
+    // passes both before and after the fix. Assert on the CALL SHAPE instead.
+    const systemPrompt = "s".repeat(40_000);
+    const spy = vi.mocked(piEstimateTokens);
+    spy.mockClear();
+    const withSystem = estimatePrePromptTokens({ messages: [], systemPrompt, prompt: "hello" });
+    const rolesHandedToPi = spy.mock.calls.map(([message]) =>
+      String((message as unknown as { role?: unknown })?.role),
+    );
+    expect(rolesHandedToPi).not.toContain("system");
+    expect(rolesHandedToPi).toContain("user");
+
+    const withoutSystem = estimatePrePromptTokens({ messages: [], prompt: "hello" });
+    const expectedDelta = Math.ceil(systemPrompt.length / 4) * SAFETY_MARGIN;
+    expect(withSystem - withoutSystem).toBeGreaterThanOrEqual(Math.floor(expectedDelta) - 2);
+    expect(withSystem - withoutSystem).toBeLessThanOrEqual(Math.ceil(expectedDelta) + 2);
+  });
+
+  it("accepts systemPromptChars when the caller only holds a size, preferring the string", () => {
+    const chars = 40_000;
+    const viaString = estimatePrePromptTokens({
+      messages: [],
+      systemPrompt: "s".repeat(chars),
+      prompt: "hello",
+    });
+    const viaChars = estimatePrePromptTokens({
+      messages: [],
+      systemPromptChars: chars,
+      prompt: "hello",
+    });
+    const bothSupplied = estimatePrePromptTokens({
+      messages: [],
+      systemPrompt: "s".repeat(chars),
+      systemPromptChars: 4_000_000,
+      prompt: "hello",
+    });
+
+    expect(viaChars).toBe(viaString);
+    expect(bothSupplied).toBe(viaString);
+  });
+
+  it("counts tool schema chars, which pi never sees at all", () => {
+    const base = estimatePrePromptTokens({ messages: [], prompt: "hello" });
+    const withTools = estimatePrePromptTokens({
+      messages: [],
+      prompt: "hello",
+      toolSchemaChars: 40_000,
+    });
+    const expectedDelta = Math.ceil(40_000 / 4) * SAFETY_MARGIN;
+    expect(withTools - base).toBeGreaterThanOrEqual(Math.floor(expectedDelta) - 2);
+    expect(withTools - base).toBeLessThanOrEqual(Math.ceil(expectedDelta) + 2);
+  });
+
+  it("lets the system prompt and tool schemas alone push the gate over budget", () => {
+    const messages = [makeAssistantHistory("short history")];
+    const withoutPrePrompt = shouldPreemptivelyCompactBeforePrompt({
+      messages,
+      prompt: "hello",
+      contextTokenBudget: 10_000,
+      reserveTokens: 1_000,
+    });
+    const withPrePrompt = shouldPreemptivelyCompactBeforePrompt({
+      messages,
+      prompt: "hello",
+      contextTokenBudget: 10_000,
+      reserveTokens: 1_000,
+      systemPromptChars: 60_000,
+      toolSchemaChars: 80_000,
+    });
+
+    expect(withoutPrePrompt.route).toBe("fits");
+    expect(withoutPrePrompt.shouldCompact).toBe(false);
+    expect(withPrePrompt.route).toBe("compact_only");
+    expect(withPrePrompt.shouldCompact).toBe(true);
+    expect(withPrePrompt.estimatedPromptTokens).toBeGreaterThan(
+      withoutPrePrompt.estimatedPromptTokens,
+    );
+  });
+
+  it("is unchanged from the previous estimate when no pre-prompt sizes are supplied", () => {
+    const messages = [makeAssistantHistory(verboseHistory)];
+    const expected = Math.max(
+      0,
+      Math.ceil(
+        (estimateMessagesTokens(messages) +
+          piEstimateTokens({
+            role: "user",
+            content: verbosePrompt,
+            timestamp: 0,
+          } as AgentMessage)) *
+          SAFETY_MARGIN,
+      ),
+    );
+
+    expect(estimatePrePromptTokens({ messages, prompt: verbosePrompt })).toBe(expected);
+    expect(
+      estimatePrePromptTokens({
+        messages,
+        prompt: verbosePrompt,
+        systemPrompt: "   ",
+        systemPromptChars: 0,
+        toolSchemaChars: 0,
+      }),
+    ).toBe(expected);
   });
 });

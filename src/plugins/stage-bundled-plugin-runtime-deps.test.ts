@@ -57,6 +57,47 @@ function writeRepoFile(repoRoot: string, relativePath: string, value: string) {
   fs.writeFileSync(fullPath, value, "utf8");
 }
 
+function writeStageablePluginFixture(repoRoot: string, pluginId: string) {
+  writeRepoFile(
+    repoRoot,
+    `dist/extensions/${pluginId}/package.json`,
+    JSON.stringify(
+      {
+        name: `@openclaw/${pluginId}`,
+        version: "2026.4.10",
+        dependencies: {
+          "@larksuiteoapi/node-sdk": "^1.60.0",
+        },
+        openclaw: {
+          bundle: {
+            stageRuntimeDependencies: true,
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  writeRepoFile(
+    repoRoot,
+    "node_modules/@larksuiteoapi/node-sdk/package.json",
+    JSON.stringify(
+      {
+        name: "@larksuiteoapi/node-sdk",
+        version: "1.60.0",
+        main: "./lib/index.js",
+      },
+      null,
+      2,
+    ),
+  );
+  writeRepoFile(
+    repoRoot,
+    "node_modules/@larksuiteoapi/node-sdk/lib/index.js",
+    "export const runtime = true;\n",
+  );
+}
+
 function createBaileysMessagesMediaSource(params?: {
   dispatcherPatched?: boolean;
   dispatcherHeaderDrifted?: boolean;
@@ -244,6 +285,64 @@ describe("stageBundledPluginRuntimeDeps", () => {
       expect(fs.existsSync(path.join(stagedRoot, "es", "index.js"))).toBe(true);
       expect(fs.existsSync(path.join(stagedRoot, "types"))).toBe(false);
     });
+  });
+
+  it("reclaims a node_modules symlink that points into the runtime deps cache", async () => {
+    const repoRoot = makeRepoRoot("openclaw-stage-bundled-runtime-cache-link-");
+    writeStageablePluginFixture(repoRoot, "feishu");
+
+    // Mirrors what the gateway's runtime self-heal leaves behind.
+    const cacheNodeModulesDir = path.join(
+      repoRoot,
+      ".local",
+      "bundled-plugin-runtime-deps",
+      "feishu-cachekey",
+      "node_modules",
+    );
+    fs.mkdirSync(cacheNodeModulesDir, { recursive: true });
+    const stagedNodeModulesDir = path.join(
+      repoRoot,
+      "dist",
+      "extensions",
+      "feishu",
+      "node_modules",
+    );
+    fs.symlinkSync(cacheNodeModulesDir, stagedNodeModulesDir, "dir");
+
+    const stageBundledPluginRuntimeDeps = await loadStageBundledPluginRuntimeDeps();
+    stageBundledPluginRuntimeDeps({ repoRoot });
+
+    expect(fs.lstatSync(stagedNodeModulesDir).isSymbolicLink()).toBe(false);
+    expect(
+      fs.existsSync(
+        path.join(stagedNodeModulesDir, "@larksuiteoapi", "node-sdk", "lib", "index.js"),
+      ),
+    ).toBe(true);
+    // Dropping the link must never delete the cache it pointed at.
+    expect(fs.existsSync(cacheNodeModulesDir)).toBe(true);
+  });
+
+  it("still refuses a node_modules symlink that escapes the runtime deps cache", async () => {
+    const repoRoot = makeRepoRoot("openclaw-stage-bundled-runtime-foreign-link-");
+    writeStageablePluginFixture(repoRoot, "feishu");
+
+    const foreignNodeModulesDir = path.join(repoRoot, "elsewhere", "node_modules");
+    fs.mkdirSync(foreignNodeModulesDir, { recursive: true });
+    const stagedNodeModulesDir = path.join(
+      repoRoot,
+      "dist",
+      "extensions",
+      "feishu",
+      "node_modules",
+    );
+    fs.symlinkSync(foreignNodeModulesDir, stagedNodeModulesDir, "dir");
+
+    const stageBundledPluginRuntimeDeps = await loadStageBundledPluginRuntimeDeps();
+
+    expect(() => stageBundledPluginRuntimeDeps({ repoRoot })).toThrow(
+      /refusing to replace runtime deps via symlinked path/u,
+    );
+    expect(fs.lstatSync(stagedNodeModulesDir).isSymbolicLink()).toBe(true);
   });
 
   it("strips non-runtime dependency sections before fallback runtime staging", async () => {

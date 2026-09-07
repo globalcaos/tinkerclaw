@@ -294,6 +294,43 @@ function collectPluginIdsForConfiguredChannel(
   return [builtInId ?? claims[0]?.plugin.id ?? normalizedChannelId];
 }
 
+/**
+ * Resolve the plugin id that should go into `plugins.allow` for a candidate.
+ *
+ * `entry.pluginId` is often a bundled CHANNEL id, which doubles as a plugin id
+ * only while a plugin of that name is registered. A fork can ship its own
+ * plugin for a bundled channel and park the stock one: `tinkerclaw-whatsapp`
+ * claims the `whatsapp` channel while the stock `whatsapp` plugin no longer
+ * loads, yet `whatsapp` stays a known channel id because the fork's own
+ * package.json declares `openclaw.channel.id`. Allowlisting the channel id
+ * there writes an entry that resolves to no plugin, so config validation warns
+ * `plugin not found: whatsapp` on every start -- and because auto-enable
+ * rewrites the config, deleting the entry by hand cannot stick.
+ *
+ * Enabling still keys off `entry.pluginId` (a channel id must enable the
+ * CHANNEL, not a plugin entry); only the allowlist is redirected.
+ */
+function resolveAllowlistPluginId(
+  entry: PluginAutoEnableCandidate,
+  registry: PluginManifestRegistry,
+): string {
+  if (registry.plugins.some((record) => record.id === entry.pluginId)) {
+    return entry.pluginId;
+  }
+  // Only a channel candidate can be redirected: it is the one kind whose
+  // pluginId may be a bundled CHANNEL id rather than a real plugin id.
+  if (entry.kind !== "channel-configured") {
+    return entry.pluginId;
+  }
+  const normalizedChannelId = normalizeManifestChannelId(entry.channelId);
+  const claimant = registry.plugins.find((record) =>
+    (record.channels ?? []).some((id) => normalizeManifestChannelId(id) === normalizedChannelId),
+  );
+  // No registered claimant: keep today's behaviour, including the "plugin not
+  // found" warning that correctly reports a genuinely missing channel plugin.
+  return claimant?.id ?? entry.pluginId;
+}
+
 function collectCandidateChannelIds(cfg: OpenClawConfig, env: NodeJS.ProcessEnv): string[] {
   return listPotentialConfiguredChannelIds(cfg, env, { includePersistedAuthState: false }).map(
     (channelId) => normalizeChatChannelId(channelId) ?? channelId,
@@ -920,8 +957,9 @@ export function materializePluginAutoEnableCandidatesInternal(params: {
       continue;
     }
 
+    const allowlistPluginId = resolveAllowlistPluginId(entry, params.manifestRegistry);
     const allow = next.plugins?.allow;
-    const allowMissing = Array.isArray(allow) && !allow.includes(entry.pluginId);
+    const allowMissing = Array.isArray(allow) && !allow.includes(allowlistPluginId);
     const alreadyEnabled =
       builtInChannelId != null
         ? isBuiltInChannelAlreadyEnabled(next, builtInChannelId)
@@ -931,7 +969,7 @@ export function materializePluginAutoEnableCandidatesInternal(params: {
     }
 
     next = registerPluginEntry(next, entry.pluginId);
-    next = ensurePluginAllowlisted(next, entry.pluginId);
+    next = ensurePluginAllowlisted(next, allowlistPluginId);
     const reason = resolvePluginAutoEnableCandidateReason(entry);
     autoEnabledReasons.set(entry.pluginId, [
       ...(autoEnabledReasons.get(entry.pluginId) ?? []),

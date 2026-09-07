@@ -1,10 +1,74 @@
 import { describe, expect, it, vi } from "vitest";
 import { MIN_PROMPT_BUDGET_RATIO, MIN_PROMPT_BUDGET_TOKENS } from "./pi-compaction-constants.js";
 import {
+  applyPiAutoCompactionGuard,
   applyPiCompactionSettingsFromConfig,
   DEFAULT_PI_COMPACTION_RESERVE_TOKENS_FLOOR,
   resolveCompactionReserveTokensFloor,
+  shouldDisablePiAutoCompaction,
 } from "./pi-settings.js";
+
+// FORK 2026-07-28 — pi's own compaction decider reads a TURN AGGREGATE as if it were the
+// context size, so it fired at 644.8% "fill" on a session holding ~5% of its window. We
+// cannot fix pi (pinned dist), so the guard must switch its decider OFF whenever one of our
+// own extensions owns compaction. Before this fix the predicate tested ONLY
+// contextEngineInfo.ownsCompaction, which LegacyContextEngine never sets — so the disable
+// branch never executed and pi compacted freely.
+describe("shouldDisablePiAutoCompaction", () => {
+  it("disables when the context engine owns compaction (pre-existing behaviour)", () => {
+    expect(shouldDisablePiAutoCompaction({ contextEngineInfo: { ownsCompaction: true } })).toBe(
+      true,
+    );
+  });
+
+  it("disables when a compaction extension owns it — engram, our live mode", () => {
+    // REGRESSION: fails before the fix. LegacyContextEngine sets no ownsCompaction, so the
+    // old one-disjunct predicate returned false and pi kept its decider.
+    expect(shouldDisablePiAutoCompaction({ compactionMode: "engram" })).toBe(true);
+  });
+
+  it("disables for safeguard mode too", () => {
+    expect(shouldDisablePiAutoCompaction({ compactionMode: "safeguard" })).toBe(true);
+  });
+
+  it("leaves pi's decider alone in default mode with no owning engine", () => {
+    expect(shouldDisablePiAutoCompaction({ compactionMode: "default" })).toBe(false);
+    expect(shouldDisablePiAutoCompaction({})).toBe(false);
+  });
+});
+
+describe("applyPiAutoCompactionGuard", () => {
+  function makeManager() {
+    return {
+      getCompactionReserveTokens: () => 16_384,
+      getCompactionKeepRecentTokens: () => 20_000,
+      applyOverrides: vi.fn(),
+      setCompactionEnabled: vi.fn(),
+    };
+  }
+
+  it("disables via applyOverrides, NOT setCompactionEnabled", () => {
+    const settingsManager = makeManager();
+    const result = applyPiAutoCompactionGuard({ settingsManager, compactionMode: "engram" });
+
+    expect(result).toEqual({ supported: true, disabled: true });
+    expect(settingsManager.applyOverrides).toHaveBeenCalledWith({
+      compaction: { enabled: false },
+    });
+    // setCompactionEnabled would persist enabled:false into the user's GLOBAL pi settings
+    // file, outliving this run and suppressing manual /compact everywhere.
+    expect(settingsManager.setCompactionEnabled).not.toHaveBeenCalled();
+  });
+
+  it("does not touch settings when nothing owns compaction", () => {
+    const settingsManager = makeManager();
+    const result = applyPiAutoCompactionGuard({ settingsManager, compactionMode: "default" });
+
+    expect(result).toEqual({ supported: true, disabled: false });
+    expect(settingsManager.applyOverrides).not.toHaveBeenCalled();
+    expect(settingsManager.setCompactionEnabled).not.toHaveBeenCalled();
+  });
+});
 
 describe("applyPiCompactionSettingsFromConfig", () => {
   it("bumps reserveTokens when below floor", () => {

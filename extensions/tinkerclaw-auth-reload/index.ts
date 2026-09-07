@@ -9,13 +9,13 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
   ensureAuthProfileStore,
   saveAuthProfileStore,
-} from "../../src/agents/auth-profiles/store.js";
-import { clearAuthProfileCooldown } from "../../src/agents/auth-profiles/usage.js";
+} from "openclaw/plugin-sdk/agent-runtime";
+import { clearAuthProfileCooldown } from "openclaw/plugin-sdk/agent-runtime";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
   startReauth,
   getSession,

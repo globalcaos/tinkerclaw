@@ -4,6 +4,9 @@
  * Run with: npx tsx scripts/wa-fetch-contacts.ts
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   makeWASocket,
   useMultiFileAuthState,
@@ -11,18 +14,16 @@ import {
   fetchLatestBaileysVersion,
 } from "@whiskeysockets/baileys";
 import pino from "pino";
-import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 
-const AUTH_DIR = process.env.WA_AUTH_DIR || path.join(os.homedir(), ".openclaw/credentials/whatsapp/default");
+const AUTH_DIR =
+  process.env.WA_AUTH_DIR || path.join(os.homedir(), ".openclaw/credentials/whatsapp/default");
 const OUTPUT_PATH = path.join(os.homedir(), ".openclaw/workspace/bank/whatsapp-contacts-full.json");
 
 // Load all LID reverse mappings
 function loadLidMappings(): Map<string, string> {
   const mappings = new Map<string, string>();
   const files = fs.readdirSync(AUTH_DIR);
-  
+
   for (const file of files) {
     if (file.startsWith("lid-mapping-") && file.endsWith("_reverse.json")) {
       try {
@@ -37,20 +38,20 @@ function loadLidMappings(): Map<string, string> {
       }
     }
   }
-  
+
   console.log(`📋 Loaded ${mappings.size} LID mappings`);
   return mappings;
 }
 
 async function main() {
   console.log("🔌 Connecting to WhatsApp...");
-  
+
   const lidMappings = loadLidMappings();
-  
+
   const logger = pino({ level: "silent" });
   const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
-  
+
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
@@ -80,33 +81,36 @@ async function main() {
 
   try {
     const groups = await sock.groupFetchAllParticipating();
-    
-    const contacts: Record<string, { 
-      phone: string; 
-      lid?: string;
-      groups: Array<{ id: string; name: string; isAdmin: boolean }>; 
-      isAdmin: boolean 
-    }> = {};
+
+    const contacts: Record<
+      string,
+      {
+        phone: string;
+        lid?: string;
+        groups: Array<{ id: string; name: string; isAdmin: boolean }>;
+        isAdmin: boolean;
+      }
+    > = {};
     const groupList: Array<{ id: string; subject: string; participantCount: number }> = [];
     let unresolvedLids = 0;
-    
+
     console.log(`📊 Found ${Object.keys(groups).length} groups`);
-    
+
     for (const [jid, meta] of Object.entries(groups)) {
       groupList.push({
         id: jid,
         subject: meta.subject,
         participantCount: meta.participants?.length || 0,
       });
-      
+
       for (const participant of meta.participants || []) {
         let rawId = participant.id?.split("@")[0];
         if (!rawId || rawId.includes(":")) continue;
-        
+
         // Check if this is a LID that needs resolution
         let phone: string;
         let lid: string | undefined;
-        
+
         if (lidMappings.has(rawId)) {
           // This is a LID, resolve to phone
           phone = `+${lidMappings.get(rawId)}`;
@@ -120,7 +124,7 @@ async function main() {
           // Real phone number
           phone = `+${rawId}`;
         }
-        
+
         if (!contacts[phone]) {
           contacts[phone] = {
             phone,
@@ -129,13 +133,13 @@ async function main() {
             isAdmin: false,
           };
         }
-        
+
         contacts[phone].groups.push({
           id: jid,
           name: meta.subject,
           isAdmin: participant.admin ? true : false,
         });
-        
+
         if (participant.admin) {
           contacts[phone].isAdmin = true;
         }
@@ -144,12 +148,12 @@ async function main() {
 
     // Sort contacts by number of groups
     const sortedContacts = Object.values(contacts).sort(
-      (a, b) => b.groups.length - a.groups.length
+      (a, b) => b.groups.length - a.groups.length,
     );
-    
+
     // Separate resolved and unresolved
-    const resolved = sortedContacts.filter(c => !c.phone.startsWith("LID:"));
-    const unresolved = sortedContacts.filter(c => c.phone.startsWith("LID:"));
+    const resolved = sortedContacts.filter((c) => !c.phone.startsWith("LID:"));
+    const unresolved = sortedContacts.filter((c) => c.phone.startsWith("LID:"));
 
     const output = {
       extracted: new Date().toISOString(),
@@ -167,20 +171,19 @@ async function main() {
     };
 
     fs.writeFileSync(OUTPUT_PATH, JSON.stringify(output, null, 2));
-    
+
     console.log(`\n📱 Extracted ${resolved.length} contacts from ${groupList.length} groups`);
     if (unresolved.length > 0) {
       console.log(`⚠️  ${unresolved.length} contacts have unresolved LIDs`);
     }
     console.log(`💾 Saved to: ${OUTPUT_PATH}`);
-    
+
     // Print top contacts with real phone numbers
     console.log("\n🔝 Top contacts by group membership:");
     for (const contact of resolved.slice(0, 15)) {
       const admin = contact.isAdmin ? " (admin)" : "";
       console.log(`  ${contact.phone}: ${contact.groups.length} groups${admin}`);
     }
-
   } catch (err: unknown) {
     const error = err as Error;
     console.error("❌ Error:", error.message);

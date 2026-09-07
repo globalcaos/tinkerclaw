@@ -1,0 +1,22 @@
+{
+  "id": "tinkerclaw-cron-panel",
+  "name": "Cron Panel",
+  "description": "Exec-mode Crons tab: read-only board of cron jobs joined with their per-run delta reports (ok/error/silent, headline, days since last delta). Data: ~/.openclaw/cron/jobs.json + reports/.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": true,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "cronDir": {
+        "type": "string",
+        "description": "OpenClaw cron directory (jobs.json + reports/). Defaults to ~/.openclaw/cron"
+      }
+    }
+  },
+  "uiHints": {
+    "cronDir": { "label": "Cron dir", "help": "Where jobs.json and reports/ live." }
+  }
+}

@@ -5,7 +5,7 @@ audience: AI
 last_verified: 2026-06-10
 last_verified_commit: HEAD
 single_owner: yes — panel-layout facts live here, not in tinker-ui.md. tinker-ui.md owns the visual language (chip styles, fonts, colors); this file owns the SPATIAL contract.
-see_also: tinker-ui.md (visual language, chip families, per-component design), flows.md (event flows that drive panel updates), topology.md (which process renders the UI)
+see_also: tinker-ui.md (visual language, chip families, per-component design), flows.md (event flows that drive panel updates), topology.md (which process renders the UI), ui-persistence.md (which chrome state survives a reload — the collapse/flag/choice store)
 verify:
   - name: single source of truth for "session busy" (FORK 2026-05-16 — chat/sending/sessions/prefrontal must not disagree)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "function runBelongsToViewedSession" in t and "function scopedActiveRuns" in t and "function viewedSessionBusy" in t, "the shared busy/scope helpers were removed — the four panels will silently re-diverge (chat stuck on sending, prefrontal idle, sessions thinking)"; assert re.search(r"budgetScope ===\s*.all.\s*&&\s*latestTreeFromExtension", t, re.S), "buildPrefrontalTree no longer gates the extension-tree shortcut on budgetScope===all — the session/all toggle is being ignored by prefrontal again"; assert "if (sending && !viewedSessionBusy())" in t, "the sending pill no longer checks viewedSessionBusy — it will stick on sending forever whenever another tab has a run"'
@@ -32,11 +32,11 @@ The Tinker UI is a single-page HTML app. The DOM has a small set of named region
 │ topbar                                  (always present, mode-aware)│
 ├──┬─────────────────────────────────┬───────────────────────────────┤
 │  │                                 │ right-panels                  │
-│  │ chat-area                       │   ├─ prefrontal               │
-│ L│   (messages, input)             │   ├─ sessions                 │
-│ E│                                 │   ├─ budget                   │
-│ F│                                 │                               │
-│ T├─────────────────────────────────┤                               │
+│  │ chat-area                       │   ├─ sessions                 │
+│ L│   (messages, input)             │   ├─ models (+ EEG group)     │
+│ E│                                 │   ├─ prefrontal               │
+│ F│                                 │   ├─ amygdala                 │
+│ T├─────────────────────────────────┤   └─ cache                    │
 │ N│ ctx-timeline                    │                               │
 │ A│   (compaction/turn anatomy)     │                               │
 │ V├─────────────────────────────────┴───────────────────────────────┤
@@ -48,7 +48,7 @@ The Tinker UI is a single-page HTML app. The DOM has a small set of named region
 Plus three **overlays** that can sit ON TOP of the layout:
 
 - **alt-view** — full-pane replacement for the chat-mode layout. Mounted at the same place as `chat-area` + `right-panels` + `ctx-timeline` + `bottom-right`, but covers them. Activated by any left-nav tab other than `chat`.
-- **exec-panel** — persistent left-edge HUD (FORK 2026-05-12 control-panel plugin). Three sections: graphs / 7-day calendar strip / live task board. Mounted directly under `app`, NOT inside `.right-panels`. Controlled by the **Dev↔Exec** toggle in the topbar — orthogonal to tab nav.
+- **exec-panel** — persistent left-edge HUD (FORK 2026-05-12; backed since 2026-07-24 by the split panel plugins: `tinkerclaw-pulse-panel` graphs, `tinkerclaw-task-panel` calendar strip + task board, `tinkerclaw-cron-panel` cron board — `tinkerclaw-control-panel` is a deprecated no-op shell). Three sections: graphs / 7-day calendar strip / live task board. Mounted directly under `app`, NOT inside `.right-panels`. Controlled by the **Dev↔Exec** toggle in the topbar — orthogonal to tab nav.
 - **kit-modal** — ephemeral dialog overlay (FORK 2026-05-14). Appears on recipe card click in the `recipes` alt-view. Two tabs: View (markdown-it rendered body, strips frontmatter) + Edit (raw textarea). Save writes via `POST /api/save-file` (dev) or `POST /tinker/api/save-file` (prod), sandboxed to `extensions/tinkerclaw-prefrontal/kits/` and `~/.openclaw/workspace/kits/`. z-index 6000. CSS class `.kit-modal-backdrop` / `.kit-modal-dialog`.
 
 ## Two orthogonal state axes
@@ -57,7 +57,7 @@ The UI surface is the cartesian product of two axes, **not** a flat tab list.
 
 ### Axis A — left-nav tab (13 values)
 
-One of `chat`, `overview`, `channels`, `sessions`, `usage`, `cron`, `agents`, `skills`, `nodes`, `config`, `debug`, `logs`, `recipes`. Default: `chat`. Persists to `localStorage[tinker-active-tab]`.
+One of `chat`, `overview`, `channels`, `sessions`, `usage`, `cron`, `agents`, `skills`, `nodes`, `config`, `debug`, `logs`, `recipes`. Default: `chat`. Persisted as choice `tab:active` — see `ui-persistence.md`.
 
 | `tab`      | What it shows                                                                                                |
 | ---------- | ------------------------------------------------------------------------------------------------------------ |
@@ -77,7 +77,7 @@ One of `chat`, `overview`, `channels`, `sessions`, `usage`, `cron`, `agents`, `s
 
 ### Axis B — Dev↔Exec mode (2 values)
 
-A persistent topbar toggle, default `Dev`. Drives `<html>` or `<body>` class. Independent of tab nav. Persists to `localStorage[tinker-mode]`.
+A persistent topbar toggle, default `Dev`. Drives `<html>` or `<body>` class. Independent of tab nav. Persisted as flag `topbar:exec` — see `ui-persistence.md`.
 
 | Mode | exec-panel visibility | Effect on the rest of the UI                                                                                 |
 | ---- | --------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -112,7 +112,8 @@ This rule was added to fix the bug "Control Panel wrongly still visible when I c
 - **chat-area XOR alt-view.** Exactly one of these is visible at any time. The transition is `switchTab(tab)`: `tab==="chat"` → chat-area on, alt-view off; otherwise the inverse.
 - **right-panels and bottom-right follow chat-area.** They are children-in-spirit of chat-mode and inherit its visibility. (They are _not_ DOM children — the layout is a CSS grid — but they MUST hide and show together with chat-area.)
 - **exec-panel implies tab=chat.** If the exec-panel is visible, `tab` must be `chat`. The reverse is NOT true (chat + Dev still hides the exec-panel).
-- **Sub-panels inside right-panels are always all-visible together.** When right-panels is on, all of {prefrontal, sessions, budget} render. Individual sub-panels do not toggle on/off independently — they manage their own internal "empty state" placeholders.
+- **Sub-panels inside right-panels are always all-visible together.** When right-panels is on, all of {sessions, models, prefrontal, amygdala, cache} render. Individual sub-panels do not toggle on/off independently — they manage their own internal "empty state" placeholders. Whether an individual sub-panel is _collapsed_ — and how any chrome state survives a reload — is a persistence fact, not a visibility fact; see also: ui-persistence.md.
+- **The EEG is NOT one of them.** Until 2026-08-02 the seismograph was its own `.rpanel` (`#eeg-panel`, peer to Models). It is now a `.model-group` (`data-section="eeg"`) inside the **Models** panel, so it has no visibility row of its own — it inherits Models'. Where inside Models it may sit is not a free choice: it must be a sibling of `#budget-panel`, never a child, because `updateBudgetPanel()` rewrites that body's `innerHTML` wholesale. That constraint, why it matters, and the collapse ids it carries are recorded in `ui-persistence.md`.
 
 ## The prefrontal sub-panel is "always active"
 
@@ -216,7 +217,7 @@ The frontmatter's `verify:` block already enforces three of these:
 
 Future invariants worth adding (defer until first regression):
 
-- `localStorage[tinker-active-tab]` and `localStorage[tinker-mode]` are read at page-load and applied via `switchTab` exactly once.
+- The persisted `tab:active` choice and `topbar:exec` flag (owned by `ui-persistence.md`) are read at page-load and applied via `switchTab` exactly once.
 - `prefrontal.plan.get` returning `null` does NOT crash the panel — the implicit 2-step or idle render takes over.
 
 ## How to evolve this doc
@@ -230,4 +231,5 @@ Future invariants worth adding (defer until first regression):
 - `tinker-ui.md` — visual language of each panel's content (chips, fonts, colors, animations). Does NOT redefine which panels are visible when.
 - `flows.md` — event flows that update panel data (e.g. F-PLAN-RESUME drives the prefrontal panel). Does NOT define visibility.
 - `topology.md` — which process owns the renderer. Does NOT define layout.
+- `ui-persistence.md` — which chrome state (collapse/pressed/choice) survives a reload, and how. Does NOT define visibility.
 - `panels.md` — **this file** — spatial + visibility contract.

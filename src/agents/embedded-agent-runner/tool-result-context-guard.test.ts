@@ -249,6 +249,89 @@ describe("installToolResultContextGuard", () => {
 
     expectPiStyleTruncation(getToolResultText(transformed[0]));
   });
+
+  // FORK 2026-07-27 — the whole-context predicate must be denominated in the same
+  // 4-chars/token unit as its budget. window 10_000 tokens => 40_000 real chars,
+  // guard budget = floor(40_000 * 0.9) = 36_000.
+  // maxSingleToolResultChars = floor(10_000 * 2 * 0.5) = 10_000, so a 5_000-char tool
+  // result (weighted 10_000) sits exactly on the per-result boundary and is untouched.
+  it("does not trip the whole-context guard at ~50% of the real window", async () => {
+    const agent = makeGuardableAgent();
+    // 4 x 5_000 = 20_000 real chars = 50% fill. The pre-fork estimate scored this
+    // 40_000 (x2, details-inclusive) and threw.
+    const contextForNextCall = [
+      makeToolResult("call_1", "a".repeat(5_000)),
+      makeToolResult("call_2", "b".repeat(5_000)),
+      makeToolResult("call_3", "c".repeat(5_000)),
+      makeToolResult("call_4", "d".repeat(5_000)),
+    ];
+
+    const transformed = await applyGuardToContext(agent, contextForNextCall, 10_000);
+
+    expect(transformed).toBe(contextForNextCall);
+  });
+
+  it("trips the whole-context guard at ~95% of the real window", async () => {
+    const agent = makeGuardableAgent();
+    // 8 x 4_750 = 38_000 real chars = 95% of 40_000, past the 36_000 budget. Each single
+    // result is weighted 9_500, under the 10_000 per-result cap, so nothing is truncated
+    // first — the aggregate predicate is what fires.
+    const contextForNextCall: AgentMessage[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      contextForNextCall.push(makeToolResult(`call_${i}`, "a".repeat(4_750)));
+    }
+
+    await expect(applyGuardToContext(agent, contextForNextCall, 10_000)).rejects.toThrow(
+      PREEMPTIVE_CONTEXT_OVERFLOW_MESSAGE,
+    );
+  });
+
+  it("does not let toolResult.details move the whole-context estimate", async () => {
+    const agent = makeGuardableAgent();
+    // Same 20_000 real chars as the ~50% case, plus 60_000 chars of details per result.
+    // details are stripped before send, so they must not push the aggregate over.
+    const contextForNextCall = [
+      makeToolResultWithDetails("call_1", "a".repeat(5_000), "d".repeat(60_000)),
+      makeToolResultWithDetails("call_2", "b".repeat(5_000), "d".repeat(60_000)),
+      makeToolResultWithDetails("call_3", "c".repeat(5_000), "d".repeat(60_000)),
+      makeToolResultWithDetails("call_4", "e".repeat(5_000), "d".repeat(60_000)),
+    ];
+
+    const transformed = (await applyGuardToContext(
+      agent,
+      contextForNextCall,
+      10_000,
+    )) as AgentMessage[];
+
+    for (const msg of transformed) {
+      // details are dropped by the per-result pass, but the visible text survives whole
+      // and the aggregate predicate never fires.
+      expect((msg as { details?: unknown }).details).toBeUndefined();
+      expect(getToolResultText(msg).length).toBe(5_000);
+      expect(getToolResultText(msg)).not.toContain(CONTEXT_LIMIT_TRUNCATION_NOTICE);
+    }
+  });
+
+  it("keeps the single-tool-result truncation threshold and notice unchanged", async () => {
+    // window 1_000 => maxSingleToolResultChars = max(1_024, floor(1_000 * 2 * 0.5)) =
+    // 1_024 (the 1_024 floor wins), and the weighted estimate is x2, so 512 chars is
+    // exactly on the boundary and must pass through untouched.
+    const atBoundary = [makeToolResult("call_edge", "x".repeat(512))];
+    expect(await applyGuardToContext(makeGuardableAgent(), atBoundary)).toBe(atBoundary);
+
+    // 513 chars trips it; the text budget is floor(1_024 / 2) = 512, and the pi-style
+    // notice is sized so body + notice lands exactly on that budget.
+    const overBoundary = [makeToolResult("call_over", "x".repeat(513))];
+    const transformed = (await applyGuardToContext(
+      makeGuardableAgent(),
+      overBoundary,
+    )) as AgentMessage[];
+    const truncated = getToolResultText(transformed[0]);
+
+    expect(truncated).toBe(`${"x".repeat(478)}[... 35 more characters truncated]`);
+    expect(truncated.length).toBe(512);
+    expectPiStyleTruncation(truncated);
+  });
 });
 
 type MockedEngine = ContextEngine & {

@@ -134,6 +134,57 @@ describe("findSupersededChunkIds (per-chunk identity)", () => {
     // same id → re-indexing the very same row
     expect(findSupersededChunkIds(db, candidate("A", { hash: "h-old" }))).toEqual([]);
   });
+
+  // FORK 2026-09-03 regression — enforceEmbeddingMaxInputTokens() splits an over-long chunk
+  // into fragments that all inherit the parent's startLine/endLine and differ only by hash.
+  // They are ONE fact, not competing revisions, and they are written in the same pass with
+  // the same validity_start. Before the `validity_start <` clause each fragment closed its
+  // predecessor, so only the last one stayed currently-valid.
+  it("does not supersede a sibling fragment written in the SAME indexing pass", () => {
+    // three fragments of one over-long line, same span, same pass timestamp
+    insertChunk(db, "frag-1", { startLine: 281, endLine: 281, hash: "h-1", validityStart: 5000 });
+    insertChunk(db, "frag-2", { startLine: 281, endLine: 281, hash: "h-2", validityStart: 5000 });
+    const third = candidate("frag-3", {
+      startLine: 281,
+      endLine: 281,
+      hash: "h-3",
+      validityStart: 5000,
+    });
+    expect(findSupersededChunkIds(db, third)).toEqual([]);
+    expect(decideSupersede(db, third).action).toBe("allow");
+  });
+
+  it("still supersedes a genuinely earlier revision at the same span", () => {
+    insertChunk(db, "old", { startLine: 281, endLine: 281, hash: "h-old", validityStart: 1000 });
+    const next = candidate("new", {
+      startLine: 281,
+      endLine: 281,
+      hash: "h-new",
+      validityStart: 5000,
+    });
+    expect(findSupersededChunkIds(db, next)).toEqual(["old"]);
+  });
+
+  it("leaves every fragment of a split chunk currently-valid after a full pass", () => {
+    const pass = 5000;
+    const frags = ["f1", "f2", "f3", "f4"];
+    for (const id of frags) {
+      // persist, then run the writer exactly as manager-embedding-ops does per chunk
+      insertChunk(db, id, { startLine: 281, endLine: 281, hash: `h-${id}`, validityStart: pass });
+      supersedeContradictions(db, {
+        ...candidate(id, {
+          startLine: 281,
+          endLine: 281,
+          hash: `h-${id}`,
+          validityStart: pass,
+        }),
+      });
+    }
+    const open = db
+      .prepare(`SELECT COUNT(*) AS n FROM chunks WHERE start_line = 281 AND validity_end IS NULL`)
+      .get() as { n: number };
+    expect(open.n).toBe(frags.length);
+  });
 });
 
 describe("decideSupersede (gate becomes a validity-writer)", () => {

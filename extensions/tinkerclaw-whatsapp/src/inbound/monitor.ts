@@ -872,14 +872,30 @@ export async function attachWebInboxToSocket(
     },
   });
 
+  // FORK 2026-09-03: shutdown must never throw. The whatsmeow backend issues
+  // two disconnects per stop (auto-reply/monitor-wm.ts awaits listener.close()
+  // and then disconnectWmClient()), so guard the repeat call out here rather
+  // than writing again into an already-dying pipe.
+  let closed = false;
+
   return {
     close: async () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
       try {
         detachMessagesUpsert();
         detachConnectionUpdate();
-        closeInboundMonitorSocket(sock);
+        // warn, not logVerbose: a close failure on the shutdown path has to be
+        // visible without verbose mode, and it is exactly one line per stop.
+        await closeInboundMonitorSocket(sock, (message) => {
+          inboundLogger.warn({ message }, "whatsapp inbound socket close");
+          inboundConsoleLog.warn(message);
+        });
       } catch (err) {
-        logVerbose(`Socket close failed: ${String(err)}`);
+        inboundLogger.warn({ error: String(err) }, "whatsapp inbound socket close failed");
+        inboundConsoleLog.warn(`WhatsApp inbound socket close failed: ${String(err)}`);
       }
     },
     onClose,

@@ -14,6 +14,7 @@
  * so it is unit-testable without a live gateway.
  */
 
+import { isOperatorScopeDenial } from "../gateway/method-scopes.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
@@ -40,6 +41,31 @@ export interface ProposedGoal {
   topic: string;
 }
 
+/**
+ * FORK 2026-08-04: the outcome tags of one proposal cycle, as a CLOSED union.
+ *
+ * This used to be a bare `string`, and that was the actual bug behind the months-long
+ * silence: a gateway REFUSAL (`missing scope: operator.admin` on fork.curiosity.topGaps)
+ * came back as "fetch-error", which at the caller is indistinguishable from the healthy
+ * "no-gaps" / "rate-limited" no-ops. Naming the failures in the type makes the difference
+ * checkable rather than a log-reading exercise.
+ *
+ * FAILURES (the cycle could not read the gaps at all): "scope-denied" | "fetch-error".
+ * HEALTHY no-ops (the cycle ran and legitimately declined): everything else.
+ */
+export type IdleGoalReason =
+  | "proposed"
+  | "no-gaps"
+  | "rate-limited"
+  | "automated"
+  | "fetch-error"
+  | "scope-denied";
+
+/** True when the cycle FAILED (could not read the gaps) rather than legitimately declining. */
+export function isIdleGoalFailure(reason: IdleGoalReason): boolean {
+  return reason === "scope-denied" || reason === "fetch-error";
+}
+
 export interface IdleGoalDeps {
   /** Fetch the top open curiosity gaps (real impl: fork.curiosity.topGaps). */
   fetchTopGaps: () => Promise<ProposedGoal[]>;
@@ -59,11 +85,14 @@ export function shouldProposeNow(sessionKey: string, now: number): boolean {
 /**
  * Run one idle goal-proposal cycle. Testable with mock deps. Returns what happened. Never
  * throws. Skips automated sessions + rate-limited windows + empty gap sets.
+ *
+ * The `reason` distinguishes a FAILURE ("scope-denied" / "fetch-error" -- see
+ * isIdleGoalFailure) from a healthy decline; do not collapse the two at a call site.
  */
 export async function proposeIdleGoals(
   sessionKey: string,
   deps: IdleGoalDeps,
-): Promise<{ proposed: boolean; reason: string }> {
+): Promise<{ proposed: boolean; reason: IdleGoalReason }> {
   const now = (deps.now ?? Date.now)();
   if (isAutomatedSession(sessionKey)) return { proposed: false, reason: "automated" };
   if (!shouldProposeNow(sessionKey, now)) return { proposed: false, reason: "rate-limited" };
@@ -71,7 +100,18 @@ export async function proposeIdleGoals(
   try {
     gaps = await deps.fetchTopGaps();
   } catch (err) {
-    log.warn(`[idle-goals] fetch failed: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    // FORK 2026-08-04: a gateway scope REFUSAL is a permanent wiring bug, not a transient
+    // fetch failure -- it will fail identically forever. Give it its own reason and its own
+    // log level so it can never again be mistaken for "ran and had nothing to say".
+    if (isOperatorScopeDenial(err)) {
+      log.error(
+        `[idle-goals] REFUSED by gateway: fork.curiosity.topGaps denied (${msg}). ` +
+          `Curiosity proposals are DEAD, not idle -- fix the method scope classification.`,
+      );
+      return { proposed: false, reason: "scope-denied" };
+    }
+    log.warn(`[idle-goals] fetch failed: ${msg}`);
     return { proposed: false, reason: "fetch-error" };
   }
   if (!gaps || gaps.length === 0) return { proposed: false, reason: "no-gaps" };
@@ -127,9 +167,20 @@ export function noteTurnActivity(sessionKey: string | undefined): void {
   if (existing) clearTimeout(existing);
   const t = setTimeout(() => {
     idleTimers.delete(sessionKey);
-    void proposeIdleGoals(sessionKey, realDeps()).catch((err) =>
-      log.warn(`[idle-goals] cycle failed (non-fatal): ${String(err)}`),
-    );
+    void proposeIdleGoals(sessionKey, realDeps())
+      .then((out) => {
+        // FORK 2026-08-04: proposeIdleGoals swallows fetch/refusal errors and returns them
+        // as a reason, so this .then() is the ONLY place a failure can surface -- the old
+        // .catch()-only wiring discarded the reason entirely, which meant a dead curiosity
+        // path and a healthy quiet one produced byte-identical logs (i.e. nothing).
+        if (isIdleGoalFailure(out.reason)) {
+          log.warn(
+            `[idle-goals] cycle FAILED for ${sessionKey}: ${out.reason} -- no proposal was ` +
+              `possible; this is not a healthy no-op`,
+          );
+        }
+      })
+      .catch((err) => log.warn(`[idle-goals] cycle failed (non-fatal): ${String(err)}`));
   }, idleMs());
   if (typeof t.unref === "function") t.unref();
   idleTimers.set(sessionKey, t);

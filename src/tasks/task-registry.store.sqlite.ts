@@ -3,6 +3,7 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { requireNodeSqlite } from "../infra/node-sqlite.js";
 import { configureSqliteWalMaintenance, type SqliteWalMaintenance } from "../infra/sqlite-wal.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
+import { describeArchivedStateTwin, guardArchivedStateFile } from "./state-file-guard.js";
 import { resolveTaskRegistryDir, resolveTaskRegistrySqlitePath } from "./task-registry.paths.js";
 import type { TaskRegistryStoreSnapshot } from "./task-registry.store.types.js";
 import type { TaskDeliveryState, TaskRecord } from "./task-registry.types.js";
@@ -448,6 +449,10 @@ function openTaskRegistryDatabase(): TaskRegistryDatabase {
     cachedDatabase = null;
   }
   ensureTaskRegistryPermissions(pathname);
+  const restored = guardArchivedStateFile(pathname);
+  if (restored) {
+    console.warn(`[task-registry] ${describeArchivedStateTwin(restored)}`);
+  }
   const { DatabaseSync } = requireNodeSqlite();
   const db = new DatabaseSync(pathname);
   const walMaintenance = configureSqliteWalMaintenance(db);

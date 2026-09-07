@@ -8,6 +8,7 @@ import { loadWebMedia } from "../media.js";
 import { newConnectionId } from "../reconnect.js";
 import { formatError } from "../session.js";
 import { whatsappOutboundLog } from "./loggers.js";
+import { stripHtmlRenderBlocks } from "./strip-html-render.js";
 import type { WebInboundMsg } from "./types.js";
 import { elide } from "./util.js";
 
@@ -29,7 +30,11 @@ export async function deliverWebReply(params: {
   const replyStarted = Date.now();
   const tableMode = params.tableMode ?? "code";
   const chunkMode = params.chunkMode ?? "length";
-  const convertedText = convertMarkdownTables(replyResult.text || "", tableMode);
+  // FORK 2026-08-30: ```html-render is a Tinker-chat-only fence; on WhatsApp it
+  // arrives as raw tags. Convert it to plain text BEFORE tables/chunking so the
+  // summary's content survives but the markup never ships.
+  const renderSafeText = stripHtmlRenderBlocks(replyResult.text || "");
+  const convertedText = convertMarkdownTables(renderSafeText, tableMode);
   const textChunks = chunkMarkdownTextWithMode(convertedText, textLimit, chunkMode);
   const mediaList = replyResult.mediaUrls?.length
     ? replyResult.mediaUrls

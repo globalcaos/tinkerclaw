@@ -171,14 +171,21 @@ export function resolveExternalCliAuthProfiles(
       });
       continue;
     }
-    if (providerConfig.bootstrapOnly && existingOAuth) {
-      log.debug("kept local oauth over external cli bootstrap-only provider", {
+    const localUsable = hasUsableOAuthCredential(existingOAuth, now);
+    // bootstrapOnly exists so a *working* locally-refreshed token is not
+    // clobbered by stale CLI state. An expired stored login is not working —
+    // `codex login` on a renewed/new plan must be allowed to replace it.
+    if (providerConfig.bootstrapOnly && existingOAuth && localUsable) {
+      log.debug("kept usable local oauth over external cli bootstrap-only provider", {
         profileId: providerConfig.profileId,
         provider: providerConfig.provider,
       });
       continue;
     }
-    if (existingOAuth && !isSafeToUseExternalCliCredential(existingOAuth, creds)) {
+    // Identity gates only protect a usable local credential. Cancelled Team
+    // → new Plus is a different chatgpt_account_id; refusing that after the
+    // stored token is dead leaves OpenClaw on the cancelled plan forever.
+    if (localUsable && existingOAuth && !isSafeToUseExternalCliCredential(existingOAuth, creds)) {
       log.warn("refused external cli oauth bootstrap: identity mismatch", {
         profileId: providerConfig.profileId,
         provider: providerConfig.provider,
@@ -186,6 +193,7 @@ export function resolveExternalCliAuthProfiles(
       continue;
     }
     if (
+      localUsable &&
       existingOAuth &&
       !isSafeToAdoptBootstrapOAuthIdentity(existingOAuth, creds) &&
       !areOAuthCredentialsEquivalent(existingOAuth, creds)

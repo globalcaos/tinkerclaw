@@ -277,6 +277,23 @@ export function buildBootstrapContextFiles(
     1,
     Math.floor(opts?.totalMaxChars ?? Math.max(maxChars, DEFAULT_BOOTSTRAP_TOTAL_MAX_CHARS)),
   );
+  // Two-pass: if the raw set already fits the TOTAL budget, inject every file whole.
+  // A per-file cap is a fairness tool under contention, not a license to amputate
+  // one file while global capacity sits idle. Silent 75/25 surgery of standing
+  // instructions is context-loss, not lean.
+  let estimatedRawChars = 0;
+  for (const file of files) {
+    const pathValue = normalizeOptionalString(file.path) ?? "";
+    if (!pathValue) {
+      continue;
+    }
+    if (file.missing) {
+      estimatedRawChars += `[MISSING] Expected at: ${pathValue}`.length;
+      continue;
+    }
+    estimatedRawChars += (file.content ?? "").trimEnd().length;
+  }
+  const fitsWhole = estimatedRawChars <= totalMaxChars;
   let remainingTotalChars = totalMaxChars;
   const result: EmbeddedContextFile[] = [];
   for (const file of files) {
@@ -309,7 +326,10 @@ export function buildBootstrapContextFiles(
       );
       break;
     }
-    const fileMaxChars = Math.max(1, Math.min(maxChars, remainingTotalChars));
+    const fileMaxChars = Math.max(
+      1,
+      fitsWhole ? remainingTotalChars : Math.min(maxChars, remainingTotalChars),
+    );
     const trimmed = trimBootstrapContent(file.content ?? "", file.name, fileMaxChars);
     const contentWithinBudget = clampToBudget(trimmed.content, remainingTotalChars);
     if (!contentWithinBudget) {

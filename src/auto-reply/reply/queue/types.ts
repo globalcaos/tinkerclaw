@@ -74,6 +74,14 @@ export type FollowupRun = {
     model: string;
     hasSessionModelOverride?: boolean;
     modelOverrideSource?: "auto" | "user";
+    /**
+     * THALAMUS's per-turn recovery ladder (`ThalamusAutoRoute.chain`) — ordered `provider/model`
+     * keys, one per OTHER supply. Carried on the run because the router decides it during model
+     * selection while `resolveModelFallbackOptions` needs it at execution time. PERSISTED
+     * NOWHERE, for the same reason the route itself is not: a written ladder would outlive the
+     * dial move that produced it and would later be indistinguishable from configuration.
+     */
+    thalamusChain?: readonly string[];
     authProfileId?: string;
     authProfileIdSource?: "auto" | "user";
     thinkLevel?: ThinkLevel;

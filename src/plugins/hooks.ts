@@ -79,6 +79,7 @@ import type {
   PluginHookBeforeInstallEvent,
   PluginHookBeforeInstallResult,
 } from "./hook-types.js";
+import { beginTurnPhase, logHookHandlerSpan } from "./turn-phase-emit.js";
 
 // Re-export types for consumers
 export type {
@@ -498,34 +499,55 @@ export function createHookRunner(
 
     logger?.debug?.(`[hooks] running ${hookName} (${hooks.length} handlers, sequential)`);
 
+    // FORK 2026-08-15 — narrate the pre-model stages to the UI. Opened here so the span covers
+    // every handler for this hook, and closed in the `finally` below so a throwing handler still
+    // ends its stage. No-op for hooks not on the allowlist, and for any context without a runId.
+    const phaseSpan = beginTurnPhase(hookName, ctx);
+
     let result: TResult | undefined;
 
-    for (const hook of hooks) {
-      try {
-        const handler = hook.handler as (event: unknown, ctx: unknown) => Promise<TResult>;
-        const promise = Promise.resolve(handler(event, ctx));
-        const timeoutMs = getModifyingHookTimeoutMs(hookName);
-        const handlerResult = timeoutMs ? await withHookTimeout(promise, timeoutMs) : await promise;
+    try {
+      for (const hook of hooks) {
+        // FORK 2026-08-22 — time each handler, not just the chain. See logHookHandlerSpan:
+        // `before_prompt_build` alone runs eight of these, and the phase row shows their SUM.
+        const handlerStartedAt = Date.now();
+        try {
+          const handler = hook.handler as (event: unknown, ctx: unknown) => Promise<TResult>;
+          const promise = Promise.resolve(handler(event, ctx));
+          const timeoutMs = getModifyingHookTimeoutMs(hookName);
+          const handlerResult = timeoutMs
+            ? await withHookTimeout(promise, timeoutMs)
+            : await promise;
 
-        if (handlerResult !== undefined && handlerResult !== null) {
-          if (policy.mergeResults) {
-            result = policy.mergeResults(result, handlerResult, hook);
-          } else {
-            result = handlerResult;
+          if (handlerResult !== undefined && handlerResult !== null) {
+            if (policy.mergeResults) {
+              result = policy.mergeResults(result, handlerResult, hook);
+            } else {
+              result = handlerResult;
+            }
+            if (result && policy.shouldStop?.(result)) {
+              const terminalLabel = policy.terminalLabel ? ` ${policy.terminalLabel}` : "";
+              const priority = hook.priority ?? 0;
+              logger?.debug?.(
+                `[hooks] ${hookName}${terminalLabel} decided by ${hook.pluginId} (priority=${priority}); skipping remaining handlers`,
+              );
+              policy.onTerminal?.({ hookName, pluginId: hook.pluginId, result });
+              break;
+            }
           }
-          if (result && policy.shouldStop?.(result)) {
-            const terminalLabel = policy.terminalLabel ? ` ${policy.terminalLabel}` : "";
-            const priority = hook.priority ?? 0;
-            logger?.debug?.(
-              `[hooks] ${hookName}${terminalLabel} decided by ${hook.pluginId} (priority=${priority}); skipping remaining handlers`,
-            );
-            policy.onTerminal?.({ hookName, pluginId: hook.pluginId, result });
-            break;
-          }
+        } catch (err) {
+          handleHookError({ hookName, pluginId: hook.pluginId, error: err });
+        } finally {
+          // `finally`, so a handler that throws or times out is still timed — a hook that
+          // burns its whole 15s budget and then fails is exactly the one worth seeing.
+          // A `break` above runs this too.
+          const handlerMs = Date.now() - handlerStartedAt;
+          logHookHandlerSpan(hookName, hook.pluginId, handlerMs);
+          phaseSpan?.recordHandler(hook.pluginId, handlerMs);
         }
-      } catch (err) {
-        handleHookError({ hookName, pluginId: hook.pluginId, error: err });
       }
+    } finally {
+      phaseSpan?.end();
     }
 
     return result;

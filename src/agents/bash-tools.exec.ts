@@ -1657,6 +1657,16 @@ export function createExecTool(
             })
           : (hostEnvResult?.env ?? inheritedBaseEnv);
 
+      // FORK 2026-08-31: native exec never inherited TC_SESSION_KEY. The Claude
+      // Code bridge exports it (worker.ts) so `jarvis` can gate to the home
+      // session and inject the purple bubble. On grok/native the var was
+      // unset, so `jarvis` exited 0 with no audio and no bubble. Stamp the
+      // canonical session key after sanitization (TC_ is not a blocked prefix).
+      const sessionKeyForVoice = normalizeOptionalString(defaults?.sessionKey);
+      if (sessionKeyForVoice && !env.TC_SESSION_KEY) {
+        env.TC_SESSION_KEY = sessionKeyForVoice;
+      }
+
       if (!sandbox && host === "gateway" && !params.env?.PATH) {
         const shellPath = getShellPathFromLoginShell({
           env: process.env,

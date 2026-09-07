@@ -81,6 +81,25 @@ export type GatewaySessionRow = {
   totalTokensFresh?: boolean;
   estimatedCostUsd?: number;
   status?: SessionRunStatus;
+  /**
+   * FORK 2026-07-29 — THE RUN SET, as observed by the gateway process at the instant this row was
+   * built (src/infra/agent-events.ts getSessionRunLiveness).
+   *
+   * `status` above is a verbatim passthrough of the PERSISTED entry, so it describes the archive:
+   * it can latch at "running" when a terminal write is missed, and it is absent entirely on a
+   * measured 61 of 348 rows. This field describes the PROCESS instead — it is true only while a
+   * run is actually open, and a gateway restart erases it rather than resurrecting it.
+   *
+   * Consumers should prefer `run.live` and treat `status` as history. Added additively: a client
+   * that does not know this field ignores it.
+   */
+  run?: {
+    live: boolean;
+    count: number;
+    heartbeatCount: number;
+    since?: number;
+    lastActiveAt?: number;
+  };
   subagentRunState?: SubagentRunState;
   hasActiveSubagentRun?: boolean;
   startedAt?: number;
@@ -91,6 +110,20 @@ export type GatewaySessionRow = {
   responseUsage?: "on" | "off" | "tokens" | "full";
   modelProvider?: string;
   model?: string;
+  /**
+   * FORK 2026-08-29 — the DURABLE PIN, published separately from the RUNTIME pair above.
+   *
+   * `model`/`modelProvider` are "what SERVED" (pin ?? last-served identity) — they cannot
+   * distinguish a session that is pinned to a model from one on Auto that merely happened to
+   * run on it. ABSENT here means the session is on Auto; PRESENCE, not value, is the
+   * Auto/pinned predicate. Reading `model` as if it were a pin is exactly what made the Auto
+   * button light up Opus.
+   *
+   * Additive: a client that does not know these fields ignores them.
+   */
+  modelOverride?: string;
+  providerOverride?: string;
+  modelOverrideSource?: "auto" | "user";
   contextTokens?: number;
   deliveryContext?: DeliveryContext;
   lastChannel?: SessionEntry["lastChannel"];

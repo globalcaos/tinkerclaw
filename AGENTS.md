@@ -19,6 +19,7 @@ Telegraph style. Root rules only. Read scoped `AGENTS.md` before subtree work.
 ## Map
 
 - Core TS: `src/`, `ui/`, `packages/`; plugins: `extensions/`; SDK: `src/plugin-sdk/*`; channels: `src/channels/*`; loader: `src/plugins/*`; protocol: `src/gateway/protocol/*`; docs/apps: `docs/`, `apps/`, `Swabble/`.
+- Design bible (bug-log, optics, decisions): `TINKER_UI_DESIGN_BIBLE/` — NOT `docs/bible/` (that path no longer exists; renamed 2026-Q3).
 - Installers: sibling `../openclaw.ai`.
 - Scoped guides exist in: `extensions/`, `src/{plugin-sdk,channels,plugins,gateway,gateway/protocol,agents}/`, `test/helpers*/`, `docs/`, `ui/`, `scripts/`.
 

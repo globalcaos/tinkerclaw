@@ -13,6 +13,7 @@ const GEMINI_2_5_FLASH_PREFIX = "gemini-2.5-flash";
 const GEMINI_3_1_PRO_PREFIX = "gemini-3.1-pro";
 const GEMINI_3_1_FLASH_LITE_PREFIX = "gemini-3.1-flash-lite";
 const GEMINI_3_1_FLASH_PREFIX = "gemini-3.1-flash";
+const GEMINI_3_5_FLASH_PREFIX = "gemini-3.5-flash";
 const GEMINI_PRO_LATEST_ID = "gemini-pro-latest";
 const GEMINI_FLASH_LATEST_ID = "gemini-flash-latest";
 const GEMINI_FLASH_LITE_LATEST_ID = "gemini-flash-lite-latest";
@@ -162,6 +163,14 @@ export function resolveGoogleGeminiForwardCompatModel(params: {
       antigravityTemplateIds: GEMINI_3_FLASH_ANTIGRAVITY_TEMPLATE_IDS,
     };
   } else if (lower.startsWith(GEMINI_3_1_FLASH_PREFIX) || lower === GEMINI_FLASH_LATEST_ID) {
+    family = {
+      googleTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
+      cliTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
+      antigravityTemplateIds: GEMINI_3_FLASH_ANTIGRAVITY_TEMPLATE_IDS,
+    };
+  } else if (lower.startsWith(GEMINI_3_5_FLASH_PREFIX)) {
+    // Forward-compat: route 3.5-flash variants to the 3.1-flash template
+    // until a dedicated 3.5 template is registered in the catalog.
     family = {
       googleTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,
       cliTemplateIds: GEMINI_3_1_FLASH_TEMPLATE_IDS,

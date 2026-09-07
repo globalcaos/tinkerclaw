@@ -27,7 +27,7 @@ import {
   getRuntimeConfig,
   loadSessionStore,
   queueEmbeddedPiMessage,
-  resolveActiveEmbeddedRunSessionId,
+  resolveActiveEmbeddedRunSessionIdUnique,
   resolveAgentIdFromSessionKey,
   resolveConversationIdFromTargets,
   resolveExternalBestEffortDeliveryTarget,
@@ -56,6 +56,8 @@ type SubagentAnnounceDeliveryDeps = {
   getRequesterSessionActivity: (requesterSessionKey: string) => {
     sessionId?: string;
     isActive: boolean;
+    /** Several live runs share this session key; no single tab can be targeted. */
+    ambiguous?: boolean;
   };
   queueEmbeddedPiMessage: typeof queueEmbeddedPiMessage;
   sendMessage: typeof sendMessage;
@@ -65,9 +67,27 @@ const defaultSubagentAnnounceDeliveryDeps: SubagentAnnounceDeliveryDeps = {
   callGateway,
   getRuntimeConfig,
   getRequesterSessionActivity: (requesterSessionKey: string) => {
+    const resolved = resolveActiveEmbeddedRunSessionIdUnique(requesterSessionKey);
+    if (resolved.ambiguous) {
+      // Two or more live runs answer to this key (multiple UI tabs under one
+      // agent session). Announcing to either would inject a completion into a
+      // tab that never requested it, and that tab will act on it. Fail closed.
+      //
+      // ASYMMETRY (documented here deliberately; NOT changed in this unit): the
+      // "fail closed" only holds for STEERING into an existing run. Nulling
+      // sessionId skips the steer branch in sendSubagentAnnounceDirectly, but
+      // control then falls THROUGH to the direct `agent` gateway call, which
+      // targets the same shared session key and fails OPEN by starting a NEW
+      // run -- re-introducing the injection this guard just refused, through a
+      // different door. BOTH dispatch orders reach it: the queue-primary order
+      // returns "none" here (maybeQueueSubagentAnnounce bails on the missing
+      // sessionId) and then falls through to the same direct call, so fixing
+      // only the completion path would leave the hole open. A fix belongs at
+      // that call site, not here.
+      return { sessionId: undefined, isActive: false, ambiguous: true };
+    }
     const sessionId =
-      resolveActiveEmbeddedRunSessionId(requesterSessionKey) ??
-      loadRequesterSessionEntry(requesterSessionKey).entry?.sessionId;
+      resolved.sessionId ?? loadRequesterSessionEntry(requesterSessionKey).entry?.sessionId;
     return {
       sessionId,
       isActive: Boolean(sessionId && isEmbeddedPiRunActive(sessionId)),
@@ -141,6 +161,11 @@ function resolveBoundConversationOrigin(params: {
 
 function resolveRequesterSessionActivity(requesterSessionKey: string) {
   const activity = subagentAnnounceDeliveryDeps.getRequesterSessionActivity(requesterSessionKey);
+  if (activity.ambiguous) {
+    // Do NOT fall through to the persisted session entry: it is looked up by the
+    // same shared key and would re-introduce the guess we just refused.
+    return { sessionId: undefined, isActive: false, ambiguous: true };
+  }
   if (activity.sessionId || activity.isActive) {
     return activity;
   }
@@ -807,7 +832,35 @@ async function sendSubagentAnnounceDirectly(params: {
               },
               idempotencyKey: params.directIdempotencyKey,
             },
-            expectFinal: true,
+            // Wait for ADMISSION (the gateway's `accepted` ack), not for the
+            // requester's turn to finish. `expectFinal: true` made this one call
+            // span lane wait + the entire requester turn under a single hard
+            // wall-clock timer armed before the call: a requester session is one
+            // serialized lane, so a few long turns ahead of us starved announces
+            // out before they were ever dequeued, and every retry appended to the
+            // very lane it was starving in. The queued path (`sendAnnounce`) has
+            // never set `expectFinal`; this makes the direct path consistent.
+            //
+            // This is a cure rather than a bigger bucket, and the reason is the
+            // ordering: `respond(true, accepted, ...)` in server-methods/agent.ts
+            // fires ON RECEIPT, before the request is handed to the session lane.
+            // Dropping `expectFinal` therefore takes the lane wait out from under
+            // this timer entirely instead of merely shortening it.
+            //
+            // The final response is needed for exactly one thing: the completion
+            // fallback below inspects `result.payloads` to avoid double-sending
+            // output the requester already surfaced, and an `accepted` ack carries
+            // no payloads. That read is gated on `completionFallbackText` and
+            // `directAnnounceResponse` has no other reader, so on the SUCCESS path
+            // this is payload-equivalent -- with no fallback text the value was
+            // already dead. On the ERROR path it is deliberately not equivalent:
+            // a failure during the requester's turn used to reject here, and now
+            // goes unobserved. Where that mattered (non-empty fallback text) we
+            // still wait; where it did not, `sendCompletionFallback` already
+            // early-returned on empty content, so the only delta is that an
+            // admitted announce now reports delivered -- exactly what the queued
+            // path has always reported.
+            expectFinal: Boolean(completionFallbackText),
             timeoutMs: announceTimeoutMs,
           }),
       });
@@ -878,6 +931,55 @@ async function sendSubagentAnnounceDirectly(params: {
   }
 }
 
+/**
+ * Emit exactly one structured line per announce, naming the delivery target we
+ * chose, before anything is dispatched.
+ *
+ * Diagnosing the announce-starvation incident took a full forensic pass because
+ * routing left no trace: which requester key we resolved, whether that
+ * resolution was ambiguous, and which path we took were all only recoverable by
+ * inferring them from `HOOK llm_input sessionKey=` further downstream.
+ *
+ * PII boundary (this repo is a public fork): session keys, channel names and
+ * flags only -- never the announce text. Note that a DM-shaped session key
+ * (`agent:main:<channel>:<address>`) embeds the channel address itself, which is
+ * why the `to` field is not logged separately and why nothing here widens what
+ * the surrounding gateway logs already record.
+ */
+function logAnnounceRoutingDecision(params: {
+  requesterSessionKey: string;
+  targetRequesterSessionKey: string;
+  requesterIsSubagent: boolean;
+  expectsCompletionMessage: boolean;
+  directOrigin?: DeliveryContext;
+}): void {
+  const cfg = subagentAnnounceDeliveryDeps.getRuntimeConfig();
+  // The dispatcher tries `direct` first for completion announces and `queue`
+  // first otherwise, and the two paths canonicalize DIFFERENT input keys, so
+  // report the key the primary path will actually use.
+  //
+  // `primaryPath`, not `path`: this line is emitted BEFORE dispatch (the whole
+  // point is to survive a call that never returns), and runSubagentAnnounceDispatch
+  // falls through in both directions -- a queue-primary announce that fails to
+  // queue is still delivered direct. Naming it `primaryPath` keeps the log from
+  // asserting an outcome it cannot yet know; the realized path is in
+  // `result.phases`.
+  const primaryPath = params.expectsCompletionMessage ? "direct" : "queued";
+  const requested = params.expectsCompletionMessage
+    ? params.targetRequesterSessionKey
+    : params.requesterSessionKey;
+  const target = resolveRequesterStoreKey(cfg, requested);
+  // Ambiguity only -- do NOT call getRequesterSessionActivity here. That dep is
+  // also used to decide steer/queue vs direct, and some callers (and tests)
+  // treat successive reads as a state machine on isActive. A pre-dispatch log
+  // must not burn that observation.
+  const activeRuns = resolveActiveEmbeddedRunSessionIdUnique(target);
+  const channel = normalizeMessageChannel(params.directOrigin?.channel) ?? "none";
+  defaultRuntime.log(
+    `[info] Subagent announce routing primaryPath=${primaryPath} target=${target} requested=${requested} ambiguous=${activeRuns.ambiguous === true} candidates=${activeRuns.candidateCount} requesterIsSubagent=${params.requesterIsSubagent} channel=${channel}`,
+  );
+}
+
 export async function deliverSubagentAnnouncement(params: {
   requesterSessionKey: string;
   announceId?: string;
@@ -899,6 +1001,13 @@ export async function deliverSubagentAnnouncement(params: {
   directIdempotencyKey: string;
   signal?: AbortSignal;
 }): Promise<SubagentAnnounceDeliveryResult> {
+  logAnnounceRoutingDecision({
+    requesterSessionKey: params.requesterSessionKey,
+    targetRequesterSessionKey: params.targetRequesterSessionKey,
+    requesterIsSubagent: params.requesterIsSubagent,
+    expectsCompletionMessage: params.expectsCompletionMessage,
+    directOrigin: params.directOrigin,
+  });
   return await runSubagentAnnounceDispatch({
     expectsCompletionMessage: params.expectsCompletionMessage,
     signal: params.signal,

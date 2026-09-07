@@ -14,6 +14,37 @@ import { loadRecipeText, resolveRecipeOverlayDir } from "../recipe-runner.js";
 const SLUG = "overlay-demo";
 const KIT_REF = `owner/${SLUG}`;
 
+// FORK 2026-09-02: the library also stores recipes as `<category>/<name>.md`, and
+// `feature` composes `parallel-build`, `test-hardening`, `code-review` and
+// `finish-branch` from `coding/` via `uses:`. The loader only ever probed
+// `<dir>/<slug>/recipe.md`, so the matcher could select a recipe the runner then
+// failed to load. Same class as the 2026-08-22 scanner blind spot, third sighting.
+describe("loadRecipeText — category-folder layout", () => {
+  it("finds `<own>/<category>/<slug>.md` when no `<own>/<slug>/recipe.md` exists", async () => {
+    const prev = process.env.OPENCLAW_HOME;
+    const overlayHome = await mkdtemp(join(tmpdir(), "recipe-locate-home-"));
+    const ownRecipesDir = await mkdtemp(join(tmpdir(), "recipe-locate-own-"));
+    const sandbox = await mkdtemp(join(tmpdir(), "recipe-locate-sandbox-"));
+    try {
+      process.env.OPENCLAW_HOME = overlayHome;
+      await mkdir(join(ownRecipesDir, "coding"), { recursive: true });
+      await writeFile(
+        join(ownRecipesDir, "coding", "parallel-build.md"),
+        "CATEGORY CONTENT",
+        "utf-8",
+      );
+      const text = await loadRecipeText("globalcaos/parallel-build", ownRecipesDir, sandbox);
+      expect(text).toBe("CATEGORY CONTENT");
+    } finally {
+      if (prev === undefined) delete process.env.OPENCLAW_HOME;
+      else process.env.OPENCLAW_HOME = prev;
+      await rm(overlayHome, { recursive: true, force: true });
+      await rm(ownRecipesDir, { recursive: true, force: true });
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("recipe overlay resolution", () => {
   it("resolveRecipeOverlayDir honours OPENCLAW_HOME", async () => {
     const prev = process.env.OPENCLAW_HOME;

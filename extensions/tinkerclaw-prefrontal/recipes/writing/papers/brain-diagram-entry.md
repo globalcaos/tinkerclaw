@@ -166,9 +166,9 @@ PY
 
 ```bash
 python3 - <<'PY'
-import json
+import json, os
 env={k.strip():v.strip() for k,v in (l.split('=',1) for l in open(
-  '/home/user/.openclaw/jarvis-workspace/.claude/skills/wordpress-ultimate/.env')
+  os.path.expanduser('~/.openclaw/jarvis-workspace/.claude/skills/wordpress-ultimate/.env'))
   if '=' in l and not l.startswith('#'))}
 from curl_cffi import requests
 r=requests.put(env['WP_URL'].rstrip('/')+'/wp-json/wp/v2/posts/428', impersonate='chrome',

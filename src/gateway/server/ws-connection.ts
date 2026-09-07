@@ -18,6 +18,7 @@ import { clearNodeWakeState } from "../server-methods/nodes-wake-state.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "../server-methods/types.js";
 import { formatError } from "../server-utils.js";
 import { logWs } from "../ws-log.js";
+import { gatewayStallCreditSince, startStallAwareDeadline } from "./event-loop-health.js";
 import { getHealthVersion, incrementPresenceVersion } from "./health-state.js";
 import type { PreauthConnectionBudget } from "./preauth-connection-budget.js";
 import { broadcastPresenceSnapshot } from "./presence-events.js";
@@ -269,7 +270,7 @@ export function attachGatewayWsConnectionHandler(params: AttachGatewayWsConnecti
         return;
       }
       closed = true;
-      clearTimeout(handshakeTimer);
+      handshakeDeadline.clear();
       releasePreauthBudget();
       if (client) {
         clients.delete(client);
@@ -366,19 +367,35 @@ export function attachGatewayWsConnectionHandler(params: AttachGatewayWsConnecti
     });
 
     const handshakeTimeoutMs = getPreauthHandshakeTimeoutMsFromEnv();
-    const handshakeTimer = setTimeout(() => {
-      if (!client) {
+    // FORK(2026-08-28): the pre-auth deadline was naive wall clock, so the
+    // gateway billed peers for its OWN event-loop stalls - on 2026-08-28 every
+    // `handshake timeout` (12:42:23, 12:45:23, 12:59:27, all loopback CLI
+    // peers) was followed by its own `closed before connect` 1.6-1.8 s later,
+    // proving the close callback itself sat queued behind the stall. The
+    // stall-aware deadline subtracts the event-loop lateness accrued since the
+    // socket opened (capped at 1x the budget, so a dead peer still dies within
+    // 2x budget) and re-arms for the remainder instead of closing. The warn
+    // line format is unchanged for journald greps.
+    const handshakeDeadline = startStallAwareDeadline({
+      budgetMs: handshakeTimeoutMs,
+      startedAtMs: openedAt,
+      stallCreditSince: gatewayStallCreditSince,
+      onExpire: ({ elapsedMs, stallCreditMs }) => {
+        if (closed || client) {
+          return;
+        }
         handshakeState = "failed";
         setCloseCause("handshake-timeout", {
-          handshakeMs: Date.now() - openedAt,
+          handshakeMs: elapsedMs,
+          stallCreditMs,
           endpoint,
         });
         logWsControl.warn(
           `handshake timeout conn=${connId} peer=${endpoint ?? "n/a"} remote=${remoteAddr ?? "?"}`,
         );
         close();
-      }
-    }, handshakeTimeoutMs);
+      },
+    });
 
     attachGatewayWsMessageHandler({
       socket,
@@ -408,7 +425,7 @@ export function attachGatewayWsConnectionHandler(params: AttachGatewayWsConnecti
       send,
       close,
       isClosed: () => closed,
-      clearHandshakeTimer: () => clearTimeout(handshakeTimer),
+      clearHandshakeTimer: () => handshakeDeadline.clear(),
       getClient: () => client,
       setClient: (next) => {
         if (closed) {

@@ -572,6 +572,56 @@ describe("openai transport stream", () => {
     });
   });
 
+  it("counts reasoning tokens as output when the provider reports them separately", () => {
+    const model = {
+      id: "grok-4.5",
+      name: "Grok 4.5",
+      api: "openai-completions",
+      provider: "xai",
+      baseUrl: "https://cli-chat-proxy.grok.com/v1",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 2, output: 6, cacheRead: 0.3, cacheWrite: 0 },
+      contextWindow: 256000,
+      maxTokens: 32768,
+    } satisfies Model<"openai-completions">;
+
+    // Real figures from cli-chat-proxy.grok.com: Grok reports reasoning OUTSIDE
+    // completion_tokens, so its own totals only reconcile as
+    // prompt + completion + reasoning. Billed output is 3 + 498, not 3.
+    expect(
+      parseTransportChunkUsage(
+        {
+          prompt_tokens: 254,
+          completion_tokens: 3,
+          total_tokens: 755,
+          completion_tokens_details: { reasoning_tokens: 498 },
+        },
+        model,
+      ),
+    ).toMatchObject({
+      input: 254,
+      output: 501,
+      cacheRead: 0,
+    });
+
+    // OpenAI-shaped payload: reasoning is already inside completion_tokens, so the
+    // identity does not hold and nothing may be added on top.
+    expect(
+      parseTransportChunkUsage(
+        {
+          prompt_tokens: 100,
+          completion_tokens: 60,
+          total_tokens: 160,
+          completion_tokens_details: { reasoning_tokens: 40 },
+        },
+        model,
+      ),
+    ).toMatchObject({
+      output: 60,
+    });
+  });
+
   it("records usage from OpenAI-compatible streaming usage chunks", async () => {
     const model = {
       id: "glm-5",
