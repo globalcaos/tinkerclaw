@@ -95,55 +95,37 @@ if [ -d "$KIT" ]; then
   done
 fi
 
-# ---- 5. Structural crons (the habits, not just the engine) -------------------
-# These are the jobs that make the fork maintain ITSELF overnight: consolidate
-# memory, tidy the workspace, sweep for security updates, refresh model ranks,
-# scan the agent-OSS ecosystem. They ship with the repo under
-# extensions/tinkerclaw-tinker-bridge/crons/ and each one is a readable brief.
-#
-# They seed ENABLED by default so a novice cloner gets the benefit without
-# knowing what to opt into. Each job uses the cloner's configured/default model
-# (no pinned Claude provider), never delivers outbound, and never takes an
-# irreversible action. Opt out is one answer: skip / n. Disable later with
-# `pnpm tinker:crons:disable` (only affects jobs that are not yet installed).
-say "Structural crons — nightly self-maintenance jobs bundled with this repo."
-echo "   They consolidate memory, tidy the workspace, sweep for security updates,"
-echo "   refresh model ranks, and scan the agent-OSS field — six jobs, every night."
-echo "   Default is ON: they burn tokens every night, and they pay that back by"
-echo "   keeping context smaller and the harness current, so later sessions cost less."
-echo "   They never send messages and never take irreversible actions."
-node --import tsx scripts/seed-structural-crons.mjs --list 2>/dev/null || true
-CRON_ANSWER="$(ask 'Install them enabled? [Y/n/off]  (Y = on, n = skip, off = install disabled)' Y)"
+# ---- 5. Product pack (plugins + nightly jobs) --------------------------------
+# One question, default Y: enable every bundled tinkerclaw-* plugin except
+# WhatsApp, seed the six structural crons ON, and slot Total Recall as memory.
+# n = skip. off = plugins on, crons installed disabled (they burn tokens).
+say "Product pack — Tinker UI, every bundled plugin except WhatsApp, and six nightly"
+echo "   self-maintenance jobs. Default is ON so a clone is the product, not a kit."
+echo "   The jobs burn tokens every night and pay it back in cheaper later sessions."
+echo "   They never send messages. WhatsApp stays off until you link a phone."
+PRODUCT_ANSWER="$(ask 'Enable the full product pack? [Y/n/off]  (Y = everything on, n = skip, off = install crons disabled)' Y)"
 CRON_NOTE=""
-case "$CRON_ANSWER" in
-  skip|no|n|N) say "Skipping cron seeding. Run 'pnpm tinker:crons' any time." ;;
+PLUGIN_NOTE=""
+case "$PRODUCT_ANSWER" in
+  skip|no|n|N)
+    say "Skipping product pack. Later: pnpm tinker:plugins && pnpm tinker:crons" ;;
   off|disabled|OFF)
+    if node --import tsx scripts/seed-fork-plugins.mjs; then :; else
+      warn "Could not seed fork plugins. Re-run: pnpm tinker:plugins"
+      PLUGIN_NOTE="Enable the fork UI: ${BOLD}pnpm tinker:plugins${N}"
+    fi
     if node --import tsx scripts/seed-structural-crons.mjs --disabled; then :; else
       warn "Could not seed crons yet. Re-run: pnpm tinker:crons:disable"
       CRON_NOTE="Seed the nightly jobs (disabled): ${BOLD}pnpm tinker:crons:disable${N}"
     fi ;;
   *)
-    if node --import tsx scripts/seed-structural-crons.mjs; then :; else
-      warn "Could not seed crons yet. Re-run: pnpm tinker:crons"
-      CRON_NOTE="Seed the nightly jobs: ${BOLD}pnpm tinker:crons${N}"
-    fi ;;
-esac
-
-# ---- 5b. Fork plugins (the UI a cloner actually sees) -----------------------
-# The files already travel with git clone. Loading them does not. A fresh gateway
-# leaves tinkerclaw-* disabled until someone runs `plugins enable`, which is
-# tribal knowledge. This writes plugins.entries.<id>.enabled = true and NEVER
-# writes plugins.allow — a short allow-list hides the rest of the tree.
-say "Fork plugins — Tinker UI, the three left-rail panels, prefrontal, identity."
-echo "   Default is ON so a clone looks like the product, not stock OpenClaw."
-PLUGIN_ANSWER="$(ask 'Enable the fork UI plugins? [Y/n]' Y)"
-PLUGIN_NOTE=""
-case "$PLUGIN_ANSWER" in
-  skip|no|n|N) say "Skipping plugin seeding. Run 'pnpm tinker:plugins' any time." ;;
-  *)
     if node --import tsx scripts/seed-fork-plugins.mjs; then :; else
       warn "Could not seed fork plugins. Re-run: pnpm tinker:plugins"
       PLUGIN_NOTE="Enable the fork UI: ${BOLD}pnpm tinker:plugins${N}"
+    fi
+    if node --import tsx scripts/seed-structural-crons.mjs; then :; else
+      warn "Could not seed crons yet. Re-run: pnpm tinker:crons"
+      CRON_NOTE="Seed the nightly jobs: ${BOLD}pnpm tinker:crons${N}"
     fi ;;
 esac
 
