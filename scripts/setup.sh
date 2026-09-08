@@ -31,6 +31,17 @@ say "node $(node -v) · pnpm $(pnpm -v) · git $(git --version | awk '{print $3}
 # ---- 2. Install & build -----------------------------------------------------
 say "Installing dependencies (pnpm install)…"
 pnpm install
+
+# The gateway boots from dist/entry.(m)js — `pnpm install` does NOT produce it.
+# Without this build the installer prints "Setup complete", and the very next
+# command it tells you to run dies with "missing dist/entry.(m)js (build output)".
+# Found 2026-09-08 on a real from-scratch deployment, where exactly that happened.
+say "Building the gateway (pnpm build)…"
+pnpm build
+if [ ! -f dist/entry.js ] && [ ! -f dist/entry.mjs ]; then
+  die "Build finished but dist/entry.(m)js is missing — the gateway cannot start. Check the pnpm build output above."
+fi
+
 if [ -d tinker-ui ]; then
   say "Installing tinker-ui deps…"; ( cd tinker-ui && pnpm install )
 fi
