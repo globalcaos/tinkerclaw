@@ -1629,6 +1629,7 @@
     "testbox:sanity": "node scripts/testbox-sync-sanity.mjs",
     "tinker:crons": "node --import tsx scripts/seed-structural-crons.mjs",
     "tinker:crons:disable": "node --import tsx scripts/seed-structural-crons.mjs --disabled",
+    "tinker:plugins": "node --import tsx scripts/seed-fork-plugins.mjs",
     "tool-display:check": "node --import tsx scripts/tool-display.ts --check",
     "tool-display:write": "node --import tsx scripts/tool-display.ts --write",
     "ts-topology": "node --import tsx scripts/ts-topology.ts",

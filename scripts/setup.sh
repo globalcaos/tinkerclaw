@@ -117,7 +117,25 @@ case "$CRON_ANSWER" in
     fi ;;
 esac
 
-# ---- 5. Optional components -------------------------------------------------
+# ---- 5b. Fork plugins (the UI a cloner actually sees) -----------------------
+# The files already travel with git clone. Loading them does not. A fresh gateway
+# leaves tinkerclaw-* disabled until someone runs `plugins enable`, which is
+# tribal knowledge. This writes plugins.entries.<id>.enabled = true and NEVER
+# writes plugins.allow — a short allow-list hides the rest of the tree.
+say "Fork plugins — Tinker UI, the three left-rail panels, prefrontal, identity."
+echo "   Default is ON so a clone looks like the product, not stock OpenClaw."
+PLUGIN_ANSWER="$(ask 'Enable the fork UI plugins? [Y/n]' Y)"
+PLUGIN_NOTE=""
+case "$PLUGIN_ANSWER" in
+  skip|no|n|N) say "Skipping plugin seeding. Run 'pnpm tinker:plugins' any time." ;;
+  *)
+    if node --import tsx scripts/seed-fork-plugins.mjs; then :; else
+      warn "Could not seed fork plugins. Re-run: pnpm tinker:plugins"
+      PLUGIN_NOTE="Enable the fork UI: ${BOLD}pnpm tinker:plugins${N}"
+    fi ;;
+esac
+
+# ---- 6. Optional components -------------------------------------------------
 say "Optional components (install later from ClawHub / plugins as needed):"
 echo "   • browser plugin   • downloader app   • mesh-VPN join   • messaging channels"
 
@@ -133,7 +151,8 @@ $(printf "${BOLD}Setup complete.${N}")
 Start the gateway:   ${BOLD}openclaw gateway start${N}     (or: node openclaw.mjs)
 Open the UI:         the address the gateway prints on start.
 ${CRON_NOTE:+
-$CRON_NOTE}
+$CRON_NOTE}${PLUGIN_NOTE:+
+$PLUGIN_NOTE}
 
 Personalize by editing files in your workspace ($WS) — never in this repo,
 so future 'git pull' stays clean. See FORK_SETUP.md for the git-pull contract.
