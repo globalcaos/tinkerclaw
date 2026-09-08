@@ -1,0 +1,212 @@
+[
+  {
+    "id": "T01",
+    "query": "What preferences are recorded for the development environment setup?",
+    "category": "semantic",
+    "difficulty": "easy",
+    "notes": "Tests basic semantic recall of preference-type memories"
+  },
+  {
+    "id": "T02",
+    "query": "What happened during the last consolidation cycle?",
+    "category": "episodic",
+    "difficulty": "medium",
+    "notes": "Tests temporal/episodic retrieval"
+  },
+  {
+    "id": "T03",
+    "query": "How should I handle sensitive data when sharing between agents?",
+    "category": "procedural",
+    "difficulty": "medium",
+    "notes": "Tests procedural knowledge retrieval"
+  },
+  {
+    "id": "T04",
+    "query": "recurring patterns in recorded project planning failures",
+    "category": "strategic",
+    "difficulty": "hard",
+    "notes": "Tests abstract/strategic retrieval; phrased to avoid keyword matching"
+  },
+  {
+    "id": "T05",
+    "query": "What tools were configured for audio processing?",
+    "category": "semantic",
+    "difficulty": "easy",
+    "notes": "Tests factual tool/config recall"
+  },
+  {
+    "id": "T06",
+    "query": "what happened, and in what order, during the most recent incident",
+    "category": "episodic",
+    "difficulty": "hard",
+    "notes": "Tests ordered event reconstruction without keyword match"
+  },
+  {
+    "id": "T07",
+    "query": "steps to deploy a new version safely",
+    "category": "procedural",
+    "difficulty": "medium",
+    "notes": "Tests multi-step procedural recall"
+  },
+  {
+    "id": "T08",
+    "query": "Which external services or integrations are configured?",
+    "category": "semantic",
+    "difficulty": "easy",
+    "notes": "Tests entity-type memory retrieval over configured services"
+  },
+  {
+    "id": "T09",
+    "query": "lessons learned from debugging difficult issues",
+    "category": "strategic",
+    "difficulty": "hard",
+    "notes": "Tests abstract lesson retrieval across multiple episodes"
+  },
+  {
+    "id": "T10",
+    "query": "What was decided about rate limits or usage quotas?",
+    "category": "episodic",
+    "difficulty": "medium",
+    "notes": "Tests topical episodic recall"
+  },
+  {
+    "id": "T11",
+    "query": "privacy rules for handling user data",
+    "category": "procedural",
+    "difficulty": "easy",
+    "notes": "Tests policy/procedural recall"
+  },
+  {
+    "id": "T12",
+    "query": "connections between automation projects and hardware",
+    "category": "strategic",
+    "difficulty": "hard",
+    "notes": "Tests multi-hop associative retrieval"
+  },
+  {
+    "id": "T13",
+    "query": "which scheduled or recurring jobs have run recently",
+    "category": "episodic",
+    "difficulty": "medium",
+    "notes": "Tests recurring-job pattern retrieval"
+  },
+  {
+    "id": "T14",
+    "query": "error handling best practices",
+    "category": "procedural",
+    "difficulty": "medium",
+    "notes": "Tests general procedural knowledge"
+  },
+  {
+    "id": "T15",
+    "query": "which design proposals were recorded for the retrieval pipeline",
+    "category": "episodic",
+    "difficulty": "medium",
+    "notes": "Tests recent episodic recall with abstract query"
+  },
+  {
+    "id": "T16",
+    "query": "tradeoffs between local and cloud solutions",
+    "category": "strategic",
+    "difficulty": "hard",
+    "notes": "Tests comparative/analytical retrieval"
+  },
+  {
+    "id": "T17",
+    "query": "which components make up the system and what each one does",
+    "category": "semantic",
+    "difficulty": "easy",
+    "notes": "Tests component/architecture relationship recall"
+  },
+  {
+    "id": "T18",
+    "query": "What failed and why in previous attempts?",
+    "category": "episodic",
+    "difficulty": "hard",
+    "notes": "Tests failure/negative experience retrieval"
+  },
+  {
+    "id": "T19",
+    "query": "configuration steps for new integrations",
+    "category": "procedural",
+    "difficulty": "medium",
+    "notes": "Tests setup/config procedural recall"
+  },
+  {
+    "id": "T20",
+    "query": "long-term technical objectives recorded for the memory system",
+    "category": "strategic",
+    "difficulty": "hard",
+    "notes": "Tests goal-tracking retrieval across time"
+  },
+  {
+    "id": "T21",
+    "query": "formatting and output conventions that are preferred",
+    "category": "semantic",
+    "difficulty": "easy",
+    "notes": "Tests convention/preference recall"
+  },
+  {
+    "id": "T22",
+    "query": "What did the last test or verification run report as failing?",
+    "category": "episodic",
+    "difficulty": "medium",
+    "notes": "Tests failure-report episodic recall"
+  },
+  {
+    "id": "T23",
+    "query": "how to resolve merge conflicts in the codebase",
+    "category": "procedural",
+    "difficulty": "medium",
+    "notes": "Tests specific technical procedural recall"
+  },
+  {
+    "id": "T24",
+    "query": "evolution of the memory architecture over time",
+    "category": "strategic",
+    "difficulty": "hard",
+    "notes": "Tests longitudinal strategic retrieval"
+  },
+  {
+    "id": "T25",
+    "query": "the most recent benchmark runs and when they happened",
+    "category": "episodic",
+    "difficulty": "easy",
+    "notes": "Tests temporal recall of recent runs"
+  },
+  {
+    "id": "T26",
+    "query": "Which file formats or codecs are documented as supported?",
+    "category": "semantic",
+    "difficulty": "easy",
+    "notes": "Tests documented-capability recall"
+  },
+  {
+    "id": "T27",
+    "query": "backup and recovery procedures",
+    "category": "procedural",
+    "difficulty": "medium",
+    "notes": "Tests disaster recovery procedural recall"
+  },
+  {
+    "id": "T28",
+    "query": "how tradeoffs between retrieval accuracy and latency were weighed over time",
+    "category": "strategic",
+    "difficulty": "hard",
+    "notes": "Tests longitudinal tradeoff-reasoning retrieval"
+  },
+  {
+    "id": "T29",
+    "query": "What was the outcome of the last research task?",
+    "category": "episodic",
+    "difficulty": "medium",
+    "notes": "Tests recent task outcome retrieval"
+  },
+  {
+    "id": "T30",
+    "query": "communication style preferences for different channels",
+    "category": "semantic",
+    "difficulty": "medium",
+    "notes": "Tests nuanced preference retrieval"
+  }
+]
