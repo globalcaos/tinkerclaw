@@ -5,8 +5,17 @@ Stores usage data from multiple AI providers:
 - Anthropic (Claude)
 - Manus AI
 - Google Gemini
+
+What is stored is COUNTS AND IDENTIFIERS: provider, model, token totals, cost, credit
+totals, opaque task ids, statuses and timestamps. No prompt text, no message content and
+no task titles are written here — see _migrate() for the erasure of the one column that
+used to hold prompt fragments.
+
+The database file and its directory are created owner-only (0700 / 0600) rather than
+inheriting whatever umask the shell or systemd unit happened to have.
 """
 
+import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime
@@ -20,10 +29,19 @@ def get_connection(db_path: Optional[Path] = None) -> sqlite3.Connection:
     """Get a database connection, creating tables if needed."""
     path = db_path or DEFAULT_DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    
+    os.chmod(path.parent, 0o700)
+
+    # Create the file ourselves so it cannot be born group/world readable; sqlite3
+    # would otherwise apply the ambient umask. This file reports what you spend.
+    if not path.exists():
+        os.close(os.open(str(path), os.O_CREAT | os.O_WRONLY, 0o600))
+    elif not path.is_symlink():
+        os.chmod(path, 0o600)
+
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     _init_schema(conn)
+    _migrate(conn)
     return conn
 
 
@@ -56,7 +74,6 @@ def _init_schema(conn: sqlite3.Connection):
             task_id TEXT UNIQUE NOT NULL,
             credits_used INTEGER NOT NULL,
             status TEXT,                      -- 'completed', 'error', 'running'
-            description TEXT,
             started_at TEXT,
             completed_at TEXT,
             metadata TEXT,                    -- JSON for extra fields
@@ -93,6 +110,25 @@ def _init_schema(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_summary(date);
     """)
     conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection):
+    """Erase prompt-derived content left behind by earlier versions.
+
+    manus_tasks.description used to hold the first 200 characters of the task prompt.
+    New installs never create the column; installs that already have it get the values
+    blanked here. Nothing writes to it again, so it stays empty. Runs on every connect
+    and is a no-op once clean.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(manus_tasks)").fetchall()]
+    if "description" not in cols:
+        return
+    n = conn.execute(
+        "UPDATE manus_tasks SET description = NULL WHERE description IS NOT NULL"
+    ).rowcount
+    conn.commit()
+    if n:
+        print(f"token-panel: erased stored prompt text from {n} manus task record(s).")
 
 
 # ============================================================================
@@ -149,22 +185,25 @@ def record_manus_task(
     task_id: str,
     credits_used: int,
     status: str = "completed",
-    description: str = None,
     started_at: datetime = None,
     completed_at: datetime = None,
     metadata: dict = None,
 ):
-    """Record a Manus task completion."""
+    """Record a Manus task completion — id, credits, status and timestamps only.
+
+    There is no `description` parameter. Callers that used to pass prompt text have
+    nowhere to put it, which is the point.
+    """
     now = datetime.utcnow().isoformat()
     conn.execute("""
-        INSERT INTO manus_tasks (task_id, credits_used, status, description, started_at, completed_at, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO manus_tasks (task_id, credits_used, status, started_at, completed_at, metadata)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
             credits_used = excluded.credits_used,
             status = excluded.status,
             completed_at = excluded.completed_at
     """, (
-        task_id, credits_used, status, description,
+        task_id, credits_used, status,
         started_at.isoformat() if started_at else None,
         (completed_at or datetime.utcnow()).isoformat(),
         json.dumps(metadata) if metadata else None

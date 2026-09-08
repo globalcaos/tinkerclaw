@@ -1,24 +1,43 @@
-# Budget Collector — systemd service template
-# CUSTOMIZE before installing:
-#   - Replace YOUR_USER with your OS username
-#   - Replace YOUR_HOME with your home directory (e.g., /home/youruser)
-# Install: sudo cp budget-collector.service /etc/systemd/system/
-#          sudo systemctl daemon-reload && sudo systemctl enable --now budget-collector
+# Token Panel — usage collector API.
+#
+# This is a USER unit. Install it per-user, never system-wide:
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp budget-collector.service ~/.config/systemd/user/
+#   systemctl --user edit budget-collector   # set WorkingDirectory to your skill path
+#   systemctl --user enable --now budget-collector
+#
+# It therefore runs as you, with your keychain, and never as root. There is no User=
+# line to edit: `systemctl --user` supplies the account, so this file carries no
+# machine's username.
 
 [Unit]
-Description=Budget Collector - AI Usage Tracking
-After=network.target
+Description=Token Panel - AI usage tracking API
+After=network-online.target
 
 [Service]
 Type=simple
-User=YOUR_USER
-WorkingDirectory=YOUR_HOME/src/budget-collector
-ExecStart=YOUR_HOME/.local/bin/uvicorn api:app --host 127.0.0.1 --port 8765
+# Point this at the directory holding api.py (where you installed the skill).
+WorkingDirectory=%h/.openclaw/skills/token-panel-ultimate
+ExecStart=%h/.local/bin/uvicorn api:app --host 127.0.0.1 --port 8765
 Restart=on-failure
 RestartSec=10
 
-# Environment
 Environment=PYTHONUNBUFFERED=1
+# Mutating endpoints stay CLOSED unless you set a token, e.g. via an override:
+#   systemctl --user edit budget-collector
+#   [Service]
+#   Environment=TOKEN_PANEL_API_TOKEN=<a long random string>
+
+# The collector writes only to its SQLite database under your home directory.
+# ProtectSystem=full keeps /usr, /boot and /etc read-only; ProtectSystem=strict is NOT
+# used because it would also make $HOME read-only and the database lives there.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

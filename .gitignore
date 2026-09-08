@@ -159,6 +159,11 @@ PRIVACY.md
 PROJECTS.md
 VOICE.md
 SESSION.md
+# Bundled day-0 templates are not personal data — they must ship.
+!extensions/tinkerclaw-tinker-bridge/workspace-kit/HEARTBEAT.md
+!extensions/tinkerclaw-tinker-bridge/workspace-kit/TOOLS.md
+!extensions/tinkerclaw-tinker-bridge/workspace-kit/SESSION.md
+!extensions/tinkerclaw-tinker-bridge/workspace-kit/USER.md
 .openclaw/
 bank/
 data/

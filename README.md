@@ -378,9 +378,10 @@ Visit **`http://localhost:18789/tinker/`** for the command center. Click the **T
 - **Context pruning** — cache-ttl prevents unbounded session growth
 - **Budget panel** — token cost tracking so you know what each session costs
 - **Tinker UI** — real-time context treemaps, session management, cost dashboard
-- **93 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
+- **99+ skills in `skills/`** — voice, messaging, media, security, diagramming, shopping, HR/Planner via the live browser session. Cloned with the repo; nothing to install
 - **Six structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer (opt out with `pnpm tinker:crons:disable`)
 - **Fork UI plugins** — Tinker, the three left-rail panels, prefrontal. Seeded ON so a clone looks like the product, not stock OpenClaw
+- **Workspace starter kit** — AGENTS, heartbeat, session, cron-report contract, the 14 robotic primaries. Copied on first setup, never overwritten
 
 ### Required Setup (you must do these)
 

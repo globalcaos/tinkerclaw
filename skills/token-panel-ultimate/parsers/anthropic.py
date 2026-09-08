@@ -2,7 +2,9 @@
 Anthropic Usage API Parser
 
 Fetches usage data from Anthropic's Admin API.
-Requires ANTHROPIC_ADMIN_API_KEY environment variable.
+Credential: stored by you via `secretstore.py --login anthropic` (OS keychain).
+A generic ANTHROPIC_ADMIN_API_KEY from the environment is used only with
+TOKEN_PANEL_ALLOW_PROVIDER_ENV=1 — it belongs to other tools too.
 
 API Docs: https://platform.claude.com/docs/en/build-with-claude/usage-cost-api
 """
@@ -12,6 +14,8 @@ import httpx
 from datetime import datetime, timedelta
 from typing import Optional
 import logging
+
+from secretstore import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +42,8 @@ class AnthropicParser:
     """Parse usage data from Anthropic's API."""
     
     def __init__(self, admin_api_key: Optional[str] = None):
-        self.api_key = admin_api_key or os.getenv("ANTHROPIC_ADMIN_API_KEY")
+        stored_key, _ = get_secret("anthropic")
+        self.api_key = admin_api_key or stored_key
         self.base_url = "https://api.anthropic.com/v1"
         
     def is_configured(self) -> bool:
@@ -75,7 +80,7 @@ class AnthropicParser:
     async def fetch_daily_usage(self, date: datetime) -> list[dict]:
         """Fetch usage for a specific day from the Admin API."""
         if not self.api_key:
-            logger.warning("ANTHROPIC_ADMIN_API_KEY not set, skipping API fetch")
+            logger.warning("no Anthropic credential stored; run: secretstore.py --login anthropic")
             return []
         
         date_str = date.strftime("%Y-%m-%d")

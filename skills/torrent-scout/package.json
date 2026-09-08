@@ -1,0 +1,13 @@
+{
+  "name": "torrent-scout",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Search, verify and retrieve torrents — inspects the real file list before a single content byte is transferred, and never seeds.",
+  "type": "module",
+  "dependencies": {
+    "parse-torrent": "^11.0.18"
+  },
+  "optionalDependencies": {
+    "webtorrent": "^2.6.10"
+  }
+}

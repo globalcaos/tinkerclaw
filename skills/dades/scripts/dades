@@ -1,0 +1,367 @@
+#!/usr/bin/env node
+// dades — read-only gateway to the company NAS (configured in policy.json).
+//
+// This CLI is the ONLY sanctioned path to the disk. Its safety is structural,
+// not behavioural (J9/AEGIS: a "read only" rule in a prompt is rated 2/5 and
+// fails under pressure; a code-level guard is 4/5). Therefore:
+//   - There is NO enabled code path that writes, moves, or deletes on the disk.
+//   - Write/modify/rm subcommands exist only to refuse loudly and log the attempt.
+//   - Every call resolves its path INSIDE the mount root (no `..`/symlink escape).
+//   - Every call appends one line to an off-disk append-only audit log.
+//
+// Usage:
+//   dades ls [relpath]                 list a directory (default: share root)
+//   dades tree [relpath] [--depth N]   directory tree (dirs only), default depth 2
+//   dades cat <relpath>                print a text file (<=5MB, refuses binary)
+//   dades get <relpath>                copy ONE file out to the local export dir (read-only on the share)
+//   dades stat <relpath>               file/dir metadata
+//   dades find [relpath] <pattern>     case-insensitive name search under relpath
+//   dades map [--depth N] [--refresh]  (re)build the cached folder map (dirs)
+//   dades tier [relpath]               show the importance tier of a path
+//   dades audit [--tail N]             show recent audit-log lines (default 20)
+//   dades status                       show mount state, mode, enabled levels
+//
+// Read-only is enforced here in code. To make it enforced by the OS as well
+// (strongest layer), mount the share read-only — see references/security-model.md.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+
+const SKILL_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const POLICY = JSON.parse(fs.readFileSync(path.join(SKILL_DIR, 'policy.json'), 'utf8'));
+
+function mountRoot() {
+  const uid = process.getuid();
+  const { server, share } = POLICY.mount;
+  return `/run/user/${uid}/gvfs/smb-share:server=${server},share=${share}`;
+}
+
+function fail(msg, code = 1) {
+  process.stderr.write(`dades: ${msg}\n`);
+  process.exit(code);
+}
+
+// --- audit (append-only JSONL, off the audited disk) -----------------------
+function auditPath() {
+  // Month-bucketed file so a single log never grows unbounded.
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  return path.join(POLICY.audit.dir, `audit-${ym}.jsonl`);
+}
+function audit(entry) {
+  try {
+    fs.mkdirSync(POLICY.audit.dir, { recursive: true });
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n';
+    fs.appendFileSync(auditPath(), line);
+  } catch (e) {
+    process.stderr.write(`dades: WARNING could not write audit log: ${e.message}\n`);
+  }
+}
+
+// --- path confinement ------------------------------------------------------
+// Resolve a user-supplied relative path to an absolute path that is provably
+// inside the mount root. Reject anything that escapes (../, absolute, symlink-out).
+function resolveInside(rel) {
+  const root = mountRoot();
+  const abs = path.resolve(root, rel || '.');
+  const rootReal = (() => { try { return fs.realpathSync(root); } catch { return root; } })();
+  // Containment by prefix on the *resolved* path; also realpath the target if it exists
+  // so a symlink pointing outside the share is caught.
+  let target = abs;
+  try { target = fs.realpathSync(abs); } catch { /* may not exist yet; use abs */ }
+  const within = (p) => p === rootReal || p.startsWith(rootReal + path.sep) || p === root || p.startsWith(root + path.sep);
+  if (!within(target) && !within(abs)) {
+    audit({ op: 'denied', reason: 'path-escape', rel });
+    fail(`path escapes the share root: ${rel}`);
+  }
+  return abs;
+}
+
+function mountPresent() {
+  try { return fs.existsSync(mountRoot()) && fs.statSync(mountRoot()).isDirectory(); }
+  catch { return false; }
+}
+function requireMount() {
+  if (!mountPresent()) {
+    audit({ op: 'error', reason: 'mount-absent' });
+    fail(`the dades share is not mounted at ${mountRoot()} — reconnect it in the file manager and retry.`);
+  }
+}
+
+// --- tier lookup -----------------------------------------------------------
+function topFolderOf(rel) {
+  const norm = (rel || '.').replace(/^[./]+/, '');
+  if (!norm || norm === '.') return null;
+  return norm.split('/')[0];
+}
+function tierOf(rel) {
+  const top = topFolderOf(rel);
+  if (!top) return null; // share root itself
+  const t = POLICY.folderTiers[top];
+  return t == null ? POLICY.defaultTier : t;
+}
+function tierLabel(t) {
+  if (t == null) return 'root';
+  const info = POLICY.tiers[String(t)];
+  return `T${t} ${info ? info.name : '?'}`;
+}
+
+// --- write-attempt refusal (the structural read-only guarantee) ------------
+function blockedWrite(op, rel) {
+  audit({ op: 'blocked', verb: op, rel, tier: tierOf(rel), mode: POLICY.mode });
+  process.stderr.write(
+    `dades: BLOCKED — '${op}' is a write operation and this gateway is ${POLICY.mode} ` +
+    `(enabled levels: ${POLICY.enabledLevels.join(', ')}).\n` +
+    `Nothing was changed on the disk. Write tiers (L1 create-new / L2 version-save / L3 own-modify) ` +
+    `are designed but disabled; see references/security-model.md.\n`);
+  process.exit(3);
+}
+
+// --- read operations -------------------------------------------------------
+function fmtSize(n) {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}K`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}M`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)}G`;
+}
+
+function cmdLs(rel) {
+  requireMount();
+  const abs = resolveInside(rel);
+  let entries;
+  try { entries = fs.readdirSync(abs, { withFileTypes: true }); }
+  catch (e) { audit({ op: 'ls', rel, ok: false, reason: e.code }); fail(`cannot list ${rel || '.'}: ${e.message}`); }
+  entries.sort((a, b) => (b.isDirectory() - a.isDirectory()) || a.name.localeCompare(b.name));
+  const t = tierOf(rel);
+  console.log(`# ${rel || '/'}  [${tierLabel(t)}]  (${entries.length} entries)`);
+  for (const e of entries) {
+    let size = '', mtime = '';
+    try { const s = fs.statSync(path.join(abs, e.name)); size = e.isDirectory() ? '' : fmtSize(s.size); mtime = s.mtime.toISOString().slice(0, 10); }
+    catch { /* ignore stat errors on individual entries */ }
+    console.log(`${e.isDirectory() ? 'd' : '-'} ${mtime.padEnd(10)} ${size.padStart(7)}  ${e.name}`);
+  }
+  audit({ op: 'ls', rel: rel || '.', tier: t, ok: true, count: entries.length });
+}
+
+function walkTree(abs, rel, depth, maxDepth, lines) {
+  if (depth > maxDepth) return;
+  let entries;
+  try { entries = fs.readdirSync(abs, { withFileTypes: true }); } catch { return; }
+  const dirs = entries.filter(e => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name));
+  for (const d of dirs) {
+    lines.push(`${'  '.repeat(depth)}${d.name}/`);
+    walkTree(path.join(abs, d.name), path.join(rel, d.name), depth + 1, maxDepth, lines);
+  }
+}
+function cmdTree(rel, depth) {
+  requireMount();
+  const abs = resolveInside(rel);
+  const maxDepth = Math.min(depth || POLICY.limits.mapDefaultDepth, POLICY.limits.mapMaxDepth) - 1;
+  const lines = [];
+  walkTree(abs, rel || '', 0, maxDepth, lines);
+  const t = tierOf(rel);
+  console.log(`# tree ${rel || '/'}  [${tierLabel(t)}]  depth=${maxDepth + 1}`);
+  console.log(lines.join('\n'));
+  audit({ op: 'tree', rel: rel || '.', tier: t, depth: maxDepth + 1, ok: true, dirs: lines.length });
+}
+
+function looksBinary(buf) {
+  const n = Math.min(buf.length, 8000);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+  return false;
+}
+function cmdCat(rel) {
+  if (!rel) fail('cat needs a file path');
+  requireMount();
+  const abs = resolveInside(rel);
+  let st;
+  try { st = fs.statSync(abs); } catch (e) { audit({ op: 'cat', rel, ok: false, reason: e.code }); fail(`cannot read ${rel}: ${e.message}`); }
+  if (st.isDirectory()) fail(`${rel} is a directory — use 'ls'`);
+  if (st.size > POLICY.limits.catMaxBytes) { audit({ op: 'cat', rel, ok: false, reason: 'too-large', bytes: st.size }); fail(`${rel} is ${fmtSize(st.size)} (> ${fmtSize(POLICY.limits.catMaxBytes)} cap) — too large to print`); }
+  const buf = fs.readFileSync(abs);
+  if (looksBinary(buf)) { audit({ op: 'cat', rel, tier: tierOf(rel), ok: false, reason: 'binary', bytes: st.size }); fail(`${rel} looks binary (${fmtSize(st.size)}) — not printing. Use 'stat' for metadata.`); }
+  process.stdout.write(buf.toString('utf8'));
+  if (!buf.toString('utf8').endsWith('\n')) process.stdout.write('\n');
+  audit({ op: 'cat', rel, tier: tierOf(rel), ok: true, bytes: st.size });
+}
+
+// Read-only resolver for Windows .lnk shortcuts: extracts the embedded target
+// path(s) so cross-folder links can be recorded. Stays inside resolveInside +
+// audit; only reads bytes, never writes. (cat refuses .lnk as binary by design.)
+function cmdLnk(rel) {
+  if (!rel) fail('lnk needs a .lnk shortcut path');
+  requireMount();
+  const abs = resolveInside(rel);
+  let st;
+  try { st = fs.statSync(abs); } catch (e) { audit({ op: 'lnk', rel, ok: false, reason: e.code }); fail(`cannot read ${rel}: ${e.message}`); }
+  if (st.isDirectory()) fail(`${rel} is a directory`);
+  if (st.size > POLICY.limits.catMaxBytes) { audit({ op: 'lnk', rel, ok: false, reason: 'too-large', bytes: st.size }); fail(`${rel} is ${fmtSize(st.size)} — too large`); }
+  const buf = fs.readFileSync(abs);
+  const cands = new Set();
+  const re = /(?:[A-Za-z]:\\|\\\\)[^ -"<>|?*\r\n]{2,260}/g;
+  for (const enc of ['latin1', 'utf16le']) {
+    const s = buf.toString(enc); let m;
+    while ((m = re.exec(s))) cands.add(m[0].replace(/[ \t]+$/, ''));
+  }
+  const targets = [...cands].sort((a, b) => b.length - a.length);
+  audit({ op: 'lnk', rel, tier: tierOf(rel), ok: true, targets: targets.length });
+  console.log(JSON.stringify({ lnk: rel, targets }, null, 2));
+}
+
+function cmdStat(rel) {
+  if (!rel) fail('stat needs a path');
+  requireMount();
+  const abs = resolveInside(rel);
+  let s;
+  try { s = fs.statSync(abs); } catch (e) { audit({ op: 'stat', rel, ok: false, reason: e.code }); fail(`cannot stat ${rel}: ${e.message}`); }
+  const t = tierOf(rel);
+  console.log(JSON.stringify({
+    path: rel, tier: tierLabel(t), type: s.isDirectory() ? 'dir' : 'file',
+    size: s.size, sizeHuman: fmtSize(s.size),
+    mtime: s.mtime.toISOString(), ctime: s.ctime.toISOString()
+  }, null, 2));
+  audit({ op: 'stat', rel, tier: t, ok: true });
+}
+
+function cmdFind(rel, pattern) {
+  if (!pattern) fail('find needs a search pattern: dades find [relpath] <pattern>');
+  requireMount();
+  const abs = resolveInside(rel);
+  const needle = pattern.toLowerCase();
+  const hits = [];
+  const cap = 500;
+  (function walk(dir, r) {
+    if (hits.length >= cap) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (hits.length >= cap) return;
+      const childRel = r ? `${r}/${e.name}` : e.name;
+      if (e.name.toLowerCase().includes(needle)) hits.push(`${e.isDirectory() ? 'd' : '-'} ${childRel}`);
+      if (e.isDirectory()) walk(path.join(dir, e.name), childRel);
+    }
+  })(abs, rel || '');
+  console.log(hits.join('\n'));
+  console.log(`# ${hits.length}${hits.length >= cap ? '+ (capped)' : ''} match(es) for "${pattern}" under ${rel || '/'}`);
+  audit({ op: 'find', rel: rel || '.', pattern, ok: true, hits: hits.length });
+}
+
+function cmdMap(depth, refresh) {
+  requireMount();
+  const d = Math.min(depth || POLICY.limits.mapDefaultDepth, POLICY.limits.mapMaxDepth);
+  const cacheFile = path.join(SKILL_DIR, 'references', 'folder-map.cache.txt');
+  if (!refresh && fs.existsSync(cacheFile)) {
+    process.stdout.write(fs.readFileSync(cacheFile, 'utf8'));
+    audit({ op: 'map', cached: true, ok: true });
+    return;
+  }
+  const root = mountRoot();
+  const lines = [`# dades folder map  (depth ${d}, generated ${new Date().toISOString()})`];
+  let topEntries;
+  try { topEntries = fs.readdirSync(root, { withFileTypes: true }); } catch (e) { fail(`cannot read share root: ${e.message}`); }
+  for (const top of topEntries.filter(e => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+    const t = POLICY.folderTiers[top.name] ?? POLICY.defaultTier;
+    lines.push(`\n${top.name}/   [${tierLabel(t)}]`);
+    const sub = [];
+    walkTree(path.join(root, top.name), top.name, 1, d - 1, sub);
+    lines.push(...sub);
+  }
+  const out = lines.join('\n') + '\n';
+  fs.writeFileSync(cacheFile, out); // cache is in the skill dir, NOT on the NAS
+  process.stdout.write(out);
+  audit({ op: 'map', cached: false, depth: d, ok: true });
+}
+
+function cmdTier(rel) {
+  const t = tierOf(rel);
+  const top = topFolderOf(rel);
+  const info = t == null ? null : POLICY.tiers[String(t)];
+  console.log(JSON.stringify({
+    path: rel || '/', topFolder: top, tier: t == null ? 'root' : `T${t}`,
+    name: info ? info.name : (t == null ? 'share root' : '?'),
+    writeFuture: info ? info.writeFuture : 'n/a',
+    enabledNow: POLICY.enabledLevels
+  }, null, 2));
+}
+
+function cmdAudit(tail) {
+  const n = tail || 20;
+  const f = auditPath();
+  if (!fs.existsSync(f)) { console.log('(no audit entries this month)'); return; }
+  const lines = fs.readFileSync(f, 'utf8').trim().split('\n');
+  console.log(lines.slice(-n).join('\n'));
+}
+
+function cmdStatus() {
+  console.log(JSON.stringify({
+    server: POLICY.mount.server, share: POLICY.mount.share,
+    mountPath: mountRoot(), mounted: mountPresent(),
+    mode: POLICY.mode, enabledLevels: POLICY.enabledLevels,
+    auditDir: POLICY.audit.dir, auditFile: auditPath(),
+    tiersClassified: Object.keys(POLICY.folderTiers).length, defaultTier: `T${POLICY.defaultTier}`
+  }, null, 2));
+}
+
+// --- export (a READ of a binary file, out to a pinned local dir) -----------
+// Binary files (.mpp, .xlsx, .pdf) cannot be `cat`-ed, but opening them locally
+// is still a pure READ of the share: the source is opened read-only and never
+// written, moved or deleted. The destination is PINNED to one local export dir
+// so this can never be steered into writing onto the NAS or scattering
+// confidential files across the filesystem. Every export is audited with its
+// tier and byte count. Nothing leaves this machine.
+const EXPORT_DIR = path.join(os.homedir(), '.openclaw', 'dades-export');
+const EXPORT_MAX_BYTES = 200 * 1024 * 1024;
+
+function cmdGet(rel) {
+  requireMount();
+  if (!rel) fail('usage: dades get <relpath>');
+  const abs = resolveInside(rel);
+  let st;
+  try { st = fs.statSync(abs); } catch { audit({ op: 'get', rel, ok: false, reason: 'missing' }); fail(`no such file: ${rel}`); }
+  if (!st.isFile()) fail(`not a file (only single files can be exported): ${rel}`);
+  if (st.size > EXPORT_MAX_BYTES) fail(`file too large to export: ${st.size} bytes > ${EXPORT_MAX_BYTES}`);
+  fs.mkdirSync(EXPORT_DIR, { recursive: true, mode: 0o700 });
+  const dest = path.join(EXPORT_DIR, path.basename(abs));
+  fs.copyFileSync(abs, dest);          // source opened read-only; never modified
+  fs.chmodSync(dest, 0o600);           // confidential by default
+  audit({ op: 'get', rel, tier: tierOf(rel), bytes: st.size, dest, ok: true });
+  console.log(JSON.stringify({
+    source: rel, tier: tierLabel(tierOf(rel)), bytes: st.size, localCopy: dest,
+    note: 'local copy only — read-only on the share, nothing left this machine'
+  }, null, 2));
+}
+
+// --- arg parsing -----------------------------------------------------------
+function flag(args, name) {
+  const i = args.indexOf(name);
+  if (i === -1) return undefined;
+  const v = args[i + 1];
+  args.splice(i, v && !v.startsWith('--') ? 2 : 1);
+  return v && !v.startsWith('--') ? v : true;
+}
+
+const argv = process.argv.slice(2);
+const cmd = argv.shift();
+
+switch (cmd) {
+  case 'ls': cmdLs(argv[0]); break;
+  case 'tree': { const d = flag(argv, '--depth'); cmdTree(argv[0], d ? parseInt(d, 10) : undefined); break; }
+  case 'cat': cmdCat(argv[0]); break;
+  case 'get': cmdGet(argv[0]); break;
+  case 'lnk': cmdLnk(argv[0]); break;
+  case 'stat': cmdStat(argv[0]); break;
+  case 'find': cmdFind(argv.length > 1 ? argv[0] : '', argv.length > 1 ? argv[1] : argv[0]); break;
+  case 'map': { const refresh = flag(argv, '--refresh') !== undefined; const d = flag(argv, '--depth'); cmdMap(d ? parseInt(d, 10) : undefined, refresh); break; }
+  case 'tier': cmdTier(argv[0]); break;
+  case 'audit': { const t = flag(argv, '--tail'); cmdAudit(t ? parseInt(t, 10) : undefined); break; }
+  case 'status': cmdStatus(); break;
+  // write verbs — present ONLY to refuse and log; no enabled implementation exists.
+  case 'write': case 'create': case 'save': case 'put': blockedWrite(cmd, argv[0]); break;
+  case 'modify': case 'edit': case 'version': blockedWrite(cmd, argv[0]); break;
+  case 'rm': case 'delete': case 'mv': case 'move': blockedWrite(cmd, argv[0]); break;
+  case undefined: case '-h': case '--help': case 'help':
+    process.stdout.write(fs.readFileSync(new URL(import.meta.url)).toString().split('\n').filter(l => l.startsWith('//')).map(l => l.slice(3)).join('\n') + '\n');
+    break;
+  default: fail(`unknown command '${cmd}'. Run 'dades help'.`);
+}

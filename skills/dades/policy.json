@@ -1,0 +1,53 @@
+{
+  "_comment": "TRUST ROOT for the dades CLI. Edit mount.server / mount.share to point at YOUR company NAS. Keep mode read-only until you have a write rollout.",
+  "mount": {
+    "server": "fileserver.example.internal",
+    "share": "share",
+    "transport": "gvfs-smb",
+    "_path_template": "/run/user/<uid>/gvfs/smb-share:server=<server>,share=<share>"
+  },
+  "mode": "read-only",
+  "enabledLevels": ["L0"],
+  "_levels": {
+    "L0": "READ \u2014 ls, tree, cat, stat, find, map. No mutation. ENABLED.",
+    "L1": "CREATE-NEW \u2014 author a brand-new file into an allowed folder; never overwrites. DISABLED.",
+    "L2": "VERSION-SAVE \u2014 write a new versioned copy alongside; original untouched. DISABLED.",
+    "L3": "OWN-MODIFY \u2014 freely modify a file the agent itself created. DISABLED.",
+    "NEVER": "Overwrite or delete another author's file. Never auto."
+  },
+  "limits": {
+    "catMaxBytes": 5242880,
+    "mapDefaultDepth": 2,
+    "mapMaxDepth": 99
+  },
+  "audit": {
+    "dir": "$HOME/.openclaw/workspace/memory/dades",
+    "_note": "Append-only JSONL, stored OFF the audited disk."
+  },
+  "defaultTier": 1,
+  "_defaultTier_note": "Fail-safe: unclassified folders are Tier 1 (read-only) until explicitly tiered.",
+  "tiers": {
+    "1": {
+      "name": "CROWN JEWELS",
+      "writeFuture": "none \u2014 read-only forever"
+    },
+    "2": {
+      "name": "SENSITIVE",
+      "writeFuture": "future: create-new / version-save into named archive subfolders only"
+    },
+    "3": {
+      "name": "OPERATIONAL / IT",
+      "writeFuture": "future: scoped create-new + version-save"
+    },
+    "4": {
+      "name": "SANDBOX",
+      "writeFuture": "future: most permissive; still NEVER delete"
+    }
+  },
+  "folderTiers": {
+    "engineering": 1,
+    "finance": 2,
+    "operations": 3,
+    "scratch": 4
+  }
+}
