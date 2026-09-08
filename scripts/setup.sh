@@ -55,7 +55,19 @@ fi
 LINK="$(ask 'Code-linking — installed-copy (default) or dev-linked (edit the clone live)?' installed-copy)"
 if [ "$LINK" = dev-linked ]; then
   say "Linking the gateway CLI globally so edits to this clone are live…"
-  pnpm link --global || warn "pnpm link --global failed (non-fatal)."
+  # pnpm refuses to link if it has no global bin dir (measured 2026-09-08 on Goku:
+  # ERR_PNPM_NO_GLOBAL_BIN_DIR, and the installer used to swallow that as non-fatal).
+  export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+  mkdir -p "$PNPM_HOME"
+  case ":$PATH:" in *":$PNPM_HOME:"*) ;; *) export PATH="$PNPM_HOME:$PATH" ;; esac
+  if ! pnpm config get global-bin-dir >/dev/null 2>&1 || [ "$(pnpm config get global-bin-dir 2>/dev/null)" = "undefined" ]; then
+    pnpm config set global-bin-dir "$PNPM_HOME" >/dev/null
+  fi
+  if pnpm link --global; then
+    say "openclaw → $(command -v openclaw)"
+  else
+    die "pnpm link --global failed. The CLI is not dev-linked."
+  fi
 fi
 
 # ---- 4. Agent identity (personalization lives in the workspace) -------------

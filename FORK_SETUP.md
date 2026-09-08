@@ -71,13 +71,19 @@ ls node_modules/better-sqlite3/build/Release/better_sqlite3.node
 
 If missing: `pnpm rebuild better-sqlite3 opusscript`
 
-Install the `openclaw` CLI globally:
+Install the `openclaw` CLI globally (dev-linked = this clone is the CLI):
 
 ```bash
+export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+mkdir -p "$PNPM_HOME"
+export PATH="$PNPM_HOME:$PATH"
+pnpm config set global-bin-dir "$PNPM_HOME"
 pnpm link --global
 ```
 
-Verify: `which openclaw` should point to your repo's `openclaw.mjs`.
+Verify: `readlink -f $(which openclaw)` should resolve inside this repo
+(`…/src/tinkerclaw/openclaw.mjs`). If `pnpm link --global` errors with
+`ERR_PNPM_NO_GLOBAL_BIN_DIR`, the three lines above are the fix — do not skip them.
 
 Install Tinker UI dependencies:
 
