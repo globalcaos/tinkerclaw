@@ -83,6 +83,18 @@ else
   } > "$IDFILE"
 fi
 
+# Workspace starter kit — copy only files that do not already exist.
+KIT="$REPO/extensions/tinkerclaw-tinker-bridge/workspace-kit"
+if [ -d "$KIT" ]; then
+  say "Seeding workspace starter kit (existing files are left untouched)…"
+  for f in AGENTS.md HEARTBEAT.md SESSION.md CRON-REPORT-CONTRACT.md TOOLS.md USER.md; do
+    if [ ! -e "$WS/$f" ] && [ -f "$KIT/$f" ]; then
+      cp "$KIT/$f" "$WS/$f"
+      say "  $f"
+    fi
+  done
+fi
+
 # ---- 5. Structural crons (the habits, not just the engine) -------------------
 # These are the jobs that make the fork maintain ITSELF overnight: consolidate
 # memory, tidy the workspace, sweep for security updates, refresh model ranks,

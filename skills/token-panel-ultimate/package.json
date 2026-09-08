@@ -1,0 +1,26 @@
+{
+  "name": "token-panel-ultimate",
+  "version": "2.6.0",
+  "description": "Track AI usage across Claude, ChatGPT, Gemini & Manus in one OpenClaw dashboard. 5-hour/7-day rolling windows, per-model rate limits, credit balances, reset times. Credentials sealed in the OS keychain and never passed on a command line; no other application's credential store is read. Only counts are stored.",
+  "keywords": [
+    "api-usage",
+    "budget",
+    "chatgpt",
+    "claude-max",
+    "cost-tracking",
+    "dashboard",
+    "gemini",
+    "manus",
+    "openai",
+    "openclaw",
+    "rate-limits",
+    "token-counting",
+    "tokens",
+    "usage",
+    "usage-tracking",
+    "widget"
+  ],
+  "license": "MIT",
+  "author": "Oscar Serra",
+  "repository": "https://github.com/globalcaos/tinkerclaw"
+}

@@ -1,16 +1,30 @@
 """
 Budget Collector HTTP API
 
-Exposes endpoints for OpenClaw plugin to query budget data.
+Exposes endpoints for the OpenClaw plugin to query budget data.
 Run with: uvicorn api:app --port 8765
+
+READ vs WRITE. The GET endpoints are open to a caller that can reach the port; every
+mutating endpoint (POST /usage, POST /budgets, POST /manus/task) additionally requires
+the X-Token-Panel-Token header to match TOKEN_PANEL_API_TOKEN, and is CLOSED outright
+when that variable is unset. Bind to localhost: the GETs report your spend and quota.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
+import os
 import db
+
+MUTATE_TOKEN = os.environ.get("TOKEN_PANEL_API_TOKEN", "")
+
+def require_mutate_token(x_token: Optional[str] = Header(default=None, alias="X-Token-Panel-Token")):
+    if not MUTATE_TOKEN:
+        raise HTTPException(status_code=403, detail="TOKEN_PANEL_API_TOKEN is not set; mutating endpoints are closed")
+    if not x_token or x_token != MUTATE_TOKEN:
+        raise HTTPException(status_code=403, detail="mutating endpoints require X-Token-Panel-Token")
 
 app = FastAPI(
     title="Budget Collector API",
@@ -18,12 +32,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Allow OpenClaw to connect
+# Local dashboards only. Wildcard CORS would let any website the user has
+# open call this API from the browser and read or mutate usage records.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[
+        "http://127.0.0.1:18789",
+        "http://localhost:18789",
+        "http://127.0.0.1:8765",
+        "http://localhost:8765",
+    ],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -42,10 +62,12 @@ class UsageRecord(BaseModel):
     cache_write_tokens: int = 0
 
 class ManusTask(BaseModel):
+    # No description/prompt field: a usage record is an id, a credit count and a status.
+    # Pydantic drops unknown keys, so an older client still POSTing "description" gets a
+    # 200 and its prompt text goes nowhere.
     task_id: str
     credits_used: int
     status: str = "completed"
-    description: Optional[str] = None
 
 class BudgetConfig(BaseModel):
     provider: str
@@ -70,8 +92,9 @@ def health():
 # --- Usage Recording ---
 
 @app.post("/usage")
-def record_usage(record: UsageRecord):
+def record_usage(record: UsageRecord, x_token: Optional[str] = Header(default=None, alias="X-Token-Panel-Token")):
     """Record a usage event from any provider."""
+    require_mutate_token(x_token)
     conn = db.get_connection()
     db.record_usage(
         conn,
@@ -88,15 +111,15 @@ def record_usage(record: UsageRecord):
 
 
 @app.post("/manus/task")
-def record_manus_task(task: ManusTask):
+def record_manus_task(task: ManusTask, x_token: Optional[str] = Header(default=None, alias="X-Token-Panel-Token")):
     """Record a Manus task completion."""
+    require_mutate_token(x_token)
     conn = db.get_connection()
     db.record_manus_task(
         conn,
         task_id=task.task_id,
         credits_used=task.credits_used,
         status=task.status,
-        description=task.description,
     )
     return {"status": "recorded"}
 
@@ -104,8 +127,9 @@ def record_manus_task(task: ManusTask):
 # --- Budget Management ---
 
 @app.post("/budgets")
-def set_budget(config: BudgetConfig):
+def set_budget(config: BudgetConfig, x_token: Optional[str] = Header(default=None, alias="X-Token-Panel-Token")):
     """Set or update a monthly budget."""
+    require_mutate_token(x_token)
     conn = db.get_connection()
     db.set_budget(conn, config.provider, config.monthly_limit, config.alert_threshold)
     return {"status": "updated"}
