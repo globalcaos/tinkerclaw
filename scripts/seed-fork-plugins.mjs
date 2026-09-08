@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { resolveConfigPath } from "../src/config/paths.ts";
 import { withFileLock } from "../src/infra/file-lock.ts";
 
+/** Every bundled tinkerclaw-* plugin except WhatsApp (needs a phone). */
 const FORK_PLUGIN_IDS = [
   "tinkerclaw-tinker",
   "tinkerclaw-tinker-bridge",
@@ -32,9 +33,21 @@ const FORK_PLUGIN_IDS = [
   "tinkerclaw-pulse-panel",
   "tinkerclaw-task-panel",
   "tinkerclaw-control-panel",
+  "tinkerclaw-budget-panel",
   "tinkerclaw-prefrontal",
   "tinkerclaw-fractal-reflection",
   "tinkerclaw-identity-persistence",
+  "tinkerclaw-hippocampus",
+  "tinkerclaw-memory-enhancements",
+  "tinkerclaw-total-recall",
+  "tinkerclaw-learned-intuition",
+  "tinkerclaw-computational-humor",
+  "tinkerclaw-orca",
+  "tinkerclaw-people",
+  "tinkerclaw-round-table",
+  "tinkerclaw-auth-reload",
+  "tinkerclaw-browser-relay",
+  "microsoft",
 ];
 
 const argv = process.argv.slice(2);
@@ -88,12 +101,19 @@ function inspect(cfg) {
 }
 
 function apply(cfg, toEnable) {
+  const existingSlots =
+    cfg.plugins?.slots && typeof cfg.plugins.slots === "object" ? cfg.plugins.slots : {};
   const next = {
     ...cfg,
     plugins: {
       ...cfg.plugins,
       entries: {
         ...(cfg.plugins?.entries ?? {}),
+      },
+      slots: {
+        ...existingSlots,
+        // Don't clobber an operator who already picked a memory plugin.
+        memory: existingSlots.memory ?? "tinkerclaw-total-recall",
       },
     },
   };

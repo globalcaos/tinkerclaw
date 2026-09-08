@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// dades — read-only gateway to the company NAS (configured in policy.json).
+// company-hd — read-only gateway to the company NAS (configured in policy.json).
 //
 // This CLI is the ONLY sanctioned path to the disk. Its safety is structural,
 // not behavioural (J9/AEGIS: a "read only" rule in a prompt is rated 2/5 and
@@ -10,16 +10,16 @@
 //   - Every call appends one line to an off-disk append-only audit log.
 //
 // Usage:
-//   dades ls [relpath]                 list a directory (default: share root)
-//   dades tree [relpath] [--depth N]   directory tree (dirs only), default depth 2
-//   dades cat <relpath>                print a text file (<=5MB, refuses binary)
-//   dades get <relpath>                copy ONE file out to the local export dir (read-only on the share)
-//   dades stat <relpath>               file/dir metadata
-//   dades find [relpath] <pattern>     case-insensitive name search under relpath
-//   dades map [--depth N] [--refresh]  (re)build the cached folder map (dirs)
-//   dades tier [relpath]               show the importance tier of a path
-//   dades audit [--tail N]             show recent audit-log lines (default 20)
-//   dades status                       show mount state, mode, enabled levels
+//   company-hd ls [relpath]                 list a directory (default: share root)
+//   company-hd tree [relpath] [--depth N]   directory tree (dirs only), default depth 2
+//   company-hd cat <relpath>                print a text file (<=5MB, refuses binary)
+//   company-hd get <relpath>                copy ONE file out to the local export dir (read-only on the share)
+//   company-hd stat <relpath>               file/dir metadata
+//   company-hd find [relpath] <pattern>     case-insensitive name search under relpath
+//   company-hd map [--depth N] [--refresh]  (re)build the cached folder map (dirs)
+//   company-hd tier [relpath]               show the importance tier of a path
+//   company-hd audit [--tail N]             show recent audit-log lines (default 20)
+//   company-hd status                       show mount state, mode, enabled levels
 //
 // Read-only is enforced here in code. To make it enforced by the OS as well
 // (strongest layer), mount the share read-only — see references/security-model.md.
@@ -38,7 +38,7 @@ function mountRoot() {
 }
 
 function fail(msg, code = 1) {
-  process.stderr.write(`dades: ${msg}\n`);
+  process.stderr.write(`company-hd: ${msg}\n`);
   process.exit(code);
 }
 
@@ -55,7 +55,7 @@ function audit(entry) {
     const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n';
     fs.appendFileSync(auditPath(), line);
   } catch (e) {
-    process.stderr.write(`dades: WARNING could not write audit log: ${e.message}\n`);
+    process.stderr.write(`company-hd: WARNING could not write audit log: ${e.message}\n`);
   }
 }
 
@@ -85,7 +85,7 @@ function mountPresent() {
 function requireMount() {
   if (!mountPresent()) {
     audit({ op: 'error', reason: 'mount-absent' });
-    fail(`the dades share is not mounted at ${mountRoot()} — reconnect it in the file manager and retry.`);
+    fail(`the company-hd share is not mounted at ${mountRoot()} — reconnect it in the file manager and retry.`);
   }
 }
 
@@ -111,7 +111,7 @@ function tierLabel(t) {
 function blockedWrite(op, rel) {
   audit({ op: 'blocked', verb: op, rel, tier: tierOf(rel), mode: POLICY.mode });
   process.stderr.write(
-    `dades: BLOCKED — '${op}' is a write operation and this gateway is ${POLICY.mode} ` +
+    `company-hd: BLOCKED — '${op}' is a write operation and this gateway is ${POLICY.mode} ` +
     `(enabled levels: ${POLICY.enabledLevels.join(', ')}).\n` +
     `Nothing was changed on the disk. Write tiers (L1 create-new / L2 version-save / L3 own-modify) ` +
     `are designed but disabled; see references/security-model.md.\n`);
@@ -225,7 +225,7 @@ function cmdStat(rel) {
 }
 
 function cmdFind(rel, pattern) {
-  if (!pattern) fail('find needs a search pattern: dades find [relpath] <pattern>');
+  if (!pattern) fail('find needs a search pattern: company-hd find [relpath] <pattern>');
   requireMount();
   const abs = resolveInside(rel);
   const needle = pattern.toLowerCase();
@@ -257,7 +257,7 @@ function cmdMap(depth, refresh) {
     return;
   }
   const root = mountRoot();
-  const lines = [`# dades folder map  (depth ${d}, generated ${new Date().toISOString()})`];
+  const lines = [`# company-hd folder map  (depth ${d}, generated ${new Date().toISOString()})`];
   let topEntries;
   try { topEntries = fs.readdirSync(root, { withFileTypes: true }); } catch (e) { fail(`cannot read share root: ${e.message}`); }
   for (const top of topEntries.filter(e => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
@@ -310,12 +310,12 @@ function cmdStatus() {
 // so this can never be steered into writing onto the NAS or scattering
 // confidential files across the filesystem. Every export is audited with its
 // tier and byte count. Nothing leaves this machine.
-const EXPORT_DIR = path.join(os.homedir(), '.openclaw', 'dades-export');
+const EXPORT_DIR = path.join(os.homedir(), '.openclaw', 'company-hd-export');
 const EXPORT_MAX_BYTES = 200 * 1024 * 1024;
 
 function cmdGet(rel) {
   requireMount();
-  if (!rel) fail('usage: dades get <relpath>');
+  if (!rel) fail('usage: company-hd get <relpath>');
   const abs = resolveInside(rel);
   let st;
   try { st = fs.statSync(abs); } catch { audit({ op: 'get', rel, ok: false, reason: 'missing' }); fail(`no such file: ${rel}`); }
@@ -363,5 +363,5 @@ switch (cmd) {
   case undefined: case '-h': case '--help': case 'help':
     process.stdout.write(fs.readFileSync(new URL(import.meta.url)).toString().split('\n').filter(l => l.startsWith('//')).map(l => l.slice(3)).join('\n') + '\n');
     break;
-  default: fail(`unknown command '${cmd}'. Run 'dades help'.`);
+  default: fail(`unknown command '${cmd}'. Run 'company-hd help'.`);
 }

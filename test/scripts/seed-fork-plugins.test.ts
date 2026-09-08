@@ -12,9 +12,21 @@ const FORK_PLUGIN_IDS = [
   "tinkerclaw-pulse-panel",
   "tinkerclaw-task-panel",
   "tinkerclaw-control-panel",
+  "tinkerclaw-budget-panel",
   "tinkerclaw-prefrontal",
   "tinkerclaw-fractal-reflection",
   "tinkerclaw-identity-persistence",
+  "tinkerclaw-hippocampus",
+  "tinkerclaw-memory-enhancements",
+  "tinkerclaw-total-recall",
+  "tinkerclaw-learned-intuition",
+  "tinkerclaw-computational-humor",
+  "tinkerclaw-orca",
+  "tinkerclaw-people",
+  "tinkerclaw-round-table",
+  "tinkerclaw-auth-reload",
+  "tinkerclaw-browser-relay",
+  "microsoft",
 ];
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -57,12 +69,18 @@ describe("seed-fork-plugins", () => {
     const home = await makeCleanHome();
     const output = JSON.parse(runSeeder(home)) as { added: string[]; created: boolean };
     const cfg = JSON.parse(await readFile(configPath(home), "utf8")) as {
-      plugins?: { allow?: string[]; entries?: Record<string, { enabled?: boolean }> };
+      plugins?: {
+        allow?: string[];
+        entries?: Record<string, { enabled?: boolean }>;
+        slots?: { memory?: string };
+      };
     };
 
     expect(output.created).toBe(true);
     expect(output.added.sort()).toEqual([...FORK_PLUGIN_IDS].sort());
     expect(cfg.plugins?.allow).toBeUndefined();
+    expect(cfg.plugins?.slots?.memory).toBe("tinkerclaw-total-recall");
+    expect(FORK_PLUGIN_IDS).not.toContain("tinkerclaw-whatsapp");
     for (const id of FORK_PLUGIN_IDS) {
       expect(cfg.plugins?.entries?.[id]).toEqual({ enabled: true });
     }

@@ -1,7 +1,7 @@
 #!/bin/bash
 # scan-full.sh — complete full-depth folder inventory + shortcut map of the SERRA NAS.
 #
-# WHY THIS EXISTS: a single `dades tree <dept> --depth 99` on the big engineering vaults
+# WHY THIS EXISTS: a single `company-hd tree <dept> --depth 99` on the big engineering vaults
 # (05 Disseny/maquinas, 06 Informació/15 Clients, 07 OTELEC/12_Maquinas) NEVER FINISHES.
 # gvfs/SMB does ~40 dir/s serially and those vaults hold tens of thousands of folders.
 # On 2026-06-26 that killed the scan twice and then crashed the agent process.
@@ -11,12 +11,12 @@
 #   pass 2 = level-1 subfolders of any unit that still timed out  (894 units)
 # 2026-07-27 full run: 64.660 folders, 1.856 shortcuts, ~55 min, zero failures.
 #
-# Read-only throughout: every call goes through the audited `dades` CLI.
+# Read-only throughout: every call goes through the audited `company-hd` CLI.
 #
 # Usage:  ./scan-full.sh [outdir]      (default outdir: ~/.openclaw/data/backup-audit/nas-scan-<date>)
 
 set -u
-D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dades"
+D="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/company-hd"
 OUT="${1:-$HOME/.openclaw/data/backup-audit/nas-scan-$(date +%F)}"
 PAR="${PAR:-8}"        # concurrent readers; 8 is polite and saturates gvfs
 CAP="${CAP:-900}"      # per-unit timeout in seconds
@@ -87,4 +87,4 @@ echo "  shortcuts       : $(wc -l < "$OUT/lnk-paths.txt")"
 echo
 echo "NEXT: assemble indented tree output into canonical full paths (2 spaces = 1 level,"
 echo "      prefix each line with its @UNIT, add all ancestors, drop @FAIL units' partials,"
-echo "      then append flat-departments.txt). See memory/dades/ON-VA-CADA-COSA.md."
+echo "      then append flat-departments.txt). See memory/company-hd/ON-VA-CADA-COSA.md."

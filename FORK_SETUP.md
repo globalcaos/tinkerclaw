@@ -256,10 +256,10 @@ pnpm tinker:crons                # install the missing ones, ENABLED
 pnpm tinker:crons:disable        # same, but switched OFF (opt-out)
 ```
 
-`scripts/setup.sh` asks once during a fresh install and defaults to **on**. They use your
-configured/default model, never pin a provider, never send messages, and never take
-irreversible actions. A novice cloner should get the benefit without knowing what to opt
-into. Opt out with `skip` during setup, or `pnpm tinker:crons:disable` before the first run.
+`scripts/setup.sh` asks once — **Enable the full product pack?** — and defaults to **Y**.
+That one answer enables every bundled plugin except WhatsApp and seeds the six nightly
+jobs ON. `n` skips. `off` enables the plugins but installs the crons disabled (they burn
+tokens every night). WhatsApp stays off until you link a phone.
 
 The seeder writes the cron store directly — no running gateway required — and is idempotent
 across `git pull`. Existing jobs matched by id or name are never overwritten.
@@ -272,8 +272,7 @@ repo contract as `SOUL.md`, resolved in that order at run time.
 
 The plugin _files_ already travel with `git clone`. Loading them does not. A fresh gateway
 leaves `tinkerclaw-*` disabled until someone runs `openclaw plugins enable`, which is tribal
-knowledge — the same hole the cron seeder used to be. `scripts/setup.sh` now seeds the fork
-UI plugins ON by default:
+knowledge — the same hole the cron seeder used to be. `scripts/setup.sh` now seeds every bundled `tinkerclaw-*` plugin except WhatsApp ON by default (same product-pack question as the crons):
 
 ```bash
 pnpm tinker:plugins -- --list    # what this installer enables

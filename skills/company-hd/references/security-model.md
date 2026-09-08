@@ -1,4 +1,4 @@
-# dades — security model & write rollout
+# company-hd — security model & write rollout
 
 Grounded in J9 (_AEGIS: A Multi-Layered Security Framework for Autonomous AI Agents_,
 `~/src/tinkerclaw/docs/papers/agent-security/agent-security.md`). Read this before proposing to
@@ -19,14 +19,14 @@ guarantee here lives in code, not in this paragraph.
 
 ## Defense in depth (which J9 layer each piece is)
 
-| Layer                     | Mechanism here                                                                                           | J9 §   | Rating       | Status                       |
-| ------------------------- | -------------------------------------------------------------------------------------------------------- | ------ | ------------ | ---------------------------- |
-| Programmatic guardrail    | `dades` CLI is the only sanctioned path; **no enabled write code path exists**; write verbs refuse + log | §2.3   | 4/5          | ✅ live                      |
-| Path confinement          | every path resolved + realpath-checked to stay inside the share; `..`/symlink escape denied              | §2.1   | 4/5          | ✅ live                      |
-| Audit logging             | append-only JSONL, **off the audited disk**, one line per call (incl. blocked/denied)                    | §2.7   | 3/5 (detect) | ✅ live                      |
-| Scope restriction by tier | crown-jewel folders are read-only by classification, not by per-call judgement                           | §4.3   | —            | ✅ live                      |
-| OS read-only mount        | mount the SMB share `ro` so even a buggy agent physically cannot write                                   | §2.1   | 4/5          | ⚠️ recommended, not yet done |
-| Backups (safety net)      | daily on-prem + cloud; recover from far back. **Net, not a control** — never an excuse to act loosely    | §2.7.2 | —            | external                     |
+| Layer                     | Mechanism here                                                                                                | J9 §   | Rating       | Status                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- | ------ | ------------ | ---------------------------- |
+| Programmatic guardrail    | `company-hd` CLI is the only sanctioned path; **no enabled write code path exists**; write verbs refuse + log | §2.3   | 4/5          | ✅ live                      |
+| Path confinement          | every path resolved + realpath-checked to stay inside the share; `..`/symlink escape denied                   | §2.1   | 4/5          | ✅ live                      |
+| Audit logging             | append-only JSONL, **off the audited disk**, one line per call (incl. blocked/denied)                         | §2.7   | 3/5 (detect) | ✅ live                      |
+| Scope restriction by tier | crown-jewel folders are read-only by classification, not by per-call judgement                                | §4.3   | —            | ✅ live                      |
+| OS read-only mount        | mount the SMB share `ro` so even a buggy agent physically cannot write                                        | §2.1   | 4/5          | ⚠️ recommended, not yet done |
+| Backups (safety net)      | daily on-prem + cloud; recover from far back. **Net, not a control** — never an excuse to act loosely         | §2.7.2 | —            | external                     |
 
 Two honest gaps (J9 names both):
 
@@ -47,7 +47,7 @@ sudo mount -t cifs //fileserver.example.internal/share /mnt/nas-ro \
   -o ro,username=<user>,uid=$(id -u),iocharset=utf8,vers=3.0
 ```
 
-Then point `policy.json.mount` at `/mnt/dades-ro`. Needs the share credentials and sudo, so it's
+Then point `policy.json.mount` at `/mnt/company-hd-ro`. Needs the share credentials and sudo, so it's
 a deliberate setup step, not something this skill does automatically.
 
 ## The permission ladder (the operator's design, formalized)

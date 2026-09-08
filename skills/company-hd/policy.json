@@ -1,5 +1,5 @@
 {
-  "_comment": "TRUST ROOT for the dades CLI. Edit mount.server / mount.share to point at YOUR company NAS. Keep mode read-only until you have a write rollout.",
+  "_comment": "TRUST ROOT for the company-hd CLI. Edit mount.server / mount.share to point at YOUR company NAS. Keep mode read-only until you have a write rollout.",
   "mount": {
     "server": "fileserver.example.internal",
     "share": "share",
@@ -21,7 +21,7 @@
     "mapMaxDepth": 99
   },
   "audit": {
-    "dir": "$HOME/.openclaw/workspace/memory/dades",
+    "dir": "$HOME/.openclaw/workspace/memory/company-hd",
     "_note": "Append-only JSONL, stored OFF the audited disk."
   },
   "defaultTier": 1,
