@@ -1,0 +1,15 @@
+{
+  "id": "self-evolution",
+  "name": "Self-Evolution Scanner",
+  "description": "Nightly scan of AI vendor blogs, model releases and agent techniques; updates the model-intelligence state file and appends a dated entry.",
+  "enabled": true,
+  "schedule": { "kind": "cron", "expr": "30 4 * * *", "tz": "UTC" },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "[Self-Evolution Scanner] Execute the first available workspace override or bundled routine exactly as written. Do the work directly in this isolated cron turn; do NOT spawn another agent. Write the run report the routine requires before finishing. Return only a short delta summary as your final response (max 8 lines).",
+    "thinking": "medium"
+  },
+  "delivery": { "mode": "none" }
+}

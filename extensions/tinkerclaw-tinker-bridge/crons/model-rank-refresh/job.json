@@ -1,0 +1,15 @@
+{
+  "id": "model-rank-refresh",
+  "name": "Model Rank Refresh",
+  "description": "Refreshes model scores and rank order from a public benchmark index so the model picker and router keep choosing current models.",
+  "enabled": true,
+  "schedule": { "kind": "cron", "expr": "45 5 * * *", "tz": "UTC" },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "[Model Rank Refresh] Execute the first available workspace override or bundled routine exactly as written. Do the work directly in this isolated cron turn; do NOT spawn another agent. Write the run report the routine requires before finishing. Return only a short delta summary as your final response (max 8 lines).",
+    "thinking": "medium"
+  },
+  "delivery": { "mode": "none" }
+}

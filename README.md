@@ -378,6 +378,8 @@ Visit **`http://localhost:18789/tinker/`** for the command center. Click the **T
 - **Context pruning** — cache-ttl prevents unbounded session growth
 - **Budget panel** — token cost tracking so you know what each session costs
 - **Tinker UI** — real-time context treemaps, session management, cost dashboard
+- **93 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
+- **Six structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer (opt out with `pnpm tinker:crons:disable`)
 
 ### Required Setup (you must do these)
 
@@ -402,9 +404,41 @@ After first run, edit `~/.openclaw/openclaw.json`:
 }
 ```
 
-### Cron Jobs (Recommended Starter Set)
+### Cron Jobs — the structural ones now ship with the repo
 
-TinkerClaw doesn't ship cron jobs by default — they're personal. Here's a minimal starter set:
+This section used to begin "TinkerClaw doesn't ship cron jobs by default — they're personal."
+Half of that was true and it cost every cloner the best part of the project. The jobs that are
+genuinely personal (your morning briefing, your marketplace hunter) _are_ yours to write. But the
+**structural** ones — the agent maintaining itself — are not personal at all, and they were the
+reason a fresh clone felt like a different piece of software from the one in the demos.
+
+Six of them now ship in `extensions/tinkerclaw-tinker-bridge/crons/`, each a readable brief:
+
+| job                      | what it does                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `memory-consolidation`   | Reads the day's notes and files what is worth keeping into long-term memory     |
+| `self-evolution`         | Scans vendor blogs, model releases and agent techniques                         |
+| `security-updates-check` | Read-only sweep: pending updates, advisories, open ports, plaintext credentials |
+| `fork-scanner`           | Surveys OpenClaw forks and agent open-source for techniques worth stealing      |
+| `cleaning-lady`          | Workspace hygiene — archives, never deletes                                     |
+| `model-rank-refresh`     | Keeps model scores and rank order current so the picker and router stay honest  |
+
+```bash
+pnpm tinker:crons -- --list      # what ships, and what you already have
+pnpm tinker:crons                # install the missing ones, ENABLED
+pnpm tinker:crons:disable        # same, but switched OFF (opt-out)
+```
+
+`scripts/setup.sh` asks once and defaults to installing them **on**. They use your configured
+model, never pin a provider, never send messages, and never take irreversible actions. A novice
+cloner should get the benefit without knowing what to opt into. Opt out with `skip` during setup
+or `pnpm tinker:crons:disable` before the first run. Read `crons/<id>/routine.md` any time.
+
+Re-run the seeder after any `git pull`; it is idempotent and picks up jobs added upstream. To
+customise a routine, copy it to `~/.openclaw/workspace/crons/<id>/routine.md` — workspace beats
+repo, so your edits survive updates.
+
+**The personal ones are still yours to write**, and the old starter set is a fine template:
 
 ```bash
 # Morning briefing (daily at 8:30)
@@ -416,11 +450,6 @@ openclaw cron add --name morning-briefing --cron "30 8 * * *" --tz "Your/Timezon
 openclaw cron add --name wind-down --cron "0 0 * * *" --tz "Your/Timezone" \
   --session isolated --model "anthropic/claude-sonnet-4" \
   --message "Review today's sessions. What worked? What failed? Write lessons to memory."
-
-# Workspace cleanup (daily at 5am)
-openclaw cron add --name cleaning-lady --cron "0 5 * * *" --tz "Your/Timezone" \
-  --session isolated --model "anthropic/claude-haiku-4-5" \
-  --message "Clean old sessions (>7 days), check bootstrap file sizes, prune daily logs."
 ```
 
 ### Multi-Agent Family Setup
