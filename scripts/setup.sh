@@ -92,15 +92,20 @@ fi
 # They seed ENABLED by default so a novice cloner gets the benefit without
 # knowing what to opt into. Each job uses the cloner's configured/default model
 # (no pinned Claude provider), never delivers outbound, and never takes an
-# irreversible action. Opt out is one answer: skip. Disable later with
+# irreversible action. Opt out is one answer: skip / n. Disable later with
 # `pnpm tinker:crons:disable` (only affects jobs that are not yet installed).
-say "Structural crons — nightly self-maintenance jobs bundled with this repo:"
+say "Structural crons — nightly self-maintenance jobs bundled with this repo."
+echo "   They consolidate memory, tidy the workspace, sweep for security updates,"
+echo "   refresh model ranks, and scan the agent-OSS field — six jobs, every night."
+echo "   Default is ON: they burn tokens every night, and they pay that back by"
+echo "   keeping context smaller and the harness current, so later sessions cost less."
+echo "   They never send messages and never take irreversible actions."
 node --import tsx scripts/seed-structural-crons.mjs --list 2>/dev/null || true
-CRON_ANSWER="$(ask 'Install them? (default ON — uses your model for nightly self-maintenance; skip to opt out) [on/skip/off]' on)"
+CRON_ANSWER="$(ask 'Install them enabled? [Y/n/off]  (Y = on, n = skip, off = install disabled)' Y)"
 CRON_NOTE=""
 case "$CRON_ANSWER" in
-  skip|no|n) say "Skipping cron seeding. Run 'pnpm tinker:crons' any time." ;;
-  off|disabled)
+  skip|no|n|N) say "Skipping cron seeding. Run 'pnpm tinker:crons' any time." ;;
+  off|disabled|OFF)
     if node --import tsx scripts/seed-structural-crons.mjs --disabled; then :; else
       warn "Could not seed crons yet. Re-run: pnpm tinker:crons:disable"
       CRON_NOTE="Seed the nightly jobs (disabled): ${BOLD}pnpm tinker:crons:disable${N}"

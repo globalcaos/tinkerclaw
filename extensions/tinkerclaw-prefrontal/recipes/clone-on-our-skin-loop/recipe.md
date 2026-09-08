@@ -1,7 +1,7 @@
 ---
 schema: "kit/1.0"
-slug: "dogfood-the-clone"
-title: "Dogfood the clone — be your own cloner, and fix what you find"
+slug: "clone-on-our-skin-loop"
+title: "Clone-on-our-skin loop — wear the clone, or you will miss what cloners get"
 summary: "You cannot know what a cloner receives by reading your repo; you only learn it by BEING one. Stand up a clean deployment from the public artifact, use it for real, and treat every gap as evidence about the distribution path rather than a missing feature. One iteration closes one gap at the layer that produced it."
 version: "2.0.0"
 owner: "globalcaos"
@@ -10,7 +10,7 @@ category: "coding"
 subdivision: "release"
 tags:
   [
-    "dogfooding",
+    "loop",
     "clone",
     "cloner",
     "distribution",
@@ -27,7 +27,7 @@ params:
   clone: "{{clone|a clean deployment from the PUBLIC artifact}}"
 ---
 
-# dogfood-the-clone
+# clone-on-our-skin-loop
 
 **The premise.** A maintainer reading their own repo sees what they _intended_ to ship. A cloner
 receives only what the distribution path actually carries — the public branch, the installer, the
@@ -36,8 +36,9 @@ years of hand-configuration that never entered the artifact. The only reliable w
 difference is to **stand up a clone and use it**, then treat each gap as testimony about the
 distribution path.
 
-This is a LOOP, not a checklist. It is also the cheapest quality process available: the clone
-finds real defects in the order a real user would hit them.
+This is a LOOP, not a checklist. Reading the repo shows what we _meant_ to ship. Wearing the
+clone — installing it, starting it, using it on our own skin — is the only way to see what a
+stranger actually receives. Skip that step and we miss the product.
 
 ## Step 0 — measure both sides; never recall them
 
