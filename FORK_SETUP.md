@@ -240,6 +240,34 @@ If you want a session prompt that loads on every `/new` command, create `~/.open
 
 Daily briefing pipeline. Create `~/.openclaw/workspace/BRIEFING.md` if you want morning briefing automation.
 
+## Step 5.5: Structural Crons — turn on the self-maintenance
+
+This is the step most people never find, because until 2026-09-08 there was nothing to find:
+the nightly jobs that make this fork maintain itself lived only in one machine's private cron
+store. They now ship with the repo, in `extensions/tinkerclaw-tinker-bridge/crons/`.
+
+Six jobs: nightly memory consolidation, an AI-field scan, a read-only security sweep, an
+agent-OSS survey, workspace hygiene, and a model-rank refresh. Full descriptions and the
+safety rules every routine follows are in that directory's `README.md`.
+
+```bash
+pnpm tinker:crons -- --list      # what ships, and what you already have
+pnpm tinker:crons                # install the missing ones, ENABLED
+pnpm tinker:crons:disable        # same, but switched OFF (opt-out)
+```
+
+`scripts/setup.sh` asks once during a fresh install and defaults to **on**. They use your
+configured/default model, never pin a provider, never send messages, and never take
+irreversible actions. A novice cloner should get the benefit without knowing what to opt
+into. Opt out with `skip` during setup, or `pnpm tinker:crons:disable` before the first run.
+
+The seeder writes the cron store directly — no running gateway required — and is idempotent
+across `git pull`. Existing jobs matched by id or name are never overwritten.
+
+To customise a routine without fighting `git pull`, copy it to
+`~/.openclaw/workspace/crons/<id>/routine.md` and edit it there — the same workspace-overrides-
+repo contract as `SOUL.md`, resolved in that order at run time.
+
 ## Step 6: Voice / TTS (optional)
 
 The fork supports multiple TTS providers. Configure in `openclaw.json`:

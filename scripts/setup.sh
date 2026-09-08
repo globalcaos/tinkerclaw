@@ -83,6 +83,35 @@ else
   } > "$IDFILE"
 fi
 
+# ---- 5. Structural crons (the habits, not just the engine) -------------------
+# These are the jobs that make the fork maintain ITSELF overnight: consolidate
+# memory, tidy the workspace, sweep for security updates, refresh model ranks,
+# scan the agent-OSS ecosystem. They ship with the repo under
+# extensions/tinkerclaw-tinker-bridge/crons/ and each one is a readable brief.
+#
+# They seed ENABLED by default so a novice cloner gets the benefit without
+# knowing what to opt into. Each job uses the cloner's configured/default model
+# (no pinned Claude provider), never delivers outbound, and never takes an
+# irreversible action. Opt out is one answer: skip. Disable later with
+# `pnpm tinker:crons:disable` (only affects jobs that are not yet installed).
+say "Structural crons — nightly self-maintenance jobs bundled with this repo:"
+node --import tsx scripts/seed-structural-crons.mjs --list 2>/dev/null || true
+CRON_ANSWER="$(ask 'Install them? (default ON — uses your model for nightly self-maintenance; skip to opt out) [on/skip/off]' on)"
+CRON_NOTE=""
+case "$CRON_ANSWER" in
+  skip|no|n) say "Skipping cron seeding. Run 'pnpm tinker:crons' any time." ;;
+  off|disabled)
+    if node --import tsx scripts/seed-structural-crons.mjs --disabled; then :; else
+      warn "Could not seed crons yet. Re-run: pnpm tinker:crons:disable"
+      CRON_NOTE="Seed the nightly jobs (disabled): ${BOLD}pnpm tinker:crons:disable${N}"
+    fi ;;
+  *)
+    if node --import tsx scripts/seed-structural-crons.mjs; then :; else
+      warn "Could not seed crons yet. Re-run: pnpm tinker:crons"
+      CRON_NOTE="Seed the nightly jobs: ${BOLD}pnpm tinker:crons${N}"
+    fi ;;
+esac
+
 # ---- 5. Optional components -------------------------------------------------
 say "Optional components (install later from ClawHub / plugins as needed):"
 echo "   • browser plugin   • downloader app   • mesh-VPN join   • messaging channels"
@@ -98,6 +127,8 @@ $(printf "${BOLD}Setup complete.${N}")
 
 Start the gateway:   ${BOLD}openclaw gateway start${N}     (or: node openclaw.mjs)
 Open the UI:         the address the gateway prints on start.
+${CRON_NOTE:+
+$CRON_NOTE}
 
 Personalize by editing files in your workspace ($WS) — never in this repo,
 so future 'git pull' stays clean. See FORK_SETUP.md for the git-pull contract.

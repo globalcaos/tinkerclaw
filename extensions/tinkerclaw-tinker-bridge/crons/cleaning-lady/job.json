@@ -1,0 +1,15 @@
+{
+  "id": "cleaning-lady",
+  "name": "Cleaning Lady (Workspace Hygiene)",
+  "description": "Nightly workspace tidy-up: archives stale sessions instead of deleting them, and reports big logs, broken links and forgotten files.",
+  "enabled": true,
+  "schedule": { "kind": "cron", "expr": "30 5 * * *", "tz": "UTC" },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "[Cleaning Lady (Workspace Hygiene)] Execute the first available workspace override or bundled routine exactly as written. Do the work directly in this isolated cron turn; do NOT spawn another agent. Write the run report the routine requires before finishing. Return only a short delta summary as your final response (max 8 lines).",
+    "thinking": "medium"
+  },
+  "delivery": { "mode": "none" }
+}

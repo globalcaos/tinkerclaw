@@ -1,0 +1,15 @@
+{
+  "id": "memory-consolidation",
+  "name": "Memory Consolidation (Sleep Cycle)",
+  "description": "Nightly sleep pass: reads the day's notes and log, files what is worth keeping into long-term memory, and writes a short reflection.",
+  "enabled": true,
+  "schedule": { "kind": "cron", "expr": "15 4 * * *", "tz": "UTC" },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "[Memory Consolidation (Sleep Cycle)] Execute the first available workspace override or bundled routine exactly as written. Do the work directly in this isolated cron turn; do NOT spawn another agent. Write the run report the routine requires before finishing. Return only a short delta summary as your final response (max 8 lines).",
+    "thinking": "medium"
+  },
+  "delivery": { "mode": "none" }
+}

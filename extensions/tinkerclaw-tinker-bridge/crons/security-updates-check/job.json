@@ -1,0 +1,15 @@
+{
+  "id": "security-updates-check",
+  "name": "Security Updates Check",
+  "description": "Nightly read-only security sweep: pending updates, dependency advisories, open ports, exposed credentials, MCP config. Reports only, never changes anything.",
+  "enabled": true,
+  "schedule": { "kind": "cron", "expr": "0 5 * * *", "tz": "UTC" },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "[Security Updates Check] Execute the first available workspace override or bundled routine exactly as written. Do the work directly in this isolated cron turn; do NOT spawn another agent. Write the run report the routine requires before finishing. Return only a short delta summary as your final response (max 8 lines).",
+    "thinking": "medium"
+  },
+  "delivery": { "mode": "none" }
+}

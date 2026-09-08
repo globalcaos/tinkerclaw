@@ -2,7 +2,7 @@
 title: TinkerClaw FOUNDATION — the apex of the pyramid
 status: RATIFIED (architect sign-off 2026-06-02)
 authority: OUTRANKS every bible optic. When an optic's detail contradicts this file, THIS file wins and the contradiction is flagged for repair — never silently followed.
-last_verified: 2026-06-02
+last_verified: 2026-09-08
 audience: AI (Claude Code, Jarvis) + architect. The base reference every layer below derives from.
 verify:
   - name: FOUNDATION exists and INDEX points at it as the apex
@@ -84,6 +84,8 @@ Code inside a bible file is fine when the code **is** the explanation — a rend
 
 8. **Three repositories, three non-negotiable goals.**
    The split exists so the architect can simultaneously **(a) share TinkerClaw with the world**, **(b) guard his personal information**, and **(c) recover Jarvis fully after a machine crash**. Public fork (`tinkerclaw`), private runtime/workspace, and the recoverable Jarvis state are kept apart on purpose. The split is structural and never unified; the PII boundary and a pre-push leak check protect (b); the workspace/runtime separation protects (c).
+
+   **What (a) actually means for a cloner _(clarified 2026-09-08)_.** Goal (a) is not "a starter kit." A stranger who clones the public fork should receive every generally useful capability and every safe structural habit — skills whose content is not PII, the nightly self-maintenance jobs, the installer that actually builds the gateway. Privacy is **content-based**, not directory-based: a skill that merely lives on the private side of a folder line, with no secrets and no identity, belongs in the public fork. Only live credentials, personal names/contacts, deployment-specific identity, and company data stay private. Structural defaults may spend ordinary configured inference when that spend is intrinsic, disclosed, and reversible by one opt-out command; they must never send, publish, or take irreversible actions. The test is: could a novice, without our tribal knowledge, rip the whole benefit of the repo? If not, the distribution path is the defect.
 
 9. **Bounded, replicable, recoverable — and this is the test that governs dependencies.** _(ratified 2026-08-04)_
    The whole system — TinkerClaw, Jarvis's runtime, and the `jarvis-icu` helper — must be **reconstructible on another computer from what is committed and pushed.** That is the invariant. It has two axes, and both are load-bearing:
