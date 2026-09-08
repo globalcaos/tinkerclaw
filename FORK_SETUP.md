@@ -268,6 +268,22 @@ To customise a routine without fighting `git pull`, copy it to
 `~/.openclaw/workspace/crons/<id>/routine.md` and edit it there — the same workspace-overrides-
 repo contract as `SOUL.md`, resolved in that order at run time.
 
+## Step 5.6: Fork plugins — the UI a cloner actually sees
+
+The plugin _files_ already travel with `git clone`. Loading them does not. A fresh gateway
+leaves `tinkerclaw-*` disabled until someone runs `openclaw plugins enable`, which is tribal
+knowledge — the same hole the cron seeder used to be. `scripts/setup.sh` now seeds the fork
+UI plugins ON by default:
+
+```bash
+pnpm tinker:plugins -- --list    # what this installer enables
+pnpm tinker:plugins              # write plugins.entries.<id>.enabled = true
+```
+
+It writes **only** `plugins.entries`. It never writes `plugins.allow`. A short allow-list
+hides the rest of the tree (measured: a 4-name list took a live gateway from 10 plugins to 0).
+Existing entries are never overwritten, so an operator who switched a panel off keeps it off.
+
 ## Step 6: Voice / TTS (optional)
 
 The fork supports multiple TTS providers. Configure in `openclaw.json`:

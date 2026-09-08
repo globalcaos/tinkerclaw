@@ -118,3 +118,7 @@ across runs and a stale line reads exactly like a fresh one.
   It taxes every publish.
 - A hand-written `plugins.allow` on the clone silently EXCLUDED two of the three left-rail panels;
   the deployment looked feature-poor because of the operator's own list, not the artifact.
+- Plugin _files_ travelled with `git clone`; loading them did not. A fresh gateway left
+  `tinkerclaw-*` disabled until someone knew `plugins enable`. Fixed 2026-09-08 with
+  `scripts/seed-fork-plugins.mjs`, which writes `plugins.entries.<id>.enabled = true` and
+  **never** writes `plugins.allow`.
