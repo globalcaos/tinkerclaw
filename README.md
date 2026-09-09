@@ -12,8 +12,9 @@
 <p align="center">
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-604020?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-8B6914?style=for-the-badge" alt="Hundreds of fork commits"></a>
-  <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-18-C0834D?style=for-the-badge" alt="18 papers"></a>
-  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-15+-8B6914?style=for-the-badge" alt="15+ skills"></a>
+  <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-20-C0834D?style=for-the-badge" alt="20 papers"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-27-8B6914?style=for-the-badge" alt="27 skills"></a>
+  <a href="#-published-plugins"><img src="https://img.shields.io/badge/plugins-16-604020?style=for-the-badge" alt="16 plugins"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-604020?style=for-the-badge" alt="MIT License"></a>
 </p>
 
@@ -29,9 +30,9 @@
   <a href="https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/"><img src="https://img.shields.io/badge/%F0%9F%94%90_Safer_than_NeMo-at_a_fraction_of_cost-604020?style=for-the-badge" alt="Safer than NeMo"></a>
 </p>
 
-No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Eighteen research papers and four months of 24/7 operation made the difference.
+No other agent has learned to think about its own thinking, developed computational humor, or trained itself to be safer than NeMo Guardrails at a fraction of the cost. Yours can. Twenty research papers and four months of 24/7 operation made the difference.
 
-**TinkerClaw's agent gets smarter every single day.** Eighteen research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
+**TinkerClaw's agent gets smarter every single day.** Twenty research papers. Each one a real problem we hit, solved, and turned into a system that prevents recurrence:
 
 - 🌿 **It thinks about its own thinking.** When something breaks, it doesn't just fix the bug — it asks _why the bug exists_, then fixes the system that produced it. Like a mechanic who doesn't just patch the flat tire but asks "why do I keep getting flats on this road?" ([Fractal Reasoning](https://thetinkerzone.com/fractal-reasoning-multi-resolution-memory-and-self-similar-metacognition-for-llm-agents/))
 
@@ -209,7 +210,7 @@ These are just the ones with personality. **15+ total crons**, each with its own
 
 ### 📊 The Research
 
-All eighteen papers are published at **[thetinkerzone.com](https://thetinkerzone.com/)** and linked in the [intro above](#the-singularity-point-). Each one started as a real problem, became a research paper, became a production system. Read them — they're the best proof that this isn't marketing.
+Twenty papers live at **[thetinkerzone.com](https://thetinkerzone.com/)** and are linked in the [intro above](#the-singularity-point-). Each one started as a real problem, became a research paper, became a production system. Read them — they're the best proof that this isn't marketing.
 
 ---
 
@@ -250,69 +251,86 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 ## 📦 Published Skills
 
 > All on [ClawHub](https://clawhub.ai/u/globalcaos). Install any with `clawhub install globalcaos/<skill-name>`.
-> Skills sometimes get delisted from the marketplace — this list is the permanent record.
+> Live catalog as of 2026-09-09: **27 skills** (plus `teams-hack`, blocked by ClawHub malware detection). This list is the permanent record.
 
 ### 🎤 Voice & Personality
 
-| Skill                                                        | What it does                                                                  |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice) | Turn your AI into JARVIS. Voice, wit, and personality — the complete package. |
+| Skill                                                                      | What it does                                                                  |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [`jarvis-voice`](https://clawhub.ai/globalcaos/jarvis-voice)               | Turn your AI into JARVIS. Voice, wit, and personality — the complete package. |
+| [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns from embedding-space bisociation. Data noticing humanity.   |
 
 ### 💬 Messaging & Channels
 
-| Skill                                                                  | What it does                                                                                                                                                                       |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate) | Five agents in one group means five replies and a tripled bill — Protocol v2 adds congestion control and budget-aware scheduling so they know when to talk and when to stay quiet. |
+| Skill                                                                                                                               | What it does                                                                                                   |
+| ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| [`whatsapp-ultimate`](https://clawhub.ai/globalcaos/whatsapp-ultimate)                                                              | Five agents in one group means five replies and a tripled bill — congestion control so they know when to talk. |
+| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack)                                                                        | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced.                            |
+| [`linkedin-hack`](https://clawhub.ai/globalcaos/linkedin-hack) / [`tinker-linkedin`](https://clawhub.ai/globalcaos/tinker-linkedin) | LinkedIn search and drafts through the authenticated browser. Session riding is the product.                   |
+| [`wordpress-ultimate`](https://clawhub.ai/globalcaos/wordpress-ultimate)                                                            | Drafts WordPress posts. Publish is gated. Plugin install is named as code execution.                           |
 
-### 📹 Media & Content
+### 📹 Media, Location & Shopping
 
-| Skill                                                                | What it does                                                                |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate) | Free transcripts, 4K downloads, video exploration — zero API quotas burned. |
+| Skill                                                                          | What it does                                                                     |
+| ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| [`youtube-ultimate`](https://clawhub.ai/globalcaos/youtube-ultimate)           | Free transcripts, 4K downloads, video exploration — zero API quotas burned.      |
+| [`owntracks-location`](https://clawhub.ai/globalcaos/owntracks-location)       | Live GPS trail receiver. Loopback + token. A location server, honestly labelled. |
+| [`tinker-amazon-shopper`](https://clawhub.ai/globalcaos/tinker-amazon-shopper) | Anonymous amazon.es search and ranking. Cookie capture is not in the zip.        |
 
-### 💰 Cost & Token Management
+### 💰 Cost, Tokens & Command
 
-| Skill                                                                            | What it does                                                                        |
-| -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Multi-provider token tracking, budget alerts, REST API.                             |
-| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. 10 steps, one afternoon. |
+| Skill                                                                            | What it does                                               |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [`token-panel-ultimate`](https://clawhub.ai/globalcaos/token-panel-ultimate)     | Multi-provider token tracking, budget alerts, REST API.    |
+| [`token-efficiency-guide`](https://clawhub.ai/globalcaos/token-efficiency-guide) | Go from weekly limit on Tuesday to weekly limit on Sunday. |
+| [`tinker-command-center`](https://clawhub.ai/globalcaos/tinker-command-center)   | The Tinker UI as a skill: panels, sessions, cost, recipes. |
+| [`visual-tables`](https://clawhub.ai/globalcaos/visual-tables)                   | Dense comparison tables the chat can actually paint.       |
 
-### 🏢 Enterprise Integrations (Browser Relay)
+### 🤖 Agent, Models & DevOps
 
-No API keys. No admin consent. Your authenticated browser session IS the API.
+| Skill                                                                                              | What it does                                                        |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed.                       |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold.                  |
+| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade memory eval — nDCG, MAP, MRR.                     |
+| [`agent-superpowers`](https://clawhub.ai/globalcaos/agent-superpowers)                             | The operating doctrine that makes a clone behave on day one.        |
+| [`agent-sensei-ultimate`](https://clawhub.ai/globalcaos/agent-sensei-ultimate)                     | Teaching loop: corrections become standing rules.                   |
+| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router)                           | Route the cheap work to cheap models.                               |
+| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter)                       | Per-model prompt shape so a swap doesn't drop personality.          |
+| [`tinker-orca`](https://clawhub.ai/globalcaos/tinker-orca)                                         | File-lease orchestrator for concurrent agents on one tree.          |
+| [`shell-security-ultimate`](https://clawhub.ai/globalcaos/shell-security-ultimate)                 | Classify every shell command as SAFE, WARN, or CRIT before it runs. |
 
-| Skill                                                        | What it does                                                                        |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| [`outlook-hack`](https://clawhub.ai/globalcaos/outlook-hack) | Reads Outlook all day, drafts replies — won't send without approval. Code-enforced. |
-| [`teams-hack`](https://clawhub.ai/globalcaos/teams-hack)     | Reads Teams chats, posts to channels, searches everything. One browser handshake.   |
+### 📋 Export, Audit & Twins
 
-### 🤖 Agent & DevOps
+| Skill                                                                                                                                                         | What it does                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [`chatgpt-exporter-ultimate`](https://clawhub.ai/globalcaos/chatgpt-exporter-ultimate) / [`chatgpt-exporter`](https://clawhub.ai/globalcaos/chatgpt-exporter) | Leaving ChatGPT? Take the conversations. Browser-relay, no bearer token. |
+| [`backlink-audit`](https://clawhub.ai/globalcaos/backlink-audit) / [`tinker-backlink-audit`](https://clawhub.ai/globalcaos/tinker-backlink-audit)             | Backlink audit with keychain-only credentials.                           |
 
-| Skill                                                                                              | What it does                                                                   |
-| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed. Health checks, zero babysitting. |
-| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold, skip the clones.            |
-| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade evaluation suite — LLM-as-judge, nDCG, MAP, MRR metrics.     |
+`teams-hack` was published and then blocked by ClawHub malware detection. Restore needs a moderator, not another version.
 
-### 🛡️ Security & Governance
+## 🔌 Published Plugins
 
-| Skill                                                                                  | What it does                                                                             |
-| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| [`agent-boundaries-ultimate`](https://clawhub.ai/globalcaos/agent-boundaries-ultimate) | Instruction-level guardrails so your agent won't go rogue or improvise ethics.           |
-| [`agent-memory-ultimate`](https://clawhub.ai/globalcaos/agent-memory-ultimate)         | Long-term memory done right. Semantic search, daily consolidation, cross-session recall. |
-| [`shell-security-ultimate`](https://clawhub.ai/globalcaos/shell-security-ultimate)     | Classify every shell command as SAFE, WARN, or CRIT before your agent runs it.           |
+> Same publisher. Package names are `@globalcaos/tinker-<designation>` — no `claw`, no `openclaw`, no `tinkerclaw` in the ClawHub name. Runtime ids inside `openclaw.plugin.json` are a separate namespace.
 
-### 😂 Humor & Communication
-
-| Skill                                                                      | What it does                                                   |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| [`computational-humor`](https://clawhub.ai/globalcaos/computational-humor) | 12 humor patterns based on embedding space bisociation theory. |
-
-### 📋 Data & Migration
-
-| Skill                                                                                  | What it does                                                                  |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [`chatgpt-exporter-ultimate`](https://clawhub.ai/globalcaos/chatgpt-exporter-ultimate) | Leaving ChatGPT? Take your conversations with you. Full export, clean format. |
+| Plugin                                                                                              | What it does                                             |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [`tinker-whatsapp`](https://clawhub.ai/globalcaos/packages/tinker-whatsapp)                         | WhatsApp channel plugin for TinkerClaw.                  |
+| [`tinker-bridge`](https://clawhub.ai/globalcaos/packages/tinker-bridge)                             | Claude Code bridge with Tinker session wiring.           |
+| [`tinker-prefrontal`](https://clawhub.ai/globalcaos/packages/tinker-prefrontal)                     | Recipe matcher, composer, and executive function.        |
+| [`tinker-grok-bridge`](https://clawhub.ai/globalcaos/packages/tinker-grok-bridge)                   | xAI / Grok session bridge.                               |
+| [`tinker-hippocampus`](https://clawhub.ai/globalcaos/packages/tinker-hippocampus)                   | O(1) concept index over long-term memory.                |
+| [`tinker-total-recall`](https://clawhub.ai/globalcaos/packages/tinker-total-recall)                 | Pointer-based compaction. Evict, don't summarize.        |
+| [`tinker-task-panel`](https://clawhub.ai/globalcaos/packages/tinker-task-panel)                     | Durable task ledger in the Tinker UI.                    |
+| [`tinker-learned-intuition`](https://clawhub.ai/globalcaos/packages/tinker-learned-intuition)       | Reflex layer that stops the wrong action before it runs. |
+| [`tinker-identity-persistence`](https://clawhub.ai/globalcaos/packages/tinker-identity-persistence) | Persona that survives restarts and model swaps.          |
+| [`tinker-pulse-panel`](https://clawhub.ai/globalcaos/packages/tinker-pulse-panel)                   | Left-panel graphs: ClawHub, GitHub, cost.                |
+| [`tinker-round-table`](https://clawhub.ai/globalcaos/packages/tinker-round-table)                   | Cross-provider RAAC debate.                              |
+| [`tinker-fractal-reflection`](https://clawhub.ai/globalcaos/packages/tinker-fractal-reflection)     | Four-level post-turn reflection.                         |
+| [`tinker-computational-humor`](https://clawhub.ai/globalcaos/packages/tinker-computational-humor)   | Humor plugin companion to the live skill.                |
+| [`tinker-memory-enhancements`](https://clawhub.ai/globalcaos/packages/tinker-memory-enhancements)   | Hippocampus index hooks on memory-core.                  |
+| [`tinker-orca`](https://clawhub.ai/globalcaos/packages/tinker-orca)                                 | Plugin half of the ORCA lease orchestrator.              |
+| [`tinker-budget-panel`](https://clawhub.ai/globalcaos/packages/tinker-budget-panel)                 | Token spend dashboard. Gateway credentials only.         |
 
 ---
 
@@ -327,6 +345,18 @@ No API keys. No admin consent. Your authenticated browser session IS the API.
 > _"A stuck sub-agent is burning money. Kill fast, respawn small."_
 
 **📖 [Read the Field Guide →](docs/guides/field-guide.md)**
+
+### 🧠 The Starter Kit — the markdown that makes the agent behave
+
+A fork ships code. What separates an assistant corrected for months from a fresh install is a pile
+of prose that normally never leaves the maintainer's machine: **13 priority-ordered ethical rules**
+(the gate is on the _effect_, not the tool), a verification discipline that kills "true statement
+about the wrong layer", a persistence doctrine that treats "impossible" as "I tried one approach
+once", and a reflection loop that is the only reason an agent is different in ninety days.
+
+It ships, it loads on every turn, and every file is overridable from your workspace without forking.
+
+**🧠 [Read the Starter Kit →](STARTER-KIT.md)**
 
 ---
 
@@ -378,10 +408,8 @@ Visit **`http://localhost:18789/tinker/`** for the command center. Click the **T
 - **Context pruning** — cache-ttl prevents unbounded session growth
 - **Budget panel** — token cost tracking so you know what each session costs
 - **Tinker UI** — real-time context treemaps, session management, cost dashboard
-- **99+ skills in `skills/`** — voice, messaging, media, security, diagramming, shopping, HR/Planner via the live browser session. Cloned with the repo; nothing to install
-- **Six structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer (opt out with `n` / `off` at the product-pack prompt, or `pnpm tinker:crons:disable`)
-- **Fork plugins** — every bundled `tinkerclaw-*` plugin except WhatsApp. Seeded ON so a clone _is_ the product, not stock OpenClaw
-- **Workspace starter kit** — AGENTS, heartbeat, session, cron-report contract, the 14 robotic primaries. Copied on first setup, never overwritten
+- **77 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
+- **Six structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer, so a fresh clone maintains itself from night one
 
 ### Required Setup (you must do these)
 
@@ -426,15 +454,17 @@ Six of them now ship in `extensions/tinkerclaw-tinker-bridge/crons/`, each a rea
 | `model-rank-refresh`     | Keeps model scores and rank order current so the picker and router stay honest  |
 
 ```bash
-pnpm tinker:crons -- --list      # what ships, and what you already have
-pnpm tinker:crons                # install the missing ones, ENABLED
-pnpm tinker:crons:disable        # same, but switched OFF (opt-out)
+pnpm tinker:crons -- --list       # what ships, and what you already have
+pnpm tinker:crons                 # install the missing ones, switched ON
+pnpm tinker:crons -- --disabled   # install them, switched off
 ```
 
-`scripts/setup.sh` asks once and defaults to installing them **on**. They use your configured
-model, never pin a provider, never send messages, and never take irreversible actions. A novice
-cloner should get the benefit without knowing what to opt into. Opt out with `skip` during setup
-or `pnpm tinker:crons:disable` before the first run. Read `crons/<id>/routine.md` any time.
+`scripts/setup.sh` asks once and defaults to **on** — clone it, run the installer, and the thing
+maintains itself from the first night. The cost is stated in the question instead of hidden behind
+a safe default: each job wakes an agent on a schedule and spends model tokens on _your_ account,
+roughly a euro a night for the whole cycle. Read `crons/<id>/routine.md`, and switch off anything
+you don't want with `openclaw cron disable <id>`. (`openclaw cron list --all` to see ids — plain
+`list` hides disabled jobs.)
 
 Re-run the seeder after any `git pull`; it is idempotent and picks up jobs added upstream. To
 customise a routine, copy it to `~/.openclaw/workspace/crons/<id>/routine.md` — workspace beats
@@ -492,7 +522,7 @@ Both are excellent standalone tools. We folded their ideas into a single embedde
 
 ## 📚 The J-Series Papers
 
-Every system in TinkerClaw began as a research paper about a real failure we hit — each named for the brain region it imitates. **18 papers**, all published on [thetinkerzone.com](https://thetinkerzone.com/).
+Every system in TinkerClaw began as a research paper about a real failure we hit — each named for the brain region it imitates. **20 papers**, published on [thetinkerzone.com](https://thetinkerzone.com/).
 
 | #   | Paper                                                                                                                                                                                  | Codename        | What it is                                                                                                                                  |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -503,7 +533,7 @@ Every system in TinkerClaw began as a research paper about a real failure we hit
 | J5  | [Sleep Consolidation](https://thetinkerzone.com/sleep-consolidation-how-nightly-prompting-makes-a-stateless-agent-get-better-over-time/)                                               | **CEREBELLUM**  | 79% fewer incidents in 30 days — no fine-tuning, just a nightly loop that rewrites its own instructions while you sleep.                    |
 | J6  | [Round Table](https://thetinkerzone.com/round-table-exploiting-cognitive-diversity-as-a-computational-resource-in-persistent-ai-agents/)                                               | **SYNAPSE**     | Stop crowning one "best" model. Seat Claude, GPT, and Gemini at one table and let cognitive diversity carry the answer.                     |
 | J7  | [Humor Embeddings](https://thetinkerzone.com/humor-embeddings-laughter-from-inverted-memory-bisociation-in-computational-embedding-space/)                                             | **LIMBIC**      | Memory retrieves what's nearest; humor finds what's at the right distance. Computational comedy from embedding geometry.                    |
-| J8  | [Curiosity Drive](https://thetinkerzone.com/the-wondering-machine-giving-an-llm-the-drive-to-learn-on-its-own/)                                                                        | **THALAMUS**    | LLMs answer brilliantly but never wonder. A drive that spots its own knowledge gaps and goes to close them.                                 |
+| J8  | [Curiosity Drive](https://thetinkerzone.com/the-wondering-machine-giving-an-llm-the-drive-to-learn-on-its-own/)                                                                        | **TEGMENTUM**   | LLMs answer brilliantly but never wonder. A drive that spots its own knowledge gaps and goes to close them.                                 |
 | J9  | [Agent Security](https://thetinkerzone.com/aegis-a-multi-layered-security-framework-for-autonomous-ai-agents/)                                                                         | **AEGIS**       | The question isn't whether your agent is a risk — it's which risks apply. A layered framework, safer than NeMo at a fraction of the cost.   |
 | J10 | [Corporate Swarm](https://thetinkerzone.com/hivemind-hierarchical-agent-swarms-for-enterprise-knowledge-management/)                                                                   | **HIVEMIND**    | A hierarchical agent swarm that lets a whole company run agents — deep integration, hard clearance boundaries.                              |
 | J11 | [Learned Intuition](https://thetinkerzone.com/learned-intuition-a-reflex-layer-that-stops-your-agent-before-it-does-the-wrong-thing/)                                                  | **AMYGDALA**    | It had all the context and still did the wrong thing. A learned reflex layer that pauses danger before it happens.                          |
@@ -514,6 +544,8 @@ Every system in TinkerClaw began as a research paper about a real failure we hit
 | J16 | [Salience Pyramid](https://thetinkerzone.com/salience-the-death-of-fixed-thresholds-the-pyramid-of-significance-and-cheap-traversal-as-the-basis-of-next-generation-vibe-programming/) | **SALIENCE**    | The death of fixed thresholds: a pyramid of significance and cheap traversal as the basis of next-gen vibe programming.                     |
 | J17 | [Recipe Grammar](https://thetinkerzone.com/broca-recipe-grammar-gradual-type-system-combinator-algebra/)                                                                               | **BROCA**       | Gives agent recipes a grammar — a gradual type system and combinator algebra for self-composing workflows.                                  |
 | J18 | [Personality Tuning](https://thetinkerzone.com/striatum-learned-personality-modulation-tuning-an-agents-behaviour-from-feedback-not-static-prompt-text/)                               | **STRIATUM**    | Personality that tunes itself — learned modulation from your feedback, so corrections stick without editing a file.                         |
+| J19 | [MAESTRO](https://thetinkerzone.com/maestro-what-orchestration-actually-buys/)                                                                                                         | **THALAMUS**    | Orchestration is a scheduler, not an intelligence multiplier. Latency vs capability vs supply.                                              |
+| J20 | [SEAHORSE](https://thetinkerzone.com/seahorse-what-actually-makes-an-agent-code-well/)                                                                                                 | **SEAHORSE**    | What actually makes an agent code well: file leases, a bible, four premises, and the harness.                                               |
 
 ---
 
