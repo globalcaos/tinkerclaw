@@ -749,6 +749,15 @@ function parseUiStateSnapshot(payload: unknown): UiStateSnapshot | null {
  * store is left exactly as it was. NEVER rejects: app.ts awaits this at module scope, so
  * a rejection here is a black page, not a lost panel fold.
  */
+function seatHeaders(): Record<string, string> {
+  try {
+    const id = sessionStorage.getItem("tinker.seatId");
+    return id ? { "X-Tinker-Seat": id } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function hydrateUiState(
   store: Storage = globalThis.localStorage,
   timeoutMs: number = HYDRATE_TIMEOUT_MS,
@@ -765,9 +774,10 @@ export async function hydrateUiState(
   // pre-hydrate cache over the very file it is being seeded from.
   hydrating = true;
   try {
+    const seat = seatHeaders();
     const res = await fetch(UI_STATE_ENDPOINT, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: { Accept: "application/json", ...seat },
       signal: controller.signal,
     });
     if (!res.ok) {
@@ -822,9 +832,18 @@ function flushUiStateMirror(): void {
     return;
   }
   try {
+    // FORK 2026-09-10 (the user: "upon restart, in the production tinker ui, the tabs open
+    // before turning off don't appear open"). The seat header is CARRIED, never REQUIRED,
+    // on the client. The hivemind-seats draft of 12:22 today returned early here whenever
+    // sessionStorage held no `tinker.seatId` — and nothing sets one until the door lands
+    // (plan units A/F) — so the laptop's production UI stopped mirroring altogether: the
+    // desk file froze at 09:33 and the 17:52 reboot came back with a lone "🏠 Main" while
+    // nine tabs sat in the file. Which desk a seat-less request lands on is the SERVER's
+    // decision (owner desk, or 400 under TINKER_REQUIRE_SEAT=1 in a hive) — see
+    // scripts/tinker-prod-ui.mjs, tinker-ui/vite.config.ts and the plugin route.
     void fetch(UI_STATE_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...seatHeaders() },
       body: JSON.stringify(readUiStateSnapshot(store)),
       // The tab closing is exactly when localStorage is wiped, so the last mirror is the
       // most important one: it must outlive the document that started it.

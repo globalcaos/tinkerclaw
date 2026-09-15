@@ -11,6 +11,22 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
+import {
+  TINKER_SEAT_COOKIE,
+  TINKER_SEAT_HEADER,
+  gatewayCookie,
+  loadOperators,
+  lookupOperator,
+  parseCookieHeader,
+  renderTinkerLoginPage,
+  resolvePresentedGatewayToken,
+  sanitizeSeatId,
+  saveOperators,
+  seatCookie,
+  timingSafeEqualString,
+  uiStatePath,
+  upsertOperator,
+} from "../../src/shared/hivemind-seats.ts";
 
 const PREFIX = "/tinker";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -239,31 +255,226 @@ const plugin = {
     // `npm run build`, so the user saw no UI changes (or a blank shell) until a
     // full gateway restart. Hashed assets still get long-cache; only the HTML
     // entry is mtime-busted.
-    let indexHtmlCache: { html: string; mtimeMs: number } | null = null;
+    let indexHtmlCache: { raw: string; mtimeMs: number } | null = null;
 
-    function getIndexHtml(): string {
+    // FORK 2026-09-10 hivemind door: the token is never GIFTED. Both callers reach this only
+    // after hasHouseToken(req) passed, so writing the presented token back into the page tells
+    // the requester nothing it did not already send — and it lets a new tab, carrying just the
+    // HttpOnly login cookie, open the WebSocket without a second trip through the door.
+    function getIndexHtml(presentedToken: string): string {
       const indexPath = path.join(TINKER_DIST, "index.html");
       const mtimeMs = fs.statSync(indexPath).mtimeMs;
-      if (indexHtmlCache && indexHtmlCache.mtimeMs === mtimeMs) {
-        return indexHtmlCache.html;
+      if (!indexHtmlCache || indexHtmlCache.mtimeMs !== mtimeMs) {
+        indexHtmlCache = { raw: fs.readFileSync(indexPath, "utf-8"), mtimeMs };
       }
-      const raw = fs.readFileSync(indexPath, "utf-8");
-      // Inject runtime config before </head> so the client can read it
-      const config = JSON.stringify({ token: authToken });
-      const tag = `<script>window.__TINKER_CONFIG=${config}</script>`;
-      const html = raw.replace("</head>", `${tag}\n</head>`);
-      indexHtmlCache = { html, mtimeMs };
-      return html;
+      const raw = indexHtmlCache.raw;
+      if (raw.includes("__TINKER_CONFIG")) return raw;
+      const config = JSON.stringify(presentedToken ? { token: presentedToken } : {}).replace(
+        /</g,
+        "\\u003c",
+      );
+      return raw.replace("</head>", `<script>window.__TINKER_CONFIG=${config}</script>\n</head>`);
     }
 
-    // Use registerHttpRoute (the correct plugin API) with prefix matching
+    function presentedToken(req: IncomingMessage): string | null {
+      const h = req.headers;
+      const auth = typeof h.authorization === "string" ? h.authorization : undefined;
+      const cookie = typeof h.cookie === "string" ? h.cookie : undefined;
+      return resolvePresentedGatewayToken({ cookieHeader: cookie, authorization: auth });
+    }
+
+    function hasHouseToken(req: IncomingMessage): boolean {
+      const presented = presentedToken(req);
+      return Boolean(presented && authToken && timingSafeEqualString(presented, authToken));
+    }
+
+    function readSeatHeader(req: IncomingMessage): string | null {
+      const raw = req.headers[TINKER_SEAT_HEADER];
+      const v = Array.isArray(raw) ? raw[0] : raw;
+      return sanitizeSeatId(v ?? "");
+    }
+
+    async function readJsonBody(req: IncomingMessage, max = 64 * 1024): Promise<unknown> {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of req) {
+        const buf = chunk as Buffer;
+        size += buf.length;
+        if (size > max) throw new Error("too large");
+        chunks.push(buf);
+      }
+      const raw = Buffer.concat(chunks).toString("utf8");
+      if (!raw.trim()) return {};
+      return JSON.parse(raw);
+    }
+
+    function sendLogin(res: ServerResponse, error?: string) {
+      res.statusCode = error ? 401 : 200;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.setHeader("Cache-Control", "no-store");
+      res.end(renderTinkerLoginPage({ error }));
+    }
+
+    // FORK 2026-09-09 (the user: :18789/tinker/ returned 401 even with ?token=).
+    // Plugin routes with auth:"gateway" are gated BEFORE this handler by
+    // authorizeGatewayHttpRequestOrReply, which only reads Authorization: Bearer
+    // — never ?token=. A browser navigating to /tinker/ sends neither, so the
+    // page 401s before getIndexHtml() can inject __TINKER_CONFIG. Control UI on
+    // `/` does not have that gate, which is why it loads. When the operator has
+    // already set dangerouslyDisableDeviceAuth (loopback-only), register as
+    // auth:"plugin" so the HTML/assets load; the injected token still authenticates
+    // the WebSocket hello and the client's own Bearer fetches.
+    // Written here now; the running gateway loads dist/ until a dist-swap.
     api.registerHttpRoute({
       path: PREFIX,
-      auth: "gateway",
+      auth: disableAuth ? "plugin" : "gateway",
       match: "prefix",
       handler: async (req: IncomingMessage, res: ServerResponse) => {
         const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
         let pathname = url.pathname;
+
+        // FORK 2026-09-10 hivemind door. Login is public even when the rest of
+        // /tinker is auth:"plugin" because dangerouslyDisableDeviceAuth is on.
+        if (pathname === `${PREFIX}/login` || pathname === `${PREFIX}/login/`) {
+          if (req.method === "GET") {
+            sendLogin(res);
+            return true;
+          }
+          if (req.method === "POST") {
+            const ctype = String(req.headers["content-type"] ?? "");
+            let token = "";
+            let name = "";
+            if (ctype.includes("application/json")) {
+              try {
+                const body = (await readJsonBody(req)) as { token?: unknown; name?: unknown };
+                token = typeof body.token === "string" ? body.token : "";
+                name = typeof body.name === "string" ? body.name : "";
+              } catch {
+                sendLogin(res, "Could not read the token.");
+                return true;
+              }
+            } else {
+              const chunks: Buffer[] = [];
+              for await (const chunk of req) chunks.push(chunk as Buffer);
+              const params = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
+              token = params.get("token") ?? "";
+              name = params.get("name") ?? "";
+            }
+            if (!authToken || !timingSafeEqualString(token, authToken)) {
+              sendLogin(res, "That token does not open this house.");
+              return true;
+            }
+            // The seat is the name typed at the door (see operatorIdFromName), recorded in
+            // ~/.openclaw/data/seats/operators.json so /api/seat can paint "AGENT (Name)".
+            const seat = upsertOperator(loadOperators(), name);
+            if (!seat) {
+              sendLogin(res, "Tell the house who you are (a name, up to 40 characters).");
+              return true;
+            }
+            saveOperators(seat.records);
+            const secure = req.headers["x-forwarded-proto"] === "https";
+            res.statusCode = 303;
+            res.setHeader("Set-Cookie", [
+              gatewayCookie(token, secure),
+              seatCookie(seat.record.deviceId, secure),
+            ]);
+            res.setHeader("Location", `${PREFIX}/`);
+            res.end();
+            return true;
+          }
+          res.statusCode = 405;
+          res.end("Method not allowed");
+          return true;
+        }
+
+        if (pathname === `${PREFIX}/api/seat` && req.method === "GET") {
+          if (!hasHouseToken(req)) {
+            res.statusCode = 401;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "unauthorized" }));
+            return true;
+          }
+          const seatId =
+            readSeatHeader(req) ??
+            sanitizeSeatId(
+              parseCookieHeader(
+                typeof req.headers.cookie === "string" ? req.headers.cookie : undefined,
+                TINKER_SEAT_COOKIE,
+              ) ?? "",
+            );
+          const ops = loadOperators();
+          const rec = lookupOperator(ops, seatId);
+          res.statusCode = 200;
+          res.setHeader("Content-Type", "application/json");
+          res.end(
+            JSON.stringify({
+              seatId,
+              operatorId: rec?.operatorId ?? null,
+              displayName: rec?.displayName ?? null,
+            }),
+          );
+          return true;
+        }
+
+        if (pathname === `${PREFIX}/api/ui-state`) {
+          if (!hasHouseToken(req)) {
+            res.statusCode = 401;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "unauthorized" }));
+            return true;
+          }
+          const seatId = readSeatHeader(req);
+          // FORK 2026-09-10 — a seat-less request lands on the OWNER DESK (the single-operator
+          // file) unless TINKER_REQUIRE_SEAT=1 (hive mode). Same rule as scripts/tinker-prod-ui.mjs
+          // and the Vite middleware; an unconditional 400 froze the laptop's desk on 2026-09-10.
+          if (!seatId && process.env.TINKER_REQUIRE_SEAT === "1") {
+            res.statusCode = 400;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ error: "X-Tinker-Seat required" }));
+            return true;
+          }
+          const file = uiStatePath(seatId);
+          if (req.method === "GET") {
+            try {
+              const raw = fs.readFileSync(file, "utf8");
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.setHeader("Cache-Control", "no-store");
+              res.end(raw);
+            } catch (err: any) {
+              if (err?.code === "ENOENT") {
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ collapsed: {}, flags: {}, choices: {} }));
+                return true;
+              }
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ collapsed: {}, flags: {}, choices: {}, degraded: true }));
+            }
+            return true;
+          }
+          if (req.method === "POST") {
+            try {
+              const body = await readJsonBody(req, 256 * 1024);
+              fs.mkdirSync(path.dirname(file), { recursive: true });
+              const tmp = `${file}.${process.pid}.tmp`;
+              fs.writeFileSync(tmp, JSON.stringify(body));
+              fs.renameSync(tmp, file);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ ok: true }));
+            } catch (err: any) {
+              res.statusCode = 400;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: err?.message ?? "write failed" }));
+            }
+            return true;
+          }
+          res.statusCode = 405;
+          res.end("Method not allowed");
+          return true;
+        }
 
         // --- Jarvis Voice Mute API ---
         const MUTE_FILE = path.join(
@@ -682,10 +893,14 @@ const plugin = {
           return true;
         }
 
-        // Serve index.html with injected config
+        // Serve index.html — house token required even when device-auth is off.
         if (rel === "/index.html") {
+          if (!hasHouseToken(req)) {
+            sendLogin(res);
+            return true;
+          }
           try {
-            const html = getIndexHtml();
+            const html = getIndexHtml(presentedToken(req) ?? "");
             res.statusCode = 200;
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.setHeader("Cache-Control", "no-cache");
@@ -721,8 +936,12 @@ const plugin = {
         // SPA fallback: serve index.html for non-asset routes
         const ext = path.extname(rel);
         if (!ext || ext === ".html") {
+          if (!hasHouseToken(req)) {
+            sendLogin(res);
+            return true;
+          }
           try {
-            const html = getIndexHtml();
+            const html = getIndexHtml(presentedToken(req) ?? "");
             res.statusCode = 200;
             res.setHeader("Content-Type", "text/html; charset=utf-8");
             res.setHeader("Cache-Control", "no-cache");
