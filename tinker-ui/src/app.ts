@@ -12889,6 +12889,13 @@ function mergeFsLinkClass(attrs: string | undefined, extra = ""): string {
   return `${a} class="${classes}"`;
 }
 
+/**
+ * FORK 2026-09-15 (the user: "all mention of Jarvis should be a variable") — the purple voice line is
+ * `**<agent name>:** *…*`. refreshAgentNameHeader overwrites this with the CONFIGURED identity, so
+ * Goku's `**GOKU:**` paints purple exactly like Jarvis's line. The default only covers first paint.
+ */
+let voiceSpeakerName = "Jarvis";
+
 function md(text: string): string {
   // FORK 2026-06-24: pull ```html-render blocks out BEFORE markdown render so
   // their raw HTML survives untouched, then swap in the sandboxed iframe after.
@@ -12915,14 +12922,18 @@ function md(text: string): string {
     });
   }
 
-  // Jarvis voice styling
+  // Voice-line styling: `**<agent name>:** *spoken text*` (name = voiceSpeakerName)
   // The capture must tolerate a soft newline: with breaks:true a `\n` inside the
   // italics becomes <br>, and the old `.*?` (where `.` never matches `\n`) dropped
   // the match entirely — a COMPLETE, well-formed line that still rendered grey.
   // Bounded so it can never run past its own </em> or out of the block.
+  const voiceName = voiceSpeakerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   h = h.replace(
-    /<strong>Jarvis:<\/strong>\s*<em>((?:(?!<\/em>|<\/p>)[\s\S])*)<\/em>/gi,
-    '<strong>Jarvis:</strong> <span class="jarvis-voice">$1</span>',
+    new RegExp(
+      String.raw`<strong>(${voiceName}):<\/strong>\s*<em>((?:(?!<\/em>|<\/p>)[\s\S])*)<\/em>`,
+      "gi",
+    ),
+    '<strong>$1:</strong> <span class="jarvis-voice">$2</span>',
   );
   // FORK 2026-09-06 (the user: "sometimes the Jarvis text does not get rendered in
   // purple, as it's designed"). The rule above needs markdown-it to have emitted
@@ -12946,8 +12957,11 @@ function md(text: string): string {
   // first tag, painting only the leading fragment. Stop at a literal `*`, at a
   // <br> (end of the identity line) or at </p> (end of the block) — never beyond.
   h = h.replace(
-    /<strong>Jarvis:<\/strong>(\s*)\*((?:[^*<]|<(?!br\b|\/p>)[^>]*>)*)\*?/gi,
-    '<strong>Jarvis:</strong>$1<span class="jarvis-voice">$2</span>',
+    new RegExp(
+      String.raw`<strong>(${voiceName}):<\/strong>(\s*)\*((?:[^*<]|<(?!br\b|\/p>)[^>]*>)*)\*?`,
+      "gi",
+    ),
+    '<strong>$1:</strong>$2<span class="jarvis-voice">$3</span>',
   );
   // FORK 2026-06-10 (amygdala retirement): the pink "🧠 AMYGDALA:" inline-nudge
   // styling was removed. The per-turn amygdala section is retired — any residual
@@ -16773,6 +16787,7 @@ function refreshAgentNameHeader(): void {
         host.hidden = true;
         return;
       }
+      voiceSpeakerName = name;
       text.textContent = formatAgentBanner(name, readSessionValue(CONDUCTOR_STORAGE_KEY));
       host.hidden = false;
       void loadConductorName().then((conductor) => {
