@@ -30,14 +30,14 @@
       },
       "cwd": {
         "type": "string",
-        "description": "Working directory for the claude subprocess. Default: ~/.openclaw/jarvis-workspace"
+        "description": "Working directory for the claude subprocess. Default: ~/.openclaw/jarvis-workspace if it exists, otherwise OpenClaw's agent workspace (~/.openclaw/workspace, or workspace-<profile>)."
       },
       "disallowedTools": {
         "type": "array",
         "items": {
           "type": "string"
         },
-        "description": "Tools to disable inside claude (OpenClaw owns the tool loop)."
+        "description": "Tools to disable inside claude (OpenClaw owns the tool loop). Replaces the permissive default list entirely."
       },
       "warmOnBoot": {
         "type": "array",
@@ -59,7 +59,7 @@
     },
     "disallowedTools": {
       "label": "Disallowed tools",
-      "help": "Tools to disable in-claude. OpenClaw runs its own tool loop; default blocks Bash/Read/Write/Edit/Grep/Glob/Agent."
+      "help": "Tools to disable in-claude. The default is PERMISSIVE: it blocks only Agent and Claude Code's IDE/task-UX tools. Bash/Read/Write/Edit/Grep/Glob stay ENABLED and the subprocess runs with bypassPermissions. Set this list to impose a restrictive profile; your value replaces the default, it does not merge."
     }
   }
 }

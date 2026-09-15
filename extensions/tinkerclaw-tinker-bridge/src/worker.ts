@@ -681,6 +681,12 @@ export class ClaudeCodeWorker extends EventEmitter {
       args.push("--model", this.params.model);
     }
     const cwd = path.resolve(this.params.cwd);
+    if (!fs.existsSync(cwd)) {
+      // Node reports a missing cwd as `spawn systemd-run ENOENT`, naming the wrong culprit.
+      throw new Error(
+        `claude-code cwd does not exist: ${cwd} — create it or set plugins.entries.tinkerclaw-tinker-bridge.config.cwd`,
+      );
+    }
     if (this.params.resumeSessionId) {
       // FORK 2026-06-23 (oversized-resume guard): a fat transcript wedges the
       // brain — `claude --resume` stalls parsing 14.5–15.3MB of history, emits
@@ -912,14 +918,15 @@ export class ClaudeCodeWorker extends EventEmitter {
     // env vars aren't set (scripts/openclaw-spawn-subagent.mjs:58-67,
     // scripts/openclaw-recipe-state.mjs:78-87). The subagent bridge still
     // works; the harness-detection strip is honored.
-    // Full env dump — every key, every value (secrets truncated). We've ruled out
-    // all the obvious suspects, so cast a wide net.
-    const fullEnv = Object.entries(cleanEnv)
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${k}=${(v ?? "").length > 60 ? (v ?? "").slice(0, 60) + "…" : (v ?? "")}`)
-      .toSorted()
-      .join("\n  ");
-    log.info(`FULL env for claude spawn (${Object.keys(cleanEnv).length} vars):\n  ${fullEnv}`);
+    // Log the env SHAPE, never the values. This used to dump every key=value
+    // pair (truncated at 60 chars) into the gateway journal on every single
+    // spawn — which is not redaction: most tokens are shorter than 60 chars,
+    // and HOME/PATH/USER/XDG_RUNTIME_DIR leak the operator's identity and host
+    // layout into a log that gets read, tailed and pasted into bug reports.
+    // The allowlist above is the thing worth auditing, and the key names alone
+    // prove which vars survived it.
+    const envKeys = Object.keys(cleanEnv).toSorted().join(", ");
+    log.info(`env for claude spawn (${Object.keys(cleanEnv).length} vars, names only): ${envKeys}`);
 
     // Build --setenv=K=V args for every cleanEnv entry. systemd-run --pipe
     // does NOT inherit the caller's env (only --scope does), so the child

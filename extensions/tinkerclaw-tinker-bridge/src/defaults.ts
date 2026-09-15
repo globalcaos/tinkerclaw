@@ -5,14 +5,53 @@
  * binary path, cwd, disallowed-tools list, model catalog. Keeping these
  * isolated so empirical tweaks don't sprawl.
  */
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 export const PROVIDER_ID = "claude-code";
 export const PROVIDER_LABEL = "Claude Code (OAuth)";
 export const DEFAULT_BINARY = "claude";
-export const DEFAULT_CWD = path.join(homedir(), ".openclaw", "jarvis-workspace");
+
+/**
+ * Working directory for each claude subprocess. The architect's own host keeps its agent in
+ * `~/.openclaw/jarvis-workspace`; every other install uses OpenClaw's default agent workspace
+ * (same rule as core's resolveDefaultAgentWorkspaceDir). Hard-coding the first path made every
+ * claude-code turn on a fresh clone fail at spawn, which Node reports as `spawn systemd-run ENOENT`.
+ */
+export function resolveDefaultCwd(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+  exists: (p: string) => boolean = existsSync,
+): string {
+  const legacy = path.join(home, ".openclaw", "jarvis-workspace");
+  if (exists(legacy)) {
+    return legacy;
+  }
+  const profile = env.OPENCLAW_PROFILE?.trim();
+  if (profile && profile.toLowerCase() !== "default") {
+    return path.join(home, ".openclaw", `workspace-${profile}`);
+  }
+  return path.join(home, ".openclaw", "workspace");
+}
+
+export const DEFAULT_CWD = resolveDefaultCwd();
 export const CREDENTIALS_PATH = path.join(homedir(), ".claude", ".credentials.json");
+
+/**
+ * NOT A CREDENTIAL. OpenClaw's `ModelProviderConfig` requires a non-empty
+ * `apiKey` string, but this provider has no API key: authentication happens
+ * entirely inside the `claude` CLI, which reads its own OAuth tokens from
+ * CREDENTIALS_PATH above. This constant is the fixed placeholder we put in
+ * that required field so the provider validates.
+ *
+ * It is a literal, readable, non-secret marker on purpose — deliberately NOT
+ * obfuscated, encoded or generated, so anyone auditing this file can see at a
+ * glance that no key material is embedded here. Named explicitly because a
+ * bare string literal assigned to a field called `apiKey` reads to any secret
+ * scanner (correctly) as a hardcoded credential.
+ */
+export const OAUTH_PLACEHOLDER_API_KEY = "claude-code-oauth";
 
 /**
  * Tools we disable inside claude. Kept minimal on purpose: Jarvis needs
