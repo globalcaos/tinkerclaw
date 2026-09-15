@@ -3,6 +3,13 @@ import MarkdownIt from "markdown-it";
 // FORK 2026-09-03 (the user): the €/task Pareto frontier THALAMUS routes along — the same
 // module behind the chart's yellow envelope and the reply-path router, so the routing
 // card's "would route" line cannot disagree with either.
+import {
+  CONDUCTOR_STORAGE_KEY,
+  GATEWAY_TOKEN_STORAGE_KEY,
+  SEAT_ID_STORAGE_KEY,
+  TINKER_SEAT_COOKIE,
+  formatAgentBanner,
+} from "../../src/shared/hivemind-seats.ts";
 import { frontierRungsFor } from "../../src/shared/thalamus-frontier.js";
 import { thalamusPlan } from "../../src/shared/thalamus-plan.js";
 import { supplyStates, supplyWindowsFromUsage } from "../../src/shared/thalamus-supply.js";
@@ -406,6 +413,14 @@ import {
 // timeout, transport failure or blocked Storage. A rejection at top level would abort
 // module evaluation and black-page the entire UI, so that guarantee is enforced on the
 // callee side (panels/ui-state.ts) rather than papered over with a handler here.
+// Hivemind seats: copy the seat chosen at the door into this tab BEFORE the desk loads, so the
+// hydrate below reads this seat's desk instead of the owner's.
+try {
+  const seatFromCookie = readCookieValue(TINKER_SEAT_COOKIE);
+  if (seatFromCookie) sessionStorage.setItem(SEAT_ID_STORAGE_KEY, seatFromCookie);
+} catch {
+  // Blocked storage: this load falls back to the owner desk.
+}
 await hydrateUiState();
 
 // FORK 2026-05-09: linkify was auto-converting plain text like "BRIEFING.md"
@@ -475,9 +490,37 @@ if (PF_DEBUG_STATE.debug) {
   );
 }
 
-// Runtime config: injected by the tinker plugin into index.html, or via URL params
+// Runtime config. Hivemind door: the tinker plugin writes the gateway token into index.html
+// only for a request that already presented it (the HttpOnly cookie set by /tinker/login, or a
+// Bearer header). A browser with neither gets no token and is sent to the login page. A URL
+// ?token= is ignored on purpose: it lands in history, bookmarks and referrers.
 const __cfg = (window as unknown).__TINKER_CONFIG ?? {};
-const TOKEN = __cfg.token ?? new URLSearchParams(window.location.search).get("token") ?? "";
+function readSessionValue(key: string): string {
+  try {
+    return sessionStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+function readCookieValue(name: string): string {
+  for (const part of document.cookie.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx > 0 && part.slice(0, idx).trim() === name) {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return "";
+}
+const TOKEN =
+  (typeof __cfg.token === "string" && __cfg.token) || readSessionValue(GATEWAY_TOKEN_STORAGE_KEY);
+try {
+  if (TOKEN) sessionStorage.setItem(GATEWAY_TOKEN_STORAGE_KEY, TOKEN);
+} catch {
+  // Blocked storage: this page load still works; the next one asks the door again.
+}
+if (!TOKEN && !window.location.pathname.includes("/login")) {
+  window.location.replace(`${(import.meta.env.BASE_URL ?? "/tinker/").replace(/\/?$/, "/")}login`);
+}
 // In dev mode (vite), connect WS directly to the gateway; in prod the plugin serves from the gateway itself
 const GW_WS = import.meta.env.DEV
   ? `ws://localhost:18789`
@@ -16675,6 +16718,37 @@ function checkTabOverflow() {
  * key so switching tabs does not re-request an identity that cannot have changed.
  */
 let agentNameHeaderKey: string | null = null;
+/**
+ * Hivemind seats: who is in the chair. The door (/tinker/login) records a name against a seat;
+ * /tinker/api/seat returns it for this browser's seat. One fetch per page load; a failure
+ * leaves the banner at the agent name alone and lets the next repaint retry.
+ */
+let conductorNamePromise: Promise<string> | null = null;
+function loadConductorName(): Promise<string> {
+  if (conductorNamePromise) return conductorNamePromise;
+  const seat = readSessionValue(SEAT_ID_STORAGE_KEY);
+  if (!seat || !TOKEN) return Promise.resolve("");
+  conductorNamePromise = fetch(`${BASE}api/seat`, {
+    headers: { Authorization: `Bearer ${TOKEN}`, "X-Tinker-Seat": seat },
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j: { displayName?: unknown } | null) => {
+      const n = typeof j?.displayName === "string" ? j.displayName.trim() : "";
+      if (n) {
+        try {
+          sessionStorage.setItem(CONDUCTOR_STORAGE_KEY, n);
+        } catch {
+          // The banner still paints from the returned value.
+        }
+      }
+      return n;
+    })
+    .catch(() => {
+      conductorNamePromise = null;
+      return "";
+    });
+  return conductorNamePromise;
+}
 function refreshAgentNameHeader(): void {
   const host = document.getElementById("agent-name-banner");
   const text = document.getElementById("agent-name-text");
@@ -16699,8 +16773,11 @@ function refreshAgentNameHeader(): void {
         host.hidden = true;
         return;
       }
-      text.textContent = name;
+      text.textContent = formatAgentBanner(name, readSessionValue(CONDUCTOR_STORAGE_KEY));
       host.hidden = false;
+      void loadConductorName().then((conductor) => {
+        if (conductor) text.textContent = formatAgentBanner(name, conductor);
+      });
     })
     .catch(() => {
       // Leave the latch DOWN so the next repaint retries; latching on a failed load is how the
