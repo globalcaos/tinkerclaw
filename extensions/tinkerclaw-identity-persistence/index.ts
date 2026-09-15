@@ -51,6 +51,47 @@ function ensureDir(dir: string): void {
 }
 
 /**
+ * Neutral fallback name, used only when the host config names no agent. It is
+ * deliberately generic: shipping a specific character here would brand every
+ * install with this fork author's persona.
+ */
+const DEFAULT_AGENT_NAME = "Agent";
+
+/**
+ * The agent's configured name, in the order the gateway resolves it for the UI header:
+ * `ui.assistant.name` -> `agents.defaults.name` -> `Name:` in the workspace IDENTITY.md ->
+ * DEFAULT_AGENT_NAME. The persona header, the shared state and every voice rule say THIS name,
+ * so a second deployment of the fork (Goku) answers as itself, not as the fork author's agent.
+ */
+function resolveAgentName(config: unknown): string {
+  const c = config as
+    | { ui?: { assistant?: { name?: unknown } }; agents?: { defaults?: Record<string, unknown> } }
+    | undefined;
+  for (const v of [c?.ui?.assistant?.name, c?.agents?.defaults?.name]) {
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+  }
+  const ws = c?.agents?.defaults?.workspace;
+  const workspace =
+    typeof ws === "string" && ws.trim()
+      ? ws.replace(/^~/, homedir())
+      : join(OPENCLAW_DIR, "workspace");
+  try {
+    const match = readFileSync(join(workspace, "IDENTITY.md"), "utf8").match(
+      /^\s*-?\s*[*_]*name[*_]*\s*:\s*[*_]*\s*(.+?)\s*$/im,
+    );
+    const name = match?.[1]?.replace(/[*_]+$/, "").trim();
+    if (name) {
+      return name;
+    }
+  } catch {
+    // no workspace identity file: fall through to the neutral default
+  }
+  return DEFAULT_AGENT_NAME;
+}
+
+/**
  * Resolve the persona source path. Checks pluginConfig.personaPath first,
  * then falls back to ~/.openclaw/SOUL.md. If neither exists, bootstraps a
  * default SOUL.md (never overwrites existing files).
@@ -177,8 +218,7 @@ export default definePluginEntry({
     const cfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
     const threshold = (cfg.syncScoreThreshold as number) ?? 0.6;
     const evaluationInterval = (cfg.evaluationInterval as number) ?? 10;
-    const agentName =
-      ((api.config?.agents?.defaults as Record<string, unknown>)?.name as string) ?? "JarvisOne";
+    const agentName = resolveAgentName(api.config);
 
     // -- Initialize cortex runtime --
     const soulPath = resolveSoulPath(cfg, agentName);

@@ -15,7 +15,13 @@ const DRIFT_THRESHOLD = 0.15;
 /** Max number of nudges to fire per turn (highest-drift dimensions win) */
 const DEFAULT_TOP_K = 5;
 
-/** Human-readable nudge templates per dimension */
+/**
+ * Name used in `{name}` templates when the caller does not know the agent's configured name.
+ * Deliberately generic: a fork deployment must answer as ITSELF, never as the fork author's agent.
+ */
+const DEFAULT_AGENT_NAME = "Agent";
+
+/** Human-readable nudge templates per dimension. `{name}` is the agent's configured name. */
 const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
   humor: {
     low: "HUMOR DRIFT: You're going serious/formal. Apply Pattern 10 (competent self-deprecation) if corrected, Pattern 7 (domain transfer) for technical topics, Pattern 4 (expectation subversion) for observations. The bridge must be valid and surprising -- don't force it, but scan for it.",
@@ -38,11 +44,11 @@ const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
     high: "Being blunt without enough context -- add reasoning.",
   },
   patience_under_correction: {
-    low: "PERSONALITY ALERT: You're dropping character under correction. Stay Jarvis. Own the mistake with humor.",
+    low: "PERSONALITY ALERT: You're dropping character under correction. Stay {name}. Own the mistake with humor.",
     high: "You're brushing off corrections too lightly -- acknowledge the substance.",
   },
   voice_consistency: {
-    low: "VOICE ALERT: Persona/voice dropping. Fire jarvis exec. Write the **Jarvis:** line. This is identity, not decoration.",
+    low: "VOICE ALERT: Persona/voice dropping. Fire the voice exec if one is installed. Write the **{name}:** line. This is identity, not decoration.",
     high: "Voice is fine -- no action needed.",
   },
   narration_discipline: {
@@ -93,6 +99,7 @@ const NUDGE_TEMPLATES: Record<string, { low: string; high: string }> = {
  * @param combined   The 64-dim combined_embedding from the Personality ensemble
  * @param target     The 64-dim target_vector from config
  * @param alphaPers  Current personality trust coefficient alpha_I in [0, 1]
+ * @param agentName  The agent's configured name, substituted for `{name}`
  * @returns PersonalityNudge with human-readable adjustments
  */
 export function decodePersonalityNudge(
@@ -100,6 +107,7 @@ export function decodePersonalityNudge(
   target: number[],
   alphaPers: number,
   topK = DEFAULT_TOP_K,
+  agentName = DEFAULT_AGENT_NAME,
 ): PersonalityNudge {
   const dim = Math.min(combined.length, target.length);
   const delta = new Float32Array(dim);
@@ -146,7 +154,9 @@ export function decodePersonalityNudge(
   // When the net learns to discriminate per-situation, top-K tracks the real
   // drift automatically — no further change needed.
   candidates.sort((a, b) => b.mag - a.mag);
-  const adjustments = candidates.slice(0, Math.max(0, topK)).map((c) => c.text);
+  const adjustments = candidates
+    .slice(0, Math.max(0, topK))
+    .map((c) => c.text.replaceAll("{name}", agentName));
 
   return {
     adjustments,

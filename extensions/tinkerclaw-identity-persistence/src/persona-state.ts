@@ -213,8 +213,8 @@ export function createDefaultPersonaState(name: string, identity: string): Perso
       {
         id: "HR-VOICE",
         category: "identity",
-        rule: "Tinker home chat: first line of every substantive reply is **Jarvis:** *italic spoken text*. Italics required for purple. Do not wait for a script to inject it.",
-        examples: ["**Jarvis:** *The patch is sitting in source. Purple lives in this line.*"],
+        rule: `Tinker home chat: first line of every substantive reply is **${name}:** *italic spoken text*. Italics required for purple. Do not wait for a script to inject it.`,
+        examples: [`**${name}:** *The patch is sitting in source. Purple lives in this line.*`],
       },
     ],
     traits: [],

@@ -21,8 +21,11 @@ import { createLinkIndex } from "../../memory/engram/link-index.js";
 function listEmbeddedExtensionFactories(): never[] {
   return [];
 }
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agent-scope.js";
 import { resolveContextWindowInfo } from "../context-window-guard.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../defaults.js";
+import { loadAgentIdentityFromWorkspace } from "../identity-file.js";
+import { resolveAgentIdentity } from "../identity.js";
 import compactionEngramExtension from "../pi-extensions/compaction-engram.js";
 import contextPruningExtension from "../pi-extensions/context-pruning.js";
 import { setContextPruningRuntime } from "../pi-extensions/context-pruning/runtime.js";
@@ -113,6 +116,25 @@ function buildContextPruningFactory(params: {
  * OUR compaction extensions owns compaction. A non-"default" mode registers a
  * `session_before_compact` handler, which means pi's own decider must be switched off.
  */
+/**
+ * FORK 2026-09-15: the CORTEX persona header must carry the agent's CONFIGURED name, in the order
+ * the gateway resolves it for the UI (`ui.assistant.name` -> agent identity -> workspace IDENTITY.md).
+ * Without it every model on a second deployment (Goku) was told it was "JarvisOne".
+ */
+function resolveCortexPersonaName(cfg: OpenClawConfig | undefined): string | undefined {
+  if (!cfg) {
+    return undefined;
+  }
+  const agentId = resolveDefaultAgentId(cfg);
+  const candidates: unknown[] = [cfg.ui?.assistant?.name, resolveAgentIdentity(cfg, agentId)?.name];
+  try {
+    candidates.push(loadAgentIdentityFromWorkspace(resolveAgentWorkspaceDir(cfg, agentId))?.name);
+  } catch {
+    // no readable workspace identity: the config candidates stand alone
+  }
+  return candidates.map((v) => (typeof v === "string" ? v.trim() : "")).find(Boolean) || undefined;
+}
+
 export function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" | "engram" {
   const compaction = cfg?.agents?.defaults?.compaction;
   // A registered compaction provider requires the safeguard extension path
@@ -213,7 +235,7 @@ export function buildEmbeddedExtensionFactories(params: {
     // CORTEX: persona state injection, SyncScore, drift detection
     let cortexRuntime: ReturnType<typeof createCortexRuntime> | undefined;
     if (needsCortex) {
-      cortexRuntime = createCortexRuntime();
+      cortexRuntime = createCortexRuntime({ name: resolveCortexPersonaName(params.cfg) });
       setCortexRuntime(params.sessionManager, cortexRuntime);
     }
 

@@ -8,6 +8,9 @@
  * Self-contained: no imports from upstream src/.
  */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { EmbeddingPipeline, EmbeddingWindow } from "./embedding.js";
 import { AmygdalaGate } from "./gate.js";
 import { GitCache } from "./git-cache.js";
@@ -26,6 +29,22 @@ import type {
   GateDecision,
   PersonalityNudge,
 } from "./types.js";
+
+/**
+ * The agent's configured name as published by identity-persistence in its shared state, so the
+ * nudges say "Stay Goku" on Goku and "Stay Jarvis" on Jarvis. Undefined when unpublished.
+ */
+function readSharedAgentName(): string | undefined {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(homedir(), ".openclaw", "cognitive", "identity-persistence.json"), "utf8"),
+    ) as { persona?: { name?: unknown } };
+    const name = raw?.persona?.name;
+    return typeof name === "string" && name.trim() ? name.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Calibration key for the persisted novelty threshold. */
 const NOVELTY_THRESHOLD_KEY = "novelty_threshold";
@@ -417,6 +436,8 @@ export class AmygdalaHook {
         evaluation.personality.combined_embedding,
         targetVector,
         this.config.trust.alpha_personality,
+        undefined,
+        readSharedAgentName(),
       );
     }
 

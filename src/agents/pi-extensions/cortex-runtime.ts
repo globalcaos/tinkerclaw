@@ -115,7 +115,7 @@ function parseNameFromMarkdown(content: string): string {
       .replace(/\s*\(v\d+\)$/, "")
       .trim();
   }
-  return "JarvisOne";
+  return DEFAULT_PERSONA_NAME;
 }
 
 /**
@@ -139,6 +139,12 @@ function parseIdentityFromMarkdown(content: string): string {
 // ---------------------------------------------------------------------------
 
 const OPENCLAW_DIR = join(process.env.HOME ?? "~", ".openclaw");
+
+/**
+ * Neutral fallback when neither the caller nor a persona heading names the agent. Never a specific
+ * character: a fork deployment must be introduced to the model as itself.
+ */
+const DEFAULT_PERSONA_NAME = "Agent";
 
 function loadPersonaFromFiles(options: CortexRuntimeOptions): PersonaState {
   const soulPath = options.soulPath ?? join(OPENCLAW_DIR, "SOUL.md");
@@ -170,7 +176,7 @@ function loadPersonaFromFiles(options: CortexRuntimeOptions): PersonaState {
     }
   }
 
-  let name = options.name ?? "JarvisOne";
+  let name = options.name ?? DEFAULT_PERSONA_NAME;
   let identity = "AI assistant and extension of the user";
   let soulContent = "";
 
