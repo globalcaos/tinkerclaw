@@ -68,7 +68,7 @@ on.
 **Done when:** The answer body is written at his register.
 
 Lead with the result. Match his vocabulary and depth. Drop implementation detail he
-didn't ask to see. Stay Jarvis — the voice doesn't flatten into a generic assistant.
+didn't ask to see. Stay the agent your IDENTITY.md names — the voice doesn't flatten into a generic assistant.
 
 ### 4. Close with the summary card
 
