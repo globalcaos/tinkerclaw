@@ -176,10 +176,19 @@ export function parseCookieHeader(header: string | undefined, name: string): str
   return null;
 }
 
+/**
+ * "Remember this machine": both door cookies persist for a year, so the same browser on the
+ * same machine is not asked for name + token again. A browser set to clear site data on exit
+ * still forgets them; allow cookies for the Tinker address in that browser to keep them.
+ * Rotating the gateway token signs every remembered machine out at once.
+ */
+export const DOOR_COOKIE_MAX_AGE_S = 365 * 24 * 60 * 60;
+
 export function gatewayCookie(token: string, secure: boolean): string {
   const parts = [
     `${TINKER_GATEWAY_COOKIE}=${encodeURIComponent(token)}`,
     "Path=/tinker",
+    `Max-Age=${DOOR_COOKIE_MAX_AGE_S}`,
     "HttpOnly",
     "SameSite=Lax",
   ];
@@ -191,6 +200,7 @@ export function seatCookie(seatId: SeatId, secure: boolean): string {
   const parts = [
     `${TINKER_SEAT_COOKIE}=${encodeURIComponent(seatId)}`,
     "Path=/tinker",
+    `Max-Age=${DOOR_COOKIE_MAX_AGE_S}`,
     "SameSite=Lax",
   ];
   if (secure) parts.push("Secure");

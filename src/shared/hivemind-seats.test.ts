@@ -168,6 +168,12 @@ describe("the door names the seat", () => {
     expect(seatCookie("alice", true)).toContain("Secure");
   });
 
+  it("remembers the machine: both door cookies last a year", () => {
+    expect(seatCookie("alice", false)).toContain("Max-Age=31536000");
+    expect(gatewayCookie("t", false)).toContain("Max-Age=31536000");
+    expect(gatewayCookie("t", false)).toContain("HttpOnly");
+  });
+
   it("asks for a name on the login page", () => {
     const html = renderTinkerLoginPage();
     expect(html).toContain('name="name"');
