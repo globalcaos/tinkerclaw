@@ -106,7 +106,7 @@ function parseNameFromMarkdown(content: string): string {
       .replace(/\s*\(v\d+\)$/, "")
       .trim();
   }
-  return "JarvisOne";
+  return "Agent";
 }
 
 /**
@@ -163,7 +163,7 @@ export function loadPersonaFromFiles(options: CortexRuntimeOptions): PersonaStat
     }
   }
 
-  let name = options.name ?? "JarvisOne";
+  let name = options.name ?? "Agent";
   let identity = "AI assistant and extension of the user";
   let soulContent = "";
 
