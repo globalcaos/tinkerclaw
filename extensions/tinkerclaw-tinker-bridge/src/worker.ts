@@ -816,6 +816,11 @@ export class ClaudeCodeWorker extends EventEmitter {
       "CLAUDECODE",
       "CLAUDE_CODE_ENTRYPOINT",
       "CLAUDE_CODE_EXECPATH",
+      // Long-lived headless login (`claude setup-token`). Claude Code's own documented
+      // variable for machines with no browser, so it is not a harness tell. A host that
+      // sets it in the gateway environment gets a login that does not share (and rotate)
+      // the refresh token of another machine; hosts without it are unaffected.
+      "CLAUDE_CODE_OAUTH_TOKEN",
       // Output-token ceiling — set explicitly below. A host-level override
       // (if present) wins; otherwise we pin it so the CLI never falls back to
       // a low default that would silently truncate a long answer.
