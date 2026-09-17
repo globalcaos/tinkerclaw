@@ -313,24 +313,24 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 
 > Same publisher. Package names are `@globalcaos/tinker-<designation>` — no `claw`, no `openclaw`, no `tinkerclaw` in the ClawHub name. Runtime ids inside `openclaw.plugin.json` are a separate namespace.
 
-| Plugin                                                                                              | What it does                                             |
-| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| [`tinker-whatsapp`](https://clawhub.ai/globalcaos/packages/tinker-whatsapp)                         | WhatsApp channel plugin for TinkerClaw.                  |
-| [`tinker-bridge`](https://clawhub.ai/globalcaos/packages/tinker-bridge)                             | Claude Code bridge with Tinker session wiring.           |
-| [`tinker-prefrontal`](https://clawhub.ai/globalcaos/packages/tinker-prefrontal)                     | Recipe matcher, composer, and executive function.        |
-| [`tinker-grok-bridge`](https://clawhub.ai/globalcaos/packages/tinker-grok-bridge)                   | xAI / Grok session bridge.                               |
-| [`tinker-hippocampus`](https://clawhub.ai/globalcaos/packages/tinker-hippocampus)                   | O(1) concept index over long-term memory.                |
-| [`tinker-total-recall`](https://clawhub.ai/globalcaos/packages/tinker-total-recall)                 | Pointer-based compaction. Evict, don't summarize.        |
-| [`tinker-task-panel`](https://clawhub.ai/globalcaos/packages/tinker-task-panel)                     | Durable task ledger in the Tinker UI.                    |
-| [`tinker-learned-intuition`](https://clawhub.ai/globalcaos/packages/tinker-learned-intuition)       | Reflex layer that stops the wrong action before it runs. |
-| [`tinker-identity-persistence`](https://clawhub.ai/globalcaos/packages/tinker-identity-persistence) | Persona that survives restarts and model swaps.          |
-| [`tinker-pulse-panel`](https://clawhub.ai/globalcaos/packages/tinker-pulse-panel)                   | Left-panel graphs: ClawHub, GitHub, cost.                |
-| [`tinker-round-table`](https://clawhub.ai/globalcaos/packages/tinker-round-table)                   | Cross-provider RAAC debate.                              |
-| [`tinker-fractal-reflection`](https://clawhub.ai/globalcaos/packages/tinker-fractal-reflection)     | Four-level post-turn reflection.                         |
-| [`tinker-computational-humor`](https://clawhub.ai/globalcaos/packages/tinker-computational-humor)   | Humor plugin companion to the live skill.                |
-| [`tinker-memory-enhancements`](https://clawhub.ai/globalcaos/packages/tinker-memory-enhancements)   | Hippocampus index hooks on memory-core.                  |
-| [`tinker-orca`](https://clawhub.ai/globalcaos/packages/tinker-orca)                                 | Plugin half of the ORCA lease orchestrator.              |
-| [`tinker-budget-panel`](https://clawhub.ai/globalcaos/packages/tinker-budget-panel)                 | Token spend dashboard. Gateway credentials only.         |
+| Plugin                                                                                             | What it does                                             |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| [`tinker-whatsapp`](https://clawhub.ai/globalcaos/plugins/tinker-whatsapp)                         | WhatsApp channel plugin for TinkerClaw.                  |
+| [`tinker-bridge`](https://clawhub.ai/globalcaos/plugins/tinker-bridge)                             | Claude Code bridge with Tinker session wiring.           |
+| [`tinker-prefrontal`](https://clawhub.ai/globalcaos/plugins/tinker-prefrontal)                     | Recipe matcher, composer, and executive function.        |
+| [`tinker-grok-bridge`](https://clawhub.ai/globalcaos/plugins/tinker-grok-bridge)                   | xAI / Grok session bridge.                               |
+| [`tinker-hippocampus`](https://clawhub.ai/globalcaos/plugins/tinker-hippocampus)                   | O(1) concept index over long-term memory.                |
+| [`tinker-total-recall`](https://clawhub.ai/globalcaos/plugins/tinker-total-recall)                 | Pointer-based compaction. Evict, don't summarize.        |
+| [`tinker-task-panel`](https://clawhub.ai/globalcaos/plugins/tinker-task-panel)                     | Durable task ledger in the Tinker UI.                    |
+| [`tinker-learned-intuition`](https://clawhub.ai/globalcaos/plugins/tinker-learned-intuition)       | Reflex layer that stops the wrong action before it runs. |
+| [`tinker-identity-persistence`](https://clawhub.ai/globalcaos/plugins/tinker-identity-persistence) | Persona that survives restarts and model swaps.          |
+| [`tinker-pulse-panel`](https://clawhub.ai/globalcaos/plugins/tinker-pulse-panel)                   | Left-panel graphs: ClawHub, GitHub, cost.                |
+| [`tinker-round-table`](https://clawhub.ai/globalcaos/plugins/tinker-round-table)                   | Cross-provider RAAC debate.                              |
+| [`tinker-fractal-reflection`](https://clawhub.ai/globalcaos/plugins/tinker-fractal-reflection)     | Four-level post-turn reflection.                         |
+| [`tinker-computational-humor`](https://clawhub.ai/globalcaos/plugins/tinker-computational-humor)   | Humor plugin companion to the live skill.                |
+| [`tinker-memory-enhancements`](https://clawhub.ai/globalcaos/plugins/tinker-memory-enhancements)   | Hippocampus index hooks on memory-core.                  |
+| [`tinker-orca`](https://clawhub.ai/globalcaos/plugins/tinker-orca)                                 | Plugin half of the ORCA lease orchestrator.              |
+| [`tinker-budget-panel`](https://clawhub.ai/globalcaos/plugins/tinker-budget-panel)                 | Token spend dashboard. Gateway credentials only.         |
 
 ---
 
