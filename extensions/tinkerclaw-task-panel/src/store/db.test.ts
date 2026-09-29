@@ -3,7 +3,13 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { addAxisParentIdColumn, closeDb, getDb, stripTodoistMetadata } from "./db.js";
+import {
+  addAxisParentIdColumn,
+  closeDb,
+  getDb,
+  migrateRemoveAxisCheck,
+  stripTodoistMetadata,
+} from "./db.js";
 
 describe("addAxisParentIdColumn migration", () => {
   let db: Database.Database;
@@ -19,7 +25,7 @@ describe("addAxisParentIdColumn migration", () => {
         updated_at INTEGER NOT NULL
       );
       INSERT INTO task_axis (id, label, position, created_at, updated_at)
-        VALUES ('online', 'Online', 100, 0, 0), ('acme', 'ACME', 200, 0, 0);
+        VALUES ('online', 'Online', 100, 0, 0), ('acme', 'Acme', 200, 0, 0);
     `);
   });
 
@@ -34,8 +40,8 @@ describe("addAxisParentIdColumn migration", () => {
       parent_id: string | null;
     }>;
     expect(rows).toEqual([
-      { id: "online", parent_id: null },
       { id: "acme", parent_id: null },
+      { id: "online", parent_id: null },
     ]);
   });
 
@@ -189,5 +195,186 @@ describe("stripTodoistMetadata migration", () => {
     stripTodoistMetadata(db);
     const after = db.prepare("SELECT id, metadata_json FROM task ORDER BY id").all();
     expect(after).toEqual(before);
+  });
+});
+
+/**
+ * v3.1.1 — the old schema enumerated the allowed axis ids in a CHECK on
+ * task.priority_axis. The migration detects any such enumeration (whatever ids
+ * it lists) and rebuilds the table without it, keeping rows verbatim.
+ */
+describe("migrateRemoveAxisCheck on an old-schema DB", () => {
+  let dir: string;
+  let dbPath: string;
+  const cfgFor = () =>
+    ({
+      dbPath,
+      dataDir: dir,
+      calendarSync: false,
+      briefingImport: false,
+      execMode: false,
+    }) as unknown as Parameters<typeof getDb>[0];
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-axis-check-"));
+    dbPath = path.join(dir, "store.db");
+    const seed = new Database(dbPath);
+    // v3.1-shaped store: enumerated axis CHECK, a custom axis row and a task
+    // that sits on it.
+    seed.exec(`
+      CREATE TABLE briefing_pass (
+        id TEXT PRIMARY KEY,
+        date TEXT NOT NULL,
+        pass_number INTEGER NOT NULL,
+        delivered_to_user_at INTEGER,
+        initial_task_count INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE task (
+        id TEXT PRIMARY KEY,
+        text TEXT NOT NULL,
+        context_md TEXT,
+        status TEXT NOT NULL CHECK (status IN ('open','in_progress','resolved','dropped','dismissed')),
+        source TEXT NOT NULL,
+        source_ref TEXT,
+        briefing_pass_id TEXT REFERENCES briefing_pass(id),
+        priority_axis TEXT CHECK (priority_axis IN ('online','family','me','acme','meta')),
+        priority_rank INTEGER NOT NULL DEFAULT 50,
+        carry_days INTEGER NOT NULL DEFAULT 0,
+        age_seconds INTEGER NOT NULL DEFAULT 0,
+        due_date TEXT,
+        dismissal_kind TEXT CHECK (dismissal_kind IN ('not_a_task','not_relevant','wrong_priority','duplicate','out_of_scope','other')),
+        dismissal_note TEXT,
+        est_minutes INTEGER,
+        hands TEXT CHECK (hands IN ('user','assistant','either')),
+        inferred_signal_json TEXT,
+        metadata_json TEXT,
+        recurrence_rule_text TEXT,
+        recurrence_parent_id TEXT REFERENCES task(id),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        resolved_at INTEGER
+      );
+      CREATE TABLE task_axis (
+        id TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        position INTEGER NOT NULL DEFAULT 100,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT INTO task_axis (id, label, position, created_at, updated_at)
+        VALUES ('acme', 'Acme Corp', 50, 1, 2);
+      INSERT INTO task (id, text, status, source, priority_axis, priority_rank, metadata_json, created_at, updated_at)
+        VALUES ('t-acme', 'custom-axis task', 'open', 'manual', 'acme', 3, '{"k":"v"}', 10, 20);
+    `);
+    seed.close();
+  });
+
+  afterEach(() => {
+    closeDb();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("drops the enumerated CHECK and keeps the custom axis row + its tasks verbatim", () => {
+    const db = getDb(cfgFor());
+    const sql = (
+      db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task'").get() as {
+        sql: string;
+      }
+    ).sql;
+    expect(sql).not.toContain("priority_axis IN (");
+
+    const axes = db.prepare("SELECT id, label, position FROM task_axis").all();
+    // The custom row survives and the non-empty table is not re-seeded.
+    expect(axes).toEqual([{ id: "acme", label: "Acme Corp", position: 50 }]);
+
+    const task = db
+      .prepare(
+        "SELECT id, text, status, priority_axis, priority_rank, metadata_json, created_at, updated_at FROM task WHERE id = 't-acme'",
+      )
+      .get();
+    expect(task).toEqual({
+      id: "t-acme",
+      text: "custom-axis task",
+      status: "open",
+      priority_axis: "acme",
+      priority_rank: 3,
+      metadata_json: '{"k":"v"}',
+      created_at: 10,
+      updated_at: 20,
+    });
+
+    // Any axis id is now accepted — the column is no longer enumerated.
+    db.prepare(
+      "INSERT INTO task (id, text, status, source, priority_axis, created_at, updated_at) VALUES ('t-new', 'x', 'open', 'manual', 'brand-new-axis', 0, 0)",
+    ).run();
+    expect(
+      (
+        db.prepare("SELECT priority_axis FROM task WHERE id = 't-new'").get() as {
+          priority_axis: string;
+        }
+      ).priority_axis,
+    ).toBe("brand-new-axis");
+  });
+
+  it("is a no-op on an already-migrated table", () => {
+    const db = getDb(cfgFor());
+    const before = db.prepare("SELECT sql FROM sqlite_master WHERE name='task'").get();
+    migrateRemoveAxisCheck(db);
+    const after = db.prepare("SELECT sql FROM sqlite_master WHERE name='task'").get();
+    expect(after).toEqual(before);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM task").get()).toEqual({ n: 1 });
+  });
+});
+
+describe("fresh DB axis seed", () => {
+  let dir: string;
+  afterEach(() => {
+    closeDb();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  it("seeds the generic work axis", () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-axis-seed-"));
+    const db = getDb({
+      dbPath: path.join(dir, "store.db"),
+      dataDir: dir,
+    } as unknown as Parameters<typeof getDb>[0]);
+    const ids = (
+      db.prepare("SELECT id FROM task_axis ORDER BY position").all() as Array<{
+        id: string;
+      }>
+    ).map((r) => r.id);
+    expect(ids).toContain("work");
+  });
+});
+
+describe("calendarSync.sources config schema", () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(new URL("../../openclaw.plugin.json", import.meta.url), "utf8"),
+  ) as {
+    configSchema: {
+      properties: {
+        calendarSync: { properties: { sources: { items: { type: string; pattern: string } } } };
+      };
+    };
+  };
+  const items = manifest.configSchema.properties.calendarSync.properties.sources.items;
+  const re = new RegExp(items.pattern);
+
+  it("is an open <provider>.<account> pattern, not an enum", () => {
+    expect(items.type).toBe("string");
+    expect(items).not.toHaveProperty("enum");
+  });
+
+  it("accepts google.primary and outlook.<any account name>", () => {
+    for (const ok of ["google.primary", "outlook.work", "outlook.acme", "outlook.my-team_2"]) {
+      expect(re.test(ok), ok).toBe(true);
+    }
+  });
+
+  it("rejects unknown providers and malformed values", () => {
+    for (const bad of ["outlook", "outlook.", "yahoo.primary", "outlook.a.b", "google primary"]) {
+      expect(re.test(bad), bad).toBe(false);
+    }
   });
 });

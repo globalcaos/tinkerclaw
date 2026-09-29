@@ -158,7 +158,14 @@ assert_p       "list seeded"       "control-panel.axes.list"        '{}' "axes._
 assert         "add"               "control-panel.axes.add"         "{\"id\":\"$AXID\",\"label\":\"🧪 Probe\"}" "axis.id" "$AXID"
 assert         "update"            "control-panel.axes.update"      "{\"id\":\"$AXID\",\"label\":\"🧪 Probe v2\"}" "axis.label" "🧪 Probe v2"
 # reorder: send the full current order; just verify the response shape.
-assert_p       "reorder"           "control-panel.axes.reorder"     "{\"ids\":[\"ventures\",\"online\",\"family\",\"me\",\"acme\",\"meta\",\"$AXID\"]}" "axes.__len__"
+# Axes are user data, so read the live ids (probe included) instead of
+# hardcoding a list — the reorder then keeps whatever order the install has.
+AX_ORDER=$(call "control-panel.axes.list" '{}' | python3 -c "
+import sys, json
+try: d = json.load(sys.stdin)
+except: d = {}
+print(json.dumps({'ids': [a['id'] for a in d.get('axes', [])]}))")
+assert_p       "reorder"           "control-panel.axes.reorder"     "$AX_ORDER" "axes.__len__"
 assert         "delete"            "control-panel.axes.delete"      "{\"id\":\"$AXID\",\"reassign_to\":\"meta\"}" "removed" "true"
 
 echo ""

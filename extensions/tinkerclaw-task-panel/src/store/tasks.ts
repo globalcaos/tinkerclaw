@@ -19,7 +19,9 @@ export type TaskStatus =
   // belongs to its axis; restored by setting status back to 'open'.
   | "back_burner";
 
-export type TaskAxis = "online" | "family" | "me" | "acme" | "meta";
+// Axes are user data: the ids live in the task_axis table (seeded with a few
+// generic defaults, then edited from the UI), so any non-empty id is valid here.
+export type TaskAxis = string;
 
 export type DismissalKind =
   | "not_a_task"

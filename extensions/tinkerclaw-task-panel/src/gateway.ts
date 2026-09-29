@@ -12,7 +12,7 @@ import type { OpenClawPluginApi } from "../api.js";
 import type { ControlPanelResolvedConfig } from "./paths.js";
 import { addAxis, deleteAxis, listAxes, reorderAxes, updateAxis } from "./store/axes.js";
 import { syncGoogleCalendarRange } from "./store/calendar-sync.js";
-import { getCalendarDensity, listCalendarEvents } from "./store/calendar.js";
+import { getCalendarDensity, listCalendarEvents, type CalendarSource } from "./store/calendar.js";
 import {
   addEstPreset,
   deleteEstPreset,
@@ -293,10 +293,7 @@ export function registerTaskPanelMethods(params: {
       const rows = listCalendarEvents(cfg, {
         from: p.from,
         to: p.to,
-        source:
-          typeof p.source === "string"
-            ? (p.source as "google.primary" | "outlook.work" | "manual")
-            : undefined,
+        source: typeof p.source === "string" ? (p.source as CalendarSource) : undefined,
       });
       respond(true, { events: rows, sync: syncInfo });
     }),
@@ -316,10 +313,7 @@ export function registerTaskPanelMethods(params: {
       const rows = getCalendarDensity(cfg, {
         from: p.from,
         to: p.to,
-        source:
-          typeof p.source === "string"
-            ? (p.source as "google.primary" | "outlook.work" | "manual")
-            : undefined,
+        source: typeof p.source === "string" ? (p.source as CalendarSource) : undefined,
       });
       respond(true, { density: rows });
     }),
