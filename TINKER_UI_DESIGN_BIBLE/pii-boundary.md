@@ -2,7 +2,7 @@
 file: pii-boundary.md
 purpose: What's safe to push to the public tinkerclaw fork; what must stay in private jarvis-brain
 audience: AI
-last_verified: 2026-08-04
+last_verified: 2026-09-29
 last_verified_commit: HEAD
 single_owner: yes — the PII boundary INTENT is canonical here; the executable regex has exactly one home (scripts/pii-pre-push.sh) and this file must never hold a second copy
 see_also: topology.md (the two-repo split), crons.md (auto-merge gate), design-principles.md#18 (one canonical derivation), design-principles.md#19 (no frozen lists)
@@ -41,7 +41,7 @@ These are explicitly allowed on the public fork:
 - **Family or contact names** — spouse, children, in-laws, siblings, friends, business contacts. Use role placeholders (`a family member`, `the sister`).
 - **Location** — city/neighborhood/address. Generic location placeholder if needed.
 - **Host paths** — the architect's home-directory path. Rewrite as `~/` in user-facing strings.
-- **Business contacts** — workplace name, customer/supplier names. See memory `project_acme_business_threads.md` (private).
+- **Business contacts** — workplace name, customer/supplier names. The list of which names count lives in a private memory note (business threads), never on the fork.
 - **Phone numbers** — including the architect's own and any contact number.
 - **Email addresses** — both personal and work. Use `@example.com` placeholders for fixtures.
 - **Credentials** — API keys, OAuth tokens, session cookies. ALL env vars in `openclaw.json`'s `env.vars` block (lives in private jarvis-brain only).
@@ -60,6 +60,16 @@ That is a PROSE form and is deliberately not executable.
 **The single executable source of truth is `PII_RE` in `scripts/pii-pre-push.sh`** (2026-08-02). Everything
 that needs the pattern — the pre-push hook, this file's `verify:` blocks, any future tooling — _sources it
 from there_. Nothing holds a second copy.
+
+**Two layers since 2026-09-29.** The literal `PII_RE='…'` line now holds only generic tokens (token
+prefixes); the hook then appends the pusher's own home path and a **private token list kept outside
+the repo** — one alternation per line at `$TINKERCLAW_PII_FILE` (default
+`~/.config/tinkerclaw/pii-private.re`). The bible check appends the same file the same way, so the
+two never disagree. Why: a public hook that spells out the architect's names, places and employer
+publishes exactly the words it guards. The list must compile in both `grep -P` and JavaScript (no
+inline `(?i:…)` groups), and matches the employer's name case-insensitively and word-aware, so
+camelCase identifiers do not trip it. Without the file (a stranger's clone) only the generic layer
+runs, and the hook says so on every push.
 
 **Why it moved here from `~/src/jarvis-icu/CLAUDE.md` (2026-08-02).** The previous text named a file in the
 **private** repo as canonical for a gate that protects the **public** one. That is unsound three ways: the
