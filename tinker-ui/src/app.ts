@@ -8294,7 +8294,7 @@ function onEvent(evt: unknown) {
       // sending reflects the VIEWED tab only — never the global map size, so a
       // different tab's live run can't pin this tab on "sending" forever.
       setSending(viewedSessionBusy());
-      // FORK 2026-09-03 (the architect: "the acmeclaw tab is preparing context forever").
+      // FORK 2026-09-03 (the architect: "the work tab is preparing context forever").
       //
       // THE VIEWED LANE'S MISSING TERMINATOR — the exact shape of the 2026-08-26 bug twenty
       // lines up, one variable over. `preparingSince` was closed by two proofs only, and BOTH
@@ -25535,7 +25535,7 @@ function init() {
           { id: "online", label: "💰 Online", position: 1, parent_id: null },
           { id: "family", label: "👨‍👩‍👧 Family", position: 2, parent_id: null },
           { id: "me", label: "🏃 Me", position: 3, parent_id: null },
-          { id: "acme", label: "🏭 ACME", position: 4, parent_id: null },
+          { id: "work", label: "💼 Work", position: 4, parent_id: null },
           { id: "meta", label: "⚙️ Meta", position: 5, parent_id: null },
         ];
       }

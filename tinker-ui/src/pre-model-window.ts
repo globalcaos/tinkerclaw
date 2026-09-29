@@ -114,7 +114,7 @@ export function clearPreModelFor(
 /**
  * Does this chat event end the VIEWED tab's pre-model window?
  *
- * FORK 2026-09-03 (the architect: "the acmeclaw tab is preparing context forever").
+ * FORK 2026-09-03 (the architect: "the work tab is preparing context forever").
  *
  * THE THIRD PROOF, WHICH THE VIEWED LANE NEVER HAD. Everything above keys the window by
  * session and is written for the tab glow. app.ts keeps a SECOND, viewed-only window in

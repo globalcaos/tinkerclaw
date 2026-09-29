@@ -9,7 +9,7 @@ import type { AgentInternalEventStatus } from "./internal-event-contract.js";
  * "(no output)" was substituted for the body, and the parent was told to "convert the result
  * above into your normal assistant voice and send that user-facing update now".
  *
- * Measured: subagent `customerco-video-audit` (2026-09-03, AcmeVision) ran 3s, spent 0 tokens
+ * Measured: a video-audit subagent (2026-09-03, work tab) ran 3s, spent 0 tokens
  * (in 0 / out 0), returned nothing — and was reported to the owner as a success. The audit it
  * was spawned for never ran, and a full parent turn was billed to say so in vague words.
  *

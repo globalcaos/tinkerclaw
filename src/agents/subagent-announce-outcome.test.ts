@@ -5,9 +5,9 @@ import {
   EMPTY_RESULT_PLACEHOLDER,
 } from "./subagent-announce-outcome.js";
 
-// FORK 2026-09-07 (the user, on the AcmeVision tab) — the incident these pin.
+// FORK 2026-09-07 (the user, on the work tab) — the incident these pin.
 //
-// On 2026-09-03 a subagent labelled `customerco-video-audit` ran for 3 SECONDS, spent 0 tokens
+// On 2026-09-03 a video-audit subagent ran for 3 SECONDS, spent 0 tokens
 // (in 0 / out 0), and returned an EMPTY string. The announce path reported
 // `status: completed successfully`, substituted the literal "(no output)" for the missing
 // result, and then handed the parent this instruction:
@@ -16,7 +16,7 @@ import {
 //    your normal assistant voice and send that user-facing update now."
 //
 // So a task that did nothing cost a full parent turn AND was announced as a success. The
-// requested AcmeVision video-recording audit never ran, and nothing said so.
+// requested video-recording audit never ran, and nothing said so.
 //
 // An `ok` transport status means "the child process ended without erroring". It does NOT
 // mean the child produced anything. Those are different facts and must read differently.

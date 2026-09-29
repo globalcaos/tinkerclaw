@@ -104,7 +104,7 @@ describe("it must never latch — every failure mode degrades to the glow STOPPI
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FORK 2026-09-03 (the architect: "the acmeclaw tab is preparing context forever").
+// FORK 2026-09-03 (the architect: "the work tab is preparing context forever").
 //
 // The VIEWED tab's twin of this window (`preparingSince` in app.ts) had no terminal-event
 // terminator. It was cleared on disconnect, on the next send, and on send failure — never
@@ -118,7 +118,7 @@ describe("it must never latch — every failure mode degrades to the glow STOPPI
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("a terminal chat event closes the VIEWED pre-model window", () => {
-  it("closes on error — the AcmeClaw case: 529 before any model was named", () => {
+  it("closes on error — the work-tab case: 529 before any model was named", () => {
     // THE BUG, stated as a test. Nothing else in the client would ever clear this window.
     expect(
       terminalClosesPreModelWindow({

@@ -230,7 +230,7 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
 //     note below). Model identity lives in the COLOR/label channel, not this one.
 //     RE-DERIVE when the plan price changes or burn moves an order of magnitude;
 //     bug-log 2026-08-11 [panels] carries the query and the log-axis proposal.
-//   · OpenAI: ChatGPT BUSINESS ×5 seats €130.01/mo (ACME pays) → €26/seat, which
+//   · OpenAI: ChatGPT BUSINESS ×5 seats €130.01/mo (employer pays) → €26/seat, which
 //     the architect states as **€25/mo** (2026-08-12); the 4% gap is immaterial next
 //     to the denominator problem documented at the gpt-5.6 rows below. Our
 //     path burns one seat. No token data → uniform 9.3× price→API-value quota
@@ -239,7 +239,7 @@ export function eegToolIdentity(toolName: string, command?: string): EegToolIden
 //     2026-07-22 16:17, though the CLI tokens come from the free Code Assist
 //     tier) → same uniform amortization: API output ÷ 4.65 (3.1-pro $12 →
 //     2.58; flash $9 → 1.94).
-//   · xAI: SuperGrok (ACME, $9.90 promo → $30 steady-state; widths use $30):
+//   · xAI: SuperGrok (company seat, $9.90 promo → $30 steady-state; widths use $30):
 //     grok-4.5 $6 ÷ 4.65.
 //   · GitHub Copilot Pro+ (the user 2026-07-30): $39/mo → 7,000 AI credits
 //     (1 credit = $0.01 ⇒ $70 included). Token burn is metered at GitHub's

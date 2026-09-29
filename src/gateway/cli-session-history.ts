@@ -69,7 +69,7 @@ const IMPORT_ASSISTANT_SLOT_COVER_MS = 5 * 60 * 1000;
 //     tripping tab silently lost per-step thinking/toolcall segmentation on reload.
 // Truncating to the newest `ratio * localCount` records keeps the cost bound that motivated the
 // valve (the debris is ancient, the value is recent) while leaving the tail — and the merge —
-// intact. Measured on the live store, this drops ~70% of AcmeVision's payload (632 -> 189).
+// intact. Measured on the live store, this drops ~70% of the work tab's payload (632 -> 189).
 const IMPORT_FLOOD_MAX_RATIO = 3;
 
 // Escape hatch: a subtractive valve with no runtime override means a misfire costs a rebuild

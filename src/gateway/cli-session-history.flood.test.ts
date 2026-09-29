@@ -22,7 +22,7 @@ import { augmentChatHistoryWithCliSessionImports } from "./cli-session-history.j
 // answer that nothing re-provides.
 //
 // HONESTY (also in the commit message): the text-less-cover hardening was replayed offline
-// against the live AcmeVision inputs and rescues ZERO of the 5 currently-suppressed answers
+// against the live work-tab inputs and rescues ZERO of the 5 currently-suppressed answers
 // (each is covered by 11-24 TEXT-BEARING imports). It hardens the B043 shape; it is NOT that fix.
 
 const mocks = vi.hoisted(() => ({ logWarn: vi.fn() }));
