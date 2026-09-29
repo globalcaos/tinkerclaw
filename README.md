@@ -408,7 +408,7 @@ Visit **`http://localhost:18789/tinker/`** for the command center. Click the **T
 - **Context pruning** — cache-ttl prevents unbounded session growth
 - **Budget panel** — token cost tracking so you know what each session costs
 - **Tinker UI** — real-time context treemaps, session management, cost dashboard
-- **77 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
+- **106 skills in `skills/`** — voice, messaging, media, security, diagramming, orchestration. Cloned with the repo; nothing to install
 - **Six structural crons** — the nightly self-maintenance cycle, bundled and seeded ON by the installer, so a fresh clone maintains itself from night one
 
 ### Required Setup (you must do these)
