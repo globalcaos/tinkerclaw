@@ -1,0 +1,23 @@
+{
+  "_example": true,
+  "_note": "EXAMPLE ONLY: the shape and the provenance discipline, not anyone's real numbers. scripts/build-history.mjs refuses --yes while \"_example\" is true. Copy this file to ~/.config/backlink-audit/history-series.json (or pass --series / set BACKLINK_AUDIT_SERIES), replace the points with your own derived dataset, and delete the \"_example\" key.",
+  "_provenance": [
+    "Every point is DERIVED from a record you can re-run, never estimated.",
+    "Authored third-party threads: `gh search issues --include-prs --author <your-login>` and `--commenter <your-login>`; keep only threads whose comment body holds a live link to your target; date each thread by its FIRST link-bearing comment (created_at from `gh api repos/<r>/issues/<n>/comments`). One thread = one linking page, however many comments it has.",
+    "Links from your own repos to your site: `git log -S \"<your-domain>\"` in the linking repo gives the date the link first went live.",
+    "Skill-registry or package-registry listings: date each by the listing's creation date, and say in the note that you assumed the README link was present from publish.",
+    "cumulative is the running count of distinct linking pages on or after that date. It can go DOWN when a page drops the link; record the drop, do not hide it."
+  ],
+  "series": {
+    "graph.inbound.my-repo.ours": [
+      { "date": "2026-01-15", "cumulative": 1, "note": "registry listing: my-first-skill" },
+      { "date": "2026-01-28", "cumulative": 3, "note": "+2 authored threads (some-org/some-repo#123, another-org/another-repo#45)" },
+      { "date": "2026-02-20", "cumulative": 7, "note": "+4 registry listings (skill-a, skill-b, skill-c, skill-d)" }
+    ],
+    "graph.inbound.my-site.ours": [
+      { "date": "2026-01-10", "cumulative": 1, "note": "README.md of my-repo links example.com" },
+      { "date": "2026-02-02", "cumulative": 4, "note": "+3 extension READMEs (one commit)" },
+      { "date": "2026-03-01", "cumulative": 3, "note": "a doc page was cut to a stub and lost its link" }
+    ]
+  }
+}

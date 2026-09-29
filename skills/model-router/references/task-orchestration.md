@@ -48,7 +48,7 @@ Output of stage N feeds stage N+1. Each stage uses the model best suited to its 
 ### The Parallel Fan-Out Pattern
 
 ```
-Task → Classifier (flash) → Route to N workers simultaneously
+Task → Tier chosen in context (SKILL.md Fast Route Table) → Route to N workers simultaneously
                            → Collect results
                            → Merge (mid/strong)
 ```
@@ -107,7 +107,7 @@ Claude Code uses Read, Write, Execute, Connect — not 100 specialized plugins. 
 
 ```
 1. Receive task
-2. Classify complexity (flash tier classifier)
+2. Classify complexity in context (SKILL.md Fast Route Table; no external classifier call)
 3. If simple → single agent, appropriate tier
 4. If complex → decompose:
    a. Identify independent sub-tasks

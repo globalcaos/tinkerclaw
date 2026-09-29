@@ -1,12 +1,12 @@
 ---
 name: smart-model-router
-version: 2.0.1
-description: "Stop sending 'format this JSON' to Opus. Stop sending 'cron job' to GPT. Billing-aware model router picks the right brain for every task — flat-rate first, metered only when justified, budget pressure respected at all times."
+version: 2.0.2
+description: "Stop sending 'format this JSON' to Opus. Stop sending 'cron job' to GPT. Billing-aware routing guide for choosing among the models already configured in your OpenClaw setup when assigning an agent, sub-agent or cron task — flat-rate first, metered only when justified, budget pressure respected. Not for picking models outside your configuration, and not a runtime proxy."
 metadata:
   openclaw:
     emoji: "🧭"
     notes:
-      security: "No network calls. Decision tree logic only — reads task description and utilization data, outputs model recommendation."
+      security: "Instructions only, no scripts. Routing is decided in the current agent context from the tables below and outputs a model name; by default no task text is sent anywhere for classification. The optional classifier is off unless MODEL_ROUTER_CLASSIFIER=local is set, and then sends only a short abstract task summary to a local model on loopback. The model you route to receives the task when your agent spawns it, as with any spawn."
 ---
 
 > One of dozens of skills and plugins in **[TinkerClaw](https://github.com/globalcaos/tinkerclaw)** — a self-improving OpenClaw fork that's been running 24/7 for months.
@@ -24,7 +24,7 @@ _Clone it. Fork it. Break it. Make it yours._
 # Model Router
 
 <role>
-You are a billing-aware model router. Your job is to pick the right LLM for any task: flat-rate first, metered only when justified, budget pressure respected at all times.
+You are a billing-aware model router. Your job is to pick, from the models configured in this OpenClaw setup, the right one for an agent, sub-agent or cron task: flat-rate first, metered only when justified, budget pressure respected at all times.
 </role>
 
 <why_this_matters>
@@ -49,7 +49,7 @@ Route to `flat` or `free` by default. `metered` requires explicit justification 
 
 ## Quick Decision: Can You Route Without a Classifier?
 
-Most tasks fit obvious categories. Check the **Fast Route Table** first. Only use the classifier for ambiguous cases.
+Most tasks fit obvious categories. Check the **Fast Route Table** first, and decide the tier yourself, in the current context. No task text leaves this context to make that decision.
 
 ### Fast Route Table
 
@@ -153,20 +153,20 @@ If the scenario doesn't fit one of these four, route to flat-rate.
 <metered_blocked>
 These use cases never justify a metered model, regardless of task complexity:
 
-- All cron jobs: self-evolution, cleaning-lady, briefing, engagement reports, fork-sync, heartbeat
+- All cron jobs (for example self-evolution, cleanup, briefing, engagement reports, fork-sync, heartbeat)
 - All automated/background tasks running without active user involvement
 - Email checking, WhatsApp summarization, data extraction
 - Code generation, debugging, tool use
 - Any task that doesn't directly produce user-facing output requiring cross-model perspective
 - Sub-agents spawned by cron jobs (inherits the parent's flat-rate restriction)
-- Classifier calls (always flash/free)
+- Tier classification (done in context by default; opt-in local classifier only)
   </metered_blocked>
 
 ---
 
 ## Budget Pressure Tables
 
-Check utilization before routing. Do not assume headroom.
+Check utilization before routing. Do not assume headroom. Read it from wherever your setup exposes it (the provider's usage page or API, or your gateway's usage panel). If you cannot read it, apply the missing-data rule below.
 
 ### Seven-Day Window (flat-rate provider quota)
 
@@ -192,9 +192,15 @@ Missing data isn't permission to use opus — it's a signal to be cautious. Assu
 
 ---
 
-## Classifier Prompt (For Ambiguous Cases)
+## Ambiguous Cases
 
-When the Fast Route Table doesn't clearly match, use a free/flat model to classify. Send this to `qwen3` (local) or `haiku`:
+A task is **ambiguous** when it matches rows in two or more tiers of the Fast Route Table (e.g. "write code" and "debug complex system"), or matches no row at all. A task that matches one row is not ambiguous — route it; do not classify it.
+
+**Default (no configuration):** decide the tier yourself using the tier definitions below and the Generosity Rule. Nothing is sent to another model for this.
+
+**Optional local classifier — off by default.** Only when the operator has set `MODEL_ROUTER_CLASSIFIER=local`, you may ask a local model (e.g. Ollama `qwen3` on `127.0.0.1`) to pick the tier. Never send the raw task: send a one-line abstract summary (task type, expected output, complexity signals) with no code, credentials, names, URLs, customer or personal data. If the variable is unset, has any other value, or no local model is reachable, skip this and use the default. This skill never sends classification requests to a remote provider.
+
+Tier definitions (used by you, or by the opt-in local classifier):
 
 ```
 Classify this task into exactly one tier. Reply with ONLY the tier name.
@@ -206,18 +212,18 @@ Tiers:
 - strong: complex debugging, self-reflection, creative writing, architectural decisions
 - reasoning: math proofs, formal logic, multi-step deduction
 
-Task: {TASK_DESCRIPTION}
+Task summary: {ABSTRACT_ONE_LINE_SUMMARY}
 
 Tier:
 ```
 
-Cost: ~20 tokens. Free (local) or negligible (haiku).
+The tier names are fixed internal labels the router matches on; they do not affect the language of anything shown to the user.
 
 ### Generosity Rule (When in Doubt, Go Up — Within Flat-Rate)
 
-If the classifier returns a tier but you're unsure:
+If you (or the opt-in local classifier) chose a tier but you're unsure:
 
-- **Non-critical task** → trust the classifier
+- **Non-critical task** → keep that tier
 - **User-facing output** → go one tier up (flat-rate only)
 - **Irreversible action** → always use strong (flat-rate)
 - **Ambiguous between two tiers** → pick the higher flat-rate tier
@@ -252,7 +258,7 @@ sessions_spawn({
 
 ```
 heartbeat:        flash/local  → qwen3 (free, NEVER metered)
-cleaning-lady:    fast         → haiku (flat, NEVER metered)
+cleanup:          fast         → haiku (flat, NEVER metered)
 morning-briefing: mid          → sonnet (flat, NEVER metered)
 code review:      mid          → sonnet (flat, NEVER metered)
 wind-down:        strong       → opus (flat, NEVER metered)
@@ -269,7 +275,7 @@ research reports: mid          → sonnet (flat, NEVER metered)
 - Metered models (GPT, o3): only for cross-model review or user-initiated request
 - Budget pressure: check utilization before spawning. >85% seven_day → sonnet max. >95% → haiku/local only.
 - Missing data → assume conservative (75%). Never assume headroom you can't prove.
-- Gateway enforces billing caps — metered models silently rerouted if over budget.
+- If your gateway enforces billing caps, it may reroute a metered request once over budget — check its logs.
 ```
 
 ---
@@ -299,7 +305,7 @@ The router applies to ALL model selections, including:
 - Sub-agents spawned by cron jobs (not just interactive)
 - Sub-agents spawned by other sub-agents (recursive routing)
 - Cron job model assignment at creation time
-- The classifier model itself (always flash/free)
+- Tier classification itself (in context by default; opt-in local model only, never remote)
 
 <cron_restriction>
 All cron-originated work inherits the metered-blocked restriction. The user isn't there to authorise spend, so the policy treats it as flat-rate-only across the board.
@@ -351,10 +357,10 @@ Match CoT technique to tier for maximum ROI. See `references/chain-of-thought.md
 - Metered models (GPT, o3): only for cross-model review or user-initiated request
 - Budget pressure: check utilization before spawning. >85% seven_day → sonnet max. >95% → haiku/local only.
 - Missing data → assume conservative (75%). Never assume headroom you can't prove.
-- Gateway enforces billing caps — metered models silently rerouted if over budget.
+- If your gateway enforces billing caps, it may reroute a metered request once over budget — check its logs.
 ```
 
-**In this skill (loaded on demand):** The full routing table, classifier prompt, tier definitions, budget pressure tables, justification scenarios.
+**In this skill (loaded on demand):** The full routing table, tier definitions, ambiguous-case rules, budget pressure tables, justification scenarios.
 
 **In reference files (loaded only when needed):**
 
@@ -373,6 +379,7 @@ This follows the progressive disclosure principle: 5 lines always loaded, full s
 - Always defaulting to one model — defeats the routing purpose
 - Routing user-facing content to the cheapest model — quality matters when the user reads it
 - Classifying every task — most fit the Fast Route Table obviously
+- Sending a raw task description to another model just to pick a tier — decide in context
 - Putting the full routing table in bootstrap files — wastes tokens every prompt
 - Skipping the router on cron sub-agents — they spend tokens too
 - Self-reviewing output with the same model — use a different model for review to catch blind spots
@@ -384,11 +391,15 @@ This follows the progressive disclosure principle: 5 lines always loaded, full s
 
 ---
 
+## Changelog
+
+- 2.0.2 — Removed the ambiguous-case step that sent the task description to another model; ambiguous tasks are now tiered in context, with an optional loopback-only classifier behind `MODEL_ROUTER_CLASSIFIER=local` that receives only an abstract summary. Corrected the security note to match, defined "ambiguous", and scoped the description to models you have configured.
+
 ## Pairs Well With
 
-- [model-prompt-adapter](https://clawhub.ai/globalcaos/model-prompt-adapter) — once Router picks the model, Adapter fixes its quirks
-- [subagent-overseer](https://clawhub.ai/globalcaos/subagent-overseer) — monitor the sub-agents you're routing models for
-- [agent-superpowers](https://clawhub.ai/globalcaos/agent-superpowers) — the full engineering pipeline these routed agents should follow
+- [model-prompt-adapter](https://github.com/globalcaos/tinkerclaw/tree/main/skills/model-prompt-adapter) — once Router picks the model, Adapter fixes its quirks
+- [subagent-overseer](https://github.com/globalcaos/tinkerclaw/tree/main/skills/subagent-overseer) — monitor the sub-agents you're routing models for
+- [agent-superpowers](https://github.com/globalcaos/tinkerclaw/tree/main/skills/agent-superpowers) — the full engineering pipeline these routed agents should follow
 
 👉 **https://github.com/globalcaos/tinkerclaw**
 

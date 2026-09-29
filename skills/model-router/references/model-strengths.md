@@ -15,7 +15,7 @@ Last updated: 2026-03-05
 
 - **Best at:** Structured feedback, calibrated reviews, general reasoning
 - **Weakness:** Slightly behind Opus on code benchmarks
-- **Use for:** PR reviews, second opinions, report critique (Step 3.5 professor pattern)
+- **Use for:** PR reviews, second opinions, report critique (cross-model review: a second model critiques the draft before delivery)
 - **Skip for:** Tasks requiring Anthropic-specific features (tool use patterns)
 
 ### Gemini 3.1 Pro
@@ -65,7 +65,7 @@ Last updated: 2026-03-05
 
 - **Best at:** Fastest inference, cheapest, good enough for mechanical tasks
 - **Cost:** ~$0.075/M in, $0.30/M out (cheapest of all)
-- **Use for:** Data extraction, formatting, template filling, the classifier itself
+- **Use for:** Data extraction, formatting, template filling
 
 ### GPT-5.4 mini (NEW — Mar 17, 2026)
 
@@ -108,7 +108,7 @@ Last updated: 2026-03-05
 
 ## Multi-Model Orchestration Patterns
 
-### Cross-Model Review (Step 3.5 Pattern)
+### Cross-Model Review (Draft → Critic)
 
 ```
 Draft (Sonnet) → Review (GPT-5.2) → Final (incorporate feedback)
