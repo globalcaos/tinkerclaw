@@ -1,5 +1,5 @@
 #!/bin/bash
-slugs="jarvis-voice whatsapp-ultimate youtube-ultimate chatgpt-exporter-ultimate token-panel-ultimate shell-security-ultimate token-efficiency-guide subagent-overseer computational-humor fork-and-skill-scanner-ultimate outlook-hack memory-bench-pioneer smart-model-router model-prompt-adapter owntracks-location agent-sensei-ultimate agent-superpowers tinker-command-center wordpress-ultimate"
+slugs="jarvis-voice whatsapp-ultimate youtube-ultimate chatgpt-exporter-ultimate token-panel-ultimate token-efficiency-guide subagent-overseer computational-humor fork-and-skill-scanner-ultimate outlook-hack memory-bench-pioneer smart-model-router model-prompt-adapter owntracks-location agent-sensei-ultimate agent-superpowers tinker-command-center wordpress-ultimate"
 declare -A SRC=( [smart-model-router]="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/workspace/skills/model-router/SKILL.md" )
 roots="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}/workspace/skills ${TINKERCLAW_DIR:-$HOME/src/tinkerclaw}/skills"
 localver(){ local s="$1" f="${SRC[$s]}"

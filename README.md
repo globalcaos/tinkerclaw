@@ -13,7 +13,7 @@
   <a href="https://github.com/openclaw/openclaw"><img src="https://img.shields.io/badge/fork%20of-OpenClaw-604020?style=for-the-badge" alt="Fork of OpenClaw"></a>
   <a href="https://github.com/globalcaos/tinkerclaw/commits/main"><img src="https://img.shields.io/badge/hundreds%20of-fork%20commits-8B6914?style=for-the-badge" alt="Hundreds of fork commits"></a>
   <a href="#the-singularity-point-"><img src="https://img.shields.io/badge/papers-20-C0834D?style=for-the-badge" alt="20 papers"></a>
-  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-27-8B6914?style=for-the-badge" alt="27 skills"></a>
+  <a href="#-published-skills"><img src="https://img.shields.io/badge/skills-26-8B6914?style=for-the-badge" alt="26 skills"></a>
   <a href="#-published-plugins"><img src="https://img.shields.io/badge/plugins-16-604020?style=for-the-badge" alt="16 plugins"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-604020?style=for-the-badge" alt="MIT License"></a>
 </p>
@@ -251,7 +251,7 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 ## 📦 Published Skills
 
 > All on [ClawHub](https://clawhub.ai/u/globalcaos). Install any with `clawhub install globalcaos/<skill-name>`.
-> Live catalog as of 2026-09-09: **27 skills** (plus `teams-hack`, blocked by ClawHub malware detection). This list is the permanent record.
+> Live catalog as of 2026-09-09: **27 skills** (plus `teams-hack`, blocked by ClawHub malware detection); `shell-security-ultimate` was withdrawn on 2026-09-29. This list is the permanent record.
 
 ### 🎤 Voice & Personality
 
@@ -288,17 +288,16 @@ Claude (primary) → Gemini (rate limit) → Local Model (offline fallback)
 
 ### 🤖 Agent, Models & DevOps
 
-| Skill                                                                                              | What it does                                                        |
-| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed.                       |
-| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold.                  |
-| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade memory eval — nDCG, MAP, MRR.                     |
-| [`agent-superpowers`](https://clawhub.ai/globalcaos/agent-superpowers)                             | The operating doctrine that makes a clone behave on day one.        |
-| [`agent-sensei-ultimate`](https://clawhub.ai/globalcaos/agent-sensei-ultimate)                     | Teaching loop: corrections become standing rules.                   |
-| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router)                           | Route the cheap work to cheap models.                               |
-| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter)                       | Per-model prompt shape so a swap doesn't drop personality.          |
-| [`tinker-orca`](https://clawhub.ai/globalcaos/tinker-orca)                                         | File-lease orchestrator for concurrent agents on one tree.          |
-| [`shell-security-ultimate`](https://clawhub.ai/globalcaos/shell-security-ultimate)                 | Classify every shell command as SAFE, WARN, or CRIT before it runs. |
+| Skill                                                                                              | What it does                                                 |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [`subagent-overseer`](https://clawhub.ai/globalcaos/subagent-overseer)                             | Sub-agents that go silent don't go unnoticed.                |
+| [`fork-and-skill-scanner-ultimate`](https://clawhub.ai/globalcaos/fork-and-skill-scanner-ultimate) | Scan 1,000 GitHub forks per run. Surface the gold.           |
+| [`memory-bench-pioneer`](https://clawhub.ai/globalcaos/memory-bench-pioneer)                       | Peer-review-grade memory eval — nDCG, MAP, MRR.              |
+| [`agent-superpowers`](https://clawhub.ai/globalcaos/agent-superpowers)                             | The operating doctrine that makes a clone behave on day one. |
+| [`agent-sensei-ultimate`](https://clawhub.ai/globalcaos/agent-sensei-ultimate)                     | Teaching loop: corrections become standing rules.            |
+| [`smart-model-router`](https://clawhub.ai/globalcaos/smart-model-router)                           | Route the cheap work to cheap models.                        |
+| [`model-prompt-adapter`](https://clawhub.ai/globalcaos/model-prompt-adapter)                       | Per-model prompt shape so a swap doesn't drop personality.   |
+| [`tinker-orca`](https://clawhub.ai/globalcaos/tinker-orca)                                         | File-lease orchestrator for concurrent agents on one tree.   |
 
 ### 📋 Export, Audit & Twins
 
