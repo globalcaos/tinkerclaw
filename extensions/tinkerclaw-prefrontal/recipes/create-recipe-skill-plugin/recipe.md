@@ -1,9 +1,9 @@
 ---
 schema: "kit/1.0"
 slug: "create-recipe-skill-plugin"
-title: "Create a New Recipe, Skill or Plugin"
-summary: "Turn a repeatable need into the lightest artifact that serves it — recipe, skill or plugin — after a prior-art sweep of the local inventory, ClawHub, Journey kits and prompts.chat, so we adopt or improve before we build."
-version: "1.0.0"
+title: "Create a New Enhancement (Recipe, Skill or Plugin)"
+summary: "Turn a repeatable need into the lightest enhancement that serves it — recipe, skill or plugin — after a prior-art sweep of the local inventory, ClawHub, Journey kits and prompts.chat, so we adopt or improve before we build; then place it: which agents run it, and whether it is public."
+version: "1.1.0"
 owner: "globalcaos"
 license: "MIT"
 category: "coding"
@@ -26,6 +26,11 @@ tags:
     "we keep doing this",
     "is there already a skill for",
     "new capability",
+    "enhancement",
+    "new enhancement",
+    "where should this live",
+    "which agents get it",
+    "public or private",
   ]
 testedHarnesses: ["OpenClaw", "Claude Code"]
 authoredBy: "jarvis-on-the-fly"
@@ -59,6 +64,12 @@ params:
       default: "extensions",
       description: "Repo-relative folder holding plugins (one openclaw.plugin.json per plugin).",
     }
+  placement_policy:
+    {
+      type: "string",
+      default: "~/.openclaw/workspace/memory/knowledge/enhancement-placement.md",
+      description: "The deployment's private placement policy: which agents exist, what each is for, and the owner's own rulings. Overrides the generic rules in step 9. Skipped when absent.",
+    }
   funnel_url:
     {
       type: "string",
@@ -74,6 +85,7 @@ parallelism:
     - [7]
     - [8]
     - [9]
+    - [10]
 ---
 
 # Create a New Recipe, Skill or Plugin
@@ -188,7 +200,26 @@ Anything operator-specific becomes a `{{param}}`: people's names, client or comp
 - **Skill:** run its evals, or invoke it once on a real task and read the result.
 - **Plugin:** build, run its tests, deploy through the normal deploy path, and confirm the gateway loads it.
 
-### 9. Register, attribute, and — only by hand — publish
+### 9. Place the enhancement — which agents run it, and is it public
+
+**Done when:** every place (each agent, and the public repo) has a decision, each decision names the rule that made it, and every decision no rule explains is one question to the owner.
+
+Read `{{placement_policy}}` first: it names the agents, what each is for, and the owner's past rulings, and it overrides the defaults below. Then apply the defaults in order. They were read from an owner's 114 overrides of an agent's placement picks, plus the reasons he gave for the ones that looked like outliers.
+
+1. **Check what it IS before placing it by its name.** Read the manifest (providers, contracts, required binaries). A plugin named after a marketplace company can be that company's AI-model service, not its shop.
+2. **The main agent is the superset.** Whatever any agent has, the main agent has too. A capability taken off a child agent moves to the main agent instead of disappearing. The one exception: model vendors no agent calls stay off everywhere.
+3. **A child agent that serves a team gets everything that helps that team's job**, including several overlapping sources for one job. A purchasing agent gets every marketplace and price source it can search, because breadth is what makes it fast and cheap. Strip only personal accounts and personal messaging, home devices, tools for a platform the machine does not run, and the chores of maintaining the public repo.
+4. **Judge a capability by the role it serves, not by how it looks.** Phone location looks personal, yet it lets a manager plan flights and warn waiting customers without calling a travelling colleague. When a capability touches people, record the condition that makes it acceptable (for location: the people are told first, as local law requires) instead of stripping it.
+5. **Do not remove a capability for a misuse it could have** when it has legal uses the owner wants. Torrent search also finds 3D-print files and public datasets.
+6. **The delivery channel decides publication.** If an agent receives code only by pulling the public repo, "give it to that agent" means "publish it, sanitized". Per-deployment values go into a thin private overlay beside the public enhancement.
+7. **Publish by default, after sanitizing.** Keep an enhancement private only when the private subject IS its content (a gateway to one company's file server, one company's wiki, one company's article codes). A private name in a slug becomes a generic name, and the result serves a wider audience.
+8. **Exclusive slots are per agent, not per fleet.** Where a kind allows one active holder (a memory backend, for example), each agent picks its own; the others of that kind load but stay dormant on that agent.
+9. **Inert enhancements** (a required binary is missing) cost clutter, not tokens. Keep the ones that serve a known use and list the install as a setup task; switch off the ones that serve nothing.
+10. **Retire a superseded enhancement everywhere at once:** the repo, every agent, the registry listing (soft-delete, which stays restorable for a while) and the README.
+
+Where a decision makes a live agent restart, stage it for the next start or pick a moment when that agent is idle, and say which.
+
+### 10. Register, attribute, and — only by hand — publish
 
 **Done when:** It is registered, attribution is in place, and the publish decision is recorded.
 
@@ -213,6 +244,8 @@ Anything operator-specific becomes a `{{param}}`: people's names, client or comp
 - Publishing (ClawHub, Journey, prompts.chat) is an irreversible external action. Draft here and let the owner publish.
 
 ## Failures Overcome
+
+- 2026-09-29: an owner kept two model-vendor plugins on a purchasing agent, reading their names as shopping platforms. Step 9 rule 1 (read the manifest before placing by name) exists because of it.
 
 - `prompts.csv` fails to parse with `field larger than field limit (131072)`: the longest prompt is about 144k characters. Raise `csv.field_size_limit` before reading.
 - Vector search is phrasing-sensitive: one query missed obvious matches. Always sweep two or three phrasings.

@@ -3,7 +3,7 @@ schema: "kit/1.0"
 slug: "decision-page"
 title: "Decision page — the human decides many items across several places"
 summary: "When a human must decide, item by item, where dozens or hundreds of things should live (which skills on which agent, what to publish, what to cherry-pick), build one local page: live present state, your recommendation with its certainty, the human's decision on the same control, small readable groups, and saves that survive a reboot."
-version: "1.0.0"
+version: "1.1.0"
 owner: "globalcaos"
 license: "MIT"
 category: "analysis"
@@ -69,7 +69,7 @@ Read each place from its own source of truth: the plugin and skill listings on e
 
 **Done when:** every cell has a pick (keep / add / remove / fix), a certainty (sure / fairly sure / I hesitate) and, for anything not "keep, sure", a one-line reason.
 
-A reason must cite something checkable: an incident with its date, a measured count, a missing dependency, a platform that cannot run it. When several places share one decision chain (bring it into the repo, then switch it on per agent), make the picks consistent along that chain. Certainty is about the recommendation, not about effort; put the effort or port cost into the reason.
+Start every pick from the placement rules in recipe `create-recipe-skill-plugin` (step 9, "Place the enhancement") and the deployment's private placement policy that step reads; a pick that breaks one of those rules says which and why. They hold the owner's patterns from earlier pages, so the page opens closer to what the owner will choose. A reason must cite something checkable: an incident with its date, a measured count, a missing dependency, a platform that cannot run it. When several places share one decision chain (bring it into the repo, then switch it on per agent), make the picks consistent along that chain. Certainty is about the recommendation, not about effort; put the effort or port cost into the reason.
 
 ### 4. Group the rows into small blocks a human can read
 
@@ -119,7 +119,7 @@ Applying is a separate step the human asks for. Before touching anything:
 - **Never restart a live service to apply config.** Stage config for the next start where the platform supports it; on a machine that serves other people, check when it was last used and name the restart as a separate step.
 - **Leave other sessions' uncommitted work alone.** Work in a separate worktree per branch; files that already carry someone else's edits are changed last, hunk by hunk, never by stash or checkout.
 
-Then read the save for patterns: group the overrides by place and direction, name the rule each group implies, and apply the same rules to items created after the page was built. Report the patterns, then ask about the handful of choices none of them explains, one question each.
+Then read the save for patterns: group the overrides by place and direction, name the rule each group implies, and apply the same rules to items created after the page was built. Report the patterns, then ask about the handful of choices none of them explains, one question each. When the owner answers, write the result back: owner-specific rulings into the private placement policy, generic rules into `create-recipe-skill-plugin` step 9. Keep no second copy of the rules here.
 
 ## Constraints
 
@@ -142,4 +142,5 @@ Then read the save for patterns: group the overrides by place and direction, nam
 - Hundreds of rows in alphabetical order made the reader re-sort in their head. Small named groups inside each block fixed it; the model providers alone split into "the ones this agent calls" and "other vendors".
 - A recommendation said an upstream item "arrives with our next merge" when merging had stopped months earlier. Reasons that cite a process must be checked against that process's current state.
 - The first apply found the "public" column measured on a public branch whose history had split from the development branch: 14 public skills were missing from development, so the next squash-publish would have deleted them, and 5 rows marked "not public" were public under their folder names. Step 8 now re-measures against both trees before applying.
+- An owner kept two plugins he read as shopping platforms; they were AI-model vendors. Read each item's manifest before recommending by its name.
 - The employer's name was already on the public branch in dozens of files, because the push hook matched it case-sensitively and only as a two-word phrase. The hook now matches it case-insensitively and word-aware.
