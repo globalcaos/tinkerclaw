@@ -71,7 +71,7 @@ Pipeline stage 1 = `revise-paper` Steps 1–6 per paper. Bump the version (never
 ### 3. Compile (per revised paper)
 
 **Tools:** exec, write
-**Done when:** Each revised `.md` has a styled PDF; failures reported, not fatal
+**Done when:** Each revised `.md` has a built PDF; failures reported, not fatal
 
 Pipeline stage 2 = `compile-paper` Steps 1–7 per paper: generate missing figures per {{paper-figures}} (conceptual → `napkin-diagrams` + the Nano Banana Pro cohesion pass; numeric charts → matplotlib; D2/TikZ only as fallback), `md-to-tex.sh`, enrich `refs.bib`, `build-paper.sh`. A compile failure drops that paper to a reported error — it does not abort the batch.
 
@@ -88,7 +88,7 @@ Collect every pipeline result. Report per paper. The Overseer reads this to judg
 - Version outputs (`-vX.Y+1`), never overwrite an existing paper version.
 - Pipeline, not barrier: do not block all compiles on all revisions finishing. Slowest single paper sets wall-clock, not slowest-stage × N.
 - One paper failing (revise or compile) must not abort the others — isolate to a reported null.
-- Do NOT touch `build-paper.sh` or `acme-paper.sty`.
+- Do NOT touch `build-paper.sh` or the paper style file.
 
 ## Safety Notes
 

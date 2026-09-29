@@ -76,7 +76,7 @@ Grep the paper for `![...](images/...)`. Read `diagram-suggestions.md`. Produce 
 - **Pull in what the tables hold.** Section tables usually ARE the figure's content; a text-only extract silently drops them and starves the engine.
 - Working reference to copy the register from: `images/sec-trilemma.md` in any J-series paper folder.
 
-Request `--variations 4`, then **look at all four** and pick the best. Cost is ~0.5 credit per brief word and is charged per REQUEST, not per variation — so always ask for 4; a re-run after a bad brief costs the whole request again. The figure's content must be self-contained: no sibling-paper names or codenames, no "this paper", no "Serra 202X" baked inside the image — describe adjacent mechanisms generically. Regenerate rather than reuse a PNG that happens to be on disk; stale images carry exactly the labels self-containment forbids, invisible to a text grep.
+Request `--variations 4`, then **look at all four** and pick the best. Cost is ~0.5 credit per brief word and is charged per REQUEST, not per variation — so always ask for 4; a re-run after a bad brief costs the whole request again. The figure's content must be self-contained: no sibling-paper names or codenames, no "this paper", no author-year self-citation label ("<Author> 202X") baked inside the image — describe adjacent mechanisms generically. Regenerate rather than reuse a PNG that happens to be on disk; stale images carry exactly the labels self-containment forbids, invisible to a text grep.
 
 **Numeric.** Short `matplotlib`/`plotly` script in a temp file, PNG into `images/`. Apply the house style at the code level so the chart matches the Napkin set without ever going near an image model:
 

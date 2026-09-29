@@ -48,7 +48,7 @@ resolverHints:
 
 ## Goal
 
-Take one paper folder under `~/Documents/AI_reports/Papers/` and produce a house-styled PDF — figures embedded, references clickable.
+Take one paper folder under `~/Documents/AI_reports/Papers/` and produce a PDF in the house paper style — figures embedded, references clickable.
 
 ## When to Use
 
@@ -62,7 +62,7 @@ Not for: bulk-building all 15 papers (separate recipe later), Group A `.latex` s
 
 - Inventory + style + naming: `~/Documents/AI_reports/Papers/BLUEPRINT.md`
 - Build script (unchanged): `~/Documents/AI_reports/Papers/build-paper.sh`
-- Style: `~/Documents/AI_reports/Papers/acme-paper.sty`
+- Style: the paper style file `build-paper.sh` copies in (its `STY=` line; today `~/Documents/AI_reports/Papers/jseries-paper.sty`)
 - Converter: `~/Documents/AI_reports/Papers/md-to-tex.sh`
 
 ## Steps
@@ -138,7 +138,7 @@ Report:
 
 - One paper per run. Do not auto-fan-out to the rest of `Papers/` without an explicit user request — bulk orchestration is out of scope.
 - Do NOT rewrite `.md` content. The recipe compiles, it does not edit.
-- Do NOT touch `build-paper.sh` or `acme-paper.sty` from inside the recipe.
+- Do NOT touch `build-paper.sh` or the paper style file from inside the recipe.
 - Filename violations: ask the user before renaming the `.md`.
 
 ## Safety Notes

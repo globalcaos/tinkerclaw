@@ -101,7 +101,7 @@ Both `develop` and `main` live on `origin`. We always work on `develop` and push
 
 **Push authority (2026-05-09).** The earlier "only Jarvis pushes" rule is lifted. Architect Claude Code may `git push` directly. **Topology check still mandatory** before every push: no private data into public `tinkerclaw` (see `pii-boundary.md`). The 2026-04-06 personality-NN leak is the reason that check is non-negotiable. `git push --force` / `--force-with-lease` and `--no-verify` still need explicit confirmation, especially against `main`.
 
-**Pre-push enforcement (FORK 2026-05-11).** `git-hooks/pre-push` runs `scripts/pii-pre-push.sh` automatically. The hook scans the commit range about to be pushed for the private-token regex from `pii-boundary.md` and blocks the push if any match. Bypass with `PII_GUARD=off git push …` for genuine intentional inclusions (e.g. adding an "Oscar Serra" byline).
+**Pre-push enforcement (FORK 2026-05-11).** `git-hooks/pre-push` runs `scripts/pii-pre-push.sh` automatically. The hook scans the commit range about to be pushed for the private-token regex from `pii-boundary.md` and blocks the push if any match. Bypass with `PII_GUARD=off git push …` for genuine intentional inclusions (e.g. adding the author's full-name byline).
 
 **README.md is `merge=ours`-protected** (`.gitattributes`, 2026-05-09). The fork's gold-pass TinkerClaw README auto-wins on every upstream conflict. Without this, the merge cron's `--theirs README.md` block silently replaced our README with upstream's OpenClaw one — happened repeatedly before the protection landed.
 
