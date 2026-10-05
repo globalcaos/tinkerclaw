@@ -42,6 +42,43 @@ workflow journals every 15 s (`gantt.py live`, in memory, the plan file is never
   watching between sends; the block is the record in the chat.
 - `attach PLAN.json` gives a chat its tab by hand (another plan, another chat); `detach` drops it.
 
+### The machines panel
+
+The principal asked for it the same day: "a little section where I can see the available machines
+for this project. If only this one is necessary, the panel should be hidden … I would like to know
+in real time if we have a healthy connection to them or if the connection gets interrupted … the
+resources used by us, the available in the machine, and its current load." When the plan has a
+`machines` list with at least one machine besides `"host": "local"`, the tab shows a Machines
+section under the chart and a chip in its top bar ("4 machines connected", red with the names
+when one is unreachable; a click scrolls to the section). No list, or only this machine: nothing
+shows.
+
+```json
+"machines": [
+  { "name": "Laptop", "host": "local", "role": "the worker", "dirs": ["~/src/product"] },
+  { "name": "Desk1", "host": "desk1", "role": "test runner", "dirs": ["~/runner"],
+    "jobs": { "label": "runner", "name_label": "runner-target" }, "images": ["runner"] },
+  { "name": "Gateway", "host": "lab-gw", "role": "every ssh to the lab goes through it" }
+]
+```
+
+- `host` is an ssh alias (`~/.ssh/config`), or `local`. The jump host comes from ssh's own config
+  (`ssh -G`), so a machine reached through a gateway that is down says so.
+- `dirs` are where our work lives on that machine. A process is ours when its working folder is
+  inside one of them; our disk is `du -sk` of them, measured in the background at most every 10
+  minutes (`du_max_age`) and cached on the machine. A machine with no `dirs` (a gateway) shows
+  only its own load.
+- `jobs` lists our running containers by label (`docker ps`), named by the `name_label` label.
+  `images` adds those images' size to our disk.
+- Each row: link (connected and round trip, or unreachable with ssh's reason, last reached and
+  down since), uptime (amber when it restarted in the last hour), our runs, CPU temperature, then
+  CPU, RAM, GPU and disk as bars split into us, everyone else and free, amber or red when
+  the machine runs short. "Ours" is approximate: PSS memory, a half-second CPU sample.
+- It polls only while the tab is open (every 15 s, one probe per machine shared by every page).
+  ssh keeps one connection per machine for two minutes, so a colleague's desktop does not log a
+  new login on every refresh. Link history lives in `~/.cache/gantt-machines/state.json`.
+- `machines.py PLAN.json` prints what the panel shows, as JSON, to check it from a shell.
+
 ## The plan file
 
 One JSON file per build, private, next to the charter (for example `<charter_dir>/gantt.json`).
@@ -130,6 +167,7 @@ python3 $G attach <charter_dir>/gantt.json [--session KEY]   # the chat's Gantt 
 python3 $G detach [--session KEY]
 python3 $G live <charter_dir>/gantt.json > /tmp/gantt-live.html # the tab's page, to look at it offline
 python3 $G agent <wf_id> <agent_id>                         # one unit: model, task, report
+python3 ${G%/*}/machines.py <charter_dir>/gantt.json         # the machines panel's data (JSON)
 ```
 
 `render` prints a ` ```html-render ` block: paste it into the Tinker reply. It leaves out the table view to stay small (about 35 KB

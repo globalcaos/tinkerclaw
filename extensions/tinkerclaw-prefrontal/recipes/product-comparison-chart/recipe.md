@@ -112,6 +112,8 @@ compare. Naming a product without a link hands back the search work that was del
 first place; a spec table without a cost column cannot answer a value question at all. Where a
 figure is genuinely unavailable, print the gap and say so per row rather than dropping the column.
 
+When the deciding characteristic is physical (where a key sits, which side a port is on, how a hinge opens), the evidence is a photo you actually looked at, cropped to the part in question. Spec sheets rarely state it and reviews state it loosely, so a row without that look is unverified, and the answer should show the crops.
+
 ### 4. Gate on availability BEFORE ranking
 
 **Tools:** the source's own skill

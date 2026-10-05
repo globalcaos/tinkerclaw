@@ -408,11 +408,11 @@ function readGanttBoards() {
     }));
 }
 
-function runGanttPy(args, timeoutMs) {
+function runGanttPy(args, timeoutMs, script = GANTT_PY) {
   return new Promise((resolve) => {
     execFile(
       "python3",
-      [GANTT_PY, ...args],
+      [script, ...args],
       { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
       (err, stdout, stderr) =>
         resolve({
@@ -431,6 +431,22 @@ function ganttRender(plan, mode) {
   if (hit && Date.now() - hit.at < GANTT_CACHE_MS) return hit.promise;
   const promise = runGanttPy(["live", plan, ...(mode === "chart" ? ["--fragment"] : [])], 60_000);
   ganttRuns.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+// FORK 2026-10-05 (the architect: "a little section where I can see the available machines for this
+// project … if we have a healthy connection to them … the resources used by us, the available in
+// the machine, and its current load"). machines.py probes the plan's "machines" over ssh; the page
+// asks every 15 s, and only while the Gantt tab is open, so nothing polls the lab when nobody looks.
+const GANTT_MACHINES_PY = path.join(ROOT, "skills", "build-gantt", "scripts", "machines.py");
+const GANTT_MACHINES_MS = 10_000;
+const ganttMachineRuns = new Map();
+
+function ganttMachines(plan) {
+  const hit = ganttMachineRuns.get(plan);
+  if (hit && Date.now() - hit.at < GANTT_MACHINES_MS) return hit.promise;
+  const promise = runGanttPy([plan], 60_000, GANTT_MACHINES_PY);
+  ganttMachineRuns.set(plan, { at: Date.now(), promise });
   return promise;
 }
 
@@ -472,6 +488,25 @@ async function handleGantt(sub, url, req, res) {
       body = { error: r.stderr.trim().slice(-300) || "gantt.py printed nothing" };
     }
     return json(res, body.error ? 404 : 200, body);
+  }
+  if (sub === "machines") {
+    const session = url.searchParams.get("session") || "";
+    const board = session
+      ? readGanttBoards().find((b) => ganttKeysMatch(b.session, session))
+      : null;
+    if (!board) return json(res, 404, { error: "No Gantt plan is attached to this chat." });
+    const r = await ganttMachines(board.plan);
+    let body = null;
+    try {
+      body = JSON.parse(r.stdout);
+    } catch {}
+    if (!r.ok || !body) {
+      console.error(
+        `[tinker-prod-ui] machines.py ${board.plan} failed: ${r.stderr.trim().slice(-500)}`,
+      );
+      return json(res, 500, { error: r.stderr.trim().split("\n").pop() || "machines.py failed" });
+    }
+    return json(res, 200, body);
   }
   if (sub === "view" || sub === "chart") {
     const session = url.searchParams.get("session") || "";

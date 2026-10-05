@@ -19,12 +19,19 @@
  *     phase the user unfolded and the open drawer.
  *  6. Clicking the master goes back to the chat and unloads the chart.
  *  7. Deleting the master session drops its board, and the Gantt tab goes with it.
+ *  8. The machines panel (the architect, 2026-10-05: "a little section where I can see the available
+ *     machines for this project … if we have a healthy connection to them … the resources used by
+ *     us"): under the chart, one row per machine through a fake ssh; ours counted (a busy process
+ *     in a runner folder, its disk); an unreachable machine red with ssh's reason, one behind it
+ *     blamed on it; the top-bar chip names it and scrolls to the panel; a plan that uses only this
+ *     machine shows no panel.
  *
  * Usage: (cd tinker-ui && npx vite build) && node tinker-ui/e2e/gantt-tab/drive.mjs [--shots DIR]
  * Exit code 1 when an assertion fails.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -117,11 +124,37 @@ const journalB = workflow(`${WF}-b`, [
     task: "Write the B1 exporter.",
   },
 ]);
+// Machines: a fake ssh runs the probe here for "runner1", fails like a dead lab host for "gone",
+// and puts "behind" behind "gone" (ssh -G says so), so its error must blame the gateway.
+const runnerDir = join(home, "runner");
+mkdirSync(join(runnerDir, "slot"), { recursive: true });
+writeFileSync(join(runnerDir, "slot", "data.bin"), Buffer.alloc(3 * 1024 * 1024, 7));
+const fakeSsh = join(home, "bin", "fake-ssh");
+mkdirSync(dirname(fakeSsh), { recursive: true });
+writeFileSync(
+  fakeSsh,
+  `#!/bin/sh
+if [ "$1" = "-G" ]; then [ "$2" = behind ] && echo "proxyjump gone" || echo "proxyjump none"; exit 0; fi
+while [ "$1" = "-o" ]; do shift 2; done
+host="$1"; shift
+case "$host" in gone|behind) echo "ssh: connect to host $host port 22: No route to host" >&2; exit 255 ;; esac
+exec "$@"
+`,
+);
+chmodSync(fakeSsh, 0o755);
+const machines = [
+  { name: "This one", host: "local", role: "the worker", dirs: [join(home, "plan")] },
+  { name: "Runner", host: "runner1", role: "test runner", dirs: [runnerDir] },
+  { name: "Gone", host: "gone", role: "the lab gateway" },
+  { name: "Behind", host: "behind", role: "a runner behind the gateway", dirs: [runnerDir] },
+];
+
 const plan = join(home, "plan", "gantt.json");
 mkdirSync(dirname(plan), { recursive: true });
 writeFileSync(
   plan,
   JSON.stringify({
+    machines,
     title: "E2E build",
     phases: [
       { id: "A", label: "A · Parser", kind: "build", workflows: [`${WF}-a`] },
@@ -205,9 +238,13 @@ await start(
     TINKER_PROD_PORT: String(UI_PORT),
     TINKER_GATEWAY_PORT: String(GW_PORT),
     OPENCLAW_GATEWAY_TOKEN: "mock",
+    GANTT_SSH: fakeSsh,
   },
   /production Tinker/,
 );
+// A process of ours on "Runner": it works inside the runner folder and keeps one core busy.
+const busy = spawn("node", ["-e", "for(;;){}"], { cwd: join(runnerDir, "slot"), stdio: "ignore" });
+procs.push(busy);
 
 // ─── Drive ───
 const browser = await chromium.launch();
@@ -368,6 +405,108 @@ const keptOpen = await frame
 check(keptOpen, "5. a refresh keeps the phase the user unfolded");
 check((await frame.locator("#drawer.open").count()) === 1, "5. and keeps the drawer open");
 check(readFileSync(plan, "utf8") === planBefore, "5. the plan file is never written by the tab");
+
+// 8 — the machines panel, under the chart
+await frame
+  .locator('#machines .mrow[data-host="runner1"]')
+  .waitFor({ timeout: 30_000 })
+  .catch(() => {});
+const layout = await frame.locator("body").evaluate(() => {
+  const m = document.getElementById("machines");
+  const c = document.getElementById("chart");
+  return {
+    shown: !!m && !m.hidden,
+    after: !!(m && c && c.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING),
+    rows: [...document.querySelectorAll("#machines .mrow")].map((r) => r.dataset.host),
+  };
+});
+check(
+  layout.shown && layout.after,
+  "8. the machines panel shows at the end, under the chart",
+  JSON.stringify(layout),
+);
+check(
+  layout.rows.join(",") === "local,runner1,gone,behind",
+  "8. one row per machine, in the plan's order",
+  layout.rows.join(","),
+);
+const runner = frame.locator('#machines .mrow[data-host="runner1"]');
+const runnerText = await runner.textContent();
+check(
+  (await runner.locator(".dot.ok").count()) === 1 && /connected · \d+ ms/.test(runnerText),
+  "8. a reachable machine is green, with its round trip",
+  runnerText.slice(0, 120),
+);
+const cells = await runner.locator(".mc").evaluateAll((els) => els.map((e) => e.dataset.m));
+check(
+  cells.join(",") === "CPU,RAM,GPU,Disk",
+  "8. CPU, RAM, GPU and disk for each machine",
+  cells.join(","),
+);
+// Our CPU: the busy loop is one core of this machine; our disk: the 3 MB file, measured in the background.
+let usCpu = 0;
+let usDisk = "";
+for (let i = 0; i < 45 && !(usCpu > 0 && /us \d/.test(usDisk)); i++) {
+  usCpu = Number(
+    ((await runner.locator('[data-m="CPU"] .ms').textContent()) ?? "").match(/us (\d+)%/)?.[1] ?? 0,
+  );
+  usDisk = (await runner.locator('[data-m="Disk"] .ms').textContent()) ?? "";
+  if (!(usCpu > 0 && /us \d/.test(usDisk))) await page.waitForTimeout(1000);
+}
+check(usCpu > 0, "8. our CPU counts the process working in our folder", `us ${usCpu}%`);
+check(/us 3(\.\d)? MB/.test(usDisk), "8. our disk is the size of our folders", usDisk);
+const usBar = await runner
+  .locator('[data-m="CPU"] .mb .us')
+  .evaluate((e) => parseFloat(e.style.width));
+check(usBar > 0, "8. and the bar draws our share", `${usBar}%`);
+const goneRow = frame.locator('#machines .mrow[data-host="gone"]');
+const goneText = await goneRow.textContent();
+check(
+  (await goneRow.locator(".dot.down").count()) === 1 &&
+    goneText.includes("No route to host") &&
+    goneText.includes("never reached"),
+  "8. an unreachable machine is red, with ssh's reason",
+  goneText.slice(0, 160),
+);
+const behindText = await frame.locator('#machines .mrow[data-host="behind"]').textContent();
+check(
+  behindText.includes("through Gone, which is down too"),
+  "8. a machine behind a dead gateway blames the gateway",
+  behindText.slice(0, 160),
+);
+const mchip = frame.locator("#mchip");
+check(
+  (await mchip.getAttribute("class")) === "bad" &&
+    (await mchip.textContent()).includes("Gone, Behind unreachable"),
+  "8. the top-bar chip names the unreachable machines",
+  await mchip.textContent(),
+);
+// The unit drawer from step 4 covers the right of the top bar; Esc closes it, as a person would.
+await page.keyboard.press("Escape");
+await frame.locator("body").evaluate(() => scrollTo(0, 0));
+await mchip.click();
+await page.waitForTimeout(1200);
+const inView = await frame.locator("#machines").evaluate((m) => {
+  const r = m.getBoundingClientRect();
+  return r.top < innerHeight && r.bottom > 0;
+});
+check(inView, "8. clicking the chip scrolls to the machines");
+if (SHOTS) await frame.locator("#machines").screenshot({ path: join(SHOTS, "gantt-machines.png") });
+const showFor = (list) => {
+  const p = join(home, "plan", `m-${list.length}.json`);
+  writeFileSync(p, JSON.stringify({ title: "x", phases: [], ...(list ? { machines: list } : {}) }));
+  const r = spawnSync("python3", ["skills/build-gantt/scripts/machines.py", p], {
+    cwd: repo,
+    env: { ...process.env, HOME: home, GANTT_SSH: fakeSsh },
+    encoding: "utf8",
+  });
+  return JSON.parse(r.stdout || "{}").show;
+};
+check(
+  showFor([machines[0]]) === false && showFor([]) === false,
+  "8. a build that uses only this machine shows no panel",
+);
+check(readFileSync(plan, "utf8") === planBefore, "8. the panel never writes the plan file");
 
 // 6
 await page.locator('[data-tab-id="tab-m"]').click();
