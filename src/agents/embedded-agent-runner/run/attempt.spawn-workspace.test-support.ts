@@ -313,6 +313,8 @@ vi.mock("../../pi-settings.js", () => ({
 
 vi.mock("../extensions.js", () => ({
   buildEmbeddedExtensionFactories: () => [],
+  // attempt.ts calls this since 4be81d5684d (2026-07-28); without it 8 context-engine tests fail.
+  resolveCompactionMode: () => "default",
 }));
 
 vi.mock("../replay-history.js", () => ({

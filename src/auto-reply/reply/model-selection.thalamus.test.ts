@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { clearOrcaBiasCache } from "../../infra/orca-bias-store.js";
+import { clearThalamusCoolingCache, recordSupplyLimit } from "../../infra/thalamus-cooling.js";
+import { clearThalamusTierDefaultsCache } from "../../infra/thalamus-tier-defaults.js";
 import { relCostLookup } from "../../shared/rel-cost-table.js";
 import {
   classifyTaskDomain,
   frontierRungsFor,
   thalamusRoute,
 } from "../../shared/thalamus-frontier.js";
+import { supplyOfKey } from "../../shared/thalamus-supply.js";
 import { createModelSelectionState, formatThalamusRouteNotice } from "./model-selection.js";
 
 const quotaMocks = vi.hoisted(() => ({
@@ -106,14 +109,25 @@ beforeEach(() => {
   quotaMocks.resolveQuotaAwareAutoModel.mockReset();
   quotaMocks.resolveQuotaAwareAutoModel.mockReturnValue(null);
   delete process.env.OPENCLAW_THALAMUS_ROUTING;
-  delete process.env.OPENCLAW_ORCA_BIAS_FILE;
+  // Never the operator's own files: without these the suite read ~/.openclaw/thalamus-tier-defaults.json
+  // (pinned from the model picker on 2026-09-23) and failed 4 tests on that machine only.
+  const none = mkdtempSync(join(tmpdir(), "thalamus-none-"));
+  process.env.OPENCLAW_ORCA_BIAS_FILE = join(none, "orca-bias.json");
+  process.env.OPENCLAW_THALAMUS_DEFAULTS_FILE = join(none, "thalamus-tier-defaults.json");
+  process.env.OPENCLAW_THALAMUS_COOLING_FILE = join(none, "thalamus-cooling.json");
   clearOrcaBiasCache();
+  clearThalamusTierDefaultsCache();
+  clearThalamusCoolingCache();
 });
 
 afterEach(() => {
   delete process.env.OPENCLAW_THALAMUS_ROUTING;
   delete process.env.OPENCLAW_ORCA_BIAS_FILE;
+  delete process.env.OPENCLAW_THALAMUS_DEFAULTS_FILE;
+  delete process.env.OPENCLAW_THALAMUS_COOLING_FILE;
   clearOrcaBiasCache();
+  clearThalamusTierDefaultsCache();
+  clearThalamusCoolingCache();
 });
 
 describe("createModelSelectionState THALAMUS routing", () => {
@@ -132,16 +146,23 @@ describe("createModelSelectionState THALAMUS routing", () => {
     // The routed rung IS the selection everywhere downstream, exactly as the quota
     // substitution is — not a fallback list handed over.
     expect(`${state.provider}/${state.model}`).toBe(want?.rung.key);
-    expect(state.thalamusRoute?.notice).toBe(
-      formatThalamusRouteNotice({
-        biasIdx: 6,
-        domain: "general",
-        provider: state.thalamusRoute?.provider ?? "",
-        model: state.thalamusRoute?.model ?? "",
-        effort: state.thalamusRoute?.effort ?? "",
-        reason: want?.reason ?? "",
-      }),
-    );
+    // The notice carries the FRONTIER's rationale verbatim, and since 2026-09-04 the PLAN
+    // appends to it — why the reserved set opened, and the recovery ladder. So this asserts the
+    // frontier reason is present rather than that it is the whole string: pinning the exact
+    // notice would make every future plan-level disclosure a test failure, which trains the next
+    // author to delete the disclosure instead of the assertion.
+    const head = formatThalamusRouteNotice({
+      biasIdx: 6,
+      domain: "general",
+      provider: state.thalamusRoute?.provider ?? "",
+      model: state.thalamusRoute?.model ?? "",
+      effort: state.thalamusRoute?.effort ?? "",
+      reason: want?.reason ?? "",
+    });
+    expect(state.thalamusRoute?.notice.startsWith(head)).toBe(true);
+    // And the ladder is disclosed, because an empty one is the defect the chain exists to fix.
+    expect(state.thalamusRoute?.notice).toContain("if it fails →");
+    expect(state.thalamusRoute?.chain.length).toBeGreaterThan(0);
   });
 
   it("routes to a cheaper, no-smarter rung at the FAST end — the dial actually moves it", async () => {
@@ -164,7 +185,7 @@ describe("createModelSelectionState THALAMUS routing", () => {
     expect((smart?.smart ?? 0) - (fast?.smart ?? 0)).toBeLessThanOrEqual(15);
   });
 
-  it("defaults to the balanced stop when the dial file does not exist", async () => {
+  it("defaults to the middle stop, default, when the dial file does not exist (2026-10-02; smart for one day)", async () => {
     process.env.OPENCLAW_ORCA_BIAS_FILE = join(
       mkdtempSync(join(tmpdir(), "thalamus-bias-")),
       "missing.json",
@@ -254,5 +275,97 @@ describe("createModelSelectionState THALAMUS routing", () => {
     expect(state.thalamusRoute).toBeUndefined();
     expect(state.provider).toBe(AUTO_PROVIDER);
     expect(state.model).toBe(AUTO_MODEL);
+  });
+});
+
+// the architect, 2026-10-02 (full deploy): his picks are suggestions, and a limit cools its supply.
+describe("createModelSelectionState THALAMUS suggestions and cooling", () => {
+  function writeSuggestions(content: unknown): void {
+    const file = process.env.OPENCLAW_THALAMUS_DEFAULTS_FILE!;
+    writeFileSync(file, JSON.stringify(content));
+    clearThalamusTierDefaultsCache();
+  }
+  const routedKey = (state: Awaited<ReturnType<typeof createState>>): string =>
+    `${state.thalamusRoute?.provider}/${state.thalamusRoute?.model}`;
+
+  it("runs the suggestion of the dial's stop on a general task, not the frontier's own pick", async () => {
+    writeBias(6);
+    const want = expectedRoute(6);
+    expect(want?.rung.key).not.toBe(GROK);
+    writeSuggestions({ smart: { model: GROK } });
+
+    const state = await createState({});
+
+    expect(routedKey(state)).toBe(GROK);
+    expect(state.thalamusRoute?.notice).toContain("suggestion");
+  });
+
+  it("still reads the old file: high / medium / low strings", async () => {
+    writeBias(6);
+    writeSuggestions({ high: GROK });
+
+    expect((await createState({})).thalamusRoute?.model).toBe("grok-4.6");
+  });
+
+  it("answers for the stop the dial is on: the middle stop for an unset dial", async () => {
+    process.env.OPENCLAW_ORCA_BIAS_FILE = join(
+      mkdtempSync(join(tmpdir(), "thalamus-bias-")),
+      "missing.json",
+    );
+    clearOrcaBiasCache();
+    writeSuggestions({ smart: { model: OPUS }, default: { model: GROK }, budget: { model: LUNA } });
+
+    const state = await createState({});
+
+    expect(state.thalamusRoute?.biasIdx).toBe(3);
+    expect(routedKey(state)).toBe(GROK);
+  });
+
+  it("treats a suggestion for a model the catalog does not have as an unset stop", async () => {
+    writeBias(6);
+    const want = expectedRoute(6);
+    writeSuggestions({ smart: { model: "nobody/ghost-9" } });
+
+    const state = await createState({});
+
+    expect(routedKey(state)).toBe(want?.rung.key);
+  });
+
+  it("moves off a suggestion whose supply just hit a limit, to the best supply still open, and keeps the chain off it", async () => {
+    writeBias(6);
+    writeSuggestions({ smart: { model: GROK } });
+    expect(routedKey(await createState({}))).toBe(GROK);
+
+    // A 429 with a reset time: the failover path writes this exact record.
+    const hit = recordSupplyLimit({
+      provider: "xai",
+      model: "grok-4.6",
+      reason: "rate_limit",
+      error: "Rate limit reached. Try again in ~90 min.",
+    });
+    expect(hit?.supply).toBe("xai");
+
+    const after = await createState({});
+
+    expect(supplyOfKey(routedKey(after))).not.toBe("xai");
+    expect(after.thalamusRoute?.chain.map(supplyOfKey)).not.toContain("xai");
+    expect(after.thalamusRoute?.notice).toContain("cooling");
+  });
+
+  it("with no suggestion, a cooling supply that the open board would have used is skipped on the next turn", async () => {
+    writeBias(0);
+    const open = expectedRoute(0)!.rung.key;
+    expect(routedKey(await createState({}))).toBe(open);
+
+    recordSupplyLimit({
+      provider: open.slice(0, open.indexOf("/")),
+      model: open.slice(open.indexOf("/") + 1),
+      reason: "rate_limit",
+      error: "usage limit. resets in 2 hours",
+    });
+
+    const after = await createState({});
+
+    expect(supplyOfKey(routedKey(after))).not.toBe(supplyOfKey(open));
   });
 });

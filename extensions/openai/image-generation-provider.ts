@@ -570,6 +570,12 @@ function createOpenAIImageGenerationProviderBase(params: {
   };
 }
 
+/** HTTP 429 from an empty prepaid wallet, as opposed to an ordinary rate limit. */
+function isOpenAIQuotaExhaustedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /insufficient_quota|credit_balance_exhausted/.test(message);
+}
+
 async function resolveOptionalApiKeyForProvider(
   params: Parameters<typeof resolveApiKeyForProvider>[0],
 ) {
@@ -868,10 +874,28 @@ export function buildOpenAIImageGenerationProvider(): ImageGenerationProvider {
           })();
       const { response, release } = requestResult;
       try {
-        await assertOkOrThrowHttpError(
-          response,
-          isEdit ? "OpenAI image edit failed" : "OpenAI image generation failed",
-        );
+        try {
+          await assertOkOrThrowHttpError(
+            response,
+            isEdit ? "OpenAI image edit failed" : "OpenAI image generation failed",
+          );
+        } catch (error) {
+          // An empty prepaid wallet is not a dead supply when a ChatGPT subscription is signed in.
+          const codexAuth =
+            publicOpenAIBaseUrl && isOpenAIQuotaExhaustedError(error)
+              ? await resolveOptionalApiKeyForProvider({
+                  provider: "openai-codex",
+                  cfg: req.cfg,
+                  agentDir: req.agentDir,
+                  store: req.authStore,
+                })
+              : null;
+          if (!codexAuth?.apiKey) {
+            throw error;
+          }
+          logCodexImageAuthSelected({ req, authMode: codexAuth.mode, timeoutMs });
+          return await generateOpenAICodexImage({ req, apiKey: codexAuth.apiKey });
+        }
 
         const data = (await response.json()) as OpenAIImageApiResponse;
         const output = resolveOutputMime(req.outputFormat);

@@ -101,6 +101,12 @@ export type PhaseEntry = {
    * derived duration silently folds in event-loop and network latency.
    */
   inferred?: boolean;
+  /**
+   * FORK 2026-09-21 — how an inferred close came about ("final" / "error" / "aborted" /
+   * "cleared" / "new" / "stale-restore") when the closer was a terminal signal rather than the
+   * next stage starting. Diagnostic only; the renderer keys off `done`/`inferred`.
+   */
+  closedBy?: string;
 };
 
 /**
@@ -168,6 +174,49 @@ function lastOpenIndex(entries: readonly PhaseEntry[]): number {
 /** Is any stage in this block still running? Drives the block's live styling. */
 export function phaseGroupIsLive(entries: readonly PhaseEntry[]): boolean {
   return lastOpenIndex(entries) >= 0;
+}
+
+/**
+ * FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — cap on a derived close.
+ * A phantom block restored from localStorage days after its turn died would otherwise close its
+ * open entry with days of "runtime"; no single stage legitimately holds an hour.
+ */
+export const PHASE_CLOSE_MAX_MS = 60 * 60 * 1000;
+
+/**
+ * FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — close every entry a
+ * terminal signal leaves open.
+ *
+ * A timing block is PERSISTED (client-rows.ts) and re-injected on every reload, and one entry
+ * with `done:false` is what makes the whole block render as running (`phaseGroupIsLive`).
+ * Nothing closed open entries on chat final/error/aborted, on Stop, on /clear or /new — so an
+ * aborted turn's block pulsed forever, surviving hard reloads (observed 2026-09-21: gateway
+ * activeRunIds=[], sessions row run.live=false, yet a ticking "Turn timing" block).
+ *
+ * Same convention as the superseded-entry close in `upsertPhaseEntry`: done + `inferred`,
+ * duration derived from `startedAt`, the entry NEVER dropped — a stage that ran is a real stage.
+ * Pure: returns a new array plus whether anything was open; the caller persists.
+ */
+export function closeOpenPhaseEntries(
+  entries: readonly PhaseEntry[],
+  nowMs: number,
+  closedBy: string,
+): { entries: PhaseEntry[]; changed: boolean } {
+  let changed = false;
+  const out = entries.map((e) => {
+    if (e.done) {
+      return e;
+    }
+    changed = true;
+    return {
+      ...e,
+      done: true,
+      inferred: true,
+      closedBy,
+      ms: Math.min(Math.max(0, nowMs - (e.startedAt ?? nowMs)), PHASE_CLOSE_MAX_MS),
+    };
+  });
+  return { entries: changed ? out : entries.slice(), changed };
 }
 
 /**

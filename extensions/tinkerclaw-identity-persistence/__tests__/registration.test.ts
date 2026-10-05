@@ -1,21 +1,36 @@
 /**
  * FORK: Registration tests for Identity Persistence plugin hooks.
  *
- * Verifies that the plugin registers the correct hooks (before_prompt_build,
- * llm_output) and that the before_prompt_build handler returns a persona block.
+ * Verifies the opt-in gate (no hooks without `enabled: true` AND an existing
+ * persona file), that an opted-in plugin registers the correct hooks
+ * (before_prompt_build, llm_output), and that the before_prompt_build handler
+ * returns a persona block.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+let dir: string;
+let personaPath: string;
 
 /**
  * Build a minimal mock of OpenClawPluginApi that captures hook registrations.
+ * Opts in by default so the hook-wiring assertions below test the wiring, not
+ * the gate; the gate has its own cases.
  */
 function createMockApi(overrides: Record<string, unknown> = {}) {
   const onHook = vi.fn();
   return {
     api: {
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
-      pluginConfig: { syncScoreThreshold: 0.6, evaluationInterval: 10 },
+      pluginConfig: {
+        enabled: true,
+        personaPath,
+        syncScoreThreshold: 0.6,
+        evaluationInterval: 10,
+      },
       rootDir: __dirname,
       config: { agents: { defaults: { name: "TestAgent" } } },
       registerTool: vi.fn(),
@@ -27,19 +42,65 @@ function createMockApi(overrides: Record<string, unknown> = {}) {
   };
 }
 
+async function registerWith(api: unknown): Promise<void> {
+  const mod = await import("../index.js");
+  const entry = mod.default;
+  if (entry && typeof entry === "object" && "register" in entry) {
+    (entry as { register: (a: unknown) => void }).register(api);
+  }
+}
+
 describe("Plugin Registration", () => {
   beforeEach(() => {
     vi.resetModules();
+    // Every case gets its own HOME so the plugin can never read or write the
+    // real ~/.openclaw while tests run.
+    dir = mkdtempSync(join(tmpdir(), "cortex-reg-"));
+    vi.stubEnv("HOME", dir);
+    mkdirSync(join(dir, ".openclaw", "workspace"), { recursive: true });
+    personaPath = join(dir, ".openclaw", "workspace", "SOUL.md");
+    writeFileSync(personaPath, "# TestAgent\n\n## Identity\nA test persona.\n");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
+  });
+
+  it("registers NO hooks unless explicitly enabled", async () => {
+    const { api, onHook } = createMockApi({
+      pluginConfig: { personaPath, syncScoreThreshold: 0.6 },
+    });
+
+    await registerWith(api);
+
+    expect(onHook).not.toHaveBeenCalled();
+  });
+
+  it("registers NO hooks when the configured persona file does not exist", async () => {
+    const { api, onHook } = createMockApi({
+      pluginConfig: { enabled: true, personaPath: join(dir, "nope", "absent.md") },
+    });
+
+    await registerWith(api);
+
+    expect(onHook).not.toHaveBeenCalled();
+  });
+
+  it("never creates a persona file it was asked to read", async () => {
+    const missing = join(dir, ".openclaw", "workspace", "ABSENT.md");
+    const { api } = createMockApi({ pluginConfig: { enabled: true, personaPath: missing } });
+
+    await registerWith(api);
+
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(missing)).toBe(false);
   });
 
   it("registers before_prompt_build and llm_output hooks", async () => {
     const { api, onHook } = createMockApi();
 
-    const mod = await import("../index.js");
-    const entry = mod.default;
-    if (entry && typeof entry === "object" && "register" in entry) {
-      (entry as { register: (a: unknown) => void }).register(api);
-    }
+    await registerWith(api);
 
     const hookNames = onHook.mock.calls.map(([name]: [string, ...unknown[]]) => name);
     expect(hookNames).toContain("before_prompt_build");
@@ -55,11 +116,7 @@ describe("Plugin Registration", () => {
   it("before_prompt_build is registered with priority 100", async () => {
     const { api, onHook } = createMockApi();
 
-    const mod = await import("../index.js");
-    const entry = mod.default;
-    if (entry && typeof entry === "object" && "register" in entry) {
-      (entry as { register: (a: unknown) => void }).register(api);
-    }
+    await registerWith(api);
 
     // Find the before_prompt_build registration call
     const promptBuildCall = onHook.mock.calls.find(
@@ -82,11 +139,7 @@ describe("Plugin Registration", () => {
       }),
     });
 
-    const mod = await import("../index.js");
-    const entry = mod.default;
-    if (entry && typeof entry === "object" && "register" in entry) {
-      (entry as { register: (a: unknown) => void }).register(api);
-    }
+    await registerWith(api);
 
     expect(promptBuildHandler).not.toBeNull();
 
@@ -102,6 +155,25 @@ describe("Plugin Registration", () => {
     expect(result.prependSystemContext).toContain("TestAgent");
   });
 
+  it("injects no hard rules that the owner did not write", async () => {
+    let promptBuildHandler: Function | null = null;
+    const { api } = createMockApi({
+      on: vi.fn((name: string, handler: Function) => {
+        if (name === "before_prompt_build") {
+          promptBuildHandler = handler;
+        }
+      }),
+    });
+
+    await registerWith(api);
+    const result = await promptBuildHandler!({ prompt: "Hi" }, { sessionKey: "agent:main:main" });
+
+    // The bootstrap persona ships with hardRules: [], so the rendered block
+    // carries no "Hard Rules" section and no fork-author branding.
+    expect(result.prependSystemContext).not.toContain("Hard Rules");
+    expect(result.prependSystemContext).not.toContain("Jarvis");
+  });
+
   it("llm_output SyncScore handler increments turn counter", async () => {
     const llmOutputHandlers: Function[] = [];
     const { api } = createMockApi({
@@ -112,11 +184,7 @@ describe("Plugin Registration", () => {
       }),
     });
 
-    const mod = await import("../index.js");
-    const entry = mod.default;
-    if (entry && typeof entry === "object" && "register" in entry) {
-      (entry as { register: (a: unknown) => void }).register(api);
-    }
+    await registerWith(api);
 
     expect(llmOutputHandlers.length).toBe(2);
 
@@ -134,11 +202,7 @@ describe("Plugin Registration", () => {
       logger: { info: infoSpy, warn: vi.fn(), error: vi.fn() },
     });
 
-    const mod = await import("../index.js");
-    const entry = mod.default;
-    if (entry && typeof entry === "object" && "register" in entry) {
-      (entry as { register: (a: unknown) => void }).register(api);
-    }
+    await registerWith(api);
 
     const readyMsg = infoSpy.mock.calls.find(
       ([msg]: [string]) => typeof msg === "string" && msg.includes("[identity-persistence] ready"),

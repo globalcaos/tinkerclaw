@@ -1,5 +1,5 @@
 {
-  "name": "@globalcaos/tinkerclaw-task-panel",
+  "name": "@globalcaos/tinker-task-panel",
   "version": "0.1.0",
   "private": true,
   "description": "FORK-ONLY: exec-mode Today tab — live task board + axes + est-presets + calendar cache. Split from tinkerclaw-control-panel. Replaces Todoist.",

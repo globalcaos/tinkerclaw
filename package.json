@@ -14,7 +14,8 @@
     "url": "git+https://github.com/openclaw/openclaw.git"
   },
   "bin": {
-    "openclaw": "openclaw.mjs"
+    "openclaw": "openclaw.mjs",
+    "tinkerclaw": "openclaw.mjs"
   },
   "directories": {
     "doc": "docs",
@@ -1292,6 +1293,22 @@
       "types": "./dist/plugin-sdk/fork-overseer-budget.d.ts",
       "default": "./dist/plugin-sdk/fork-overseer-budget.js"
     },
+    "./plugin-sdk/fork-telemetry": {
+      "types": "./dist/plugin-sdk/fork-telemetry.d.ts",
+      "default": "./dist/plugin-sdk/fork-telemetry.js"
+    },
+    "./plugin-sdk/fork-jev": {
+      "types": "./dist/plugin-sdk/fork-jev.d.ts",
+      "default": "./dist/plugin-sdk/fork-jev.js"
+    },
+    "./plugin-sdk/fork-thalamus": {
+      "types": "./dist/plugin-sdk/fork-thalamus.d.ts",
+      "default": "./dist/plugin-sdk/fork-thalamus.js"
+    },
+    "./plugin-sdk/fork-thalamus-runtime": {
+      "types": "./dist/plugin-sdk/fork-thalamus-runtime.d.ts",
+      "default": "./dist/plugin-sdk/fork-thalamus-runtime.js"
+    },
     "./extension-api": "./dist/extensionAPI.js",
     "./cli-entry": "./openclaw.mjs"
   },
@@ -1627,6 +1644,7 @@
     "test:watch": "node scripts/test-projects.mjs --watch",
     "test:windows:ci": "node scripts/test-projects.mjs src/shared/runtime-import.test.ts src/plugins/import-specifier.test.ts src/process/exec.windows.test.ts src/process/windows-command.test.ts src/infra/windows-install-roots.test.ts extensions/lobster/src/lobster-runner.test.ts test/scripts/npm-runner.test.ts test/scripts/pnpm-runner.test.ts test/scripts/ui.test.ts test/scripts/vitest-process-group.test.ts",
     "testbox:sanity": "node scripts/testbox-sync-sanity.mjs",
+    "tinker:crons": "node scripts/seed-structural-crons.mjs",
     "tool-display:check": "node --import tsx scripts/tool-display.ts --check",
     "tool-display:write": "node --import tsx scripts/tool-display.ts --write",
     "ts-topology": "node --import tsx scripts/ts-topology.ts",
@@ -1646,12 +1664,7 @@
     "tsgo:test:src": "node scripts/run-tsgo.mjs -p tsconfig.test.src.json --incremental --tsBuildInfoFile .artifacts/tsgo-cache/test-src.tsbuildinfo",
     "tsgo:test:ui": "node scripts/run-tsgo.mjs -p tsconfig.test.ui.json --incremental --tsBuildInfoFile .artifacts/tsgo-cache/test-ui.tsbuildinfo",
     "tui": "node scripts/run-node.mjs tui",
-    "tui:dev": "OPENCLAW_PROFILE=dev node scripts/run-node.mjs --dev tui",
-    "ui:build": "node scripts/ui.js build",
-    "ui:dev": "node scripts/ui.js dev",
-    "ui:i18n:check": "node --import tsx scripts/control-ui-i18n.ts check",
-    "ui:i18n:sync": "node --import tsx scripts/control-ui-i18n.ts sync --write",
-    "ui:install": "node scripts/ui.js install"
+    "tui:dev": "OPENCLAW_PROFILE=dev node scripts/run-node.mjs --dev tui"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.20.0",
@@ -1667,6 +1680,7 @@
     "@whatsmeow-node/linux-x64": "0.5.3",
     "@whatsmeow-node/whatsmeow-node": "0.5.3",
     "ajv": "^8.20.0",
+    "better-sqlite3": "12.8.0",
     "chalk": "^5.6.2",
     "chokidar": "^5.0.0",
     "commander": "^14.0.3",
@@ -1764,6 +1778,7 @@
       "@tloncorp/tlon-skill",
       "@whiskeysockets/baileys",
       "authenticate-pam",
+      "better-sqlite3",
       "esbuild",
       "node-llama-cpp",
       "protobufjs",

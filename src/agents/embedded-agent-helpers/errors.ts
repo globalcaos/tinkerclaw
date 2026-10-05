@@ -662,6 +662,15 @@ function classifyFailoverClassificationFromHttpStatus(
   if (status === 408) {
     return toReasonClassification("timeout");
   }
+  if (status === 426) {
+    // FORK 2026-10-02: 426 Upgrade Required — the provider refuses THIS CLIENT (xAI: "Your Grok CLI version (0.2.91)
+    // is outdated"), so every model it serves fails the same way until the client changes. It is classified as auth,
+    // not left null: null meant no failover, so a Thalamus Auto turn routed there died instead of moving down the
+    // chain. auth puts the provider's profile in cooldown (model-fallback then skips all its models) and probes again
+    // later, so it heals by itself once the client is fixed. Thalamus cools the supply on the same 426
+    // (thalamus-cooling.ts), so the next plan does not choose it.
+    return toReasonClassification("auth");
+  }
   if (status === 410) {
     // Generic 410/no-body responses behave like transport failures, not session expiry.
     if (

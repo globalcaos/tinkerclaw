@@ -1,0 +1,7 @@
+{
+  "model": "jev-latest",
+  "answers": {
+    "q-score": { "type": "score", "score": 2.0 }
+  },
+  "usage": { "input_tokens": 500, "output_tokens": 3 }
+}

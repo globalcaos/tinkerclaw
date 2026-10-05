@@ -68,12 +68,14 @@ describe("createProductionOrchestrationRuntime", () => {
     await expect(rt.agent("q")).rejects.toThrow(/spawn failed/i);
   });
 
-  it("returns empty text on a wait timeout (no history read)", async () => {
+  it("throws on a wait timeout and never reads history", async () => {
+    // Since 2c96563f464 (2026-06-05) a timeout throws: an empty string chained into the next agent(prev) would
+    // spawn a taskless subagent. This test still expected "" and failed from then on.
     const { call, methods } = mockGateway([{ role: "assistant", content: "x" }], {
       waitStatus: "timeout",
     });
     const rt = createProductionOrchestrationRuntime({ callGateway: call });
-    expect(await rt.agent("q")).toBe("");
+    await expect(rt.agent("q")).rejects.toThrow(/timed out/);
     expect(methods).toEqual(["fork.subagents.spawn", "agent.wait"]); // never reached chat.history
   });
 

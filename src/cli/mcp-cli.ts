@@ -67,6 +67,26 @@ export function registerMcpCli(program: Command) {
       }
     });
 
+  // FORK 2026-09-22: the agent's own tools for an external MCP client (e.g. Claude Code),
+  // proxied to the running gateway — nothing is built or loaded in this process.
+  mcp
+    .command("tools")
+    .description("Expose the agent's tools over MCP stdio, proxied to the running gateway")
+    .option(
+      "--session-key <key>",
+      "Session identity the tool calls run as",
+      "agent:main:claude-code",
+    )
+    .action(async (opts: { sessionKey?: string }) => {
+      try {
+        const { serveJarvisToolsMcp } = await import("../mcp/jarvis-tools-serve.js");
+        await serveJarvisToolsMcp({ sessionKey: opts.sessionKey });
+      } catch (err) {
+        defaultRuntime.error(String(err));
+        defaultRuntime.exit(1);
+      }
+    });
+
   mcp
     .command("list")
     .description("List configured MCP servers")

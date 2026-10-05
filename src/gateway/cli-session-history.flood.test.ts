@@ -22,7 +22,7 @@ import { augmentChatHistoryWithCliSessionImports } from "./cli-session-history.j
 // answer that nothing re-provides.
 //
 // HONESTY (also in the commit message): the text-less-cover hardening was replayed offline
-// against the live AcmeVision inputs and rescues ZERO of the 5 currently-suppressed answers
+// against the live work-tab inputs and rescues ZERO of the 5 currently-suppressed answers
 // (each is covered by 11-24 TEXT-BEARING imports). It hardens the B043 shape; it is NOT that fix.
 
 const mocks = vi.hoisted(() => ({ logWarn: vi.fn() }));
@@ -109,11 +109,62 @@ function entryFor(cliSessionId: string) {
   };
 }
 
+const ORIGINAL_FLOOD_RATIO = process.env.OPENCLAW_IMPORT_FLOOD_MAX_RATIO;
+
+function restoreFloodRatio(): void {
+  if (ORIGINAL_FLOOD_RATIO === undefined) {
+    delete process.env.OPENCLAW_IMPORT_FLOOD_MAX_RATIO;
+  } else {
+    process.env.OPENCLAW_IMPORT_FLOOD_MAX_RATIO = ORIGINAL_FLOOD_RATIO;
+  }
+}
+
+// FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — the valve is
+// OFF unless OPENCLAW_IMPORT_FLOOD_MAX_RATIO sets a ratio. A Claude-backed tab's local store holds
+// little more than its prompts, so 3x the local rows cut 9 live tabs to their prompts: 592 imported
+// rows to 99 on one, 577 to 63 on another (journal, 2026-10-02/03). Measured offline on the live
+// store, the merge of every import took 24-341 ms against 45-623 ms with the valve on, and the reply
+// is windowed by `limit` since the 2026-09-23 rehaul. The valve's mechanics stay, opt-in.
+describe("no flood valve unless one is configured", () => {
+  beforeEach(() => {
+    mocks.logWarn.mockClear();
+    delete process.env.OPENCLAW_IMPORT_FLOOD_MAX_RATIO;
+  });
+  afterEach(() => {
+    restoreFloodRatio();
+    if (ORIGINAL_HOME === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = ORIGINAL_HOME;
+    }
+  });
+
+  it("merges every import of a tab whose local store holds little more than its prompts", async () => {
+    const lines = Array.from({ length: 40 }, (_, i) => importUserLine(i + 1));
+    await withTranscript(lines, ({ homeDir, cliSessionId }) => {
+      const out = augmentChatHistoryWithCliSessionImports({
+        entry: entryFor(cliSessionId),
+        localMessages: localMessagesFixture(),
+        homeDir,
+      });
+      const rendered = JSON.stringify(out);
+      expect(out).toHaveLength(42); // 2 local + all 40 imports, 20x the local rows
+      expect(rendered).toContain("imported prompt number 1 ");
+      expect(rendered).toContain("imported prompt number 40");
+      expect(rendered).toContain("the real local answer");
+      expect(mocks.logWarn).not.toHaveBeenCalled();
+    });
+  });
+});
+
 describe("import flood safety valve", () => {
   beforeEach(() => {
     mocks.logWarn.mockClear();
+    // Opt-in since 2026-10-03: these cases pin the valve's mechanics at the old ratio.
+    process.env.OPENCLAW_IMPORT_FLOOD_MAX_RATIO = "3";
   });
   afterEach(() => {
+    restoreFloodRatio();
     if (ORIGINAL_HOME === undefined) {
       delete process.env.HOME;
     } else {
@@ -279,6 +330,41 @@ describe("import flood safety valve", () => {
       expect(mocks.logWarn).not.toHaveBeenCalled();
     });
   });
+
+  // Plan task 5 (chat.history seq cursors): an afterSeq delta hands this function only the NEW
+  // local rows. Sized by that slice, the valve would cut imports the whole-store call keeps —
+  // the first test in this block is the control (same 2 locals + 7 imports → 1 dropped).
+  it("sizes the valve by floodValveLocalCount when the caller passes a slice of the store", async () => {
+    const lines = [1, 2, 3, 4, 5, 6, 7].map(importUserLine);
+    await withTranscript(lines, ({ homeDir, cliSessionId }) => {
+      const out = augmentChatHistoryWithCliSessionImports({
+        entry: entryFor(cliSessionId),
+        localMessages: localMessagesFixture(),
+        floodValveLocalCount: 40, // the whole store: 7 imports vs 40 locals is far under 3x
+        homeDir,
+      });
+      expect(out).toHaveLength(9); // 2 local + all 7 imports
+      expect(JSON.stringify(out)).toContain("imported prompt number 1");
+      expect(mocks.logWarn).not.toHaveBeenCalled();
+    });
+  });
+
+  it("an EMPTY slice of a non-empty store trips exactly as the whole store would", async () => {
+    // The empty-store exemption above is about the STORE, not the slice: a caller whose slice is
+    // empty but whose store holds 2 rows gets the whole-store decision (budget 6 of 7).
+    const lines = [1, 2, 3, 4, 5, 6, 7].map(importUserLine);
+    await withTranscript(lines, ({ homeDir, cliSessionId }) => {
+      const out = augmentChatHistoryWithCliSessionImports({
+        entry: entryFor(cliSessionId),
+        localMessages: [],
+        floodValveLocalCount: 2,
+        homeDir,
+      });
+      expect(out).toHaveLength(6);
+      expect(JSON.stringify(out)).not.toContain("imported prompt number 1");
+      expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 describe("B043 symmetry — only a TEXT-BEARING import assistant may cover a local answer", () => {
@@ -319,6 +405,69 @@ describe("B043 symmetry — only a TEXT-BEARING import assistant may cover a loc
       const rendered = JSON.stringify(out);
       expect(rendered).toContain("imported segmented answer");
       expect(rendered).not.toContain("the real local answer");
+    });
+  });
+});
+
+// Plan task 5, review fix round 1: the merge's prehistory floor (layer 1: imports older than the
+// earliest LOCAL row minus 15 min are dropped) must be anchored at the whole store's earliest row
+// when the caller merges a slice, like the flood valve's size.
+describe("prehistory floor for a slice of the local store", () => {
+  const T0 = Date.parse("2026-08-26T11:00:00.000Z");
+  const loopLines = Array.from({ length: 30 }, (_, i) =>
+    JSON.stringify({
+      type: "user",
+      uuid: `loop-${i}`,
+      timestamp: new Date(T0 + (i + 1) * 60_000).toISOString(),
+      message: { role: "user", content: `loop step ${i} with distinctive text` },
+    }),
+  );
+  const answerOnly = () => [
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "the answer after 31 minutes" }],
+      timestamp: T0 + 31 * 60_000,
+    },
+  ];
+  const importCount = (out: unknown[]) =>
+    out.filter(
+      (m) => (m as { __openclaw?: { importedFrom?: unknown } }).__openclaw?.importedFrom != null,
+    ).length;
+
+  it("anchors at wholeStoreEarliestLocalTs, and at the slice when it is absent", async () => {
+    await withTranscript(loopLines, ({ homeDir, cliSessionId }) => {
+      // CONTROL: a slice holding only the answer floors at t0+16 min and keeps 15 of 30 steps.
+      // Both calls pin the flood valve to the whole store (40 rows) so only the floor differs.
+      const sliceFloored = augmentChatHistoryWithCliSessionImports({
+        entry: entryFor(cliSessionId),
+        localMessages: answerOnly(),
+        floodValveLocalCount: 40,
+        homeDir,
+      });
+      expect(importCount(sliceFloored)).toBe(15);
+      const wholeFloored = augmentChatHistoryWithCliSessionImports({
+        entry: entryFor(cliSessionId),
+        localMessages: answerOnly(),
+        floodValveLocalCount: 40,
+        wholeStoreEarliestLocalTs: T0 - 60 * 60_000,
+        homeDir,
+      });
+      expect(importCount(wholeFloored)).toBe(30);
+    });
+  });
+
+  it("floors an EMPTY slice of a non-empty store as the whole store would", async () => {
+    // Without a local row the merge used to skip layer 1 entirely; given the store's earliest
+    // row it floors like the whole store: steps older than that row minus 15 min are prehistory.
+    await withTranscript(loopLines, ({ homeDir, cliSessionId }) => {
+      const out = augmentChatHistoryWithCliSessionImports({
+        entry: entryFor(cliSessionId),
+        localMessages: [],
+        floodValveLocalCount: 40,
+        wholeStoreEarliestLocalTs: T0 + 20 * 60_000, // floor at t0+5 min: steps 0-3 are older
+        homeDir,
+      });
+      expect(importCount(out)).toBe(26);
     });
   });
 });

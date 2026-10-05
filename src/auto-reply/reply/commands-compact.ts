@@ -43,6 +43,51 @@ function extractCompactInstructions(params: {
   return rest.length ? rest : undefined;
 }
 
+/**
+ * The tinker-bridge's provider id: `PROVIDER_ID` in
+ * extensions/tinkerclaw-tinker-bridge/src/defaults.ts. Core does not import extensions, so the id
+ * is named here, as session-eviction.ts names it.
+ */
+const CLAUDE_CODE_PROVIDER_ID = "claude-code";
+
+/**
+ * FORK 2026-09-25 (TINKER_UI_DESIGN_BIBLE/context-window-panel.md finding F2) — is this session's
+ * context owned by the claude CLI rather than by the gateway? On the tinker-bridge lane the model
+ * reads the claude CLI's OWN transcript, resumed with `--resume` by a worker keyed on the
+ * sessionId, so an embedded compaction here rewrites the gateway's MIRROR: it spends a
+ * summarisation call, reports "Compacted (X → Y)", and the very next turn resumes the untouched
+ * CLI session at exactly the size it was. A typed `/compact` on that lane must instead reach the
+ * agent runner as the turn prompt, so the bridge writes it to the CLI and the CLI compacts its
+ * own context.
+ *
+ * The lane is resolved exactly as the EVICT button's refusal resolves it —
+ * `resolveContextOwningRuntime` over `resolveSessionModelRef(entry, agent)` in
+ * ../../gateway/session-eviction.ts — so there is ONE definition of the lane, the two doors can
+ * never disagree, and the tab's model-picker override decides: the question is where the NEXT
+ * call goes, not where the last one ran.
+ *
+ * Deliberately NARROWED to claude-code rather than to every context-owning runtime the eviction
+ * refuses on. A registered CLI backend also keeps its own context, but passing `/compact` through
+ * only helps when the runtime on the other end understands it; on any other backend the literal
+ * text would simply become a prompt. Those lanes keep today's behaviour until a bridge answers
+ * for them.
+ *
+ * Imported lazily, like the compaction runtime above: the command handlers load eagerly, and
+ * gateway/session-utils.js imports back into auto-reply.
+ */
+async function ownsContextViaClaudeCode(params: {
+  cfg: OpenClawConfig;
+  entry: import("../../config/sessions.js").SessionEntry | undefined;
+  agentId: string;
+}): Promise<boolean> {
+  const [{ resolveContextOwningRuntime }, { resolveSessionModelRef }] = await Promise.all([
+    import("../../gateway/session-eviction.js"),
+    import("../../gateway/session-utils.js"),
+  ]);
+  const { provider } = resolveSessionModelRef(params.cfg, params.entry, params.agentId);
+  return resolveContextOwningRuntime(provider, params.cfg) === CLAUDE_CODE_PROVIDER_ID;
+}
+
 function isCompactionSkipReason(reason?: string): boolean {
   const text = normalizeOptionalLowercaseString(reason) ?? "";
   return (
@@ -89,6 +134,31 @@ export const handleCompactCommand: CommandHandler = async (params) => {
     return { shouldContinue: false };
   }
   const targetSessionEntry = params.sessionStore?.[params.sessionKey] ?? params.sessionEntry;
+  const sessionAgentId = params.sessionKey
+    ? resolveSessionAgentId({ sessionKey: params.sessionKey, config: params.cfg })
+    : (params.agentId ?? "main");
+  // FORK 2026-09-25 (F2) — the claude-code lane owns its own context: hand the command to the
+  // runner as the turn prompt instead of compacting the gateway's mirror. `shouldContinue: true`
+  // with NO reply is what commands-core hands back to get-reply-inline-actions as kind:"continue"
+  // (a reply on THIS branch would be silently dropped there), and nothing rewrites ctx.Body, so
+  // the ORIGINAL command text — instruction tail and all — is what the runner sends.
+  //
+  // Checked BEFORE the session-id guard, which is an embedded-compaction concern (the runner needs
+  // the prompt either way), and BEFORE loadCompactRuntime(), so a live embedded run is never
+  // interrupted to accomplish nothing — the lesson the EVICT button already learned (F1). Every
+  // other lane falls through to the embedded compaction below, unchanged.
+  if (
+    await ownsContextViaClaudeCode({
+      cfg: params.cfg,
+      entry: targetSessionEntry,
+      agentId: sessionAgentId,
+    })
+  ) {
+    logVerbose(
+      `Passing /compact through to the ${CLAUDE_CODE_PROVIDER_ID} runtime for ${params.sessionKey || "<unknown session>"}`,
+    );
+    return { shouldContinue: true };
+  }
   if (!targetSessionEntry?.sessionId) {
     return {
       shouldContinue: false,
@@ -101,9 +171,6 @@ export const handleCompactCommand: CommandHandler = async (params) => {
     runtime.abortEmbeddedPiRun(sessionId);
     await runtime.waitForEmbeddedPiRunEnd(sessionId, 15_000);
   }
-  const sessionAgentId = params.sessionKey
-    ? resolveSessionAgentId({ sessionKey: params.sessionKey, config: params.cfg })
-    : (params.agentId ?? "main");
   const currentAgentId = params.agentId ?? "main";
   const sessionAgentDir =
     sessionAgentId === currentAgentId && params.agentDir

@@ -47,8 +47,21 @@ export interface PoolWorker {
   readonly thinkLevel?: string;
   isAlive(): boolean;
   isBusy(): boolean;
+  /**
+   * FORK 2026-10-01: when the child last printed a line (ms, the pool's clock). A child can keep
+   * working after its turn ends (a background Workflow, a turn the gateway is not tracking); the
+   * sweep must not take that for idle. Optional so a test fake without it behaves as before.
+   */
+  lastActivityAt?(): number;
+  /** FORK 2026-10-01: a turn the CLI started on its own, waiting for its run (unprompted-turn.ts). */
+  unpromptedTurn?(): { id: string } | null;
   kill(signal?: NodeJS.Signals): void;
   on(event: "exit", listener: (...args: unknown[]) => void): unknown;
+  // FORK 2026-09-30 (lifecycles.md L4b): the file transport (worker-transport.ts). Optional so a
+  // test fake without them behaves like a pipe worker.
+  readonly openclawSessionKey?: string;
+  isFileTransport?(): boolean;
+  detach?(): void;
 }
 
 export interface SessionWorkerPoolOptions {
@@ -87,6 +100,8 @@ export class SessionWorkerPool {
   // caller can apply it (e.g. surface a notice / force a respawn next turn)
   // via `takeThinkLevelPending`. running = level the busy worker is using.
   private lastThinkLevelPending = new Map<string, { requested?: string; running?: string }>();
+  /** FORK 2026-09-30 (L4b): keys of workers adopted from the last gateway (rekeyAdopted). */
+  private adoptedKeys = new Set<string>();
   private readonly createWorker: (params: WorkerSpawnParams) => PoolWorker;
   private readonly maxWorkers: number;
   private readonly idleTtlMs: number;
@@ -101,6 +116,7 @@ export class SessionWorkerPool {
 
   getOrCreate(params: WorkerSpawnParams): ClaudeCodeWorker {
     const now = this.now();
+    this.rekeyAdopted(params);
     const existing = this.workers.get(params.sessionKey);
     if (existing && existing.isAlive()) {
       // FORK 2026-06-11 (the lag fix): a warm worker bakes its think level into
@@ -204,7 +220,7 @@ export class SessionWorkerPool {
       if (key === exemptKey) {
         continue;
       }
-      const idleMs = now - (this.lastUsedAt.get(key) ?? now);
+      const idleMs = now - this.lastSeen(key, worker, now);
       if (idleMs > this.idleTtlMs && !worker.isBusy()) {
         this.evict(key, worker);
       }
@@ -213,7 +229,7 @@ export class SessionWorkerPool {
       return;
     }
     const oldestFirst = [...this.workers.entries()].sort(
-      (a, b) => (this.lastUsedAt.get(a[0]) ?? 0) - (this.lastUsedAt.get(b[0]) ?? 0),
+      (a, b) => this.lastSeen(a[0], a[1], 0) - this.lastSeen(b[0], b[1], 0),
     );
     for (const [key, worker] of oldestFirst) {
       if (this.workers.size <= this.maxWorkers) {
@@ -226,6 +242,16 @@ export class SessionWorkerPool {
     }
   }
 
+  /**
+   * FORK 2026-10-01 (bug-log [pool-sweep-kills-working-child]): the later of the last turn handed
+   * to this worker and the last line its child printed. Before, only the turn counted, so at
+   * 14:29:33 the sweep stopped a child still running a Workflow and another still working a turn
+   * the gateway was not tracking.
+   */
+  private lastSeen(key: string, worker: PoolWorker, fallback: number): number {
+    return Math.max(this.lastUsedAt.get(key) ?? fallback, worker.lastActivityAt?.() ?? 0);
+  }
+
   private evict(key: string, worker: PoolWorker): void {
     worker.kill("SIGTERM");
     this.workers.delete(key);
@@ -235,10 +261,101 @@ export class SessionWorkerPool {
     this.spawnedThinkLevel.delete(key);
     this.spawnedModel.delete(key);
     this.lastThinkLevelPending.delete(key);
+    this.adoptedKeys.delete(key);
   }
 
   get(sessionKey: string): ClaudeCodeWorker | undefined {
     return this.workers.get(sessionKey) as ClaudeCodeWorker | undefined;
+  }
+
+  /**
+   * FORK 2026-09-30 (lifecycles.md L4b): take in a worker the last gateway left running (file
+   * transport), under the pool key it had. `now()` starts its idle clock.
+   */
+  adopt(worker: PoolWorker, spawned: { model?: string; thinkLevel?: string }): void {
+    const key = worker.sessionKey;
+    const previous = this.workers.get(key);
+    if (previous && previous !== worker) {
+      this.evict(key, previous);
+    }
+    this.workers.set(key, worker);
+    this.lastUsedAt.set(key, this.now());
+    this.spawnedThinkLevel.set(key, spawned.thinkLevel);
+    this.spawnedModel.set(key, spawned.model);
+    this.adoptedKeys.add(key);
+  }
+
+  /**
+   * An adopted worker is filed under the pool key the LAST gateway derived (stream.ts hashes the
+   * system prompt's stable prefix with the session id), and an upgrade can change that prefix. The
+   * first turn of its session finds it by the canonical session key instead and files it under the
+   * new key, so a second claude never starts on the same CLI session.
+   */
+  private rekeyAdopted(params: WorkerSpawnParams): void {
+    if (this.adoptedKeys.size === 0 || !params.openclawSessionKey) {
+      return;
+    }
+    if (this.workers.get(params.sessionKey)?.isAlive()) {
+      return;
+    }
+    for (const key of this.adoptedKeys) {
+      const worker = this.workers.get(key);
+      if (!worker || !worker.isAlive()) {
+        this.adoptedKeys.delete(key);
+        continue;
+      }
+      if (key === params.sessionKey || worker.openclawSessionKey !== params.openclawSessionKey) {
+        continue;
+      }
+      this.workers.delete(key);
+      this.workers.set(params.sessionKey, worker);
+      this.lastUsedAt.set(params.sessionKey, this.lastUsedAt.get(key) ?? this.now());
+      this.lastUsedAt.delete(key);
+      this.spawnedThinkLevel.set(params.sessionKey, this.spawnedThinkLevel.get(key));
+      this.spawnedThinkLevel.delete(key);
+      this.spawnedModel.set(params.sessionKey, this.spawnedModel.get(key));
+      this.spawnedModel.delete(key);
+      this.adoptedKeys.delete(key);
+      return;
+    }
+  }
+
+  /** A live worker serving this canonical session, under whatever pool key. */
+  liveWorkerFor(openclawSessionKey: string | undefined): PoolWorker | undefined {
+    if (!openclawSessionKey) {
+      return undefined;
+    }
+    for (const worker of this.workers.values()) {
+      if (worker.openclawSessionKey === openclawSessionKey && worker.isAlive()) {
+        return worker;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): the worker keeping the CLI's own
+   * turn with this id, whatever pool key it sits under, for the run its wake started.
+   */
+  findUnpromptedHolder(id: string): ClaudeCodeWorker | undefined {
+    for (const worker of this.workers.values()) {
+      if (worker.unpromptedTurn?.()?.id === id) {
+        return worker as ClaudeCodeWorker;
+      }
+    }
+    return undefined;
+  }
+
+  /** Every pooled worker (the restart drain asks each one to hold). */
+  all(): ClaudeCodeWorker[] {
+    return [...this.workers.values()] as ClaudeCodeWorker[];
+  }
+
+  /** Workers on the file transport: the ones a restart can hold and the next gateway adopt. */
+  fileWorkers(): ClaudeCodeWorker[] {
+    return [...this.workers.values()].filter(
+      (w) => w.isFileTransport?.() === true,
+    ) as ClaudeCodeWorker[];
   }
 
   /**
@@ -256,15 +373,29 @@ export class SessionWorkerPool {
     return v;
   }
 
-  killAll(): void {
-    for (const worker of this.workers.values()) {
-      worker.kill("SIGTERM");
+  /**
+   * The gateway is going. A pipe worker cannot outlive it and is killed. A file-transport worker
+   * is let go (detach) and left running, or frozen by the restart drain, for the next gateway to
+   * adopt. `keepFileWorkers` skips them entirely: at SIGTERM the drain has not run yet, and it needs
+   * them attached to find their API-call boundaries; the process `exit` lets go of them.
+   */
+  killAll(opts: { keepFileWorkers?: boolean } = {}): void {
+    for (const [key, worker] of this.workers) {
+      if (worker.isFileTransport?.()) {
+        if (opts.keepFileWorkers) {
+          continue;
+        }
+        worker.detach?.();
+      } else {
+        worker.kill("SIGTERM");
+      }
+      this.workers.delete(key);
+      this.lastUsedAt.delete(key);
+      this.spawnedThinkLevel.delete(key);
+      this.spawnedModel.delete(key);
+      this.lastThinkLevelPending.delete(key);
+      this.adoptedKeys.delete(key);
     }
-    this.workers.clear();
-    this.lastUsedAt.clear();
-    this.spawnedThinkLevel.clear();
-    this.spawnedModel.clear();
-    this.lastThinkLevelPending.clear();
   }
 }
 
@@ -274,8 +405,8 @@ export function getPool(): SessionWorkerPool {
   if (!singleton) {
     singleton = new SessionWorkerPool();
     process.on("exit", () => singleton?.killAll());
-    process.on("SIGTERM", () => singleton?.killAll());
-    process.on("SIGINT", () => singleton?.killAll());
+    process.on("SIGTERM", () => singleton?.killAll({ keepFileWorkers: true }));
+    process.on("SIGINT", () => singleton?.killAll({ keepFileWorkers: true }));
   }
   return singleton;
 }

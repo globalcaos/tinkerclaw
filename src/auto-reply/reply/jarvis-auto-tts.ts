@@ -98,7 +98,7 @@ function spawnJarvisVoice(text: string): void {
 }
 
 /**
- * Main hook: call from buildReplyPayloads after applyJarvisVoiceMarkup.
+ * Main hook: call from buildReplyPayloads.
  * Scans text for **Jarvis:** line, triggers voice if found.
  * Returns the text unchanged (this hook is side-effect only).
  */

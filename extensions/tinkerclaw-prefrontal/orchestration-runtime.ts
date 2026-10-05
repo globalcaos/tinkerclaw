@@ -40,6 +40,12 @@ export interface AgentOpts {
    */
   model?: string;
   /**
+   * What this unit reads and what it changes, declared by the script. Used only when `model` is "auto": the model
+   * resolver sees them. Nothing else reads them, and an undeclared change is invisible to the scheduler.
+   */
+  reads?: string[];
+  writes?: string[];
+  /**
    * Optional thinking/effort level for this unit (e.g. "low", "medium", "high",
    * "max"). Forwarded to fork.subagents.spawn → child session thinkingLevel.
    * Omit to inherit the runtime default (none = off). Bible §5.84-A.

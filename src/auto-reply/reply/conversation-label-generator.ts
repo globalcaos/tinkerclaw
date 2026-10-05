@@ -1,9 +1,10 @@
-import { completeSimple, type TextContent } from "@mariozechner/pi-ai";
+import { completeSimple, type TextContent, type Context } from "@mariozechner/pi-ai";
 import { resolveModelAsync } from "../../agents/embedded-agent-runner/model.js";
 import { requireApiKey } from "../../agents/model-auth.js";
 import { resolveDefaultModelForAgent } from "../../agents/model-selection.js";
 import { prepareModelForSimpleCompletion } from "../../agents/simple-completion-transport.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { withLedgerCompletion } from "../../forensic/llm-ledger.js";
 import { logVerbose } from "../../globals.js";
 import { getRuntimeAuthForModel } from "../../plugins/runtime/runtime-model-auth.runtime.js";
 
@@ -55,23 +56,31 @@ export async function generateConversationLabel(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const result = await completeSimple(
-      completionModel,
+    const labelContext: Context = {
+      messages: [
+        {
+          role: "user",
+          content: `${prompt}\n\n${userMessage}`,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+    const result = await withLedgerCompletion(
       {
-        messages: [
-          {
-            role: "user",
-            content: `${prompt}\n\n${userMessage}`,
-            timestamp: Date.now(),
-          },
-        ],
+        source: "completion:conversation-label",
+        agentId,
+        provider: completionModel.provider,
+        model: completionModel.id,
+        api: completionModel.api,
       },
-      {
-        apiKey,
-        maxTokens: 100,
-        temperature: 0.3,
-        signal: controller.signal,
-      },
+      labelContext,
+      () =>
+        completeSimple(completionModel, labelContext, {
+          apiKey,
+          maxTokens: 100,
+          temperature: 0.3,
+          signal: controller.signal,
+        }),
     );
 
     const text = result.content

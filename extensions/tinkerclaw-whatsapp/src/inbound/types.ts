@@ -31,9 +31,22 @@ export type ActiveWebListener = {
     fromMe: boolean,
     participant?: string,
   ) => Promise<void>;
+  revokeMessage: (
+    chatJid: string,
+    messageId: string,
+    fromMe: boolean,
+    participant?: string,
+  ) => Promise<void>;
+  editMessage: (chatJid: string, messageId: string, text: string) => Promise<void>;
+  updateGroup: (groupJid: string, change: WhatsAppGroupChange) => Promise<void>;
   sendComposingTo: (to: string) => Promise<void>;
   close?: () => Promise<void>;
 };
+
+export type WhatsAppGroupChange =
+  | { kind: "subject"; subject: string }
+  | { kind: "icon"; imagePath: string }
+  | { kind: "leave" };
 
 export type WhatsAppStructuredContactContext = {
   kind: "contact" | "contacts";

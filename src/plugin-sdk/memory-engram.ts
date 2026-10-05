@@ -81,9 +81,17 @@ export {
 
 export {
   assembleRetrievalPack,
+  // FORK 2026-09-03: the yielding twin. Anything running INSIDE the gateway must use
+  // this one — the synchronous variant blocked the event loop 13-28 s on every cold
+  // session (total-recall's before_prompt_build hook).
+  assembleRetrievalPackAsync,
   DEFAULT_RETRIEVAL_MAX_TOKENS,
   type AssembleOptions,
 } from "../memory/engram/retrieval-integration.js";
+
+// FORK 2026-09-23 (plan task 16): `assembleRetrievalPackAsync` runs its FTS in a worker thread
+// (unref'd while idle). A plugin that builds packs ends it from its gateway_stop hook.
+export { shutdownFtsWorker } from "../memory/engram/fts-worker-client.js";
 
 export {
   NON_EVICTABLE_KINDS,

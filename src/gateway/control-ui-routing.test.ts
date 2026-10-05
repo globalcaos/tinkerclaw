@@ -5,16 +5,16 @@ describe("classifyControlUiRequest", () => {
   describe("root-mounted control ui", () => {
     it.each([
       {
-        name: "serves the root entrypoint",
+        name: "returns not-found for the retired stock dashboard root",
         pathname: "/",
         method: "GET",
-        expected: { kind: "serve" as const },
+        expected: { kind: "not-found" as const },
       },
       {
-        name: "serves other read-only SPA routes",
+        name: "returns not-found for retired stock SPA routes",
         pathname: "/chat",
         method: "HEAD",
-        expected: { kind: "serve" as const },
+        expected: { kind: "not-found" as const },
       },
       {
         name: "keeps health probes outside the SPA catch-all",
@@ -67,18 +67,18 @@ describe("classifyControlUiRequest", () => {
   describe("basePath-mounted control ui", () => {
     it.each([
       {
-        name: "redirects the basePath entrypoint",
+        name: "returns not-found for the retired basePath dashboard",
         pathname: "/openclaw",
         search: "?foo=1",
         method: "GET",
-        expected: { kind: "redirect" as const, location: "/openclaw/?foo=1" },
+        expected: { kind: "not-found" as const },
       },
       {
-        name: "serves nested read-only routes",
+        name: "returns not-found for retired nested stock routes",
         pathname: "/openclaw/chat",
         search: "",
         method: "HEAD",
-        expected: { kind: "serve" as const },
+        expected: { kind: "not-found" as const },
       },
       {
         name: "falls through unmatched paths",

@@ -370,10 +370,18 @@ export function mergeReportIntoBoard(
 
   // Auto-resolve by absence. Dismissed items are the architect's call, pinned items are
   // his too — neither is ever retired behind his back.
+  //
+  // An UNREAD FOUND is exempt too (2026-09-19). Absence means "the condition is
+  // gone" only for conditions (BROKE, WATCH, FLAG…). A discovery does not stop
+  // being true because tonight's run did not repeat it, and the architect asked for the
+  // Scavenger shortlist to stay "until I read them". Measured on the
+  // self-evolution card that day: 70 FOUND items auto-resolved, 0 ever ticked.
+  // Once ticked, a FOUND that stops recurring is archived by ingestBoard as usual.
   const universe = ingestedDateUniverse(board, date, ingestedDates);
   const resolvedAt = nowIso();
   for (const item of next.items) {
     if (item.status !== "open" || item.pinned) continue;
+    if (item.kind === "found" && item.acknowledged !== true) continue;
     const missed = universe.filter((d) => d > item.lastSeen).length;
     if (missed >= RESOLVE_AFTER_MISSED_RUNS) {
       item.status = "resolved";

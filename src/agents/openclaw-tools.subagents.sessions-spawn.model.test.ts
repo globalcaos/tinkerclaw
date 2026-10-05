@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { type LeafModelRequest, registerLeafModelResolver } from "../infra/thalamus-call-router.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import {
   resolveConfiguredSubagentRunTimeoutSeconds,
@@ -137,6 +138,84 @@ describe("subagent spawn model + thinking plan", () => {
       status: "ok",
       resolvedModel: "opencode/claude",
       initialSessionPatch: { model: "opencode/claude" },
+    });
+  });
+
+  describe("when Thalamus owns the sub-agent choice", () => {
+    const seen: LeafModelRequest[] = [];
+    let unregister: (() => void) | undefined;
+    const own = (answer: { model: string; thinking?: string } | undefined) => {
+      unregister = registerLeafModelResolver({
+        resolve: (req) => {
+          seen.push(req);
+          return answer;
+        },
+      });
+    };
+    afterEach(() => {
+      unregister?.();
+      unregister = undefined;
+      seen.length = 0;
+    });
+
+    it("prices a spawn that names no model and takes the pick and its effort, not as a hand pick", () => {
+      own({ model: "claude-code/claude-haiku-4-5", thinking: "low" });
+      const plan = resolveSubagentModelAndThinkingPlan({
+        cfg: createConfig({
+          agents: { defaults: { model: { primary: "claude-code/claude-opus-5-5" } } },
+        }),
+        targetAgentId: "research",
+        task: "List the files under docs/",
+        label: "lister",
+      });
+      expect(seen).toEqual([
+        { prompt: "List the files under docs/", label: "lister", site: "subagent" },
+      ]);
+      expect(plan).toMatchObject({
+        status: "ok",
+        resolvedModel: "claude-code/claude-haiku-4-5",
+        thinkingOverride: "low",
+        initialSessionPatch: { model: "claude-code/claude-haiku-4-5", modelOverrideSource: "auto" },
+      });
+    });
+
+    it("never replaces a model named on purpose, by the spawn or by config", () => {
+      own({ model: "claude-code/claude-haiku-4-5" });
+      const named = resolveSubagentModelAndThinkingPlan({
+        cfg: createConfig(),
+        targetAgentId: "research",
+        modelOverride: "claude-code/claude-opus-5-5",
+        task: "Prove the theorem",
+      });
+      const configured = resolveSubagentModelAndThinkingPlan({
+        cfg: createConfig({
+          agents: { defaults: { subagents: { model: "minimax/MiniMax-M2.7" } } },
+        }),
+        targetAgentId: "research",
+        task: "Prove the theorem",
+      });
+      expect(seen).toEqual([]);
+      expect(named).toMatchObject({ resolvedModel: "claude-code/claude-opus-5-5" });
+      expect(configured).toMatchObject({ resolvedModel: "minimax/MiniMax-M2.7" });
+    });
+
+    it("keeps the default when Thalamus answers nothing, and drops an effort the model does not accept", () => {
+      own(undefined);
+      const empty = resolveSubagentModelAndThinkingPlan({
+        cfg: createConfig(),
+        targetAgentId: "research",
+        task: "Anything",
+      });
+      expect(empty).toMatchObject({ resolvedModel: `${DEFAULT_PROVIDER}/${DEFAULT_MODEL}` });
+      unregister?.();
+      own({ model: "claude-code/claude-sonnet-5-5", thinking: "banana" });
+      const odd = resolveSubagentModelAndThinkingPlan({
+        cfg: createConfig(),
+        targetAgentId: "research",
+        task: "Anything",
+      });
+      expect(odd).toMatchObject({ status: "ok", resolvedModel: "claude-code/claude-sonnet-5-5" });
+      expect(odd.status === "ok" && odd.thinkingOverride).toBeFalsy();
     });
   });
 

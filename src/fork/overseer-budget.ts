@@ -27,6 +27,8 @@
  * and over-tighten the loop to a single nudge.
  */
 
+import { emitJBoundDerived } from "../infra/events/j-rows.js";
+
 export interface OverseerLoopSignals {
   /** Supervision iterations already burned on this task (diminishing returns). */
   priorIterations?: number;
@@ -76,5 +78,42 @@ export function deriveOverseerLoopBudget(signals: OverseerLoopSignals): number {
       ? Math.floor(signals.remainingDispatchBudget / signals.estStepTokens)
       : Number.POSITIVE_INFINITY;
 
-  return Math.max(1, Math.min(derived, affordable));
+  const bound = Math.max(1, Math.min(derived, affordable));
+
+  // logging.md §4.12 (J16): one row per derivation, as PARTS — the value the situation produced,
+  // the ceiling that could clamp it, whether the clamp actually bound, and how many of the five
+  // live signals were measured. `sample_size` is the honest tell for the anti-pattern this
+  // function exists to prevent: a "derived" bound computed from zero live signals is a frozen
+  // constant wearing a derivation's name, and the row shows it. `fired` is about THIS
+  // derivation's affordability clamp; whether a CALLER then hit the bound is the caller's own row.
+  emitJBoundDerived({
+    bound: "overseer.loop",
+    derivedValue: derived,
+    ceiling: Number.isFinite(affordable) ? affordable : null,
+    fired: bound < derived ? 1 : 0,
+    sampleSize: countLiveSignals(signals),
+  });
+
+  return bound;
+}
+
+/** How many of the five signals the caller actually measured (J16 `sample_size`). */
+function countLiveSignals(signals: OverseerLoopSignals): number {
+  let live = 0;
+  if (signals.priorIterations !== undefined) {
+    live += 1;
+  }
+  if (signals.fitnessSuccessRate !== undefined) {
+    live += 1;
+  }
+  if (signals.gapShrinking !== undefined) {
+    live += 1;
+  }
+  if (signals.remainingDispatchBudget !== undefined) {
+    live += 1;
+  }
+  if (signals.estStepTokens !== undefined) {
+    live += 1;
+  }
+  return live;
 }

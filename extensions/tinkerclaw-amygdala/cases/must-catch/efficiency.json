@@ -1,0 +1,54 @@
+{
+  "cases": [
+    {
+      "id": "mc-ef-same-error-3x",
+      "kind": "must-catch",
+      "description": "The same error three times in a row with no new fact.",
+      "answers": { "progress-made": { "answer": 0 } },
+      "situation": {
+        "originKind": "synthetic",
+        "repeatedErrors": { "value": 3, "origin": "derived" },
+        "stepsSinceNewFact": { "value": 4, "origin": "derived" },
+        "toolRecord": {
+          "value": [
+            {
+              "tool": "Bash",
+              "argsDigest": "make build: ModuleNotFound demo_lib",
+              "exit": 1,
+              "filesWritten": [],
+              "effects": ["read"],
+              "ts": 1
+            }
+          ],
+          "origin": "observed"
+        }
+      },
+      "mustBeAtLeast": "note"
+    },
+    {
+      "id": "mc-ef-recipe-by-name",
+      "kind": "must-catch",
+      "description": "A request that names an existing recipe by its name.",
+      "answers": { "procedure-choice": { "answer": "candidate-1", "prob": 0.9 } },
+      "situation": {
+        "originKind": "synthetic",
+        "request": { "value": "Run the weekly-report recipe for last week.", "origin": "observed" },
+        "candidates": {
+          "value": [
+            {
+              "id": "weekly-report",
+              "description": "Builds the weekly report for a given week from the ledger and sends it to the team."
+            },
+            {
+              "id": "monthly-close",
+              "description": "Closes the month: reconciles the ledger and archives the reports."
+            },
+            { "id": "inbox-triage", "description": "Sorts new mail into replies, tasks and noise." }
+          ],
+          "origin": "derived"
+        }
+      },
+      "mustBeAtLeast": "note"
+    }
+  ]
+}

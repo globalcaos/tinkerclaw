@@ -79,7 +79,9 @@ if (check(existsSync(appPath), "tinker-ui/src/app.ts is gone (bible 5.8L)")) {
 
   // …and the shared rule must be fed the real ownership + sibling-count lookups, or "delegation"
   // is a call that decides nothing.
-  const deps = /subagentAttributionDeps[\s\S]{0,600}?\n\};/.exec(app);
+  // Anchored on the declaration: the first mention is a call site, and a 600-char window from it
+  // stopped reaching the closing brace once the object grew a comment (2026-10-01).
+  const deps = /const subagentAttributionDeps[\s\S]{0,2000}?\n\};/.exec(app);
   if (check(deps, "subagentAttributionDeps object not found (bible 5.8L)")) {
     check(
       deps[0].includes("subagentOwnerTab.get("),

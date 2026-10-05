@@ -37,22 +37,24 @@ Every unit becomes its own subscription-billed `tinker-sp-*` worker, runs concur
 (cap ≈ cores), and appears on the Prefrontal effort tree. This is NOT reserved for
 "maximum effort" — reach for it WHENEVER work parallelizes, even small batches.
 
-Pick the leaf model PER UNIT by weight (`agent(task, {model})`) — this is the main
-cost lever, and it is cheap to fan out wide. Omitting `{model}` uses the runtime
-default (sonnet). Compose quality patterns inside the script — adversarial verify,
+{{LEAF_MODEL_OWNER}} Compose quality patterns inside the script — adversarial verify,
 judge-panel, loop-until-dry — when correctness matters more than speed.
 
-### Model × effort heuristic (cost-aware; relative output cost 1× / 3× / 5× / 10×)
+### Model × effort heuristic (cost-aware; relative output cost 1× / 2× / 4× / 10×)
 
 Two independent axes: MODEL = task difficulty (can it do it at all);
 EFFORT/thinking = task depth (how much deliberation this instance needs).
 
-| model (claude-code/…)                                                                                      | low effort                                             | medium                                | high                                       | max                                        |
-| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------- | ------------------------------------------ | ------------------------------------------ |
-| `claude-haiku-4-5` (1×, SEPARATE budget ≈ free)                                                            | ✅ scans, lookups, extraction, classify — fan out wide | ✅ light drafting                     | ⚠️ ceiling — wrong model if it needs this  | ❌ false economy: burns tokens circling    |
-| `claude-sonnet-4-6` (3×, default)                                                                          | ✅ routine edits                                       | ✅ standard implementation, synthesis | ⚠️ consider opus                           | —                                          |
-| `claude-opus-5` (5×)                                                                                       | ⚠️ overkill for easy work                              | ✅ workhorse: solid implementation    | ✅ hard single-shot reasoning              | ⚠️ you probably need fable                 |
-| `claude-fable-5` (10× sticker; ~⅓ tokens on long tasks → effective ≪ sticker; lead GROWS with task length) | ❌ wasteful                                            | ✅ hard problems, first try           | ✅ long/complex work nothing else finishes | ✅ research-grade, days-of-work-equivalent |
+| model (claude-code/…)                                                                                        | low effort                                             | medium                                | high                                       | max                                        |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------ | ------------------------------------- | ------------------------------------------ | ------------------------------------------ |
+| `claude-haiku-4-5` (1×, SEPARATE budget ≈ free)                                                              | ✅ scans, lookups, extraction, classify — fan out wide | ✅ light drafting                     | ⚠️ ceiling — wrong model if it needs this  | ❌ false economy: burns tokens circling    |
+| `claude-sonnet-5-5` (2×, default)                                                                            | ✅ routine edits                                       | ✅ standard implementation, synthesis | ⚠️ consider opus                           | —                                          |
+| `claude-opus-5-5` (4×)                                                                                       | ⚠️ overkill for easy work                              | ✅ workhorse: solid implementation    | ✅ hard single-shot reasoning              | ⚠️ you probably need fable                 |
+| `claude-fable-5-1` (10× sticker; ~⅓ tokens on long tasks → effective ≪ sticker; lead GROWS with task length) | ❌ wasteful                                            | ✅ hard problems, first try           | ✅ long/complex work nothing else finishes | ✅ research-grade, days-of-work-equivalent |
+
+Only the newest model of each line appears above. The older ones still answer
+(Opus 5 and 4.x, Sonnet 4.6 and 5) but each costs as much or more than its
+successor and scores lower, so never pick one.
 
 Rules:
 

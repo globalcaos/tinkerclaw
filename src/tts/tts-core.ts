@@ -18,6 +18,7 @@ export {
   requireInRange,
   scheduleCleanup,
 } from "./tts-provider-helpers.js";
+import { ledgeredCompletion } from "../forensic/llm-ledger.js";
 
 type SummarizeTextDeps = {
   completeSimple: typeof completeSimple;
@@ -107,7 +108,7 @@ export async function summarizeText(
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const res = await deps.completeSimple(
+      const res = await ledgeredCompletion("completion:tts-summary", deps.completeSimple)(
         completionModel,
         {
           messages: [

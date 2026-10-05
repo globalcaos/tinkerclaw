@@ -3,7 +3,7 @@ schema: "kit/1.0"
 slug: "parallel-build"
 title: "Parallel build — execute a plan in waves, one commit per unit"
 summary: "Execute an implementation plan in record time: split it into edit-units with disjoint writes, prove every complicated piece in isolation with its own tests first, then wire it up — all fanned out through ORCA with one commit per unit. Use when you have a plan and want it built in parallel, built fast, or built without serial hand-edits."
-version: "1.1.0"
+version: "1.2.0"
 owner: "globalcaos"
 license: "MIT"
 category: "coding"
@@ -108,12 +108,16 @@ without a complicated piece being integrated before it is green on its own.
 
 ### 1. Preflight the units
 
+uses: git-instructions
 out: {"type":"object","required":["worktree","units"],"properties":{"worktree":{"type":"string"},"units":{"type":"array","items":{"type":"object","required":["id","task","writes","complexity","wave"],"properties":{"id":{"type":"string"},"task":{"type":"string"},"writes":{"type":"array","items":{"type":"string"}},"reads":{"type":"array","items":{"type":"string"}},"complexity":{"type":"string","enum":["simple","complicated"]},"wave":{"type":"string","enum":["isolate","integrate"]},"model":{"type":"string"}}}}}}
 **Done when:** Every unit has a model, a wave, and a `writes` list that overlaps no other unit in the same wave; the worktree exists and is not `{{integration_branch}}`.
 
 Read the PLAN in `{{plans_dir}}`. Lift its edit-units verbatim; if two units in
 one wave write the same path, merge them or move one to a later wave — do not
-hope the lease sorts it out. Snapshot any foreign work in progress before
+hope the lease sorts it out. Run `git-instructions` as a gate: refuse any unit
+whose task needs "and" / "i" / "y", whose hop is not independently pullable, or
+whose tests do not travel with it. The compact `policyText` from that recipe is
+passed into every ORCA call on this run — advisory, cannot widen `writes`. Snapshot any foreign work in progress before
 touching the tree and say where the snapshot is. Create the worktree. Pick the
 model per unit by weight: cheap for mechanical edits, strong for units tagged
 `complicated`. Record the assignment; it is the first entry in the ledger.
@@ -181,8 +185,10 @@ does not merge.
 ## Constraints
 
 - ORCA is driven from the plan: `units[].writes` comes from the PLAN's edit-units, never guessed.
+  Units are hops from `git-instructions`. Do not invent a unit that spans two seams.
 - One commit per unit, staging only that unit's own files. Never stage the whole tree — on a
   permanently dirty branch that commits other people's work under your message.
+- Every ORCA call on this run passes the `git-instructions` `policyText`. ORCA is not split and not extended; hops are decided before it runs.
 - Diff the staged set before every commit and read the file list, not just the summary line.
 - Never bypass commit hooks or verification flags to make a commit land.
 - Never build on `{{integration_branch}}`; the worktree is the unit of isolation.
@@ -217,3 +223,4 @@ does not merge.
   file-granular and the branch was dirty. Every commit now stages one unit's files and the
   staged diff is read before the commit lands.
 - **v1.1.0 (2026-09-03):** folded in the AI-native SDLC playbook (claude.com/blog/the-ai-native-sdlc-playbook — the source the "INTENT.md" video walks through): a unit that departs from its plan task amends the plan text in that unit's commit.
+- **v1.2.0 (2026-09-10):** preflight `uses: git-instructions`. A unit that is not one hop is refused; ORCA gets the compact `policyText`. ORCA is not split — hops are decided before it runs.

@@ -10,6 +10,8 @@
  * real module's types.
  */
 
+import { statSync } from "node:fs";
+import path from "node:path";
 import { getChildLogger } from "openclaw/plugin-sdk/runtime-env";
 import { ensureDir, resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
 import { bindWmHistoryCapture } from "../../tinkerclaw-whatsapp/src/history/live-capture.js";
@@ -76,7 +78,57 @@ function resolveWhatsmeowBinaryPath(): string | undefined {
   if (!raw) {
     return undefined;
   }
-  return resolveUserPath(raw);
+  const resolved = resolveUserPath(raw);
+  const problem = checkWhatsmeowBinaryOverride(resolved);
+  if (problem) {
+    // Refuse rather than fall back: a silently ignored override would hide the
+    // misconfiguration and run a different binary than the operator asked for.
+    throw new Error(`${BINARY_PATH_ENV} rejected (${resolved}): ${problem}`);
+  }
+  return resolved;
+}
+
+/**
+ * The override is spawned as a subprocess with the WhatsApp session store, so
+ * only accept a binary the gateway user controls: an absolute path to a regular
+ * executable file, owned by the current user (or root), and not writable by
+ * group or others. Returns a reason string when the path is not acceptable.
+ */
+export function checkWhatsmeowBinaryOverride(binaryPath: string): string | null {
+  if (!path.isAbsolute(binaryPath)) {
+    return "path must be absolute";
+  }
+  let st: ReturnType<typeof statSync>;
+  try {
+    st = statSync(binaryPath);
+  } catch {
+    return "file does not exist";
+  }
+  if (!st.isFile()) {
+    return "not a regular file";
+  }
+  if ((st.mode & 0o111) === 0) {
+    return "file is not executable";
+  }
+  if ((st.mode & 0o022) !== 0) {
+    return "file is writable by group or others";
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (uid !== undefined && st.uid !== uid && st.uid !== 0) {
+    return "file is not owned by the gateway user or root";
+  }
+  return null;
+}
+
+/**
+ * Raw event tracing for debugging the whatsmeow bridge. OFF by default: when
+ * on, it writes the first 1500 characters of every message, receipt, presence
+ * and history-sync event (including message text) to the gateway log.
+ */
+const EVENT_TRACE_ENV = "OPENCLAW_WHATSMEOW_EVENT_TRACE";
+
+function isEventTraceEnabled(): boolean {
+  return process.env[EVENT_TRACE_ENV]?.trim() === "1";
 }
 
 let activeClient: WhatsmeowClient | null = null;
@@ -129,27 +181,28 @@ export async function createWmClient(opts: CreateWmClientOptions = {}): Promise<
       logger.debug({ wmLevel: level }, msg);
     });
   }
-  // FORK 2026-05-03 (re-enabled): full payload event tap for self-DM diagnosis.
-  // Earlier conclusion (whatsmeow doesn't fire `message` for peer_msg) is
-  // worth re-verifying since group fromMe text DOES make it through. Logs
-  // the FULL event payload to journal so we can grep for actual body text.
-  const allEvents = [
-    "message",
-    "message:receipt",
-    "history_sync",
-    "chat_presence",
-    "presence",
-    "stream_error",
-  ];
-  for (const ev of allEvents) {
-    client.on(ev, (payload: unknown) => {
-      try {
-        const summary = JSON.stringify(payload).slice(0, 1500);
-        console.log(`[wm-event-full] ${ev}: ${summary}`);
-      } catch {
-        console.log(`[wm-event-full] ${ev}: <unserializable>`);
-      }
-    });
+  // Payload event trace for self-DM diagnosis. Only when
+  // OPENCLAW_WHATSMEOW_EVENT_TRACE=1: it logs message text to the journal.
+  if (isEventTraceEnabled()) {
+    logger.warn(`${EVENT_TRACE_ENV}=1: logging whatsmeow event payloads`);
+    const allEvents = [
+      "message",
+      "message:receipt",
+      "history_sync",
+      "chat_presence",
+      "presence",
+      "stream_error",
+    ];
+    for (const ev of allEvents) {
+      client.on(ev, (payload: unknown) => {
+        try {
+          const summary = JSON.stringify(payload).slice(0, 1500);
+          console.log(`[wm-event-full] ${ev}: ${summary}`);
+        } catch {
+          console.log(`[wm-event-full] ${ev}: <unserializable>`);
+        }
+      });
+    }
   }
 
   // ── Error safety net ──

@@ -14,7 +14,7 @@ import { toWhatsappJid } from "../text-runtime.js";
 // import gap. Surfaced once the whatsmeow outbound path actually reached the
 // echo-tracking step.
 import { trackSentMessageId } from "./sent-ids.js";
-import type { ActiveWebSendOptions } from "./types.js";
+import type { ActiveWebSendOptions, WhatsAppGroupChange } from "./types.js";
 
 function recordWhatsAppOutbound(accountId: string) {
   recordChannelActivity({
@@ -43,6 +43,9 @@ export function createWebSendApi(params: {
     ) => Promise<unknown>;
     sendPresenceUpdate: (presence: WAPresence, jid?: string) => Promise<unknown>;
     presenceSubscribe: (jid: string) => Promise<void>;
+    groupUpdateSubject: (jid: string, subject: string) => Promise<void>;
+    updateProfilePicture: (jid: string, content: { url: string }) => Promise<void>;
+    groupLeave: (jid: string) => Promise<void>;
   };
   defaultAccountId: string;
   // FORK 2026-05-02: programmatic outbound prefix resolver. Returns the
@@ -164,6 +167,41 @@ export function createWebSendApi(params: {
           },
         },
       } as AnyMessageContent);
+    },
+    revokeMessage: async (
+      chatJid: string,
+      messageId: string,
+      fromMe: boolean,
+      participant?: string,
+    ): Promise<void> => {
+      const jid = toWhatsappJid(chatJid);
+      await params.sock.sendMessage(jid, {
+        delete: {
+          remoteJid: jid,
+          id: messageId,
+          fromMe,
+          participant: participant ? toWhatsappJid(participant) : undefined,
+        },
+      } as AnyMessageContent);
+    },
+    // FORK 2026-10-03: Baileys edit shape. WhatsApp only edits our own messages, hence fromMe.
+    // The new text carries the persona prefix like the original send did.
+    editMessage: async (chatJid: string, messageId: string, text: string): Promise<void> => {
+      const jid = toWhatsappJid(chatJid);
+      await params.sock.sendMessage(jid, {
+        text: applyOutboundPrefix(text, prefixFor(params.defaultAccountId)),
+        edit: { remoteJid: jid, id: messageId, fromMe: true },
+      } as AnyMessageContent);
+    },
+    updateGroup: async (groupJid: string, change: WhatsAppGroupChange): Promise<void> => {
+      const jid = toWhatsappJid(groupJid);
+      if (change.kind === "subject") {
+        await params.sock.groupUpdateSubject(jid, change.subject);
+      } else if (change.kind === "icon") {
+        await params.sock.updateProfilePicture(jid, { url: change.imagePath });
+      } else {
+        await params.sock.groupLeave(jid);
+      }
     },
     sendComposingTo: async (to: string): Promise<void> => {
       const jid = toWhatsappJid(to);

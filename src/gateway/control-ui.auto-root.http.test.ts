@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe("handleControlUiHttpRequest auto-detected root", () => {
-  it("serves hardlinked asset files for bundled auto-detected roots", async () => {
+  it("no longer serves hardlinked asset files (dashboard retired 2026-09-19)", async () => {
     await withControlUiRoot(async (tmp) => {
       const assetsDir = path.join(tmp, "assets");
       await fs.mkdir(assetsDir, { recursive: true });
@@ -48,19 +48,18 @@ describe("handleControlUiHttpRequest auto-detected root", () => {
       await fs.link(path.join(assetsDir, "app.js"), path.join(assetsDir, "app.hl.js"));
       resolveControlUiRootSyncMock.mockReturnValue(tmp);
 
-      const { res, end } = makeMockHttpResponse();
+      const { res } = makeMockHttpResponse();
       const handled = await handleControlUiHttpRequest(
         { url: "/assets/app.hl.js", method: "GET" } as IncomingMessage,
         res,
       );
 
       expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
-      expect(String(end.mock.calls[0]?.[0] ?? "")).toBe("console.log('hi');");
+      expect(res.statusCode).toBe(404);
     });
   });
 
-  it("serves hardlinked SPA fallback index.html for bundled auto-detected roots", async () => {
+  it("no longer serves the hardlinked index.html fallback (dashboard retired)", async () => {
     await withControlUiRoot(async (tmp) => {
       const sourceIndex = path.join(tmp, "index.source.html");
       const indexPath = path.join(tmp, "index.html");
@@ -69,15 +68,14 @@ describe("handleControlUiHttpRequest auto-detected root", () => {
       await fs.link(sourceIndex, indexPath);
       resolveControlUiRootSyncMock.mockReturnValue(tmp);
 
-      const { res, end } = makeMockHttpResponse();
+      const { res } = makeMockHttpResponse();
       const handled = await handleControlUiHttpRequest(
         { url: "/dashboard", method: "GET" } as IncomingMessage,
         res,
       );
 
       expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
-      expect(String(end.mock.calls[0]?.[0] ?? "")).toBe("<html>fallback-hardlink</html>\n");
+      expect(res.statusCode).toBe(404);
     });
   });
 

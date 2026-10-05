@@ -1,0 +1,14 @@
+{
+  "name": "tinkerclaw",
+  "owner": { "name": "TinkerClaw" },
+  "metadata": {
+    "description": "TinkerClaw as Claude Code plugins: the agent's moral code, tools and skills, shared with every model TinkerClaw runs"
+  },
+  "plugins": [
+    {
+      "name": "tinkerclaw-core",
+      "source": "./tinkerclaw-core",
+      "description": "Delivers the TinkerClaw moral code (ethical rules, objectives, starter kit) once per session and after compaction"
+    }
+  ]
+}

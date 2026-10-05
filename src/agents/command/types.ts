@@ -113,6 +113,8 @@ export type AgentCommandOpts = {
   resultMetaOverrides?: AgentCommandResultMetaOverrides;
   /** Internal one-shot model probe mode: no tools, no workspace/chat prompt policy. */
   modelRun?: boolean;
+  /** FORK 2026-09-29: resume the interrupted turn with Agent.continue(); the message is ignored. */
+  continueFromTranscript?: boolean;
   /** Internal prompt-mode override for trusted local/gateway callsites. */
   promptMode?: PromptMode;
   /** Internal ACP-ready session turn source. Manual spawn turns bypass only the dispatch gate. */

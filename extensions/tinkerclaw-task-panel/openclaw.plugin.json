@@ -23,7 +23,8 @@
           "cadenceSeconds": { "type": "integer", "minimum": 300 },
           "sources": {
             "type": "array",
-            "items": { "type": "string", "enum": ["google.primary", "outlook.work"] }
+            "description": "Calendars to sync, each written \"<provider>.<account>\" — e.g. google.primary, outlook.work.",
+            "items": { "type": "string", "pattern": "^(google|outlook)\\.[A-Za-z0-9_-]+$" }
           }
         }
       },

@@ -1,9 +1,19 @@
 {
-  "name": "@globalcaos/tinkerclaw-pulse-panel",
-  "version": "0.1.0",
+  "name": "@globalcaos/tinker-pulse-panel",
+  "version": "0.1.2",
   "private": true,
   "description": "FORK-ONLY: exec-mode Pulse tab — KPI pollers + metric graph RPCs. Split from tinkerclaw-control-panel.",
   "license": "Apache-2.0",
+  "files": [
+    "index.ts",
+    "api.ts",
+    "src/**/*.ts",
+    "src/**/*.sql",
+    "!src/**/*.test.ts",
+    "dist/index.js",
+    "openclaw.plugin.json",
+    "CHANGELOG.md"
+  ],
   "type": "module",
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*"

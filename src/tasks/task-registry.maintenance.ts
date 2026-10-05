@@ -1,5 +1,5 @@
 import { readAcpSessionEntry } from "../acp/runtime/session-meta.js";
-import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
+import { hasSessionStoreEntry, resolveStorePath } from "../config/sessions.js";
 import { isCronJobActive } from "../cron/active-jobs.js";
 import { readCronRunLogEntriesSync, resolveCronRunLogPath } from "../cron/run-log.js";
 import type { CronRunLogEntry } from "../cron/run-log.js";
@@ -8,7 +8,6 @@ import type { CronJob, CronStoreFile } from "../cron/types.js";
 import { getAgentRunContext } from "../infra/agent-events.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { deriveSessionChatType } from "../sessions/session-chat-type.js";
-import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { tryRecoverTaskBeforeMarkLost } from "./detached-task-runtime.js";
 import {
   deleteTaskRecordById,
@@ -48,7 +47,7 @@ let configuredCronRuntimeAuthoritative = false;
 
 type TaskRegistryMaintenanceRuntime = {
   readAcpSessionEntry: typeof readAcpSessionEntry;
-  loadSessionStore: typeof loadSessionStore;
+  hasSessionStoreEntry: typeof hasSessionStoreEntry;
   resolveStorePath: typeof resolveStorePath;
   isCronJobActive: typeof isCronJobActive;
   getAgentRunContext: typeof getAgentRunContext;
@@ -71,7 +70,7 @@ type TaskRegistryMaintenanceRuntime = {
 
 const defaultTaskRegistryMaintenanceRuntime: TaskRegistryMaintenanceRuntime = {
   readAcpSessionEntry,
-  loadSessionStore,
+  hasSessionStoreEntry,
   resolveStorePath,
   isCronJobActive,
   getAgentRunContext,
@@ -126,20 +125,6 @@ function createCronRecoveryContext(): CronRecoveryContext {
     storePath: taskRegistryMaintenanceRuntime.resolveCronStorePath(),
     runLogsByJobId: new Map<string, CronRunLogEntry[]>(),
   };
-}
-
-function findSessionEntryByKey(store: Record<string, unknown>, sessionKey: string): unknown {
-  const direct = store[sessionKey];
-  if (direct) {
-    return direct;
-  }
-  const normalized = normalizeLowercaseStringOrEmpty(sessionKey);
-  for (const [key, entry] of Object.entries(store)) {
-    if (normalizeLowercaseStringOrEmpty(key) === normalized) {
-      return entry;
-    }
-  }
-  return undefined;
 }
 
 function isActiveTask(task: TaskRecord): boolean {
@@ -337,8 +322,10 @@ function hasBackingSession(task: TaskRecord): boolean {
     }
     const agentId = taskRegistryMaintenanceRuntime.parseAgentSessionKey(childSessionKey)?.agentId;
     const storePath = taskRegistryMaintenanceRuntime.resolveStorePath(undefined, { agentId });
-    const store = taskRegistryMaintenanceRuntime.loadSessionStore(storePath);
-    return Boolean(findSessionEntryByKey(store, childSessionKey));
+    // FORK 2026-09-23 — membership only: no whole-store structuredClone per task.
+    return taskRegistryMaintenanceRuntime.hasSessionStoreEntry(storePath, childSessionKey, {
+      ignoreCase: true,
+    });
   }
 
   return true;

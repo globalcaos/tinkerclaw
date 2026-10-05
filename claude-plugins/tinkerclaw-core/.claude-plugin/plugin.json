@@ -1,0 +1,7 @@
+{
+  "name": "tinkerclaw-core",
+  "description": "The TinkerClaw moral code (ethical rules, objectives, starter kit), delivered once at session start and again after compaction",
+  "version": "0.2.0",
+  "author": { "name": "TinkerClaw" },
+  "license": "MIT"
+}

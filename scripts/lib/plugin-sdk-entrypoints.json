@@ -305,5 +305,9 @@
   "fork-secret-refs",
   "fork-gateway-broadcast",
   "fork-browser-relay",
-  "fork-overseer-budget"
+  "fork-overseer-budget",
+  "fork-telemetry",
+  "fork-jev",
+  "fork-thalamus",
+  "fork-thalamus-runtime"
 ]

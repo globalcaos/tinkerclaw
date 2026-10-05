@@ -380,6 +380,79 @@ export interface InstrumentLivenessLogOutcome {
 }
 
 /**
+ * What the report hands its sink once per tick (TINKER_UI_DESIGN_BIBLE/logging.md §4.10): the same
+ * counts the `[instrument-liveness] declared=…` line prints, and each instrument's verdict. The
+ * events bridge (src/infra/events/bridge-diagnostic-bus.ts) writes them as `instrument.census` and
+ * diffs `states` into `instrument.transition`, so the record outlives the process.
+ */
+export interface InstrumentLivenessReportSnapshot {
+  readonly nowMs: number;
+  readonly counts: Readonly<InstrumentLivenessLogOutcome["counts"]>;
+  readonly states: ReadonlyMap<string, InstrumentLivenessState>;
+}
+
+export type InstrumentLivenessReportSink = (snapshot: InstrumentLivenessReportSnapshot) => void;
+
+const REPORT_SINK_KEY = Symbol.for("openclaw.instrumentLiveness.reportSink");
+
+interface ReportSinkSlot {
+  sink: InstrumentLivenessReportSink | null;
+}
+
+/**
+ * The sink slot lives on globalThis for the registry's reason (registryMap above): a sink installed
+ * through one bundled copy of this module must be the one a summary running in another copy calls,
+ * or the census goes silent with nothing to say so. A direct Symbol.for lookup, as
+ * src/shared/global-singleton.ts asks for live mutable state. INJECTED, never imported: the events
+ * writer (src/infra/events/emit.ts) already imports this module, and every extension bundle
+ * inlines this file, so importing the writer here would close a cycle and copy it into each one.
+ */
+function reportSinkSlot(): ReportSinkSlot {
+  const store = globalThis as Record<PropertyKey, unknown>;
+  const existing = store[REPORT_SINK_KEY] as ReportSinkSlot | undefined;
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created: ReportSinkSlot = { sink: null };
+  store[REPORT_SINK_KEY] = created;
+  return created;
+}
+
+/**
+ * Installs THE report sink and returns its disposer. The disposer clears the slot only while it
+ * still holds this sink, so a late stop can never unhook a newer bridge.
+ */
+export function setInstrumentLivenessReportSink(sink: InstrumentLivenessReportSink): () => void {
+  const slot = reportSinkSlot();
+  slot.sink = sink;
+  return () => {
+    if (slot.sink === sink) {
+      slot.sink = null;
+    }
+  };
+}
+
+function notifyReportSink(
+  nowMs: number,
+  counts: InstrumentLivenessLogOutcome["counts"],
+  rows: readonly InstrumentLivenessRow[],
+): void {
+  const sink = reportSinkSlot().sink;
+  if (sink === null) {
+    return;
+  }
+  try {
+    sink({
+      nowMs,
+      counts,
+      states: new Map(rows.map((row): [string, InstrumentLivenessState] => [row.id, row.state])),
+    });
+  } catch {
+    /* a sink must never change what the report says, nor throw into the maintenance tick */
+  }
+}
+
+/**
  * Escalating clarity for the one state that always IS a defect. Six instruments on this deployment
  * have never fired since declaration; they must read differently from one that is two minutes late.
  */
@@ -457,6 +530,8 @@ export function logInstrumentLivenessSummary(
   try {
     const rows = reportInstrumentLiveness(nowMs, { staleMinPeers: opts.staleMinPeers });
     if (rows.length === 0) {
+      // The census still gets its row (logging.md L10): an empty registry is a reading, not a gap.
+      notifyReportSink(nowMs, nothing.counts, rows);
       return nothing;
     }
     const enumerateIntervalMs = opts.enumerateIntervalMs ?? DEFAULT_ENUMERATE_INTERVAL_MS;
@@ -487,6 +562,9 @@ export function logInstrumentLivenessSummary(
       idle: idle.length,
       byConfig: byConfig.length,
     };
+    // logging.md §4.10: the counts this line is about to print, plus each verdict, to the events
+    // bridge — before any logging, so a logger failure cannot cost the census its row.
+    notifyReportSink(nowMs, counts, rows);
 
     // What a reader would actually LEARN from the enumeration. Unchanged signature ⇒ reprinting
     // teaches nothing, so it is not reprinted.
@@ -562,9 +640,13 @@ export function logInstrumentLivenessSummary(
   }
 }
 
-/** Test-only: drop all state — the registry AND the reporter's memory of what it already said. */
+/**
+ * Test-only: drop all state — the registry, the report sink, and the reporter's memory of what it
+ * already said.
+ */
 export function resetInstrumentLivenessForTest(): void {
   registryMap().clear();
+  reportSinkSlot().sink = null;
   reporter.lastSignature = null;
   reporter.lastEnumeratedAtMs = 0;
   reporter.lastProcessFires = -1;

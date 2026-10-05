@@ -24,7 +24,7 @@ parallelism:
     3=Evaluate (0-indexed body heading sequence).
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

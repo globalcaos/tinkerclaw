@@ -1,0 +1,55 @@
+/* Amygdala in-chat cards (F3). Lifted from the approved design page; every selector is amy- prefixed. */
+.amy-btn{background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:5px 11px;font-size:13px;font:inherit;cursor:pointer}
+.amy-btn:hover{border-color:var(--accent)}
+.amy-btn.amy-primary{background:var(--accent);color:#1a1510;border-color:var(--accent);font-weight:650}
+.amy-btn.amy-danger{border-color:#7a3a3a;color:#f0b9b9}
+.amy-btn.amy-small{font-size:12px;padding:3px 9px}
+
+.amy-card{border-radius:10px;padding:11px 13px;background:var(--surface);border:1px solid var(--border);width:420px;max-width:100%}
+.amy-card.amy-hold{border-left:4px solid var(--red)}
+.amy-card.amy-proof{border-left:4px solid var(--amber, #d9a441)}
+.amy-card.amy-ask{border-left:4px solid var(--blue)}
+.amy-card.amy-appr{border-left:4px solid var(--purple)}
+.amy-card h3{margin:0 0 6px;font-size:13.5px}
+.amy-cmd{font:12.5px/1.4 ui-monospace,Menlo,monospace;background:#120e0a;border:1px solid #3a3124;border-radius:6px;padding:5px 8px;margin:4px 0 8px;color:#f0c9a8;overflow-wrap:anywhere}
+.amy-chips{display:flex;gap:5px;flex-wrap:wrap;margin:0 0 9px}
+.amy-chip{font-size:11.5px;border-radius:999px;padding:1px 8px;background:var(--surface2);border:1px solid var(--border);color:#d8cdb9}
+.amy-chip.amy-bad{border-color:#7a3a3a;color:#f0b9b9}
+.amy-btns{display:flex;gap:6px;flex-wrap:wrap}
+.amy-foot{font-size:11.5px;color:var(--muted);margin-top:7px}
+.amy-why{font-size:12px;margin:0 0 9px;color:#cbbfa9}
+.amy-why-t{color:var(--muted);font-size:11.5px}
+.amy-why ul{margin:2px 0 0;padding-left:18px}
+.amy-settled{font-size:12.5px;color:var(--muted);margin:2px 0}
+.amy-settled-proof{color:var(--green2, #8fb03a);font-weight:650}
+
+.amy-opt{display:flex;gap:8px;align-items:flex-start;padding:6px 8px;border:1px solid var(--border);border-radius:7px;margin:0 0 6px;cursor:pointer}
+.amy-opt.amy-sel{border-color:var(--blue);background:#1d2633}
+.amy-opt small{color:var(--muted);display:block}
+
+.amy-tag{font-size:11px;letter-spacing:.03em;text-transform:uppercase;color:var(--purple);margin:0 0 4px}
+.amy-fromto{font:12.5px/1.4 ui-monospace,Menlo,monospace;margin:0 0 8px;color:#d8cdb9;overflow-wrap:anywhere}
+.amy-cases{font-size:12px;color:#cbbfa9;margin:0 0 9px}
+.amy-status{text-transform:capitalize}
+
+.amy-refstrip{margin-top:8px;padding:7px 9px;border-radius:8px;background:#35290f;border:1px solid #6b5220;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px}
+.amy-refstrip .amy-t{color:#f1d79a;font-weight:600}
+.amy-refstrip .amy-m{color:var(--muted);font-size:11.5px;margin-left:auto}
+.amy-retry{display:inline-flex;align-items:center;gap:5px}
+.amy-retry .model-provider-icon svg{width:14px;height:14px}
+.amy-retry-name{font-weight:600}
+.amy-rewound{align-self:center;font-size:12px;color:var(--muted);border:1px dashed #5a4a33;border-radius:999px;padding:3px 12px}
+.amy-rewound a{color:var(--accent);cursor:pointer;text-decoration:underline}
+
+.amy-note-chip{font-size:11.5px;border-radius:6px;padding:1px 7px;margin-left:auto}
+.amy-nc-s{background:#2e2a12;color:#e8d68a;border:1px solid #5e5420}
+.amy-nc-f{background:#321d1a;color:#f0b9b9;border:1px solid #6a3530}
+.amy-nc-c{background:#262033;color:#cbb6ef;border:1px solid #4b3d69}
+
+.amy-sentback{font-size:12px;color:#e9d6a6;margin-top:8px}
+.amy-sentback summary{display:inline-block;cursor:pointer;background:#2d2615;border:1px solid #5e4d25;border-radius:7px;padding:4px 9px;list-style:none}
+.amy-sentback summary::-webkit-details-marker{display:none}
+.amy-sb-detail{font-size:12px;color:#cbbfa9;margin-top:6px;border-left:2px solid #5e4d25;padding-left:9px}
+
+.amy-marker{font-size:12px;color:var(--muted);margin-top:6px;border-left:2px solid #5e4d25;padding-left:9px}
+.amy-card + .amy-card { margin-top: 8px; }

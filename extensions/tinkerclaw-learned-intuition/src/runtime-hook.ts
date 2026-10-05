@@ -8,6 +8,10 @@
  * Self-contained: no imports from upstream src/.
  */
 
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import { EmbeddingPipeline, EmbeddingWindow } from "./embedding.js";
 import { AmygdalaGate } from "./gate.js";
 import { GitCache } from "./git-cache.js";
@@ -27,8 +31,44 @@ import type {
   PersonalityNudge,
 } from "./types.js";
 
+/**
+ * The agent's configured name as published by identity-persistence in its shared state, so the
+ * nudges say "Stay Goku" on Goku and "Stay Jarvis" on Jarvis. Undefined when unpublished.
+ */
+function readSharedAgentName(): string | undefined {
+  try {
+    const raw = JSON.parse(
+      readFileSync(join(homedir(), ".openclaw", "cognitive", "identity-persistence.json"), "utf8"),
+    ) as { persona?: { name?: unknown } };
+    const name = raw?.persona?.name;
+    return typeof name === "string" && name.trim() ? name.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Calibration key for the persisted novelty threshold. */
 const NOVELTY_THRESHOLD_KEY = "novelty_threshold";
+
+/**
+ * J11 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.amygdala.ask` (§9 step 9), cadence "per ask":
+ * one row each time a channel DECIDES to ask — `isNovel` in evaluateNovelty, an incongruous
+ * verdict in checkIncongruity. It is written here, where the ask is decided, and NOT inside
+ * NoveltyIndex.score(): the legacy ONNX path also calls score() for parity, and there a high
+ * novelty is not an ask (the ONNX gate decides), so a row at score() would record asks that
+ * never happened.
+ *
+ * label = the channel; n1 = the channel's own score — novelty (1 − top-k cosine; HIGH is
+ * unfamiliar) for `novelty`, the clause cosine (LOW is incongruous) for `incongruity`. The two
+ * scales point opposite ways, which is why the label is the first thing any query groups by.
+ *
+ * `delivered` / `answered` are deliberately ABSENT: whether the ask reached a human, and whether
+ * the human answered, is known to the delivery path and never here. An honest gap is actionable;
+ * hardcoding false would silently assert that no ask ever reaches anyone.
+ */
+function noteAmygdalaAsk(channel: "novelty" | "incongruity", score: number): void {
+  emitEvent("j.amygdala.ask", { label: channel, n1: score });
+}
 
 // -- Read-only short-circuit --
 
@@ -256,6 +296,9 @@ export class AmygdalaHook {
     const noveltyScore = this.novelty ? this.novelty.score(embedding) : null;
     const threshold = this.novelty?.threshold ?? null;
     const isNovel = noveltyScore !== null && threshold !== null && noveltyScore > threshold;
+    if (isNovel && noveltyScore !== null) {
+      noteAmygdalaAsk("novelty", noveltyScore);
+    }
 
     const decision: GateDecision = isNovel ? "soft_block" : "allow";
     const disposition: Disposition = isNovel ? "ask" : "proceed";
@@ -417,6 +460,8 @@ export class AmygdalaHook {
         evaluation.personality.combined_embedding,
         targetVector,
         this.config.trust.alpha_personality,
+        undefined,
+        readSharedAgentName(),
       );
     }
 
@@ -477,6 +522,7 @@ export class AmygdalaHook {
       ]);
       const verdict = judgeIncongruity(h, t);
       if (!verdict.incongruous) return null;
+      noteAmygdalaAsk("incongruity", verdict.similarity);
       return { similarity: verdict.similarity, head: split.head, tail: split.tail };
     } catch {
       return null;

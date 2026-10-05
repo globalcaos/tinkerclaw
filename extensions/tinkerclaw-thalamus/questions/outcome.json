@@ -1,0 +1,30 @@
+{
+  "family": "routing",
+  "questions": [
+    {
+      "id": "outcome-state",
+      "version": 1,
+      "family": "routing",
+      "seams": ["post-tool", "stop"],
+      "type": "choice",
+      "criteria": {
+        "done": "the step did what it was for",
+        "retry": "it failed in a way another try could fix",
+        "stuck": "the same failure has now happened twice",
+        "refused": "the model declined to do legitimate work",
+        "check": "it produced something that should be checked before it is relied on"
+      },
+      "instructions": "How did the last model call end?",
+      "fields": ["request", "toolRecord", "reply", "repeatedErrors"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Tells the router whether to move on, retry, escalate or send the work to a check.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "How the call ended"
+    }
+  ]
+}

@@ -119,6 +119,8 @@ const MECHANISMS = [
   { path: "extensions/tinkerclaw-orca/lease-core.mjs", entry: ["linkSync", "renameSync"] },
   { path: "scripts/pii-pre-push.sh", entry: ["PII_RE"] },
   { path: "TINKER_UI_DESIGN_BIBLE/canonical-derivations.md" },
+  { path: "src/shared/thalamus-route-call.ts", entry: ["routeCall"] },
+  { path: "src/infra/jev/jev.ts", entry: ["JevClient"] },
 ];
 
 const rung = (process.argv.find((a) => a.startsWith("--rung=")) ?? "").slice(7);

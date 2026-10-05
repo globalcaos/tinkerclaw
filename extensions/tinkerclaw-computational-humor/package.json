@@ -1,5 +1,5 @@
 {
-  "name": "@globalcaos/openclaw-computational-humor",
+  "name": "@globalcaos/tinker-computational-humor",
   "version": "0.1.0",
   "description": "Your agent jokes. You laugh — it remembers. Humor from embedding geometry, calibrated by your reactions.",
   "keywords": [
@@ -22,6 +22,7 @@
   },
   "files": [
     "index.ts",
+    "dist/",
     "src/",
     "openclaw.plugin.json",
     "README.md"
@@ -46,8 +47,11 @@
       "pluginApi": ">=2026.4.25"
     },
     "release": {
-      "publishToClawHub": false,
-      "publishToNpm": true
+      "publishToClawHub": true,
+      "publishToNpm": false
+    },
+    "build": {
+      "openclawVersion": "2026.4.25"
     }
   }
 }

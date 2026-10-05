@@ -37,6 +37,13 @@ import {
   RECENT_ENDED_SUBAGENT_CHILD_SESSION_MS,
   shouldKeepSubagentRunChildLink,
 } from "../agents/subagent-run-liveness.js";
+import { getExistingFollowupQueue } from "../auto-reply/reply/queue/state.js";
+import { resolveFollowupRunPromptKeys } from "../auto-reply/reply/queue/types.js";
+import {
+  listSteeredReplyPrompts,
+  replyRunRegistry,
+  type ReplyOperationPhase,
+} from "../auto-reply/reply/reply-run-registry.js";
 import { listThinkingLevelOptions } from "../auto-reply/thinking.js";
 import { getRuntimeConfig } from "../config/io.js";
 import { resolveAgentModelFallbackValues } from "../config/model-input.js";
@@ -57,6 +64,7 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getSessionRunLiveness } from "../infra/agent-events.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
+import { readCompactionLedger } from "../infra/compaction-ledger.js";
 import { projectPluginSessionExtensionsSync } from "../plugins/host-hook-state.js";
 import {
   DEFAULT_AGENT_ID,
@@ -74,6 +82,7 @@ import {
   resolveAvatarMime,
 } from "../shared/avatar-policy.js";
 import { fortuneForKey } from "../shared/fortune-cookies.js";
+import { sessionVisibleToOperator } from "../shared/hivemind-seats.ts";
 import {
   normalizeLowercaseStringOrEmpty,
   normalizeOptionalString,
@@ -81,6 +90,7 @@ import {
 } from "../shared/string-coerce.js";
 import { normalizeSessionDeliveryFields } from "../utils/delivery-context.shared.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
+import { resolveReplyHolderKey } from "./reply-registry-key.js";
 // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
 // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: server-side
 // lazy-mint restored, now drawing from the shared FORTUNE_COOKIES pool
@@ -107,6 +117,8 @@ import {
 } from "./session-utils.fs.js";
 import type {
   GatewayAgentRow,
+  GatewaySessionPendingPrompt,
+  GatewaySessionPendingPromptState,
   GatewaySessionRow,
   GatewaySessionsDefaults,
   SessionRunStatus,
@@ -124,11 +136,14 @@ export {
   readSessionTitleFieldsFromTranscript,
   readSessionPreviewItemsFromTranscript,
   readSessionMessages,
+  readSessionMessagesWithCursor,
   resolveSessionTranscriptCandidates,
 } from "./session-utils.fs.js";
 export { canonicalizeSpawnedByForAgent, resolveSessionStoreKey } from "./session-store-key.js";
 export type {
   GatewayAgentRow,
+  GatewaySessionPendingPrompt,
+  GatewaySessionPendingPromptState,
   GatewaySessionRow,
   GatewaySessionsDefaults,
   SessionsListResult,
@@ -494,7 +509,15 @@ export function resolveDeletedAgentIdFromSessionKey(
   return agentId;
 }
 
-export function loadSessionEntry(sessionKey: string) {
+// FORK 2026-09-21 — loadSessionEntry used loadSessionStore's default
+// clone:true, i.e. a structuredClone of the WHOLE store (~16 MB on the live
+// gateway) on every call. It sits on the hot path of chat.history (~10/min
+// from the Tinker UI), sessions.delete/reset and every sessions.changed
+// broadcast (loadGatewaySessionRow), yet almost every caller reads only
+// `entry`. The shared loader below returns the CACHED store object — a
+// READ-ONLY contract, same as readSessionStoreCache({ clone: false }) — and
+// the public wrappers copy only what they hand out.
+function loadSessionEntryShared(sessionKey: string) {
   const cfg = getRuntimeConfig();
   const key = normalizeOptionalString(sessionKey) ?? "";
   const target = resolveGatewaySessionStoreTarget({
@@ -502,17 +525,64 @@ export function loadSessionEntry(sessionKey: string) {
     key,
   });
   const storePath = target.storePath;
-  const store = loadSessionStore(storePath);
-  const freshestMatch = resolveFreshestSessionStoreMatchFromStoreKeys(store, target.storeKeys);
+  // READ-ONLY: this is the cache's own object. Never mutate it here.
+  const rawStore = loadSessionStore(storePath, { clone: false });
+  const freshestMatch = resolveFreshestSessionStoreMatchFromStoreKeys(rawStore, target.storeKeys);
   const legacyKey = freshestMatch?.key !== target.canonicalKey ? freshestMatch?.key : undefined;
   return {
     cfg,
     storePath,
-    store,
-    entry: freshestMatch?.entry,
+    rawStore,
+    freshestMatch,
     canonicalKey: target.canonicalKey,
     legacyKey,
   };
+}
+
+type LoadedGatewaySessionEntry = {
+  cfg: OpenClawConfig;
+  storePath: string;
+  store: Record<string, SessionEntry>;
+  entry: SessionEntry | undefined;
+  canonicalKey: string;
+  legacyKey: string | undefined;
+};
+
+/**
+ * Load one session entry. `entry` is a private deep copy (callers may mutate
+ * it). `store` is a LAZY getter: the full-store structuredClone happens only
+ * on first access, then is memoised. Inside that clone the matched key is
+ * re-pointed at the returned `entry`, so `store[matchedKey] === entry` holds
+ * exactly as it did when both came from one eagerly cloned store
+ * (command-status.runtime hands both to createModelSelectionState).
+ */
+export function loadSessionEntry(sessionKey: string): LoadedGatewaySessionEntry {
+  const { cfg, storePath, rawStore, freshestMatch, canonicalKey, legacyKey } =
+    loadSessionEntryShared(sessionKey);
+  const entry = freshestMatch ? structuredClone(freshestMatch.entry) : undefined;
+  const matchedKey = freshestMatch?.key;
+  let storeClone: Record<string, SessionEntry> | undefined;
+  const result = {
+    cfg,
+    storePath,
+    entry,
+    canonicalKey,
+    legacyKey,
+  } as Omit<LoadedGatewaySessionEntry, "store"> as LoadedGatewaySessionEntry;
+  Object.defineProperty(result, "store", {
+    enumerable: true,
+    configurable: true,
+    get(): Record<string, SessionEntry> {
+      if (!storeClone) {
+        storeClone = structuredClone(rawStore);
+        if (matchedKey !== undefined && entry) {
+          storeClone[matchedKey] = entry;
+        }
+      }
+      return storeClone;
+    },
+  });
+  return result;
 }
 
 export function resolveFreshestSessionStoreMatchFromStoreKeys(
@@ -882,7 +952,12 @@ function resolveGatewaySessionStoreLookup(params: {
     storePath: resolveStorePath(params.cfg.session?.store, { agentId: params.agentId }),
   };
   let selectedStorePath = fallback.storePath;
-  let selectedStore = params.initialStore ?? loadSessionStore(fallback.storePath);
+  // FORK 2026-09-23 — READ-ONLY borrows (clone:false): the stores are only
+  // scanned for keys and never leave resolveGatewaySessionStoreTarget, which
+  // returns paths and key strings. The default clone:true deep-copied the WHOLE
+  // store on every chat.history / loadGatewaySessionRow call (~20% of the live
+  // gateway main thread). Never mutate `selectedStore` or `store` here.
+  let selectedStore = params.initialStore ?? loadSessionStore(fallback.storePath, { clone: false });
   let selectedMatch = findFreshestStoreMatch(selectedStore, ...scanTargets);
   let selectedUpdatedAt = selectedMatch?.entry.updatedAt ?? Number.NEGATIVE_INFINITY;
 
@@ -891,7 +966,7 @@ function resolveGatewaySessionStoreLookup(params: {
     if (!candidate) {
       continue;
     }
-    const store = loadSessionStore(candidate.storePath);
+    const store = loadSessionStore(candidate.storePath, { clone: false });
     const match = findFreshestStoreMatch(store, ...scanTargets);
     if (!match) {
       continue;
@@ -957,7 +1032,8 @@ function resolveExplicitDeletedLegacyMainStoreTarget(params: {
     if (target.agentId !== legacyAgentId) {
       continue;
     }
-    const store = loadSessionStore(target.storePath);
+    // READ-ONLY borrow: only scanned for keys; the result holds paths and strings.
+    const store = loadSessionStore(target.storePath, { clone: false });
     const match = findFreshestStoreMatch(store, ...lookupSeeds);
     if (!match) {
       continue;
@@ -1265,6 +1341,254 @@ export function resolveSessionModelIdentityRef(
   return { provider: resolved.provider, model: resolved.model };
 }
 
+/** Reply-operation phases whose prompt has not reached its run yet: §2 PREPARING. */
+const PREPARING_REPLY_PHASES: ReadonlySet<ReplyOperationPhase> = new Set<ReplyOperationPhase>([
+  "queued",
+  "preflight_compacting",
+  "memory_flushing",
+]);
+
+/** The two run-set facts deriveSessionPendingPrompts reads (see getSessionRunLiveness). */
+type PendingPromptRunLiveness = Pick<
+  ReturnType<typeof getSessionRunLiveness>,
+  "live" | "lastActiveAt"
+>;
+
+/** One exact-key reading of the run set (getSessionRunLiveness): the row's `run` field. */
+type SessionRunLiveness = ReturnType<typeof getSessionRunLiveness>;
+
+/**
+ * Two exact-key readings of the run set as one. A run context carries ONE session key, so no run is
+ * counted twice: the counts add, `since` is the earlier and `lastActiveAt` the later of the two.
+ */
+function joinRunLiveness(a: SessionRunLiveness, b: SessionRunLiveness): SessionRunLiveness {
+  const count = a.count + b.count;
+  return {
+    live: count > 0,
+    count,
+    heartbeatCount: a.heartbeatCount + b.heartbeatCount,
+    since: pickDefinedNumber(a.since, b.since, Math.min),
+    lastActiveAt: pickDefinedNumber(a.lastActiveAt, b.lastActiveAt, Math.max),
+  };
+}
+
+function pickDefinedNumber(
+  a: number | undefined,
+  b: number | undefined,
+  pick: (x: number, y: number) => number,
+): number | undefined {
+  return a === undefined ? b : b === undefined ? a : pick(a, b);
+}
+
+/**
+ * FORK 2026-09-25 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md §2 ACCEPTED, §4 holder C, §7 G5.
+ * chat.send acks a prompt, then get-reply runs media and link understanding and the prepared-reply
+ * setup before runReplyAgent creates the reply operation, which can take seconds. The steer, the
+ * backlog and the reply operation all happen inside runReplyAgent, so in that span only the chat
+ * abort controller (holder C) holds the prompt, and a sessions.list row built then listed the
+ * session's other prompts and not this one. The UI had to keep a page-liveness veto so that the
+ * absence did not read as LOST (tinker-ui/src/prompt-state.ts gatewayHolderFacts).
+ *
+ * chat.send marks that span here: from right after its ack until the reply pipeline PLACES the
+ * prompt (its run starts, or it is steered, backlogged or dropped: onAgentRunStart and
+ * onPromptDisposition), its controller is aborted (abortChatRunById aborts it), or its dispatch
+ * settles or throws. Every way holder C lets go of the prompt also releases the mark, so a mark
+ * never outlives its controller. deriveSessionPendingPrompts reports a marked key PREPARING: the
+ * wire has no ACCEPTED state, and §2 gives ACCEPTED the same "preparing context" pill.
+ *
+ * WHY A MARK, NOT A READ OF THE CONTROLLERS MAP (prompt-queue.md §6.4 rejects a new per-prompt
+ * store; this is a named exception). A controller lives for the WHOLE dispatch: through the run,
+ * and through chat.send's transcript and final work after the run ends. A controller whose key no
+ * reply operation names is either not placed yet or already answered, and only chat.send knows
+ * which. Derived from the map alone, an answered prompt would come back PREPARING after its
+ * terminal. The mark holds no "live" of its own: it is holder C's unplaced span, released by
+ * holder C's own exits, and nothing but deriveSessionPendingPrompts reads it.
+ */
+type AcceptedChatSend = { sessionKey: string; since: number };
+const acceptedChatSends = new Map<string, AcceptedChatSend>();
+
+/**
+ * Mark a chat.send prompt as accepted and not yet placed (see acceptedChatSends), under the store
+ * key chat.send loaded. Returns the release, which drops only THIS mark and may be called any
+ * number of times: a later send under the same key owns whatever mark is there by then. A prompt
+ * with no key, or no session, is not marked (PQ-1).
+ */
+export function trackAcceptedChatSend(params: {
+  promptKey: string;
+  sessionKey: string | undefined;
+  since: number;
+}): () => void {
+  const promptKey = normalizeOptionalString(params.promptKey);
+  const sessionKey = normalizeOptionalString(params.sessionKey);
+  if (!promptKey || !sessionKey) {
+    return () => {};
+  }
+  const mark: AcceptedChatSend = { sessionKey, since: params.since };
+  acceptedChatSends.set(promptKey, mark);
+  return () => {
+    if (acceptedChatSends.get(promptKey) === mark) {
+      acceptedChatSends.delete(promptKey);
+    }
+  };
+}
+
+/** Test-only: drop every mark (session-utils.pending-prompts.test.ts). */
+export function resetAcceptedChatSendsForTest(): void {
+  acceptedChatSends.clear();
+}
+
+/**
+ * FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 / §7 step G5. Every prompt of ONE
+ * session that a gateway holder still owns, in the §2 state that holder puts it in. PQ-11
+ * re-derives a prompt's state from this after a reload or reconnect, and PQ-5 counts a key's
+ * absence as evidence for LOST.
+ *
+ * DERIVED, never stored: a per-prompt store would be an eighth holder of "live" (§6.4). Each state
+ * comes from the holder that owns it:
+ *   - PREPARING: the reply operation, through EVERY key it was created for (`promptKeys`; a
+ *     coalesced follow-up answers several, all since the operation's `startedAt`), while its phase
+ *     is `queued`, `preflight_compacting` or `memory_flushing`.
+ *   - RUNNING: the same operation in phase `running`, while the run set holds a run of this session
+ *     active since the operation began. The run registers synchronously right after the phase
+ *     flips (agent-runner.ts → agent-runner-execution.ts registerAgentRunContext; followup-runner.ts
+ *     registers it even earlier), and server-chat.ts clears it when the run's lifecycle ends (the
+ *     same handler emits the chat final for a control-UI run). So a `running` operation with no such
+ *     run is a turn whose run has ENDED and whose operation is only finishing up: its prompts are
+ *     reported as nothing, never as RUNNING and never back as PREPARING (PQ-5; PQ-10, the run set
+ *     owns "live"). "Active since the operation began" is read from getSessionRunLiveness's
+ *     `lastActiveAt`, which this turn's run always satisfies; an earlier turn's run still emitting
+ *     events satisfies it too, and agent-events.ts exposes no per-run read that would exclude it.
+ *   - BEHIND: the follow-up queue, in queue order, one entry per key each item carries
+ *     (queue/types.ts resolveFollowupRunPromptKeys: its `promptKeys`, then its `messageId`). A lost
+ *     steer is re-enqueued as ONE item holding every buffered caller's key, so each one is BEHIND.
+ *   - STEERED: prompts that turn accepted by steer (reply-run-registry.ts recordSteeredReplyPrompt,
+ *     called by agent-runner.ts's steer branch), reported only while the turn is RUNNING, because
+ *     they end with it (§2 STEERED → ANSWERED). The steer buffer holds its callers' keys only until
+ *     it flushes, within 1.5 s, which is why the key is kept on the operation.
+ *   - PREPARING, from holder C (§2 ACCEPTED, 2026-09-25): a chat.send prompt acked and not yet
+ *     placed by the reply pipeline (trackAcceptedChatSend above), since its controller registered.
+ *
+ * ONE key, ONE state (PQ-2). When two holders name the same key, the first wins:
+ *   1. the operation's own prompts. drain.ts leaves a follow-up item in `queue.items` until its run
+ *      RETURNS (drainNextQueueItem shifts, and a collect batch is spliced, after the await), so the
+ *      prompts a follow-up turn is answering are still queued while it runs;
+ *   2. BEHIND over STEERED. A steer whose delivery was lost is re-enqueued as a follow-up
+ *      (agent-runner.ts onDeliveryLost, the §2 STEERED → BEHIND edge), and the queue is the later
+ *      fact;
+ *   3. holder C last, and never for a key the reply operation names, even one it reports as
+ *      nothing: a turn whose run has ended must not come back as PREPARING.
+ * Output order is the same: the operation's prompts, then the queue in order, then steered prompts,
+ * then accepted chat.send prompts in the order they were acked.
+ *
+ * In-memory holders only: no session-store read (failures.md M21, pinned by a spy in
+ * session-utils.pending-prompts.test.ts). Returns undefined when nothing is pending, so the row
+ * field is ABSENT rather than `[]`.
+ *
+ * KEY (2026-09-25). `sessionKey` is the row's STORE key (resolveSessionStoreKey: the combined store
+ * sessions.list iterates, and loadGatewaySessionRow). The holders are keyed by the key
+ * initSessionState registered the turn under, and for some configs the two part: with no `main`
+ * agent and a renamed main key, a legacy `agent:main:<mainKey>` folds into
+ * `agent:<default>:<mainKey>`, and a bare `x` into `agent:<default>:x`. resolveReplyHolderKey
+ * (reply-registry-key.ts) picks the ONE key they are held under; the row key wins whenever it
+ * holds anything, and an exact hit or an idle gateway reads no config. `getConfig` defaults to the
+ * runtime config (buildGatewaySessionRow resolves the key itself, with the row's own `cfg`). The
+ * run set is read under that same holder key, because agent-runner registers the operation's run
+ * there too: `runLiveness` defaults to that reading, and a caller that passes one must read it
+ * there. Holder C is matched on the row key (chat.send marks the store key it loaded) or the
+ * holder key.
+ */
+export function deriveSessionPendingPrompts(
+  sessionKey: string,
+  runLiveness?: PendingPromptRunLiveness,
+  getConfig: () => OpenClawConfig = getRuntimeConfig,
+): GatewaySessionPendingPrompt[] | undefined {
+  const rowKey = normalizeOptionalString(sessionKey);
+  if (!rowKey) {
+    return undefined;
+  }
+  const key = resolveReplyHolderKey(rowKey, getConfig);
+  return derivePendingPromptsHeldUnder(rowKey, key, runLiveness ?? getSessionRunLiveness(key));
+}
+
+/**
+ * deriveSessionPendingPrompts once the holder key is known: `rowKey` is the row's store key, `key`
+ * the key its reply holders are read under, and `runLiveness` the run set read under `key`.
+ */
+function derivePendingPromptsHeldUnder(
+  rowKey: string,
+  key: string,
+  runLiveness: PendingPromptRunLiveness,
+): GatewaySessionPendingPrompt[] | undefined {
+  const pending = new Map<string, GatewaySessionPendingPrompt>();
+  const report = (
+    promptKey: string | undefined,
+    state: GatewaySessionPendingPromptState,
+    since: number | undefined,
+  ): void => {
+    const normalizedKey = normalizeOptionalString(promptKey);
+    // PQ-1: a prompt with no key has no identity to report, and a synthetic key would be matched
+    // against the client's outbox. `since` is always a holder's own timestamp; only a hand-built
+    // ReplyOperation double lacks `startedAt` (createReplyOperation always sets it).
+    if (!normalizedKey || typeof since !== "number" || pending.has(normalizedKey)) {
+      return;
+    }
+    pending.set(normalizedKey, { key: normalizedKey, state, since });
+  };
+
+  const operation = replyRunRegistry.get(key);
+  // Every key the operation answers (a coalesced follow-up has several), all since its start.
+  // `promptKeys` is absent only on a hand-built double; its `promptKey` is then the whole list.
+  // Read whatever the operation's state: holder C yields every key the operation names (rule 3).
+  const operationPromptKeys: ReadonlyArray<string | undefined> = operation
+    ? (operation.promptKeys ?? [operation.promptKey])
+    : [];
+  let turnRunning = false;
+  // `result` is set the moment an operation completes, fails or is aborted. An aborted one can stay
+  // registered until its backend lets go, but its prompt's terminal is already on its way (PQ-6).
+  if (operation && operation.result === null) {
+    if (PREPARING_REPLY_PHASES.has(operation.phase)) {
+      for (const promptKey of operationPromptKeys) {
+        report(promptKey, "preparing", operation.startedAt);
+      }
+    } else if (operation.phase === "running") {
+      turnRunning =
+        runLiveness.live &&
+        (runLiveness.lastActiveAt ?? Number.NEGATIVE_INFINITY) >=
+          (operation.startedAt ?? Number.NEGATIVE_INFINITY);
+      if (turnRunning) {
+        for (const promptKey of operationPromptKeys) {
+          report(promptKey, "running", operation.startedAt);
+        }
+      }
+    }
+  }
+
+  for (const item of getExistingFollowupQueue(key)?.items ?? []) {
+    // An item re-enqueued from a lost steer holds every buffered caller's key.
+    for (const promptKey of resolveFollowupRunPromptKeys(item)) {
+      report(promptKey, "behind", item.enqueuedAt);
+    }
+  }
+
+  if (turnRunning) {
+    for (const steered of listSteeredReplyPrompts(key)) {
+      report(steered.key, "steered", steered.since);
+    }
+  }
+
+  // HOLDER C, last (rule 3): a chat.send prompt acked and not yet placed by the reply pipeline.
+  for (const [promptKey, accepted] of acceptedChatSends) {
+    if (
+      (accepted.sessionKey === rowKey || accepted.sessionKey === key) &&
+      !operationPromptKeys.includes(promptKey)
+    ) {
+      report(promptKey, "preparing", accepted.since);
+    }
+  }
+
+  return pending.size > 0 ? [...pending.values()] : undefined;
+}
+
 export function buildGatewaySessionRow(params: {
   cfg: OpenClawConfig;
   storePath: string;
@@ -1478,6 +1802,29 @@ export function buildGatewaySessionRow(params: {
   const pluginExtensions = entry
     ? projectPluginSessionExtensionsSync({ sessionKey: key, entry })
     : [];
+  // FORK 2026-09-24 (prompt-queue.md §7 G5) — ONE observation of the run set serves both `run` and
+  // `pendingPrompts`, so the two fields cannot disagree about a run that registers between them.
+  // FORK 2026-09-25 — read under the HOLDER key (reply-registry-key.ts resolveReplyHolderKey). For
+  // some configs the reply pipeline registers a turn's operation, queue and run under a key the
+  // store folds into this row, and a reading under the row key alone reported that turn's prompts
+  // PREPARING or BEHIND but never RUNNING, with `run.live` false while it ran. `pendingPrompts`
+  // reads the holder key's run set, where agent-runner registers the operation's run; `run` joins
+  // it with the row key's own reading, so the row never loses a run it showed before. An ordinary
+  // row (its own key is the holder key) takes one reading, as before. The row's own `cfg` decides
+  // the fold, as it decides everything else here.
+  const holderKey = resolveReplyHolderKey(key, () => cfg);
+  const heldRunLiveness = getSessionRunLiveness(holderKey, now);
+  const runLiveness =
+    holderKey === key
+      ? heldRunLiveness
+      : joinRunLiveness(getSessionRunLiveness(key, now), heldRunLiveness);
+  const pendingPrompts = derivePendingPromptsHeldUnder(key, holderKey, heldRunLiveness);
+  // FORK 2026-09-24 (context-window-panel.md §6.1 A7; failures.md M21) — the compaction LEDGER's
+  // per-session figures, from memory only (src/infra/compaction-ledger.ts). Undefined until the
+  // session's history from earlier gateway processes is seeded; the first read of an unseeded
+  // session queues that seed on the events writer's worker. Until then the row carries none of
+  // the ledger's fields (P10: absent, not zero).
+  const compactionLedger = readCompactionLedger(key, now);
 
   return {
     key,
@@ -1537,7 +1884,7 @@ export function buildGatewaySessionRow(params: {
     // verbatim passthrough of the archive and can latch at "running" (measured live) or be absent
     // (measured on 61 of 348 rows); this is what the PROCESS is actually holding open right now.
     // Additive: stage 2 publishes, no surface reads it yet.
-    run: getSessionRunLiveness(key, now),
+    run: runLiveness,
     subagentRunState,
     hasActiveSubagentRun: subagentRun ? liveSubagentRunActive : undefined,
     startedAt: subagentRun ? subagentStartedAt : entry?.startedAt,
@@ -1564,7 +1911,15 @@ export function buildGatewaySessionRow(params: {
     lastThreadId: deliveryFields.lastThreadId ?? entry?.lastThreadId,
     compactionCheckpointCount: entry?.compactionCheckpoints?.length,
     latestCompactionCheckpoint,
+    // FORK 2026-09-24 (context-window-panel.md §6.1 A7) — the entry's own durable counter as
+    // stored (absent when it never recorded one), then the ledger's figures: the view already
+    // omits every value the ledger cannot state (P10), so the spread adds only known keys.
+    ...(entry?.compactionCount !== undefined ? { compactionCount: entry.compactionCount } : {}),
+    ...compactionLedger,
     pluginExtensions: pluginExtensions.length > 0 ? pluginExtensions : undefined,
+    // FORK 2026-09-24 (prompt-queue.md §6.3 / §7 G5) — spread so the key is ABSENT, not an explicit
+    // undefined, when nothing is pending (the same rule as chat.ts's `disposition`).
+    ...(pendingPrompts ? { pendingPrompts } : {}),
   };
 }
 
@@ -1594,16 +1949,22 @@ export function loadGatewaySessionRow(
   sessionKey: string,
   options?: { includeDerivedTitles?: boolean; includeLastMessage?: boolean; now?: number },
 ): GatewaySessionRow | null {
-  const { cfg, storePath, store, entry, canonicalKey } = loadSessionEntry(sessionKey);
-  if (!entry) {
+  // FORK 2026-09-21 — runs on every sessions.changed broadcast. The store is
+  // only read here (resolveChildSessionKeys iterates it), so pass the cached
+  // object directly instead of paying a full-store clone via
+  // loadSessionEntry().store; the entry is still copied because the row
+  // embeds sub-objects of it.
+  const { cfg, storePath, rawStore, freshestMatch, canonicalKey } =
+    loadSessionEntryShared(sessionKey);
+  if (!freshestMatch) {
     return null;
   }
   return buildGatewaySessionRow({
     cfg,
     storePath,
-    store,
+    store: rawStore,
     key: canonicalKey,
-    entry,
+    entry: structuredClone(freshestMatch.entry),
     now: options?.now,
     includeDerivedTitles: options?.includeDerivedTitles,
     includeLastMessage: options?.includeLastMessage,
@@ -1761,6 +2122,13 @@ export function listSessionsFromStore(params: {
       // Jarvis can retrieve if necessary."
       if (entry?.deletedAt && !includeDeleted) {
         return false;
+      }
+      const operatorId = typeof opts.operatorId === "string" ? opts.operatorId.trim() : "";
+      if (operatorId) {
+        const meta = (entry as { operatorId?: string; seatId?: string } | undefined) ?? {};
+        if (!sessionVisibleToOperator(meta, operatorId, opts.includeHive === true)) {
+          return false;
+        }
       }
       return true;
     })

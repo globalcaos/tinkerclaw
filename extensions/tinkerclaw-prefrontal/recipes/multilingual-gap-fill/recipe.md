@@ -300,7 +300,7 @@ Look at a rasterised page; do not infer it from the text layer.
   the sentence "the article is about the genus, not this species" attached — the taxon
   rule from step 3 applied to the display, not just the key.
 - **When several editions give a hardiness figure, the WARMEST is the planning figure.**
-  A Coastal bed is not helped by the hardiest provenance on record; keep the spread and
+  A Coastline bed is not helped by the hardiest provenance on record; keep the spread and
   cite every edition, but plan on the least hardy claim.
 - **A rate-limited probe reports "one edition" for a plant with fifteen.** Two sweeps
   hitting Wikipedia concurrently drew 429s; the API helper returned `None`, the langlink

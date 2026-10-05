@@ -55,6 +55,20 @@ describe("personality-decoder", () => {
     expect(hasPatience).toBe(true);
   });
 
+  it("names the configured agent, never a hardcoded one", () => {
+    const combined = new Float32Array(target);
+    const map = getDimensionIndexMap(DEFAULT_TARGET_DIMENSIONS);
+    for (const idx of map.get("voice_consistency")!) {
+      combined[idx] = 0;
+    }
+    const text = decodePersonalityNudge(combined, target, 0.5, undefined, "Goku").adjustments.join(
+      "\n",
+    );
+    expect(text).toContain("**Goku:**");
+    expect(text).not.toContain("Jarvis");
+    expect(text).not.toContain("{name}");
+  });
+
   it("delta vector has correct length", () => {
     const combined = new Float32Array(64);
     const nudge = decodePersonalityNudge(combined, target, 0.3);

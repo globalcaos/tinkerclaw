@@ -25,7 +25,7 @@ const CONVERSATION_RULES = `
 const BRAIN_CAPABILITIES = `
 ## Your Brain
 
-You are running inside OpenClaw as the real-time brain. Use OpenClaw tools directly for anything beyond basic conversation:
+You are running inside TinkerClaw as the real-time brain. Use TinkerClaw tools directly for anything beyond basic conversation:
 - memory and prior conversations
 - calendar, tasks, files, and local tools
 - web research and URLs the user asks you to inspect

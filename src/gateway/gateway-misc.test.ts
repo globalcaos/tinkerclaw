@@ -150,7 +150,7 @@ describe("GatewayClient", () => {
     });
   });
 
-  it("still serves SPA fallback for extensionless paths", async () => {
+  it("returns 404 for extensionless paths (dashboard retired 2026-09-19)", async () => {
     await withControlUiRoot({}, async (tmp) => {
       const { res } = makeControlUiResponse();
       const handled = await handleControlUiHttpRequest(
@@ -159,7 +159,7 @@ describe("GatewayClient", () => {
         { root: { kind: "resolved", path: tmp } },
       );
       expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(404);
     });
   });
 
@@ -176,7 +176,7 @@ describe("GatewayClient", () => {
     });
   });
 
-  it("serves SPA fallback for dotted path segments that are not static assets", async () => {
+  it("returns 404 for dotted path segments (dashboard retired)", async () => {
     await withControlUiRoot({}, async (tmp) => {
       for (const route of ["/webchat/user/jane.doe", "/webchat/v2.0", "/settings/v1.2"]) {
         const { res } = makeControlUiResponse();
@@ -186,12 +186,12 @@ describe("GatewayClient", () => {
           { root: { kind: "resolved", path: tmp } },
         );
         expect(handled).toBe(true);
-        expect(res.statusCode, `expected 200 for ${route}`).toBe(200);
+        expect(res.statusCode, `expected 404 for ${route}`).toBe(404);
       }
     });
   });
 
-  it("serves SPA fallback for .html paths that do not exist on disk", async () => {
+  it("returns 404 for .html paths (dashboard retired)", async () => {
     await withControlUiRoot({}, async (tmp) => {
       const { res } = makeControlUiResponse();
       const handled = await handleControlUiHttpRequest(
@@ -200,7 +200,7 @@ describe("GatewayClient", () => {
         { root: { kind: "resolved", path: tmp } },
       );
       expect(handled).toBe(true);
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode).toBe(404);
     });
   });
 });

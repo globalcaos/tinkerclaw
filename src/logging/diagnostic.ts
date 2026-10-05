@@ -6,6 +6,7 @@ import {
   emitDiagnosticEvent,
   isDiagnosticsEnabled,
   type DiagnosticLivenessWarningReason,
+  type DiagnosticSessionStuckReason,
 } from "../infra/diagnostic-events.js";
 import { emitDiagnosticMemorySample, resetDiagnosticMemoryForTest } from "./diagnostic-memory.js";
 import {
@@ -53,6 +54,11 @@ const DEFAULT_LIVENESS_EVENT_LOOP_DELAY_WARN_MS = 1_000;
 const DEFAULT_LIVENESS_EVENT_LOOP_UTILIZATION_WARN = 0.95;
 const DEFAULT_LIVENESS_CPU_CORE_RATIO_WARN = 0.9;
 const DEFAULT_LIVENESS_WARN_COOLDOWN_MS = 120_000;
+/**
+ * The heartbeat period. Exported because `gw.health.sample` (src/infra/events/samplers/
+ * gateway-health.ts) samples at the same period on a timer of its own; its test pins the two equal.
+ */
+export const DIAGNOSTIC_HEARTBEAT_INTERVAL_MS = 30_000;
 let commandPollBackoffRuntimePromise: Promise<
   typeof import("../agents/command-poll-backoff.runtime.js")
 > | null = null;
@@ -85,10 +91,26 @@ type SampleDiagnosticLiveness = (
   work: DiagnosticWorkSnapshot,
 ) => DiagnosticLivenessSample | null;
 
+/**
+ * FORK 2026-09-24 (prompt-queue.md §7 G6, Task 15's P3). Reports a session's reply-operation
+ * phase for the stuck-session line: `queued`, `preflight_compacting` or `memory_flushing` while an
+ * accepted turn has not reached the model, `running` once it has. Returns undefined when the
+ * session holds no reply operation. Typed as a plain string so no registry type leaks into the
+ * logging layer.
+ *
+ * INJECTED, never imported. The phase lives in `src/auto-reply/reply/reply-run-registry.ts`, a
+ * three-import leaf this module does not reach today, and logging must not start depending on
+ * reply-pipeline code. The gateway passes the probe where it starts the heartbeat (the seam that
+ * already injects `getConfig`); `src/gateway/` already imports the registry.
+ */
+export type DiagnosticReplyPhaseProbe = (ref: SessionRef) => string | undefined;
+
 type StartDiagnosticHeartbeatOptions = {
   getConfig?: () => OpenClawConfig;
   emitMemorySample?: EmitDiagnosticMemorySample;
   sampleLiveness?: SampleDiagnosticLiveness;
+  /** Absent: the stuck-session line carries no `phase=` field (the pre-G6 line, byte for byte). */
+  replyPhaseProbe?: DiagnosticReplyPhaseProbe;
 };
 
 let diagnosticLivenessMonitor: EventLoopDelayMonitor | null = null;
@@ -123,6 +145,22 @@ function hasOpenDiagnosticWork(snapshot: DiagnosticWorkSnapshot): boolean {
   return snapshot.activeCount > 0 || snapshot.waitingCount > 0 || snapshot.queuedCount > 0;
 }
 
+export type DiagnosticWorkCounts = { active: number; waiting: number; queued: number };
+
+/**
+ * The heartbeat's work counts — sessions processing, sessions waiting, prompts queued — for the
+ * `gw.health.sample` row (TINKER_UI_DESIGN_BIBLE/logging.md §4.1). undefined while diagnostics are
+ * off for the process: the session-state map is not maintained then, so zeros would be a false
+ * reading rather than an honest gap.
+ */
+export function getDiagnosticWorkCounts(): DiagnosticWorkCounts | undefined {
+  if (!areDiagnosticsEnabledForProcess()) {
+    return undefined;
+  }
+  const work = getDiagnosticWorkSnapshot();
+  return { active: work.activeCount, waiting: work.waitingCount, queued: work.queuedCount };
+}
+
 function hasRecentDiagnosticActivity(now: number): boolean {
   const lastActivityAt = getLastDiagnosticActivityAt();
   return lastActivityAt > 0 && now - lastActivityAt <= RECENT_DIAGNOSTIC_ACTIVITY_MS;
@@ -142,6 +180,31 @@ function nanosecondsToMilliseconds(value: number): number {
 
 function formatOptionalDiagnosticMetric(value: number | undefined): string {
   return value === undefined ? "unknown" : String(value);
+}
+
+/**
+ * The stuck-session line's ` phase=` suffix (prompt-queue.md §7 G6). "" when no probe is injected,
+ * so the line stays byte-identical to the pre-G6 one. `none` = the probe ran and the session holds
+ * no reply operation: a real state (prompt-queue.md §4: holder A says processing, holder D has
+ * nothing) that must not read the same as "not wired". `unknown` = the probe threw. The throw is
+ * swallowed because this runs inside the heartbeat's timer callback, where it would otherwise be
+ * an uncaught exception.
+ */
+function formatStuckSessionPhaseField(
+  probe: DiagnosticReplyPhaseProbe | undefined,
+  ref: SessionRef,
+): string {
+  if (!probe) {
+    return "";
+  }
+  let phase: string | undefined;
+  try {
+    phase = probe({ sessionId: ref.sessionId, sessionKey: ref.sessionKey });
+  } catch (err) {
+    diag.debug(`stuck session phase probe failed: ${String(err)}`);
+    return " phase=unknown";
+  }
+  return ` phase=${typeof phase === "string" && phase.length > 0 ? phase : "none"}`;
 }
 
 function startDiagnosticLivenessSampler(): void {
@@ -520,6 +583,12 @@ export function logSessionStateChange(
  * An alive client with recent progress logs at DEBUG with an explicit
  * state=processing-alive marker instead of warning, and emits no event
  * (DiagnosticSessionStuckEvent is strict and cannot carry the marker).
+ *
+ * replyPhaseProbe (prompt-queue.md §7 G6) appends ` phase=<reply-op phase>` LAST on the warned
+ * line, so a turn the gateway accepted but has not taken to the model reads `phase=queued` rather
+ * than looking like a hung model call. It is consulted only when the line is actually written.
+ * Without it the line is unchanged. The phase is in the text only: the bus event carries the
+ * `reason` token (logging.md §4.1 `gw.session.stuck`), never the phase.
  */
 export function logSessionStuck(
   params: SessionRef & {
@@ -528,6 +597,7 @@ export function logSessionStuck(
     clientAlive?: boolean;
     lastProgressAtMs?: number;
     progressWindowMs?: number;
+    replyPhaseProbe?: DiagnosticReplyPhaseProbe;
   },
 ) {
   if (!areDiagnosticsEnabledForProcess()) {
@@ -553,18 +623,19 @@ export function logSessionStuck(
     }
     return;
   }
-  const reason =
+  const reason: DiagnosticSessionStuckReason =
     params.clientAlive === false
       ? "client-dead"
       : lastProgressAgoMs === undefined
         ? "no-progress-signal"
         : "no-recent-progress";
+  const phaseField = formatStuckSessionPhaseField(params.replyPhaseProbe, state);
   diag.warn(
     `stuck session: sessionId=${state.sessionId ?? "unknown"} sessionKey=${
       state.sessionKey ?? "unknown"
     } state=${params.state} age=${Math.round(params.ageMs / 1000)}s reason=${reason} lastProgressAgo=${
       lastProgressAgoMs === undefined ? "unknown" : `${Math.round(lastProgressAgoMs / 1000)}s`
-    } queueDepth=${state.queueDepth}`,
+    } queueDepth=${state.queueDepth}${phaseField}`,
   );
   emitDiagnosticEvent({
     type: "session.stuck",
@@ -573,6 +644,8 @@ export function logSessionStuck(
     state: params.state,
     ageMs: params.ageMs,
     queueDepth: state.queueDepth,
+    // logging.md §4.1 gw.session.stuck: the reason rides the bus too, not only the text line.
+    reason,
   });
   markActivity();
 }
@@ -733,10 +806,11 @@ export function startDiagnosticHeartbeat(
           ageMs,
           clientAlive: state.clientAlive,
           lastProgressAtMs: resolveDiagnosticSessionLastProgressAt(state),
+          replyPhaseProbe: opts?.replyPhaseProbe,
         });
       }
     }
-  }, 30_000);
+  }, DIAGNOSTIC_HEARTBEAT_INTERVAL_MS);
   heartbeatInterval.unref?.();
 }
 

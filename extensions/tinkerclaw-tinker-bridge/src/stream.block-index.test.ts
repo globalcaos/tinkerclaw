@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { blockKindOf, classifyTailRecover, createBlockKeyTracker } from "./stream.js";
+import {
+  blockKindOf,
+  classifyTailRecover,
+  createBlockKeyTracker,
+  keysForAssistantFrame,
+} from "./stream.js";
 
 // FORK 2026-08-28 (the architect: "There seems to be a disconnect between what Jarvis
 // answers and what is visible in the chat"). Two defects, both measured over one
@@ -78,17 +83,10 @@ function makeIngest() {
     /** cumulative `assistant` path — carries only a POSITION in content[]. */
     cumulative(id: string, blocks: Array<{ type: string; text?: string }>): void {
       keys.noteMessage(id);
-      let nthText = 0;
-      let nthThinking = 0;
-      for (const b of blocks) {
-        const kind = blockKindOf(b.type);
-        const key =
-          kind === "text"
-            ? keys.keyForContentOrdinal("text", nthText++)
-            : kind === "thinking"
-              ? keys.keyForContentOrdinal("thinking", nthThinking++)
-              : "";
-        if (kind !== "text" || typeof b.text !== "string") {
+      const frameKeys = keysForAssistantFrame(keys, blocks);
+      for (const [bi, b] of blocks.entries()) {
+        const key = frameKeys[bi];
+        if (blockKindOf(b.type) !== "text" || typeof b.text !== "string") {
           continue;
         }
         const prev = seen.get(key) ?? "";

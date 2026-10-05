@@ -49,6 +49,16 @@ function createClaudeHistoryLines(sessionId: string) {
       },
     }),
     JSON.stringify({
+      type: "user",
+      uuid: "internal-skill-reference",
+      timestamp: "2026-03-26T16:29:55.800Z",
+      isMeta: true,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "# Workflow authoring reference\n\nInternal context." }],
+      },
+    }),
+    JSON.stringify({
       type: "assistant",
       uuid: "assistant-2",
       timestamp: "2026-03-26T16:29:56.000Z",
@@ -172,6 +182,7 @@ describe("cli session history", () => {
           },
         ],
       });
+      expect(JSON.stringify(messages)).not.toContain("Workflow authoring reference");
     });
   });
 
@@ -231,6 +242,40 @@ describe("cli session history", () => {
         externalId: "user-2",
       },
     });
+  });
+
+  it("an import that carries the bridge-prefixed moral code is the SAME prompt as the local row", () => {
+    // 2026-09-23, agent:main:tinker:mtshq738 rows 940/941: on a resumed claude-cli session the
+    // bridge prefixes the moral-code pack to the next forwarded message, so the CLI copy was kept
+    // as a second, 65k-char "user prompt".
+    const prompt = "Ok, I understand what you want to say, but this diagram is not as descriptive";
+    const localMessages = [
+      { role: "user", content: prompt, timestamp: Date.parse("2026-09-23T06:56:55.000Z") },
+    ];
+    const importedMessages = [
+      {
+        role: "user",
+        content: `<moral_code source="tinkerclaw">\n\n# Ethical rules\n\n1. Truth before agreement.\n</moral_code>\n\n[Wed 2026-09-23 08:56 GMT+2] ${prompt}`,
+        timestamp: Date.parse("2026-09-23T06:56:56.136Z"),
+        __openclaw: { importedFrom: "claude-cli", externalId: "u-941", cliSessionId: "s" },
+      },
+    ];
+    const merged = mergeImportedChatHistoryMessages({ localMessages, importedMessages });
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toBe(localMessages[0]);
+  });
+
+  it("a moral-code block that does NOT open the message is not stripped", () => {
+    const localMessages = [{ role: "user", content: "quote this", timestamp: 1 }];
+    const importedMessages = [
+      {
+        role: "user",
+        content: 'quote this <moral_code source="tinkerclaw">x</moral_code>',
+        timestamp: 2,
+        __openclaw: { importedFrom: "claude-cli", externalId: "u-x", cliSessionId: "s" },
+      },
+    ];
+    expect(mergeImportedChatHistoryMessages({ localMessages, importedMessages })).toHaveLength(2);
   });
 
   it("augments chat history when a session has a claude-cli binding", async () => {

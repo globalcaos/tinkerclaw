@@ -8,7 +8,8 @@ Read-only. Prints four buckets: current / stale / new / orphan, plus the
 follow-up recipe to run for each actionable item. No writes, no publishing.
 
 Usage:  python3 audit-paper-posts.py
-Env:    reads WP_APP_PASSWORD from skills/wordpress-ultimate/.env
+Env:    reads WP_USER + WP_APP_PASSWORD from skills/wordpress-ultimate/.env
+        (WP_USER / WP_APP_PASSWORD in the environment override the file)
 """
 import os, re, json, glob, subprocess, sys
 
@@ -72,15 +73,18 @@ def topics_match(folder_topic, post_topic):
 
 
 def get_posts():
-    pw = ""
+    creds = {}
     with open(ENV) as f:
         for line in f:
-            if line.startswith("WP_APP_PASSWORD="):
-                pw = line.split("=", 1)[1].strip()
+            if "=" in line and not line.lstrip().startswith("#"):
+                k, v = line.split("=", 1)
+                creds[k.strip()] = v.strip()
+    user = os.environ.get("WP_USER") or creds.get("WP_USER") or "admin"
+    pw = os.environ.get("WP_APP_PASSWORD") or creds.get("WP_APP_PASSWORD", "")
     url = (f"{WP}/wp-json/wp/v2/posts?categories={CAT}&per_page=50"
            "&status=publish,draft&context=edit&_fields=id,status,slug,content,modified")
     out = subprocess.run(
-        ["curl", "-s", "-u", f"owner:{pw}", url],
+        ["curl", "-s", "-u", f"{user}:{pw}", url],
         capture_output=True, text=True).stdout
     posts = json.loads(out)
     res = []

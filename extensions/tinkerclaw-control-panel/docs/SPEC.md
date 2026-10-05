@@ -209,7 +209,7 @@ CREATE TABLE task (
   source TEXT NOT NULL,                             -- 'briefing' | 'conversation' | 'manual' | 'cron' | 'auto'
   source_ref TEXT,                                  -- e.g. briefing file path + line, or message id
   briefing_pass_id TEXT REFERENCES briefing_pass(id),-- (v3.1) which /new pass introduced this task
-  priority_axis TEXT CHECK(priority_axis IN ('online','family','me','acme','meta')),
+  priority_axis TEXT,                               -- any task_axis.id; axes are user data, no enumerated CHECK
   priority_rank INTEGER NOT NULL DEFAULT 50,        -- 0 = top, 100 = bottom within axis
   carry_days INTEGER NOT NULL DEFAULT 0,            -- how many briefings has this survived
   age_seconds INTEGER NOT NULL DEFAULT 0,           -- updated on every read
@@ -306,7 +306,7 @@ Short pushes are exposed in the right-click menu as one-clicks: "Snooze 1 h" / "
 Examples:
 
 ```json
-{ "type": "metric_below", "metric_id": "gmail_unread_caixa_enginyers", "threshold": 1 }
+{ "type": "metric_below", "metric_id": "gmail_unread_bank", "threshold": 1 }
 { "type": "metric_below", "metric_id": "msal_token_age_seconds", "threshold": 3600 }
 { "type": "event", "channel": "gmail.thread", "match": { "thread_id": "abc123", "label_added": "TRASH" } }
 { "type": "metric_above", "metric_id": "github_open_prs", "threshold": 0 }
@@ -317,7 +317,7 @@ If the signal evaluates true, the task auto-resolves with `source = 'auto'`, `ki
 
 #### v3.5 update — `task_axis` hierarchy
 
-`task_axis` gains `parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE`, with a partial index `task_axis_parent ON task_axis(parent_id) WHERE parent_id IS NOT NULL`. Hierarchy is capped at **two levels** (group → sub-group, no grandchildren) and the cap is enforced at the application layer via `validateParentDepth` in `src/store/axes.ts` — schema does not enforce depth because SQLite has no native recursion constraint and the application path is the single writer. The `parent_id` migration ships as `0abb0c7e6f` (idempotent `ALTER TABLE` for existing DBs) + `e60c1f45c9` (boot-order fix: the partial index is created in the migration, not the inline schema, so it runs after the column add on first-boot of a fresh DB). The five pre-existing axes (`online`, `family`, `me`, `acme`, `meta`) become top-level groups with `parent_id = NULL`; sub-groups are user-created from the UI.
+`task_axis` gains `parent_id TEXT REFERENCES task_axis(id) ON DELETE CASCADE`, with a partial index `task_axis_parent ON task_axis(parent_id) WHERE parent_id IS NOT NULL`. Hierarchy is capped at **two levels** (group → sub-group, no grandchildren) and the cap is enforced at the application layer via `validateParentDepth` in `src/store/axes.ts` — schema does not enforce depth because SQLite has no native recursion constraint and the application path is the single writer. The `parent_id` migration ships as `0abb0c7e6f` (idempotent `ALTER TABLE` for existing DBs) + `e60c1f45c9` (boot-order fix: the partial index is created in the migration, not the inline schema, so it runs after the column add on first-boot of a fresh DB). The seeded default axes (`ventures`, `online`, `family`, `me`, `work`, `meta`) and any user-created ones become top-level groups with `parent_id = NULL`; sub-groups are user-created from the UI.
 
 #### v3.5 update — Todoist removal
 
@@ -333,7 +333,7 @@ Caches calendar events from external sources for fast date-range queries (used b
 
 ```sql
 CREATE TABLE calendar_event_cache (
-  source TEXT NOT NULL,                             -- 'google.primary' | 'outlook.work' | 'manual'
+  source TEXT NOT NULL,                             -- '<provider>.<account>' (google.primary, outlook.work) | 'manual'
   event_id TEXT NOT NULL,                           -- provider's event id
   date TEXT NOT NULL,                               -- ISO date for the event's start (local TZ)
   start_ts INTEGER NOT NULL,                        -- unix ms
@@ -568,9 +568,9 @@ Data comes from `control-panel.calendar.density` for the heat + `control-panel.t
   ⬜ Sasha-Apr-4 flowers (Day 37, firm nudge zone)     37d 2m   user ⋯
 
 🏃 Me (1)
-  ⬜ Sign Caixa Enginyers loan document                58h 3m   user ⋯
+  ⬜ Sign bank loan document                           58h 3m   user ⋯
 
-🏭 ACME (2)
+💼 Work (2)
   ⬜ Re-auth Microsoft (Day 7 daily ritual)            7d  3m   user ⋯
   ✅ Develop branch pushed (auto-resolved)             1m  —    me   (fading)
 ```
@@ -619,7 +619,7 @@ Click on a task row → expands inline showing:
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ ⬜ Sign Caixa Enginyers loan document         58h 3m  user ⋯ │
+│ ⬜ Sign bank loan document                    58h 3m  user ⋯ │
 ├───────────────────────────────────────────────────────────────┤
 │                                                                │
 │  Context                                                       │
@@ -712,7 +712,7 @@ A scrollable calendar grid overlay shown when the user picks "Reschedule to → 
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│  Reschedule "Sign Caixa Enginyers loan document" to…              │
+│  Reschedule "Sign bank loan document" to…                         │
 │                                                                     │
 │  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┐  ▲             │
 │  │Mon 11│Tue 12│Wed 13│Thu 14│Fri 15│Sat 16│Sun 17│  │             │
@@ -819,8 +819,8 @@ The morning briefing's `/new` output ends with a code block the plugin consumes:
   "prune_missing": false,
   "tasks": [
     {
-      "id": "caixa_signature_2026-05-06",
-      "text": "Sign Caixa Enginyers loan document",
+      "id": "bank_signature_2026-05-06",
+      "text": "Sign bank loan document",
       "context_md": "Loan paperwork from May 6, escalated to sign-now status Saturday 21:01. **58 hours** of weekend non-action on a 5-minute financial obligation. [Open original email](gmail://thread/abc123). [Open sign-now reminder](gmail://thread/def456).",
       "priority_axis": "me",
       "priority_rank": 1,
@@ -841,8 +841,8 @@ The morning briefing's `/new` output ends with a code block the plugin consumes:
     {
       "id": "outlook_msal_reauth_daily",
       "text": "Re-auth Microsoft sign-in (daily ritual day 7)",
-      "context_md": "Microsoft's SPA refresh token has expired every morning since 2026-05-04 (7 consecutive days). The structural fix is a confidential-client-app token with months-long lifetime — scheduled for May 19. Until then, the daily ritual unblocks ACME + Teams calendar visibility for the rest of the day.",
-      "priority_axis": "acme",
+      "context_md": "Microsoft's SPA refresh token has expired every morning since 2026-05-04 (7 consecutive days). The structural fix is a confidential-client-app token with months-long lifetime — scheduled for May 19. Until then, the daily ritual unblocks work Outlook + Teams calendar visibility for the rest of the day.",
+      "priority_axis": "work",
       "priority_rank": 1,
       "carry_days": 7,
       "est_minutes": 3,
@@ -928,7 +928,7 @@ All colors are CSS variables, themed via `[data-theme="dark|light"]`. Default = 
   --axis-online: #f5b800; /* gold */
   --axis-family: #e8849e; /* warm pink */
   --axis-me: #6cb1e8; /* soft blue */
-  --axis-acme: #8a8a92; /* slate */
+  --axis-work: #8a8a92; /* slate */
   --axis-meta: #6a6a73; /* faded */
 
   /* Typography */
@@ -1029,7 +1029,7 @@ Motion respects `prefers-reduced-motion: reduce` — all transitions collapse to
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ ⬜  Sign Caixa Enginyers loan document    58h  3m  user  ⋯  │
+│ ⬜  Sign bank loan document               58h  3m  user  ⋯  │
 └─────────────────────────────────────────────────────────────┘
    ↑    ↑                                    ↑    ↑    ↑    ↑
    icon text (truncates with ellipsis)       age  est  hands menu
@@ -1056,7 +1056,7 @@ Motion respects `prefers-reduced-motion: reduce` — all transitions collapse to
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ ⬜  Sign Caixa Enginyers loan document    58h  3m  user  ⋯  │
+│ ⬜  Sign bank loan document               58h  3m  user  ⋯  │
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  📅  Due Thu 14 May  (in 2 days)                  [change]   │
@@ -1215,15 +1215,15 @@ This covers the "I'm at my desk, I want to add a task" case that's currently Tod
 
 ### 14.4 Migration path
 
-| Step | Decision / action                                                                                                                                                                                                                                                                                                                                                         |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1    | **Choose: import or start fresh.** Current Todoist API token is expired (broken 15 days, per preflight). Import requires one-time token rotation; start-fresh requires nothing.                                                                                                                                                                                           |
-| 2a   | **If importing**: rotate the Todoist token once, call `todoist.tasks.list` for both projects (`ACME Work` `6g4Hq9fWCGwGWqvj` + `PROJECT Workshop` `6g4HvJ57235xpC7m`), map each task → `control_panel_tasks_add` with `priority_axis = 'acme'` and the original due dates / labels preserved in `metadata_json`. One-shot script in `scripts/migrate-from-todoist.mjs`. |
-| 2b   | **If starting fresh**: skip the import. Todoist's recent state is sparse anyway (subscription on the brink, token broken 15 days). Briefing's daily passes naturally re-surface what matters.                                                                                                                                                                             |
-| 3    | Use the Control Panel for **2 weeks** while Todoist subscription stays paid (rollback safety net).                                                                                                                                                                                                                                                                        |
-| 4    | After 2 weeks of confident usage: **cancel Todoist subscription**. Resolves three carry items in MEMORY.md naturally: "Todoist token rotation pending", "card-on-file update", "recurring failed-payment emails".                                                                                                                                                         |
+| Step | Decision / action                                                                                                                                                                                                                                                                                                                        |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | **Choose: import or start fresh.** Current Todoist API token is expired (broken 15 days, per preflight). Import requires one-time token rotation; start-fresh requires nothing.                                                                                                                                                          |
+| 2a   | **If importing**: rotate the Todoist token once, call `todoist.tasks.list` for both projects (the work project + the workshop project), map each task → `control_panel_tasks_add` with `priority_axis = 'work'` and the original due dates / labels preserved in `metadata_json`. One-shot script in `scripts/migrate-from-todoist.mjs`. |
+| 2b   | **If starting fresh**: skip the import. Todoist's recent state is sparse anyway (subscription on the brink, token broken 15 days). Briefing's daily passes naturally re-surface what matters.                                                                                                                                            |
+| 3    | Use the Control Panel for **2 weeks** while Todoist subscription stays paid (rollback safety net).                                                                                                                                                                                                                                       |
+| 4    | After 2 weeks of confident usage: **cancel Todoist subscription**. Resolves three carry items in MEMORY.md naturally: "Todoist token rotation pending", "card-on-file update", "recurring failed-payment emails".                                                                                                                        |
 
-**Recommendation**: start fresh (2b). Lower friction, the ACME tasks worth keeping will reappear via the briefing within the first few days.
+**Recommendation**: start fresh (2b). Lower friction, the work tasks worth keeping will reappear via the briefing within the first few days.
 
 ### 14.5 Net consequences
 

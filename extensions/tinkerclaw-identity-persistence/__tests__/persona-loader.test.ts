@@ -18,7 +18,7 @@ describe("Persona Loader", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "cortex-"));
     vi.stubEnv("HOME", dir);
-    mkdirSync(join(dir, ".openclaw"), { recursive: true });
+    mkdirSync(join(dir, ".openclaw", "workspace"), { recursive: true });
   });
 
   afterEach(() => {
@@ -38,7 +38,7 @@ A witty AI assistant who serves as an extension of the user.
 - Hedging: rare
 - Emoji: never`;
 
-    writeFileSync(join(dir, ".openclaw", "SOUL.md"), soulContent);
+    writeFileSync(join(dir, ".openclaw", "workspace", "SOUL.md"), soulContent);
 
     const persona = loadPersonaFromFiles({});
     expect(persona.name).toBe("Jarvis");
@@ -51,14 +51,17 @@ A witty AI assistant who serves as an extension of the user.
 
   it("generates default persona when SOUL.md missing", () => {
     const persona = loadPersonaFromFiles({});
-    expect(persona.name).toBe("JarvisOne");
+    expect(persona.name).toBe("Agent");
     expect(persona.identityStatement).toBe("AI assistant and extension of the user");
     expect(persona.version).toBe(1);
     expect(persona.voiceMarkers.vocabularyTier).toBe("standard");
   });
 
   it("prefers persona.json over SOUL.md when both exist", () => {
-    writeFileSync(join(dir, ".openclaw", "SOUL.md"), "# From SOUL\n\nSome identity from SOUL.");
+    writeFileSync(
+      join(dir, ".openclaw", "workspace", "SOUL.md"),
+      "# From SOUL\n\nSome identity from SOUL.",
+    );
     const personaJson = createDefaultPersonaState("FromJSON", "Identity from JSON file");
     writeFileSync(join(dir, ".openclaw", "persona.json"), JSON.stringify(personaJson));
 
@@ -69,7 +72,7 @@ A witty AI assistant who serves as an extension of the user.
 
   it("falls through to SOUL.md when persona.json is invalid", () => {
     writeFileSync(
-      join(dir, ".openclaw", "SOUL.md"),
+      join(dir, ".openclaw", "workspace", "SOUL.md"),
       "# FallbackName\n\n## Identity\nFallback identity.",
     );
     writeFileSync(join(dir, ".openclaw", "persona.json"), "not-valid-json{{{");
@@ -80,8 +83,14 @@ A witty AI assistant who serves as an extension of the user.
   });
 
   it("IDENTITY.md overrides inline identity from SOUL.md", () => {
-    writeFileSync(join(dir, ".openclaw", "SOUL.md"), "# TestBot\n\n## Identity\nFrom SOUL.");
-    writeFileSync(join(dir, ".openclaw", "IDENTITY.md"), "Override identity from IDENTITY.md");
+    writeFileSync(
+      join(dir, ".openclaw", "workspace", "SOUL.md"),
+      "# TestBot\n\n## Identity\nFrom SOUL.",
+    );
+    writeFileSync(
+      join(dir, ".openclaw", "workspace", "IDENTITY.md"),
+      "Override identity from IDENTITY.md",
+    );
 
     const persona = loadPersonaFromFiles({});
     expect(persona.name).toBe("TestBot");
@@ -97,7 +106,10 @@ A witty AI assistant who serves as an extension of the user.
   });
 
   it("respects name override option", () => {
-    writeFileSync(join(dir, ".openclaw", "SOUL.md"), "# OriginalName\n\nSome identity.");
+    writeFileSync(
+      join(dir, ".openclaw", "workspace", "SOUL.md"),
+      "# OriginalName\n\nSome identity.",
+    );
     const persona = loadPersonaFromFiles({ name: "OverrideName" });
     expect(persona.name).toBe("OverrideName");
   });
@@ -118,7 +130,7 @@ A witty AI assistant who serves as an extension of the user.
 - Frequency: 0.7
 - Sensitivity: 0.3`;
 
-    writeFileSync(join(dir, ".openclaw", "SOUL.md"), soulContent);
+    writeFileSync(join(dir, ".openclaw", "workspace", "SOUL.md"), soulContent);
 
     const persona = loadPersonaFromFiles({});
     expect(persona.humor.humorFrequency).toBe(0.7);
@@ -161,7 +173,7 @@ describe("CortexRuntime factory", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "cortex-rt-"));
     vi.stubEnv("HOME", dir);
-    mkdirSync(join(dir, ".openclaw"), { recursive: true });
+    mkdirSync(join(dir, ".openclaw", "workspace"), { recursive: true });
   });
 
   afterEach(() => {
@@ -171,7 +183,7 @@ describe("CortexRuntime factory", () => {
 
   it("creates runtime with default persona", () => {
     const rt = createCortexRuntime();
-    expect(rt.persona.name).toBe("JarvisOne");
+    expect(rt.persona.name).toBe("Agent");
     expect(rt.ewmaSyncScore).toBe(1.0);
   });
 
@@ -180,6 +192,6 @@ describe("CortexRuntime factory", () => {
     const block1 = rt.getPersonaBlock();
     const block2 = rt.getPersonaBlock();
     expect(block1).toBe(block2); // same reference (cached)
-    expect(block1).toContain("JarvisOne");
+    expect(block1).toContain("Agent");
   });
 });

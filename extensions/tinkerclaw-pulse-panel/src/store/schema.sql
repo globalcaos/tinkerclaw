@@ -5,6 +5,17 @@
 --
 -- All tables live in one file (`store.db`) under the configured dataDir.
 -- WAL mode is enabled at boot for concurrent read-during-write.
+--
+-- OWNERSHIP (2026-09-08). This file documents every table in the shared store,
+-- but the Pulse panel only CREATES the ones it owns:
+--   Pulse-owned, always created  : metric_definition, observation, alert_state,
+--                                  panel_pin   (PULSE_PANEL_SCHEMA_SQL)
+--   Task-panel-owned, opt-in only: briefing_pass, task, task_axis,
+--                                  task_est_preset, task_event,
+--                                  calendar_event_cache (TASK_PANEL_SCHEMA_SQL,
+--                                  applied only under `manageTaskSchema: true`;
+--                                  tinkerclaw-task-panel creates and migrates
+--                                  them itself).
 
 ------------------------------------------------------------------------------
 -- METRICS (LIVE + SNAPSHOT)
@@ -66,7 +77,8 @@ CREATE TABLE IF NOT EXISTS task (
   source TEXT NOT NULL,
   source_ref TEXT,
   briefing_pass_id TEXT REFERENCES briefing_pass(id),
-  priority_axis TEXT CHECK (priority_axis IN ('online','family','me','acme','meta')),
+  -- Any axis id: axes are user data in task_axis (no enumerated CHECK).
+  priority_axis TEXT,
   priority_rank INTEGER NOT NULL DEFAULT 50,
   carry_days INTEGER NOT NULL DEFAULT 0,
   age_seconds INTEGER NOT NULL DEFAULT 0,

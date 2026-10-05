@@ -175,7 +175,9 @@ how the same bug returns a month later.
 The fix commit must not touch a test file. If the test fails, fix the code,
 not the test; a wrong expectation is corrected in its own commit with a
 logged ruling, never inside the fix. Read the staged diff before committing
-and reject the commit if a test path is in it.
+and reject the commit if a test path is in it. Commit grain follows
+`git-instructions`: one hop, no "and" in the subject, what/why/impact in the
+body. A fix that also rewires an adjacent layer is two commits.
 
 ### 6. Verify as the user would
 
@@ -209,7 +211,8 @@ still unknown. This pass counts as one attempt; it does not repeat.
 
 - No code change without a confirmed root cause named as `file:line`.
 - Fix the cause, not the symptom; do not refactor while debugging.
-- One fix per commit; stage only that fix's files.
+- One fix per commit; stage only that fix's files. Grain is `git-instructions`:
+  one hop, tests travel with it, message answers what / why / impact.
 - Clear caches before rebuilding (`rm -rf dist/.cache node_modules/.cache`) —
   otherwise the "fix" is never in the artifact you test.
 - A hypothesis leg reports a command and its output, never an opinion.

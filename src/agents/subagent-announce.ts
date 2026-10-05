@@ -26,6 +26,10 @@ import {
 import type { SubagentAnnounceDeliveryResult } from "./subagent-announce-dispatch.js";
 import { resolveAnnounceOrigin } from "./subagent-announce-origin.js";
 import {
+  buildEmptyResultReplyInstruction,
+  describeAnnounceOutcome,
+} from "./subagent-announce-outcome.js";
+import {
   applySubagentWaitOutcome,
   buildChildCompletionFindings,
   buildCompactAnnounceStatsLine,
@@ -451,19 +455,20 @@ export async function runSubagentAnnounceFlow(params: {
       outcome = { status: "unknown" };
     }
 
-    // Build status label
-    const statusLabel =
-      outcome.status === "ok"
-        ? "completed successfully"
-        : outcome.status === "timeout"
-          ? "timed out"
-          : outcome.status === "error"
-            ? `failed: ${outcome.error || "unknown error"}`
-            : "finished with unknown status";
+    // Build status label. FORK 2026-09-07 — `ok` used to mean "completed successfully"
+    // unconditionally, which conflated the transport fact (the child ended without erroring)
+    // with the result fact (it produced something). describeAnnounceOutcome tells them apart;
+    // see its header for the measured incident.
+    const outcomeDescription = describeAnnounceOutcome({
+      status: outcome.status,
+      error: outcome.error,
+      rawFindings: childCompletionFindings || reply || "",
+    });
+    const statusLabel = outcomeDescription.statusLabel;
 
     const taskLabel = params.label || params.task || "task";
     const announceSessionId = childSessionId || "unknown";
-    const findings = childCompletionFindings || reply || "(no output)";
+    const findings = outcomeDescription.findings;
 
     let requesterIsSubagent = requesterIsInternalSession();
     if (requesterIsSubagent) {
@@ -494,11 +499,17 @@ export async function runSubagentAnnounceFlow(params: {
       }
     }
 
-    const replyInstruction = buildAnnounceReplyInstruction({
-      requesterIsSubagent,
-      announceType,
-      expectsCompletionMessage,
-    });
+    // FORK 2026-09-07 — there is nothing to "convert into your normal assistant voice" when the
+    // child returned nothing, and telling the parent to do it anyway is what turned an empty
+    // 0-token run into a confident user-facing update. Say the truth instead; it is also the
+    // cheaper turn.
+    const replyInstruction = outcomeDescription.producedNoOutput
+      ? buildEmptyResultReplyInstruction(announceType)
+      : buildAnnounceReplyInstruction({
+          requesterIsSubagent,
+          announceType,
+          expectsCompletionMessage,
+        });
     const statsLine = await buildCompactAnnounceStatsLine({
       sessionKey: params.childSessionKey,
       startedAt: params.startedAt,

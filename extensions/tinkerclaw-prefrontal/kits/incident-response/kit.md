@@ -35,7 +35,7 @@ parallelism:
     0=Contain, 1=Assess, 2=Remediate, 3=Communicate, 4=Postmortem.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

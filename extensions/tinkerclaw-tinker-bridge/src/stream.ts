@@ -17,7 +17,24 @@ import {
 import { emitAgentEvent } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { buildErrorEnvelope } from "openclaw/plugin-sdk/fork-error-envelope";
+import {
+  type CallPromptParts,
+  type CallTelemetryEvent,
+  type CompactionTelemetryEvent,
+  allocateCallIndex,
+  compactionTokenCount,
+  emitCallTelemetry,
+  emitCompactionTelemetry,
+} from "openclaw/plugin-sdk/fork-telemetry";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+import { decideChannelReply, isChatChannelRun } from "./channel-reply.js";
+import {
+  type CliCompactionEnd,
+  CHAT_ROW_CONTRACT_MARKER,
+  describeCliCommandOutcome,
+  extractCliCommand,
+} from "./cli-command.js";
+import { type CliContextSource, cliContextFor } from "./cli-context.js";
 import {
   DEFAULT_CWD,
   DEFAULT_DISALLOWED_TOOLS,
@@ -36,8 +53,12 @@ import type {
   CcStreamStdoutUserMessage,
   CcUsage,
 } from "./protocol.js";
+import { ensureAdoptionScan, markReattachClaimed, resumedTurnFields } from "./restart-reattach.js";
+import { noteThalamusSubagentCall } from "./thalamus-worker-seam.js";
 import { thinkLevelToMaxThinkingTokens } from "./thinking-budget.js";
 import { recordToolEvent } from "./tool-buffer.js";
+import { resolveTranscriptPath } from "./transcript-path.js";
+import { parseUnpromptedWakeMarker, UNPROMPTED_TURN_GONE_TEXT } from "./unprompted-turn.js";
 import { getPool } from "./worker-pool.js";
 import type { WorkerEvent } from "./worker.js";
 
@@ -292,6 +313,19 @@ function deriveSessionKey(
 // retained: no ingest path uses it any more, but it is the property pinned by
 // stream.block-key.test.ts and it remains the honest answer to "which raw index
 // did this message use?" for diagnostics.
+//
+// FORK 2026-09-24 (the architect: "in nearly every thinking message … the messages show
+// twice") — a per-frame ordinal is only right while a message holds ONE block of
+// each kind. claude-cli writes one `assistant` frame PER BLOCK, right after that
+// block's deltas and before its content_block_stop, so every one-block frame
+// counted itself as ordinal 0. Opus 5.5 at effort xhigh sends TWO thinking
+// blocks per message (an empty signed one, then the narration): the narration's
+// frame resolved to the empty block's key, found prev "", and pushed the whole
+// text again on top of the deltas — "X\n\nX" in 17 of one turn's 30 thinking
+// messages. A frame with one block of a kind is the block the delta path touched
+// LAST of that kind, so it takes that block's key (`keyForFrameBlock`); frames
+// holding several blocks of a kind, or arriving with no stream events at all,
+// keep the ordinal. Tests: stream.thinking-frames.test.ts.
 export type BlockKind = "text" | "thinking";
 
 /**
@@ -316,6 +350,7 @@ export function createBlockKeyTracker(): {
   keyFor: (index: number) => string;
   keyForStreamIndex: (index: number, kind: BlockKind) => string;
   keyForContentOrdinal: (kind: BlockKind, ordinal: number) => string;
+  keyForFrameBlock: (kind: BlockKind, ordinal: number, sameKindInFrame: number) => string;
 } {
   let currentMessageId = "m0";
   // Absolute block index -> the "<kind>:<ordinal>" it was assigned, for the
@@ -323,10 +358,13 @@ export function createBlockKeyTracker(): {
   // restarts block indices at 0 in every new assistant message.
   const assignedByIndex = new Map<number, string>();
   const nextOrdinal: Record<BlockKind, number> = { text: 0, thinking: 0 };
+  // The absolute index the delta path touched last, per kind, in the CURRENT message.
+  const lastStreamedIndex = new Map<BlockKind, number>();
 
   // Idempotent: an index announced by content_block_start and then streamed by
   // content_block_delta must resolve to the SAME ordinal, not consume two.
   const assign = (index: number, kind: BlockKind): string => {
+    lastStreamedIndex.set(kind, index);
     const existing = assignedByIndex.get(index);
     if (existing !== undefined && existing.startsWith(`${kind}:`)) {
       return existing;
@@ -344,6 +382,7 @@ export function createBlockKeyTracker(): {
       }
       currentMessageId = next;
       assignedByIndex.clear();
+      lastStreamedIndex.clear();
       nextOrdinal.text = 0;
       nextOrdinal.thinking = 0;
     },
@@ -359,7 +398,39 @@ export function createBlockKeyTracker(): {
       `${currentMessageId}:${assign(index, kind)}`,
     keyForContentOrdinal: (kind: BlockKind, ordinal: number): string =>
       `${currentMessageId}:${kind}:${ordinal}`,
+    keyForFrameBlock: (kind: BlockKind, ordinal: number, sameKindInFrame: number): string => {
+      const streamed = lastStreamedIndex.get(kind);
+      if (sameKindInFrame === 1 && streamed !== undefined) {
+        return `${currentMessageId}:${assign(streamed, kind)}`;
+      }
+      return `${currentMessageId}:${kind}:${ordinal}`;
+    },
   };
+}
+
+export type BlockKeyTracker = ReturnType<typeof createBlockKeyTracker>;
+
+/**
+ * The key of every block in one cumulative `assistant` frame, in order; "" for a
+ * block that carries no prose (tool_use, server_tool_use, …). The ordinal is
+ * consumed by TYPE, up front, so a malformed block cannot desync the blocks
+ * after it.
+ */
+export function keysForAssistantFrame(
+  keys: BlockKeyTracker,
+  blocks: ReadonlyArray<{ type?: unknown }>,
+): string[] {
+  const kinds = blocks.map((block) => blockKindOf(block?.type));
+  const total: Record<BlockKind, number> = { text: 0, thinking: 0 };
+  for (const kind of kinds) {
+    if (kind !== null) {
+      total[kind]++;
+    }
+  }
+  const nth: Record<BlockKind, number> = { text: 0, thinking: 0 };
+  return kinds.map((kind) =>
+    kind === null ? "" : keys.keyForFrameBlock(kind, nth[kind]++, total[kind]),
+  );
 }
 
 // predicate for the stream watchdog. Returns true when a turn has clearly
@@ -372,6 +443,15 @@ export function createBlockKeyTracker(): {
 // legitimately-long heavy TOOL turn — which streams MANY lines while text.len
 // and thinking.len stay 0 — is NEVER fast-failed. Only a turn that is both
 // content-empty AND line-quiet (the init-wedge signature) qualifies.
+//
+// FORK 2026-09-25 (context-window-panel.md §6.1 A6 (i)): a COMPACTION wears that
+// signature and is not a wedge. The CLI's compaction runs 2–3.6 minutes and says
+// nothing but a `system/status` `compacting` line (re-sent every 30 s only while a
+// precomputed one is pending), so at the 90 s tick a `/compact` turn has text 0,
+// thinking 0 and a handful of lines, and this predicate SIGTERMed it mid-compaction.
+// `compacting` is true for a turn that IS `/compact` (cli-command.ts) and for any turn
+// while the CLI's own `compacting` status is latched (createCompactionLineReader). The
+// turn stays bounded by the request timeout and the user's Stop.
 export function shouldFastFailInitStall(args: {
   elapsedMs: number;
   textLen: number;
@@ -379,10 +459,13 @@ export function shouldFastFailInitStall(args: {
   linesSeen: number;
   initSilentMs?: number;
   maxInitLines?: number;
+  /** A compaction is running (see above): never a wedge, whatever else holds. */
+  compacting?: boolean;
 }): boolean {
   const initSilentMs = args.initSilentMs ?? FAST_FAIL_INIT_SILENT_MS;
   const maxInitLines = args.maxInitLines ?? FAST_FAIL_MAX_INIT_LINES;
   return (
+    args.compacting !== true &&
     args.elapsedMs > initSilentMs &&
     args.textLen === 0 &&
     args.thinkingLen === 0 &&
@@ -462,6 +545,412 @@ export function classifyTailRecover(args: { streamed: string; result: string; he
   return { verdict: "missing", append: streamedLen > 0 ? `\n\n${result}` : result };
 }
 
+// FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/context-window-panel.md §6.1 A8) — the cc-bridge
+// producer of the per-model-call contract (the call stream): one event per phase of every API call
+// the CLI makes, read off the stdout lines Step 0 measured (§6.0 a).
+//
+//   send   {type:"system", subtype:"status", status:"requesting"} — the CLI's own per-request
+//          marker, measured right before its message_start (a stdin write would be once per
+//          TURN, and a tool loop is many calls inside one turn)
+//   usage  stream_event message_start — message.usage input / cache_read / cache_creation
+//   end    stream_event message_delta — usage (output, and the final input side) + stop_reason
+//
+// The contract's owner is src/infra/call-telemetry.ts, reached through the published subpath
+// `openclaw/plugin-sdk/fork-telemetry` (src/plugin-sdk/fork-telemetry.ts). The tracker below
+// produces the owner's own CallTelemetryEvent, the owner's emitCallTelemetry builds the wire
+// payload and publishes it, and the owner's allocateCallIndex numbers this lane's calls.
+//
+// MIRROR RETIRED 2026-09-24. Until that subpath existed this file could not import the owner, so
+// it rebuilt the payload to the same shape, kept its own per-run call counter and wrote the stream
+// literal itself, under a RATCHET note that the two builders must agree key for key. The mirrored
+// builder, its count rule and its counter are deleted: the owner is again the only shipped file
+// that writes the literal, and a change to the contract reaches this lane with no second edit.
+// What stays here is the line MAPPING, which belongs to this lane alone.
+//
+// What the tracker does when the stream leaves the happy path:
+//   - A call it can no longer follow is ENDED, never left open: a second `requesting` (the CLI
+//     retried), a second message_start before any message_delta, the `result` line and the
+//     stream fn's `finally` each close it with an `end` carrying only what was measured, so a
+//     timeline block drawn from send to end cannot grow forever.
+//   - message_start with no `requesting` before it still opens a call (a CLI that does not send
+//     the marker); only the send is missing, and nothing is invented in its place.
+//   - A stream_event with a `parent_tool_use_id` belongs to a subagent the CLI ran inside a tool;
+//     its prompt is not this session's context, so it is not read. UNVERIFIED: whether the CLI
+//     sends `requesting` for those requests too. If it does, each shows as a send that the next
+//     main-thread request ends empty.
+//   - message_start's `output_tokens` is the count at first byte, not the call's output: output
+//     is read from message_delta only.
+//   - Absent, not zero: a count that is missing, null, negative or not finite is omitted (the
+//     owner's compactionTokenCount rule, imported rather than mirrored); a reported 0 is kept.
+
+/**
+ * What every call event of this lane carries. §6.0 (a) measured per-call usage on this stream, so
+ * every count is the CLI's own; an event without counts vouches only for its timestamp, which is
+ * observed too.
+ */
+const CC_BRIDGE_CALL = { lane: "cc-bridge", provenance: "exact" } as const;
+
+function readCallPromptParts(usage: unknown): CallPromptParts {
+  const fields = usage && typeof usage === "object" ? (usage as Record<string, unknown>) : {};
+  return {
+    input: compactionTokenCount(fields.input_tokens),
+    cacheRead: compactionTokenCount(fields.cache_read_input_tokens),
+    cacheWrite: compactionTokenCount(fields.cache_creation_input_tokens),
+  };
+}
+
+/** What the tracker tells a sub-agent counter: the same counts it reads for a main-thread call, keyed by the parent tool call. */
+export type SubagentStreamEvent = {
+  phase: "start" | "end";
+  parentToolUseId: string;
+  t: number;
+  model?: string;
+  input?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  output?: number;
+};
+
+/**
+ * Pure: turns the CLI's stdout lines into the owner's call events. `nextCallIndex` numbers each new
+ * call; `now` is the observation time the caller stamps on every event a line produces.
+ */
+export function createBridgeCallTracker(
+  nextCallIndex: () => number,
+  /**
+   * FORK 2026-09-30 (THALAMUS v4 D5, design F7): told of each sub-agent call (a `parent_tool_use_id` event) so a
+   * plugin can COUNT them. It never changes what the tracker returns: the per-call feed still skips them. Absent: as before.
+   */
+  onSubagentEvent?: (event: SubagentStreamEvent) => void,
+): {
+  observe: (line: CcStreamStdoutLine, now: number) => CallTelemetryEvent[];
+  close: (now: number) => CallTelemetryEvent[];
+} {
+  let open: { callIndex: number; usageRead: boolean } | null = null;
+  const close = (now: number): CallTelemetryEvent[] => {
+    if (!open) {
+      return [];
+    }
+    const ended: CallTelemetryEvent = {
+      phase: "end",
+      callIndex: open.callIndex,
+      t: now,
+      ...CC_BRIDGE_CALL,
+    };
+    open = null;
+    return [ended];
+  };
+  const observe = (line: CcStreamStdoutLine, now: number): CallTelemetryEvent[] => {
+    const record = line as { type?: unknown; subtype?: unknown; status?: unknown };
+    if (record.type === "system" && record.subtype === "status" && record.status === "requesting") {
+      const frames = close(now);
+      const call = { callIndex: nextCallIndex(), usageRead: false };
+      open = call;
+      frames.push({ phase: "send", callIndex: call.callIndex, t: now, ...CC_BRIDGE_CALL });
+      return frames;
+    }
+    if (record.type === "result") {
+      return close(now);
+    }
+    if (record.type !== "stream_event") {
+      return [];
+    }
+    const streamLine = line as CcStreamStdoutStreamEvent & { parent_tool_use_id?: unknown };
+    if (typeof streamLine.parent_tool_use_id === "string" && streamLine.parent_tool_use_id) {
+      if (onSubagentEvent) {
+        const sub = streamLine.event;
+        if (sub?.type === "message_start") {
+          const message = sub.message as { model?: unknown; usage?: unknown } | undefined;
+          onSubagentEvent({
+            phase: "start",
+            parentToolUseId: streamLine.parent_tool_use_id,
+            t: now,
+            ...(typeof message?.model === "string" && message.model
+              ? { model: message.model }
+              : {}),
+            ...readCallPromptParts(message?.usage),
+          });
+        } else if (sub?.type === "message_delta") {
+          const usage =
+            sub.usage && typeof sub.usage === "object"
+              ? (sub.usage as Record<string, unknown>)
+              : {};
+          onSubagentEvent({
+            phase: "end",
+            parentToolUseId: streamLine.parent_tool_use_id,
+            t: now,
+            ...readCallPromptParts(usage),
+            output: compactionTokenCount(usage.output_tokens),
+          });
+        }
+      }
+      return [];
+    }
+    const ev = streamLine.event;
+    if (ev?.type === "message_start") {
+      const frames: CallTelemetryEvent[] = open?.usageRead ? close(now) : [];
+      const call = open ?? { callIndex: nextCallIndex(), usageRead: false };
+      call.usageRead = true;
+      open = call;
+      const parts = readCallPromptParts((ev.message as { usage?: unknown } | undefined)?.usage);
+      if (Object.values(parts).some((value) => value !== undefined)) {
+        frames.push({
+          phase: "usage",
+          callIndex: call.callIndex,
+          t: now,
+          ...CC_BRIDGE_CALL,
+          ...parts,
+        });
+      }
+      return frames;
+    }
+    if (ev?.type === "message_delta" && open) {
+      const call = open;
+      open = null;
+      const usage =
+        ev.usage && typeof ev.usage === "object" ? (ev.usage as Record<string, unknown>) : {};
+      const stopReason = ev.delta?.stop_reason;
+      return [
+        {
+          phase: "end",
+          callIndex: call.callIndex,
+          t: now,
+          ...CC_BRIDGE_CALL,
+          ...readCallPromptParts(usage),
+          output: compactionTokenCount(usage.output_tokens),
+          ...(typeof stopReason === "string" && stopReason ? { stopReason } : {}),
+        },
+      ];
+    }
+    return [];
+  };
+  return { observe, close };
+}
+
+/**
+ * FORK 2026-09-29 (bible tinker-ui.md §5.8AB): the stop reason a stdout line reports for the
+ * TOP-LEVEL call, from a `stream_event` message_delta or a block-complete `assistant` line.
+ * Undefined for lines of a subagent call (parent_tool_use_id) and for lines without one.
+ */
+export function topLevelStopReasonOf(line: unknown): string | undefined {
+  if (!line || typeof line !== "object") {
+    return undefined;
+  }
+  const rec = line as {
+    type?: unknown;
+    parent_tool_use_id?: unknown;
+    event?: { type?: unknown; delta?: { stop_reason?: unknown } };
+    message?: { stop_reason?: unknown };
+  };
+  if (rec.parent_tool_use_id) {
+    return undefined;
+  }
+  const raw =
+    rec.type === "stream_event" && rec.event?.type === "message_delta"
+      ? rec.event.delta?.stop_reason
+      : rec.type === "assistant"
+        ? rec.message?.stop_reason
+        : undefined;
+  return typeof raw === "string" && raw ? raw : undefined;
+}
+
+/**
+ * The typed outcome for a turn the CLI ended with stop_reason "refusal". A fact the CLI states,
+ * not a classification, so it is built here rather than by src/fork/turn-outcome.ts (which the
+ * bridge cannot import without a plugin-sdk subpath); the shape is TurnOutcome's.
+ */
+export function bridgeRefusalOutcome(): {
+  kind: "refusal";
+  recoverable: false;
+  headline: string;
+  detail: string;
+  source: "cli";
+} {
+  return {
+    kind: "refusal",
+    recoverable: false,
+    headline: "The model refused to answer",
+    detail: 'Claude stopped this turn with stop_reason "refusal".',
+    source: "cli",
+  };
+}
+
+/**
+ * The stream fn's two hooks: `observe` every stdout line, `close` once the turn is over. A no-op
+ * without a runId, like every other agent event this file emits. Calls are numbered by the owner's
+ * allocateCallIndex on the cc-bridge lane: per RUN, so a retried attempt continues the numbering,
+ * and apart from the embedded lane's count for the same run. No try/catch around publishing: the
+ * owner's emitCallTelemetry hands the event to notifyListeners, which isolates each listener's
+ * throw.
+ *
+ * FORK 2026-10-02 (owner: "I see some sent information is unitemised ... assign it a bucket") —
+ * `contextFor` finds the CLI transcript's reader (cli-context.ts) at each call. A `usage` frame then
+ * carries `composition`: the billed prompt (input + cacheRead + cacheWrite) split into the panel's
+ * buckets from what the CLI's own transcript recorded, summing to that billed figure exactly. The
+ * read is wrapped: transcript I/O never breaks the call stream, it only leaves the frame without a
+ * composition. send and end frames never carry one.
+ */
+export function createBridgeCallTelemetry(
+  runId: string | undefined,
+  sessionKey: string | undefined,
+  contextFor?: () => CliContextSource | undefined,
+): { observe: (line: CcStreamStdoutLine) => void; close: () => void } {
+  if (!runId) {
+    return { observe: () => undefined, close: () => undefined };
+  }
+  const target = { runId, sessionKey };
+  let compositionFailureLogged = false;
+  const withComposition = (event: CallTelemetryEvent): CallTelemetryEvent => {
+    if (event.phase !== "usage" || !contextFor) {
+      return event;
+    }
+    const billed = (event.input ?? 0) + (event.cacheRead ?? 0) + (event.cacheWrite ?? 0);
+    if (!(billed > 0)) {
+      return event;
+    }
+    try {
+      const reader = contextFor();
+      if (!reader) {
+        return event;
+      }
+      reader.refresh();
+      const composition = reader.compose(billed);
+      return composition ? { ...event, composition } : event;
+    } catch (err) {
+      if (!compositionFailureLogged) {
+        compositionFailureLogged = true;
+        log.warn(`call composition skipped for run ${runId}: ${formatErrorMessage(err)}`);
+      }
+      return event;
+    }
+  };
+  const tracker = createBridgeCallTracker(
+    () => allocateCallIndex(runId, "cc-bridge"),
+    (e) =>
+      noteThalamusSubagentCall({
+        sessionKey,
+        phase: e.phase,
+        parentToolUseId: e.parentToolUseId,
+        t: e.t,
+        model: e.model,
+        inputTokens: e.input,
+        cacheReadTokens: e.cacheRead,
+        cacheWriteTokens: e.cacheWrite,
+        outputTokens: e.output,
+      }),
+  );
+  const publish = (events: CallTelemetryEvent[]) => {
+    for (const event of events) {
+      emitCallTelemetry(target, withComposition(event));
+    }
+  };
+  return {
+    observe: (line) => publish(tracker.observe(line, Date.now())),
+    close: () => publish(tracker.close(Date.now())),
+  };
+}
+
+// FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/context-window-panel.md §6.1 A3, finding F3a) — the
+// cc-bridge producer of the A1 compaction contract, for the claude CLI's OWN compactions. Its
+// owner is src/infra/compaction-telemetry.ts, reached through openclaw/plugin-sdk/fork-telemetry.
+//
+// WHY. On this lane the model reads the CLI's own transcript, so the CLI's compaction is the only
+// one that shrinks what it sees (F1 / F2). Before this reader the gateway never heard of it:
+// worker.ts forwards every parsed stdout line as a stream_line, and handleLine below had no arm
+// for `system`, so the line died there. The panel counted 0 compactions on the lane that compacts
+// most, and nothing could pulse through a compaction that runs 2-3.6 minutes.
+//
+// THE LINES (§6.0 b: the CLI's own stream-json schema, claude CLI 2.1.281):
+//   start  {type:"system", subtype:"status", status:"compacting"}. RE-SENT every 30 s while a
+//          precomputed compaction is pending, so it is LATCHED: one start per compaction.
+//   end    {type:"system", subtype:"compact_boundary", compact_metadata:{pre_tokens, post_tokens?,
+//          duration_ms?, ...}}: completed, with the CLI's own figures as tokensBefore /
+//          tokensAfter / durationMs. The latch resets here, so a second compaction starts again.
+//   end    {type:"system", subtype:"status", status:null, compact_result:"failed"}: the CLI gave
+//          the compaction up and sends no boundary. completed:false, no figures, latch reset, so
+//          the start is not left open. Code-evident in the installed CLI (its auto-compaction
+//          path sends failed with no boundary, and success beside one); not yet observed live.
+//
+// CHOICES, each against the alternative it rejects:
+//   - Snake_case `compact_metadata` only. camelCase `compactMetadata` is the TRANSCRIPT's
+//     spelling; a fallback to it would hide a change in the stream's shape behind a second path.
+//   - `cumulative_dropped_tokens` is never read. It is a running total across every earlier
+//     compaction (the CLI's own description), so as tokensDropped it would overstate every
+//     compaction after the first. tokensDropped stays absent; the consumer has before and after.
+//   - trigger is always "cli-internal", whatever the metadata's own trigger ("auto" or "manual")
+//     says: A1's trigger names the EXECUTOR, and on this lane that is the CLI either way.
+//   - A compact_result of "success" is not an end: the boundary is, and mapping both would count
+//     one compaction twice.
+//   - A boundary with no start before it still ends; nothing is invented in the start's place.
+//     And no end is invented at turn end for a start that saw no boundary: a precomputed
+//     compaction can finish in a later turn, and a fabricated completed:false would be false.
+//   - Absent, not zero: every figure passes through the owner's compactionTokenCount.
+// The wire literal stays in the owner (context-window-panel.md gate 7): this file hands it events.
+
+/** Every compaction event of this lane: the CLI decided it, and the CLI measured it. */
+const CLI_COMPACTION = {
+  trigger: "cli-internal",
+  lane: "cc-bridge",
+  provenance: "exact",
+} as const;
+
+/**
+ * Pure: the compaction events one stdout line carries (none or one). ONE reader per turn; the
+ * start latch is its only state, and `isCompacting` exposes it to the fast-fail watchdog, which
+ * must not read a compaction's silence as an init wedge (A6 (i)).
+ */
+export function createCompactionLineReader(): {
+  read: (line: CcStreamStdoutLine) => CompactionTelemetryEvent[];
+  isCompacting: () => boolean;
+} {
+  let compacting = false;
+  const read = (line: CcStreamStdoutLine): CompactionTelemetryEvent[] => {
+    const record = line as {
+      type?: unknown;
+      subtype?: unknown;
+      status?: unknown;
+      compact_result?: unknown;
+      compact_metadata?: unknown;
+    };
+    if (record.type !== "system") {
+      return [];
+    }
+    if (record.subtype === "compact_boundary") {
+      compacting = false;
+      const metadata =
+        record.compact_metadata && typeof record.compact_metadata === "object"
+          ? (record.compact_metadata as Record<string, unknown>)
+          : {};
+      const tokensBefore = compactionTokenCount(metadata.pre_tokens);
+      const tokensAfter = compactionTokenCount(metadata.post_tokens);
+      const durationMs = compactionTokenCount(metadata.duration_ms);
+      return [
+        {
+          phase: "end",
+          completed: true,
+          ...CLI_COMPACTION,
+          ...(tokensBefore !== undefined ? { tokensBefore } : {}),
+          ...(tokensAfter !== undefined ? { tokensAfter } : {}),
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        },
+      ];
+    }
+    if (record.subtype !== "status") {
+      return [];
+    }
+    if (record.compact_result === "failed") {
+      compacting = false;
+      return [{ phase: "end", completed: false, ...CLI_COMPACTION }];
+    }
+    if (record.status === "compacting" && !compacting) {
+      compacting = true;
+      return [{ phase: "start", ...CLI_COMPACTION }];
+    }
+    return [];
+  };
+  return { read, isCompacting: () => compacting };
+}
+
 export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): StreamFn {
   return (model, context, options) => {
     const stream = createAssistantMessageEventStream();
@@ -485,10 +974,18 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         __openclawSessionKey?: string;
         __openclawSessionId?: string;
         __openclawThinkLevel?: string;
+        // FORK 2026-09-30 (lifecycles.md L4b): this call continues a turn a restart interrupted
+        // (attempt.ts continueFromTranscript), with the resume text to send if no worker holds it.
+        __openclawContinuation?: { fallbackText?: string };
+        // FORK 2026-10-02 (channel-reply): the run's normalized message channel ("webchat" for
+        // Tinker, "whatsapp", ...). A chat-channel run gets its final message stamped below.
+        __openclawMessageChannel?: string;
       };
       const runId = pipedOptions.__openclawRunId;
+      const continuation = pipedOptions.__openclawContinuation;
       const openclawSessionKey = pipedOptions.__openclawSessionKey;
       const openclawSessionId = pipedOptions.__openclawSessionId;
+      const messageChannel = pipedOptions.__openclawMessageChannel;
       // FORK 2026-06-11: per-run think level smuggled through pi-ai options
       // (mirrors the other __openclaw* fields). The cast is untyped, so this
       // name must match the writer EXACTLY or it silently flatlines.
@@ -544,6 +1041,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
               accumulatedThinking.length > 0 &&
               !(sawRedactedThinking && accumulatedThinking.length <= 18),
             redacted: sawRedactedThinking,
+            // FORK 2026-10-01 (bug-log [chat-divergence], cause 4): the frozen turn this run took
+            // over, if any (resumeFields below), so a page that missed the run's start learns it.
+            ...resumeFields,
             ...(extra ?? {}),
           },
         });
@@ -586,12 +1086,12 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // `message.id`, so both paths derive the same key without double-counting.
       const blockKeys = createBlockKeyTracker();
       const noteAssistantMessage = blockKeys.noteMessage;
-      // Both ingest paths key through these three and never through a raw index
-      // again — that identity is what makes a same-message text_block_break
-      // impossible unless the text block genuinely changed.
+      // Both ingest paths key through the tracker (the cumulative path via
+      // keysForAssistantFrame) and never through a raw index again — that
+      // identity is what makes a same-message text_block_break impossible unless
+      // the text block genuinely changed.
       const noteBlockStart = blockKeys.noteBlockStart;
       const streamBlockKey = blockKeys.keyForStreamIndex;
-      const contentBlockKey = blockKeys.keyForContentOrdinal;
 
       // FORK 2026-05-28 — per-turn text-block tracker. When the active text
       // block changes between deltas (a tool_use fired between two pieces of
@@ -616,6 +1116,8 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             phase: "text-block-break",
             fromIndex,
             toIndex,
+            // FORK 2026-10-01: the frozen turn this run took over, if any (resumeFields below).
+            ...resumeFields,
           },
         });
       };
@@ -626,6 +1128,11 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         args: unknown,
         narration: string,
       ) => {
+        // FORK 2026-10-02 (channel-reply): the same textOffset recorded below, kept per call id
+        // (first sighting wins) so the turn end can split narration from the answer.
+        if (!toolTextOffsets.has(toolCallId)) {
+          toolTextOffsets.set(toolCallId, accumulatedText.length);
+        }
         if (!runId) {
           return;
         }
@@ -707,6 +1214,10 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       };
 
       const pool = getPool();
+      // FORK 2026-09-30 (L4b): a worker the last gateway left (file transport) is adopted before
+      // any turn picks one, or this turn would spawn a second claude on the same CLI session.
+      // Once per process; afterwards an already-settled promise.
+      await ensureAdoptionScan();
       const worker = pool.getOrCreate({
         sessionKey,
         binary: opts.binary,
@@ -726,6 +1237,21 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // for the jarvis voice gate + chat.inject routing (see worker.ts).
         openclawSessionKey,
       });
+      // FORK 2026-09-30 (lifecycles.md L4b): the worker still holds the turn a restart froze
+      // (adopted at boot, file transport). This run takes it instead of starting a new one.
+      const resumingTurn = worker.hasPendingTurn?.() === true;
+      // FORK 2026-10-01 (bug-log.md [chat-divergence], cause 4): this run also NAMES that turn, on
+      // its lifecycle start below and on its later text-block breaks and effort events (a page that
+      // reconnects after the start learns it from those). It has a NEW id and the worker replays the
+      // turn from its first byte; without the name the webchat anchored the replay to no prompt, or
+      // to one sent after the restart, and the answer appeared twice. Read before resumeTurn, which
+      // clears the turn.
+      const resumeFields = resumedTurnFields(resumingTurn ? (worker.frozenTurn?.() ?? null) : null);
+      if (resumingTurn) {
+        log.info(
+          `[reattach] run ${runId ?? "?"} takes the frozen turn of run ${resumeFields.resumesRunId ?? "?"} (started ${resumeFields.resumesTurnStartedAt ?? "?"}) sessionKey=${sessionKey}`,
+        );
+      }
 
       // FORK 2026-05-11: emit lifecycle:start so the TUI's activeRuns map
       // picks up this run and renders the thinking indicator + side panels
@@ -745,6 +1271,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             model: model.id,
             modelProvider: model.provider,
             sessionKey: openclawSessionKey,
+            // FORK 2026-10-01: the frozen turn this run takes, if any (resumesRunId,
+            // resumesTurnStartedAt; tinker-ui live-continuation.ts ResumedTurn).
+            ...resumeFields,
           },
         });
       }
@@ -777,6 +1306,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       let textEnded = false;
       let accumulatedText = "";
       let accumulatedThinking = "";
+      const toolTextOffsets = new Map<string, number>();
       // FORK 2026-06-25 (metadata completeness — forward the thinking signature):
       // Claude's stream closes each extended-thinking block with a `signature_delta`
       // (and the cumulative `assistant` message's thinking block carries the same
@@ -1039,6 +1569,19 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       // compact summary. Watchdog fires a WARN if nothing arrives for 45s
       // so a silent hang is visible instead of invisible until the 900s
       // hard timeout.
+      // FORK 2026-09-25 (context-window-panel.md §6.1 A6 (i)): read the user text before the
+      // watchdog below, which needs to know whether this turn IS a CLI command (cli-command.ts;
+      // `/compact` only). Such a turn goes out as the bare command: the chat-row contract further
+      // down is for the model, and appended to `/compact` it would become the compaction's
+      // summarization instructions. worker.send asks the same predicate for its stdin line.
+      // A continuation whose worker is gone (it died, or ran on the pipe transport) has no turn to
+      // take: the CLI session already holds the interrupted prompt, so it gets the resume text,
+      // never that prompt a second time.
+      const rawUserText =
+        continuation && !resumingTurn && continuation.fallbackText
+          ? continuation.fallbackText
+          : extractUserText(context.messages ?? []);
+      const cliCommand = extractCliCommand(rawUserText);
       const turnStartedAt = Date.now();
       let linesSeen = 0;
       let lastProgressLogAt = 0;
@@ -1070,13 +1613,22 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
             textLen: accumulatedText.length,
             thinkingLen: accumulatedThinking.length,
             linesSeen,
+            // A6 (i): a `/compact` turn is a compaction from its first line; any other turn is one
+            // while the CLI's `compacting` status is latched. (compactionLines is declared below;
+            // the first tick runs 15 s after run() passed every declaration, and the only await in
+            // run() is worker.send.)
+            compacting: cliCommand !== null || compactionLines.isCompacting(),
           })
         ) {
           fastFailFired = true;
           log.error(
             `[fast-fail] init-only for ${elapsedMs}ms text.len=0 thinking.len=0 lines=${linesSeen} — aborting early`,
           );
-          worker.kill("SIGTERM");
+          // FORK 2026-09-03: name the cause. Without it this kill reached the
+          // user as "Gateway restarted — I'm resuming it automatically", false
+          // twice over: nothing restarted here and nothing resumes. The literal
+          // is matched by `classifyAbortCause` in src/fork/error-envelope.ts.
+          worker.kill("SIGTERM", "fast-fail-init-stall");
         }
       }, 15_000);
 
@@ -1139,6 +1691,27 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // unprotected. The idle timer is wide enough that this is safe.
       }, HEARTBEAT_INTERVAL_MS);
 
+      // FORK 2026-09-24 (A8): per-API-call events for the call stream, off the same stdout lines,
+      // in their own function (createBridgeCallTelemetry) so the line router below stays untouched.
+      // `openclawSessionKey`, not `sessionKey`: the latter is the worker-pool hash.
+      // FORK 2026-10-02: the third argument finds the CLI's own transcript at each call, from the
+      // worker's CLI session id (its init line) and cwd, so every usage frame is itemised
+      // (cli-context.ts). Undefined until the CLI has named its session.
+      const callTelemetry = createBridgeCallTelemetry(runId, openclawSessionKey, () => {
+        const cliSessionId = worker.sessionId;
+        const workerCwd = worker.cwd;
+        if (!cliSessionId || !workerCwd) {
+          return undefined;
+        }
+        return cliContextFor(resolveTranscriptPath(workerCwd, cliSessionId));
+      });
+      // FORK 2026-09-24 (A3): the CLI's own compactions, read by handleLine's `system` arm. ONE
+      // reader per turn, never one per stream fn: this stream fn serves every session, and a latch
+      // shared between them would hide one session's start behind another's.
+      const compactionLines = createCompactionLineReader();
+      // FORK 2026-09-25 (A6 (i)): the last compaction end this turn heard, quoted by a command
+      // turn's outcome line (describeCliCommandOutcome). Set by handleLine's `system` arm.
+      let lastCompactionEnd: CliCompactionEnd | null = null;
       const onStreamLine = (evt: WorkerEvent) => {
         if (evt.type !== "stream_line") {
           return;
@@ -1159,11 +1732,18 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           );
           lastProgressLogAt = lastLineAt;
         }
+        callTelemetry.observe(line);
         handleLine(line);
       };
 
+      // FORK 2026-09-29 (bible tinker-ui.md §5.8AB): the CLI's own stop reason for the TOP-LEVEL
+      // call (a subagent's call inside a tool carries parent_tool_use_id and is ignored). The
+      // bridge persists every turn as `stop`, so without this a refusal reached the chat as an
+      // ordinary (often empty or thinking-only) answer.
+      let lastTopLevelStopReason: string | undefined;
       const handleLine = (line: CcStreamStdoutLine) => {
         const t = (line as { type?: string }).type;
+        lastTopLevelStopReason = topLevelStopReasonOf(line) ?? lastTopLevelStopReason;
         if (t === "stream_event") {
           const ev = (line as CcStreamStdoutStreamEvent).event;
           if (!ev) {
@@ -1268,27 +1848,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           noteAssistantMessage((line as CcStreamStdoutAssistantMessage).message?.id);
           const blocks = (line as CcStreamStdoutAssistantMessage).message?.content ?? [];
           // FORK 2026-08-28 — count text and thinking blocks SEPARATELY and key on
-          // the type-scoped ordinal, never on `bi`. The counters are local to this
-          // one cumulative frame, so they restart at 0 on every re-emit of the same
-          // message and a given block always resolves to the same key. That is what
-          // makes `msg:text:0` here mean the SAME block as `msg:text:0` on the delta
-          // path, even though the delta path saw it at absolute index 1 behind a
-          // thinking block this frame omits. Keyed on `bi`, those two were `msg:0`
-          // and `msg:1`: 727 spurious breaks, ~716 whole-block re-emits.
-          let nthText = 0;
-          let nthThinking = 0;
+          // the type-scoped ordinal, never on `bi`. That is what makes `msg:text:0`
+          // here mean the SAME block as `msg:text:0` on the delta path, even though
+          // the delta path saw it at absolute index 1 behind a thinking block this
+          // frame omits. Keyed on `bi`, those two were `msg:0` and `msg:1`: 727
+          // spurious breaks, ~716 whole-block re-emits.
+          const frameKeys = keysForAssistantFrame(blockKeys, blocks);
           for (let bi = 0; bi < blocks.length; bi++) {
             const typed = blocks[bi] as CcContentBlock;
-            // The ordinal is consumed by TYPE, up front, before the arms below
-            // narrow on the payload — a malformed block must not desync the
-            // ordinals of the blocks after it.
-            const kind = blockKindOf(typed.type);
-            const key =
-              kind === "text"
-                ? contentBlockKey("text", nthText++)
-                : kind === "thinking"
-                  ? contentBlockKey("thinking", nthThinking++)
-                  : "";
+            const key = frameKeys[bi] ?? "";
             if (typed.type === "text" && typeof typed.text === "string") {
               const cumulative = typed.text;
               const prev = blockTextSeen.get(key) ?? "";
@@ -1449,9 +2017,22 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           }
           return;
         }
+        if (t === "system") {
+          // FORK 2026-09-24 (A3): until this arm every `system` line stopped here unread, the
+          // CLI's compaction included (F3a). The reader answers only the compaction lines; init
+          // and the `requesting` status (the call tracker's, above) come back empty.
+          if (runId) {
+            for (const event of compactionLines.read(line)) {
+              emitCompactionTelemetry({ runId, sessionKey: openclawSessionKey }, event);
+              if (event.phase === "end") {
+                lastCompactionEnd = event;
+              }
+            }
+          }
+          return;
+        }
       };
 
-      const rawUserText = extractUserText(context.messages ?? []);
       // FORK 2026-04-27: claude-cli's `-p` print mode tends to suppress
       // pre-tool narration even when the system prompt explicitly demands
       // it — the model treats print-mode runs as "execute tools quietly,
@@ -1463,7 +2044,7 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
       const NARRATION_USER_DIRECTIVE = [
         "",
         "",
-        "<!-- TINKERCLAW chat-row contract -->",
+        CHAT_ROW_CONTRACT_MARKER,
         "Before EVERY tool call in your response, emit one assistant text",
         "sentence stating (a) the artifact (real file path or symbol or",
         "literal string searched) and (b) the question/move it serves —",
@@ -1475,9 +2056,13 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         "verb without an object. Required for the FIRST tool call too —",
         "no silent kickoff.",
       ].join("\n");
-      const userText = rawUserText + NARRATION_USER_DIRECTIVE;
+      const userText = cliCommand === null ? rawUserText + NARRATION_USER_DIRECTIVE : cliCommand;
+      // FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]; unprompted-turn.ts): a run a
+      // worker's wake started. It takes the turn the CLI started on its own, below.
+      const wakeId =
+        cliCommand === null && !resumingTurn ? parseUnpromptedWakeMarker(rawUserText) : null;
       log.info(
-        `turn start sessionKey=${sessionKey} userText.len=${userText.length} systemPrompt.len=${(context.systemPrompt ?? "").length}`,
+        `turn start sessionKey=${sessionKey} userText.len=${userText.length} systemPrompt.len=${(context.systemPrompt ?? "").length}${cliCommand === null ? "" : ` cliCommand=${cliCommand.split(/\s/, 1)[0]}`}`,
       );
 
       // FORK 2026-04-19: emit `start` immediately so the UI thinking
@@ -1498,10 +2083,64 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         }
         let finalLine: Awaited<ReturnType<typeof worker.send>>;
         try {
-          finalLine = await worker.send({
-            userText,
-            signal: options?.signal,
-          });
+          if (resumingTurn) {
+            // FORK 2026-09-30 (L4b): replay the frozen turn from its start, then thaw it.
+            markReattachClaimed(openclawSessionKey);
+            const resumed = worker.resumeTurn({ signal: options?.signal });
+            if (!continuation) {
+              // The architect's own prompt reached this worker before recovery did: it joins the
+              // resumed turn, as any prompt sent mid-turn does.
+              const steered = worker.steer(userText);
+              log.info(`[reattach] a new prompt joined the resumed turn (steered=${steered})`);
+            }
+            finalLine = await resumed;
+          } else if (wakeId !== null) {
+            // The CLI has already answered: it is sent nothing. The holder is this run's worker
+            // unless the pool key moved since; then it is found by the turn's id.
+            const holder =
+              worker.unpromptedTurn?.()?.id === wakeId
+                ? worker
+                : (pool.findUnpromptedHolder?.(wakeId) ?? null);
+            if (holder) {
+              log.info(
+                `[unprompted-turn] run ${runId ?? "?"} takes ${wakeId} sessionKey=${sessionKey}${holder === worker ? "" : ` (held by ${holder.sessionKey})`}`,
+              );
+              if (holder !== worker) {
+                holder.on("stream_line", onStreamLine);
+              }
+              try {
+                finalLine = await holder.takeUnpromptedTurn({
+                  id: wakeId,
+                  signal: options?.signal,
+                });
+              } finally {
+                if (holder !== worker) {
+                  holder.off("stream_line", onStreamLine);
+                }
+              }
+            } else {
+              log.warn(
+                `[unprompted-turn] run ${runId ?? "?"}: ${wakeId} is gone (a prompt joined it, or its worker stopped); nothing sent to the CLI sessionKey=${sessionKey}`,
+              );
+              finalLine = {
+                type: "result",
+                subtype: "success",
+                session_id: worker.sessionId ?? "",
+                is_error: false,
+                num_turns: 0,
+                duration_ms: 0,
+                result: UNPROMPTED_TURN_GONE_TEXT,
+              };
+            }
+          } else {
+            finalLine = await worker.send({
+              userText,
+              signal: options?.signal,
+              // FORK 2026-10-01: recorded with the turn in meta.json, so that a restart's next
+              // gateway can name the run this turn belonged to (resumedTurnFields above).
+              ...(runId ? { runId } : {}),
+            });
+          }
         } finally {
           if (openclawSessionId) {
             unregisterInflightWorker(openclawSessionId, worker);
@@ -1633,7 +2272,29 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // Nothing is ever dropped or capped here — the only actions are "append"
         // and "do nothing".
         const resTxt = typeof result.result === "string" ? result.result : "";
-        const tailRecover = classifyTailRecover({ streamed: accumulatedText, result: resTxt });
+        // FORK 2026-09-25 (context-window-panel.md §6.1 A6 (i)): a command turn answers with ONE
+        // line built from what the CLI reported (describeCliCommandOutcome), never with nothing.
+        // A text-less `stop` message is an EMPTY RESPONSE to the embedded runner
+        // (src/agents/embedded-agent-runner/run/incomplete-turn.ts): it re-prompts the model to
+        // "produce the visible answer now", a full turn on the context that was just compacted,
+        // and then shows "Agent couldn't generate a response". Append-only, like every other
+        // verdict here: whatever the CLI streamed stays.
+        const cliOutcome =
+          cliCommand === null
+            ? null
+            : describeCliCommandOutcome({
+                command: cliCommand,
+                compaction: lastCompactionEnd,
+                resultText: resTxt,
+                isError: result.is_error === true,
+              });
+        const tailRecover =
+          cliOutcome === null
+            ? classifyTailRecover({ streamed: accumulatedText, result: resTxt })
+            : {
+                verdict: "cli-command" as const,
+                append: accumulatedText ? `\n\n${cliOutcome}` : cliOutcome,
+              };
         // UNCONDITIONAL: one line per turn that reached a result, so "it did
         // nothing" is a RECORDED verdict rather than an absence of evidence.
         // Do not put this behind an `if` — that is exactly how the old net
@@ -1660,6 +2321,33 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           usage,
           timestamp: Date.now(),
         };
+        // FORK 2026-09-29 (bible tinker-ui.md §5.8AB): a refusal keeps stopReason "stop" on
+        // purpose. "error" would engage the runner's failover and channel error formatting,
+        // and a refusal must surface, not fail over. It rides as a typed `outcome`, which the
+        // history projection keeps and the UI renders as a refusal notice.
+        if (lastTopLevelStopReason === "refusal") {
+          Object.assign(finalMessage, { outcome: bridgeRefusalOutcome() });
+          log.info(`[outcome] refusal sessionKey=${sessionKey}`);
+        }
+        // FORK 2026-10-02 (channel-reply): a chat channel gets the answer, never the narration
+        // the contract has the model write before each tool. The text stays whole here (Tinker
+        // slices it at the offsets); the stamp tells the runner which part to deliver. One log
+        // line per chat-channel turn, so a `source=empty-final-segment` case can be counted.
+        if (isChatChannelRun(messageChannel)) {
+          const decision = decideChannelReply({
+            text: accumulatedText,
+            toolTextOffsets: [...toolTextOffsets.values()],
+          });
+          const line = `[channel-reply] verdict=${decision.verdict} source=${decision.source} channel=${messageChannel} tools=${toolTextOffsets.size} narration=${decision.narrationChars} final=${decision.finalChars} sessionKey=${openclawSessionKey ?? sessionKey}`;
+          if (decision.source === "empty-final-segment") {
+            log.warn(line);
+          } else {
+            log.info(line);
+          }
+          if (decision.stamp) {
+            Object.assign(finalMessage, { channelReply: decision.stamp });
+          }
+        }
 
         if (log.debug) {
           log.debug(
@@ -1681,6 +2369,15 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
         // so the UI can render it as a red (or orange if recoverable) bubble
         // with full detail instead of a generic "Agent couldn't generate a
         // response" incomplete-turn banner.
+        //
+        // FORK 2026-09-03 (SIGTERM cause attribution): `rawErr` is the worker's
+        // exit message and carries `reason=[<abort cause>]`
+        // (worker.ts::onExit). buildErrorEnvelope classifies the SIGTERM from
+        // that cause, so a user Stop, an idle timeout, the run deadline, a
+        // fast-fail stall and a real gateway restart no longer collapse into one
+        // (mostly false) "Gateway restarted — I'm resuming it automatically"
+        // bubble. Nothing extra to pass here — do NOT strip, truncate or
+        // reformat `rawErr` on its way in, or the cause is lost.
         const envelope = buildErrorEnvelope({
           raw: rawErr,
           sessionKey,
@@ -1715,6 +2412,9 @@ export function createClaudeCodeStreamFn(opts: CreateStreamFnInput = {}): Stream
           },
         });
       } finally {
+        // FORK 2026-09-24 (A8): end a call still open here (an abort, a thrown send, a stream with
+        // no message_delta) so no timeline block is left growing. A no-op after a `result` line.
+        callTelemetry.close();
         // FORK 2026-05-11: matching lifecycle:end so the TUI's activeRuns
         // entry is evicted (sessions / model / prefrontal panels go idle).
         if (runId) {

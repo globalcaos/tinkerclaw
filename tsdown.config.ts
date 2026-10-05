@@ -256,6 +256,15 @@ function buildCoreDistEntries(): Record<string, string> {
     "plugins/runtime/index": "src/plugins/runtime/index.ts",
     "llm-slug-generator": "src/hooks/llm-slug-generator.ts",
     "mcp/plugin-tools-serve": "src/mcp/plugin-tools-serve.ts",
+    // FORK 2026-09-23 (plan task 16): the engram FTS worker thread is started BY PATH, so it must
+    // be an entry of its own or it does not exist in dist/. The client is an entry only to give
+    // tooling a stable import path; its code still lands in a shared chunk behind a facade, which
+    // is why resolveFtsWorkerEntry searches upward for memory/engram/fts-worker.js.
+    "memory/engram/fts-worker": "src/memory/engram/fts-worker.ts",
+    "memory/engram/fts-worker-client": "src/memory/engram/fts-worker-client.ts",
+    // FORK 2026-09-24 (logging.md §9 step 3): the structured-events writer thread is started BY
+    // PATH too (emit.ts resolveWriterWorkerEntry looks for infra/events/writer-worker.js).
+    "infra/events/writer-worker": "src/infra/events/writer-worker.ts",
   };
 }
 

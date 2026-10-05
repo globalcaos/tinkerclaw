@@ -89,6 +89,8 @@ cheaper per kilo of the thing actually being bought. Ask at most one or two load
 if the axis is genuinely ambiguous; do not interrogate the requester about preferences that cannot
 change the ranking.
 
+Some products have no honest per-unit price: laptops, appliances, anything bought as one configured unit. There, turn the requester's hard needs into gates (a slot count, a port, a charging standard), price every row for HIS configuration rather than the base model, and rank by the one characteristic he named (weight, size, noise). Say which characteristic sorts the chart, so the order is not mistaken for a value ranking.
+
 ### 2. Sweep several phrasings, not one keyword
 
 **Tools:** the source's own skill
@@ -171,3 +173,4 @@ and state anything the chart could not verify.
 - Scoping price extraction to the vendor's price block returned the per-kg figure as if it were the total — a wrong number that looked entirely plausible, off by the pack size. Cross-check that total divided by size matches the stated unit price.
 - A generic out-of-stock string matched inline scripting on every page and marked eleven live candidates dead in one sweep. A probe returning the same verdict for every input is broken; scan the result column before trusting it.
 - An adapter that merely _supported_ 256 GB scored best on euros per GB and topped a storage board. The outlier was the tell.
+- A web-search summary priced a 4 TB SSD at €334; its product page said €837 the same evening (2026-10-01). In the same session a page summarizer reported one laptop as both "delivered tomorrow" and "no restock date", with two different screens. A price, stock state or spec from a search snippet or a summarizer is a lead, never a quote: open the product page before the number enters the answer. When the vendor walls off fetchers, a headless browser render (`--dump-dom`) usually exposes the configurator's own per-SKU data (price, availability, ship batch); read that, not a paraphrase of it.

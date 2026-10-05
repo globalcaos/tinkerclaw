@@ -240,6 +240,36 @@ If you want a session prompt that loads on every `/new` command, create `~/.open
 
 Daily briefing pipeline. Create `~/.openclaw/workspace/BRIEFING.md` if you want morning briefing automation.
 
+## Step 5.5: Structural Crons — turn on the self-maintenance
+
+This is the step most people never find, because until 2026-09-08 there was nothing to find:
+the nightly jobs that make this fork maintain itself lived only in one machine's private cron
+store. They now ship with the repo, in `extensions/tinkerclaw-tinker-bridge/crons/`.
+
+Six jobs: nightly memory consolidation, an AI-field scan, a read-only security sweep, an
+agent-OSS survey, workspace hygiene, and a model-rank refresh. Full descriptions and the
+safety rules every routine follows are in that directory's `README.md`.
+
+```bash
+pnpm tinker:crons -- --list       # what ships, and what you already have
+pnpm tinker:crons                 # install the missing ones, switched ON
+pnpm tinker:crons -- --disabled   # install them, switched off
+```
+
+`scripts/setup.sh` asks once during a fresh install and defaults to **on**, so a fresh clone
+behaves like a mature one. The cost is stated in the question rather than hidden behind a safe
+default: each job wakes an agent on a schedule and spends model tokens on your account, roughly
+one euro a night for the whole cycle. Switch any of them off with `openclaw cron disable <id>`
+(`openclaw cron list --all` to find the id — note `--all`, since plain `list` hides disabled
+jobs).
+
+The seeder is idempotent and safe to re-run after every `git pull`; that is how you pick up
+jobs added upstream later. It needs a running gateway, and says so plainly if one is missing.
+
+To customise a routine without fighting `git pull`, copy it to
+`~/.openclaw/workspace/crons/<id>/routine.md` and edit it there — the same workspace-overrides-
+repo contract as `SOUL.md`, resolved in that order at run time.
+
 ## Step 6: Voice / TTS (optional)
 
 The fork supports multiple TTS providers. Configure in `openclaw.json`:

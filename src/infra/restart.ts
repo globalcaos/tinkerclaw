@@ -362,6 +362,11 @@ export type RestartDeferralHooks = {
   onStillPending?: (pending: number, elapsedMs: number) => void;
   onReady?: () => void;
   onTimeout?: (pending: number, elapsedMs: number) => void;
+  /**
+   * FORK 2026-09-14: fired (rate-limited like onStillPending) each time the cap has elapsed but
+   * `canForceOnTimeout()` said no — the restart stays deferred instead of killing live work.
+   */
+  onTimeoutDeferred?: (pending: number, elapsedMs: number) => void;
   onCheckError?: (err: unknown) => void;
 };
 
@@ -417,6 +422,15 @@ async function emitPreparedGatewayRestart(
  * A positive maxWaitMs keeps the old capped behavior for explicit configs.
  * An explicit maxWaitMs <= 0 (or non-finite) disables the cap — wait forever (explicit opt-out).
  * Shared by both the direct RPC restart path and the config watcher path.
+ *
+ * FORK 2026-09-14 (`canForceOnTimeout`): the cap used to be unconditional — "restart timeout …
+ * restarting anyway" — and on 2026-09-14 12:46 that killed a 21-minute turn plus every other live
+ * chat, because the counter it waited on (queue + replies + runs) never reaches zero on a busy
+ * day. The cap is still the escape hatch for LEAKED bookkeeping counters, but the caller can now
+ * gate it: while `canForceOnTimeout()` returns false the poll keeps running past the cap and the
+ * restart lands at the first instant the gate opens (or the count drains), never on top of work
+ * the caller says must not be killed. A throwing gate counts as "force allowed" so a bug in the
+ * gate can only ever restore the old behaviour, not wedge the restart forever.
  */
 export function deferGatewayRestartUntilIdle(opts: {
   getPendingCount: () => number;
@@ -425,6 +439,7 @@ export function deferGatewayRestartUntilIdle(opts: {
   pollMs?: number;
   maxWaitMs?: number;
   reason?: string;
+  canForceOnTimeout?: () => boolean;
 }): void {
   const pollMsRaw = opts.pollMs ?? DEFAULT_DEFERRAL_POLL_MS;
   const pollMs = Math.max(10, Math.floor(pollMsRaw));
@@ -452,6 +467,17 @@ export function deferGatewayRestartUntilIdle(opts: {
   opts.hooks?.onDeferring?.(pending);
   const startedAt = Date.now();
   let nextStillPendingAt = startedAt + DEFAULT_DEFERRAL_STILL_PENDING_WARN_MS;
+  let nextTimeoutDeferredAt = 0;
+  const forceAllowedNow = (): boolean => {
+    if (!opts.canForceOnTimeout) {
+      return true;
+    }
+    try {
+      return opts.canForceOnTimeout();
+    } catch {
+      return true;
+    }
+  };
   const poll = setInterval(() => {
     let current: number;
     try {
@@ -471,11 +497,21 @@ export function deferGatewayRestartUntilIdle(opts: {
       return;
     }
     const elapsedMs = Date.now() - startedAt;
-    if (Date.now() >= nextStillPendingAt) {
+    const pastCap = maxWaitMs !== undefined && elapsedMs >= maxWaitMs;
+    if (pastCap && !forceAllowedNow()) {
+      // Past the cap, but the caller's gate says forcing now would kill live work. Keep
+      // polling; the restart lands at the first tick where the gate opens or the count drains.
+      if (Date.now() >= nextTimeoutDeferredAt) {
+        opts.hooks?.onTimeoutDeferred?.(current, elapsedMs);
+        nextTimeoutDeferredAt = Date.now() + DEFAULT_DEFERRAL_STILL_PENDING_WARN_MS;
+      }
+      return;
+    }
+    if (!pastCap && Date.now() >= nextStillPendingAt) {
       opts.hooks?.onStillPending?.(current, elapsedMs);
       nextStillPendingAt = Date.now() + DEFAULT_DEFERRAL_STILL_PENDING_WARN_MS;
     }
-    if (maxWaitMs !== undefined && elapsedMs >= maxWaitMs) {
+    if (pastCap) {
       clearInterval(poll);
       activeDeferralPolls.delete(poll);
       opts.hooks?.onTimeout?.(current, elapsedMs);

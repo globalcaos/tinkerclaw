@@ -1,3 +1,4 @@
+import type { StreamFn } from "@mariozechner/pi-agent-core";
 import {
   streamSimple,
   type Api,
@@ -17,6 +18,7 @@ import {
   type SessionEntry,
 } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { wrapStreamFnWithLedger } from "../forensic/llm-ledger.js";
 import { diagnosticLogger as diag } from "../logging/diagnostic.js";
 import { prepareProviderRuntimeAuth } from "../plugins/provider-runtime.js";
 import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
@@ -472,7 +474,13 @@ export async function runBtwSideQuestion(
   };
 
   const stream = await streamWithPayloadPatch(
-    providerStreamFn ?? streamSimple,
+    wrapStreamFnWithLedger((providerStreamFn ?? streamSimple) as StreamFn, {
+      source: "completion:btw",
+      sessionKey: params.sessionKey,
+      provider: runtimeModel.provider,
+      model: runtimeModel.id,
+      api: runtimeModel.api,
+    }) as typeof streamSimple,
     runtimeModel,
     {
       systemPrompt: buildBtwSystemPrompt(),

@@ -1,5 +1,11 @@
 import "./monitor-inbox.test-harness.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// 2026-09-17: the inbound pipeline refuses to auto-reply to messages older than
+// 12h (inbound/monitor.ts), so a fixture frozen at a 2023 epoch now models a
+// history-sync replay rather than a live message. Offsets preserve ordering.
+const FIXTURE_TS = Math.floor(Date.now() / 1000);
+
 import {
   DEFAULT_ACCOUNT_ID,
   getAuthDir,
@@ -68,7 +74,7 @@ describe("web monitor inbox", () => {
         {
           key: { id: "med1", fromMe: false, remoteJid: "888@s.whatsapp.net" },
           message: { imageMessage: { mimetype: "image/jpeg" } },
-          messageTimestamp: 1_700_000_100,
+          messageTimestamp: FIXTURE_TS + 100,
         },
       ],
     });
@@ -145,7 +151,7 @@ describe("web monitor inbox", () => {
         {
           key: { id: "abc", fromMe: false, remoteJid: "999@s.whatsapp.net" },
           message: { conversation: "ping" },
-          messageTimestamp: 1_700_000_000,
+          messageTimestamp: FIXTURE_TS,
           pushName: "Tester",
         },
       ],
@@ -206,7 +212,7 @@ describe("web monitor inbox", () => {
               contextInfo: { mentionedJid: ["123@s.whatsapp.net"] },
             },
           },
-          messageTimestamp: 1_700_000_000,
+          messageTimestamp: FIXTURE_TS,
         },
       ],
     });

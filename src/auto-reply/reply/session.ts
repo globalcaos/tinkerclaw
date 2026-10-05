@@ -33,12 +33,14 @@ import {
 } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import type { TtsAutoMode } from "../../config/types.tts.js";
+import type { ChatAbortOps } from "../../gateway/chat-abort.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
 import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenance-warning.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { closeTrackedBrowserTabsForSessions } from "../../plugin-sdk/browser-maintenance.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookSessionEndReason } from "../../plugins/hook-types.js";
+import { getPluginRuntimeGatewayRequestScope } from "../../plugins/runtime/gateway-request-scope.js";
 import { isAcpSessionKey, normalizeMainKey } from "../../routing/session-key.js";
 import { isInterSessionInputProvenance } from "../../sessions/input-provenance.js";
 import {
@@ -76,6 +78,15 @@ let sessionArchiveRuntimePromise: Promise<
 function loadSessionArchiveRuntime() {
   sessionArchiveRuntimePromise ??= import("../../gateway/session-archive.runtime.js");
   return sessionArchiveRuntimePromise;
+}
+
+let sessionResetServicePromise: Promise<
+  typeof import("../../gateway/session-reset-service.js")
+> | null = null;
+
+function loadSessionResetService() {
+  sessionResetServicePromise ??= import("../../gateway/session-reset-service.js");
+  return sessionResetServicePromise;
 }
 
 function stripThreadIdFromDeliveryContext(
@@ -149,6 +160,82 @@ function resolveStaleSessionEndReason(params: {
 function hasProviderOwnedSession(entry: SessionEntry | undefined): boolean {
   const provider = normalizeOptionalString(entry?.providerOverride ?? entry?.modelProvider);
   return Boolean(provider && getCliSessionBinding(entry, provider));
+}
+
+/**
+ * FORK 2026-09-24 — a /new or /reset TYPED in chat ends the OLD session's pending turns as
+ * `sessions.reset` does: through endSessionTurns (src/gateway/session-reset-service.ts), the one
+ * terminator of TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.2, reason "session-reset", so each
+ * pending prompt gets exactly one terminal (PQ-6).
+ *
+ * HOW A TYPED /new ARRIVES. There is no command fast path: chat.send special-cases only the stop
+ * command (isChatStopCommandText). It registers the command's own chat controller under the key
+ * the client sent, answers "started" and dispatches at once. Nothing waits on a running turn
+ * before get-reply calls this init; the queue gate (get-reply-run.ts resolveActiveRunQueueAction)
+ * comes after it. Before this, the init rotated the sessionId while the old turn ran on, and
+ * clearSessionResetRuntimeState dropped the old backlog with no terminal, so those prompts showed
+ * as pending forever. The command's own reply was then steered into, or backlogged behind, the
+ * still-running old turn (webchat's queue mode is steer-backlog).
+ *
+ * AWAITED, as sessions.reset ends the turns before it mutates the store. This init archives the
+ * old transcript and retires its MCP runtime right after, so the old turn must have stopped first,
+ * and the command's reply then runs on the fresh session instead of queueing behind the turn it
+ * cancelled. The waits are endSessionTurns's own. A turn still running at its deadline is logged
+ * and the reset goes ahead, as before: a typed command has no UNAVAILABLE answer to give. Any
+ * failure falls back to the old queue clear, logged.
+ *
+ * CHAT STATE. The controllers live on the gateway request context, and every ChatAbortOps field is
+ * a field of it (server-methods/chat.ts createChatAbortOps lifts the same ones for sessions.reset).
+ * chat.send dispatches inside its RPC's request scope (server-methods.ts runs every handler under
+ * withPluginRuntimeGatewayRequestScope), so the scope hands this init that context. A channel
+ * message has no scope: its reset ends the reply operation, the embedded run and the run set, and
+ * counts the backlog, like the TUI and ACP resets.
+ *
+ * THE COMMAND'S OWN TURN. Its controller is already registered under this session, so the cleanup
+ * would end it with the old turns; it is named in endSessionTurns's `exceptRunIds` by runId
+ * (ctx.MessageSid is chat.send's idempotencyKey), only when a controller is registered under it,
+ * so its own chat.send sends that key's one terminal. The cleanup walks the request's REAL
+ * controller map, so every other run it aborts leaves the map at once. Its reply operation and run
+ * context do not exist yet: runReplyAgent creates them after this init.
+ */
+async function endTypedResetSessionTurns(params: {
+  sessionKey: string;
+  previousSessionId: string | undefined;
+  commandRunId: string | undefined;
+}): Promise<void> {
+  const { sessionKey, previousSessionId, commandRunId } = params;
+  const requestOps: ChatAbortOps | undefined = getPluginRuntimeGatewayRequestScope()?.context;
+  try {
+    const { endSessionTurns } = await loadSessionResetService();
+    const controllers = requestOps?.chatAbortControllers;
+    const ownController =
+      commandRunId && controllers instanceof Map ? controllers.get(commandRunId) : undefined;
+    const turns = await endSessionTurns({
+      keys: {
+        // chat.send registers every controller under the key the client sent, maybe an alias.
+        requestedKey: ownController?.sessionKey ?? sessionKey,
+        canonicalKey: sessionKey,
+        storeKeys: [sessionKey],
+        sessionId: previousSessionId,
+      },
+      reason: "session-reset",
+      chatAbortOps: requestOps,
+      exceptRunIds: ownController && commandRunId ? [commandRunId] : [],
+    });
+    if (turns.unannouncedBacklog > 0) {
+      log.info(
+        `typed reset: ${turns.unannouncedBacklog} backlogged prompt(s) of ${sessionKey} dropped with no chat terminal`,
+      );
+    }
+    if (!turns.ended) {
+      log.warn(`typed reset: a turn of ${sessionKey} did not stop in time; resetting anyway`);
+    }
+  } catch (error) {
+    log.warn(
+      `typed reset: ending the turns of ${sessionKey} failed, clearing its queues only: ${String(error)}`,
+    );
+    clearSessionResetRuntimeState([sessionKey, previousSessionId]);
+  }
 }
 
 export type SessionInitResult = {
@@ -487,7 +574,17 @@ export async function initSessionState(params: {
     sessionKey,
     previousSessionId: previousSessionEntry?.sessionId,
   });
-  if (previousSessionEntry) {
+  if (previousSessionEntry && resetTriggered) {
+    // A typed /new or /reset: end the old session's turns, one terminal each, before rotating it.
+    // endSessionTurns clears these queues itself (its step 2), after reading what they held.
+    await endTypedResetSessionTurns({
+      sessionKey,
+      previousSessionId: previousSessionEntry.sessionId,
+      commandRunId: normalizeOptionalString(ctx.MessageSid),
+    });
+  } else if (previousSessionEntry) {
+    // A stale-session rollover (idle or daily expiry), no command: clear the old queues, as before.
+    // Its backlog, if any, still leaves with no terminal.
     clearSessionResetRuntimeState([sessionKey, previousSessionEntry.sessionId]);
   }
 

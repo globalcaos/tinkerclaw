@@ -847,6 +847,9 @@ export async function runPreparedReply(
       modelOverrideSource: runHasSessionModelOverride
         ? preparedSessionState.sessionEntry?.modelOverrideSource
         : undefined,
+      // The router already chose this turn's ladder; the run is what carries it to the failover
+      // machinery. Undefined on a pinned turn because THALAMUS does not route one at all.
+      thalamusChain: modelState.thalamusRoute?.chain,
       authProfileId,
       authProfileIdSource,
       thinkLevel: resolvedThinkLevel,

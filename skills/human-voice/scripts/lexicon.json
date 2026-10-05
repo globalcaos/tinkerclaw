@@ -1,0 +1,875 @@
+{
+  "_about": "Lexicon for voicecheck.py. One file, three languages. 'sev' is HIGH (almost only machines write it), MED (machine-typical in density), LOW (humans do it too — only a hint). Seeded 2026-09-24 from the research reports in ../references/; add entries there first, then here. Rules that belong to one writer (their own corrections) go in a voice profile (see ../profiles/example.json), never here.",
+  "lang_markers": {
+    "en": [
+      "the",
+      "and",
+      "is",
+      "you",
+      "that",
+      "with",
+      "have",
+      "this",
+      "for",
+      "of",
+      "to",
+      "in",
+      "it",
+      "are",
+      "was",
+      "what",
+      "i'm",
+      "don't",
+      "it's",
+      "not",
+      "but",
+      "we"
+    ],
+    "es": [
+      "y",
+      "ya",
+      "pero",
+      "muy",
+      "gracias",
+      "porque",
+      "también",
+      "está",
+      "hay",
+      "los",
+      "las",
+      "lo",
+      "le",
+      "su",
+      "sus",
+      "del",
+      "al",
+      "con",
+      "para",
+      "como",
+      "cuando",
+      "hasta",
+      "desde",
+      "ahora",
+      "bien",
+      "tu",
+      "te",
+      "me",
+      "una",
+      "esto",
+      "eso",
+      "hemos",
+      "habíamos",
+      "puedes",
+      "podemos"
+    ],
+    "ca": [
+      "i",
+      "ja",
+      "però",
+      "molt",
+      "gràcies",
+      "perquè",
+      "també",
+      "està",
+      "hi",
+      "els",
+      "amb",
+      "per",
+      "quan",
+      "fins",
+      "des",
+      "ara",
+      "bé",
+      "doncs",
+      "aquest",
+      "aquesta",
+      "avui",
+      "et",
+      "em",
+      "ho",
+      "una",
+      "això",
+      "aquí",
+      "podem",
+      "pots",
+      "sí",
+      "res",
+      "feina"
+    ]
+  },
+  "lang": {
+    "en": {
+      "phrases": [
+        {
+          "re": "\\bi hope (this|you|your) (email|message|note)? ?finds you well\\b",
+          "sev": "HIGH",
+          "fix": "start with why you are writing"
+        },
+        {
+          "re": "\\bhope this helps\\b",
+          "sev": "HIGH",
+          "fix": "cut it"
+        },
+        {
+          "re": "\\b(great|excellent|good) question\\b",
+          "sev": "HIGH",
+          "fix": "cut it; answer"
+        },
+        {
+          "re": "\\b(certainly|absolutely)!",
+          "sev": "HIGH",
+          "fix": "cut it"
+        },
+        {
+          "re": "\\bi'?d be (happy|glad) to\\b",
+          "sev": "MED",
+          "fix": "just do it or say 'sure'"
+        },
+        {
+          "re": "\\b(let me know|feel free to reach out|don't hesitate to (contact|reach))\\b.*\\b(questions?|anything else|further)\\b",
+          "sev": "MED",
+          "fix": "end with the specific ask, or nothing"
+        },
+        {
+          "re": "\\bit'?s (worth|important to) (noting|note|mention(ing)?) that\\b",
+          "sev": "HIGH",
+          "fix": "just say it"
+        },
+        {
+          "re": "\\bin today'?s (fast-paced|digital|ever-changing|rapidly evolving)\\b",
+          "sev": "HIGH",
+          "fix": "cut the preamble"
+        },
+        {
+          "re": "\\b(plays|play) a (crucial|pivotal|vital|key) role\\b",
+          "sev": "HIGH",
+          "fix": "say what it does"
+        },
+        {
+          "re": "\\bserves? as (a )?(testament|reminder|cornerstone)\\b",
+          "sev": "HIGH",
+          "fix": "'is', or cut"
+        },
+        {
+          "re": "\\b(delve|dive) (deeper )?into\\b",
+          "sev": "HIGH",
+          "fix": "look at / go through"
+        },
+        {
+          "re": "\\bnavigat(e|ing) the (complexities|landscape|world) of\\b",
+          "sev": "HIGH",
+          "fix": "deal with"
+        },
+        {
+          "re": "\\bat the end of the day\\b",
+          "sev": "LOW",
+          "fix": "cut"
+        },
+        {
+          "re": "\\bin (conclusion|summary)\\b",
+          "sev": "MED",
+          "fix": "no summary line in a short message"
+        },
+        {
+          "re": "\\bi have successfully\\b",
+          "sev": "HIGH",
+          "fix": "'I did X'"
+        },
+        {
+          "re": "\\bthe future (looks|is) bright\\b|\\bexciting times (ahead|lie ahead)\\b",
+          "sev": "HIGH",
+          "fix": "end on something specific"
+        },
+        {
+          "re": ",\\s+(highlighting|underscoring|emphasi[sz]ing|reflecting|showcasing|symboli[sz]ing|contributing to|fostering|marking|thereby)\\b",
+          "sev": "MED",
+          "fix": "cut the -ing tail; if it carries a fact, make it its own sentence with the number"
+        },
+        {
+          "re": "\\b(serves|stands|functions|operates) as\\b",
+          "sev": "MED",
+          "fix": "is"
+        },
+        {
+          "re": "\\bboasts\\b",
+          "sev": "HIGH",
+          "fix": "has"
+        },
+        {
+          "re": "^\\s*subject:\\s",
+          "sev": "HIGH",
+          "fix": "a Subject line belongs in the subject field, never in the body"
+        },
+        {
+          "re": "\\b(let'?s (dive|delve|break (this|it) down|explore)|without further ado|here'?s (the thing|what you need to know)|real talk)\\b",
+          "sev": "HIGH",
+          "fix": "delete the run-up; start with the point"
+        },
+        {
+          "re": "\\b(as of my (last|latest) (knowledge|training)|while (specific )?details are (limited|scarce)|not (widely|extensively) documented|based on (the )?available information)\\b",
+          "sev": "HIGH",
+          "fix": "say 'I couldn't find X' and stop; never fill the hole with a guess"
+        },
+        {
+          "re": "\\b(you asked (whether|about|if)|to answer your question)\\b",
+          "sev": "MED",
+          "fix": "answer first; do not restate the question"
+        },
+        {
+          "re": "\\b(this (commit|pr|change|patch) (adds|introduces|fixes|implements|updates))\\b",
+          "sev": "MED",
+          "fix": "plain past or imperative: 'Fixed X' / 'Add X'",
+          "modes": ["code"]
+        },
+        {
+          "re": "\\b(significantly|substantially|dramatically|drastically|vastly) (faster|improved|better|reduced|cleaner|more)\\b",
+          "sev": "MED",
+          "fix": "give the number, or say what changed without grading it",
+          "modes": ["code", "email"]
+        },
+        {
+          "re": "\\b(should (now )?fix|may (resolve|fix)|appears to fix|helps (to )?ensure)\\b",
+          "sev": "MED",
+          "fix": "say what you actually ran and what it showed",
+          "modes": ["code"]
+        },
+        {
+          "re": "\\b(production-ready|enterprise-grade|battle-tested|rock-solid|bulletproof|carefully crafted|meticulously crafted|blazing(ly)? fast)\\b",
+          "sev": "HIGH",
+          "fix": "delete the adjective"
+        },
+        {
+          "re": "\\b(comprehensive|robust) (test suite|error handling|validation|solution|approach)\\b",
+          "sev": "MED",
+          "fix": "say what it covers: '12 tests, including the malformed-header case'"
+        },
+        {
+          "re": "\\b(despite (these|its|the) challenges|continues to thrive|stands as a (beacon|testament))\\b",
+          "sev": "HIGH",
+          "fix": "end on the last concrete fact"
+        },
+        {
+          "re": "\\b(the real question is|at its core|what really matters is|the deeper issue)\\b",
+          "sev": "MED",
+          "fix": "say the point plainly"
+        },
+        {
+          "re": "\\b(i'?ve gone ahead and|i went ahead and)\\b",
+          "sev": "MED",
+          "fix": "'I did X'"
+        },
+        {
+          "re": "\\b(you'?re absolutely right|i couldn'?t agree more|what a (great|thoughtful) (observation|point))\\b",
+          "sev": "HIGH",
+          "fix": "if they were right, say what you had wrong: 'Right, I had the direction backwards'"
+        },
+        {
+          "re": "\\b(would you like me to|do you want me to|shall i|let me know if you'?d like me to|i can also)\\b[^.?!\\n]{0,50}\\b(format|expand|elaborate|provide|prepare|turn (this|it) into|go deeper|put together|summari[sz]e|draft)\\b",
+          "sev": "HIGH",
+          "fix": "the leftover assistant turn: stop, or name one real next step"
+        },
+        {
+          "re": "\\b(here'?s|this is) the (part|thing) (nobody|no one) (talks|tells you) about\\b|\\bhere'?s the kicker\\b|\\bthe best part\\?|\\bthe (real|honest) answer\\b|\\blet me be direct\\b|\\bworth stating plainly\\b",
+          "sev": "HIGH",
+          "fix": "announced payoff: deliver it without the drumroll"
+        },
+        {
+          "re": "\\bi want to be careful here\\b|\\bis doing a lot of (the )?work\\b",
+          "sev": "HIGH",
+          "fix": "Claude tell: name the actual doubt, or cut"
+        },
+        {
+          "re": "\\bless like an? [^.,;\\n]{1,30} and more like\\b",
+          "sev": "HIGH",
+          "fix": "Claude Opus signature: one plain comparison, or none"
+        },
+        {
+          "re": "\\bload[- ]bearing\\b",
+          "sev": "HIGH",
+          "fix": "#1 measured Claude word (7,500x): 'the part everything depends on', or 'important'"
+        },
+        {
+          "re": "\\b(great|good|nice) catch\\b",
+          "sev": "HIGH",
+          "fix": "name the mistake and the fix"
+        },
+        {
+          "re": "(^|\\n)\\s*honestly\\?|\\bto be (clear|honest),",
+          "sev": "MED",
+          "fix": "just say it"
+        },
+        {
+          "re": "\\b(plays?|played) an? (crucial|critical|key|important|vital|pivotal) role in shaping\\b",
+          "sev": "HIGH",
+          "fix": "say what it does"
+        },
+        {
+          "re": "\\bin service of\\b",
+          "sev": "MED",
+          "fix": "'for' / 'to'"
+        },
+        {
+          "re": "\\b(you'?re not alone|do you want to sit with that|it'?s (completely |totally )?(okay|normal) to feel)\\b",
+          "sev": "HIGH",
+          "fix": "therapist mode nobody asked for: answer the question",
+          "modes": ["chat", "email", "post"]
+        },
+        {
+          "re": "\\b(our (protagonist|mc|hero)|the mc)\\b",
+          "sev": "MED",
+          "fix": "name them, then use pronouns"
+        },
+        {
+          "re": "(^|\\n)\\s*(in conclusion|in short|in summary|to sum up|tl;?dr)\\b",
+          "sev": "MED",
+          "fix": "the conclusion nobody asked for: end on the last fact"
+        },
+        {
+          "re": "\\b(most importantly|the key insight( here)?)\\b",
+          "sev": "MED",
+          "fix": "don't rank your own points; put the important one first"
+        },
+        {
+          "re": "\\bit (carries|holds|offers|makes|leaves) no\\b",
+          "sev": "LOW",
+          "fix": "'it doesn't …'"
+        }
+      ],
+      "words": {
+        "delve": "look at",
+        "delves": "looks at",
+        "tapestry": "mix",
+        "testament": "sign",
+        "showcase": "show",
+        "showcasing": "showing",
+        "underscore": "show",
+        "underscores": "shows",
+        "pivotal": "important",
+        "crucial": "important",
+        "seamless": "smooth",
+        "seamlessly": "smoothly",
+        "robust": "solid",
+        "leverage": "use",
+        "leveraging": "using",
+        "utilize": "use",
+        "comprehensive": "full",
+        "meticulous": "careful",
+        "meticulously": "carefully",
+        "realm": "area",
+        "landscape": "field",
+        "multifaceted": "complex",
+        "myriad": "many",
+        "paramount": "most important",
+        "embark": "start",
+        "foster": "build",
+        "streamline": "simplify",
+        "empower": "let",
+        "holistic": "whole",
+        "synergy": "fit",
+        "vibrant": "lively",
+        "intricate": "detailed",
+        "commendable": "good",
+        "noteworthy": "worth noting",
+        "bustling": "busy",
+        "nestled": "in",
+        "elevate": "improve",
+        "unlock": "open",
+        "unleash": "release",
+        "game-changer": "big change",
+        "transformative": "big",
+        "groundbreaking": "new",
+        "cutting-edge": "new",
+        "furthermore": "also",
+        "moreover": "also",
+        "additionally": "also",
+        "notably": "",
+        "boasts": "has",
+        "ensure": "make sure",
+        "facilitate": "help",
+        "insightful": "useful",
+        "bolstered": "backed",
+        "garner": "get",
+        "garnered": "got",
+        "interplay": "how X and Y interact",
+        "enduring": "lasting",
+        "emphasizing": "stressing",
+        "highlighting": "showing",
+        "fostering": "building",
+        "enhance": "improve",
+        "enhancing": "improving",
+        "align": "match",
+        "aligns": "matches",
+        "impactful": "useful",
+        "reimagine": "redo",
+        "cornerstone": "base",
+        "beacon": "sign",
+        "paradigm": "model",
+        "overarching": "overall",
+        "unparalleled": "best",
+        "profound": "big",
+        "bolster": "back up"
+      },
+      "neg_parallel": "\\b(it'?s|this is|that'?s)? ?not (just|only|merely|simply)? ?(about )?[^.,;]{1,40}[,;—–-]+ ?(it'?s|but|it is)\\b",
+      "title_case": "^(#+\\s*)?(?:[A-Z][a-z]+\\s+){2,6}[A-Z][a-z]+:?\\s*$",
+      "triple": "\\b\\w+, \\w+,? and \\w+\\b",
+      "cta": "\\b(try|check|have a look|give it a (try|spin)|go (ahead|play)|drag|switch|toggle|tell me|let me know)\\b",
+      "greeting": "^(hi|hey|hello|morning|good morning|dear)\\b",
+      "opener": "^(great question|certainly|absolutely|of course!|i hope (this|you)|thank you for (reaching out|your (email|message))|i wanted to reach out)",
+      "closer": "(hope this helps|let me know if you have any (other |further )?questions|feel free to reach out|looking forward to hearing from you|happy to help)[.!]?$",
+      "status": "\\b(successfully|seamlessly|robust(ly)?|comprehensive(ly)?|ensur(e|es|ing) that|streamlin(e|ed)|enhanc(e|ed)|leverag(e|ed|ing)|i have (now )?implemented)\\b",
+      "hedge": "\\b(might|may|could|perhaps|possibly|potentially|arguably|somewhat|generally|typically|it seems|appears to)\\b"
+    },
+    "es": {
+      "phrases": [
+        {
+          "re": "\\bespero que (este (correo|mensaje) te|te) encuentre[s]? bien\\b",
+          "sev": "HIGH",
+          "fix": "empieza por el motivo"
+        },
+        {
+          "re": "\\bespero que (esto|te) (te )?(ayude|sirva)\\b",
+          "sev": "HIGH",
+          "fix": "quítalo"
+        },
+        {
+          "re": "¡(claro|por supuesto|excelente pregunta|buena pregunta)!",
+          "sev": "HIGH",
+          "fix": "quítalo y responde"
+        },
+        {
+          "re": "\\bno dudes en (contactar|escribir|preguntar)",
+          "sev": "MED",
+          "fix": "termina con la pregunta concreta, o nada"
+        },
+        {
+          "re": "\\bcabe (destacar|mencionar|señalar|resaltar) que\\b",
+          "sev": "HIGH",
+          "fix": "dilo sin más"
+        },
+        {
+          "re": "\\bes (importante|fundamental|crucial) (destacar|señalar|tener en cuenta) que\\b",
+          "sev": "HIGH",
+          "fix": "dilo sin más"
+        },
+        {
+          "re": "\\ben el (vertiginoso|cambiante|dinámico) (mundo|panorama)\\b",
+          "sev": "HIGH",
+          "fix": "quita la introducción"
+        },
+        {
+          "re": "\\b(sumergir(se|nos)|adentrar(se|nos)) en\\b",
+          "sev": "HIGH",
+          "fix": "ver / mirar / entrar en"
+        },
+        {
+          "re": "\\bjuega(n)? un papel (fundamental|crucial|clave|importante)\\b",
+          "sev": "HIGH",
+          "fix": "di qué hace"
+        },
+        {
+          "re": "\\bun sinfín de\\b",
+          "sev": "MED",
+          "fix": "muchos"
+        },
+        {
+          "re": "\\ben (resumen|conclusión|definitiva)\\b",
+          "sev": "MED",
+          "fix": "sin frase de resumen en un mensaje corto"
+        },
+        {
+          "re": "\\bsin (duda|lugar a dudas)( alguna)?\\b",
+          "sev": "MED",
+          "fix": "quítalo"
+        },
+        {
+          "re": "\\ben base a\\b",
+          "sev": "MED",
+          "fix": "según / a partir de"
+        },
+        {
+          "re": "\\ba nivel de\\b",
+          "sev": "LOW",
+          "fix": "en / de"
+        },
+        {
+          "re": "\\bhe (implementado|realizado) (con éxito|exitosamente)\\b",
+          "sev": "HIGH",
+          "fix": "he hecho X"
+        },
+        {
+          "re": "^(hola|buenos días|buenas tardes|estimad[oa])\\s+[A-ZÁÉÍÓÚÑ][\\wáéíóúñ]+,\\s*$",
+          "sev": "MED",
+          "fix": "en correo: 'Hola, Marta:' (coma vocativa y dos puntos, no coma inglesa)",
+          "modes": ["email"]
+        },
+        {
+          "re": "\\b(computadora|celular|carro|acá|agendar( una)? reunión|en la mañana|en la tarde|platicar|ahorita|jalar)\\b",
+          "sev": "MED",
+          "fix": "para España: ordenador, móvil, coche, aquí, quedar/convocar, por la mañana"
+        },
+        {
+          "re": "^\\s*¡(claro|por supuesto|genial|perfecto)!",
+          "sev": "HIGH",
+          "fix": "empieza por el contenido"
+        },
+        {
+          "re": "\\b(aquí (tienes|te explico) cómo|te lo explico paso a paso)\\b",
+          "sev": "MED",
+          "fix": "'Te cuento' / 'Mira:' o nada"
+        },
+        {
+          "re": "¿(y tú|la clave|el resultado|la trampa|el detalle clave|la verdad)[^?]{0,20}\\?",
+          "sev": "MED",
+          "fix": "termina con la pregunta real que necesitas contestada"
+        },
+        {
+          "re": "\\ben (el|un) (mundo|panorama|contexto) (actual|cada vez más|donde|digital)",
+          "sev": "HIGH",
+          "fix": "quita la frase de mundo; empieza por el dato"
+        },
+        {
+          "re": "\\b(quedo a (tu|su) (entera )?disposición|quedo a la espera de (su|tu) pronta respuesta)\\b",
+          "sev": "MED",
+          "fix": "'Cualquier cosa, me dices' / 'Ya me dices'"
+        },
+        {
+          "re": "\\bpor otro lado\\b",
+          "sev": "LOW",
+          "fix": "y / pero / en cambio — o nada"
+        },
+        {
+          "re": "\\b(desempeña|juega) un papel\\b",
+          "sev": "MED",
+          "fix": "di qué hace"
+        },
+        {
+          "re": "\\b(fue|fueron|será|serán|es|son) (revisad|enviad|organizad|realizad|implementad|creado|creada)[oa]?s? por\\b",
+          "sev": "LOW",
+          "fix": "activa o con 'se': 'el equipo revisó', 'se envía mañana'"
+        },
+        {
+          "re": "\\bsi necesitas (más|algo más|cualquier otra cosa)[^.\\n]{0,40}no dudes en\\b",
+          "sev": "HIGH",
+          "fix": "la firma de asistente olvidada: bórrala"
+        },
+        {
+          "re": "¿?(quieres|te gustaría) que te (prepare|haga|redacte|resuma|pase a limpio)\\b|¿?te preparo (también )?(un|una|la|el)\\b",
+          "sev": "HIGH",
+          "fix": "oferta de asistente: para, o di el siguiente paso real",
+          "modes": ["chat", "email", "post", "doc"]
+        },
+        {
+          "re": "\\\"(hola|buenos días|buenas|gracias|saludos)[^\\\"]{0,20}\\\"",
+          "sev": "MED",
+          "fix": "sin comillas en saludos o fórmulas"
+        },
+        {
+          "re": "\\b(desbloquear|apalancar(se)?|navegar (por )?(la|el|los|las) (complejidad|incertidumbre|panorama))",
+          "sev": "MED",
+          "fix": "calco del inglés corporativo: di qué pasa"
+        },
+        {
+          "re": "(^|\\n)\\s*(en resumen|en conclusión|para concluir),",
+          "sev": "MED",
+          "fix": "la conclusión que nadie pidió"
+        }
+      ],
+      "words": {
+        "crucial": "importante",
+        "fundamental": "importante",
+        "exhaustivo": "completo",
+        "exhaustiva": "completa",
+        "potenciar": "mejorar",
+        "optimizar": "mejorar",
+        "robusto": "sólido",
+        "robusta": "sólida",
+        "fluida": "suave",
+        "integral": "completo",
+        "innovador": "nuevo",
+        "innovadora": "nueva",
+        "revolucionario": "nuevo",
+        "vibrante": "vivo",
+        "meticuloso": "cuidadoso",
+        "meticulosa": "cuidadosa",
+        "panorama": "situación",
+        "ecosistema": "entorno",
+        "sinergia": "encaje",
+        "empoderar": "dar poder",
+        "apasionante": "interesante",
+        "fascinante": "interesante",
+        "además": "y",
+        "asimismo": "también",
+        "igualmente": "también",
+        "garantizar": "asegurar",
+        "clave": "importante",
+        "transformador": "grande",
+        "desbloquear": "abrir",
+        "elevar": "mejorar",
+        "esencial": "necesario",
+        "vital": "necesario",
+        "significativo": "notable",
+        "significativamente": "bastante",
+        "disruptivo": "nuevo",
+        "holístico": "completo",
+        "versátil": "que sirve para varias cosas",
+        "implementar": "poner en marcha",
+        "brindar": "dar",
+        "proporcionar": "dar",
+        "abordar": "tratar",
+        "fomentar": "ayudar a",
+        "impulsar": "aumentar",
+        "transformar": "cambiar",
+        "primordial": "importante"
+      },
+      "neg_parallel": "\\bno (es )?(solo|sólo|solamente|únicamente|simplemente) [^.;]{1,50}(,| ) ?sino( también| que)?\\b",
+      "title_case": "^(#+\\s*)?(?:[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+\\s+){2,6}[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+:?\\s*$",
+      "triple": "\\b\\w+, \\w+,? y \\w+\\b",
+      "cta": "\\b(prueba|pruébalo|échale un vistazo|mira|arrastra|cambia|dime|cuéntame|avísame)\\b",
+      "greeting": "^(hola|buenas|buenos días|ei|hey|querid[oa]|estimad[oa])\\b",
+      "opener": "^(¡claro|¡por supuesto|excelente pregunta|buena pregunta|espero que (este|te)|gracias por (ponerte en contacto|tu (correo|mensaje)))",
+      "closer": "(espero que (esto )?te (ayude|sirva)|no dudes en (contactarme|escribirme|preguntar)|quedo a tu disposición|quedo atento)[.!]?$",
+      "status": "\\b(con éxito|exitosamente|de forma (robusta|integral|fluida)|garantizando|optimizad[oa]|he implementado)\\b",
+      "hedge": "\\b(podría|quizás|quizá|tal vez|posiblemente|potencialmente|en cierta medida|generalmente|parece que)\\b"
+    },
+    "ca": {
+      "phrases": [
+        {
+          "re": "\\bespero que (aquest (correu|missatge) et|et) trobi bé\\b",
+          "sev": "HIGH",
+          "fix": "comença pel motiu"
+        },
+        {
+          "re": "\\bespero que (això|t') (t')?ajudi\\b",
+          "sev": "HIGH",
+          "fix": "treu-ho"
+        },
+        {
+          "re": "\\bno dubtis (a|en) (contactar|escriure|preguntar)",
+          "sev": "MED",
+          "fix": "acaba amb la pregunta concreta, o res"
+        },
+        {
+          "re": "\\bcal (destacar|remarcar|esmentar|assenyalar) que\\b",
+          "sev": "HIGH",
+          "fix": "digues-ho i prou"
+        },
+        {
+          "re": "\\bés (important|fonamental|crucial) (destacar|tenir en compte|remarcar) que\\b",
+          "sev": "HIGH",
+          "fix": "digues-ho i prou"
+        },
+        {
+          "re": "\\b(endinsar-(se|nos)|submergir-(se|nos)) en\\b",
+          "sev": "HIGH",
+          "fix": "mirar / entrar a"
+        },
+        {
+          "re": "\\bjuga(n)? un paper (fonamental|crucial|clau|important)\\b",
+          "sev": "HIGH",
+          "fix": "digues què fa"
+        },
+        {
+          "re": "\\ben (resum|conclusió|definitiva)\\b",
+          "sev": "MED",
+          "fix": "sense frase de resum en un missatge curt"
+        },
+        {
+          "re": "\\bsens(e)? cap mena de dubte\\b",
+          "sev": "MED",
+          "fix": "treu-ho"
+        },
+        {
+          "re": "\\ben base a\\b",
+          "sev": "MED",
+          "fix": "segons / a partir de"
+        },
+        {
+          "re": "\\bdegut a\\b",
+          "sev": "MED",
+          "fix": "a causa de / per"
+        },
+        {
+          "re": "\\bde cara a\\b",
+          "sev": "LOW",
+          "fix": "per a / per"
+        },
+        {
+          "re": "\\ba nivell de\\b",
+          "sev": "LOW",
+          "fix": "en / de"
+        },
+        {
+          "re": "\\btenir lloc\\b",
+          "sev": "LOW",
+          "fix": "fer-se / passar"
+        },
+        {
+          "re": "\\bhe (implementat|realitzat) (amb èxit|correctament)\\b",
+          "sev": "HIGH",
+          "fix": "he fet X"
+        },
+        {
+          "re": "^\\s*benvolgu(t|da)\\b",
+          "sev": "MED",
+          "fix": "si us coneixeu: 'Hola, Marc,' — 'Benvolgut' només per a desconeguts i institucions",
+          "modes": ["chat", "email"]
+        },
+        {
+          "re": "\\b(li agraeixo|la seva (resposta|atenció|col·laboració)|vostè)\\b",
+          "sev": "MED",
+          "fix": "el correu és un mitjà de 'tu': 'Gràcies per la resposta!' — i mantén el tractament",
+          "modes": ["chat", "email"]
+        },
+        {
+          "re": "^\\s*salutacions[.,!]?\\s*$",
+          "sev": "LOW",
+          "fix": "'Gràcies!' / 'Una abraçada' / 'Cordialment,' segons la relació"
+        },
+        {
+          "re": "\\ben (el|un) món (actual|cada cop més|digital)|\\bavui dia,? vivim\\b",
+          "sev": "HIGH",
+          "fix": "treu la frase de món; comença pel fet"
+        },
+        {
+          "re": "\\ben aquest sentit\\b",
+          "sev": "MED",
+          "fix": "treu-ho (gairebé sempre és buit)"
+        },
+        {
+          "re": "\\b(val la pena esmentar|cal subratllar|cal tenir en compte) que\\b",
+          "sev": "MED",
+          "fix": "digues-ho i prou"
+        },
+        {
+          "re": "\\bespero que aquesta informació (et|us|li) sigui útil\\b",
+          "sev": "HIGH",
+          "fix": "'Digue'm si et va bé' / 'Qualsevol cosa, em dius'"
+        },
+        {
+          "re": "\\b(no es tracta (només )?de [^.;]{1,50}, sinó)\\b",
+          "sev": "MED",
+          "fix": "digues directament el que és"
+        },
+        {
+          "re": "\\bdesbloquejar el (seu |teu )?potencial\\b",
+          "sev": "HIGH",
+          "fix": "aprofitar"
+        },
+        {
+          "re": "\\bparlém\\b|\\bposso\\b",
+          "sev": "HIGH",
+          "fix": "barreja d'idiomes: 'parlem', 'puc'"
+        },
+        {
+          "re": "\\bsi necessites (més|alguna cosa més)[^.\\n]{0,40}no dubtis\\b",
+          "sev": "HIGH",
+          "fix": "la signatura d'assistent oblidada: treu-la"
+        },
+        {
+          "re": "¿?vols que (et|us) (prepari|faci|redacti|resumeixi)\\b",
+          "sev": "HIGH",
+          "fix": "oferta d'assistent: para, o digues el pas real",
+          "modes": ["chat", "email", "post", "doc"]
+        }
+      ],
+      "words": {
+        "crucial": "important",
+        "fonamental": "important",
+        "exhaustiu": "complet",
+        "exhaustiva": "completa",
+        "potenciar": "millorar",
+        "optimitzar": "millorar",
+        "robust": "sòlid",
+        "robusta": "sòlida",
+        "fluida": "suau",
+        "integral": "complet",
+        "innovador": "nou",
+        "innovadora": "nova",
+        "revolucionari": "nou",
+        "vibrant": "viu",
+        "meticulós": "acurat",
+        "meticulosa": "acurada",
+        "panorama": "situació",
+        "ecosistema": "entorn",
+        "sinergia": "encaix",
+        "apassionant": "interessant",
+        "fascinant": "interessant",
+        "tanmateix": "però",
+        "així mateix": "també",
+        "garantir": "assegurar",
+        "clau": "important",
+        "transformador": "gran",
+        "desbloquejar": "obrir",
+        "elevar": "millorar",
+        "essencial": "necessari",
+        "primordial": "important",
+        "enfortir": "reforçar",
+        "impulsar": "fer créixer",
+        "aprofundir": "mirar més a fons",
+        "no obstant això": "però",
+        "d'altra banda": "també"
+      },
+      "neg_parallel": "\\bno (és )?(només|sols|únicament|simplement) [^.;]{1,50}(,| ) ?sinó( també| que)?\\b",
+      "title_case": "^(#+\\s*)?(?:[A-ZÀÈÉÍÒÓÚÇ][a-zàèéíòóúç·l]+\\s+){2,6}[A-ZÀÈÉÍÒÓÚÇ][a-zàèéíòóúç·l]+:?\\s*$",
+      "triple": "\\b\\w+, \\w+,? i \\w+\\b",
+      "cta": "\\b(prova|prova-ho|dona-hi un cop d'ull|mira|arrossega|canvia|digues-me|explica'm|avisa'm)\\b",
+      "greeting": "^(hola|bon dia|bona tarda|ei|benvolgut|benvolguda|estimat|estimada)\\b",
+      "opener": "^(i tant!|és clar!|bona pregunta|excel·lent pregunta|espero que (aquest|et)|gràcies per (posar-te en contacte|el teu (correu|missatge)))",
+      "closer": "(espero que (això )?t'ajudi|no dubtis (a|en) (contactar-me|escriure'm|preguntar)|resto a la teva disposició|quedo a la teva disposició)[.!]?$",
+      "status": "\\b(amb èxit|correctament|de manera (robusta|integral|fluida)|garantint|optimitzat|he implementat)\\b",
+      "hedge": "\\b(podria|potser|tal vegada|possiblement|potencialment|en certa manera|generalment|sembla que)\\b"
+    }
+  },
+  "dialect_sets": {
+    "ca": [
+      ["aquest", "este"],
+      ["avui", "hui"],
+      ["meva", "meua"],
+      ["teva", "teua"],
+      ["seva", "seua"],
+      ["nosaltres", "natros"]
+    ]
+  },
+  "latam_es": true,
+  "claudeisms_en": {
+    "_about": "Words people now read as Claude's dialect (claudeisms project 2026-07, Graphite Sep 2026, HN). One is fine; a cluster is the call. Fine in a spec, an accent in a message.",
+    "words": [
+      "genuinely",
+      "quietly",
+      "plainly",
+      "honestly",
+      "structurally",
+      "fundamentally",
+      "meaningfully",
+      "deliberately",
+      "every single",
+      "rather than",
+      "ensuring",
+      "seam",
+      "seams",
+      "scaffold",
+      "scaffolded",
+      "wedge",
+      "crux",
+      "surfaced",
+      "drift",
+      "drifted",
+      "parity",
+      "handoff",
+      "gating",
+      "canonical",
+      "idempotent",
+      "sidecar",
+      "provenance",
+      "landed",
+      "wired",
+      "stale",
+      "verbatim",
+      "silently",
+      "verified",
+      "divergence",
+      "round-trip",
+      "framing"
+    ]
+  }
+}

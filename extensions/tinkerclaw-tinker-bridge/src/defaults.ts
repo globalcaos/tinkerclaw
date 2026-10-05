@@ -5,14 +5,53 @@
  * binary path, cwd, disallowed-tools list, model catalog. Keeping these
  * isolated so empirical tweaks don't sprawl.
  */
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
 export const PROVIDER_ID = "claude-code";
 export const PROVIDER_LABEL = "Claude Code (OAuth)";
 export const DEFAULT_BINARY = "claude";
-export const DEFAULT_CWD = path.join(homedir(), ".openclaw", "jarvis-workspace");
+
+/**
+ * Working directory for each claude subprocess. The architect's own host keeps its agent in
+ * `~/.openclaw/jarvis-workspace`; every other install uses OpenClaw's default agent workspace
+ * (same rule as core's resolveDefaultAgentWorkspaceDir). Hard-coding the first path made every
+ * claude-code turn on a fresh clone fail at spawn, which Node reports as `spawn systemd-run ENOENT`.
+ */
+export function resolveDefaultCwd(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = homedir(),
+  exists: (p: string) => boolean = existsSync,
+): string {
+  const legacy = path.join(home, ".openclaw", "jarvis-workspace");
+  if (exists(legacy)) {
+    return legacy;
+  }
+  const profile = env.OPENCLAW_PROFILE?.trim();
+  if (profile && profile.toLowerCase() !== "default") {
+    return path.join(home, ".openclaw", `workspace-${profile}`);
+  }
+  return path.join(home, ".openclaw", "workspace");
+}
+
+export const DEFAULT_CWD = resolveDefaultCwd();
 export const CREDENTIALS_PATH = path.join(homedir(), ".claude", ".credentials.json");
+
+/**
+ * NOT A CREDENTIAL. OpenClaw's `ModelProviderConfig` requires a non-empty
+ * `apiKey` string, but this provider has no API key: authentication happens
+ * entirely inside the `claude` CLI, which reads its own OAuth tokens from
+ * CREDENTIALS_PATH above. This constant is the fixed placeholder we put in
+ * that required field so the provider validates.
+ *
+ * It is a literal, readable, non-secret marker on purpose — deliberately NOT
+ * obfuscated, encoded or generated, so anyone auditing this file can see at a
+ * glance that no key material is embedded here. Named explicitly because a
+ * bare string literal assigned to a field called `apiKey` reads to any secret
+ * scanner (correctly) as a hardcoded credential.
+ */
+export const OAUTH_PLACEHOLDER_API_KEY = "claude-code-oauth";
 
 /**
  * Tools we disable inside claude. Kept minimal on purpose: Jarvis needs
@@ -57,6 +96,27 @@ export const AMYGDALA_CC_HOOK_SETTINGS_PATH = path.join(
   "data",
   "amygdala",
   "cc-hook-settings.json",
+);
+
+/**
+ * FORK 2026-09-29 (digital amygdala): the new tinkerclaw-amygdala plugin's own claude-cli
+ * hook settings file, and the EFFECTIVE file it writes (the v3.1 entries merged with its own
+ * in shadow mode; its own alone in enforce mode). The plugin writes both; the bridge only
+ * stats them (amygdala-settings.ts) and passes ONE `--settings`. Absent = today's behaviour.
+ */
+export const AMYGDALA_JEV_HOOK_SETTINGS_PATH = path.join(
+  homedir(),
+  ".openclaw",
+  "data",
+  "amygdala-jev",
+  "cc-hook-settings.json",
+);
+export const AMYGDALA_JEV_EFFECTIVE_SETTINGS_PATH = path.join(
+  homedir(),
+  ".openclaw",
+  "data",
+  "amygdala-jev",
+  "cc-hook-settings.effective.json",
 );
 
 /**
@@ -133,6 +193,27 @@ export const RESUME_MAX_TRANSCRIPT_LINES = 50_000;
 // Anthropic raises a model's output limit — single source of truth.
 export const DEFAULT_MODELS = [
   {
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 32_000,
+  },
+  {
+    id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 64_000,
+  },
+  {
+    id: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    reasoning: true,
+    contextWindow: 1_000_000,
+    maxOutputTokens: 32_000,
+  },
+  {
     id: "claude-opus-5",
     name: "Claude Opus 5",
     reasoning: true,
@@ -177,8 +258,8 @@ export const DEFAULT_MODELS = [
 ] as const;
 
 export const MODEL_ALIASES: Record<string, string> = {
-  opus: "claude-opus-5",
-  sonnet: "claude-sonnet-4-6",
+  opus: "claude-opus-5-5",
+  sonnet: "claude-sonnet-5-5",
   haiku: "claude-haiku-4-5",
 };
 

@@ -22,17 +22,17 @@ verify:
   # can be linted, reviewed and — the reason this one moved — TESTED. The ratchet is the most
   # load-bearing gate the bible has, and it had no test for as long as it lived in this frontmatter.
   - name: no concept in the ledger gains another implementation (ratchet — counts may fall, never rise)
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-ledger-ratchet.mjs
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-ledger-ratchet.mjs
   - name: the ratchet itself trips — a simulated extra implementation fails every ledger row, and no ledger regex has rotted into matching nothing
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-ledger-ratchet.mjs --self-test
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-ledger-ratchet.mjs --self-test
   - name: the counts table in this file and the enforced LEDGER caps say the same thing (one fact, two readable homes)
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-ledger-ratchet.mjs --check-table
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-ledger-ratchet.mjs --check-table
   - name: the leak-grep pattern has exactly one definition (collapsed 3 -> 1 on 2026-08-03)
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-singletons.mjs --check=pii-re
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-singletons.mjs --check=pii-re
   - name: the chrome extension has exactly one tree (collapsed 2 -> 1 on 2026-08-03)
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-singletons.mjs --check=chrome-extension
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-singletons.mjs --check=chrome-extension
   - name: the ENGRAM library is not vendored back into an extension, and its sanctioned crossing still exists (collapsed 2 -> 1 on 2026-08-03)
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/canonical-singletons.mjs --check=engram
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/canonical-singletons.mjs --check=engram
 ---
 
 # Canonical derivations — the ledger and the ratchet
@@ -47,20 +47,21 @@ This file is the half that bites.
 
 The measured status quo on 2026-08-03, after the ENGRAM collapse:
 
-| Concept                    | Implementations |       Was |
-| -------------------------- | --------------: | --------: |
-| `estimateTokens`           |          **12** |        13 |
-| `cosineSimilarity`         |           **8** |        10 |
-| `deliverWebReply`          |               3 |         3 |
-| `mmrRerank`                |               3 |         3 |
-| `retrieval-pack assembler` |               2 |         2 |
-| `movePathToTrash`          |               2 |         2 |
-| `estimateTokensFromChars`  |               2 |         2 |
-| `assembleRetrievalPack`    |           **1** | 2 ✅ done |
+| Concept                    | Implementations | Was |
+| -------------------------- | --------------: | --: |
+| `estimateTokens`           |          **12** |  13 |
+| `cosineSimilarity`         |           **8** |  10 |
+| `deliverWebReply`          |               3 |   3 |
+| `mmrRerank`                |               3 |   3 |
+| `retrieval-pack assembler` |           **3** |   2 |
+| `movePathToTrash`          |               2 |   2 |
+| `estimateTokensFromChars`  |               2 |   2 |
+| `assembleRetrievalPack`    |           **2** |   1 |
 
-### When a ratchet is allowed to move up
+### The 2026-09-07 raise, and why a ratchet is allowed to move up
 
-A rising count reads like the thing this file forbids. It is not, and the distinction is the
+Two caps went UP on 2026-09-07 — `assembleRetrievalPack` 1→2 and `retrieval-pack assembler`
+2→3 — which reads like the thing this file forbids. It is not, and the distinction is the
 whole point of the ledger.
 
 **What it is for.** This ledger does not track _how many copies exist_; a bare count is cheap
@@ -68,23 +69,30 @@ and the ledger would drown in them. It tracks copies that can **silently disagre
 `estimateTokensFromChars` pair that part company at `chars=5` is the archetype. The harm is a
 divergence nobody notices.
 
-**The question a red result asks.** Does the new match introduce that divergence risk? If yes,
-collapse it. If no — a tested sync/async pair with an explicit equivalence contract, for example —
-the cap moves and the same commit carries the reason. Asked FOUNDATION §9's question — _which
-axis is this protecting here?_ — a pair that a test forbids from disagreeing answers "none".
-What is never allowed is moving the number _silently_.
+**The invariant that replaced the cap.** Both new matches are one function:
+`assembleRetrievalPackAsync`, the yielding twin added 2026-09-03 so a gateway-side caller stops
+holding the event loop. `retrieval-integration.ts` states the contract — equal output, different
+scheduling — and `index.cold-pack.test.ts` tests byte identity on a production-shaped 2,000-event
+tie-order corpus plus the empty and no-match edges. That is stronger evidence for the risk this
+row actually protects than a name-prefix count. Asked FOUNDATION §9's question — _which axis is
+this protecting here?_ — the answer is "none": these are not two uncoordinated derivations; they
+are an intentional pair with an explicit equivalence contract and a regression test.
 
-**Alternatives rejected when the match is a yielding twin of an existing assembler.**
+**Alternatives rejected.**
 
-- _Collapse them._ The sync function has a caller whose type says `string`, so it cannot simply
+- _Collapse them._ The file already considered and rejected it, with the reason written down:
+  `assembleRetrievalPack` has a synchronous caller whose type says `string`, so it cannot simply
   become async.
 - _Rename the twin_ so the prefix stops matching. This is the cheapest green and the worst
   answer — the sibling row's own comment calls a rename "the evasion, and it needs no intent."
 - _Leave it red._ A permanently-red gate teaches everyone the bypass (`BIBLE_GUARD=off`), which
   costs all 373 checks to protect one stale number.
 
-This tree currently has one `assembleRetrievalPack` and two retrieval-pack assemblers. If a
-yielding twin lands, the caps move in that commit — they do not pre-empt it.
+**The general rule this establishes.** A ratchet is a fixed threshold, and FOUNDATION principle
+2 calls fixed thresholds "legacy artifacts of the programmatic era" that go stale. So a ratchet
+rising is a QUESTION, not a verdict: does the new implementation introduce the divergence risk
+this row exists to catch? If yes, collapse it. If no — as here — the cap moves and the commit
+carries the reason. What is never allowed is moving it _silently_.
 
 **Which of these numbers is the gate?** Not this table. The table is the readable copy, kept here
 because a reader must be able to see the ledger without opening a script. The numbers the build
@@ -305,3 +313,16 @@ When you collapse a concept, or find a new one that must be singular:
   effort-resolution paths as a lesson, and `bible.md:1368` sanctions a triple-derived provider value
   as "a belt to the suspenders". Both are duplications wearing a policy costume.
 - A concept that is computed but not registered here is a future redundancy already in flight (#18).
+
+## Thalamus v4: single owners declared, not yet in the ratchet (2026-10-01)
+
+**What this is for.** Four concepts the v4 branch took care to derive once. They are listed here so the next change finds the owner instead of writing a second one (#18). **Derived from** the D2 and C reviews, each of which found or avoided a twin. **What would change it:** the ratchet gaining matching rows (then move them into the counts table and the `LEDGER` constant in the same commit).
+
+| Concept                                                                     | The one owner                                                  | The twin that was avoided or removed                                                                                            |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| The Jev client                                                              | `src/infra/jev/jev.ts` (`JevClient`)                           | a second client in the plugin; the amygdala now holds a three-line shim                                                         |
+| The routing board (the signals both v2's plan and the per-call router read) | `src/infra/thalamus-board-build.ts`                            | `readThalamusBoard` had copied v2's inline block in `model-selection.ts` (D1); pinned against the old block and collapsed in D2 |
+| The cache-aware price of a call                                             | `src/shared/thalamus-cache-ledger.ts` with `thalamus-price.ts` | per-token sticker prices                                                                                                        |
+| N\* and the digest rule                                                     | `src/shared/thalamus-switch.ts` (`breakEvenN`)                 | a heuristic in the router                                                                                                       |
+
+Not counted by any script yet: this table is the register until a ratchet row exists.

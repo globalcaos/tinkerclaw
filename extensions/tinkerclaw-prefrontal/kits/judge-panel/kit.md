@@ -21,7 +21,7 @@ parallelism:
     flags any axis where judges disagree by >2 points. 0-indexed.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API"
 ---
 

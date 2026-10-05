@@ -44,7 +44,15 @@
 
 import { resolveProviderEffortLadder } from "../../../src/shared/provider-effort-ladders.js";
 import type { EffortLadderKind } from "../../../src/shared/provider-effort-ladders.js";
-import { REL_COST_TABLE, relCostKey } from "../../../src/shared/rel-cost-table.js";
+import {
+  PLAN_UTIL,
+  REL_COST_TABLE,
+  SEAT_MEASURED,
+  SEAT_TIERS,
+  relCostKey,
+  seatValueMultiple,
+  type SeatVendor,
+} from "../../../src/shared/rel-cost-table.js";
 import {
   COST_CEILING_MULTIPLIER,
   thalamusCandidates,
@@ -134,7 +142,7 @@ export const SC_COPILOT_PINK = "#ff7ac6";
 // disagree:
 //   RUNGS    — every (model, effort) of every CONSIDERED model, priced in €/TASK
 //              (`frontierRungsFor`: relCost x EFFORT_COST_MULT x tokenRatioFor — the
-//              identical number the task axis plots as `p.cost * scTokenRatio`).
+//              identical number the task axis plots as `p.cost * scTaskCostFactor`).
 //   FRONTIER — `paretoFrontier`: cost non-decreasing, intelligence STRICTLY
 //              increasing. The top-left outline. Nothing else.
 //   RING     — a larger ring on every FRONTIER RUNG (one model may carry several).
@@ -660,11 +668,12 @@ export {
   baseTokensFor as scBaseTokens,
   tokensPerTaskFor as scTokensPerTask,
   tokenRatioFor as scTokenRatio,
+  taskCostFactor as scTaskCostFactor,
 } from "../../../src/shared/tokens-per-task.js";
 import {
   TASK_REFERENCE,
   tokensPerTaskFor as scTokensPerTask,
-  tokenRatioFor as scTokenRatio,
+  taskCostFactor as scTaskCostFactor,
 } from "../../../src/shared/tokens-per-task.js";
 const SC_REFERENCE = TASK_REFERENCE;
 
@@ -688,6 +697,8 @@ export const SC_CTX_RULES: { match: RegExp; ctx: number }[] = [
   // proportional to context window the chart's highest-scoring model would draw
   // 2.24x too small — wrong on the one channel a reader cannot check by hovering.
   { match: /claude-fable-5[.-]1/i, ctx: 1_000_000 },
+  { match: /claude-opus-5[.-]5/i, ctx: 1_000_000 },
+  { match: /claude-sonnet-5[.-]5/i, ctx: 1_000_000 },
   { match: /longcat-2\.0/i, ctx: 1_048_756 },
   { match: /nemotron-3\.5-lightning|ling-3\.0-flash/i, ctx: 262_144 },
   { match: /gemini/i, ctx: 1_000_000 }, // Gemini 2.x+ ship 1M windows
@@ -706,12 +717,12 @@ export function scDefaultCtx(modelId: string): number {
   return SC_CTX_DEFAULT;
 }
 
-/** Horizontal SHIFT in decades for per-task mode: log10 of the dot's
- *  tokens-per-task relative to the reference. The reference is 0 by
- *  construction; positive = burns more tokens per task than Opus@max. */
+/** Horizontal SHIFT in decades from the €/Mtok view to the per-task view:
+ *  log10 of `scTaskCostFactor`. The €/Mtok view already carries the effort
+ *  multiplier, so the shift is the model's token appetite net of effort — every
+ *  graded effort of one model shifts by the same amount (2026-09-30). */
 export function scTaskShiftDecades(modelId: string, effortLvl: string): number {
-  const ref = scTokensPerTask("claude-code/claude-opus-5", SC_REFERENCE.effort);
-  return Math.log10(scTokensPerTask(modelId, effortLvl) / ref);
+  return Math.log10(scTaskCostFactor(modelId, effortLvl));
 }
 
 // ─── OFFICIAL API LIST PRICE (the architect 2026-08-27) ───
@@ -753,6 +764,8 @@ export function scTaskShiftDecades(modelId: string, effortLvl: string): number {
 export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   // Anthropic — anthropic.com/pricing. Opus 5 re-verified on AA 2026-08-27 ($5/$25).
   { match: /fable/i, out: 50 },
+  // Opus 5.5 list is $4/$20 (live OpenRouter 2026-09-23), not Opus 5's $5/$25.
+  { match: /opus-5[.-]5/i, out: 20 },
   // FORK 2026-09-02: a `claude-opus-5-fast` row sat here at $50 out, deliberately
   // ABOVE the generic /opus/i $25 — a metered Anthropic route handed the amortised
   // subscription sticker draws its triangle to the LEFT of its own circle, rendering
@@ -762,6 +775,7 @@ export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   // The hazard did not leave with it: any future Anthropic route sold METERED above
   // $25 needs its own entry ABOVE /opus/i, or it inherits the wrong basis silently.
   { match: /opus/i, out: 25 },
+  { match: /sonnet-5[.-]5/i, out: 10 }, // Sonnet 5.5 $2/$10 (OpenRouter 2026-09-29)
   { match: /sonnet-5(?![.\d])/i, out: 10 }, // Sonnet 5 $2/$10
   { match: /sonnet/i, out: 15 }, // Sonnet 4.5/4.6 $3/$15
   { match: /haiku/i, out: 5 },
@@ -772,6 +786,13 @@ export const SC_API_PRICE: { match: RegExp; out: number }[] = [
   // 2026-08-30). Long context doubles: $30 / $18 / $1.80. A promo currently bills
   // Sol at $10 on OpenRouter and Copilot; this axis ranks by STANDARD list, so the
   // promo is reported to the architect rather than baked into a literal that outlives it.
+  { match: /gpt-6-astra/i, out: 50 }, // $10/$50 list; plan circle is 0.4465
+  // FORK 2026-09-30: the GPT-6 Sol/Luna rows were never added when they joined the picker
+  // on 09-23, so neither drew a triangle or a plan ladder. Prices from the live OpenRouter
+  // catalog 2026-09-30: gpt-6.1-sol and gpt-6-sol $2/$10, gpt-6-luna $0.10/$0.50.
+  { match: /gpt-6\.1-sol/i, out: 10 },
+  { match: /gpt-6-sol/i, out: 10 },
+  { match: /gpt-6-luna/i, out: 0.5 },
   { match: /5\.6-sol/i, out: 20 },
   { match: /5\.6-terra/i, out: 12 },
   { match: /5\.6-luna/i, out: 1.2 },
@@ -849,6 +870,137 @@ export function scApiMultiple(m: ScModel): number | undefined {
   return list / m.relCost;
 }
 
+// ─── PLAN-TIER WAYPOINTS (the architect 2026-09-23) ───
+// "for claude and openai models, a few landmarks of how much their tokens cost with
+//  what kind of subscription … API access (no fixed cost, already visible as a
+//  triangle), the 20€/month, the 100€/month, the corporate 125€/month and the 20x,
+//  the 200€/month. The tag next to each of these waypoints should assume 100%
+//  consumption of tokens every week, and specify as briefly as possible the name of
+//  the subscription and the monthly commitment."
+//
+// WHAT A WAYPOINT IS: the same token, bought on another plan of the SAME vendor, with
+// that plan's whole weekly cap consumed. It sits on the dashed circle↔triangle bridge
+// at the anchor effort — the bridge already means "two prices for one token", and the
+// waypoints are the prices in between. Cost = list × effort mult ÷ the tier's value
+// multiple (src/shared/rel-cost-table.ts: seatValueMultiple, util 1).
+//
+// WHERE THE NUMBERS COME FROM: one MEASURED seat per vendor (our Max 20× week, our Plus
+// week — see SEAT_MEASURED) scaled by the vendor's published tier multiple. Nothing is
+// drawn for a vendor we have not measured: Grok borrows the Anthropic multiple for its
+// circle, and inventing a SuperGrok ladder on top of a borrowed number would be two
+// guesses stacked. Copilot is excluded for the same reason scIsUtilDrag excludes it.
+//
+// Tiers that land on the SAME price become ONE mark with both tags — Anthropic's Pro
+// €20 and Max 5× €100 buy exactly the same per-token price (5× the quota for 5× the
+// fee), and two coincident diamonds would hide that fact behind overlapping text.
+
+/** Relative gap under which two tiers are one price and share a waypoint. */
+export const SC_WAYPOINT_MERGE_EPS = 0.02;
+
+/** Which MEASURED seat family a model's plan price belongs to, or undefined. */
+export function scSeatVendor(m: { id: string; provider: string }): SeatVendor | undefined {
+  if (scIsCopilot(m)) return undefined;
+  if (scApiPrice(m.id) === undefined) return undefined;
+  const p = (m.provider || m.id.split("/")[0] || "").toLowerCase();
+  if (p === "claude-code" || p === "anthropic") return "anthropic";
+  if (p === "openai-codex" || p === "codex" || p === "openai") return "openai";
+  return undefined;
+}
+
+export interface ScWaypoint {
+  /** Tier tags that land on this price, cheapest fee first ("Pro €20", "Max 5× €100"). */
+  tags: string[];
+  notes: string[];
+  /** €/Mtok at the anchor effort with 100% of the weekly cap consumed. */
+  cost: number;
+  /** € of API list value one € of fee buys on this tier at 100%. */
+  valueMult: number;
+  /** True when one of the merged tiers is the seat we actually hold. */
+  ours: boolean;
+  /** Each merged plan as name + monthly fee, for the drag readout ("Max 20× €200/mo"). */
+  plans: { name: string; feeEur: number }[];
+  lvl: string;
+  label: string;
+  smart: number;
+}
+
+/** A tier's plan name with its fee suffix dropped: "Max 20× €200" → "Max 20×". */
+const scPlanName = (tag: string): string => tag.replace(/\s*€\d+$/, "");
+
+/** The drag readout for one waypoint: every plan that lands on this price, with its
+ *  monthly commitment — "Pro €20/mo = Max 5× €100/mo". */
+export function scWaypointHud(w: Pick<ScWaypoint, "plans">): string {
+  return w.plans.map((p) => `${p.name} €${p.feeEur}/mo`).join(" = ");
+}
+
+/** The always-on tag for one mark. Tiers of ONE plan that share the mark print once, fees
+ *  joined: "Plus €20 · Pro €100/200/500" (2026-09-30 — OpenAI's three Pro tiers land on
+ *  Plus's price, and the 52-character join ran through its neighbours' labels). A plan
+ *  alone on the mark keeps its full tag ("Max 20× €200"); the HUD and hover keep all. */
+export function scWaypointTag(w: Pick<ScWaypoint, "tags" | "plans">): string {
+  const groups: { base: string; tags: string[]; fees: number[] }[] = [];
+  w.plans.forEach((p, i) => {
+    const base = p.name.replace(/\s*\d+×$/, "");
+    const g = groups.find((x) => x.base === base);
+    if (g) {
+      g.tags.push(w.tags[i]);
+      g.fees.push(p.feeEur);
+    } else groups.push({ base, tags: [w.tags[i]], fees: [p.feeEur] });
+  });
+  return groups
+    .map((g) => (g.tags.length === 1 ? g.tags[0] : `${g.base} €${g.fees.join("/")}`))
+    .join(" · ");
+}
+
+/** One row of waypoints, at the ANCHOR effort by default or at `lvl` when given — the
+ *  drag (2026-09-23 #2) needs a row on every rung, because any rung can be dragged. */
+export function scWaypointsFor(m: ScModel, lvl?: string): ScWaypoint[] {
+  const vendor = scSeatVendor(m);
+  if (vendor === undefined) return [];
+  const list = scApiPrice(m.id);
+  if (list === undefined) return [];
+  const stops = scEffortsFor(m).stops;
+  const anchor =
+    (lvl === undefined ? undefined : stops.find((e) => e.lvl === lvl)) ??
+    stops.find((e) => e.anchor) ??
+    stops[0];
+  if (anchor === undefined) return [];
+  const held = SEAT_MEASURED[vendor];
+  const tiers = SEAT_TIERS.filter((t) => t.vendor === vendor)
+    .map((t) => ({ t, mult: seatValueMultiple(vendor, t, 1) }))
+    // cheapest per-token first; on a tie, the smaller commitment first. The tie needs a
+    // tolerance: Pro (1×/€20) and Max 5× (5×/€100) are equal only up to float noise, and
+    // a raw `b.mult - a.mult` would order them by that noise.
+    .sort((a, b) =>
+      Math.abs(b.mult - a.mult) > 1e-9 * a.mult ? b.mult - a.mult : a.t.feeEur - b.t.feeEur,
+    );
+  const out: ScWaypoint[] = [];
+  for (const { t, mult } of tiers) {
+    const cost = (list * anchor.costMult) / mult;
+    const ours = t.feeEur === held.feeEur && t.quotaMult === held.quotaMult;
+    const prev = out[out.length - 1];
+    if (prev && Math.abs(prev.cost - cost) / Math.max(prev.cost, cost) < SC_WAYPOINT_MERGE_EPS) {
+      prev.tags.push(t.tag);
+      prev.notes.push(t.note);
+      prev.plans.push({ name: scPlanName(t.tag), feeEur: t.feeEur });
+      prev.ours = prev.ours || ours;
+      continue;
+    }
+    out.push({
+      tags: [t.tag],
+      notes: [t.note],
+      cost,
+      valueMult: mult,
+      ours,
+      plans: [{ name: scPlanName(t.tag), feeEur: t.feeEur }],
+      lvl: anchor.lvl,
+      label: anchor.label,
+      smart: anchor.smart,
+    });
+  }
+  return out;
+}
+
 // ─── geometry ───
 const W = 900;
 const H = 600;
@@ -887,13 +1039,12 @@ export function scComputeScales(models: ScModel[], xScale: ScXScale = "log"): Sc
   let minIdx = Infinity;
   let maxIdx = -Infinity;
   let maxCtx = -Infinity;
-  const refTokens = scTokensPerTask("claude-code/claude-opus-5", SC_REFERENCE.effort);
   for (const m of models) {
     for (const e of scEffortsFor(m).stops) {
       const cost = m.relCost * e.costMult;
       minCost = Math.min(minCost, cost);
       maxCost = Math.max(maxCost, cost);
-      maxTaskCost = Math.max(maxTaskCost, cost * (scTokensPerTask(m.id, e.lvl) / refTokens));
+      maxTaskCost = Math.max(maxTaskCost, cost * scTaskCostFactor(m.id, e.lvl));
     }
     // FORK 2026-08-27 (the architect): the API-price triangles are real marks and must be
     // inside the plot on BOTH axes. Opus 5's list price is ~340x its plan price, so
@@ -905,7 +1056,14 @@ export function scComputeScales(models: ScModel[], xScale: ScXScale = "log"): Sc
     for (const p of scApiPointsFor(m)) {
       maxCost = Math.max(maxCost, p.cost);
       minCost = Math.min(minCost, p.cost);
-      maxTaskCost = Math.max(maxTaskCost, p.cost * (scTokensPerTask(m.id, p.lvl) / refTokens));
+      maxTaskCost = Math.max(maxTaskCost, p.cost * scTaskCostFactor(m.id, p.lvl));
+    }
+    // Plan-tier waypoints are marks too. The dearest-quota tier sits LEFT of its own
+    // circle (100% vs the circle's 75%), so for the cheapest model it can undercut
+    // minCost and would otherwise clamp onto the left edge.
+    for (const w of scWaypointsFor(m)) {
+      minCost = Math.min(minCost, w.cost);
+      maxCost = Math.max(maxCost, w.cost);
     }
     // The y domain is the MEASURED index range, padded by a flat 2 points. It
     // used to be padded by ×0.9 and ×1.12 — the same invented smartness curve
@@ -1007,6 +1165,10 @@ function scCtxLegendSvg(s: ScScales): string {
   }
   return (
     `<g class="sc-ctxleg" pointer-events="none">` +
+    // The waypoint key (2026-09-23): one line, above the size key, because the diamond
+    // is the one mark on the plot whose meaning is not guessable from the other three.
+    `<text x="${x0}" y="${fx(y0 - 34)}" font-size="7.5" letter-spacing="1.4" fill="#f0e6d8" fill-opacity="0.5"` +
+    ` font-family="'SF Mono',ui-monospace,monospace">▵ PLAN AT 100% OF WEEKLY CAP · ▴ OUR SEAT · △ API LIST · DRAG A CIRCLE ALONG ITS ROW</text>` +
     `<text x="${x0}" y="${fx(y0 - 22)}" font-size="7.5" letter-spacing="1.4" fill="#f0e6d8" fill-opacity="0.5"` +
     ` font-family="'SF Mono',ui-monospace,monospace">SIZE ∝ CONTEXT</text>` +
     `${marks}</g>`
@@ -1064,9 +1226,10 @@ export function scRadius(ctxTokens: number, s: ScScales): number {
 export const SC_NONANCHOR_STROKE = 0.6;
 
 /** The accounting utilisation the prepaid circle is drawn at (the architect 2026-08-13).
- *  Max 20x / SuperGrok / ChatGPT Business are not token-metered; 75% is the
- *  quota-ceiling convention the €/Mtok number was derived from. */
-export const SC_PLAN_UTIL = 0.75;
+ *  Max 20× / ChatGPT Plus / SuperGrok are not token-metered; 75% is the
+ *  quota-ceiling convention the €/Mtok number was derived from. Owned by the cost
+ *  table since 2026-09-23 so the circle and the table cannot disagree about it. */
+export const SC_PLAN_UTIL = PLAN_UTIL;
 
 /** Sample windows for the on-plot size legend. Area ∝ ctx, so these three
  *  sizes are the visual dictionary for every circle on the chart. */
@@ -1181,15 +1344,13 @@ export function scIdxTag(
  * Freeze a mark: strip its SMIL animation elements.
  *
  * FORK 2026-08-06 #10 (the architect: "why is gemini flash pulsating? It should not").
- * The GOOGLE provider mark carries an `<animate>` that cycles its ring stroke
- * through the four Google colours on a 4s loop — so every Gemini dot (no vendor
- * mark of its own, so it falls back to the provider logo) shimmered. Two reasons
- * that is wrong HERE and nowhere else: this is a static reference chart, where a
- * moving dot reads as "live/active" and means nothing; and the mark is inlined
- * once per effort level per model, so the catalog view was running ~100 SMIL
- * timelines behind a chart we just spent a commit making cheaper to zoom.
- * The panels that show ONE logo keep their animation — this only freezes the
- * copies the chart makes.
+ * FORK 2026-09-03: the Google mark itself is now the static colourful G
+ * (`GOOGLE_G_LOGO_SVG`) — the SMIL ring is gone at the source, not just here.
+ * The 2026-08-06 exception ("panels that show ONE logo keep their animation")
+ * was a misread; he does not want the flash anywhere. `scStill` stays as a
+ * freeze in case some other mark grows an `<animate>` later: this is a static
+ * reference chart, a moving dot reads as live/active, and the mark is inlined
+ * once per effort level per model.
  */
 function scStill(mark: string): string {
   return mark.replace(/<\/?(animate|animateTransform|animateMotion|set)\b[^>]*>/g, "");
@@ -1297,7 +1458,7 @@ export function renderSmartCostChart(
   // THE FRONTIER (the architect 2026-09-02: "picked as up-left as possible, basically defining
   // the top-left outline"). Every rung of every considered model, priced in €/TASK by
   // the shared module — `m.relCost` and `m.index` are the SAME inputs scPointsFor
-  // draws from, so a rung's cost equals `p.cost * scTokenRatio(m.id, p.lvl)` and its
+  // draws from, so a rung's cost equals `p.cost * scTaskCostFactor(m.id, p.lvl)` and its
   // ring lands on the dot it names (the envelope test asserts that equivalence).
   // Nothing about the frontier is derived here: paretoFrontier and biasPick are the
   // router's own functions, called with the chart's data.
@@ -1437,6 +1598,24 @@ export function renderSmartCostChart(
   // ~1.1s whether there are 12 models or 64. A fixed 55ms × model made the
   // full-catalog wave run 3.5s, so late models looked stuck on toggle.
   const stagger = Math.min(0.055, 1.1 / Math.max(1, models.length));
+  // Waypoint TAGS are always on for ONE model per vendor — the smartest one that has a
+  // ladder — and on hover/focus for every other. Four tags on every Claude and OpenAI
+  // model would be ~40 labels saying the same pattern ten times: the ladder is the same
+  // shape for every model of a vendor, just slid along the axis by its list price.
+  const wpShowcase = new Set<string>();
+  const wpBest = new Map<SeatVendor, ScModel>();
+  for (const m of models) {
+    const v = scSeatVendor(m);
+    // FORK 2026-09-30: the marks are drawn ON the API bridges, so a model with no API
+    // triangle (a metered twin, whose circle already IS list price) draws none. The
+    // metered openai/gpt-6-astra tied the seat Astra on index, came first, won the slot,
+    // and the OpenAI tags never appeared on the chart at all.
+    if (v === undefined || scWaypointsFor(m).length === 0 || scApiPointsFor(m).length === 0)
+      continue;
+    const cur = wpBest.get(v);
+    if (cur === undefined || m.index > cur.index) wpBest.set(v, m);
+  }
+  for (const m of wpBest.values()) wpShowcase.add(m.id);
   models.forEach((m, mi) => {
     const pts = scPointsFor(m);
     // FORK 2026-08-06 #4: positions come from the SCALE-AWARE scCostX, and the
@@ -1444,7 +1623,7 @@ export function renderSmartCostChart(
     // same markup glides correctly on BOTH the log and the linear axis.
     const coords = pts.map((p) => {
       const xCost = scCostX(p.cost, s);
-      const xTask = scCostX(p.cost * scTokenRatio(m.id, p.lvl), s);
+      const xTask = scCostX(p.cost * scTaskCostFactor(m.id, p.lvl), s);
       return { x: fx(xCost), y: fx(scY(p.smart, s)), dx: fx(xTask - xCost), p };
     });
     const delay = `${(mi * stagger).toFixed(2)}s`;
@@ -1481,6 +1660,15 @@ export function renderSmartCostChart(
     // the vendor exposes and is a COST ladder: it says "these settings exist and
     // cost this much", nothing about how smart they are. A model with full AA
     // coverage (only Opus 5 today) draws no rail at all, so nothing changes for it.
+    // HOVER LAG (the architect 2026-09-23 #3, "make sure the whole model's path and bubbles light
+    // up on-hover"): these polylines used to carry the glide stagger as an inline
+    // `transition-delay`. A line does not glide — its two copies crossfade on
+    // stroke-opacity, and `.sc-svg .sc-line-*` already narrows the transition to
+    // `opacity` — so the ONLY thing the delay ever delayed was the hover highlight: a
+    // model late in the list lit its bubbles at once and its path up to ~1.1 s later
+    // (measured: API line still at 0.55 opacity 1.2 s into a hover). The stagger stays
+    // on the gliding groups (.sc-dotg / .sc-apig); on lines it is parked as an inert
+    // --sc-delay so a future animated crossfade can opt back in deliberately.
     const measuredC = coords.filter((c) => c.p.measured);
     // ESTIMATED rungs (the architect 2026-09-02) get a third line, DOTTED, through every rung
     // that carries a number we stand behind at ±1σ — measured or estimated. It is the
@@ -1489,28 +1677,28 @@ export function renderSmartCostChart(
     const knownC = coords.filter((c) => c.p.measured || c.p.estimate);
     if (measuredC.length > 1) {
       linesCost +=
-        `<polyline class="sc-line-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${measuredC.map((c) => `${c.x},${c.y}`).join(" ")}"` +
+        `<polyline class="sc-line-cost"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}" points="${measuredC.map((c) => `${c.x},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0.34" stroke-width="1.1"/>`;
       linesTask +=
-        `<polyline class="sc-line-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${measuredC.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
+        `<polyline class="sc-line-task"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}" points="${measuredC.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="1.1"/>`;
     }
     if (knownC.length > 1 && knownC.length > measuredC.length) {
       linesCost +=
-        `<polyline class="sc-line-est-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${knownC.map((c) => `${c.x},${c.y}`).join(" ")}"` +
+        `<polyline class="sc-line-est-cost"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}" points="${knownC.map((c) => `${c.x},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0.3" stroke-width="1"` +
         ` stroke-dasharray="1.6 2.4" vector-effect="non-scaling-stroke"/>`;
       linesTask +=
-        `<polyline class="sc-line-est-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${knownC.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
+        `<polyline class="sc-line-est-task"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}" points="${knownC.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="1"` +
         ` stroke-dasharray="1.6 2.4" vector-effect="non-scaling-stroke"/>`;
     }
     if (coords.length > 1 && knownC.length < coords.length) {
       rails +=
-        `<polyline class="sc-rail-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${coords.map((c) => `${c.x},${c.y}`).join(" ")}"` +
+        `<polyline class="sc-rail-cost"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}" points="${coords.map((c) => `${c.x},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0.2" stroke-width="0.9"` +
         ` stroke-dasharray="3 2.6" vector-effect="non-scaling-stroke"/>` +
-        `<polyline class="sc-rail-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}" points="${coords.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
+        `<polyline class="sc-rail-task"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}" points="${coords.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="0.9"` +
         ` stroke-dasharray="3 2.6" vector-effect="non-scaling-stroke"/>`;
     }
@@ -1533,14 +1721,14 @@ export function renderSmartCostChart(
     if (apiPts.length) {
       const aCoords = apiPts.map((p) => {
         const xCost = scCostX(p.cost, s);
-        const xTask = scCostX(p.cost * scTokenRatio(m.id, p.lvl), s);
+        const xTask = scCostX(p.cost * scTaskCostFactor(m.id, p.lvl), s);
         return { x: fx(xCost), y: fx(scY(p.smart, s)), dx: fx(xTask - xCost), p };
       });
       apiMarks +=
-        `<polyline class="sc-line-api-cost"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}"` +
+        `<polyline class="sc-line-api-cost"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}"` +
         ` points="${aCoords.map((c) => `${c.x},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0.22" stroke-width="1"/>` +
-        `<polyline class="sc-line-api-task"${vAttr}${tAttr}${mAttr} style="transition-delay:${delay}"` +
+        `<polyline class="sc-line-api-task"${vAttr}${tAttr}${mAttr} style="--sc-delay:${delay}"` +
         ` points="${aCoords.map((c) => `${fx(c.x + c.dx)},${c.y}`).join(" ")}"` +
         ` fill="none" stroke="${m.color}" stroke-opacity="0" stroke-width="1"/>`;
       const mult = scApiMultiple(m);
@@ -1563,7 +1751,7 @@ export function renderSmartCostChart(
           ` · ${scIdxTag(c.p)}` +
           ` · official published price, not our effective cost`;
         apiMarks +=
-          `<g class="sc-apipos" transform="translate(${c.x}, ${c.y})"${vAttr}${tAttr}${mAttr}>` +
+          `<g class="sc-apipos" transform="translate(${c.x}, ${c.y})"${vAttr}${tAttr}${mAttr} data-effort="${esc(c.p.lvl)}">` +
           `<g class="sc-apig" style="--sc-dx:${c.dx}px;transition-delay:${delay}">` +
           `<polygon class="sc-tri" points="${tri}" fill="${m.color}" fill-opacity="0.1"` +
           ` stroke="${m.color}" stroke-opacity="${triSo}" stroke-width="1.1"` +
@@ -1577,12 +1765,77 @@ export function renderSmartCostChart(
         // RELATIONSHIP (two prices for one token), not either price's identity.
         const cc = coords[i] ?? anchorC;
         bridges +=
-          `<line class="sc-bridge-cost"${vAttr}${tAttr}${mAttr} x1="${cc.x}" y1="${cc.y}"` +
+          `<line class="sc-bridge-cost"${vAttr}${tAttr}${mAttr} data-effort="${esc(c.p.lvl)}" x1="${cc.x}" y1="${cc.y}"` +
           ` x2="${c.x}" y2="${c.y}" stroke="#f0e6d8" stroke-opacity="0.16" stroke-width="0.8"` +
           ` stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>` +
-          `<line class="sc-bridge-task"${vAttr}${tAttr}${mAttr} x1="${fx(cc.x + cc.dx)}" y1="${cc.y}"` +
+          `<line class="sc-bridge-task"${vAttr}${tAttr}${mAttr} data-effort="${esc(c.p.lvl)}" x1="${fx(cc.x + cc.dx)}" y1="${cc.y}"` +
           ` x2="${fx(c.x + c.dx)}" y2="${c.y}" stroke="#f0e6d8" stroke-opacity="0" stroke-width="0.8"` +
           ` stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`;
+      }
+      // ─── plan-tier waypoints on EVERY rung's bridge (the architect 2026-09-23 #2, #3) ───
+      // #2: "let's make all those marks triangles, and when we are dragging a particular
+      //  circle the row of triangles will get selected (thus showing brighter) and the
+      //  triangle positions will have some stickiness. When putting the circle on top of
+      //  it, the model and price per month will show."
+      // #3: "make all the triangles the same size, same behavior."
+      //
+      // SAME SIZE, SAME BEHAVIOUR — BY CONSTRUCTION, NOT BY COPY. A waypoint is emitted
+      // with the API triangle's OWN classes (.sc-apipos / .sc-apig / .sc-tri), its radius
+      // (scRadius — area ∝ context window), its fill, and its anchor/derived stroke rule,
+      // so every base.css rule that styles, dims, lights or glides an API triangle does
+      // the same to a plan triangle; the second class (.sc-wppos / .sc-wpg / .sc-wp) only
+      // ADDS what a plan mark has and a list mark does not — the tag and the snap data.
+      // Two parallel rule sets would drift the first time either was edited.
+      //
+      // One row per rung, like the API triangles: filled = OUR seat at 100% (its circle is
+      // the same seat at 75%). Each mark carries its cost-axis x (data-wp-x) and readout
+      // (data-wp-hud) so app.ts's drag snaps to exactly what is drawn.
+      const vendor = scSeatVendor(m);
+      const show = wpShowcase.has(m.id) ? " sc-wp-show" : "";
+      const held = vendor === undefined ? "" : SEAT_MEASURED[vendor].plan;
+      const wr = fx(scRadius(m.ctx, s));
+      const wtri = `${fx(0)},${fx(-wr)} ${fx(wr * 0.87)},${fx(wr * 0.5)} ${fx(-wr * 0.87)},${fx(wr * 0.5)}`;
+      for (const ap of apiPts) {
+        const anchorCls = ap.anchor ? " sc-wp-anchor" : "";
+        const triSo = fx(0.5 * (ap.anchor ? 1 : SC_NONANCHOR_STROKE));
+        scWaypointsFor(m, ap.lvl).forEach((w, wi) => {
+          const xCost = scCostX(w.cost, s);
+          const xTask = scCostX(w.cost * scTaskCostFactor(m.id, w.lvl), s);
+          const wx = fx(xCost);
+          const wy = fx(scY(w.smart, s));
+          const wdx = fx(xTask - xCost);
+          // TAGS STACK on their own 9px rows, clear of the triangle (radius wr): an
+          // above/below alternation piled three tags into one smear (2026-09-23), and a
+          // tag is ~70px wide against marks 23-72px apart. Anthropic stacks up, OpenAI
+          // down, so the two showcase ladders never meet.
+          const dir = vendor === "anthropic" ? -1 : 1;
+          const tagY = dir < 0 ? -(wr + 4 + wi * 9) : wr + 9 + wi * 9;
+          // DURING A DRAG the readout (.sc-util-pct) sits ABOVE the circle — the space an
+          // upward stack occupies. --wp-flip mirrors this tag to its downward row; base.css
+          // applies it only to the ACTIVE row while dragging.
+          const flip = dir < 0 ? fx(2 * wr + 13 + 18 * wi) : 0;
+          const wpTip =
+            `${m.name} · ${w.label} — ${scWaypointHud(w)}` +
+            ` at 100% of the weekly cap: €${fmt(w.cost)}/Mtok` +
+            ` · each € of fee buys ${w.valueMult.toFixed(0)}× its value at API list` +
+            (w.ours
+              ? ` · the seat we hold — our circle is this plan at ${Math.round(SC_PLAN_UTIL * 100)}%`
+              : "") +
+            ` · ${w.notes.join("; ")}` +
+            ` · ceiling MEASURED on our own ${held} week, other tiers scaled by the vendor's published multiple` +
+            ` · drag the circle onto it to compare`;
+          apiMarks +=
+            `<g class="sc-apipos sc-wppos${show}${anchorCls}" transform="translate(${wx}, ${wy})"${vAttr}${tAttr}${mAttr}` +
+            ` data-effort="${esc(w.lvl)}" data-wp-x="${wx}" data-wp-hud="${esc(scWaypointHud(w))}">` +
+            `<g class="sc-apig sc-wpg" style="--sc-dx:${wdx}px;transition-delay:${delay}">` +
+            `<polygon class="sc-tri sc-wp${w.ours ? " sc-wp-ours" : ""}" points="${wtri}" fill="${m.color}"` +
+            ` fill-opacity="${w.ours ? 0.45 : 0.1}" stroke="${m.color}" stroke-opacity="${triSo}" stroke-width="1.1"` +
+            ` vector-effect="non-scaling-stroke"/>` +
+            `<text class="sc-wp-tag" y="${tagY}"${flip ? ` style="--wp-flip:${flip}px"` : ""} text-anchor="middle" font-size="6.5" fill="#f0e6d8"` +
+            ` font-family="'SF Mono',ui-monospace,monospace" pointer-events="none">${esc(scWaypointTag(w))}</text>` +
+            `<circle r="${fx(wr + 4)}" fill="transparent"><title>${esc(wpTip)}</title></circle>` +
+            `</g></g>`;
+        });
       }
     }
     for (let i = 0; i < coords.length; i++) {
@@ -1907,7 +2160,7 @@ export function renderSmartCostChart(
       const pts = scPointsFor(m);
       const p = pts[pts.length - 1];
       const xCost = scCostX(p.cost, s);
-      const xTask = scCostX(p.cost * scTokenRatio(m.id, p.lvl), s);
+      const xTask = scCostX(p.cost * scTaskCostFactor(m.id, p.lvl), s);
       return {
         name: m.name,
         id: m.id,

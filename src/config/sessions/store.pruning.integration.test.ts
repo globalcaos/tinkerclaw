@@ -7,7 +7,7 @@ import {
   resolveTrajectoryFilePath,
   resolveTrajectoryPointerFilePath,
 } from "../../trajectory/paths.js";
-import type { SessionEntry } from "./types.js";
+import { mergeSessionEntry, type SessionEntry } from "./types.js";
 
 // Keep integration tests deterministic: never read a real openclaw.json.
 vi.mock("../config.js", async () => ({
@@ -109,6 +109,42 @@ describe("Integration: saveSessionStore with pruning", () => {
     } else {
       process.env.OPENCLAW_SESSION_CACHE_TTL_MS = savedCacheTtl;
     }
+  });
+
+  // FORK 2026-10-03 — the live path of the "subagent always runs on the default
+  // model" bug: subagent-spawn writes the child's model pin with
+  // updateSessionStore, then agentCommand reads it back with loadSessionStore.
+  // With the protected conversation keys alone at or above maxEntries, the
+  // spawn's own save deleted the entry, so agentCommand found no override.
+  it("a subagent model pin survives its own save when conversation keys fill the cap", async () => {
+    mockLoadConfig.mockReturnValue({
+      session: { maintenance: { mode: "enforce", pruneAfter: "365d", maxEntries: 5 } },
+    });
+    const now = Date.now();
+    const seeded = Object.fromEntries(
+      Array.from({ length: 8 }, (_unused, i) => [
+        `agent:main:tinker:tab${i}`,
+        makeEntry(now - (i + 1) * DAY_MS),
+      ]),
+    );
+    await fs.writeFile(storePath, JSON.stringify(seeded, null, 2), "utf8");
+    const childKey = "agent:main:subagent:9696aa5a-fded-4b17-b457-5e568164236b";
+
+    await updateSessionStore(storePath, (store) => {
+      store[childKey] = mergeSessionEntry(store[childKey], {
+        spawnDepth: 1,
+        model: "claude-haiku-4-5",
+        modelOverride: "claude-haiku-4-5",
+        modelOverrideSource: "user",
+        modelProvider: "claude-code",
+        providerOverride: "claude-code",
+      });
+    });
+
+    const loaded = loadSessionStore(storePath, { skipCache: true });
+    expect(loaded[childKey]?.modelOverride).toBe("claude-haiku-4-5");
+    expect(loaded[childKey]?.providerOverride).toBe("claude-code");
+    expect(Object.keys(loaded).filter((k) => k.includes(":tinker:")).length).toBe(8);
   });
 
   it("saveSessionStore prunes stale entries on write", async () => {

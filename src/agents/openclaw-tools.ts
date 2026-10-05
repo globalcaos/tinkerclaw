@@ -332,6 +332,8 @@ export function createOpenClawTools(
       agentSessionKey: options?.agentSessionKey,
       config: resolvedConfig,
       sandboxed: options?.sandboxed,
+      modelProvider: options?.modelProvider,
+      modelId: options?.modelId,
     }),
     ...collectPresentOpenClawTools([webSearchTool, webFetchTool, imageTool, pdfTool]),
   ];

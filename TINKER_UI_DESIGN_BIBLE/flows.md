@@ -292,6 +292,61 @@ sequenceDiagram
 
 ---
 
+## F8. `chat.history` incremental window (seq cursors)
+
+**Trigger:** Tinker UI opens/reconnects a chat tab, a turn on it ends, or the tab's chat page is scrolled to the top.
+**Entry:** `tinker-ui/src/app.ts` (`loadChat`, `hydrateTab`, `loadOlderPage`) → `src/gateway/server-methods/chat.ts:chatHandlers["chat.history"]`
+**Exit:** `ChatHistoryResult` carrying a `cursor` (`epoch`, `firstSeq`, `lastSeq`, `hasMoreBefore`, `reset`); the tab folds it into its per-tab `HistoryWindow` (`tinker-ui/src/history-window.ts`).
+
+```mermaid
+sequenceDiagram
+  participant TUI as Tinker UI (app.ts, history-paging.ts)
+  participant HW as HistoryWindow (per tab, history-window.ts)
+  participant GW as chat.history handler (chat.ts)
+  participant PL as chat-history-cursor.ts (planner)
+  participant TI as TranscriptIndex (transcript-index.ts, see failures.md M20)
+
+  Note over TUI,HW: first open of an EMPTY page
+  TUI->>GW: chat.history {sessionKey, limit:100} (legacy shape)
+  GW->>TI: readSessionMessagesWithCursor
+  TI-->>GW: {epoch, messages}
+  GW->>PL: planChatHistoryWindow(no cursor) → tail
+  GW-->>TUI: {messages, cursor:{epoch, firstSeq, lastSeq, hasMoreBefore, reset:false}}
+  TUI->>HW: applyCursor (window seeded from the reply)
+
+  Note over TUI,HW: turn end / reconnect / background final — page already holds server rows
+  TUI->>GW: chat.history {sessionKey, afterSeq:HW.lastSeq, epoch:HW.epoch, limit:1000} (R25)
+  GW->>PL: planChatHistoryWindow(afterSeq, epoch)
+  alt epoch matches HW.epoch
+    PL-->>GW: rows with seq > afterSeq, plus stranded (seq-less) local rows
+    GW-->>TUI: {messages: delta, cursor:{epoch, firstSeq:afterSeq+1, lastSeq, hasMoreBefore:true, reset:false}}
+    TUI->>HW: applyCursor (delta — window advances; page rows gap-filled by identity, never replaced)
+  else epoch missing, mismatched, or server has no epoch (flat/legacy transcript)
+    PL-->>GW: reset:true, a full tail window
+    GW-->>TUI: {messages: tail, cursor:{epoch, firstSeq, lastSeq, hasMoreBefore, reset:true}}
+    TUI->>HW: applyCursor (reset — window re-seeded wholesale; page ROWS still merged by identity, never cleared)
+  end
+
+  Note over TUI,HW: scroll to top — older page
+  TUI->>GW: chat.history {sessionKey, beforeSeq:HW.firstSeq, epoch:HW.epoch}
+  GW->>PL: planChatHistoryWindow(beforeSeq, epoch)
+  PL-->>GW: positional page of `limit` seq rows before beforeSeq, imports bounded to that page's time range
+  GW-->>TUI: {messages: older page, cursor:{epoch, firstSeq, lastSeq, hasMoreBefore, reset:false}}
+  TUI->>HW: planOlderPage/applyOlderPage — rows written ABOVE the page, anchored on identity (tinker-ui.md §5.8W)
+```
+
+**Invariants:**
+
+- **Backward compatible.** A `chat.history` call with no `afterSeq`/`beforeSeq`/`epoch` returns exactly the legacy tail window (ruling R9) — the TUI's non-cursor callers, iOS/Android/macOS apps, and the prefrontal/round-table extensions all keep working unmodified. Cursors are additive protocol fields (`additionalProperties:false` unchanged).
+- **The UI window per tab (`history-window.ts`).** The first open of an EMPTY page asks `{limit:100}` (`WINDOW_PAGE`); every later read of a page that already holds server rows asks `limit:1000` (ruling R25, both cursor and legacy shape) — the gateway's 200-row default would answer a longer delta `reset`, and a 100-row legacy read can leave a mid-page hole that `beforeSeq` paging cannot reach. `epoch: null` (a flat/legacy-loaded transcript, or a pre-restart gateway that never returns a `cursor`) keeps the tab's window cursor-less: requests stay legacy-shaped, older paging is unavailable, and nothing is trimmed (ruling R7).
+- **Cursor math.** `afterSeq` selects rows with `seq > afterSeq` plus every stranded (seq-less) local row, so a concurrently appended prompt is never left only in the outbox. An epoch mismatch or an overflowing delta (`lastSeq − afterSeq > limit`) answers `reset:true` rather than silently dropping the middle (ruling R10). `beforeSeq` returns a positional page ending just before that seq, with imports bounded to the page's own time range (ruling R23 widened this so a limited tail's cut import range is still reachable by paging back).
+- **Reset semantics.** `reset:true` fires on a missing/mismatched epoch or a server epoch of `null` (ruling R22). A reset is served as a full tail window and merged into the page by IDENTITY like any other reply — **the page's rows are never cleared**; only the client's cursor state (`HistoryWindow`) is re-seeded wholesale from the reply, never merged with the stale window it replaces.
+- **Outbox proof by cursor.** The outbox records `sentAfterSeq`/`sentEpoch` on the page held when a prompt was typed; `flushOutbox` asks `{afterSeq: min(sentAfterSeq)−1, epoch, limit:1000}` (ruling R24) when every pending entry's seq was recorded under the epoch the tab holds now, and falls back to `{limit:200}` (text proof, tail-only) otherwise, or on a `reset` reply, or a rejected cursor read. See tinker-ui.md §5.8W.
+
+**See also:** tinker-ui.md §5.8W (the client-side window/older-page/trim rules in full, including the known limits); failures.md M20 (the fault class this closes on the session's OWN transcript, as distinct from the claude-cli import path M20 originally fixed); lifecycles.md (outbox ack ≠ delivery).
+
+**Last verified:** 2026-09-23 (`feat/chat-history-incremental` branch, plan tasks 2–9; `src/gateway/server-methods/chat.ts`, `src/gateway/chat-history-cursor.ts`, `tinker-ui/src/history-window.ts`, `tinker-ui/src/history-paging.ts`).
+
 ---
 
 ## F-PLAN-RESUME. Gateway restart → plan-aware [System] continue

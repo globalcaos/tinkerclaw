@@ -1,14 +1,25 @@
 import type { Server as HttpServer } from "node:http";
 import type { WebSocketServer } from "ws";
 import { disposeAllSessionMcpRuntimes } from "../agents/agent-bundle-mcp-tools.js";
+import { abortHeldEmbeddedRuns } from "../agents/embedded-agent-runner/runs.js";
 import { disposeRegisteredAgentHarnesses } from "../agents/harness/registry.js";
 import type { CanvasHostHandler, CanvasHostServer } from "../canvas-host/server.js";
 import { type ChannelId, listChannelPlugins } from "../channels/plugins/index.js";
 import { createInternalHookEvent, triggerInternalHook } from "../hooks/internal-hooks.js";
 import type { HeartbeatRunner } from "../infra/heartbeat-runner.js";
+import { drainForRestart } from "../infra/restart-drain.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { markGatewayShuttingDown } from "./gateway-shutdown-state.js";
+import { notedRestartReason, writeRestartContext } from "./restart-notice.js";
+
+/** FORK 2026-09-29 (lifecycles.md L4b): the drain must fit inside systemd's TimeoutStopSec (120 s). */
+const DEFAULT_RESTART_DRAIN_MS = 75_000;
+function resolveRestartDrainBudgetMs(): number {
+  const raw = Number(process.env.OPENCLAW_RESTART_DRAIN_MS);
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : DEFAULT_RESTART_DRAIN_MS;
+}
 
 const shutdownLog = createSubsystemLogger("gateway/shutdown");
 const GATEWAY_SHUTDOWN_HOOK_TIMEOUT_MS = 1_000;
@@ -169,6 +180,34 @@ export function createGatewayCloseHandler(params: {
   httpServers?: HttpServer[];
 }) {
   return async (opts?: { reason?: string; restartExpectedMs?: number | null }) => {
+    // FORK 2026-09-29 (lifecycles.md L4b): first thing, before any harness is disposed, so every run
+    // this shutdown cuts is stored as interrupted (`running` + `abortedLastRun`), not as `done`.
+    markGatewayShuttingDown();
+    // FORK 2026-09-29 (lifecycles.md L4b): when and why this stop happened, for the restart notice
+    // boot recovery posts in each chat it resumes (restart-notice.ts).
+    writeRestartContext({
+      stoppedAt: Date.now(),
+      reason: notedRestartReason() ?? normalizeOptionalString(opts?.reason),
+    });
+    // FORK 2026-09-29 (lifecycles.md L4b): bring every live turn to its next model-call boundary
+    // before anything is torn down, so no paid output is cut. After a `gateway.drain` the runners are
+    // usually already held and this returns quickly, but not always: since 2026-10-01 it also waits
+    // for prompts chat.send acked that are still preparing (the `preparing` participant). A plain
+    // `systemctl stop` gets what systemd allows.
+    try {
+      const drain = await drainForRestart(resolveRestartDrainBudgetMs());
+      shutdownLog.info(
+        `restart drain: held=${drain.held} ended=${drain.ended} unfinished=${drain.unfinished} in ${drain.ms}ms`,
+      );
+      if (opts?.restartExpectedMs != null) {
+        // An in-process restart keeps this process: a held turn would stay held forever, holding its
+        // transcript lock. End it here, while the shutting-down mark makes its end read as
+        // interrupted; boot recovery resumes it. A full stop just exits with the turn held.
+        abortHeldEmbeddedRuns();
+      }
+    } catch (err) {
+      shutdownLog.warn(`restart drain failed: ${String(err)}`);
+    }
     try {
       const reasonRaw = normalizeOptionalString(opts?.reason) ?? "";
       const reason = reasonRaw || "gateway stopping";

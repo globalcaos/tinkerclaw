@@ -1,5 +1,6 @@
 import { complete, type Api, type Model } from "@mariozechner/pi-ai";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { withLedgerCompletion } from "../forensic/llm-ledger.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { prepareProviderRuntimeAuth } from "../plugins/provider-runtime.runtime.js";
 import { resolveAgentDir, resolveAgentEffectiveModelPrimary } from "./agent-scope.js";
@@ -281,8 +282,18 @@ export async function completeWithPreparedSimpleCompletionModel(params: {
   options?: SimpleCompletionModelOptions;
 }) {
   const completionModel = prepareModelForSimpleCompletion({ model: params.model });
-  return await complete(completionModel, params.context, {
-    ...params.options,
-    apiKey: params.auth.apiKey,
-  });
+  return await withLedgerCompletion(
+    {
+      source: "completion",
+      provider: completionModel.provider,
+      model: completionModel.id,
+      api: completionModel.api,
+    },
+    params.context,
+    () =>
+      complete(completionModel, params.context, {
+        ...params.options,
+        apiKey: params.auth.apiKey,
+      }),
+  );
 }

@@ -183,11 +183,40 @@ export async function updateSessionStoreAfterAgentRun(params: {
     next.compactionCount = (entry.compactionCount ?? 0) + compactionsThisRun;
   }
   const persisted = await updateSessionStore(storePath, (store) => {
-    const merged = mergeSessionEntry(store[sessionKey], next);
+    const merged = mergeSessionEntry(store[sessionKey], withoutRunLifecycleFields(next));
     store[sessionKey] = merged;
     return merged;
   });
   sessionStore[sessionKey] = persisted;
+}
+
+/**
+ * FORK 2026-09-30 (TINKER_UI_DESIGN_BIBLE/lifecycles.md L4b) — the fields the run's lifecycle events
+ * (gateway/session-lifecycle-state.ts) and boot recovery (main-session-restart-recovery.ts) own.
+ *
+ * A writer that merges an entry it SNAPSHOT when the run started must leave them to their owners.
+ * Otherwise the snapshot's values win over what the lifecycle wrote meanwhile. Measured in the
+ * restart live test 2026-09-30: a chat resumed after a restart was snapshot while `status:"running"`
+ * (a cut run is stored so, for recovery). Every run end then wrote `running` back over the
+ * lifecycle's `done`, and every later snapshot saw `running` again, so the chat stayed "running"
+ * until the next restart settled it. `abortedLastRun` is not in the list: this writer sets it
+ * from the run's own result.
+ */
+const RUN_LIFECYCLE_FIELDS = [
+  "status",
+  "startedAt",
+  "endedAt",
+  "runtimeMs",
+  "lastResumeAt",
+  "restartResumeToolCallId",
+] as const;
+
+export function withoutRunLifecycleFields<T extends Partial<SessionEntry>>(entry: T): T {
+  const next = { ...entry };
+  for (const field of RUN_LIFECYCLE_FIELDS) {
+    delete (next as Record<string, unknown>)[field];
+  }
+  return next;
 }
 
 export async function clearCliSessionInStore(params: {

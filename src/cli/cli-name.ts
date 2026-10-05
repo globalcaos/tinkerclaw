@@ -1,9 +1,13 @@
 import path from "node:path";
 
+// FORK 2026-09-22: the platform is TinkerClaw and ships a `tinkerclaw` bin (same entry
+// point). Printed command hints still say `openclaw` until they are renamed lazily —
+// flipping the default here rewrites every hint at once. Both names are recognised.
 export const DEFAULT_CLI_NAME = "openclaw";
+export const TINKERCLAW_CLI_NAME = "tinkerclaw";
 
-const KNOWN_CLI_NAMES = new Set([DEFAULT_CLI_NAME]);
-const CLI_PREFIX_RE = /^(?:((?:pnpm|npm|bunx|npx)\s+))?(openclaw)\b/;
+const KNOWN_CLI_NAMES = new Set([DEFAULT_CLI_NAME, TINKERCLAW_CLI_NAME]);
+const CLI_PREFIX_RE = /^(?:((?:pnpm|npm|bunx|npx)\s+))?(tinkerclaw|openclaw)\b/;
 
 export function resolveCliName(argv: string[] = process.argv): string {
   const argv1 = argv[1];

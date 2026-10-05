@@ -10,6 +10,7 @@
  * warning in context and can decide whether to proceed.
  */
 
+import { emitJMnemoContradiction } from "../../infra/events/j-rows.js";
 import { loadTodayDailyLog } from "./daily-log-cache.js";
 import { extractEntities } from "./entity-extraction.js";
 import type { EventStore } from "./event-store.js";
@@ -153,6 +154,17 @@ export function findContradictions(
       `[ENGRAM] contradiction gate: ${warnings.length} warning(s) for [${searchTerms.join(", ")}]`,
     );
   }
+
+  // logging.md §4.12 (J14): one row per write the gate actually CHECKED. The no-entity early
+  // return above is deliberately not rowed — a write intent with nothing to search was never
+  // checked, and counting it as a pass would inflate the denominator of the very rate this row
+  // exists to measure (L7). `blocked` stays structurally unreachable here: this module is passive
+  // injection by design, so a long run of pass/flagged with zero blocked is the measurement, not
+  // a bug. Entities, signals and snippets never travel (L4).
+  emitJMnemoContradiction({
+    outcome: warnings.length > 0 ? "flagged" : "pass",
+    sessionKey: store.sessionKey,
+  });
 
   return warnings;
 }

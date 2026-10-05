@@ -19,7 +19,9 @@ export type TaskStatus =
   // belongs to its axis; restored by setting status back to 'open'.
   | "back_burner";
 
-export type TaskAxis = "online" | "family" | "me" | "acme" | "meta";
+// Axes are user data: the ids live in the task_axis table (seeded with a few
+// generic defaults, then edited from the UI), so any non-empty id is valid here.
+export type TaskAxis = string;
 
 export type DismissalKind =
   | "not_a_task"
@@ -48,6 +50,7 @@ export type TaskRow = {
   dismissal_note: string | null;
   est_minutes: number | null;
   hands: Hands | null;
+  operator_id: string | null;
   inferred_signal_json: string | null;
   metadata_json: string | null;
   recurrence_rule_text: string | null;
@@ -64,6 +67,8 @@ export type TaskListFilter = {
   due_date_filter?: "today" | "upcoming" | "all" | "overdue";
   since_ts?: number;
   limit?: number;
+  operatorId?: string | null;
+  includeShared?: boolean;
 };
 
 export type TaskAddInput = {
@@ -78,6 +83,7 @@ export type TaskAddInput = {
   due_date?: string | null;
   est_minutes?: number | null;
   hands?: Hands | null;
+  operator_id?: string | null;
   inferred_signal?: unknown;
   metadata?: unknown;
   recurrence_rule_text?: string | null;
@@ -94,6 +100,7 @@ export type TaskUpdateInput = {
   due_date?: string | null;
   est_minutes?: number | null;
   hands?: Hands | null;
+  operator_id?: string | null;
   inferred_signal?: unknown;
   metadata?: unknown;
   note?: string;
@@ -145,12 +152,12 @@ export function addTask(cfg: ControlPanelResolvedConfig, input: TaskAddInput): T
     `INSERT INTO task (
       id, text, context_md, status, source, source_ref, briefing_pass_id,
       priority_axis, priority_rank, carry_days, age_seconds, due_date,
-      est_minutes, hands, inferred_signal_json, metadata_json,
+      est_minutes, hands, operator_id, inferred_signal_json, metadata_json,
       recurrence_rule_text, recurrence_parent_id, created_at, updated_at
     ) VALUES (
       @id, @text, @context_md, 'open', @source, @source_ref, @briefing_pass_id,
       @priority_axis, @priority_rank, 0, 0, @due_date,
-      @est_minutes, @hands, @inferred_signal_json, @metadata_json,
+      @est_minutes, @hands, @operator_id, @inferred_signal_json, @metadata_json,
       @recurrence_rule_text, @recurrence_parent_id, @now, @now
     )
     ON CONFLICT(id) DO UPDATE SET
@@ -163,6 +170,7 @@ export function addTask(cfg: ControlPanelResolvedConfig, input: TaskAddInput): T
       due_date = excluded.due_date,
       est_minutes = excluded.est_minutes,
       hands = excluded.hands,
+      operator_id = excluded.operator_id,
       inferred_signal_json = excluded.inferred_signal_json,
       metadata_json = excluded.metadata_json,
       recurrence_rule_text = excluded.recurrence_rule_text,
@@ -181,6 +189,7 @@ export function addTask(cfg: ControlPanelResolvedConfig, input: TaskAddInput): T
     due_date: input.due_date ?? null,
     est_minutes: input.est_minutes ?? null,
     hands: input.hands ?? null,
+    operator_id: input.operator_id ?? null,
     inferred_signal_json:
       input.inferred_signal === undefined ? null : JSON.stringify(input.inferred_signal),
     metadata_json: input.metadata === undefined ? null : JSON.stringify(input.metadata),
@@ -224,6 +233,14 @@ export function listTasks(cfg: ControlPanelResolvedConfig, filter: TaskListFilte
   if (filter.briefing_pass_id) {
     where.push(`briefing_pass_id = @briefing_pass_id`);
     params.briefing_pass_id = filter.briefing_pass_id;
+  }
+  if (filter.operatorId) {
+    if (filter.includeShared === false) {
+      where.push(`operator_id = @operator_id`);
+    } else {
+      where.push(`(operator_id = @operator_id OR operator_id IS NULL)`);
+    }
+    params.operator_id = filter.operatorId;
   }
   if (filter.since_ts !== undefined) {
     where.push(`updated_at >= @since_ts`);

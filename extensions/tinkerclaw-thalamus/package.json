@@ -1,0 +1,31 @@
+{
+  "name": "@globalcaos/tinker-thalamus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "THALAMUS v4 (J19): routes each model call, ranks the assistant's enhancements for each task, and records what it would have done. Ships disabled; mode off by default.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": false
+    }
+  }
+}

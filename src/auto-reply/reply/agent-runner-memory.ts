@@ -24,6 +24,7 @@ import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { readSessionMessages } from "../../gateway/session-utils.fs.js";
 import { logVerbose } from "../../globals.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { isRestartDrainActive } from "../../infra/restart-drain.js";
 import { resolveMemoryFlushPlan } from "../../plugins/memory-state.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import type { TemplateContext } from "../templating.js";
@@ -82,6 +83,7 @@ const memoryDeps = {
   updateSessionStoreEntry,
   randomUUID: () => crypto.randomUUID(),
   now: () => Date.now(),
+  isRestartDrainActive,
 };
 
 export function setAgentRunnerMemoryTestDeps(overrides?: Partial<typeof memoryDeps>): void {
@@ -95,6 +97,7 @@ export function setAgentRunnerMemoryTestDeps(overrides?: Partial<typeof memoryDe
     updateSessionStoreEntry,
     randomUUID: () => crypto.randomUUID(),
     now: () => Date.now(),
+    isRestartDrainActive,
     ...overrides,
   });
 }
@@ -791,6 +794,18 @@ export async function runMemoryFlushIfNeeded(params: {
       !hasAlreadyFlushedForCurrentCompaction(entry));
 
   if (!shouldFlushMemory) {
+    return entry ?? params.sessionEntry;
+  }
+
+  // FORK 2026-10-01 (bug-log [chat-divergence] cause 6, the companion of the drain's `preparing`
+  // participant). A flush that STARTS during a restart drain is held by the drain at its own first
+  // model call, and the prompt queued behind it can then never leave preparation: the drain waits
+  // out its whole budget and the prompt is lost at the stop (2026-09-30, session mt79j0oy). Skipped
+  // here, the prompt reaches its own run, which the drain holds and boot recovery continues; the
+  // flush runs on the next turn, whose context still needs it. A flush already running when a drain
+  // starts is not covered: exempting flush runs from the hold changes an existing participant.
+  if (memoryDeps.isRestartDrainActive()) {
+    logVerbose(`memoryFlush skipped: sessionKey=${params.sessionKey} restart drain active`);
     return entry ?? params.sessionEntry;
   }
 

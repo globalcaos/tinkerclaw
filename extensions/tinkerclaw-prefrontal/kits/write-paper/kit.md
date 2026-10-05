@@ -27,7 +27,7 @@ parallelism:
     Step index: 0=Outline, 1=Research, 2=Draft, 3=Review, 4=Polish.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

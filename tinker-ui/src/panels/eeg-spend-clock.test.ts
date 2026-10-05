@@ -187,6 +187,71 @@ describe("eeg spend clock — degenerate input must never poison the axis", () =
     expect(Number.isFinite(c.yOf(300))).toBe(true);
   });
 
+  // FINDING 10 (review 2026-10-01). `acc[0]` already includes every STEP landing at the ledger's
+  // first instant, so a SPANNING sample that starts at that same instant must begin from acc[0],
+  // not from 0. The old lower bound handed back 0 for `t === times[0]`, which drew the oldest
+  // strand on the paper over the top of the step beneath it and 50% too tall. Backfilled history
+  // is all steps, so a session's first instant carrying a step is the common case, not a corner.
+  it("a span starting at the ledger's FIRST instant begins after the steps there", () => {
+    const c = buildEegSpendClock([sample("stepA", 0, 0, 1), sample("spanB", 0, 1000, 2)], NOW);
+    expect(near(c.total, 3)).toBe(true);
+    expect(near(c.spans.get("stepA")!.yStart, 0)).toBe(true);
+    expect(near(c.spans.get("stepA")!.yEnd, 1)).toBe(true);
+    expect(near(c.spans.get("spanB")!.yStart, 1)).toBe(true);
+    expect(near(c.spans.get("spanB")!.yEnd, 3)).toBe(true);
+    expect(near(height(c, "spanB"), 2)).toBe(true);
+    // and S AT that instant is the post-step value, not 0
+    expect(near(c.yOf(0), 1)).toBe(true);
+  });
+
+  it("still reads 0 strictly BEFORE the ledger opens", () => {
+    const c = buildEegSpendClock([sample("stepA", 100, 100, 1)], NOW);
+    expect(c.yOf(99)).toBe(0);
+    expect(near(c.yOf(100), 1)).toBe(true);
+  });
+
+  // FINDING 7 (review 2026-10-01). `norm` kept EVERY sample handed in while `spans` is keyed by
+  // run id, so one run arriving twice billed the ledger twice and drew once — and the surviving
+  // span was twice as tall as the run's real cost. The clock is the module that promises "the grid
+  // can never lie", so the collapse belongs here rather than at one call site: every caller gets it.
+  it("one run handed in TWICE bills the ledger once", () => {
+    const c = buildEegSpendClock([sample("run1", 0, 1000, 1), sample("run1", 0, 1000, 1)], NOW);
+    expect(near(c.total, 1)).toBe(true);
+    expect(c.spans.size).toBe(1);
+    expect(near(height(c, "run1"), 1)).toBe(true);
+  });
+
+  it("the LAST write wins, because later frames carry better data", () => {
+    // first frame: still running, no tokens yet. second: final, with its real cost and end stamp.
+    const c = buildEegSpendClock(
+      [sample("run1", 0, undefined, 0), sample("run1", 0, 1000, 4)],
+      NOW,
+    );
+    expect(near(c.total, 4)).toBe(true);
+    expect(near(c.spans.get("run1")!.yStart, 0)).toBe(true);
+    expect(near(c.spans.get("run1")!.yEnd, 4)).toBe(true);
+  });
+
+  // FINDING 9 (review 2026-10-01). The rate accumulation was `for each breakpoint (2N) { for each
+  // spanning sample (N) }` — clean N^2, measured 124ms / 425ms / 2009ms at 1k / 2k / 4k samples on
+  // this machine. EEG_PERSIST_CAP is 2000 and the paper repaints on every effort frame, so a long
+  // session blocked the whole UI for ~0.4s per frame building an SVG. It is now a SWEEP: +rate at
+  // each start, -rate at each end, then one prefix pass, i.e. O(N log N) for the sort alone.
+  //
+  // The bound is deliberately ~20x the sweep's own cost and ~7x UNDER the old loop's, so it fails
+  // loudly on a reintroduced quadratic without going flaky on a busy machine.
+  it("builds 4000 overlapping samples without a quadratic blow-up", () => {
+    const samples: EegClockSample[] = [];
+    for (let i = 0; i < 4000; i++) {
+      samples.push({ key: "k" + i, startedAt: i * 10, endedAt: i * 10 + 50_000, euros: 0.01 });
+    }
+    const t0 = Date.now();
+    const c = buildEegSpendClock(samples, 4000 * 10 + 60_000);
+    const elapsed = Date.now() - t0;
+    expect(near(c.total, 40, 1e-6)).toBe(true); // conservation survives the rewrite
+    expect(elapsed).toBeLessThan(300);
+  });
+
   it("clamps yOf outside the sample range", () => {
     const c = buildEegSpendClock([sample("a", 100, 200, 1)], NOW);
     expect(c.yOf(-99999)).toBe(0);

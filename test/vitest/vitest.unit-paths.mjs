@@ -34,6 +34,7 @@ export const bundledPluginDependentUnitTestFiles = [
   // them here lifts the extensions/** exclusion for exactly these paths (see
   // vitest.bundled.config.ts, which filters out any exclude pattern that would
   // match an included file). Verified 70/70 green before enrolling.
+  "extensions/tinkerclaw-harness-id/src/harness-id.test.ts",
   "extensions/tinkerclaw-tinker-bridge/__tests__/orchestration-disposition.test.ts",
   "extensions/tinkerclaw-tinker-bridge/src/inflight-worker-registry.test.ts",
   "extensions/tinkerclaw-tinker-bridge/src/stream.dedup.test.ts",
@@ -46,6 +47,8 @@ export const bundledPluginDependentUnitTestFiles = [
   "extensions/tinkerclaw-tinker-bridge/src/worker.steer.test.ts",
   // FORK 2026-08-19 — the NUL-argv quarantine (27 fatal spawn deaths on 2026-08-18).
   "extensions/tinkerclaw-tinker-bridge/src/worker.nul-argv.test.ts",
+  // FORK 2026-10-02 — tool narration must not reach a chat channel (the 15:46 mic-drop leak).
+  "extensions/tinkerclaw-tinker-bridge/src/stream.channel-reply.test.ts",
 ];
 
 export const unitTestAdditionalExcludePatterns = [

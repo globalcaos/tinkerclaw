@@ -22,11 +22,12 @@
  * his replies in the median pulls the target up and self-justifies the
  * verbosity. Excluding bot messages forces the rhythm back toward the user.
  *
- * Read-only query against the shared `getDb()` singleton; try/catch wraps
+ * Read-only query against the shared `getDbIfExists()` accessor (never creates the DB); try/catch wraps
  * everything; any failure returns null and the prelude omits the block.
  */
 import type Database from "better-sqlite3";
-import { getDb } from "../../history/db.js";
+import { getDbIfExists } from "../../history/db.js";
+import { resolveChatJidCandidates } from "./chat-jid-match.js";
 
 const RHYTHM_WINDOW = 20;
 const MIN_SAMPLE = 5;
@@ -40,7 +41,10 @@ let stmtCache: { db: Database.Database; stmt: Database.Statement<unknown[], Row>
 
 function getStmt(): Database.Statement<unknown[], Row> | null {
   try {
-    const db = getDb();
+    const db = getDbIfExists();
+    if (!db) {
+      return null;
+    }
     if (stmtCache?.db === db) {
       return stmtCache.stmt;
     }
@@ -48,11 +52,11 @@ function getStmt(): Database.Statement<unknown[], Row> | null {
     //   - Jarvis's own outbound (text_content starts with 🤖 or ⚡ — the persona
     //     prefix and done-separator from outbound-prefix.ts).
     //   - Empty / NULL bodies (we count words; 0-word rows pollute the stat).
-    // The chat_jid match mirrors thread-prefetch.ts (loose, JID or bare digits).
+    // Exact chat_jid match, same as thread-prefetch.ts (see chat-jid-match.ts).
     const stmt = db.prepare<unknown[], Row>(
       `SELECT text_content, caption
        FROM messages
-       WHERE (chat_jid = ? OR chat_jid LIKE ?)
+       WHERE chat_jid IN (?, ?)
          AND timestamp < ?
          AND (text_content IS NOT NULL OR caption IS NOT NULL)
          AND COALESCE(text_content, caption, '') != ''
@@ -106,12 +110,11 @@ export function prefetchChatRhythm(params: {
   const before = params.beforeTimestamp
     ? Math.floor(params.beforeTimestamp / 1000)
     : Math.floor(Date.now() / 1000) + 1;
-  const bareJid = params.chatJid.replace(/^\+/, "").replace(/@.*$/, "");
-  const likePattern = `%${bareJid}%`;
+  const [jidA, jidB] = resolveChatJidCandidates(params.chatJid);
 
   let rows: Row[];
   try {
-    rows = stmt.all(params.chatJid, likePattern, before, RHYTHM_WINDOW) as Row[];
+    rows = stmt.all(jidA, jidB, before, RHYTHM_WINDOW) as Row[];
   } catch {
     return null;
   }

@@ -11,6 +11,7 @@
  * a minimal interface instead of importing the full EventStore class.
  */
 
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import type { PersonaState } from "./persona-state.js";
 
 // ---------------------------------------------------------------------------
@@ -234,6 +235,27 @@ function estimateCost(inputTokens: number, outputTokens: number): number {
 }
 
 /**
+ * The single 0–1 number `j.cortex.probe` carries (n1 = score).
+ *
+ * The three probe prompts return DIFFERENT score maps, and two already name their headline
+ * dimension: `overall` (full_audit) and `overall_style` (style). The hard_rule probe scores one
+ * key per rule and has no headline, so its compliance is the mean of its rules — the same
+ * aggregate a reader would compute by hand. An empty map (an unparsable reply) yields null,
+ * never 0: a probe that produced nothing is not a probe that scored zero.
+ */
+function probeScore(scores: Record<string, number>): number | null {
+  const named = scores.overall ?? scores.overall_style;
+  if (typeof named === "number" && Number.isFinite(named)) {
+    return named;
+  }
+  const values = Object.values(scores).filter((v) => typeof v === "number" && Number.isFinite(v));
+  if (values.length === 0) {
+    return null;
+  }
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+/**
  * Run a single probe. Returns result or null if not scheduled.
  */
 export async function runProbe(
@@ -251,6 +273,17 @@ export async function runProbe(
   const prompt = buildProbePrompt(type, response, persona);
   const result = await llmFn(prompt);
   const parsed = parseProbeOutput(result.output);
+
+  // J4 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.cortex.probe` (§9 step 9) — one row per probe
+  // that actually ran (a probe the schedule skipped returned above, and writes nothing).
+  // label = the probe id, n1 = the probe's single headline score. The raw model output, the
+  // violated rule ids and the prompt never leave this function: they are free text, and the
+  // catalog has no free-text type (L4).
+  //
+  // KNOWN GAP (at the time of writing): nothing in production calls runProbe /
+  // runAllScheduledProbes yet, so this row stays empty until the probes are scheduled. The
+  // producer sits here so that wiring needs no second telemetry change.
+  emitEvent("j.cortex.probe", { label: type, n1: probeScore(parsed.scores) });
 
   return {
     probeType: type,

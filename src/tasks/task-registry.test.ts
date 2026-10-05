@@ -100,7 +100,7 @@ function configureTaskRegistryMaintenanceRuntimeForTest(params: {
   } satisfies AcpSessionStoreEntry;
   setTaskRegistryMaintenanceRuntimeForTests({
     readAcpSessionEntry: () => emptyAcpEntry,
-    loadSessionStore: () => ({}),
+    hasSessionStoreEntry: () => false,
     resolveStorePath: () => "",
     parseAgentSessionKey: () => null as ParsedAgentSessionKey | null,
     isCronJobActive: () => false,
@@ -1644,7 +1644,7 @@ describe("task-registry", () => {
           entry: undefined,
           storeReadFailed: false,
         }),
-        loadSessionStore: () => ({}),
+        hasSessionStoreEntry: () => false,
         resolveStorePath: () => "",
         parseAgentSessionKey: () => null,
         isCronJobActive: () => false,

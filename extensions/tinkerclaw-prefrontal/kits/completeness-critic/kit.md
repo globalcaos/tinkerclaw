@@ -21,7 +21,7 @@ parallelism:
     Prioritize (3) merges both into a ranked gap list. 0-indexed.
 model:
   provider: "anthropic"
-  name: "claude-sonnet-4-6"
+  name: "claude-sonnet-5-5"
   hosting: "cloud API"
 ---
 

@@ -4,6 +4,11 @@
  * Design of record: TINKER_UI_DESIGN_BIBLE/bible.md §5.67a (v2 architecture) as
  * amended by §5.67b (v3 — where they conflict, §5.67b wins).
  *
+ * OPT-IN: `config.enabled` must be true (and defaults to FALSE) before any
+ * agent_end hook is registered, because arming this costs one billed subagent
+ * run per finished turn. Drop 1 is the COLD arm only — no fix lane exists yet,
+ * so findings are recorded as `flagged` and nothing is edited.
+ *
  * Every main-turn `agent_end` is triaged OFF-CHANNEL by a cheap reflection lane
  * spawned on its own runId (it never blocks or steers the user's lane), and every
  * main turn yields exactly ONE append-only ledger row — including all guard paths
@@ -30,7 +35,9 @@ import { FractalGovernor, type UsageSnapshot } from "./src/governor.js";
 import { FractalLedger } from "./src/ledger.js";
 import {
   DEFAULT_FRACTAL_CONFIG,
+  isFractalLaneToolAllowed,
   isFractalSessionKey,
+  readEvidenceFile,
   type FractalConfig,
   type FractalRow,
 } from "./src/types.js";
@@ -145,8 +152,10 @@ export default definePluginEntry({
   id: "tinkerclaw-fractal-reflection",
   name: "Fractal Reflection",
   description:
-    "Parallel post-turn reflection — a triage lane judges every finished main turn " +
-    "off-channel; every turn yields exactly one ledger row (bible §5.67a/§5.67b).",
+    "Opt-in parallel post-turn reflection — a read-only triage lane judges every " +
+    "finished main turn off-channel (one billed subagent run per turn); every turn " +
+    "yields exactly one ledger row. Drop 1 is COLD-arm only: findings are flagged, " +
+    "never fixed (bible §5.67a/§5.67b).",
   register(api: OpenClawPluginApi) {
     const log = api.logger;
 
@@ -154,14 +163,19 @@ export default definePluginEntry({
       ...DEFAULT_FRACTAL_CONFIG,
       ...((api.pluginConfig ?? {}) as Partial<FractalConfig>),
     };
-    const enabled = cfg.enabled !== false;
+    // Strict opt-in: only a literal `true` arms the hooks.
+    const enabled = cfg.enabled === true;
 
     // -----------------------------------------------------------------------
     // State dir + persisted control state. Same resolution pattern as
     // tinkerclaw-learned-intuition's decisions path (~/.openclaw/data/<area>/…);
     // the ledger owns results.jsonl inside this dir (§5.67b result store).
     // -----------------------------------------------------------------------
-    const stateDir = join(homedir(), ".openclaw", "data", "fractal");
+    // $HOME first, homedir() as the fallback: os.homedir() resolves the passwd
+    // entry and ignores a redirected HOME, so tests could not keep this
+    // plugin's ledger and control-state writes out of the real ~/.openclaw.
+    // Same value in production.
+    const stateDir = join(process.env.HOME ?? homedir(), ".openclaw", "data", "fractal");
     try {
       mkdirSync(stateDir, { recursive: true });
     } catch (err) {
@@ -336,13 +350,8 @@ export default definePluginEntry({
             checkActionClaims(text, {
               home: homedir(),
               exists: (abs) => existsSync(abs),
-              read: (abs) => {
-                try {
-                  return readFileSync(abs, "utf8");
-                } catch {
-                  return "";
-                }
-              },
+              // Bounded: regular files up to MAX_EVIDENCE_READ_BYTES only.
+              read: (abs) => readEvidenceFile(abs) ?? "",
             }),
           );
           for (const w of warnings) {
@@ -498,6 +507,30 @@ export default definePluginEntry({
           queuedAt: Date.now(),
         });
       });
+
+      // Read-only ENFORCEMENT for the triage lane. subagent.run exposes no
+      // tool-restriction parameter, so the plugin blocks, at the tool-call
+      // boundary, every tool outside FRACTAL_LANE_TOOL_ALLOWLIST for any
+      // session that is a fractal lane or any run this plugin spawned.
+      // Sessions that are not fractal lanes are returned untouched.
+      api.on(
+        "before_tool_call",
+        (
+          event: { toolName: string; runId?: string },
+          ctx: { sessionKey?: string; runId?: string; toolName: string },
+        ) => {
+          const runId = event.runId ?? ctx.runId ?? "";
+          const isLane =
+            isFractalSessionKey(ctx.sessionKey) || (runId !== "" && ownRunIds.has(runId));
+          if (!isLane || isFractalLaneToolAllowed(event.toolName ?? ctx.toolName)) {
+            return undefined;
+          }
+          return {
+            block: true,
+            blockReason: `fractal-reflection triage lane is read-only; tool "${event.toolName}" is not allowed`,
+          };
+        },
+      );
     } else {
       log.info(
         "[fractal-reflection] disabled via config — RPC surface stays registered, no triage fires",

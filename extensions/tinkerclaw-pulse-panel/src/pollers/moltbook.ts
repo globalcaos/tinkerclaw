@@ -6,13 +6,13 @@
  * pluck one field. A 60s in-memory cache keeps the four sibling calls in a
  * single tick to a single fetch.
  *
- * Bearer key is read from ~/.config/moltbook/credentials.json (the same file
- * the `moltbook` skill writes when the owner pastes a refreshed key). The account
- * is fixed by that credential, so the poller `args` is ignored.
+ * The bearer key is OPERATOR-SUPPLIED: a JSON file of the form
+ * `{ "api_key": "..." }` named by
+ * `plugins.tinkerclaw-pulse-panel.credentials.moltbookApiKeyFile`. There is no default
+ * path — with nothing configured these pollers are skipped. The account is
+ * fixed by that credential, so the poller `args` is ignored.
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { readCredentialFile } from "./credentials.js";
 import type { PollerFn } from "./index.js";
 
 type Me = {
@@ -26,10 +26,10 @@ let CACHE: { fetchedAt: number; data: Me } | null = null;
 const TTL_MS = 60_000;
 
 function apiKey(): string {
-  const p = path.join(os.homedir(), ".config", "moltbook", "credentials.json");
-  const key = JSON.parse(fs.readFileSync(p, "utf8"))?.api_key;
+  const raw = readCredentialFile("moltbookApiKeyFile");
+  const key = JSON.parse(raw)?.api_key;
   if (typeof key !== "string" || !key) {
-    throw new Error(`moltbook poller: no api_key in ${p}`);
+    throw new Error("moltbook poller: configured credential file has no `api_key`");
   }
   return key;
 }

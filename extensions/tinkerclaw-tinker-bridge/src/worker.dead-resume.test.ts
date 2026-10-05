@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// REGRESSION 2026-07-27 — the "ACME Dades scan" wedge.
+// REGRESSION 2026-07-27 — the "NAS scan" wedge.
 //
 // `claude --resume <id>` on an id whose transcript .jsonl no longer exists exits
 // code=1 with `No conversation found with session ID: <id>` before emitting a

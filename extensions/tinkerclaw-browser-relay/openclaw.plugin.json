@@ -9,6 +9,12 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "bindHost": {
+        "type": "string",
+        "default": "127.0.0.1",
+        "description": "Interface the extension relay listens on. Keep 127.0.0.1 for a browser on this machine. Use a LAN address or 0.0.0.0 to let a Chrome on another machine share tabs — that requires gateway.auth.token to be set, otherwise the relay refuses to start."
+      }
+    }
   }
 }

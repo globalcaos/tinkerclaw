@@ -3,8 +3,10 @@ import path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   isRetryOwnableSessionKey,
+  pageSentPromptKey,
   resolveRetryKey,
   retryLifecycleAction,
+  retryPromptForRun,
   type RetryLifecycleDeps,
 } from "./retry-lifecycle";
 
@@ -13,11 +15,19 @@ import {
 const keyMatches = (a: string, b: string): boolean =>
   !!a && !!b && (a === b || a.endsWith(":" + b) || b.endsWith(":" + a));
 
-/** Two tabs open, VIEWING tab A. Tab B is the backgrounded one. */
-const viewingA = (): RetryLifecycleDeps => ({
+/**
+ * Two tabs open, VIEWING tab A. Tab B is the backgrounded one.
+ *
+ * FORK 2026-10-01 — `isOwnRun` is a REQUIRED dep: the ladder only moves for a run THIS page sent.
+ * `own` lists the run ids this page owns, and the default is NONE on purpose — it is the strictest
+ * possible predicate, so every test built on `viewingA()` proves that an event carrying no `runId`
+ * is decided exactly as it was before the gate existed.
+ */
+const viewingA = (own: readonly string[] = []): RetryLifecycleDeps => ({
   viewedKey: "tinker:A",
   tabKeys: ["tinker:A", "tinker:B"],
   keyMatches,
+  isOwnRun: (runId) => own.includes(runId),
 });
 
 const rateLimited = (sessionKey: string, extra: Record<string, unknown> = {}) => ({
@@ -56,7 +66,7 @@ describe("resolveRetryKey — the event's session, not the tab on screen", () =>
   });
 
   it("skips unattached (null sessionKey) tabs instead of throwing", () => {
-    const deps: RetryLifecycleDeps = { viewedKey: "", tabKeys: [null, "tinker:B"], keyMatches };
+    const deps = { viewedKey: "", tabKeys: [null, "tinker:B"], keyMatches };
     expect(resolveRetryKey("tinker:B", deps)).toBe("tinker:B");
   });
 });
@@ -253,6 +263,117 @@ describe("retryLifecycleAction — a successful turn cancels THAT session's ladd
   });
 });
 
+// ─── U9: a typed outcome on the final outranks the state word ───────────────────────────
+// Plan 2026-09-29-chat-usage-chips-and-typed-outcomes.md, review focus 3. Measured: the backstop
+// `final` the gateway sends after a surfaced error CANCELLED the ladder the error had just armed,
+// so a rate-limited turn retried zero times. The typed field makes that judgement structural.
+describe("U9 — a `final` that carries a TurnOutcome is not a success", () => {
+  const outcome = (over: Record<string, unknown> = {}) => ({
+    kind: "rate_limit",
+    recoverable: true,
+    headline: "Rate limited",
+    source: "stop-reason",
+    ...over,
+  });
+
+  it("keeps the ladder alive on a recoverable outcome — and only arms it if idle", () => {
+    expect(
+      retryLifecycleAction(
+        { sessionKey: "tinker:B", state: "final", finalOutcome: outcome() },
+        viewingA(),
+      ),
+    ).toEqual({
+      kind: "schedule",
+      sessionKey: "tinker:B",
+      retryKind: "rate_limit",
+      onlyIfIdle: true,
+    });
+  });
+
+  it("maps every recoverable kind onto the ladder's own RetryKind", () => {
+    const kindOf = (kind: string) =>
+      retryLifecycleAction(
+        { sessionKey: "tinker:A", state: "final", finalOutcome: outcome({ kind }) },
+        viewingA(),
+      );
+    expect(kindOf("quota")).toMatchObject({ retryKind: "quota" });
+    expect(kindOf("overload")).toMatchObject({ retryKind: "overloaded" });
+    expect(kindOf("network")).toMatchObject({ retryKind: "unavailable" });
+    expect(kindOf("timeout")).toMatchObject({ retryKind: "unavailable" });
+  });
+
+  it("prefers the outcome's own retryAfter, falling back to the event's", () => {
+    expect(
+      retryLifecycleAction(
+        {
+          sessionKey: "tinker:A",
+          state: "final",
+          retryAfter: 30,
+          finalOutcome: outcome({ retryAfter: 262 * 60 }),
+        },
+        viewingA(),
+      ),
+    ).toMatchObject({ retryAfterSec: 262 * 60 });
+    expect(
+      retryLifecycleAction(
+        { sessionKey: "tinker:A", state: "final", retryAfter: 30, finalOutcome: outcome() },
+        viewingA(),
+      ),
+    ).toMatchObject({ retryAfterSec: 30 });
+  });
+
+  it("neither schedules NOR cancels on a non-recoverable outcome", () => {
+    // Cancelling would run the SUCCESS cleanup on a failure: it retires the countdown bubbles and
+    // ends a ladder on the strength of a turn that did not answer.
+    for (const kind of [
+      "auth",
+      "billing",
+      "refusal",
+      "context_overflow",
+      "aborted",
+      "empty",
+      "error",
+    ]) {
+      expect(
+        retryLifecycleAction(
+          {
+            sessionKey: "tinker:A",
+            state: "final",
+            finalOutcome: outcome({ kind, recoverable: false }),
+          },
+          viewingA(),
+        ),
+        kind,
+      ).toEqual({ kind: "none" });
+    }
+  });
+
+  it("REGRESSION: a final with NO outcome still cancels — old transcripts unchanged", () => {
+    expect(retryLifecycleAction({ sessionKey: "tinker:A", state: "final" }, viewingA())).toEqual({
+      kind: "cancel",
+      sessionKey: "tinker:A",
+    });
+    // a malformed outcome is not an outcome: fall through to the 2026-08-24 text rule
+    expect(
+      retryLifecycleAction(
+        { sessionKey: "tinker:A", state: "final", finalOutcome: { kind: "melted" } },
+        viewingA(),
+      ),
+    ).toEqual({ kind: "cancel", sessionKey: "tinker:A" });
+  });
+
+  it("REGRESSION: the 2026-08-24 finalText path still schedules, WITHOUT onlyIfIdle", () => {
+    // That failure arrives only as a final (no `state:"error"` precedes it), so it must arm a fresh
+    // ladder unconditionally — flagging it onlyIfIdle would put it back to zero retries.
+    const action = retryLifecycleAction(
+      { sessionKey: "tinker:A", state: "final", finalText: "API Error: 529 Overloaded" },
+      viewingA(),
+    );
+    expect(action).toMatchObject({ kind: "schedule", retryKind: "overloaded" });
+    expect((action as { onlyIfIdle?: boolean }).onlyIfIdle).toBeUndefined();
+  });
+});
+
 // ─── Bug A: /clear must cancel a pending auto-retry ────────────────────────────────────
 // This one is a CALL-ORDERING defect inside app.ts's send(), not a pure rule, so it is
 // locked structurally: the `/clear` branch returns early (it never reaches the
@@ -260,27 +381,29 @@ describe("retryLifecycleAction — a successful turn cancels THAT session's ladd
 // `retryState` rather than the DOM — so an uncancelled track kept counting down in a wiped
 // tab and re-sent the OLD user turn up to 15 minutes later (the ladder tops out at 900s),
 // with no keystroke from the user. Deleting the cancel would restore exactly that.
-describe("app.ts /clear branch (bug A)", () => {
-  // Walk up from the vitest cwd rather than `import.meta.url`: under this jsdom project the
-  // module URL is an http:// one (vite transform), so fileURLToPath() throws "URL must be of
-  // scheme file" and the whole suite fails to collect.
-  const findAppSource = (): string => {
-    let dir = process.cwd();
-    for (let i = 0; i < 6; i++) {
-      const candidate = path.join(dir, "tinker-ui", "src", "app.ts");
-      if (existsSync(candidate)) {
-        return candidate;
-      }
-      const parent = path.dirname(dir);
-      if (parent === dir) {
-        break;
-      }
-      dir = parent;
+// Walk up from the vitest cwd rather than `import.meta.url`: under this jsdom project the
+// module URL is an http:// one (vite transform), so fileURLToPath() throws "URL must be of
+// scheme file" and the whole suite fails to collect.
+// FORK 2026-10-01 — hoisted to module scope: the own-run WIRING gate at the bottom of this file
+// reads the same source, and a second copy of this walker is the duplication that rots.
+const findAppSource = (): string => {
+  let dir = process.cwd();
+  for (let i = 0; i < 6; i++) {
+    const candidate = path.join(dir, "tinker-ui", "src", "app.ts");
+    if (existsSync(candidate)) {
+      return candidate;
     }
-    throw new Error(`could not locate tinker-ui/src/app.ts from ${process.cwd()}`);
-  };
-  const appSrc = readFileSync(findAppSource(), "utf8");
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  throw new Error(`could not locate tinker-ui/src/app.ts from ${process.cwd()}`);
+};
+const appSrc = readFileSync(findAppSource(), "utf8");
 
+describe("app.ts /clear branch (bug A)", () => {
   /** The body of `if (text.trim() === "/clear") { … return; }` in send(). */
   const clearBranch = (): string => {
     const start = appSrc.indexOf('if (text.trim() === "/clear") {');
@@ -298,5 +421,254 @@ describe("app.ts /clear branch (bug A)", () => {
     // tab-main keeps its sessionKey across /clear, so without this a reload would repaint
     // the "cleared" chat with a live-looking countdown for a retry that no longer exists.
     expect(clearBranch()).toMatch(/clearPersistedErrors\(\s*oldSessionKey\s*\)/);
+  });
+});
+
+// ─── Bug [chat-divergence] cause 3: "retries nobody asked for" (2026-10-01) ─────────────
+// MEASURED, not hypothesised: session agent:main:tinker:mugmkh6p, 2026-09-26 10:43–10:58 UTC.
+// Three SUBAGENT announce runs (`announce:v1:agent:main:subagent:…`) hit an openai-codex
+// `(rate_limit)` cooldown. Their chat events carried the OWNER's sessionKey, so
+// `isRetryOwnableSessionKey` — which reads only the SESSION key — waved them through, and each
+// failure armed the owner's ladder and re-sent a prompt answered 75 minutes earlier under a fresh
+// key (bug-reports/2026-09-26/140450-*, 140451-*, 140454-*: three fires, all carrying
+// `retryOf a6aec32b-cd48-44df-8bd3-37a7e5dd2e83`). The cooldown is the only reason it stopped at
+// three repeated PROMPTS rather than three repeated runs of the whole task.
+describe("retryLifecycleAction — only a run THIS page sent moves the ladder", () => {
+  const OWNER = "agent:main:tinker:mugmkh6p";
+  /** The shape of the announce runs' ids from the incident. */
+  const FOREIGN_RUN = "announce:v1:agent:main:subagent:mugmkh6p:7f3a1c";
+  /** The owner's prompt key — the `retryOf` all three bug reports carry. */
+  const OWN_RUN = "a6aec32b-cd48-44df-8bd3-37a7e5dd2e83";
+
+  const viewingOwner = (own: readonly string[] = [OWN_RUN]): RetryLifecycleDeps => ({
+    viewedKey: OWNER,
+    tabKeys: [OWNER],
+    keyMatches,
+    isOwnRun: (runId) => own.includes(runId),
+  });
+
+  /** The openai-codex cooldown that armed the ladder three times. */
+  const codexCooldown = (extra: Record<string, unknown> = {}) => ({
+    sessionKey: OWNER,
+    state: "error",
+    errorMessage: "openai-codex (rate_limit): usage limit reached, resets in 262 minutes",
+    ...extra,
+  });
+
+  it("REGRESSION: a foreign run's cooldown neither schedules nor cancels", () => {
+    expect(retryLifecycleAction(codexCooldown({ runId: FOREIGN_RUN }), viewingOwner())).toEqual({
+      kind: "none",
+    });
+  });
+
+  it("the SAME failure on a run this page sent still schedules", () => {
+    expect(retryLifecycleAction(codexCooldown({ runId: OWN_RUN }), viewingOwner())).toEqual({
+      kind: "schedule",
+      sessionKey: OWNER,
+      retryKind: "rate_limit",
+      retryAfterSec: undefined,
+      runId: OWN_RUN,
+    });
+  });
+
+  it("an event with NO runId is decided exactly as before the gate existed", () => {
+    // Note `own: []` — the predicate would refuse everything it was asked about. Pre-fix
+    // transcripts and any event the gateway sends without a runId must not go dark.
+    expect(retryLifecycleAction(codexCooldown(), viewingOwner([]))).toEqual({
+      kind: "schedule",
+      sessionKey: OWNER,
+      retryKind: "rate_limit",
+      retryAfterSec: undefined,
+    });
+  });
+
+  it("a non-string runId is no runId", () => {
+    expect(retryLifecycleAction(codexCooldown({ runId: 42 }), viewingOwner([]))).toMatchObject({
+      kind: "schedule",
+      sessionKey: OWNER,
+    });
+  });
+
+  it("a foreign run's `final` does NOT cancel the owner's ladder", () => {
+    // The mirror-image defect: a foreign run's success says nothing about the owner's prompt, and
+    // the cancel retires the countdown of a failure that is still standing.
+    expect(
+      retryLifecycleAction(
+        { sessionKey: OWNER, state: "final", runId: FOREIGN_RUN },
+        viewingOwner(),
+      ),
+    ).toEqual({ kind: "none" });
+    expect(
+      retryLifecycleAction({ sessionKey: OWNER, state: "final", runId: OWN_RUN }, viewingOwner()),
+    ).toEqual({ kind: "cancel", sessionKey: OWNER });
+  });
+
+  it("a foreign run's TYPED recoverable outcome does not arm the ladder either", () => {
+    // The U9 path reaches `schedule` from a `final`, so the gate has to sit ABOVE all three
+    // branches, not just the `state:"error"` one.
+    expect(
+      retryLifecycleAction(
+        {
+          sessionKey: OWNER,
+          state: "final",
+          runId: FOREIGN_RUN,
+          finalOutcome: {
+            kind: "rate_limit",
+            recoverable: true,
+            headline: "Rate limited",
+            source: "stop-reason",
+          },
+        },
+        viewingOwner(),
+      ),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("a foreign run's `final` whose BODY is a 529 does not arm it either", () => {
+    expect(
+      retryLifecycleAction(
+        {
+          sessionKey: OWNER,
+          state: "final",
+          runId: FOREIGN_RUN,
+          finalText: "API Error: 529 Overloaded",
+        },
+        viewingOwner(),
+      ),
+    ).toEqual({ kind: "none" });
+  });
+
+  it("carries the failed run's id out on the action, so a fire can find its prompt", () => {
+    const action = retryLifecycleAction(codexCooldown({ runId: OWN_RUN }), viewingOwner());
+    expect((action as { runId?: string }).runId).toBe(OWN_RUN);
+  });
+});
+
+// ─── WHICH prompt a fire re-sends ───────────────────────────────────────────────────────
+// The second half of the same incident, and the half that survives the gate above:
+// `lastUserTurnFor` picks the last user bubble ON SCREEN, which in that session was a prompt
+// answered 75 minutes earlier. A run's id IS its prompt's key (chat.send: `const clientRunId =
+// p.idempotencyKey`), so the prompt the failed run was carrying is addressable.
+describe("retryPromptForRun — the prompt the FAILED run was carrying", () => {
+  const P = "a6aec32b-cd48-44df-8bd3-37a7e5dd2e83";
+  const K1 = "abd81ba2-c1b0-4f16-8bec-a5716f6be4df";
+  const TEXT = "improve the online test platform";
+  const bubble = (over: Record<string, unknown>) => ({
+    role: "user",
+    content: [{ type: "text", text: TEXT }],
+    ...over,
+  });
+
+  it("maps a run id to its own prompt", () => {
+    expect(retryPromptForRun(P, [[bubble({ _clientMsgId: P })]])).toEqual({ text: TEXT, key: P });
+  });
+
+  it("a failed FIRE re-sends the prompt the owner typed: K1 with retryOf P → P", () => {
+    const page = [
+      bubble({ _clientMsgId: P }),
+      bubble({ _clientMsgId: K1, _retryOf: P, content: [{ type: "text", text: "stale copy" }] }),
+    ];
+    // Text from P, and key P so the NEXT fire links to the original too — never to the fire,
+    // which is what would chain the ladder onto its own output.
+    expect(retryPromptForRun(K1, [page])).toEqual({ text: TEXT, key: P });
+  });
+
+  it("still names P when the original row is no longer on the page", () => {
+    expect(retryPromptForRun(K1, [[bubble({ _clientMsgId: K1, _retryOf: P })]])).toEqual({
+      text: TEXT,
+      key: P,
+    });
+  });
+
+  it("reads a server transcript row by its served idempotencyKey", () => {
+    expect(
+      retryPromptForRun(P, [[{ role: "user", content: "typed by hand", idempotencyKey: P }]]),
+    ).toEqual({ text: "typed by hand", key: P });
+  });
+
+  it("searches every page handed in (queued sends, the outbox, a background tab)", () => {
+    expect(retryPromptForRun(P, [[], [bubble({ _clientMsgId: P })]])).toMatchObject({ key: P });
+  });
+
+  it("returns null for a run no page holds, and for a junk id", () => {
+    expect(retryPromptForRun(P, [[bubble({ _clientMsgId: K1 })]])).toBeNull();
+    expect(retryPromptForRun(undefined, [[bubble({ _clientMsgId: P })]])).toBeNull();
+    expect(retryPromptForRun("", [[bubble({ _clientMsgId: P })]])).toBeNull();
+  });
+
+  it("ignores assistant rows and in-flight temporaries", () => {
+    expect(
+      retryPromptForRun(P, [[{ role: "assistant", content: "answer", _clientMsgId: P }]]),
+    ).toBeNull();
+    expect(retryPromptForRun(P, [[bubble({ _clientMsgId: P, _temporary: true })]])).toBeNull();
+  });
+
+  it("survives a retryOf CYCLE instead of spinning", () => {
+    const page = [
+      bubble({ _clientMsgId: P, _retryOf: K1 }),
+      bubble({ _clientMsgId: K1, _retryOf: P }),
+    ];
+    expect(retryPromptForRun(K1, [page])).toMatchObject({ text: TEXT });
+  });
+
+  it("pageSentPromptKey answers the own-run question off the same rows", () => {
+    const page = [bubble({ _clientMsgId: P })];
+    expect(pageSentPromptKey(P, [page])).toBe(true);
+    expect(pageSentPromptKey("announce:v1:agent:main:subagent:x:y", [page])).toBe(false);
+    expect(pageSentPromptKey(P, [])).toBe(false);
+    expect(pageSentPromptKey(42, [page])).toBe(false);
+  });
+
+  it("a follow-up run gateway G3 linked to a prompt this page sent is own, by that link", () => {
+    // followup-runner.ts mints a follow-up run (the one that answers a prompt the gateway put
+    // BEHIND a running turn) under a fresh UUID, and names the prompt keys it answers on its
+    // `followup` stream (app.ts `followupPromptLinks`). Its id is no prompt key, so without the
+    // link every backlogged prompt's run would read as foreign: its rate limit would arm no
+    // ladder, and its `final` could not end a ladder whose fire it carried.
+    const FOLLOWUP = "0b9f2c4e-6f1a-4d3b-9a7e-2c5d8e1f4a6b";
+    const page = [bubble({ _clientMsgId: P })];
+    expect(pageSentPromptKey(FOLLOWUP, [page])).toBe(false); // CONTROL: the run id alone names none
+    expect(pageSentPromptKey(FOLLOWUP, [page], [P])).toBe(true);
+    expect(pageSentPromptKey(FOLLOWUP, [page], ["another-client", P])).toBe(true);
+    // A link counts only through a key this page sent: anything else makes nothing own.
+    expect(pageSentPromptKey(FOLLOWUP, [page], ["another-client", "", 42])).toBe(false);
+    expect(pageSentPromptKey(undefined, [page], [P])).toBe(false);
+  });
+});
+
+// ─── The own-run gate must actually be WIRED ────────────────────────────────────────────
+// "An optional call to a missing method is silent." `isOwnRun` is REQUIRED in the type, so a deps
+// object without it is a type error and, at runtime, a TypeError rather than a quiet "yes" — but a
+// required field can still be answered with a stub that always says yes, which looks green and
+// restores the bug. These lock the two live call sites structurally, the way the /clear branch
+// above is locked. (Nothing type-checks tinker-ui in the build, so the type alone gates nothing.)
+describe("app.ts own-run wiring", () => {
+  /** The body of `function retryLifecycleDeps()`. */
+  const depsFn = (): string => {
+    const start = appSrc.indexOf("function retryLifecycleDeps(): RetryLifecycleDeps {");
+    expect(start, "retryLifecycleDeps moved or was renamed").toBeGreaterThan(-1);
+    const end = appSrc.indexOf("\n}", start);
+    expect(end, "retryLifecycleDeps no longer closes").toBeGreaterThan(start);
+    return appSrc.slice(start, end);
+  };
+
+  it("REGRESSION: hands the lifecycle the page's own-run predicate", () => {
+    expect(depsFn()).toMatch(/isOwnRun:\s*isOwnRunId\b/);
+  });
+
+  it("REGRESSION: that predicate reads the page's prompt keys, not a constant", () => {
+    // `isOwnRun: () => true` would type-check and silently re-open the hole.
+    expect(appSrc).toMatch(/function isOwnRunId[\s\S]{0,240}?pageSentPromptKey\(/);
+    expect(appSrc).toMatch(/function retryPromptPagesAll[\s\S]{0,600}?readOutbox\(outboxStore\)/);
+  });
+
+  it("REGRESSION: a follow-up run's G3 link counts, so a backlogged prompt keeps its ladder", () => {
+    expect(appSrc).toMatch(/function isOwnRunId[\s\S]{0,240}?followupPromptLinks\.get\(runId\)/);
+  });
+
+  it("REGRESSION: a fire re-sends the FAILED run's prompt, not the newest bubble", () => {
+    // Both halves must consult it: the schedule path (advanceRetryLifecycle) and the fire path
+    // (retryLastTurn). `lastUserTextForSession` survives only as the named fallback.
+    expect(appSrc.match(/retryPromptForRun\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
   });
 });

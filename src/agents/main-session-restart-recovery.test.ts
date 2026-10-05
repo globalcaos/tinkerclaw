@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadSessionStore, type SessionEntry } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
+import { __testing as bridgeReattach } from "../infra/bridge-reattach.js";
 import {
   markRestartAbortedMainSessionsFromLocks,
   recoverRestartAbortedMainSessions,
@@ -22,6 +23,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  bridgeReattach.reset();
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
@@ -113,8 +115,8 @@ describe("main-session-restart-recovery", () => {
     const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
 
     expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
-    // A resume fires two gateway calls: the restart-warning envelope
-    // (chat.inject) and the [System] continue dispatch (agent).
+    // A resume fires two gateway calls: the restart notice (chat.restartNotice)
+    // and the resume dispatch (agent).
     const agentCall = vi.mocked(callGateway).mock.calls.find((c) => c[0].method === "agent");
     expect(agentCall?.[0].params).toMatchObject({
       sessionKey: "agent:main:main",
@@ -218,6 +220,84 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
   });
 
+  // FORK 2026-09-29 (tinker-ui.md §5.8AB, U7): chat.history now serves an `openclaw:prompt-error`
+  // that ENDED its run as a display-only assistant row. readSessionMessages is also what this tail
+  // check reads, so a run cut by a restart right after an idle timeout (before its fallback
+  // answered) looked like a completed assistant turn and was settled instead of resumed.
+  it("resumes a run whose tail is a served prompt-error row, not a completed answer", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const startedAt = Date.now() - 10_000;
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: startedAt,
+        startedAt,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    const lines = [
+      { message: { role: "user", content: "do the long thing", timestamp: startedAt } },
+      {
+        type: "custom",
+        customType: "openclaw:prompt-error",
+        data: {
+          runId: "run-1",
+          error: "LLM idle timeout (120s)",
+          provider: "anthropic",
+          model: "claude-opus-5-5",
+          timestamp: startedAt + 5_000,
+        },
+      },
+    ];
+    await fs.writeFile(
+      path.join(sessionsDir, "main-session.jsonl"),
+      `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`,
+    );
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:main"]?.status).not.toBe("done");
+  });
+
+  // FORK 2026-09-29 (lifecycles.md L4b): the restart itself can leave an assistant row behind, the
+  // "gateway restarting" envelope a draining reply returns. A failure row is not an answer.
+  it("resumes a run whose tail is a restart/failure envelope, not a completed answer", async () => {
+    const sessionsDir = await makeSessionsDir();
+    const startedAt = Date.now() - 10_000;
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: startedAt,
+        startedAt,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    const env = {
+      kind: "error",
+      id: "e1",
+      fatal: false,
+      category: "busy",
+      headline: "Gateway restarting",
+      icon: "🔄",
+    };
+    await writeTranscript(sessionsDir, "main-session", [
+      { role: "user", content: "do the long thing", timestamp: startedAt },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: `__ERR_ENV__:${JSON.stringify(env)}` }],
+        timestamp: startedAt + 5_000,
+      },
+    ]);
+
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+  });
+
   it("resumes when the assistant tail predates the interrupted run", async () => {
     const sessionsDir = await makeSessionsDir();
     const previousTurnAt = Date.now() - 60_000;
@@ -318,5 +398,174 @@ describe("main-session-restart-recovery", () => {
     const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
 
     expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+  });
+
+  // FORK 2026-09-29 (lifecycles.md L4b): the promptless resume and its restart notice.
+  describe("continue from the transcript", () => {
+    /** A real tree-format transcript, as SessionManager writes it. */
+    async function writeTreeTranscript(
+      sessionsDir: string,
+      sessionId: string,
+      messages: unknown[],
+    ): Promise<string> {
+      const file = path.join(sessionsDir, `${sessionId}.jsonl`);
+      const header = {
+        type: "session",
+        version: 3,
+        id: sessionId,
+        timestamp: "2026-09-29T20:00:00.000Z",
+        cwd: "/",
+      };
+      let parentId: string | null = null;
+      const lines = [JSON.stringify(header)];
+      messages.forEach((message, i) => {
+        const id = `e${i}`;
+        lines.push(
+          JSON.stringify({
+            type: "message",
+            id,
+            parentId,
+            timestamp: "2026-09-29T20:00:01.000Z",
+            message,
+          }),
+        );
+        parentId = id;
+      });
+      await fs.writeFile(file, `${lines.join("\n")}\n`);
+      return file;
+    }
+
+    const toolTail = [
+      { role: "user", content: "run the tool", timestamp: 1 },
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "call-1", name: "exec", arguments: {} }],
+        stopReason: "toolUse",
+        timestamp: 2,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "exec",
+        content: [{ type: "text", text: "done" }],
+        isError: false,
+        timestamp: 3,
+      },
+    ];
+
+    function gatewayCall(method: string) {
+      return vi.mocked(callGateway).mock.calls.find((c) => c[0].method === method)?.[0];
+    }
+
+    it("continues an embedded turn with no prompt and posts a 'continued' notice", async () => {
+      const sessionsDir = await makeSessionsDir();
+      await writeStore(sessionsDir, {
+        "agent:main:main": {
+          sessionId: "main-session",
+          updatedAt: Date.now() - 10_000,
+          status: "running",
+          abortedLastRun: true,
+          modelProvider: "anthropic",
+        },
+      });
+      await writeTreeTranscript(sessionsDir, "main-session", toolTail);
+
+      const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+      expect(result).toEqual({ recovered: 1, failed: 0, skipped: 0 });
+      expect(gatewayCall("agent")?.params).toMatchObject({ continueFromTranscript: true });
+      expect(gatewayCall("chat.restartNotice")?.params).toMatchObject({
+        sessionKey: "agent:main:main",
+        how: "continued",
+      });
+      // the old assistant-row envelope is gone: it would have become the tail continue() refuses
+      expect(gatewayCall("chat.inject")).toBeUndefined();
+    });
+
+    it("keeps the prompt for a cc-bridge turn, whose context lives in its CLI session", async () => {
+      const sessionsDir = await makeSessionsDir();
+      await writeStore(sessionsDir, {
+        "agent:main:main": {
+          sessionId: "main-session",
+          updatedAt: Date.now() - 10_000,
+          status: "running",
+          abortedLastRun: true,
+          providerOverride: "claude-code",
+        },
+      });
+      await writeTreeTranscript(sessionsDir, "main-session", toolTail);
+
+      await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+      expect(gatewayCall("agent")?.params).not.toHaveProperty("continueFromTranscript");
+      expect(gatewayCall("chat.restartNotice")?.params).toMatchObject({ how: "prompted" });
+    });
+
+    it("reattaches a cc-bridge turn whose frozen worker the bridge adopted", async () => {
+      const sessionsDir = await makeSessionsDir();
+      await writeStore(sessionsDir, {
+        "agent:main:main": {
+          sessionId: "main-session",
+          updatedAt: Date.now() - 10_000,
+          status: "running",
+          abortedLastRun: true,
+          providerOverride: "claude-code",
+        },
+      });
+      await writeTreeTranscript(sessionsDir, "main-session", [
+        { role: "user", content: "long task", timestamp: 1 },
+      ]);
+      bridgeReattach.set("agent:main:main", { unit: "tinkerclaw-worker-x", state: "pending" });
+
+      await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+      expect(gatewayCall("agent")?.params).toMatchObject({ continueFromTranscript: true });
+      expect(gatewayCall("chat.restartNotice")?.params).toMatchObject({ how: "reattached" });
+    });
+
+    it("dispatches nothing when a run already took the held turn, and still settles the session", async () => {
+      const sessionsDir = await makeSessionsDir();
+      await writeStore(sessionsDir, {
+        "agent:main:main": {
+          sessionId: "main-session",
+          updatedAt: Date.now() - 10_000,
+          status: "running",
+          abortedLastRun: true,
+          providerOverride: "claude-code",
+        },
+      });
+      await writeTreeTranscript(sessionsDir, "main-session", [
+        { role: "user", content: "long task", timestamp: 1 },
+      ]);
+      bridgeReattach.set("agent:main:main", { unit: "tinkerclaw-worker-x", state: "claimed" });
+
+      const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+      expect(result.recovered).toBe(1);
+      expect(gatewayCall("agent")).toBeUndefined();
+      expect(gatewayCall("chat.restartNotice")?.params).toMatchObject({ how: "reattached" });
+      const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+      expect(store["agent:main:main"]?.abortedLastRun).toBe(false);
+    });
+
+    it("never writes a headerless transcript while deciding (SessionManager.open would truncate it)", async () => {
+      const sessionsDir = await makeSessionsDir();
+      await writeStore(sessionsDir, {
+        "agent:main:main": {
+          sessionId: "main-session",
+          updatedAt: Date.now() - 10_000,
+          status: "running",
+          abortedLastRun: true,
+        },
+      });
+      await writeTranscript(sessionsDir, "main-session", toolTail);
+      const file = path.join(sessionsDir, "main-session.jsonl");
+      const before = await fs.readFile(file, "utf8");
+
+      await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+      expect(await fs.readFile(file, "utf8")).toBe(before);
+      expect(gatewayCall("agent")?.params).not.toHaveProperty("continueFromTranscript");
+    });
   });
 });

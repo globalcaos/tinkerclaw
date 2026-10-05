@@ -3,19 +3,12 @@ import { collectPreparedPrepackErrors } from "../scripts/openclaw-prepack.ts";
 
 describe("collectPreparedPrepackErrors", () => {
   it("accepts prepared release artifacts", () => {
-    expect(
-      collectPreparedPrepackErrors(
-        ["dist/index.mjs", "dist/control-ui/index.html"],
-        ["dist/control-ui/assets/index-Bu8rSoJV.js"],
-      ),
-    ).toEqual([]);
+    expect(collectPreparedPrepackErrors(["dist/index.mjs"])).toEqual([]);
   });
 
   it("reports missing build and control ui artifacts", () => {
-    expect(collectPreparedPrepackErrors([], [])).toEqual([
+    expect(collectPreparedPrepackErrors([])).toEqual([
       "missing required prepared artifact: dist/index.js or dist/index.mjs",
-      "missing required prepared artifact: dist/control-ui/index.html",
-      "missing prepared Control UI asset payload under dist/control-ui/assets/",
     ]);
   });
 });

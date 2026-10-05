@@ -15,7 +15,11 @@ import {
   resolveWhatsAppMediaMaxBytes,
 } from "./accounts.js";
 import { getRegisteredWhatsAppConnectionController } from "./connection-controller-registry.js";
-import type { ActiveWebListener, ActiveWebSendOptions } from "./inbound/types.js";
+import type {
+  ActiveWebListener,
+  ActiveWebSendOptions,
+  WhatsAppGroupChange,
+} from "./inbound/types.js";
 import {
   normalizeWhatsAppPayloadText,
   prepareWhatsAppOutboundMedia,
@@ -241,6 +245,56 @@ export async function sendReactionWhatsApp(
     );
     throw err;
   }
+}
+
+export async function revokeMessageWhatsApp(
+  chatJid: string,
+  messageId: string,
+  options: {
+    fromMe?: boolean;
+    participant?: string;
+    accountId?: string;
+    cfg: OpenClawConfig;
+  },
+): Promise<void> {
+  const cfg = requireRuntimeConfig(options.cfg, "WhatsApp unsend");
+  const { listener: active } = requireOutboundActiveWebListener({
+    cfg,
+    accountId: options.accountId,
+  });
+  outboundLog.info(`Deleting message ${messageId} for everyone`);
+  await active.revokeMessage(chatJid, messageId, options.fromMe ?? true, options.participant);
+  outboundLog.info(`Deleted message ${messageId}`);
+}
+
+export async function editMessageWhatsApp(
+  chatJid: string,
+  messageId: string,
+  text: string,
+  options: { accountId?: string; cfg: OpenClawConfig },
+): Promise<void> {
+  const cfg = requireRuntimeConfig(options.cfg, "WhatsApp edit");
+  const { listener: active } = requireOutboundActiveWebListener({
+    cfg,
+    accountId: options.accountId,
+  });
+  outboundLog.info(`Editing message ${messageId}`);
+  await active.editMessage(chatJid, messageId, markdownToWhatsApp(text));
+  outboundLog.info(`Edited message ${messageId}`);
+}
+
+export async function updateGroupWhatsApp(
+  groupJid: string,
+  change: WhatsAppGroupChange,
+  options: { accountId?: string; cfg: OpenClawConfig },
+): Promise<void> {
+  const cfg = requireRuntimeConfig(options.cfg, "WhatsApp group update");
+  const { listener: active } = requireOutboundActiveWebListener({
+    cfg,
+    accountId: options.accountId,
+  });
+  outboundLog.info(`Group ${change.kind} on ${redactIdentifier(groupJid)}`);
+  await active.updateGroup(groupJid, change);
 }
 
 export async function sendPollWhatsApp(

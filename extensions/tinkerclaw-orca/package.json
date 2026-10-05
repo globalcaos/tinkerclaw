@@ -1,9 +1,16 @@
 {
-  "name": "@globalcaos/tinkerclaw-orca",
+  "name": "@globalcaos/tinker-orca",
   "version": "0.1.0",
-  "private": true,
-  "description": "FORK: ORCA lease registry — cross-session per-file leases (no branches, no merges) exposed as orca.lease.* gateway RPCs + a stale-lease GC janitor.",
+  "description": "ORCA lease registry — cross-session per-file leases (no branches, no merges) exposed as orca.lease.* gateway RPCs + a stale-lease GC janitor.",
   "license": "Apache-2.0",
+  "files": [
+    "index.ts",
+    "dist/",
+    "openclaw.plugin.json",
+    "lease-core.mjs",
+    "api.ts",
+    "README.md"
+  ],
   "type": "module",
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*"
@@ -13,8 +20,14 @@
       "./index.ts"
     ],
     "release": {
-      "publishToClawHub": false,
+      "publishToClawHub": true,
       "publishToNpm": false
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "build": {
+      "openclawVersion": "2026.4.25"
     }
   }
 }

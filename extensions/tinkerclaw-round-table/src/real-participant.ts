@@ -19,13 +19,13 @@ export type Phase = "propose" | "challenge" | "defend" | "synthesize" | "ratify"
 // so the researcher role substitutes openai/o3 (closest math/code/CoT reasoner),
 // keeping a 3-vendor spread (Anthropic + OpenAI + Google).
 const ROLE_MODEL: Record<string, string> = {
-  architect: "claude-code/claude-opus-5",
+  architect: "claude-code/claude-opus-5-5",
   critic: "openai/gpt-5.3-codex",
   pragmatist: "google/gemini-3.1-pro-preview",
   researcher: "openai/o3",
-  synthesizer: "claude-code/claude-sonnet-4-6",
+  synthesizer: "claude-code/claude-sonnet-5-5",
 };
-const FALLBACK_MODEL = "claude-code/claude-sonnet-4-6";
+const FALLBACK_MODEL = "claude-code/claude-sonnet-5-5";
 
 /**
  * 7B: user-configurable role -> model-ref map ("provider/model"). Supplied from
@@ -51,6 +51,43 @@ export function modelForRole(role: string, overrides?: RoleModels): string {
 /** The builtin defaults, exported so callers/validators can compare against them. */
 export const DEFAULT_ROLE_MODELS: Readonly<RoleModels> = ROLE_MODEL;
 export { FALLBACK_MODEL };
+
+/** Must equal `LEAF_RESOLVER_SLOT` in `src/infra/thalamus-call-router.ts`; a test compares them. */
+export const THALAMUS_LEAF_RESOLVER_SLOT = "openclaw.thalamus.leafModelResolver";
+
+/**
+ * FORK 2026-10-03 (the architect: "Make sure Thalamus is owner of all those model choices when it is working"). A Claude role on
+ * its builtin model asks Thalamus, per call, for the model of that call; the builtin stays the fallback. A `roleModels`
+ * override is a model named on purpose and is kept, and the other vendors' roles keep theirs: Thalamus picks only
+ * `claude-code` models (its charter ruling C2), so it cannot own them. Read by `Symbol.for` key with no import; a throw
+ * or a malformed answer counts as no answer.
+ */
+export function thalamusRoleModel(args: {
+  role: string;
+  model: string;
+  prompt: string;
+  overrides?: RoleModels;
+}): string {
+  if (!args.model.startsWith("claude-code/")) return args.model;
+  if (typeof args.overrides?.[args.role] === "string" && args.overrides[args.role].trim()) {
+    return args.model;
+  }
+  const slot = (globalThis as Record<symbol, unknown>)[Symbol.for(THALAMUS_LEAF_RESOLVER_SLOT)];
+  const resolve = (slot as { resolve?: (r: unknown) => unknown } | undefined)?.resolve;
+  if (typeof resolve !== "function") return args.model;
+  try {
+    const out = resolve.call(slot, {
+      prompt: args.prompt,
+      label: `debate:${args.role}`,
+      site: "round-table",
+    }) as { model?: unknown } | undefined;
+    return typeof out?.model === "string" && out.model.startsWith("claude-code/")
+      ? out.model
+      : args.model;
+  } catch {
+    return args.model;
+  }
+}
 
 /**
  * 7B: one role whose chosen ref was unavailable in the host catalog and had to

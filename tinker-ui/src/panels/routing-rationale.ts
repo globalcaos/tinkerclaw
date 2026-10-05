@@ -16,12 +16,23 @@
 // Pure render model (no DOM deps, returns an HTML string) — same shape as the other panels/
 // modules, so every sentence is unit-testable without a browser.
 //
+// FORK 2026-09-03 (the architect, ask 4: "clear visibility on how Thalamus is doing things by looking
+// at the Thalamus panel"): FOUR more blocks sit ABOVE those three — SUPPLIES, WHY THIS,
+// IF IT FAILS, BALLISTIC — from the THALAMUS v2 design (jarvis-icu
+// docs/superpowers/specs/2026-09-03-thalamus-v2-design.md §6). They are driven by OPTIONAL
+// fields, so a gateway that has not been taught to send them yet gets byte-identically the
+// card above, and no empty boxes. Rule 1 still holds inside them: a block with nothing to say
+// says nothing at all.
+//
 // SOURCE OF TRUTH for the burn-down math: src/agents/effort-allocator.ts
 // (deriveQuotaPressure + allocateEffort). The constants below are MIRRORED from there so the
 // card can explain an Auto pick client-side without a round trip. If the allocator's
 // constants change, change them here too — the test pins the mirrored formula, not the prose.
 
+import type { CompositionMode, ReservedReason } from "../../../src/shared/thalamus-plan.js";
+import { windowBallistic, type SupplyState } from "../../../src/shared/thalamus-supply.js";
 import { eegStopLeftCss } from "./eeg-trace.js";
+import { renderThalamusV4, type ThalamusV4View } from "./thalamus-v4-card.js";
 
 /** Convexity of the urgency ramp toward the weekly reset (effort-allocator URGENCY_EXP). */
 const URGENCY_EXP = 2.5;
@@ -112,6 +123,48 @@ export interface RoutingSignals {
     cost: number;
     frontierSize: number;
   };
+  /** FORK 2026-09-03: the supply board THALAMUS priced this turn against. Absent ⇒ no SUPPLIES
+   *  block; an EMPTY array is also no block. We render what we were told, and "told nothing"
+   *  is not "there is nothing". */
+  supplies?: SupplyState[];
+  /** FORK 2026-09-03: the plan for this turn — primary, recovery chain, composition, and the
+   *  reasons behind them. Absent ⇒ none of the three plan blocks render. */
+  thalamusPlan?: ThalamusPlanView;
+  /** FORK 2026-10-01 (THALAMUS v4, phase G): what the v4 plugin reports, from `thalamus.panel`. Absent ⇒ the block draws
+   *  nothing, which is how a gateway without the plugin (or with it off) keeps today's card byte for byte. */
+  thalamusV4?: ThalamusV4View;
+  /** The v4 block's expanders the reader has open, so a repaint does not close them. */
+  thalamusV4Open?: ReadonlySet<string>;
+}
+
+/** The renderable projection of `ThalamusPlan` (src/shared/thalamus-plan.ts).
+ *
+ *  A PROJECTION, not the type itself: the plan carries `FrontierRung` objects and a whole
+ *  `ThalamusRoute` the browser has no use for, and pinning the panel to it would make every
+ *  field of the router's internals a wire contract. `mode` and `reservedReason` keep the shared
+ *  unions, though, so a rename over there fails the build here instead of quietly rendering a
+ *  stale word. */
+export interface ThalamusPlanView {
+  /** Route key of the rung the turn runs on, e.g. "anthropic/claude-opus-5". */
+  primary: string;
+  /** Effort in force on the primary; "" for a ladderless model. */
+  effort: string;
+  mode: CompositionMode;
+  /** Debate: the independent answerers. Fan-out: the leaf model. */
+  panel: string[];
+  /** Who synthesises, when anything composes. */
+  chair?: string;
+  /** The recovery ladder, in order. EMPTY is the defect this change exists to expose. */
+  chain: string[];
+  ballistic: boolean;
+  /** Set whenever a reserved model was admitted — never rendered silently. */
+  reservedReason?: ReservedReason;
+  /** Every rung feasibility removed, so the panel can say why the board shrank. */
+  vetoes: { key: string; veto: string; detail?: string }[];
+  domain: string;
+  subject: string;
+  /** The plan's own one-line justification. */
+  reason: string;
 }
 
 export interface BurnExplanation {
@@ -391,8 +444,294 @@ export function frontierLine(s: RoutingSignals): string {
   );
 }
 
-/** The ORCA card: the fast↔smart dial, the frontier line, then this turn's three choices,
- *  then the policy link. */
+// ── THALAMUS v2 — the four blocks above MODEL (2026-09-03) ──────────────────────────────────
+// Design: jarvis-icu docs/superpowers/specs/2026-09-03-thalamus-v2-design.md §6. The card used
+// to answer "what did it pick?". These blocks answer the three questions the architect actually
+// asks when a turn goes wrong: WHY NOT CLAUDE (supplies), WHY THIS ONE (plan), and ARE WE ABOUT
+// TO STALL AGAIN (chain).
+//
+// EVERY field behind them is OPTIONAL and an absent field renders NOTHING — not an empty box.
+// An empty box reads as "nothing is happening" when the truth is "nobody told us yet", and a
+// card whose whole job is transparency must not lie in that particular direction.
+
+/** A supply that cannot be drawn on, and the empty-chain warning. */
+const SPENT_INK = "#e05a3f";
+/** A supply that is nearly spent, and a reserved model that was opened. */
+const WARN_INK = "#c98b2e";
+
+// The blocks carry their own inline styles ON PURPOSE: base.css is not part of this change, and
+// a class with no rule behind it is invisible styling that still reviews as done. The
+// `thalamus-*` classes are emitted anyway as hooks, so a later stylesheet can take the layout
+// over without touching this module.
+const BLOCK_STYLE = "display:grid;grid-template-columns:52px 1fr;gap:7px;align-items:start";
+const KEY_STYLE =
+  "font-family:'SF Mono',monospace;font-size:9px;letter-spacing:0.06em;color:var(--accent);padding-top:1px";
+const TEXT_STYLE = "font-size:10.5px;line-height:1.42;color:var(--muted)";
+const SUPPLY_ROW_STYLE = "display:flex;align-items:center;gap:5px;white-space:nowrap";
+const BAR_STYLE =
+  "display:inline-block;width:44px;height:5px;border:1px solid var(--border);border-radius:2px;overflow:hidden;flex:none";
+
+function thalamusBlock(key: string, body: string): string {
+  return (
+    `<div class="thalamus-block" style="${BLOCK_STYLE}">` +
+    `<span class="thalamus-key" style="${KEY_STYLE}">${key}</span>` +
+    // A DIV, not a span: the body carries block children (a supply row per line, the reason
+    // line). Grid blockifies a span anyway, so this never LOOKED wrong — which is exactly why
+    // it would have survived. Invalid markup that renders is still invalid markup.
+    `<div class="thalamus-text" style="${TEXT_STYLE}">${body}</div></div>`
+  );
+}
+
+/** Billing pool → the name the architect uses for it. A SupplyId is a pool, not a provider id. */
+const SUPPLY_LABEL: Readonly<Record<string, string>> = {
+  anthropic: "Claude",
+  openai: "ChatGPT",
+  copilot: "Copilot",
+  xai: "Grok",
+  google: "Gemini",
+  openrouter: "OpenRouter",
+  unknown: "unknown",
+};
+
+export function supplyLabel(id: string): string {
+  return SUPPLY_LABEL[id] ?? id;
+}
+
+/** Time-to-reset the way a person says it: "4h 20m", "2d 3h", "12m". Never a timestamp — the
+ *  question is "how long until I can use it again", not "at what o'clock". */
+export function untilHuman(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return "now";
+  }
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) {
+    return "<1m";
+  }
+  const days = Math.floor(mins / 1440);
+  const hours = Math.floor((mins % 1440) / 60);
+  const rest = mins % 60;
+  if (days > 0) {
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+  if (hours > 0) {
+    return rest > 0 ? `${hours}h ${rest}m` : `${hours}h`;
+  }
+  return `${rest}m`;
+}
+
+/** Below this the shadow price is noise, not a decision. */
+export const SHADOW_DEADBAND = 0.02;
+
+/** The shadow price as the DECISION it is, not as the number it comes from: up = this bucket is
+ *  ahead of pace so its tokens are dearer, down = behind pace so they are cheaper (unspent
+ *  subscription quota is destroyed at reset), dash = on pace or unknown. The number is evidence
+ *  and lives in the row's title; the arrow is what the router acted on. */
+export function shadowArrow(shadow: number | undefined): string {
+  if (typeof shadow !== "number" || !Number.isFinite(shadow)) {
+    return "–";
+  }
+  if (shadow > SHADOW_DEADBAND) {
+    return "↑";
+  }
+  if (shadow < -SHADOW_DEADBAND) {
+    return "↓";
+  }
+  return "–";
+}
+
+/** The evidence behind the arrow, for the row's tooltip. */
+export function shadowTitle(sup: SupplyState): string {
+  const n = sup.shadow;
+  // UNKNOWN is not ZERO. Reporting "+0.00 · on pace" for a supply nobody priced would put a
+  // measurement where there is none, and the arrow already says "–" in that case — the two
+  // must not tell different stories.
+  if (typeof n !== "number" || !Number.isFinite(n)) {
+    return "shadow unknown";
+  }
+  const dir =
+    n > SHADOW_DEADBAND
+      ? "ahead of pace — dearer"
+      : n < -SHADOW_DEADBAND
+        ? "behind pace — cheaper"
+        : "on pace";
+  return `shadow ${n >= 0 ? "+" : ""}${n.toFixed(2)} · ${dir}`;
+}
+
+/** ONE supply, one line: who, how full, which window binds, when it comes back, what it costs. */
+export function supplyRow(sup: SupplyState, nowMs: number): string {
+  const w = sup.binding;
+  const raw = w?.used;
+  const used = typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
+  const resetAt = w?.resetAtMs ?? sup.resetAtMs;
+  const fill = sup.spent ? SPENT_INK : used >= 0.8 ? WARN_INK : "var(--accent)";
+  const name = supplyLabel(sup.id);
+  // NO BINDING WINDOW ⇒ NO BAR. An empty meter is a picture of a supply with room to spare,
+  // which is the most dangerous thing this row could imply about a supply nobody has measured.
+  // The words take its place. (`pct` is Math.round over a clamped number, so nothing but
+  // digits and `%` can reach the style attribute — the finite check above is what keeps that
+  // true when a NaN arrives over the wire.)
+  const meter = w
+    ? `<span class="thalamus-bar" style="${BAR_STYLE}">` +
+      `<span style="display:block;height:100%;width:${pct(used)};background:${fill}"></span>` +
+      "</span>" +
+      `<span>${pct(used)} <span style="opacity:.7">${esc(w.label)}</span></span>`
+    : '<span style="opacity:.7">no reading</span>';
+  return (
+    `<div class="thalamus-supply${sup.spent ? " is-spent" : ""}" style="${SUPPLY_ROW_STYLE}"` +
+    ` title="${esc(`${name} · ${sup.kind} · ${shadowTitle(sup)}`)}">` +
+    `<span style="color:${sup.spent ? SPENT_INK : "var(--text)"};width:62px;flex:none">` +
+    `${esc(name)}</span>` +
+    meter +
+    (typeof resetAt === "number"
+      ? `<span style="opacity:.7">↺ ${esc(untilHuman(resetAt - nowMs))}</span>`
+      : "") +
+    (sup.spent ? `<b style="color:${SPENT_INK};letter-spacing:.06em">SPENT</b>` : "") +
+    `<span class="thalamus-shadow" style="margin-left:auto">${shadowArrow(sup.shadow)}</span>` +
+    "</div>"
+  );
+}
+
+/** SUPPLIES — the board THALAMUS routed over. This is the block that answers "why did it not
+ *  use Claude": a spent bucket is not a preference, it is a veto, and it has to be visible. */
+export function suppliesBlock(s: RoutingSignals): string {
+  const list = s.supplies ?? [];
+  if (list.length === 0) {
+    return "";
+  }
+  return thalamusBlock("SUPPLIES", list.map((sup) => supplyRow(sup, s.nowMs)).join(""));
+}
+
+/** The three — and only three — ways the reserved set opens (design §3). Typed as a plain
+ *  string map so a value that arrived over RPC outside the union still prints something true
+ *  instead of "undefined". */
+export const RESERVED_WHY: Readonly<Record<string, string>> = {
+  dial: "Reserved model opened by the DIAL — only the smart stop admits it.",
+  ballistic: "Reserved model opened by BALLISTIC — a window is about to destroy surplus.",
+  feasibility: "Reserved model opened by FEASIBILITY — nothing else could do this job.",
+};
+
+export function reservedLine(reason: string): string {
+  return RESERVED_WHY[reason] ?? `Reserved model opened by ${reason}.`;
+}
+
+/** Who answers and who synthesises, as a tooltip on the mode tag — the detail belongs on
+ *  hover, not on a second line (the same trade `describeRoute` made). */
+function compositionTitle(p: ThalamusPlanView): string {
+  const bits: string[] = [];
+  if (p.chair) {
+    bits.push(`${p.chair} chairs`);
+  }
+  if (p.panel && p.panel.length > 0) {
+    bits.push(p.panel.join(", "));
+  }
+  return bits.join(" · ");
+}
+
+/** Why the board shrank, one vetoed rung per entry. */
+function vetoDetail(vetoes: readonly { key: string; veto: string; detail?: string }[]): string {
+  return vetoes.map((v) => `${v.key}: ${v.veto}${v.detail ? ` (${v.detail})` : ""}`).join(" · ");
+}
+
+/** WHY THIS MODEL — the plan's own reason, the key it chose on, and, when a reserved model was
+ *  admitted, WHICH of the three named reasons opened it. A reserved model arriving unexplained
+ *  is a bug, so it is never rendered silently. */
+export function whyModelBlock(s: RoutingSignals): string {
+  const p = s.thalamusPlan;
+  if (!p) {
+    return "";
+  }
+  const tag = (t: string): string => ` <span class="routing-why-dom">${esc(t)}</span>`;
+  const tagged = (t: string, title: string): string =>
+    title ? ` <span class="routing-why-dom" title="${esc(title)}">${esc(t)}</span>` : tag(t);
+  const vetoes = p.vetoes ?? [];
+  const head =
+    `<b>${esc(p.primary)}</b>` +
+    (p.effort ? ` @${esc(p.effort)}` : "") +
+    (p.domain ? tag(p.domain) : "") +
+    (p.subject && p.subject !== "none" ? tag(p.subject) : "") +
+    (p.mode && p.mode !== "solo" ? tagged(p.mode, compositionTitle(p)) : "") +
+    (vetoes.length > 0
+      ? ` <span class="thalamus-vetoes" title="${esc(vetoDetail(vetoes))}">` +
+        `${vetoes.length} vetoed</span>`
+      : "");
+  return thalamusBlock(
+    "WHY THIS",
+    head +
+      (p.reason ? `<div style="margin-top:2px">${esc(p.reason)}</div>` : "") +
+      (p.reservedReason
+        ? `<div class="thalamus-reserved" style="margin-top:2px;color:${WARN_INK}">` +
+          `${esc(reservedLine(p.reservedReason))}</div>`
+        : ""),
+  );
+}
+
+/** IF IT FAILS — the recovery ladder, in order. An EMPTY chain is the exact defect this whole
+ *  change fixes (`agents.defaults.model.fallbacks` was literally `[]`, so a 429 stalled the
+ *  turn), so it is not silence: it is a warning, in the colour of a spent supply. */
+export function chainBlock(s: RoutingSignals): string {
+  const p = s.thalamusPlan;
+  if (!p) {
+    return "";
+  }
+  // ABSENT is not EMPTY. A gateway that never sent a chain has told us nothing; printing "no
+  // fallback" for it would manufacture the very alarm this block exists to raise honestly.
+  const chain = p.chain;
+  if (!Array.isArray(chain)) {
+    return "";
+  }
+  if (chain.length === 0) {
+    return thalamusBlock(
+      "IF IT FAILS",
+      `<b class="thalamus-warn" style="color:${SPENT_INK}">` +
+        "no fallback — a failure stalls the turn</b>",
+    );
+  }
+  return thalamusBlock("IF IT FAILS", chain.map((k) => esc(k)).join(" → "));
+}
+
+/** BALLISTIC — armed only when a subscription window will destroy surplus it cannot physically
+ *  spend. Rendered only then: this block existing at all is the signal. */
+export function ballisticBlock(s: RoutingSignals): string {
+  const supplies = s.supplies ?? [];
+  const sup = supplies.find((x) => x.ballistic);
+  if (!sup && s.thalamusPlan?.ballistic !== true) {
+    return "";
+  }
+  if (!sup) {
+    return thalamusBlock(
+      "BALLISTIC",
+      "A window is about to destroy surplus — tokens are free, so THALAMUS explores.",
+    );
+  }
+  // The surplus is quoted from the window that ACTUALLY armed it — `windowBallistic` is the
+  // same predicate the producer used, so there is one definition of "about to expire". No
+  // fallback to `binding`: a number attributed to the wrong window is worse than no number.
+  const w = (sup.windows ?? []).find((x) => windowBallistic(x));
+  const parts = [`<b>${esc(supplyLabel(sup.id))}</b>`];
+  if (w && typeof w.elapsed === "number" && w.elapsed > w.used) {
+    parts.push(`${pct(w.elapsed - w.used)} of the ${esc(w.label)} window expires unspent`);
+  }
+  const resetAt = w?.resetAtMs ?? sup.resetAtMs;
+  if (typeof resetAt === "number") {
+    parts.push(`${esc(untilHuman(resetAt - s.nowMs))} left`);
+  }
+  return thalamusBlock("BALLISTIC", `${parts.join(" — ")}. Tokens are free, so THALAMUS explores.`);
+}
+
+/** The four blocks, in the order the design names them. Empty string when the gateway has told
+ *  us nothing new, which is what keeps today's card byte-identical. */
+export function thalamusBlocks(s: RoutingSignals): string {
+  return (
+    renderThalamusV4(s.thalamusV4, { nowMs: s.nowMs, open: s.thalamusV4Open }) +
+    suppliesBlock(s) +
+    whyModelBlock(s) +
+    chainBlock(s) +
+    ballisticBlock(s)
+  );
+}
+
+/** The ORCA card: the fast↔smart dial, the frontier line, the four THALAMUS blocks, then this
+ *  turn's three choices, then the policy link. */
 export function renderRoutingRationale(s: RoutingSignals): string {
   const row = (key: string, text: string): string =>
     `<div class="routing-why-row"><span class="routing-why-key">${key}</span>` +
@@ -401,6 +740,7 @@ export function renderRoutingRationale(s: RoutingSignals): string {
     renderBiasSlider(s) +
     '<div class="routing-why">' +
     frontierLine(s) +
+    thalamusBlocks(s) +
     row("MODEL", modelLine(s)) +
     row("EFFORT", effortLine(s)) +
     row("FAN-OUT", fanOutLine(s)) +

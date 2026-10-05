@@ -27,7 +27,23 @@ relay server — without launching a separate automated browser.
 
 ## Options
 
+- `Relay host`: defaults to `127.0.0.1`. Set it to the machine running the gateway when the
+  browser lives elsewhere — a LAN address such as `192.0.2.100`, or `127.0.0.1` again if you
+  reach it through an SSH tunnel (`ssh -N -L 18792:127.0.0.1:18792 user@host`).
 - `Relay port`: defaults to `18792`.
+- `Gateway token`: paste `gateway.auth.token` from `~/.openclaw/openclaw.json`. Optional for a
+  loopback relay, **required** for any other host — the relay only waives the token for a
+  `chrome-extension://` origin arriving over loopback.
+
+### Remote relay
+
+The gateway side must listen beyond loopback for this to work: set the plugin's `bindHost`
+(`plugins.entries.tinkerclaw-browser-relay.config.bindHost`) to a LAN address or `0.0.0.0`.
+The plugin refuses a non-loopback `bindHost` unless a gateway token is configured, because the
+relay is a CDP control channel over the shared tabs. Over an SSH tunnel the relay can stay on
+`127.0.0.1` and no `bindHost` change is needed.
+
+Traffic is plain `ws://`. On an untrusted network prefer the SSH tunnel over a LAN bind.
 
 ## What this version carries
 

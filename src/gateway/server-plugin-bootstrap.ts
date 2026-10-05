@@ -1,6 +1,11 @@
 import { primeConfiguredBindingRegistry } from "../channels/plugins/binding-registry.js";
+import { resolveStateDir } from "../config/paths.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  retirePublishedMoralCode,
+  shouldRetirePublishedMoralCode,
+} from "../moral-code/contract.js";
 import type { BundledRuntimeDepsInstallParams } from "../plugins/bundled-runtime-deps.js";
 import type { PluginLookUpTable } from "../plugins/plugin-lookup-table.js";
 import type { PluginRegistry } from "../plugins/registry.js";
@@ -120,10 +125,25 @@ export function prepareGatewayPluginLoad(params: GatewayPluginBootstrapParams) {
 export function loadGatewayStartupPlugins(
   params: Omit<GatewayPluginBootstrapParams, "beforePrimeRegistry">,
 ) {
-  return prepareGatewayPluginLoad({
+  const loaded = prepareGatewayPluginLoad({
     ...params,
     beforePrimeRegistry: pinActivePluginChannelRegistry,
   });
+  // FORK 2026-09-23 — TinkerClaw owns the moral code; Claude Code only reads what TinkerClaw
+  // publishes (src/moral-code/contract.ts). When the owning plugin is off, withdraw the published
+  // pack so Claude cannot keep carrying rules every other model has stopped getting.
+  try {
+    if (shouldRetirePublishedMoralCode(loaded.pluginRegistry.plugins)) {
+      if (retirePublishedMoralCode(resolveStateDir())) {
+        params.log.info(
+          "[moral-code] tinkerclaw-moral-code is not loaded — withdrew the published pack",
+        );
+      }
+    }
+  } catch {
+    // Never let a housekeeping step block gateway startup.
+  }
+  return loaded;
 }
 
 export function reloadDeferredGatewayPlugins(

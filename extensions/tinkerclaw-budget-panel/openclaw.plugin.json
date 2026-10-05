@@ -1,10 +1,11 @@
 {
   "id": "tinkerclaw-budget-panel",
   "name": "Multi-Provider Budget Panel",
-  "description": "Unified budget tracking for Claude, Manus, and Gemini",
-  "version": "0.1.0",
+  "version": "0.1.2",
+  "description": "Unified budget and quota tracking across the AI providers this gateway is configured for. RECURRING POLLING: register() primes a usage snapshot once on boot and then refreshes it on a timer EVERY 10 MINUTES for as long as the gateway runs, whether or not a UI tab is open. Each refresh may contact: api.anthropic.com (/api/oauth/usage, per Anthropic profile, 30-min per-profile cache), api.openai.com (/v1/organization/costs, only when OPENAI_ADMIN_API_KEY is set, 30-min cache), api.github.com (/copilot_internal/user with the github-copilot:github profile token, 10-min cache; the request identifies itself as the VS Code Copilot Chat client: User-Agent GitHubCopilotChat/0.26.7, Editor-Version vscode/1.98.0), cli-chat-proxy.grok.com (/v1/billing?format=credits with the xai:default profile token, 5-min cache; the request identifies itself as the Grok CLI: User-Agent grok-pager/0.2.116, x-grok-client-identifier grok-pager, x-grok-client-version 0.2.116, because that proxy rejects other clients with HTTP 426), oauth2.googleapis.com and monitoring.googleapis.com (Gemini request counts, only when a Google service-account key is configured, 10-min cache). Every fetch has an 8s timeout and the whole refresh a 60s deadline. CREDENTIALS: it reads only credentials you gave THIS gateway — the OpenClaw auth-profile store via the plugin SDK, plus config/env values you set yourself — and non-secret local usage counters under ~/.openclaw/workspace/memory/{claude,gemini,manus,chatgpt}-usage.json. It does NOT read other applications' credential stores (the Claude Code CLI credential file and gcloud's service-account key were both removed in 0.1.1), and it never writes a credential anywhere. GATEWAY METHODS registered by default: budget.usage, budget.status, budget.update, budget.refresh. Two non-budget surfaces are OFF unless you opt in: exposeModelConfig registers config.models (model routing plus auth-profile provider/mode/label and auth order, read from the gateway's runtime config, not from openclaw.json on disk; no credential paths or secrets), and exposeAnatomyTimeline registers anatomy.recent/before/session (context-timeline events from the in-process anatomy DB, up to 2000 events over 8760 hours). It also serves a plugin-authenticated HTTP route GET /budget (an HTML dashboard) and registers one agent tool, budget_check.",
   "configSchema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
       "claudeBudget": {
         "type": "number",
@@ -20,7 +21,47 @@
         "type": "number",
         "default": 20,
         "description": "Monthly Gemini budget in dollars"
+      },
+      "anthropicProfiles": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Auth-profile IDs to poll for Anthropic usage, e.g. [\"anthropic:work\"]. Left unset, the plugin polls every profile already registered in this gateway under the `anthropic:` prefix. It never reads a credential you have not given this gateway.",
+        "default": []
+      },
+      "googleServiceAccountFile": {
+        "type": "string",
+        "description": "Path to a Google service-account JSON key with monitoring.read, used ONLY for the Gemini request-count query. There is no default: leave it unset and the Gemini quota poll is skipped rather than reading gcloud's credential store. Environment fallback: BUDGET_PANEL_GOOGLE_SA_FILE."
+      },
+      "exposeModelConfig": {
+        "type": "boolean",
+        "default": false,
+        "description": "Register the config.models gateway method (model list, fallbacks, auth-profile provider/mode/label and auth order) for the Tinker UI MODELS panel. Off by default."
+      },
+      "exposeAnatomyTimeline": {
+        "type": "boolean",
+        "default": false,
+        "description": "Register the anatomy.recent / anatomy.before / anatomy.session gateway methods (context-timeline events) for the Tinker UI timeline panel. Off by default."
       }
+    }
+  },
+  "uiHints": {
+    "anthropicProfiles": {
+      "label": "Anthropic profiles",
+      "help": "Which of this gateway's auth profiles to poll. Empty = all anthropic:* profiles."
+    },
+    "googleServiceAccountFile": {
+      "label": "Google key file",
+      "help": "Optional. Unset means the Gemini quota row is simply absent."
+    },
+    "exposeModelConfig": {
+      "label": "Expose model config",
+      "help": "Needed only by the Tinker UI MODELS panel."
+    },
+    "exposeAnatomyTimeline": {
+      "label": "Expose context timeline",
+      "help": "Needed only by the Tinker UI context-timeline panel."
     }
   }
 }

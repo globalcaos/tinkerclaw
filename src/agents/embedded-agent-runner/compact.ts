@@ -96,12 +96,20 @@ import {
   applySkillEnvOverridesFromSnapshot,
   resolveSkillsPromptForRun,
 } from "../skills.js";
-import { resolveSystemPromptOverride } from "../system-prompt-override.js";
+import {
+  resolveSystemPromptIdentityLine,
+  resolveSystemPromptOverride,
+} from "../system-prompt-override.js";
 import {
   classifyCompactionReason,
   formatUnknownCompactionReasonDetail,
   resolveCompactionFailureReason,
 } from "./compact-reasons.js";
+import {
+  createRunnerCompactionTelemetry,
+  isCompactionTelemetryOwnedByCaller,
+  readMeasuredCompactionDrop,
+} from "./compact.queued.js";
 import type { CompactEmbeddedPiSessionParams, CompactionMessageMetrics } from "./compact.types.js";
 import { dedupeDuplicateUserMessagesForCompaction } from "./compaction-duplicate-user-messages.js";
 import {
@@ -458,6 +466,16 @@ export async function compactEmbeddedPiSessionDirect(
     config: params.config,
   });
 
+  // context-window-panel.md §6.1 A2: the runner's compactions run HERE, so this leaf emits
+  // their A1 start / end pair (routing in compact.queued.ts), unless the executor that reached
+  // it already does (an owning engine delegating back through compact.queued.ts).
+  const compactionTelemetry = createRunnerCompactionTelemetry({
+    enabled: !isCompactionTelemetryOwnedByCaller(params),
+    runId: params.runId,
+    sessionKey: params.sessionKey,
+    trigger: params.trigger,
+    provider: params.provider,
+  });
   let restoreSkillEnv: (() => void) | undefined;
   let compactionSessionManager: unknown = null;
   let checkpointSnapshot: CapturedCompactionCheckpointSnapshot | null = null;
@@ -761,6 +779,10 @@ export async function compactEmbeddedPiSessionDirect(
         }) ??
         buildEmbeddedSystemPrompt({
           workspaceDir: effectiveWorkspace,
+          identityLine: resolveSystemPromptIdentityLine({
+            config: params.config,
+            agentId: sessionAgentId,
+          }),
           defaultThinkLevel,
           reasoningLevel: params.reasoningLevel ?? "off",
           extraSystemPrompt: params.extraSystemPrompt,
@@ -1055,6 +1077,10 @@ export async function compactEmbeddedPiSessionDirect(
             };
           }
 
+          // Past every decline: the transcript has real conversation and the model call is next.
+          // The reasoning-level retry below (`continue`) comes back here with the pair still
+          // open, so it opens nothing new.
+          compactionTelemetry.start(observedTokenCount);
           const compactStartedAt = Date.now();
           // Measure compactedCount from the original pre-limiting transcript so compaction
           // lifecycle metrics represent total reduction through the compaction pipeline.
@@ -1116,6 +1142,15 @@ export async function compactEmbeddedPiSessionDirect(
             observedTokenCount,
             fullSessionTokensBefore,
             estimateTokensFn: estimateTokens,
+          });
+          // The transcript is compacted from here on; rotation, side effects, checkpoint and
+          // hooks are bookkeeping, and a failure there must not un-count a compaction that
+          // happened. The figures are the ones this function returns.
+          compactionTelemetry.end({
+            completed: true,
+            tokensBefore: observedTokenCount ?? result.tokensBefore,
+            tokensAfter,
+            tokensDropped: readMeasuredCompactionDrop(result.details),
           });
           const messageCountAfter = session.messages.length;
           const compactedCount = Math.max(0, messageCountCompactionInput - messageCountAfter);
@@ -1272,6 +1307,10 @@ export async function compactEmbeddedPiSessionDirect(
     });
     return fail(reason);
   } finally {
+    // Any exit that opened the pair and did not close it (a throw, an abort, a safeguard
+    // cancel) closes it here as not completed. A no-op after the close above, and on any exit
+    // that never opened one (a decline, a failure before the compaction call).
+    compactionTelemetry.end({ completed: false });
     if (!checkpointSnapshotRetained) {
       await cleanupCompactionCheckpointSnapshot(checkpointSnapshot);
     }

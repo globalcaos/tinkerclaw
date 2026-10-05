@@ -19,10 +19,10 @@ import path from "node:path";
  * `[unknown-contact-protocol]` block can hang off it deterministically.
  *
  * Read-only against `~/.openclaw/data/whatsapp-history.db` via the shared
- * `getDb()` singleton; try/catch returns null on any failure.
+ * `getDbIfExists()` accessor (never creates the DB); try/catch returns null on any failure.
  */
 import type Database from "better-sqlite3";
-import { getDb } from "../../history/db.js";
+import { getDbIfExists } from "../../history/db.js";
 
 const PEOPLE_DIR = path.join(os.homedir(), ".openclaw", "workspace", "memory", "people");
 const ALIASES_PATH = path.join(PEOPLE_DIR, "_aliases.json");
@@ -100,7 +100,10 @@ let chatStmtCache: { db: Database.Database; stmt: Database.Statement<unknown[], 
 
 function getContactStmt(): Database.Statement<unknown[], ContactRow> | null {
   try {
-    const db = getDb();
+    const db = getDbIfExists();
+    if (!db) {
+      return null;
+    }
     if (contactStmtCache?.db === db) return contactStmtCache.stmt;
     const stmt = db.prepare<unknown[], ContactRow>(
       `SELECT name, notify, phone FROM contacts WHERE jid = ? LIMIT 1`,
@@ -114,7 +117,10 @@ function getContactStmt(): Database.Statement<unknown[], ContactRow> | null {
 
 function getChatStmt(): Database.Statement<unknown[], ChatRow> | null {
   try {
-    const db = getDb();
+    const db = getDbIfExists();
+    if (!db) {
+      return null;
+    }
     if (chatStmtCache?.db === db) return chatStmtCache.stmt;
     const stmt = db.prepare<unknown[], ChatRow>(
       `SELECT name, is_group FROM chats WHERE jid = ? LIMIT 1`,

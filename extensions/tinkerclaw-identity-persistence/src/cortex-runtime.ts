@@ -29,15 +29,22 @@ import { renderTier1A } from "./priority-injection.js";
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Neutral fallback persona name, used only when no persona file names one.
+ * Deliberately generic: a specific character here would brand every install
+ * with this fork author's persona.
+ */
+export const DEFAULT_PERSONA_NAME = "Agent";
+
 // SyncScore EWMA smoothing factor (alpha)
 export const SYNC_SCORE_ALPHA = 0.1;
 // EWMA threshold below which drift re-injection is triggered
 export const SYNC_SCORE_DRIFT_THRESHOLD = 0.6;
 
 export interface CortexRuntimeOptions {
-  /** Path to SOUL.md (persona description). Defaults to ~/.openclaw/SOUL.md */
+  /** Path to SOUL.md (persona description). Defaults to ~/.openclaw/workspace/SOUL.md */
   soulPath?: string;
-  /** Path to IDENTITY.md (identity statement). Defaults to ~/.openclaw/IDENTITY.md */
+  /** Path to IDENTITY.md (identity statement). Defaults to ~/.openclaw/workspace/IDENTITY.md */
   identityPath?: string;
   /** Override the resolved persona name. */
   name?: string;
@@ -106,7 +113,7 @@ function parseNameFromMarkdown(content: string): string {
       .replace(/\s*\(v\d+\)$/, "")
       .trim();
   }
-  return "JarvisOne";
+  return DEFAULT_PERSONA_NAME;
 }
 
 /**
@@ -163,7 +170,7 @@ export function loadPersonaFromFiles(options: CortexRuntimeOptions): PersonaStat
     }
   }
 
-  let name = options.name ?? "JarvisOne";
+  let name = options.name ?? DEFAULT_PERSONA_NAME;
   let identity = "AI assistant and extension of the user";
   let soulContent = "";
 

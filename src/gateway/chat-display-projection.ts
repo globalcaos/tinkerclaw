@@ -1,6 +1,13 @@
 import { isHeartbeatOkResponse, isHeartbeatUserMessage } from "../auto-reply/heartbeat-filter.js";
 import { HEARTBEAT_PROMPT } from "../auto-reply/heartbeat.js";
 import {
+  classifyAssistantOutcome,
+  ERROR_ENVELOPE_MARKER,
+  isTurnOutcome,
+  splitErrorEnvelope,
+  type TurnOutcome,
+} from "../fork/turn-outcome.js";
+import {
   parseAssistantTextSignature,
   resolveAssistantMessagePhase,
 } from "../shared/chat-message-content.js";
@@ -565,6 +572,21 @@ function shouldHideProjectedHistoryMessage(message: Record<string, unknown>): bo
   return isHeartbeatOkResponse(roleContent);
 }
 
+/**
+ * FORK 2026-09-24 (ruling R36) — a transcript row the display projection shows as a USER row: role
+ * user, and not hidden (empty text-only, a heartbeat prompt). chat-history-cursor.ts counts these
+ * below a window (`cursor.userRowsBefore`) without projecting rows it does not serve.
+ */
+export function isShownHistoryUserRow(message: unknown): boolean {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return false;
+  }
+  const record = message as Record<string, unknown>;
+  return (
+    asRoleContentMessage(record)?.role === "user" && !shouldHideProjectedHistoryMessage(record)
+  );
+}
+
 function toProjectedMessages(messages: unknown[]): Array<Record<string, unknown>> {
   return messages.filter(
     (message): message is Record<string, unknown> =>
@@ -607,20 +629,272 @@ function filterVisibleProjectedHistoryMessages(
   return changed ? visible : messages;
 }
 
+// ── FORK 2026-09-29 — typed turn outcome on every projected assistant row ────────────────────────
+//
+// WHY. The 2026-09-29 census found 349 real failures rendering as plain answers after a reload:
+// the UI guessed errors from prose, and its envelope renderer (`extractEnvelope`, an indexOf)
+// drew a partial answer followed by an `__ERR_ENV__` envelope as the envelope ALONE, hiding the
+// answer. This projection is the one display path for chat.history rows AND the chat.ts finals
+// (`broadcastChatFinal` → projectChatDisplayMessage), so the gateway classifies ONCE here with
+// src/fork/turn-outcome.ts and ships `outcome: TurnOutcome` for the UI to render from.
+// Plan: jarvis-icu docs/superpowers/plans/2026-09-29-chat-usage-chips-and-typed-outcomes.md (U2).
+//
+// WHAT, per assistant row (every other row passes through untouched):
+//   - a valid `outcome` already on the row → the row is returned as it is;
+//   - otherwise classifyAssistantOutcome runs ONCE, on the text as persisted — BEFORE the display
+//     truncation, which would cut an envelope trailing a 100k-char answer mid-JSON and leave
+//     turn-outcome's unparseable-envelope fallback regexing the answer's prose. A non-null result
+//     is attached as `outcome`; a malformed `outcome` field is removed, so the wire field is
+//     always a TurnOutcome;
+//   - an envelope-sourced outcome whose ONE envelope follows real answer text has the envelope cut
+//     out of the text: the partial answer stays an answer and the envelope lives only in
+//     `outcome.envelope`. The text is left as it is — the UI's legacy envelope renderer stays the
+//     fallback — when the envelope is the whole text or follows only gateway lines
+//     (NOT_ANSWER_LINE_RE); when the text holds two markers (on disk 2026-09-29: 2,654 assistant
+//     rows carry a marker, every one exactly one — cutting one of two would drop the other from
+//     the wire); and when the outcome did not come from an envelope (0 of 1,857 stopReason
+//     "error" lines in the 400 newest sessions carry one — grafting the text's envelope onto such
+//     an outcome would pair one error's headline with another's explanation);
+//   - `empty` is withheld (a) from a row carrying any block other than text/thinking, or a
+//     non-empty top-level `text`: an image or audio reply, or an imported claude-cli `toolcall`
+//     (normalizeClaudeCliContent writes the type lowercase, which turn-outcome's tool check does
+//     not recognise); (b) from every imported claude-cli row: Claude Code writes one transcript
+//     entry per content block, so a text-less imported row is a step inside a turn, never the
+//     turn's answer; (c) when the next SHOWN row is another assistant row, which answers or
+//     explains it — census 2026-09-29 (110 sessions): 19 of 38 empty rows were followed within
+//     60 s by the failure row that explains them, two bubbles for one failed turn. A writer that
+//     knows better sets `outcome` itself, and the first rule keeps it.
+// Never drops, never reorders, never mutates (the transcript cache hands out shared objects).
+// Cost: every row reaching the projection is classified once — callers apply the window limit
+// AFTER projecting, so this is the whole transcript, not the served window.
+
+/**
+ * Lines that are not answer text when they come before an envelope: turn-outcome's rule-6 skip set
+ * (`[system]`, `Model set to …`), the two other directive acknowledgements found before an
+ * envelope on disk (`Thinking level set to …`, `Model reset to …`, directive-handling.impl.ts),
+ * and turn-outcome's error-shaped first lines. Mirrors SKIP_LINE_RE + ERROR_SHAPED_LINE_RE in
+ * src/fork/turn-outcome.ts, which are not exported — keep them in step.
+ */
+const NOT_ANSWER_LINE_RE =
+  /^(?:\[system\]|model set to\b|model reset to\b|thinking level set to\b|⚠️|⚠|🛑|❌|api error|error:|claude ai usage limit|you have hit your|all models are temporarily)/i;
+
+/** Block types an `empty` outcome may sit on: nothing the user would read as an answer. */
+const EMPTY_OUTCOME_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  "text",
+  "thinking",
+  "redacted_thinking",
+]);
+
+function hasAnswerTextBeforeEnvelope(before: string): boolean {
+  for (const line of before.split(/\r?\n/)) {
+    const t = line.trim();
+    if (t && !NOT_ANSWER_LINE_RE.test(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** `text` with its one parseable envelope cut out, the text around it kept; else undefined. */
+function cutEnvelope(text: string): string | undefined {
+  const split = splitErrorEnvelope(text);
+  if (!split.envelope) {
+    return undefined;
+  }
+  return [split.before, split.after].filter((part) => part.trim()).join("\n\n");
+}
+
+/**
+ * `text` without its envelope when it holds exactly ONE marker and that envelope parses and follows
+ * real answer text; undefined means "leave the text alone".
+ */
+function textWithoutTrailingEnvelope(text: string): string | undefined {
+  const at = text.indexOf(ERROR_ENVELOPE_MARKER);
+  if (at === -1 || text.includes(ERROR_ENVELOPE_MARKER, at + ERROR_ENVELOPE_MARKER.length)) {
+    return undefined;
+  }
+  const split = splitErrorEnvelope(text);
+  if (!split.envelope || !hasAnswerTextBeforeEnvelope(split.before)) {
+    return undefined;
+  }
+  return cutEnvelope(text);
+}
+
+function isTextBlockWithMarker(block: unknown): block is { type: "text"; text: string } {
+  if (!block || typeof block !== "object") {
+    return false;
+  }
+  const entry = block as { type?: unknown; text?: unknown };
+  return (
+    entry.type === "text" &&
+    typeof entry.text === "string" &&
+    entry.text.includes(ERROR_ENVELOPE_MARKER)
+  );
+}
+
+/** Content without its trailing envelope (see textWithoutTrailingEnvelope); undefined = as is. */
+function contentWithoutTrailingEnvelope(content: unknown): unknown {
+  if (typeof content === "string") {
+    return textWithoutTrailingEnvelope(content);
+  }
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+  // Decide on the text turn-outcome classified (text blocks joined by "\n"): the answer may sit in
+  // an earlier block than the envelope.
+  const joined = content
+    .filter((block): block is { type: "text"; text: string } => {
+      const entry = block as { type?: unknown; text?: unknown } | null;
+      return Boolean(entry) && entry?.type === "text" && typeof entry?.text === "string";
+    })
+    .map((block) => block.text)
+    .join("\n");
+  if (textWithoutTrailingEnvelope(joined) === undefined) {
+    return undefined;
+  }
+  const blocks: unknown[] = [];
+  for (const block of content) {
+    if (!isTextBlockWithMarker(block)) {
+      blocks.push(block);
+      continue;
+    }
+    const cut = cutEnvelope(block.text);
+    if (cut === undefined) {
+      return undefined; // the JSON spans blocks — leave the row as persisted
+    }
+    // A block that held only the envelope goes; the answer lives in an earlier block.
+    if (cut) {
+      blocks.push({ ...block, text: cut });
+    }
+  }
+  return blocks;
+}
+
+function isEmptyOutcomeEligible(message: Record<string, unknown>): boolean {
+  if (isImportedChatDisplayMessage(message)) {
+    return false;
+  }
+  if (typeof message.text === "string" && message.text.trim()) {
+    return false;
+  }
+  const content = message.content;
+  if (!Array.isArray(content)) {
+    return true;
+  }
+  return content.every((block) => {
+    if (!block || typeof block !== "object") {
+      return true;
+    }
+    const type = (block as { type?: unknown }).type;
+    return typeof type === "string" && EMPTY_OUTCOME_BLOCK_TYPES.has(type);
+  });
+}
+
+function projectAssistantOutcome(message: unknown, computedEmpty: Set<TurnOutcome>): unknown {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return message;
+  }
+  const row = message as Record<string, unknown>;
+  if (row.role !== "assistant" || isTurnOutcome(row.outcome)) {
+    return message;
+  }
+  // turn-outcome reads `content` only; a row whose text rides on a top-level `text` with no (or
+  // empty) content must be classified on that text, never read as an empty stop.
+  const content = row.content;
+  const textCarriesIt =
+    typeof row.text === "string" &&
+    (content === undefined || content === null || (Array.isArray(content) && !content.length));
+  let outcome = classifyAssistantOutcome(textCarriesIt ? { ...row, content: row.text } : row);
+  if (outcome?.kind === "empty" && !isEmptyOutcomeEligible(row)) {
+    outcome = null;
+  }
+  if (!outcome) {
+    if (!("outcome" in row)) {
+      return message;
+    }
+    const withoutMalformed = { ...row };
+    delete withoutMalformed.outcome;
+    return withoutMalformed;
+  }
+  const next: Record<string, unknown> = { ...row, outcome };
+  if (outcome.kind === "empty") {
+    computedEmpty.add(outcome);
+  }
+  if (outcome.envelope) {
+    const cutContent = contentWithoutTrailingEnvelope(content);
+    if (cutContent !== undefined) {
+      next.content = cutContent;
+    }
+    if (typeof row.text === "string") {
+      const cutText = textWithoutTrailingEnvelope(row.text);
+      if (cutText !== undefined) {
+        next.text = cutText;
+      }
+    }
+  }
+  return next;
+}
+
+function attachAssistantOutcomes(messages: unknown[]): {
+  messages: unknown[];
+  computedEmpty: Set<TurnOutcome>;
+} {
+  const computedEmpty = new Set<TurnOutcome>();
+  let changed = false;
+  const next = messages.map((message) => {
+    const projected = projectAssistantOutcome(message, computedEmpty);
+    changed ||= projected !== message;
+    return projected;
+  });
+  return { messages: changed ? next : messages, computedEmpty };
+}
+
+/**
+ * Rule (c) above, on the rows actually shown: an `empty` this projection computed is dropped when
+ * the next shown row is another assistant row. Identity on the outcome object is safe — the
+ * sanitize/filter passes copy rows shallowly and never the outcome.
+ */
+function withholdAnsweredEmptyOutcomes(
+  rows: Array<Record<string, unknown>>,
+  computedEmpty: ReadonlySet<TurnOutcome>,
+): Array<Record<string, unknown>> {
+  if (computedEmpty.size === 0) {
+    return rows;
+  }
+  let changed = false;
+  const next = rows.map((row, index) => {
+    const outcome = row.outcome as TurnOutcome | undefined;
+    if (!outcome || !computedEmpty.has(outcome) || rows[index + 1]?.role !== "assistant") {
+      return row;
+    }
+    changed = true;
+    const withoutEmpty = { ...row };
+    delete withoutEmpty.outcome;
+    return withoutEmpty;
+  });
+  return changed ? next : rows;
+}
+
 export function projectChatDisplayMessages(
   messages: unknown[],
   options?: { maxChars?: number; stripEnvelope?: boolean },
 ): Array<Record<string, unknown>> {
   const source = options?.stripEnvelope === false ? messages : stripEnvelopeFromMessages(messages);
-  return filterVisibleProjectedHistoryMessages(
-    suppressSupersededAbortEchoes(
-      toProjectedMessages(
-        sanitizeChatHistoryMessages(
-          source,
-          options?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
+  // Outcomes attach BEFORE sanitize, so classification and the envelope cut see the untruncated
+  // text; the answered-empty pass runs last, on the rows actually shown.
+  const typed = attachAssistantOutcomes(source);
+  return withholdAnsweredEmptyOutcomes(
+    filterVisibleProjectedHistoryMessages(
+      suppressSupersededAbortEchoes(
+        toProjectedMessages(
+          sanitizeChatHistoryMessages(
+            typed.messages,
+            options?.maxChars ?? DEFAULT_CHAT_HISTORY_TEXT_MAX_CHARS,
+          ),
         ),
       ),
     ),
+    typed.computedEmpty,
   );
 }
 
@@ -702,6 +976,11 @@ export function projectRecentChatDisplayMessages(
   );
 }
 
+/**
+ * One message through the same projection as chat.history, so a final that chat.ts broadcasts
+ * (`broadcastChatFinal`) carries the same typed `outcome` a reload serves. A lone message has no
+ * next row, so an empty stop here always keeps its `empty` outcome.
+ */
 export function projectChatDisplayMessage(
   message: unknown,
   options?: { maxChars?: number; stripEnvelope?: boolean },

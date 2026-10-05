@@ -25,7 +25,7 @@ parallelism:
     Step index: 0=Gather, 1=Summarize, 2=Format, 3=Deliver.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

@@ -18,6 +18,8 @@
  * re-introduce a frozen MAX_RETRIES (the exact J16 anti-pattern).
  */
 
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
+
 export interface RecoveryRetrySignals {
   /** Recovery attempts already burned on this step (diminishing returns). */
   priorAttempts?: number;
@@ -58,5 +60,24 @@ export function deriveRecoveryRetryBudget(signals: RecoveryRetrySignals): number
       ? Math.floor(signals.remainingDispatchBudget / signals.estStepTokens)
       : Number.POSITIVE_INFINITY;
 
-  return Math.max(1, Math.min(derived, affordable));
+  const retries = Math.max(1, Math.min(derived, affordable));
+
+  // J16 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.bound.derived` — the same row shape as
+  // spawn-budget.ts (see the field meanings there): n1 = the value returned, n2 = the
+  // affordability ceiling (NULL while no budget is threaded), n3 = 1 when that ceiling set the
+  // answer, n4 = how many of the four signals the caller supplied.
+  emitEvent("j.bound.derived", {
+    label: "recovery",
+    n1: retries,
+    n2: Number.isFinite(affordable) ? affordable : null,
+    n3: Number.isFinite(affordable) && derived > affordable ? 1 : 0,
+    n4: [
+      signals.priorAttempts,
+      signals.fitnessSuccessRate,
+      signals.remainingDispatchBudget,
+      signals.estStepTokens,
+    ].filter((s) => s != null).length,
+  });
+
+  return retries;
 }

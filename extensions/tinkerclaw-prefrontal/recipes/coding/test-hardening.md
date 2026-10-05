@@ -185,6 +185,7 @@ can act on beats a number that hides it.
   and logged as `Ruling: <what> — <why> — <cost if wrong>`.
 - No new test framework, runner, or dependency introduced by this recipe.
 - Fixes and tests never share a commit; fixes are staged file-by-file.
+  Grain is `git-instructions`: one hop, no "and" in the subject, what/why/impact.
 - Never bypass commit hooks; never stage the whole tree.
 - Implementation-style choices (naming, fixture shape, mock boundary) are
   rulings the executor makes and logs, never questions to the user.

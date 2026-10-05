@@ -1,9 +1,13 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   bubbleSegStart,
   bubbleText,
+  finalTextBubbles,
   fingerprintText,
   isRunTextBubble,
+  planFinalWrite,
   runTextBubbles,
   sameTextCount,
   supersedingAppendTail,
@@ -293,5 +297,252 @@ describe("why the fallback guard cannot see a multi-bubble duplicate (the lost-s
     ];
     expect(runTextBubbles(reloaded as Record<string, unknown>[], "r1")).toEqual([]);
     expect(supersedingAppendTail([], secondFinalBody)).toBe(secondFinalBody);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// FORK 2026-10-03 — THE MID-WORD TAIL (bug-log [final-mixed-coordinates]). Two live tabs drew the
+// full answer and then a second bubble holding the answer from a mid-word offset to its end, while
+// `chat.history` served the answer once. The superseding final reconciled against EVERY bubble
+// stamped with the run, reasoning bubbles included, and a reasoning bubble's `_segmentStart` counts
+// characters of the THINKING buffer (app.ts thinking writer, live-continuation.ts `start =
+// seen.length`). `resliceSegments` ends each bubble at the next one's start, so a narration bubble
+// followed by a thought grew to `final[narrStart:thinkingLength]`, the tail rule's cursor stopped
+// there, and `final.slice(thinkingLength)` was pushed as a new bubble.
+//
+// Geometry measured from the second tab's claude-cli transcript (2026-10-03 03:11-03:16Z): four
+// narration blocks of 117/153/188/69 characters glued to a 3,752-character answer (the gateway joins
+// text blocks with no separator), and seven thoughts of 225/276/264/304/297/326/302 characters, each
+// ending "\n\n". The live page cut the answer at 837 = 1364 (the trimmed thinking before thought 6)
+// minus 527 (the narration).
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe("a reasoning bubble never takes part in a final's text reconciliation (2026-10-03)", () => {
+  /** Deterministic prose of an exact length that neither starts nor ends with whitespace. */
+  const prose = (len: number, seed: number): string => {
+    const words = ["tea", "leaf", "hill", "rain", "kettle", "steep", "green", "oolong", "roll"];
+    let s = "";
+    let x = (seed * 7919 + 17) | 0;
+    while (s.length < len + 2) {
+      x = (Math.imul(x, 1103515245) + 12345) | 0;
+      const u = x >>> 0;
+      s += `${words[u % words.length]}${u % 7 === 0 ? ". " : " "}${u % 99991} `;
+    }
+    return `${s.slice(0, len - 1)}x`;
+  };
+  const RUN = "run-b";
+  const NARRATION = [117, 153, 188, 69].map((n, i) => prose(n, 10 + i));
+  const ANSWER = `**Jarvis:** *Sent.* ${prose(3752 - 20, 99)}`;
+  const FINAL = NARRATION.join("") + ANSWER;
+  const THOUGHTS = [225, 276, 264, 304, 297, 326, 302].map((n, i) => `${prose(n - 2, 50 + i)}\n\n`);
+
+  /** A thought as the live writer pushes it: `_runId`, a text block, and a THINKING-buffer offset
+   *  (the trimmed cumulative reasoning when the thought opened). */
+  const thought = (k: number): Record<string, unknown> => {
+    const before = THOUGHTS.slice(0, k).join("").trim();
+    const after = THOUGHTS.slice(0, k + 1)
+      .join("")
+      .trim();
+    return {
+      role: "assistant",
+      content: txt(after.slice(before.length)),
+      _isReasoning: true,
+      _reasoningRunId: RUN,
+      _runId: RUN,
+      _segmentStart: before.length,
+    };
+  };
+  /** A text bubble as the delta writer pushes it: a TEXT-buffer offset. Index 4 is the answer. */
+  const text = (i: number): Record<string, unknown> => ({
+    role: "assistant",
+    content: txt(i < NARRATION.length ? NARRATION[i] : ANSWER),
+    _runId: RUN,
+    _segmentStart: NARRATION.slice(0, i).join("").length,
+  });
+  /** The page after the first final promoted everything, in the order the turn wrote it. */
+  const page = (): Record<string, unknown>[] => [
+    text(0),
+    thought(0),
+    thought(1),
+    thought(2),
+    thought(3),
+    thought(4),
+    text(1),
+    text(2),
+    thought(5),
+    thought(6),
+    text(3),
+    text(4),
+  ];
+  /** What app.ts runs on a SUPERSEDING final: the shipped selection, then the shipped write. */
+  const supersede = (messages: Record<string, unknown>[], body: string) => {
+    const bubbles = finalTextBubbles(messages, RUN, false, () => false);
+    const plan = planFinalWrite(bubbles, body, true);
+    return { before: bubbles.map(bubbleText), after: plan.texts, tail: plan.appendTail };
+  };
+
+  it("pins the measured geometry: the old cut was a thinking length inside the answer", () => {
+    expect(thought(5)._segmentStart).toBe(1364);
+    expect(1364 - NARRATION.join("").length).toBe(837);
+  });
+
+  it("a reasoning bubble is not a run text bubble, though it carries the run and a text block", () => {
+    expect(isRunTextBubble(thought(0), RUN)).toBe(false);
+    expect(runTextBubbles(page(), RUN)).toHaveLength(5);
+  });
+
+  it("a second final with the same body appends nothing (the mid-word tail)", () => {
+    expect(supersede(page(), FINAL).tail).toBe("");
+  });
+
+  it("no narration bubble grows into the answer", () => {
+    const { before, after } = supersede(page(), FINAL);
+    expect(after).toEqual(before);
+  });
+
+  it("a post-tool answer that never streamed lands whole in its own bubble, the narration untouched", () => {
+    // The reason the second final exists at all: the answer can live only in its body.
+    const { before, after, tail } = supersede(page().slice(0, -1), FINAL);
+    expect(after).toEqual(before);
+    expect(tail).toBe(ANSWER);
+  });
+
+  // FORK 2026-10-03, review round 1 — in 20 of 649 two-final runs from 2026-09-23 to 10-03 the first
+  // final carried the narration only and the second added the answer (measured on the gateway journal).
+  // Reslicing the settled narration against the second body let its last bubble grow over the
+  // answer, one glued bubble where a reload draws a folded narration and the answer on its own.
+  it("a superseding final that adds an answer the first one lacked appends it as its own bubble", () => {
+    const narration = "I'll look up the opening hours first.";
+    const answer = "**Jarvis:** *The museum opens at ten.* It closes at six on weekdays.";
+    for (const withThought of [true, false]) {
+      const messages: Record<string, unknown>[] = [
+        { role: "assistant", content: txt(narration), _runId: RUN, _segmentStart: 0 },
+        ...(withThought ? [thought(0)] : []),
+      ];
+      const bubbles = finalTextBubbles(messages, RUN, false, () => false);
+      const plan = planFinalWrite(bubbles, `${narration}\n\n${answer}`, true);
+      expect(plan.texts).toEqual([narration]);
+      expect(plan.appendTail).toBe(answer);
+    }
+  });
+
+  it("a superseding final with the first one's body appends nothing and changes nothing", () => {
+    const plan = planFinalWrite(
+      finalTextBubbles(page(), RUN, false, () => false),
+      FINAL,
+      true,
+    );
+    expect(plan.texts).toEqual([...NARRATION, ANSWER]);
+    expect(plan.appendTail).toBe("");
+  });
+
+  it("the first final takes the run's live text temps, never a thought, even one still marked live", () => {
+    const temps = page().map((m) => ({ ...m, _temporary: true }));
+    const owns = (m: Record<string, unknown>) => m._temporary === true && m._runId === RUN;
+    const chosen = finalTextBubbles(temps, RUN, true, owns);
+    expect(chosen).toHaveLength(5);
+    expect(chosen.some((m) => m._isReasoning === true)).toBe(false);
+    // ...and only temps: a promoted bubble is not the first final's to reslice.
+    expect(finalTextBubbles(page(), RUN, true, owns)).toEqual([]);
+  });
+
+  it("the first final grows a partly streamed answer to the full body and appends nothing", () => {
+    const temps = page().map((m) => ({ ...m, _temporary: true }));
+    temps[temps.length - 1].content = txt(ANSWER.slice(0, 900));
+    const owns = (m: Record<string, unknown>) => m._temporary === true && m._runId === RUN;
+    const plan = planFinalWrite(finalTextBubbles(temps, RUN, true, owns), FINAL, false);
+    expect(plan.texts).toEqual([...NARRATION, ANSWER]);
+    expect(plan.appendTail).toBe("");
+  });
+});
+
+// ─── app.ts wiring (source check) ────────────────────────────────────────────────────────────────
+// FORK 2026-10-03 — the module rules above are only as good as app.ts's use of them: restoring the
+// inline run-stamp selection in the final handler, or dropping a wire below, brings the mid-word
+// tail, the gap-filled twin or the unattributed answer back with every module test green.
+describe("app.ts wires the duplicate fixes (source check)", () => {
+  const srcRoot = ["tinker-ui/src", "src"]
+    .map((p) => join(process.cwd(), p))
+    .find((p) => existsSync(join(p, "app.ts")));
+  if (!srcRoot) {
+    throw new Error(`tinker-ui/src not found from ${process.cwd()}`);
+  }
+  // Line comments stripped, so a comment can neither satisfy nor break an assertion.
+  const app = readFileSync(join(srcRoot, "app.ts"), "utf8").replace(/\/\/.*$/gm, "");
+
+  it("the final handler selects and writes through the module, never by run stamp alone", () => {
+    expect(app).toContain("finalTextBubbles(");
+    expect(app).toContain("planFinalWrite(");
+    expect(app).not.toMatch(/hadTemps \? ownsTempMsg\(m\) : m\._runId === p\.runId/);
+  });
+
+  it("a run's shown text is read for that run only (and the turn it resumes)", () => {
+    const calls = app.split("runShownTexts(").slice(1);
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const c of calls) {
+      expect(c.slice(0, c.indexOf(")"))).toContain("runScopeOf(");
+    }
+  });
+
+  it("every live text write stamps the bubble's last write", () => {
+    expect(app.split("_lastWriteAt").length - 1).toBeGreaterThanOrEqual(6);
+  });
+
+  it("every sectioned reply passes the row's history identity", () => {
+    const calls = app.split("renderSectionedReply(").slice(1);
+    expect(calls).toHaveLength(2);
+    for (const c of calls) {
+      expect(c.slice(0, c.indexOf(");"))).toContain("ocIdAttrs(msg, part)");
+    }
+  });
+});
+
+describe("the voice-span double (2026-09-24, work tab: every answer twice)", () => {
+  // Final #1: the raw streamed text. Final #2: the same reply after the gateway's (now removed)
+  // `applyJarvisVoiceMarkup`, byte for byte as it arrived on the wire — note the wrapper TRIMMED
+  // each span's content, so the blank line before the second label is gone as well.
+  const NARRATION = "**Jarvis:** *A loose cable. Checking the watcher.*";
+  const ANSWER_BODY = "**Jarvis:** *The box is back.*\n\nThe link dropped at 10:46.";
+  const FRACTAL = "🌿 FRACTAL: clean.";
+  const RAW = `${NARRATION}\n\n${ANSWER_BODY}\n\n${FRACTAL}`;
+  const MARKED =
+    '**Jarvis:** <span class="jarvis-voice">*A loose cable. Checking the watcher.*</span>' +
+    '**Jarvis:** <span class="jarvis-voice">*The box is back.*\n\nThe link dropped at 10:46.' +
+    "\n\n🌿 FRACTAL: clean.</span>";
+
+  it("appends nothing when the run already shows the reply as one bubble", () => {
+    // Before the fix this returned all of MARKED: no shown text could be found inside it.
+    expect(supersedingAppendTail([RAW], MARKED)).toBe("");
+  });
+
+  it("appends nothing when the stream glued the narration onto the answer with no whitespace", () => {
+    // Measured on the same tab: the pre-tool narration and the post-tool answer arrive as ONE text
+    // with nothing between them (`…watcher.***Jarvis:**`), and the wrapper put `</span>` exactly
+    // there. A rule that read the tag as a space failed this geometry on 3 of 8 real runs.
+    const glued = `${NARRATION}${ANSWER_BODY}`;
+    const markedGlued =
+      '**Jarvis:** <span class="jarvis-voice">*A loose cable. Checking the watcher.*</span>' +
+      '**Jarvis:** <span class="jarvis-voice">*The box is back.*\n\nThe link dropped at 10:46.</span>';
+    expect(supersedingAppendTail([glued], markedGlued)).toBe("");
+  });
+
+  it("appends nothing when the run shows it as narration, answer and fractal bubbles", () => {
+    expect(supersedingAppendTail([NARRATION, ANSWER_BODY, FRACTAL], MARKED)).toBe("");
+  });
+
+  it("appends nothing after the stream-reslice step, the way app.ts runs it", () => {
+    const prior = [{ text: RAW, segStart: 0 }];
+    const resliced = resliceSegments(prior, MARKED);
+    expect(supersedingAppendTail(resliced.texts, MARKED)).toBe("");
+  });
+
+  it("still delivers the part of a marked final that the run never showed", () => {
+    const tail = supersedingAppendTail([NARRATION], MARKED);
+    expect(tail).toContain("The box is back.");
+    expect(tail).toContain("The link dropped at 10:46.");
+    expect(tail).not.toContain("A loose cable.");
+  });
+
+  it("ignores only the voice span — other markup inside the text still has to match", () => {
+    expect(supersedingAppendTail(["**Jarvis:** *hi*"], "**Jarvis:** <b>*hi*</b>")).not.toBe("");
   });
 });

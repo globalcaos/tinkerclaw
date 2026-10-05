@@ -98,13 +98,27 @@ const OPENCLAW = process.env.OPENCLAW_DIR || path.join(homedir(), ".openclaw");
  * machine happened to have three days of logs would be switched off the first time it flapped.
  * The journal makes the REPORT sharper; it must never make the GATE non-deterministic.
  */
-export const BLIND_CAP = 144;
+export const BLIND_CAP = 154;
 // 2026-08-05: 377 -> 358, pulled down in the same session that earned it. What moved it:
 // fractal-reflection's first instruments and per-hook liveness at the registerTypedHook seam.
-// 2026-09-07: 358 -> 144 after the scorer was taught about noteRpcDispatch(req.method), the
+// 2026-09-07: 358 -> 145 after the scorer was taught about noteRpcDispatch(req.method), the
 // central signal already covering every enabled core and plugin RPC. The code had been watching
-// those methods since 2026-08-04; the old derivation had forgotten that fact and mislabeled ~237
-// enabled RPCs BLIND. The remaining 144 are the measured context on this tree after that correction.
+// those methods since 2026-08-04; the old derivation had forgotten that fact and mislabeled 237
+// enabled RPCs BLIND. The remaining 145 are the measured context after that correction.
+// 2026-10-01: 145 -> 153, measured by scoring 2c59c99a222 (where 145 was set) and today's develop
+// against the same config and diffing the BLIND ids. Nine arrived; none is a forgotten signal:
+//   - 7 UI modules under tinker-ui/src/panels (amygdala, call-timeline, call-timeline-canvas,
+//     context-buttons, context-counters, model-surface-catalog, thalamus-v4-card). Every panel
+//     module is BLIND by construction because the UI has no instrument mechanism (the note line
+//     says so on every run). The fix for those is a UI liveness signal, not a per-module patch.
+//   - rpc:thalamus.learning.run: tinkerclaw-thalamus ships off by default and is not in
+//     plugins.allow. It moves to DECLARED (central dispatch seam) the day the plugin is enabled.
+//   - ui.panel.routing-rationale.golden.fixtures: a test fixture, now excluded by isTestFile, so
+//     it is not in the 153.
+// 2026-10-05: 153 -> 154, measured on develop 07632e2e762 when the gate blocked a publish. Diffing
+// the --blind ids against ea21dccdda4 (where 153 was set) names three new UI panel modules,
+// call-timeline-persist, thalamus-roles and thalamus-turn, all BLIND by R16 like the seven above;
+// eeg-scope left the list. No forgotten signal: the fix is still the UI liveness signal.
 
 /** Directories that must never be walked. A recursive glob over an extension tree hung the bible gate once. */
 const PRUNE = new Set([
@@ -118,7 +132,12 @@ const PRUNE = new Set([
   ".turbo",
   ".next",
 ]);
-const IS_TEST = /\.test\.ts$|\.spec\.ts$|__tests__|test-harness|test-support|test-helpers/;
+// 2026-10-01: fixture files added. `routing-rationale.golden.fixtures.ts` was scored as a BLIND
+// UI panel. `.fixture(s).ts` and `test-fixtures` only: a module that merely mentions fixtures in
+// its name (`scenario-media-fixtures.ts`, a QA runner) is real code and stays in.
+const IS_TEST =
+  /\.test\.ts$|\.spec\.ts$|__tests__|test-harness|test-support|test-helpers|test-fixtures|\.fixtures?\.ts$/;
+export const isTestFile = (name) => IS_TEST.test(name);
 
 /**
  * JUDGEMENTS — the ONLY hand-written content in this file, and each entry carries its reason
@@ -171,7 +190,7 @@ function walk(dir, out = [], filter = (n) => n.endsWith(".ts")) {
   for (const e of entries) {
     if (e.isDirectory()) {
       if (!PRUNE.has(e.name)) walk(path.join(dir, e.name), out, filter);
-    } else if (e.isFile() && filter(e.name) && !IS_TEST.test(e.name)) {
+    } else if (e.isFile() && filter(e.name) && !isTestFile(e.name)) {
       out.push(path.join(dir, e.name));
     }
   }

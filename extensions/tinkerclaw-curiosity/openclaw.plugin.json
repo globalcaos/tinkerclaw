@@ -1,0 +1,25 @@
+{
+  "id": "tinkerclaw-curiosity",
+  "activation": { "onStartup": true },
+  "enabledByDefault": false,
+  "name": "Curiosity",
+  "description": "Curiosity sense (J8 purposeful curiosity, first build). Each chat turn of the main agent gets the principal's passion map and a contract: do the task first, then, when a passion comes up, research it, teach one step deeper and ask one deep question in a ✨ DEEPER section (drawn as its own yellow-bordered bubble in Tinker), and keep the map current. The map is a private markdown file in the workspace.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "profilePath": {
+        "type": "string",
+        "description": "The passion map. Default: <workspace>/memory/knowledge/passions.md"
+      },
+      "sessionPrefix": {
+        "type": "string",
+        "description": "Session keys that get the sense. Default: agent:main:tinker:"
+      },
+      "maxProfileChars": {
+        "type": "number",
+        "description": "How much of the map goes into each turn. Default 3500"
+      }
+    }
+  }
+}

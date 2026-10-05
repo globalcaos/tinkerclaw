@@ -1,10 +1,15 @@
 import {
+  registerRestartDrainParticipant,
+  type RestartDrainReport,
+} from "../../infra/restart-drain.js";
+import {
   diagnosticLogger as diag,
   logMessageQueued,
   logSessionStateChange,
 } from "../../logging/diagnostic.js";
 import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
+import type { BoundaryPauseGate } from "./boundary-pause.js";
 import { tryInflightSteer } from "./inflight-steer-hook.js";
 
 type EmbeddedPiQueueHandle = {
@@ -12,6 +17,10 @@ type EmbeddedPiQueueHandle = {
   isStreaming: () => boolean;
   isCompacting: () => boolean;
   abort: () => void;
+  /** FORK 2026-09-29 (lifecycles.md L4b): hold the run at its next model-call boundary. */
+  boundaryPause?: Pick<BoundaryPauseGate, "state" | "requestPause" | "release">;
+  /** The run's provider; the cc-bridge's runs are drained by the bridge, per API call. */
+  provider?: string;
 };
 
 export type ActiveEmbeddedRunSnapshot = {
@@ -80,16 +89,43 @@ const STEER_MAX_WAIT_MS = 1_500;
 // (agent-runner owns the followup-queue context this registry doesn't have);
 // when the run ends before the flush timer fires, the fallback — not the
 // void — gets the text.
-type SteerDeliveryFallback = (texts: string[], combined: string) => void;
+// FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §7 G3): `promptKeys` is EVERY buffered
+// caller's prompt key, in arrival order and deduplicated, not only the last caller's. The surviving
+// fallback belongs to the LAST caller and re-delivers the combined text of all of them; without the
+// list, the earlier callers' prompts rode that follow-up under the last caller's key alone.
+type SteerDeliveryFallback = (texts: string[], combined: string, promptKeys: string[]) => void;
+// FORK 2026-09-06: the symmetric half of onDeliveryLost. A steer that SUCCEEDS
+// was, until now, completely unrecorded: the text went to the live claude-cli
+// stdin and no user row was ever written, so the Tinker UI outbox (which retires
+// an entry only on transcript proof) re-sent it on every reconnect until one copy
+// landed while idle and ran as a duplicate turn. The caller owns transcript
+// persistence, so it gets told the moment delivery actually happened.
+// Mutually exclusive with SteerDeliveryFallback — never both for one buffer.
+type SteerDeliveredCallback = (combined: string, via: "inflight-steer" | "next-round") => void;
 type SteerBuffer = {
   texts: string[];
+  /** FORK 2026-09-24: every buffered caller's prompt key (see SteerDeliveryFallback). */
+  promptKeys: string[];
   timer: NodeJS.Timeout;
   // FORK (2026-08-28): timestamp of the FIRST buffered message — anchor for
   // the max-wait cap. Deliberately not refreshed on subsequent messages.
   firstBufferedAt: number;
   fallback?: SteerDeliveryFallback;
+  onDelivered?: SteerDeliveredCallback;
 };
 const steerBuffers = new Map<string, SteerBuffer>();
+
+// FORK 2026-09-24 (prompt-queue.md §7 G3): add one caller's prompt keys to a buffer's list —
+// trimmed, empties and repeats dropped, first arrival wins — so the list stays in arrival order.
+function appendSteerPromptKeys(target: string[], keys: readonly string[] | undefined): string[] {
+  for (const raw of keys ?? []) {
+    const key = normalizeOptionalString(raw);
+    if (key && !target.includes(key)) {
+      target.push(key);
+    }
+  }
+  return target;
+}
 
 // FORK (2026-08-28): Last-resort delivery when no live handle can take the
 // buffered text. With a registered fallback the text becomes a NEW follow-up
@@ -105,7 +141,7 @@ function deliverSteerBufferViaFallback(
 ): boolean {
   if (buf.fallback) {
     try {
-      buf.fallback(buf.texts, combined);
+      buf.fallback(buf.texts, combined, [...buf.promptKeys]);
       diag.debug(
         `steer flush: delivered via followup fallback sessionId=${sessionId} reason=${reason} chars=${combined.length}`,
       );
@@ -152,6 +188,7 @@ function flushSteerBuffer(sessionId: string, opts?: { runEnding?: boolean }) {
     diag.debug(
       `steer flush: folded into live turn sessionId=${sessionId} chars=${combined.length}`,
     );
+    buf.onDelivered?.(combined, "inflight-steer");
     return;
   }
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
@@ -167,6 +204,7 @@ function flushSteerBuffer(sessionId: string, opts?: { runEnding?: boolean }) {
     `steer flush: sessionId=${sessionId} messages=${buf.texts.length} chars=${combined.length}`,
   );
   void handle.queueMessage(combined);
+  buf.onDelivered?.(combined, "next-round");
 }
 
 // FORK (2026-08-28): `true` means ACCEPTED FOR DELIVERY, not yet delivered —
@@ -180,17 +218,45 @@ function flushSteerBuffer(sessionId: string, opts?: { runEnding?: boolean }) {
 export function queueEmbeddedPiMessage(
   sessionId: string,
   text: string,
-  opts?: { onDeliveryLost?: SteerDeliveryFallback },
+  opts?: {
+    /**
+     * FORK 2026-09-24 (prompt-queue.md §7 G3): the prompt key(s) this caller's text answers — for
+     * webchat, its chat.send idempotencyKey. Kept for EVERY caller of one debounce window and
+     * handed to `onDeliveryLost`, so the follow-up it enqueues can name them all.
+     */
+    promptKeys?: readonly string[];
+    onDeliveryLost?: SteerDeliveryFallback;
+    onDelivered?: SteerDeliveredCallback;
+  },
 ): boolean {
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (!handle) {
     diag.debug(`queue message failed: sessionId=${sessionId} reason=no_active_run`);
     return false;
   }
-  if (!handle.isStreaming()) {
-    diag.debug(`queue message failed: sessionId=${sessionId} reason=not_streaming`);
-    return false;
-  }
+  // FORK 2026-09-06 — STEER WHILE THINKING, not only while streaming.
+  //
+  // This used to reject the message unless the run was emitting text right now
+  // (`reason=not_streaming`). That equated "can accept steering" with "is
+  // mid-sentence", which is strictly narrower than the transport allows: the
+  // bridge holds a long-lived `claude --input-format stream-json` child whose
+  // stdin drains BETWEEN TOOL ROUNDS (worker.ts steer(); inflight-worker-registry
+  // header). So a prompt typed while the agent is thinking or running tools —
+  // the overwhelmingly common case — never reached flushSteerBuffer at all. It
+  // returned false, agent-runner fell through to enqueue-followup, and the user
+  // got the answer as a SEPARATE turn after the current one finished.
+  //
+  // the architect, 2026-09-06: "When I inject a prompt while Jarvis is thinking, it
+  // should do like Claude Code does, wait until the last LLM call finishes and
+  // inject the added request in the ongoing context. Prompts should not wait
+  // until the whole answer is finished and then answer out of the blue."
+  //
+  // Presence in ACTIVE_EMBEDDED_RUNS is the liveness signal that actually
+  // matters, and it is already checked above. Dropping the streaming test cannot
+  // lose a message: flushSteerBuffer still routes a tearing-down run to
+  // `onDeliveryLost` (run_ending) and a refusing provider to the pi steeringQueue,
+  // both of which deliver — and both mutually exclusive with a successful steer.
+  // The compaction guard below stays: injecting mid-compaction is genuinely unsafe.
   if (handle.isCompacting()) {
     diag.debug(`queue message failed: sessionId=${sessionId} reason=compacting`);
     return false;
@@ -203,6 +269,13 @@ export function queueEmbeddedPiMessage(
   if (existing) {
     clearTimeout(existing.timer);
     existing.texts.push(text);
+    // FORK 2026-09-24 (prompt-queue.md §7 G3): unlike the callbacks below, the prompt keys are NOT
+    // last-wins. Every caller's key is kept, because the surviving fallback re-delivers every
+    // caller's text.
+    appendSteerPromptKeys(existing.promptKeys, opts?.promptKeys);
+    if (opts?.onDelivered) {
+      existing.onDelivered = opts.onDelivered;
+    }
     if (opts?.onDeliveryLost) {
       // FORK (2026-08-28): latest caller-supplied fallback wins — in practice
       // one session has one delivery path, so this is a refresh, not a race.
@@ -218,9 +291,11 @@ export function queueEmbeddedPiMessage(
   } else {
     steerBuffers.set(sessionId, {
       texts: [text],
+      promptKeys: appendSteerPromptKeys([], opts?.promptKeys),
       timer: setTimeout(() => flushSteerBuffer(sessionId), STEER_DEBOUNCE_MS),
       firstBufferedAt: now,
       fallback: opts?.onDeliveryLost,
+      onDelivered: opts?.onDelivered,
     });
   }
   return true;
@@ -391,6 +466,86 @@ export async function waitForActiveEmbeddedRuns(
     await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
   }
 }
+
+/** The cc-bridge's provider id: its runs are one pi "call" per whole Claude Code turn. */
+const CC_BRIDGE_PROVIDER = "claude-code";
+
+/**
+ * FORK 2026-09-29 (lifecycles.md L4b): bring every embedded run to its next model-call boundary.
+ * A call already streaming finishes, its tools run, and the next call is held (boundary-pause.ts).
+ * Resolves when every run is held or has ended, or when the budget runs out. The cc-bridge's runs
+ * are left alone. A bridge run is ONE pi call for a whole Claude Code turn, so holding it keeps its
+ * prompt from ever reaching the CLI session, and the resume prompt after the restart then refers to
+ * a turn the CLI never saw. Their boundaries are the API calls inside `claude`, which the bridge
+ * drains itself (tinker-bridge worker.ts holdAtBoundary).
+ */
+export async function drainEmbeddedRunsToBoundary(
+  budgetMs: number,
+  opts?: { pollMs?: number },
+): Promise<RestartDrainReport> {
+  const pollMs = Math.max(10, Math.floor(opts?.pollMs ?? 250));
+  const deadline = Date.now() + Math.max(0, budgetMs);
+  const tracked = new Map<string, EmbeddedPiQueueHandle>();
+  for (const [id, handle] of ACTIVE_EMBEDDED_RUNS) {
+    if (!handle.boundaryPause || handle.provider === CC_BRIDGE_PROVIDER) {
+      continue;
+    }
+    handle.boundaryPause.requestPause();
+    tracked.set(id, handle);
+  }
+  const held: string[] = [];
+  const ended: string[] = [];
+  while (tracked.size > 0) {
+    for (const [id, handle] of tracked) {
+      if (ACTIVE_EMBEDDED_RUNS.get(id) !== handle) {
+        ended.push(id);
+        tracked.delete(id);
+      } else if (handle.boundaryPause?.state === "paused") {
+        held.push(id);
+        tracked.delete(id);
+      }
+    }
+    if (tracked.size === 0 || Date.now() >= deadline) {
+      break;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, pollMs));
+  }
+  const unfinished = [...tracked.keys()];
+  const line = `restart drain (embedded): held=${held.length} ended=${ended.length} unfinished=${unfinished.length}`;
+  if (unfinished.length > 0) {
+    diag.warn(`${line} — still mid-call when the budget ran out: ${unfinished.join(", ")}`);
+  } else {
+    diag.debug(line);
+  }
+  return { held, ended, unfinished };
+}
+
+/** End every run held at a boundary (an in-process restart keeps the process alive). */
+export function abortHeldEmbeddedRuns(): number {
+  let n = 0;
+  for (const handle of ACTIVE_EMBEDDED_RUNS.values()) {
+    if (handle.boundaryPause?.state === "paused") {
+      try {
+        handle.abort();
+        n += 1;
+      } catch (err) {
+        diag.warn(`abort of a held run failed: ${String(err)}`);
+      }
+    }
+  }
+  return n;
+}
+
+export function releaseEmbeddedRunsFromBoundary(): void {
+  for (const handle of ACTIVE_EMBEDDED_RUNS.values()) {
+    handle.boundaryPause?.release();
+  }
+}
+
+registerRestartDrainParticipant("embedded", {
+  drain: (budgetMs) => drainEmbeddedRunsToBoundary(budgetMs),
+  release: releaseEmbeddedRunsFromBoundary,
+});
 
 export function waitForEmbeddedPiRunEnd(sessionId: string, timeoutMs = 15_000): Promise<boolean> {
   if (!sessionId || !ACTIVE_EMBEDDED_RUNS.has(sessionId)) {

@@ -4,9 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite --port 18790",
-    "preview": "vite preview --port 18790"
+    "build": "vite build"
   },
   "dependencies": {
     "dompurify": "^3.2.0",

@@ -302,6 +302,8 @@ export type ThalamusCandidatesParams = {
    * miss, and let `costVerified` report the hole.
    */
   relCostFor: (key: string) => number | undefined;
+  /** User's dial suggestion stays available to the planner; other feasibility checks still apply. */
+  suggestedModelKey?: string;
   /**
    * OPTIONAL PER-TASK BASIS. `provider/model` key -> average OUTPUT tokens to
    * complete ONE task on that model, or undefined when the caller's table has no
@@ -573,7 +575,12 @@ export function thalamusCandidates(params: ThalamusCandidatesParams): ThalamusCa
     // A missing relCost is NEVER a veto: the veto must not fire on absent data,
     // or a model disappears from the envelope for a reason nobody published.
     // `costVerified` carries that gap instead.
-    if (ceiling !== undefined && row.effectiveCost !== undefined && row.effectiveCost > ceiling) {
+    if (
+      row.key !== params.suggestedModelKey &&
+      ceiling !== undefined &&
+      row.effectiveCost !== undefined &&
+      row.effectiveCost > ceiling
+    ) {
       excluded.push({ key: row.key, reason: "cost-veto" });
       continue;
     }

@@ -25,6 +25,7 @@ import {
 } from "./get-reply-directive-aliases.js";
 import { applyInlineDirectiveOverrides } from "./get-reply-directives-apply.js";
 import { clearExecInlineDirectives, clearInlineDirectives } from "./get-reply-directives-utils.js";
+import { isAutoModelDirective } from "./model-directive-auto.js";
 import { type ReplyExecOverrides, resolveReplyExecOverrides } from "./get-reply-exec-overrides.js";
 import { shouldUseReplyFastTestRuntime } from "./get-reply-fast-path.js";
 import { defaultGroupActivation, resolveGroupRequireMention } from "./groups.js";
@@ -53,7 +54,14 @@ type AgentDefaults = NonNullable<OpenClawConfig["agents"]>["defaults"];
  * router that could silently turn thinking off is not a router the architect asked
  * for.
  */
-const THALAMUS_THINK_LEVELS = new Set<string>(["minimal", "low", "medium", "high", "xhigh", "max"]);
+const THALAMUS_THINK_LEVELS = new Set<string>([
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
 function asThalamusThinkLevel(effort: string | undefined): ThinkLevel | undefined {
   return effort && THALAMUS_THINK_LEVELS.has(effort) ? (effort as ThinkLevel) : undefined;
@@ -498,6 +506,13 @@ export async function resolveReplyDirectives(params: {
     isFastTestEnv: process.env.OPENCLAW_TEST_FAST === "1",
   });
 
+  // FORK 2026-09-08 — `/model auto` is NOT a model: it is the picker's Auto riding the send (see
+  // model-directive-auto.ts). It never resolves against the catalog, never persists as a pin, and
+  // makes THIS state clear whatever pin the session stored — so the turn routes as Auto in the same
+  // breath, instead of racing a fire-and-forget sessions.patch that took 82-147 s on 2026-09-08.
+  const autoModelReset =
+    directives.hasModelDirective && isAutoModelDirective(directives.rawModelDirective);
+
   const useFastModelSelection =
     useFastReplyRuntime &&
     !hasResolvedHeartbeatModelOverride &&
@@ -505,6 +520,7 @@ export async function resolveReplyDirectives(params: {
     !normalizeOptionalString(targetSessionEntry?.modelOverride) &&
     !normalizeOptionalString(targetSessionEntry?.providerOverride) &&
     (!directives.hasModelDirective ||
+      autoModelReset ||
       canUseFastExplicitModelDirective({
         directives,
         defaultProvider,
@@ -531,7 +547,8 @@ export async function resolveReplyDirectives(params: {
         defaultModel,
         provider,
         model,
-        hasModelDirective: directives.hasModelDirective,
+        hasModelDirective: directives.hasModelDirective && !autoModelReset,
+        resetStoredModelOverride: autoModelReset,
         hasResolvedHeartbeatModelOverride,
         // THALAMUS classifies the task domain from the SAME text `chooseAutoEffort`
         // reads a few lines above, so "what task is this?" cannot be answered two
@@ -606,7 +623,10 @@ export async function resolveReplyDirectives(params: {
     ["status", "list"].includes(
       normalizeLowercaseStringOrEmpty(normalizeOptionalString(directives.rawModelDirective)),
     );
-  const effectiveModelDirective = isModelListAlias ? undefined : directives.rawModelDirective;
+  // `/model auto` is consumed by createModelSelectionState above (resetStoredModelOverride) and
+  // must not reach the resolver as a model id — there is no model called "auto" to switch to.
+  const effectiveModelDirective =
+    isModelListAlias || autoModelReset ? undefined : directives.rawModelDirective;
 
   const inlineStatusRequested = hasInlineStatus && allowTextCommands && command.isAuthorizedSender;
 

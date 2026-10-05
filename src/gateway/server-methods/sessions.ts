@@ -68,6 +68,8 @@ import {
   getSessionCompactionCheckpoint,
   listSessionCompactionCheckpoints,
 } from "../session-compaction-checkpoints.js";
+import { evictSessionTranscript } from "../session-eviction.js";
+import { branchBeforeLastPrompt, type BranchResult } from "../session-rewind.js";
 import { reactivateCompletedSubagentSession } from "../session-subagent-reactivation.js";
 import {
   archiveFileOnDisk,
@@ -89,7 +91,7 @@ import {
 } from "../session-utils.js";
 import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
-import { chatHandlers } from "./chat.js";
+import { chatHandlers, createChatAbortOps } from "./chat.js";
 import { suggestTitleViaBridge } from "./suggest-title.js";
 import type {
   GatewayClient,
@@ -326,161 +328,6 @@ const MODEL_PATCH_KEYS = new Set(["key", "model"]);
 function isModelOnlyPatch(params: { [k: string]: unknown }): boolean {
   const keys = Object.keys(params).filter((k) => params[k] !== undefined);
   return keys.includes("model") && keys.every((k) => MODEL_PATCH_KEYS.has(k));
-}
-
-// FORK 2026-08-28 (the architect: the CONTEXT WINDOW panel's manual "evict" button) — transcript-aware
-// EVICTION: drop the oldest turns, keep the newest, no model call.
-//
-// This exists instead of reusing the `maxLines` branch of sessions.compact, which does a raw
-// `lines.slice(-maxLines)`. A pi transcript is NOT a flat log: line 0 is a `{type:"session"}`
-// header and every later entry carries `id` + `parentId`, forming a chain that
-// SessionManager.open(file).getBranch() walks (session-utils.fs.ts). A blind tail slice drops the
-// header and severs that chain, so the branch walk stops at the first broken link and silently
-// loses everything before it. `maxLines` is left exactly as it was — other callers depend on it —
-// but it must not be what a button in the UI fires.
-//
-// Three rules make the rewrite safe:
-//   1. EVERY non-message entry is kept regardless of position (session header, model_change,
-//      thinking_level_change, custom). They are tiny, they are structural, and any of them may be
-//      the parent of a kept message.
-//   2. The cut is snapped FORWARD to a turn boundary: the first kept message must be a `user`
-//      message carrying no tool-result blocks. Cutting mid-turn would orphan a toolResult from
-//      its toolCall, which every provider rejects with an immediate 400. When no such boundary
-//      exists at or after the target we keep MORE messages, never fewer.
-//   3. The kept entries are re-chained — each one's `parentId` is rewritten to the previous kept
-//      entry's `id` — so the walk is unbroken end to end.
-export type TranscriptEvictionResult =
-  | { ok: false; reason: string }
-  | { ok: true; evicted: 0; evictedTokens: 0; kept: number; lines: null; reason: string }
-  | {
-      ok: true;
-      evicted: number;
-      /** ESTIMATE. ceil(chars / 3.5) over the dropped entries — the same ladder
-       *  context-anatomy uses, so the panel's numbers stay on one scale. Never a billed count:
-       *  nothing re-tokenises an evicted transcript, so a real figure does not exist. */
-      evictedTokens: number;
-      kept: number;
-      lines: string[];
-      reason?: undefined;
-    };
-
-/** True when a transcript entry's message carries a tool RESULT block. */
-function entryCarriesToolResult(entry: { message?: unknown }): boolean {
-  const content = (entry.message as { content?: unknown } | undefined)?.content;
-  if (!Array.isArray(content)) {
-    return false;
-  }
-  return content.some((block) => {
-    const type = (block as { type?: unknown } | null)?.type;
-    return type === "tool_result" || type === "toolResult";
-  });
-}
-
-/** The transcript's own role for an entry, or "" when it is not a message. */
-function entryRole(entry: { type?: unknown; message?: unknown }): string {
-  if (entry.type !== "message") {
-    return "";
-  }
-  const role = (entry.message as { role?: unknown } | undefined)?.role;
-  return typeof role === "string" ? role : "";
-}
-
-export function evictTranscriptTail(raw: string, keepFraction: number): TranscriptEvictionResult {
-  const rawLines = raw.split(/\r?\n/).filter((l) => Boolean(normalizeOptionalString(l)));
-  const entries: Array<Record<string, unknown>> = [];
-  for (const line of rawLines) {
-    try {
-      const parsed = JSON.parse(line) as unknown;
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return { ok: false, reason: "unparsable transcript" };
-      }
-      entries.push(parsed as Record<string, unknown>);
-    } catch {
-      // Abort rather than write: a transcript we cannot fully parse is one we cannot safely
-      // rewrite, and half-understanding it is how you lose a conversation.
-      return { ok: false, reason: "unparsable transcript" };
-    }
-  }
-
-  const messageIdx = entries.map((e, i) => (e.type === "message" ? i : -1)).filter((i) => i >= 0);
-  if (messageIdx.length < 4) {
-    return {
-      ok: true,
-      evicted: 0,
-      evictedTokens: 0,
-      kept: messageIdx.length,
-      lines: null,
-      reason: "too few messages to evict",
-    };
-  }
-
-  // Target: keep the newest ceil(count * keepFraction), never fewer than 2.
-  const targetKeep = Math.max(2, Math.ceil(messageIdx.length * keepFraction));
-  const targetOrdinal = messageIdx.length - targetKeep;
-  // Rule 2 — snap FORWARD from the target to the first safe boundary.
-  let cutOrdinal = -1;
-  for (let ord = targetOrdinal; ord < messageIdx.length; ord++) {
-    const entry = entries[messageIdx[ord]];
-    if (entryRole(entry) === "user" && !entryCarriesToolResult(entry)) {
-      cutOrdinal = ord;
-      break;
-    }
-  }
-  if (cutOrdinal < 0 || cutOrdinal === 0) {
-    // No safe boundary after the target (or the only one is the very first message): there is
-    // nothing we can drop without risking an orphaned tool result.
-    return {
-      ok: true,
-      evicted: 0,
-      evictedTokens: 0,
-      kept: messageIdx.length,
-      lines: null,
-      reason: "no safe turn boundary to evict at",
-    };
-  }
-
-  const firstKeptIndex = messageIdx[cutOrdinal];
-  const kept: Array<Record<string, unknown>> = [];
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    // Rule 1 — structural entries always survive; messages only from the cut onwards.
-    if (entry.type !== "message" || i >= firstKeptIndex) {
-      kept.push(entry);
-    }
-  }
-
-  // Rule 3 — re-chain. The first kept entry keeps whatever parent link it had (it is the session
-  // header in practice, which has none).
-  let prevId: string | undefined;
-  for (const entry of kept) {
-    const id = typeof entry.id === "string" ? entry.id : undefined;
-    if (prevId !== undefined && "parentId" in entry) {
-      entry.parentId = prevId;
-    }
-    if (id !== undefined) {
-      prevId = id;
-    }
-  }
-
-  const keptMessages = kept.filter((e) => e.type === "message").length;
-  // Estimate what the eviction actually bought, in tokens. Measured over the DROPPED message
-  // entries only — the structural entries all survive, so counting them would inflate the win.
-  // ceil(chars / 3.5) is the anatomy's own ladder; reusing it keeps this number comparable with
-  // the composition figures the panel shows beside it instead of introducing a second scale.
-  const keptSet = new Set(kept);
-  let droppedChars = 0;
-  for (const entry of entries) {
-    if (entry.type === "message" && !keptSet.has(entry)) {
-      droppedChars += JSON.stringify(entry).length;
-    }
-  }
-  return {
-    ok: true,
-    evicted: messageIdx.length - keptMessages,
-    evictedTokens: Math.ceil(droppedChars / 3.5),
-    kept: keptMessages,
-    lines: kept.map((e) => JSON.stringify(e)),
-  };
 }
 
 function buildDashboardSessionKey(agentId: string): string {
@@ -811,6 +658,34 @@ async function handleSessionSend(params: {
       sessionKey: canonicalKey,
       reason: interruptedActiveRun ? "steer" : "send",
     });
+    // FORK 2026-09-19: broadcast the INJECTED user message as a live `chat` final
+    // event so a viewing tab renders it in real time. An external sessions.send /
+    // sessions.steer has NO optimistic client copy (unlike a typed chat.send), so
+    // without this the injected prompt only appears on reload. This fires ONLY on
+    // the sessions.send/steer path — typed webchat prompts route straight to
+    // chat.send and never reach here — so it cannot duplicate a normally-typed
+    // message. Mirrors the chat.inject broadcast (chat.ts) but keeps role "user"
+    // so the ⟦AGENT⟧/⟦OVERSEER⟧ markers still paint their bubble.
+    const injectedUserText =
+      typeof (p as { message?: unknown }).message === "string"
+        ? ((p as { message: string }).message as string)
+        : "";
+    if (injectedUserText.trim()) {
+      const injectedUserPayload = {
+        runId: `inject-user-${randomUUID()}`,
+        sessionKey: canonicalKey,
+        seq: 0,
+        state: "final" as const,
+        message: {
+          role: "user" as const,
+          content: [{ type: "text", text: injectedUserText }],
+          text: injectedUserText,
+          timestamp: Date.now(),
+        },
+      };
+      params.context.broadcast("chat", injectedUserPayload);
+      params.context.nodeSendToSession(canonicalKey, "chat", injectedUserPayload);
+    }
   }
 }
 export const sessionsHandlers: GatewayRequestHandlers = {
@@ -1113,12 +988,19 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         },
         loadGatewayModelCatalog: context.loadGatewayModelCatalog,
       });
-      if (!patched.ok || !canonicalParentSessionKey) {
+      const operatorId = normalizeOptionalString((p as { operatorId?: string }).operatorId);
+      const seatId = normalizeOptionalString((p as { seatId?: string }).seatId);
+      if (!patched.ok) {
+        return patched;
+      }
+      if (!canonicalParentSessionKey && !operatorId && !seatId) {
         return patched;
       }
       const nextEntry: SessionEntry = {
         ...patched.entry,
-        parentSessionKey: canonicalParentSessionKey,
+        ...(canonicalParentSessionKey ? { parentSessionKey: canonicalParentSessionKey } : {}),
+        ...(operatorId ? { operatorId } : {}),
+        ...(seatId ? { seatId } : {}),
       };
       store[target.canonicalKey] = nextEntry;
       return {
@@ -1230,6 +1112,101 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       });
     }
   },
+  // FORK 2026-09-30 — sessions.rewind: the Rewind button for tabs on the built-in runner. Points the tab at a new
+  // session file that ends before its last prompt (session-rewind.ts); the original file is kept, and
+  // `{undo: true}` points the tab back. Refused while a reply is running. Claude Code tabs rewind through the
+  // amygdala (`amygdala2.rewind`) instead.
+  "sessions.rewind": async ({ params, respond, context }) => {
+    const p = params as { key?: unknown; undo?: unknown };
+    const key = requireSessionKey(p.key, respond);
+    if (!key) {
+      return;
+    }
+    const { cfg, entry, canonicalKey } = loadSessionEntry(key);
+    if (!entry?.sessionId) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, `session not found: ${key}`),
+      );
+      return;
+    }
+    if (hasTrackedActiveSessionRun({ context, requestedKey: key, canonicalKey })) {
+      respond(true, { ok: false, reason: "a reply is still running in this tab" });
+      return;
+    }
+    const target = resolveGatewaySessionStoreTarget({ cfg, key: canonicalKey });
+    const now = Date.now();
+    if (p.undo === true) {
+      const stack = entry.rewoundFrom ?? [];
+      const prev = stack.at(-1);
+      if (!prev) {
+        respond(true, { ok: false, reason: "nothing to undo" });
+        return;
+      }
+      await updateSessionStore(target.storePath, (store) => {
+        const cur = store[canonicalKey];
+        if (!cur) return;
+        store[canonicalKey] = {
+          ...cur,
+          sessionId: prev.sessionId,
+          sessionFile: prev.sessionFile,
+          rewoundFrom: stack.slice(0, -1),
+          updatedAt: now,
+        };
+      });
+      respond(true, { ok: true, capability: "session-branch", restoredSessionId: prev.sessionId });
+      return;
+    }
+    const sourceFile = resolveSessionFilePath(
+      entry.sessionId,
+      entry.sessionFile ? { sessionFile: entry.sessionFile } : undefined,
+      resolveSessionFilePathOptions({ agentId: target.agentId, storePath: target.storePath }),
+    );
+    if (!sourceFile || !fs.existsSync(sourceFile)) {
+      respond(true, { ok: false, reason: "session transcript is missing" });
+      return;
+    }
+    let branch: BranchResult;
+    try {
+      branch = branchBeforeLastPrompt(sourceFile);
+    } catch (err) {
+      console.error("[sessions.rewind] branch failed", err);
+      respond(true, {
+        ok: false,
+        reason: `could not branch the session: ${formatErrorMessage(err)}`,
+      });
+      return;
+    }
+    if (!branch.ok || !branch.sessionId || !branch.sessionFile) {
+      respond(true, { ok: false, reason: branch.reason ?? "could not branch the session" });
+      return;
+    }
+    const nextId = branch.sessionId;
+    const nextFile = branch.sessionFile;
+    await updateSessionStore(target.storePath, (store) => {
+      const cur = store[canonicalKey];
+      if (!cur) return;
+      store[canonicalKey] = {
+        ...cur,
+        sessionId: nextId,
+        sessionFile: nextFile,
+        rewoundFrom: [
+          ...(cur.rewoundFrom ?? []),
+          { sessionId: cur.sessionId, sessionFile: sourceFile, ts: now },
+        ].slice(-20),
+        updatedAt: now,
+      };
+    });
+    respond(true, {
+      ok: true,
+      capability: "session-branch",
+      forkSessionId: nextId,
+      originalSessionId: entry.sessionId,
+      restoredPrompt: branch.restoredPrompt,
+    });
+  },
+
   // FORK 2026-06-24 — sessions.fork: true EAGER transcript fork for the Tinker "Clone tab" action.
   // The dashboard clones a tab by calling this RPC first; we copy the parent session's live
   // transcript into a brand-new session (via SessionManager.forkFrom — the same primitive that
@@ -1796,6 +1773,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       key,
       reason,
       commandSource: "gateway:sessions.reset",
+      chatAbortOps: createChatAbortOps(context),
     });
     if (!result.ok) {
       respond(false, undefined, result.error);
@@ -1854,6 +1832,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       legacyKey,
       canonicalKey,
       reason: "session-delete",
+      chatAbortOps: createChatAbortOps(context),
     });
     if (mutationCleanupError) {
       respond(false, undefined, mutationCleanupError);
@@ -2009,89 +1988,46 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     }
 
     // FORK 2026-08-28 — EVICTION mode. Checked FIRST: it is the only branch that rewrites the
-    // transcript without a model call, and `keepFraction` is what selects it.
+    // transcript without a model call, and `keepFraction` is what selects it. The body lives in
+    // ../session-eviction.ts (context-window-panel.md §6.1 A5); this tier-1 file only delegates,
+    // replies and broadcasts. The run interrupt stays here, shared with the other branches.
     const keepFraction =
       typeof p.keepFraction === "number" && Number.isFinite(p.keepFraction)
         ? p.keepFraction
         : undefined;
     if (keepFraction !== undefined) {
-      // Rewriting a transcript under a live run is exactly the race that corrupts a session, so
-      // stop the run first — the same call the narrative branch below makes.
-      const interruptResult = await interruptSessionRunIfActive({
-        req,
-        context,
-        client,
-        isWebchatConnect,
-        requestedKey: key,
+      const eviction = await evictSessionTranscript({
+        cfg,
+        entry,
+        agentId: target.agentId,
         canonicalKey: target.canonicalKey,
-        sessionId,
+        storePath,
+        storeKey: compactTarget.primaryKey,
+        filePath,
+        keepFraction,
+        interruptRun: () =>
+          interruptSessionRunIfActive({
+            req,
+            context,
+            client,
+            isWebchatConnect,
+            requestedKey: key,
+            canonicalKey: target.canonicalKey,
+            sessionId,
+          }),
       });
-      if (interruptResult.error) {
-        respond(false, undefined, interruptResult.error);
+      if (eviction.kind === "error") {
+        respond(false, undefined, eviction.error);
         return;
       }
-
-      const eviction = evictTranscriptTail(fs.readFileSync(filePath, "utf-8"), keepFraction);
-      if (!eviction.ok) {
-        respond(
-          true,
-          { ok: false, key: target.canonicalKey, compacted: false, reason: eviction.reason },
-          undefined,
-        );
-        return;
-      }
-      if (eviction.lines === null) {
-        // Nothing safely evictable — say so and leave the file byte-identical on disk.
-        respond(
-          true,
-          {
-            ok: true,
-            key: target.canonicalKey,
-            compacted: false,
-            kept: eviction.kept,
-            reason: eviction.reason,
-          },
-          undefined,
-        );
-        return;
-      }
-
-      const archivedTranscript = archiveFileOnDisk(filePath, "bak");
-      fs.writeFileSync(filePath, `${eviction.lines.join("\n")}\n`, "utf-8");
-
-      await updateSessionStore(storePath, (store) => {
-        const entryKey = compactTarget.primaryKey;
-        const entryToUpdate = store[entryKey];
-        if (!entryToUpdate) {
-          return;
-        }
-        // Same invalidation as the maxLines branch: every cached token count now describes a
-        // transcript that no longer exists.
-        delete entryToUpdate.inputTokens;
-        delete entryToUpdate.outputTokens;
-        delete entryToUpdate.totalTokens;
-        delete entryToUpdate.totalTokensFresh;
-        entryToUpdate.updatedAt = Date.now();
-      });
-
-      respond(
-        true,
-        {
-          ok: true,
-          key: target.canonicalKey,
+      respond(true, eviction.reply, undefined);
+      if (eviction.evicted) {
+        emitSessionsChanged(context, {
+          sessionKey: target.canonicalKey,
+          reason: "compact",
           compacted: true,
-          evicted: eviction.evicted,
-          evictedTokens: eviction.evictedTokens,
-          kept: eviction.kept,
-          archived: archivedTranscript,
-        },
-        undefined,
-      );
-      emitSessionsChanged(context, {
-        sessionKey: target.canonicalKey,
-        reason: "compact",
-        compacted: true,
-      });
+        });
+      }
       return;
     }
 
@@ -2164,6 +2100,29 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         });
       }
 
+      // FORK 2026-09-07 (the architect: "I clicked compact, it churned for a while, and nothing") — the
+      // saving was computed, banked and then thrown away on the wire. This branch used to respond
+      // with `result` alone, but the Tinker panel reads `evictedTokens` OFF THE TOP LEVEL (the
+      // shape the eviction branch above returns), so a narrative compaction always looked like a
+      // zero: the toast said a bare "context window refreshed", and `st.compactions += 1` is
+      // guarded on `evictedTokens > 0`, so even the THIS SESSION compaction counter stayed at 0
+      // after a compaction that really did free 128,260 tokens.
+      //
+      // The saving is `details.tokensEvicted`, NOT `tokensBefore - tokensAfter`: measured on a
+      // live engram compaction, tokensBefore was 7,855,029 on a session whose conversation was
+      // 175,850 tokens (it is a store-wide running total, not this session's prefix), so
+      // subtracting would report a 61× lie. Only the explicit counter is trustworthy here.
+      const compactDetails = (result.result?.details ?? {}) as { tokensEvicted?: unknown };
+      const evictedTokens =
+        typeof compactDetails.tokensEvicted === "number" &&
+        Number.isFinite(compactDetails.tokensEvicted) &&
+        compactDetails.tokensEvicted > 0
+          ? compactDetails.tokensEvicted
+          : undefined;
+      const tokensAfter =
+        typeof result.result?.tokensAfter === "number" && Number.isFinite(result.result.tokensAfter)
+          ? result.result.tokensAfter
+          : undefined;
       respond(
         true,
         {
@@ -2172,6 +2131,8 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           compacted: result.compacted,
           reason: result.reason,
           result: result.result,
+          ...(evictedTokens !== undefined ? { evictedTokens } : {}),
+          ...(tokensAfter !== undefined ? { tokensAfter } : {}),
         },
         undefined,
       );

@@ -155,6 +155,29 @@ describe("listSessionAttachments", () => {
     expect(attachments[2]?.pid).toBe(60_003);
   });
 
+  it("names the systemd service of a match that lives in its own service, keeping Stop as is", () => {
+    const rows = listSessionAttachments({
+      sessionKey: "agent:main:tinker:abc",
+      now: NOW,
+      readProcesses: fakeProcesses(
+        {
+          pid: 4100,
+          cmdline: "python3 review_site.py serve --session agent:main:tinker:abc",
+          unit: "trip-review-usa.service",
+        },
+        {
+          pid: 4200,
+          cmdline: "bash -c sleep 9 # agent:main:tinker:abc",
+          unit: "tinkerclaw-worker-77-x.service",
+        },
+      ),
+    });
+    const byPid = Object.fromEntries(rows.map((r) => [r.pid, r]));
+    expect(byPid[4100]?.label).toBe("service trip-review-usa");
+    expect(byPid[4100]?.stoppable).toBe(true);
+    expect(byPid[4200]?.label).toBe("attached process");
+  });
+
   it("returns an empty list when nothing matches", () => {
     const attachments = listSessionAttachments({
       sessionId: "no-such-session",

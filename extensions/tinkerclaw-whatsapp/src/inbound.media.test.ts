@@ -3,6 +3,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+// 2026-09-17: the inbound pipeline refuses to auto-reply to messages older than
+// 12h (inbound/monitor.ts), so a fixture frozen at a 2023 epoch now models a
+// history-sync replay rather than a live message. Offsets preserve ordering.
+const FIXTURE_TS = Math.floor(Date.now() / 1000);
+
 import {
   mockExtractMessageContent,
   mockGetContentType,
@@ -200,7 +206,7 @@ describe("web inbound media saves with extension", () => {
         {
           key: { id: "img1", fromMe: false, remoteJid: "111@s.whatsapp.net" },
           message: { imageMessage: { mimetype: "image/jpeg" } },
-          messageTimestamp: 1_700_000_001,
+          messageTimestamp: FIXTURE_TS + 1,
         },
       ],
     });
@@ -220,7 +226,7 @@ describe("web inbound media saves with extension", () => {
         {
           key: { id: "doc1", fromMe: false, remoteJid: "333@s.whatsapp.net" },
           message: { documentMessage: { mimetype: "application/pdf", fileName } },
-          messageTimestamp: 1_700_000_004,
+          messageTimestamp: FIXTURE_TS + 4,
         },
       ],
     });
@@ -255,7 +261,7 @@ describe("web inbound media saves with extension", () => {
         {
           key: { id: "img3", fromMe: false, remoteJid: "222@s.whatsapp.net" },
           message: { imageMessage: { mimetype: "image/jpeg" } },
-          messageTimestamp: 1_700_000_003,
+          messageTimestamp: FIXTURE_TS + 3,
         },
       ],
     };

@@ -23,10 +23,24 @@
 //     must be groupable without parsing prose.
 //
 // This never throws into a serving path, and it never blocks one.
+//
+// FORK 2026-09-25 — DUAL-WRITE into the events database (TINKER_UI_DESIGN_BIBLE/logging.md
+// §4.11, §9 step 9). Every outcome is ALSO one `algo.outcome` row: label `algorithm/variant`
+// (rule 5 survives as the label's two halves), fields outcome, metrics, provenance, config, model,
+// provider and v (rules 1-4 carry over unchanged), the raw session key replaced by the writer's
+// keyed hash. `note` is NOT carried: it is free text, which the events store refuses by schema
+// (L4). The JSONL below is written exactly as before; it retires only after row counts per family
+// have matched for seven days (scripts/events-backfill.ts reports that parity), and retiring it is
+// an owner decision, not a code path. The line and the row share ONE timestamp and ONE builder
+// (algorithmOutcomeEvent), which is how the backfill recognises a line whose row the live bridge
+// already wrote. The module stays stateless: emitEvent reaches the process-wide writer through a
+// globalThis slot, so a second inlined copy (plugin-sdk/fork-instrumentation.ts) still writes to
+// the one running writer.
 import { appendFile } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { emitEvent, type EmitEventRecord } from "./events/emit.js";
 import { noteInstrumentFired } from "./instrument-liveness.js";
 
 const log = createSubsystemLogger("infra/algorithm-metrics");
@@ -65,8 +79,56 @@ export interface AlgorithmOutcome {
   provider?: string;
   /** Config that shaped this run (e.g. compaction mode) — needed to segment later. */
   config?: Record<string, string | number | boolean>;
-  /** Free-text only for things no number can carry, e.g. an error message. */
+  /**
+   * Free-text only for things no number can carry, e.g. an error message. Kept in the JSONL only:
+   * it never reaches the `algo.outcome` row (L4 — the events store has no free-text type).
+   */
   note?: string;
+}
+
+/** The events-database name of this ledger's rows (logging.md §4.11). */
+export const ALGO_OUTCOME_EVENT = "algo.outcome";
+
+/** One ledger line exactly as it is appended to the JSONL, and as the backfill reads it back. */
+export interface AlgorithmLedgerRecord {
+  v: number;
+  /** ISO-8601 with milliseconds: the row's `ts_ms` is this instant, never a second clock. */
+  ts: string;
+  algorithm: string;
+  variant: string;
+  outcome: string;
+  metrics: Record<string, number>;
+  provenance: Record<string, MetricProvenance>;
+  sessionKey?: string;
+  model?: string;
+  provider?: string;
+  config?: Record<string, string | number | boolean>;
+  note?: string;
+}
+
+/**
+ * The `algo.outcome` row for one ledger line (logging.md §4.11): label `algorithm/variant`;
+ * fields outcome, metrics, provenance, config, model, provider and v, in that order. ONE builder
+ * for the live bridge below and for scripts/events-backfill.ts, so a line yields the same row
+ * whichever path writes it — the backfill's dedup key depends on that. `note` is deliberately
+ * absent (L4). `sessionKey` goes to the writer, which stores only its keyed hash and kind (§7.5)
+ * and drops any value that is not its declared type (an `id` field that is not id-shaped).
+ */
+export function algorithmOutcomeEvent(record: AlgorithmLedgerRecord): EmitEventRecord {
+  return {
+    tsMs: Date.parse(record.ts),
+    sessionKey: record.sessionKey ?? null,
+    label: `${record.algorithm}/${record.variant}`,
+    fields: {
+      outcome: record.outcome,
+      metrics: record.metrics,
+      provenance: record.provenance,
+      config: record.config,
+      model: record.model,
+      provider: record.provider,
+      v: record.v,
+    },
+  };
 }
 
 /**
@@ -113,11 +175,14 @@ function sanitizeMetrics(metrics: Record<string, number>): Record<string, number
  *
  * Also notes liveness for `algorithm:variant`, so an algorithm that stops producing outcomes
  * shows up as a silent instrument instead of as an absence nobody notices.
+ *
+ * And emits the `algo.outcome` events row beside the JSONL line (the header's DUAL-WRITE), built
+ * from the same record, so the two cannot disagree on the instant.
  */
 export function recordAlgorithmOutcome(outcome: AlgorithmOutcome): void {
   try {
     const metrics = sanitizeMetrics(outcome.metrics);
-    const record = {
+    const record: AlgorithmLedgerRecord = {
       v: ALGORITHM_METRICS_SCHEMA_VERSION,
       ts: new Date().toISOString(),
       algorithm: outcome.algorithm,
@@ -134,6 +199,11 @@ export function recordAlgorithmOutcome(outcome: AlgorithmOutcome): void {
 
     // Liveness is in-memory and harmless under test, so it is noted either way.
     noteInstrumentFired(`algorithm:${outcome.algorithm}`, `${outcome.variant}/${outcome.outcome}`);
+
+    // The events row (logging.md §4.11). O(1), never throws, never touches the disk (§7.5). It has
+    // its own test sandbox (events/paths.ts), independent of the JSONL's guard below, so it is
+    // emitted whether or not a ledger path resolves: it is the half that outlives the JSONL.
+    emitEvent(ALGO_OUTCOME_EVENT, algorithmOutcomeEvent(record));
 
     const path = resolveLedgerPath();
     if (!path) {

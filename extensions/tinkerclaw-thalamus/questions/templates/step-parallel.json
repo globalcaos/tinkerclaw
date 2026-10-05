@@ -1,0 +1,5 @@
+{
+  "instructions": "This is one of several pending items. Could it run at the same time as the others without needing their results or changing what they change? Item: {item}",
+  "purpose": "Marks pending items that can run at the same time.",
+  "name": "Runs in parallel"
+}

@@ -1,20 +1,25 @@
-import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { DEFAULT_PROVIDER_PROFILES } from "../src/cognitive-diversity.js";
 import {
   buildPhasePrompt,
   createRealParticipant,
   modelForRole,
   normalizeVote,
+  THALAMUS_LEAF_RESOLVER_SLOT,
+  thalamusRoleModel,
   validateRoleModels,
 } from "../src/real-participant.js";
 
 describe("modelForRole — cross-provider mapping (F2)", () => {
   it("maps each profile role to its concrete configured cross-provider ref", () => {
-    expect(modelForRole("architect")).toBe("claude-code/claude-opus-5");
+    expect(modelForRole("architect")).toBe("claude-code/claude-opus-5-5");
     expect(modelForRole("critic")).toBe("openai/gpt-5.3-codex");
     expect(modelForRole("pragmatist")).toBe("google/gemini-3.1-pro-preview");
     expect(modelForRole("researcher")).toBe("openai/o3");
-    expect(modelForRole("synthesizer")).toBe("claude-code/claude-sonnet-4-6");
+    expect(modelForRole("synthesizer")).toBe("claude-code/claude-sonnet-5-5");
   });
   it("defaults span three distinct vendors (genuine cognitive diversity, not Claude-only)", () => {
     // 7B re-scoped: this now asserts the *defaults* span 3 vendors (overrides exist).
@@ -29,7 +34,7 @@ describe("modelForRole — cross-provider mapping (F2)", () => {
     expect(vendors.size).toBe(3);
   });
   it("falls back to the synthesizer ref for an unknown role", () => {
-    expect(modelForRole("nonsense")).toBe("claude-code/claude-sonnet-4-6");
+    expect(modelForRole("nonsense")).toBe("claude-code/claude-sonnet-5-5");
   });
 });
 
@@ -45,10 +50,10 @@ describe("modelForRole — 7B per-role overrides", () => {
     expect(modelForRole("critic", overrides)).toBe("openai/gpt-5.3-codex");
   });
   it("an unknown override role still falls back to FALLBACK_MODEL", () => {
-    expect(modelForRole("nonsense", { architect: "x/y" })).toBe("claude-code/claude-sonnet-4-6");
+    expect(modelForRole("nonsense", { architect: "x/y" })).toBe("claude-code/claude-sonnet-5-5");
   });
   it("an empty-string override is ignored (treated as unset)", () => {
-    expect(modelForRole("architect", { architect: "  " })).toBe("claude-code/claude-opus-5");
+    expect(modelForRole("architect", { architect: "  " })).toBe("claude-code/claude-opus-5-5");
   });
 });
 
@@ -65,7 +70,7 @@ describe("validateRoleModels — 7B substitution detection", () => {
     expect(subs[0]).toMatchObject({
       role: "architect",
       requested: "vendorX/unobtainium",
-      fellBackTo: "claude-code/claude-sonnet-4-6",
+      fellBackTo: "claude-code/claude-sonnet-5-5",
     });
   });
   it("returns no substitutions when every ref resolves", async () => {
@@ -119,7 +124,7 @@ describe("createRealParticipant", () => {
     const out = await part.propose("task X", "architect");
     expect(callModel).toHaveBeenCalledTimes(1);
     const [{ model, prompt }] = callModel.mock.calls[0];
-    expect(model).toBe("claude-code/claude-opus-5"); // architect → opus-4-8 (F2)
+    expect(model).toBe("claude-code/claude-opus-5-5"); // architect → opus-5-5 (F2)
     expect(prompt).toContain("task X");
     expect(out).toBe("opus says: cache it");
   });
@@ -158,5 +163,69 @@ describe("createRealParticipant", () => {
     );
     await part.challenge("a proposal", "critic");
     expect(callModel.mock.calls[0][0].model).toBe("openai/gpt-5.3-codex");
+  });
+});
+
+describe("thalamusRoleModel — Thalamus owns the Claude roles when it is working", () => {
+  const SLOT = Symbol.for(THALAMUS_LEAF_RESOLVER_SLOT);
+  const g = globalThis as Record<symbol, unknown>;
+  afterEach(() => {
+    delete g[SLOT];
+  });
+  const sites: unknown[] = [];
+  const own = (model: unknown) => {
+    sites.length = 0;
+    g[SLOT] = {
+      resolve: (r: { site?: unknown }) => {
+        sites.push(r.site);
+        return { model };
+      },
+    };
+  };
+
+  it("keeps the role's model with no resolver, an empty answer, a throw, or a non-claude-code answer", () => {
+    const args = { role: "architect", model: modelForRole("architect"), prompt: "p" };
+    expect(thalamusRoleModel(args)).toBe("claude-code/claude-opus-5-5");
+    for (const answer of [undefined, "", "openai/gpt-5.3-codex", 7]) {
+      own(answer);
+      expect(thalamusRoleModel(args)).toBe("claude-code/claude-opus-5-5");
+    }
+    g[SLOT] = {
+      resolve: () => {
+        throw new Error("boom");
+      },
+    };
+    expect(thalamusRoleModel(args)).toBe("claude-code/claude-opus-5-5");
+  });
+
+  it("takes Thalamus's claude-code pick for a Claude role on its builtin model, asking as the round-table site", () => {
+    own("claude-code/claude-haiku-4-5");
+    expect(
+      thalamusRoleModel({ role: "synthesizer", model: modelForRole("synthesizer"), prompt: "p" }),
+    ).toBe("claude-code/claude-haiku-4-5");
+    expect(sites).toEqual(["round-table"]);
+  });
+
+  it("never asks for another vendor's role or for a role overridden on purpose", () => {
+    own("claude-code/claude-haiku-4-5");
+    expect(thalamusRoleModel({ role: "critic", model: modelForRole("critic"), prompt: "p" })).toBe(
+      "openai/gpt-5.3-codex",
+    );
+    const overrides = { architect: "claude-code/claude-fable-5-1" };
+    expect(
+      thalamusRoleModel({
+        role: "architect",
+        model: modelForRole("architect", overrides),
+        prompt: "p",
+        overrides,
+      }),
+    ).toBe("claude-code/claude-fable-5-1");
+    expect(sites).toEqual([]);
+  });
+
+  it("reads the same slot key as core", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const core = readFileSync(join(here, "../../../src/infra/thalamus-call-router.ts"), "utf8");
+    expect(core).toContain(`LEAF_RESOLVER_SLOT = "${THALAMUS_LEAF_RESOLVER_SLOT}"`);
   });
 });

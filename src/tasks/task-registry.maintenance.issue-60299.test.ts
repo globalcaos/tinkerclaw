@@ -86,7 +86,7 @@ function createTaskRegistryMaintenanceHarness(params: {
             entry: undefined,
             storeReadFailed: false,
           } satisfies AcpSessionStoreEntry),
-    loadSessionStore: () => sessionStore,
+    hasSessionStoreEntry: (_storePath, sessionKey) => Boolean(sessionStore[sessionKey]),
     resolveStorePath: () => "",
     isCronJobActive: (jobId: string) => activeCronJobIds.has(jobId),
     getAgentRunContext: (runId: string) =>

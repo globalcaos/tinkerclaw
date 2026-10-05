@@ -1,11 +1,23 @@
 import { describe, it, expect } from "vitest";
+import { derivePromptState, type PromptStateInputs } from "./prompt-state";
 import {
+  FOLLOWUP_LINKS_MAX,
+  FOLLOWUP_STARTED_FACTS,
+  FOLLOWUP_STREAM,
   QUEUED_STRANDED_MS,
+  addSessionPromptKey,
+  chatTerminalScope,
+  followupRunLink,
+  ownRunTerminal,
+  ownRunTerminalRecorded,
   queuedBelongsToSession,
   queuedForSession,
+  rememberFollowupLink,
   settleQueuedSession,
   shouldQueue,
   strandedQueuedEntries,
+  takeSessionPromptKeys,
+  terminalPromptFacts,
   type QueuedEntry,
 } from "./queued-sends";
 
@@ -25,7 +37,6 @@ const sessOf = (e: QueuedEntry): string | undefined => e._queuedSession as strin
 const q = (session: string, text: string): QueuedEntry => ({
   role: "user",
   content: [{ type: "text", text }],
-  _queued: true,
   _queuedSession: session,
 });
 
@@ -133,8 +144,7 @@ describe("queued-sends settle on turn end (symptom #1: stays queued though proce
     );
     expect(remaining.map(sessOf)).toEqual(["tinker:B"]); // A's ghost gone, B untouched
     expect(commit).toHaveLength(0); // background → NOT spliced into the live transcript
-    // settled entry has its queued markers stripped
-    expect(queue[0]._queued).toBeUndefined();
+    // settled entry has its queued marker stripped
     expect(queue[0]._queuedSession).toBeUndefined();
   });
 
@@ -148,7 +158,7 @@ describe("queued-sends settle on turn end (symptom #1: stays queued though proce
     );
     expect(commit.map(textOf)).toEqual(["first", "second"]);
     expect(remaining.map(sessOf)).toEqual(["tinker:B"]);
-    expect(commit[0]._queued).toBeUndefined();
+    expect(commit[0]._queuedSession).toBeUndefined();
   });
 
   it("settling one session does NOT flush another (no cross-session mis-flush)", () => {
@@ -278,5 +288,313 @@ describe("strandedQueuedEntries (a GHOST run swallowed every later prompt)", () 
     expect(QUEUED_STRANDED_MS).toBeGreaterThan(90_000);
     const queue = [qAt("tinker:A", "just over", NOW - QUEUED_STRANDED_MS - 1)];
     expect(strandedQueuedEntries(queue, "tinker:A", matches, NOW, false)).toHaveLength(1);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md §7 step U3: TERMINALS KEYED BY PROMPT
+// (PQ-7; contradiction C2). A prompt typed while tinker:A's turn R runs is steered into R or
+// backlogged behind it, and its own chat.send broadcasts an early `final` for the prompt's key at
+// once. Before U3 that final settled the WHOLE session's queue while R was still running.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** A deferred entry carrying the key send() mints: the bubble's `_clientMsgId`, which is also the
+ *  gateway idempotencyKey and so the runId of that prompt's early `final` (PQ-1). */
+const qk = (session: string, text: string, key: string): QueuedEntry => ({
+  ...q(session, text),
+  _clientMsgId: key,
+});
+
+const NO_LINKS: ReadonlyMap<string, readonly string[]> = new Map();
+
+/** Three prompts deferred behind tinker:A's running turn, plus one in another tab. */
+const deferredBehindR = (): QueuedEntry[] => [
+  qk("tinker:A", "first", "k1"),
+  qk("tinker:A", "second", "k2"),
+  qk("tinker:A", "third", "k3"),
+  qk("tinker:B", "elsewhere", "kb"),
+];
+
+describe("U3 — a disposition final names ONE prompt (PQ-7, C2)", () => {
+  it("CONTROL: the same early final WITHOUT a disposition (old gateway) releases every entry of the session", () => {
+    // Today's rule, kept for an old gateway: k2's own final flushes k1 and k3 too, mid-turn. That is
+    // what EVERY early final did before U3, so the two keyed tests below fail on the pre-U3 tree.
+    const scope = chatTerminalScope({ state: "final", runId: "k2" }, NO_LINKS);
+    expect(scope).toEqual({ kind: "session" });
+    const { remaining, commit } = settleQueuedSession(
+      deferredBehindR(),
+      "tinker:A",
+      true,
+      matches,
+      scope ?? undefined,
+    );
+    expect(commit.map(textOf)).toEqual(["first", "second", "third"]);
+    expect(remaining.map(textOf)).toEqual(["elsewhere"]);
+  });
+
+  it("a `steered` final releases ONLY its own entry, committed in place", () => {
+    const scope = chatTerminalScope(
+      { state: "final", runId: "k2", disposition: "steered" },
+      NO_LINKS,
+    );
+    expect(scope).toEqual({ kind: "prompt", key: "k2", disposition: "steered" });
+    const { remaining, commit } = settleQueuedSession(
+      deferredBehindR(),
+      "tinker:A",
+      true,
+      matches,
+      scope ?? undefined,
+    );
+    expect(commit.map(textOf)).toEqual(["second"]);
+    expect(commit[0]._queuedSession).toBeUndefined();
+    // k1 and k3 are still deferred behind R, with their session tag intact.
+    expect(remaining.map(textOf)).toEqual(["first", "third", "elsewhere"]);
+    expect(remaining.map(sessOf)).toEqual(["tinker:A", "tinker:A", "tinker:B"]);
+  });
+
+  it("in a BACKGROUND tab a `steered` final drops only its own entry", () => {
+    const scope = chatTerminalScope(
+      { state: "final", runId: "k2", disposition: "steered" },
+      NO_LINKS,
+    );
+    const { remaining, commit } = settleQueuedSession(
+      deferredBehindR(),
+      "agent:main:tinker:A",
+      false,
+      matches,
+      scope ?? undefined,
+    );
+    expect(commit).toHaveLength(0);
+    expect(remaining.map(textOf)).toEqual(["first", "third", "elsewhere"]);
+  });
+
+  it("a `backlogged` final releases NOTHING: BEHIND stays trailing until its follow-up starts", () => {
+    const scope = chatTerminalScope(
+      { state: "final", runId: "k2", disposition: "backlogged" },
+      NO_LINKS,
+    );
+    expect(scope).toEqual({ kind: "prompt", key: "k2", disposition: "backlogged" });
+    const queue = deferredBehindR();
+    const { remaining, commit } = settleQueuedSession(
+      queue,
+      "tinker:A",
+      true,
+      matches,
+      scope ?? undefined,
+    );
+    expect(commit).toHaveLength(0);
+    expect(remaining.map(textOf)).toEqual(["first", "second", "third", "elsewhere"]);
+    expect(queue[1]._queuedSession).toBe("tinker:A");
+  });
+
+  it("a disposition final with no runId names nothing, and is still not a session terminal", () => {
+    const scope = chatTerminalScope({ state: "final", disposition: "steered" }, NO_LINKS);
+    expect(scope?.kind).toBe("prompt");
+    const { remaining, commit } = settleQueuedSession(
+      deferredBehindR(),
+      "tinker:A",
+      true,
+      matches,
+      scope ?? undefined,
+    );
+    expect(commit).toHaveLength(0);
+    expect(remaining).toHaveLength(4);
+  });
+
+  it("`dropped`, an unknown value, or a disposition on an error/aborted keep today's session path", () => {
+    for (const event of [
+      { state: "final", runId: "k2", disposition: "dropped" },
+      { state: "final", runId: "k2", disposition: "later" },
+      { state: "aborted", runId: "k2", disposition: "steered" },
+      { state: "error", runId: "k2", disposition: "backlogged" },
+    ]) {
+      expect(chatTerminalScope(event, NO_LINKS)).toEqual({ kind: "session" });
+    }
+  });
+
+  it("a delta, or no event at all, is not a terminal", () => {
+    expect(chatTerminalScope({ state: "delta", runId: "k2" }, NO_LINKS)).toBeNull();
+    expect(chatTerminalScope(undefined, NO_LINKS)).toBeNull();
+  });
+});
+
+describe("U3 — a linked follow-up run settles exactly its keys (gateway G3)", () => {
+  const followupStart = (runId: string, promptKeys: unknown) => ({
+    stream: FOLLOWUP_STREAM,
+    runId,
+    sessionKey: "agent:main:tinker:A",
+    data: { phase: "start", promptKeys },
+  });
+
+  it("a followup start + its terminal settles exactly its keys", () => {
+    const links = new Map<string, readonly string[]>();
+    const link = followupRunLink(followupStart("run-f2", ["k2"]));
+    expect(link).toEqual({ runId: "run-f2", keys: ["k2"] });
+    if (link) {
+      rememberFollowupLink(links, link.runId, link.keys);
+    }
+    const scope = chatTerminalScope({ state: "final", runId: "run-f2" }, links);
+    expect(scope).toEqual({ kind: "linked", keys: ["k2"] });
+    const { remaining, commit } = settleQueuedSession(
+      deferredBehindR(),
+      "tinker:A",
+      true,
+      matches,
+      scope ?? undefined,
+    );
+    expect(commit.map(textOf)).toEqual(["second"]);
+    expect(remaining.map(textOf)).toEqual(["first", "third", "elsewhere"]);
+  });
+
+  it("CONTROL: without the followup event the same run's terminal is session-wide", () => {
+    const scope = chatTerminalScope({ state: "final", runId: "run-f2" }, NO_LINKS);
+    expect(scope).toEqual({ kind: "session" });
+    const { commit } = settleQueuedSession(
+      deferredBehindR(),
+      "tinker:A",
+      true,
+      matches,
+      scope ?? undefined,
+    );
+    expect(commit.map(textOf)).toEqual(["first", "second", "third"]);
+  });
+
+  it("the START releases the linked prompt first, so the terminal after it moves nothing", () => {
+    // app.ts settles the start with the same linked scope: the run's answer is about to stream and
+    // must land UNDER its prompt, not above a prompt that is still trailing.
+    const linked = { kind: "linked" as const, keys: ["k2"] };
+    const started = settleQueuedSession(deferredBehindR(), "tinker:A", true, matches, linked);
+    expect(started.commit.map(textOf)).toEqual(["second"]);
+    const ended = settleQueuedSession(started.remaining, "tinker:A", true, matches, linked);
+    expect(ended.commit).toHaveLength(0);
+    expect(ended.remaining.map(textOf)).toEqual(["first", "third", "elsewhere"]);
+  });
+
+  it("followupRunLink reads only a followup START with at least one usable key", () => {
+    expect(followupRunLink(followupStart("r", [" k2 ", "k2", "", 7, "k3"]))).toEqual({
+      runId: "r",
+      keys: ["k2", "k3"],
+    });
+    expect(followupRunLink(followupStart("r", []))).toBeNull();
+    expect(followupRunLink(followupStart("r", "k2"))).toBeNull();
+    expect(followupRunLink(followupStart("", ["k2"]))).toBeNull();
+    expect(followupRunLink({ ...followupStart("r", ["k2"]), stream: "lifecycle" })).toBeNull();
+    expect(
+      followupRunLink({
+        ...followupStart("r", ["k2"]),
+        data: { phase: "end", promptKeys: ["k2"] },
+      }),
+    ).toBeNull();
+    expect(followupRunLink(undefined)).toBeNull();
+  });
+
+  it("the link map is bounded, oldest out first, and a re-announced run moves to the newest slot", () => {
+    const links = new Map<string, readonly string[]>();
+    rememberFollowupLink(links, "a", ["ka"], 2);
+    rememberFollowupLink(links, "b", ["kb"], 2);
+    rememberFollowupLink(links, "a", ["ka"], 2);
+    rememberFollowupLink(links, "c", ["kc"], 2);
+    expect([...links.keys()]).toEqual(["a", "c"]);
+    expect(FOLLOWUP_LINKS_MAX).toBe(256);
+  });
+});
+
+describe("U3 — the facts a prompt collects on the way (prompt-state.ts derives the state)", () => {
+  it("steered keys are drained per session, short and canonical forms alike", () => {
+    const map = new Map<string, string[]>();
+    addSessionPromptKey(map, "agent:main:tinker:A", "k1");
+    addSessionPromptKey(map, "agent:main:tinker:A", "k1");
+    addSessionPromptKey(map, "agent:main:tinker:A", "k2");
+    addSessionPromptKey(map, "tinker:B", "kb");
+    addSessionPromptKey(map, undefined, "orphan");
+    expect(takeSessionPromptKeys(map, "tinker:A", matches)).toEqual(["k1", "k2"]);
+    expect(takeSessionPromptKeys(map, "tinker:A", matches)).toEqual([]);
+    expect([...map.keys()]).toEqual(["tinker:B"]);
+    expect(takeSessionPromptKeys(map, undefined, matches)).toEqual([]);
+  });
+
+  it("each run terminal records one fact, and a delta records none", () => {
+    expect(terminalPromptFacts("final")).toEqual({ answered: true });
+    expect(terminalPromptFacts("error")).toEqual({ failed: true });
+    expect(terminalPromptFacts("aborted")).toEqual({ cancelled: true });
+    expect(terminalPromptFacts("delta")).toBeNull();
+  });
+
+  it("a backlogged prompt walks ACCEPTED → BEHIND → PREPARING → ANSWERED", () => {
+    const facts: PromptStateInputs = { transport: "acked", deferred: true };
+    expect(derivePromptState(facts)).toBe("ACCEPTED"); // no report yet: the old-gateway state
+    Object.assign(facts, { disposition: "backlogged" });
+    expect(derivePromptState(facts)).toBe("BEHIND");
+    Object.assign(facts, FOLLOWUP_STARTED_FACTS);
+    expect(derivePromptState(facts)).toBe("PREPARING");
+    Object.assign(facts, terminalPromptFacts("final"));
+    expect(derivePromptState(facts)).toBe("ANSWERED");
+  });
+
+  it("a steered prompt reads STEERED until its host turn's terminal", () => {
+    const facts: PromptStateInputs = { transport: "acked", deferred: true, disposition: "steered" };
+    expect(derivePromptState(facts)).toBe("STEERED");
+    Object.assign(facts, terminalPromptFacts("final"));
+    expect(derivePromptState(facts)).toBe("ANSWERED");
+  });
+
+  it("the follow-up start un-LOSTs a prompt re-drawn LOST after a reload (a holder now exists)", () => {
+    const facts: PromptStateInputs = { transport: "acked", noGatewayHolder: true };
+    expect(derivePromptState(facts)).toBe("LOST");
+    Object.assign(facts, FOLLOWUP_STARTED_FACTS);
+    expect(derivePromptState(facts)).toBe("PREPARING");
+  });
+});
+
+describe("U3 known limit — a run's OWN terminal ends its OWN prompt (ownRunTerminal)", () => {
+  it("final → answered and aborted → cancelled, keyed by the runId (the prompt's key)", () => {
+    expect(ownRunTerminal({ state: "final", runId: "p-1" })).toStrictEqual({
+      key: "p-1",
+      facts: { answered: true },
+    });
+    expect(ownRunTerminal({ state: "aborted", runId: "p-1" })).toStrictEqual({
+      key: "p-1",
+      facts: { cancelled: true },
+    });
+  });
+
+  it("an error records nothing: a fallback model can still carry the run", () => {
+    expect(ownRunTerminal({ state: "error", runId: "p-1" })).toBeNull();
+  });
+
+  it("a disposition final records nothing: it PLACED the prompt (U3's chatTerminalScope)", () => {
+    for (const disposition of ["steered", "backlogged", "dropped"]) {
+      expect(ownRunTerminal({ state: "final", runId: "p-1", disposition })).toBeNull();
+    }
+    // An old gateway's early final carries no field: read as the answer, as before.
+    expect(ownRunTerminal({ state: "final", runId: "p-1", disposition: null })).toStrictEqual({
+      key: "p-1",
+      facts: { answered: true },
+    });
+  });
+
+  it("no runId, or no terminal, names nothing", () => {
+    expect(ownRunTerminal({ state: "aborted" })).toBeNull();
+    expect(ownRunTerminal({ state: "aborted", runId: "" })).toBeNull();
+    expect(ownRunTerminal({ state: "delta", runId: "p-1" })).toBeNull();
+    expect(ownRunTerminal(null)).toBeNull();
+    expect(ownRunTerminal(undefined)).toBeNull();
+  });
+
+  it("PQ-6: the first own-run terminal stands (answered or cancelled); failed is not one", () => {
+    expect(ownRunTerminalRecorded({ answered: true })).toBe(true);
+    expect(ownRunTerminalRecorded({ cancelled: true })).toBe(true);
+    expect(ownRunTerminalRecorded({ failed: true })).toBe(false);
+    expect(ownRunTerminalRecorded({ transport: "acked" })).toBe(false);
+    expect(ownRunTerminalRecorded(null)).toBe(false);
+    expect(ownRunTerminalRecorded(undefined)).toBe(false);
+  });
+
+  it("a stopped prompt derives CANCELLED where it would otherwise be LOST", () => {
+    const facts: PromptStateInputs = { transport: "acked", noGatewayHolder: true };
+    // CONTROL — no terminal fact: an acked prompt no holder has is LOST, with Resend.
+    expect(derivePromptState(facts)).toBe("LOST");
+    Object.assign(facts, ownRunTerminal({ state: "aborted", runId: "p-1" })?.facts);
+    expect(derivePromptState(facts)).toBe("CANCELLED");
   });
 });

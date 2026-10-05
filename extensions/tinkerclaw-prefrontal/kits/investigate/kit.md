@@ -35,7 +35,7 @@ parallelism:
     alone. Step index: 0=Scope, 1=Gather, 2=Analyze, 3=Report.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

@@ -4,10 +4,12 @@
  * The calendar sync poller (src/calendar/sync.ts, future) writes to this
  * table; the Exec calendar strip and the reschedule picker read from it.
  */
-import type { ControlPanelResolvedConfig } from "../paths.js";
+import type { CalendarSyncSource, ControlPanelResolvedConfig } from "../paths.js";
 import { getDb } from "./db.js";
 
-export type CalendarSource = "google.primary" | "outlook.work" | "manual";
+// "<provider>.<account>" for synced calendars (google.primary, outlook.work, ...)
+// or "manual" for hand-entered events.
+export type CalendarSource = CalendarSyncSource | "manual";
 
 export type CalendarEventRow = {
   source: CalendarSource;

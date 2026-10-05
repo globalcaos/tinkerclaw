@@ -26,6 +26,7 @@ import { resolveOwnerDisplaySetting } from "../owner-display.js";
 import type { SandboxFsBridge } from "../sandbox/fs-bridge.js";
 import { detectRuntimeShell } from "../shell-utils.js";
 import { stripSystemPromptCacheBoundary } from "../system-prompt-cache-boundary.js";
+import { resolveSystemPromptIdentityLine } from "../system-prompt-override.js";
 import { buildSystemPromptParams } from "../system-prompt-params.js";
 import { buildAgentSystemPrompt } from "../system-prompt.js";
 import type { SilentReplyPromptMode } from "../system-prompt.types.js";
@@ -109,6 +110,10 @@ export function buildSystemPrompt(params: {
   const ownerDisplay = resolveOwnerDisplaySetting(params.config);
   return buildAgentSystemPrompt({
     workspaceDir: params.workspaceDir,
+    identityLine: resolveSystemPromptIdentityLine({
+      config: params.config,
+      agentId: params.agentId,
+    }),
     defaultThinkLevel: params.defaultThinkLevel,
     extraSystemPrompt: params.extraSystemPrompt,
     sourceReplyDeliveryMode: params.sourceReplyDeliveryMode,

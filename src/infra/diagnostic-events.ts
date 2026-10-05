@@ -124,6 +124,17 @@ export type DiagnosticSessionStateEvent = DiagnosticBaseEvent & {
   queueDepth?: number;
 };
 
+/**
+ * Why the heartbeat called a session stuck: the same token the `stuck session: … reason=` journal
+ * line prints (src/logging/diagnostic.ts logSessionStuck). On the bus since 2026-09-25, so the
+ * events database can store it (TINKER_UI_DESIGN_BIBLE/logging.md §4.1 `gw.session.stuck`); it
+ * used to live in the text line only.
+ */
+export type DiagnosticSessionStuckReason =
+  | "client-dead"
+  | "no-progress-signal"
+  | "no-recent-progress";
+
 export type DiagnosticSessionStuckEvent = DiagnosticBaseEvent & {
   type: "session.stuck";
   sessionKey?: string;
@@ -131,6 +142,8 @@ export type DiagnosticSessionStuckEvent = DiagnosticBaseEvent & {
   state: DiagnosticSessionState;
   ageMs: number;
   queueDepth?: number;
+  /** Optional in the type so hand-built events stay valid; logSessionStuck always sets it. */
+  reason?: DiagnosticSessionStuckReason;
 };
 
 export type DiagnosticLaneEnqueueEvent = DiagnosticBaseEvent & {
@@ -576,6 +589,35 @@ function getDiagnosticEventsState(): DiagnosticEventsGlobalState {
   return state;
 }
 
+const DIAGNOSTIC_LISTENER_TYPE_FILTERS_KEY = Symbol.for(
+  "openclaw.diagnosticEvents.listenerTypeFilters.v1",
+);
+
+/**
+ * Per-listener type filters, consulted BEFORE the per-listener clone in dispatchDiagnosticEvent.
+ * Without one a listener receives a structuredClone plus a deep freeze of EVERY event — one
+ * `log.record` per log line included — even when it maps three types and returns on the rest
+ * (TINKER_UI_DESIGN_BIBLE/logging.md §7.5, the events bridge). On globalThis under a versioned key,
+ * like the state above, so every bundled copy of this module that knows the filters honours them;
+ * a copy that predates them delivers everything, which is why a filtered listener still checks the
+ * type itself.
+ */
+function getListenerTypeFilters(): WeakMap<DiagnosticEventListener, ReadonlySet<string>> {
+  const globalRecord = globalThis as Record<PropertyKey, unknown>;
+  const existing = globalRecord[DIAGNOSTIC_LISTENER_TYPE_FILTERS_KEY];
+  if (existing instanceof WeakMap) {
+    return existing as WeakMap<DiagnosticEventListener, ReadonlySet<string>>;
+  }
+  const filters = new WeakMap<DiagnosticEventListener, ReadonlySet<string>>();
+  Object.defineProperty(globalThis, DIAGNOSTIC_LISTENER_TYPE_FILTERS_KEY, {
+    configurable: true,
+    enumerable: false,
+    value: filters,
+    writable: false,
+  });
+  return filters;
+}
+
 export function isDiagnosticsEnabled(config?: OpenClawConfig): boolean {
   return config?.diagnostics?.enabled !== false;
 }
@@ -600,9 +642,15 @@ function dispatchDiagnosticEvent(
     return;
   }
 
+  const typeFilters = getListenerTypeFilters();
   state.dispatchDepth += 1;
   try {
     for (const listener of state.listeners) {
+      const typeFilter = typeFilters.get(listener);
+      if (typeFilter !== undefined && !typeFilter.has(enriched.type)) {
+        // Skipped BEFORE the clone: a filtered listener pays nothing for types it did not ask for.
+        continue;
+      }
       try {
         listener(
           cloneDiagnosticEventForListener(enriched),
@@ -739,6 +787,27 @@ export function onDiagnosticEvent(listener: (evt: DiagnosticEventPayload) => voi
     }
     listener(event);
   });
+}
+
+/**
+ * onDiagnosticEvent narrowed to `types`: the bus skips this listener — and the clone it would be
+ * handed — for every other type (getListenerTypeFilters). Same exclusions as onDiagnosticEvent:
+ * trusted events and `log.record` never reach it.
+ */
+export function onDiagnosticEventTypes<T extends DiagnosticEventPayload["type"]>(
+  types: readonly T[],
+  listener: (evt: Extract<DiagnosticEventPayload, { type: T }>) => void,
+): () => void {
+  const wanted = new Set<string>(types);
+  wanted.delete("log.record");
+  const filtered: DiagnosticEventListener = (event, metadata) => {
+    if (metadata.trusted || !wanted.has(event.type)) {
+      return;
+    }
+    listener(event as Extract<DiagnosticEventPayload, { type: T }>);
+  };
+  getListenerTypeFilters().set(filtered, wanted);
+  return onInternalDiagnosticEvent(filtered);
 }
 
 export function formatDiagnosticTraceparentForPropagation(

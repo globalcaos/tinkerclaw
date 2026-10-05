@@ -7,7 +7,10 @@ import {
   resolveClaudeCliBindingSessionId,
   resolveClaudeCliSessionFilePath,
 } from "./cli-session-history.claude.js";
-import { mergeImportedChatHistoryMessages } from "./cli-session-history.merge.js";
+import {
+  mergeImportedChatHistoryMessages,
+  resolveEarliestLocalTimestamp,
+} from "./cli-session-history.merge.js";
 import { resolveTinkerBridgeCliSessionIdForOpenclawSession } from "./tinker-bridge-session-map.js";
 
 /**
@@ -28,6 +31,7 @@ import { resolveTinkerBridgeCliSessionIdForOpenclawSession } from "./tinker-brid
 
 export {
   mergeImportedChatHistoryMessages,
+  resolveEarliestLocalTimestamp,
   readClaudeCliFallbackSeed,
   readClaudeCliSessionMessages,
   resolveClaudeCliBindingSessionId,
@@ -69,13 +73,20 @@ const IMPORT_ASSISTANT_SLOT_COVER_MS = 5 * 60 * 1000;
 //     tripping tab silently lost per-step thinking/toolcall segmentation on reload.
 // Truncating to the newest `ratio * localCount` records keeps the cost bound that motivated the
 // valve (the debris is ancient, the value is recent) while leaving the tail — and the merge —
-// intact. Measured on the live store, this drops ~70% of AcmeVision's payload (632 -> 189).
-const IMPORT_FLOOD_MAX_RATIO = 3;
+// intact. Measured on the live store, this drops ~70% of the work tab's payload (632 -> 189).
+//
+// FORK 2026-10-03 (the architect: "There are still tabs where the history has been erased") — OFF unless
+// OPENCLAW_IMPORT_FLOOD_MAX_RATIO sets a ratio. Its unit was wrong for the tabs it guarded: a
+// Claude-backed tab's local store holds little more than its prompts, so "3x the local rows" kept
+// each tab's newest steps and hid the answers of every older turn — 9 open tabs tripped it between
+// 2026-10-02 19:00 and 2026-10-03 07:00 (592 rows cut to 99, 577 to 63, 288 to 33). And the cost
+// it bounded is gone: since the 2026-09-23 rehaul a reply is a `limit` window, and replayed offline
+// on those tabs' live stores the whole merge took 24-341 ms, LESS than the truncating one (45-623
+// ms). The 18.5-41.5 s serves were never the merge of 457 rows.
 
-// Escape hatch: a subtractive valve with no runtime override means a misfire costs a rebuild
-// instead of a restart. Read per call — the gateway is long-lived and this must be changeable
-// without one. Invalid / absent / non-positive values fall back to the compiled default.
-function resolveImportFloodMaxRatio(): number {
+// The ratio when one is configured; null = no valve. Read per call — the gateway is long-lived and
+// this must be changeable with a restart, not a rebuild. Invalid / non-positive values = no valve.
+function resolveImportFloodMaxRatio(): number | null {
   const raw = process.env.OPENCLAW_IMPORT_FLOOD_MAX_RATIO;
   if (typeof raw === "string" && raw.trim() !== "") {
     const parsed = Number.parseFloat(raw);
@@ -83,7 +94,7 @@ function resolveImportFloodMaxRatio(): number {
       return parsed;
     }
   }
-  return IMPORT_FLOOD_MAX_RATIO;
+  return null;
 }
 
 /**
@@ -245,6 +256,11 @@ export function resolveClaudeCliProvenanceSessionIds(params: {
 export function augmentChatHistoryWithCliSessionImports(params: {
   entry: SessionEntry | undefined;
   /**
+   * FORK 2026-10-02 — the claude-cli sessions to import, overriding the entry's provenance (its
+   * binding plus the newest bridge-map id). A reset archive passes every session bound to it.
+   */
+  cliSessionIds?: string[];
+  /**
    * Optional caller-side session key, used ONLY to attribute the flood-valve warn log.
    * Falls back to entry.sessionId when absent; never affects what is served.
    */
@@ -256,13 +272,29 @@ export function augmentChatHistoryWithCliSessionImports(params: {
    */
   provider?: string;
   localMessages: unknown[];
+  /**
+   * FORK 2026-09-23 (chat.history rehaul, plan task 5) — the local-store size the IMPORT FLOOD
+   * SAFETY VALVE below measures against; defaults to `localMessages.length`. chat.history's seq
+   * cursors pass only a SLICE of the local rows, and a valve sized by the slice would truncate
+   * imports the whole-store call keeps, so they pass the whole store's row count here.
+   */
+  floodValveLocalCount?: number;
+  /**
+   * FORK 2026-09-23 (plan task 5, review fix round 1) — the whole local store's earliest
+   * timestamp (resolveEarliestLocalTimestamp), handed to the merge's prehistory floor for the same
+   * reason as floodValveLocalCount: a floor measured from a slice drops imports the whole-store
+   * call keeps. Absent = measured from `localMessages`, as before.
+   */
+  wholeStoreEarliestLocalTs?: number;
   homeDir?: string;
 }): unknown[] {
   // GATE 1 of 2 — is there a recorded claude-cli session id for THIS session at all?
-  const cliSessionIds = resolveClaudeCliProvenanceSessionIds({
-    entry: params.entry,
-    homeDir: params.homeDir,
-  });
+  const cliSessionIds =
+    params.cliSessionIds ??
+    resolveClaudeCliProvenanceSessionIds({
+      entry: params.entry,
+      homeDir: params.homeDir,
+    });
   if (cliSessionIds.length === 0) {
     return params.localMessages;
   }
@@ -294,18 +326,18 @@ export function augmentChatHistoryWithCliSessionImports(params: {
     return params.localMessages;
   }
 
-  // IMPORT FLOOD SAFETY VALVE (FORK 2026-08-26) — see IMPORT_FLOOD_MAX_RATIO above. Fires only
+  // IMPORT FLOOD SAFETY VALVE (FORK 2026-08-26; opt-in since 2026-10-03, see above). Fires only
   // when the LOCAL store is non-empty: after a reset / fresh sessionFile / the 4am wipe the local
   // store is empty and the import IS the history, so suppressing it then would be exactly the
   // "config deleted my history" deletion this file exists to prevent — the merge layer's own
   // valve applies the same guard via `params.localMessages.length > 0`. A valve may bound a
   // flood; it must never delete the only record.
   const importCount = allImports.reduce((count, list) => count + list.length, 0);
-  const localCount = params.localMessages.length;
+  const localCount = params.floodValveLocalCount ?? params.localMessages.length;
   const floodRatio = resolveImportFloodMaxRatio();
   let effectiveImports = allImports;
   let truncated = false;
-  if (localCount > 0 && importCount > localCount * floodRatio) {
+  if (floodRatio !== null && localCount > 0 && importCount > localCount * floodRatio) {
     truncated = true;
     const budget = Math.max(1, Math.floor(localCount * floodRatio));
     effectiveImports = truncateImportsToNewest(allImports, budget);
@@ -380,6 +412,7 @@ export function augmentChatHistoryWithCliSessionImports(params: {
     merged = mergeImportedChatHistoryMessages({
       localMessages: merged,
       importedMessages,
+      earliestLocalTs: params.wholeStoreEarliestLocalTs,
     });
   }
   return merged;

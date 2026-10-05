@@ -192,8 +192,16 @@ export default function register(api: OpenClawPluginApi) {
   const forcingQuestionsEnabled = pluginConfig.forcingQuestions?.enabled !== false;
 
   // ─── P3: Permission Hooks + Denial Tracking ───
+  // Permission hooks execute operator-supplied scripts on every tool call.
+  // That is opt-in: defining a hook is not consent to run it, so the operator
+  // must also set hooks.enabled. See permission-hooks.ts for the full model.
   const hookDefs = pluginConfig.hooks?.before_tool ?? [];
-  const permissionHooks = createPermissionHooks(hookDefs);
+  const hooksEnabled = pluginConfig.hooks?.enabled === true;
+  const permissionHooks = createPermissionHooks(hookDefs, {
+    enabled: hooksEnabled,
+    allowedRoots: pluginConfig.hooks?.allowedRoots,
+    logger: api.logger ?? { warn: console.warn },
+  });
   const denialTracker = createDenialTracker({ limit: pluginConfig.hooks?.denialLimit ?? 3 });
 
   // Initialize shared monitor singleton on first registration
@@ -472,7 +480,7 @@ export default function register(api: OpenClawPluginApi) {
       }
 
       // P3: Permission hooks — user-defined shell scripts gate tool calls
-      if (isEnabled(featureFlags, "permissionHooks") && hookDefs.length > 0) {
+      if (isEnabled(featureFlags, "permissionHooks") && hooksEnabled && hookDefs.length > 0) {
         const hookResult = await permissionHooks.check(event.toolName, {
           args: event.params,
           sessionKey: ctx.sessionKey,
@@ -840,111 +848,176 @@ export default function register(api: OpenClawPluginApi) {
   }
 
   // ─── Gateway Methods ───
-  api.registerGatewayMethod("prefrontal.topology", async ({ respond }) => {
-    enrichTopology(); // Freshen data before responding
-    const snap = topology.snapshot();
-    log.info?.(
-      `[prefrontal] topology requested: ${snap.nodes.length} nodes, ${snap.edges.length} edges`,
-    );
-    respond(true, snap);
-  });
+  // Every gateway method this plugin registers is pinned to operator.admin explicitly
+  // (topology/tree/metrics expose session keys and tool names, orcaBias writes a file,
+  // config returns the merged prefrontal config), rather than relying on the gateway's
+  // unclassified-method fallback. The README's method table lists each one.
+  const ADMIN_METHOD = { scope: "operator.admin" } as const;
+  api.registerGatewayMethod(
+    "prefrontal.topology",
+    async ({ respond }) => {
+      enrichTopology(); // Freshen data before responding
+      const snap = topology.snapshot();
+      log.info?.(
+        `[prefrontal] topology requested: ${snap.nodes.length} nodes, ${snap.edges.length} edges`,
+      );
+      respond(true, snap);
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.status", async ({ respond }) => {
-    // FORK 2026-07-25 (the architect): report the fan-out cap the orchestration runtime actually
-    // enforces (min(16, cores-2), ≥1 — see orchestration-runtime.ts concurrencyCap) so the
-    // Models panel's routing card can justify the parallelism count instead of guessing it.
-    respond(true, {
-      nodeCount: topology.size,
-      changesSinceLastPoll: topology.changes,
-      persistPath,
-      pollIntervalMs,
-      stalenessThresholdMs,
-      cores: os.cpus?.().length ?? 0,
-      concurrencyCap: concurrencyCap(),
-      // FORK 2026-07-25 (the architect): the ORCA card's footer link OPENS this file in the system
-      // viewer, so the panel points at the real policy rather than restating it. Path only —
-      // serving the text would ship a few KB on every budget refresh for nothing.
-      // orca-policy-drift.test.ts pins the file's constants against effort-allocator.ts,
-      // orchestration-runtime.ts and the Conductor, so it can never describe rules we do not run.
-      policyPath: POLICY_PATH,
-    });
-  });
+  api.registerGatewayMethod(
+    "prefrontal.status",
+    async ({ respond }) => {
+      // FORK 2026-07-25 (the architect): report the fan-out cap the orchestration runtime actually
+      // enforces (min(16, cores-2), ≥1 — see orchestration-runtime.ts concurrencyCap) so the
+      // Models panel's routing card can justify the parallelism count instead of guessing it.
+      respond(true, {
+        nodeCount: topology.size,
+        changesSinceLastPoll: topology.changes,
+        persistPath,
+        pollIntervalMs,
+        stalenessThresholdMs,
+        cores: os.cpus?.().length ?? 0,
+        concurrencyCap: concurrencyCap(),
+        // FORK 2026-07-25 (the architect): the ORCA card's footer link OPENS this file in the system
+        // viewer, so the panel points at the real policy rather than restating it. Path only —
+        // serving the text would ship a few KB on every budget refresh for nothing.
+        // orca-policy-drift.test.ts pins the file's constants against effort-allocator.ts,
+        // orchestration-runtime.ts and the Conductor, so it can never describe rules we do not run.
+        policyPath: POLICY_PATH,
+      });
+    },
+    ADMIN_METHOD,
+  );
 
   // FORK 2026-07-25 (the architect): the ORCA panel's FAN-OUT section narrates the routing calls
   // made during a turn. The Conductor (jarvis-icu docs/superpowers/orca-conductor.mjs) appends
   // one row per routed unit to ~/.openclaw/orca-routes.jsonl; we return the MOST RECENT RUN's
   // rows, which is the honest reading of "this turn". Cross-repo, so the 10-line reader is
   // duplicated here rather than imported — fail-to-empty, a missing feed just hides the list.
-  api.registerGatewayMethod("prefrontal.routes", async ({ respond }) => {
-    const file = join(os.homedir(), ".openclaw", "orca-routes.jsonl");
-    let rows: Array<Record<string, unknown>> = [];
-    try {
-      for (const line of readFileSync(file, "utf-8").split("\n")) {
-        if (!line.trim()) continue;
-        try {
-          rows.push(JSON.parse(line));
-        } catch {
-          /* skip a torn line */
+  api.registerGatewayMethod(
+    "prefrontal.routes",
+    async ({ respond }) => {
+      const file = join(os.homedir(), ".openclaw", "orca-routes.jsonl");
+      let rows: Array<Record<string, unknown>> = [];
+      try {
+        for (const line of readFileSync(file, "utf-8").split("\n")) {
+          if (!line.trim()) continue;
+          try {
+            rows.push(JSON.parse(line));
+          } catch {
+            /* skip a torn line */
+          }
         }
+      } catch {
+        respond(true, { routes: [] });
+        return;
       }
-    } catch {
-      respond(true, { routes: [] });
-      return;
-    }
-    rows = rows.slice(-64);
-    // Prefer the latest run id; fall back to the trailing slice when the Conductor was
-    // invoked without --run (a manual `plan` call has no run to group by).
-    const lastRun = [...rows].reverse().find((r) => r.run)?.run;
-    const routes = lastRun ? rows.filter((r) => r.run === lastRun) : rows.slice(-8);
-    respond(true, { routes });
-  });
+      rows = rows.slice(-64);
+      // Prefer the latest run id; fall back to the trailing slice when the Conductor was
+      // invoked without --run (a manual `plan` call has no run to group by).
+      const lastRun = [...rows].reverse().find((r) => r.run)?.run;
+      const routes = lastRun ? rows.filter((r) => r.run === lastRun) : rows.slice(-8);
+      respond(true, { routes });
+    },
+    ADMIN_METHOD,
+  );
 
   // FORK 2026-07-26 (the architect): the ORCA panel's fast↔smart dial. The UI owns the position; the
   // gateway persists it so the Conductor can read it on the NEXT routed run and pick its tier
   // from it. Written as a tiny JSON file rather than held in memory so it survives a gateway
   // restart and is readable by the out-of-process conductor CLI.
-  api.registerGatewayMethod("prefrontal.orcaBias", async ({ respond, params }) => {
-    const file = join(os.homedir(), ".openclaw", "orca-bias.json");
-    const raw = (params as { biasIdx?: unknown } | undefined)?.biasIdx;
-    if (raw === undefined) {
-      // read
-      try {
-        respond(true, JSON.parse(readFileSync(file, "utf-8")));
-      } catch {
-        respond(true, { biasIdx: null });
+  api.registerGatewayMethod(
+    "prefrontal.orcaBias",
+    async ({ respond, params }) => {
+      const file = join(os.homedir(), ".openclaw", "orca-bias.json");
+      const raw = (params as { biasIdx?: unknown } | undefined)?.biasIdx;
+      if (raw === undefined) {
+        // read
+        try {
+          respond(true, JSON.parse(readFileSync(file, "utf-8")));
+        } catch {
+          respond(true, { biasIdx: null });
+        }
+        return;
       }
-      return;
-    }
-    const n = Number(raw);
-    if (!Number.isFinite(n)) {
-      respond(false, { error: "biasIdx must be a number" });
-      return;
-    }
-    const biasIdx = Math.max(0, Math.min(6, Math.round(n)));
-    try {
-      writeFileSync(file, JSON.stringify({ biasIdx, ts: Date.now() }) + "\n");
-      respond(true, { biasIdx });
-    } catch (e) {
-      respond(false, { error: String(e) });
-    }
-  });
+      const n = Number(raw);
+      if (!Number.isFinite(n)) {
+        respond(false, { error: "biasIdx must be a number" });
+        return;
+      }
+      const biasIdx = Math.max(0, Math.min(6, Math.round(n)));
+      try {
+        writeFileSync(file, JSON.stringify({ biasIdx, ts: Date.now() }) + "\n");
+        respond(true, { biasIdx });
+      } catch (e) {
+        respond(false, { error: String(e) });
+      }
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.tree", async ({ respond }) => {
-    const tree = monitor.getTreeState();
-    respond(true, tree);
-  });
+  // FORK 2026-09-23 (the architect): Thalamus tier defaults, set from the model picker's right-click menu; FORK 2026-10-02
+  // (the architect, full deploy): they are SUGGESTIONS, one model AND effort per dial stop (smart / default / budget), and the
+  // router moves off one only for a reason. The parser, the writer and the old high / medium / low spelling live in
+  // core (`applyThalamusDefaultsRequest`, src/infra/thalamus-tier-defaults.ts) so the reply path and this method
+  // cannot disagree. No `tier` → read; `{tier, model}` assigns (a new model gets effort low); `{tier, effort}` sets the
+  // effort of the stop's model; `model: null` clears. `defaults` is the old model-per-tier view, `suggestions` the new shape.
+  api.registerGatewayMethod(
+    "prefrontal.thalamusDefaults",
+    async ({ respond, params }) => {
+      try {
+        const { applyThalamusDefaultsRequest } =
+          await import("openclaw/plugin-sdk/fork-thalamus-runtime");
+        const out = applyThalamusDefaultsRequest(
+          (params ?? {}) as { tier?: unknown; model?: unknown; effort?: unknown },
+        );
+        if (out.ok) {
+          respond(true, { defaults: out.defaults, suggestions: out.suggestions });
+        } else {
+          respond(false, { error: out.error });
+        }
+      } catch (e) {
+        console.error("[prefrontal] thalamusDefaults failed", e);
+        respond(false, { error: String(e) });
+      }
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.config", async ({ respond }) => {
-    respond(true, prefrontalConfig);
-  });
+  api.registerGatewayMethod(
+    "prefrontal.tree",
+    async ({ respond }) => {
+      const tree = monitor.getTreeState();
+      respond(true, tree);
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.metrics", async ({ respond }) => {
-    respond(true, faarTracker.getMetrics());
-  });
+  api.registerGatewayMethod(
+    "prefrontal.config",
+    async ({ respond }) => {
+      respond(true, prefrontalConfig);
+    },
+    ADMIN_METHOD,
+  );
 
-  api.registerGatewayMethod("prefrontal.flags", async ({ respond }) => {
-    respond(true, featureFlags);
-  });
+  api.registerGatewayMethod(
+    "prefrontal.metrics",
+    async ({ respond }) => {
+      respond(true, faarTracker.getMetrics());
+    },
+    ADMIN_METHOD,
+  );
+
+  api.registerGatewayMethod(
+    "prefrontal.flags",
+    async ({ respond }) => {
+      respond(true, featureFlags);
+    },
+    ADMIN_METHOD,
+  );
 
   // ── Kit dir constants (used by both plan-rpcs and recipe-rpcs) ──
   const recipeInstallSandbox = join(os.homedir(), ".openclaw", "workspace", "kits");
@@ -979,15 +1052,19 @@ export default function register(api: OpenClawPluginApi) {
   });
   const planRpcs = createPlanRpcs({ store: planStore, ownRecipesDir, recipeInstallSandbox });
   for (const [name, handler] of Object.entries(planRpcs)) {
-    api.registerGatewayMethod(name, async ({ respond, params }) => {
-      try {
-        const result = await handler(params);
-        respond(true, result);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        respond(false, undefined, { code: "INVALID_REQUEST", message });
-      }
-    });
+    api.registerGatewayMethod(
+      name,
+      async ({ respond, params }) => {
+        try {
+          const result = await handler(params);
+          respond(true, result);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          respond(false, undefined, { code: "INVALID_REQUEST", message });
+        }
+      },
+      ADMIN_METHOD,
+    );
   }
   log.info?.(`[prefrontal] plan RPCs registered at planRootDir=${planRootDir}`);
 
@@ -1340,6 +1417,11 @@ export default function register(api: OpenClawPluginApi) {
     // recipe.search local fallback rank proven recipes higher (same lookup the
     // turn-start seed uses above).
     engramBaseDir,
+    // Opt-in gates (all default OFF): arbitrary orchestration scripts, publishing
+    // to JourneyKits, and downloading recipes from JourneyKits.
+    allowOrchestrationScripts: pluginConfig.orchestration?.allowScripts === true,
+    allowRecipePublish: pluginConfig.marketplace?.allowPublish === true,
+    allowRemoteRecipeInstall: pluginConfig.marketplace?.allowRemoteInstall === true,
   });
   for (const [name, handler] of Object.entries(kitRpcs)) {
     const wrapped = async ({
@@ -1362,12 +1444,15 @@ export default function register(api: OpenClawPluginApi) {
     // back-compat alias so any in-flight client/CLI keeps working through the
     // rename. (The kit/1.0 wire format itself stays — it's the external Journey
     // standard.)
+    // Recipe RPCs install, author, run and orchestrate work, so they are pinned to
+    // operator.admin explicitly (the gateway's default for an unscoped plugin
+    // method is also admin-only; this states it rather than relying on it).
     // oxlint-disable-next-line typescript-eslint/no-explicit-any
-    api.registerGatewayMethod(name, wrapped as any);
+    api.registerGatewayMethod(name, wrapped as any, { scope: "operator.admin" });
     const alias = name.replace(".recipe.", ".kit.");
     if (alias !== name) {
       // oxlint-disable-next-line typescript-eslint/no-explicit-any
-      api.registerGatewayMethod(alias, wrapped as any);
+      api.registerGatewayMethod(alias, wrapped as any, { scope: "operator.admin" });
     }
   }
   log.info?.(

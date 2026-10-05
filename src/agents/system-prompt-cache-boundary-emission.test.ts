@@ -69,9 +69,7 @@ describe("what falls on which side of it", () => {
 
   it("keeps the prefix identical when only the runtime facts change", () => {
     // The whole point. Same identity, different model/thinking level => SAME worker key.
-    const a = build({
-      runtimeInfo: { host: "h", os: "linux", node: "22", model: "claude-opus-5" },
-    });
+    const a = build({ runtimeInfo: { host: "h", os: "linux", node: "22", model: "claude-opus-5" } });
     const b = build({
       runtimeInfo: { host: "h", os: "linux", node: "22", model: "claude-sonnet-5" },
       defaultThinkLevel: "high",

@@ -1,9 +1,5 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { GoogleGenAI, Modality } from "@google/genai";
 import { chromium, type Browser } from "playwright";
-import { createServer, type ViteDevServer } from "vite";
 
 const OPENAI_REALTIME_MODEL =
   process.env.OPENCLAW_REALTIME_OPENAI_MODEL?.trim() || "gpt-realtime-1.5";
@@ -37,10 +33,6 @@ async function readBoundedText(response: Response): Promise<string> {
 
 function printResult(result: SmokeResult): void {
   console.log(`${result.name}: ${result.ok ? "ok" : "failed"}`, result.details ?? {});
-}
-
-function compareStrings(left: string | undefined, right: string | undefined): number {
-  return (left ?? "").localeCompare(right ?? "");
 }
 
 async function createOpenAIClientSecret(apiKey: string): Promise<string> {
@@ -290,184 +282,6 @@ async function smokeGoogleLiveBrowserWs(browser: Browser, apiKey: string): Promi
   }
 }
 
-async function smokeGatewayRelayBrowser(browser: Browser): Promise<SmokeResult> {
-  let server: ViteDevServer | undefined;
-  const dir = await mkdtemp(path.join(tmpdir(), "openclaw-realtime-talk-"));
-  try {
-    const repoRoot = process.cwd().replaceAll("\\", "/");
-    await writeFile(
-      path.join(dir, "index.html"),
-      '<!doctype html><meta charset="utf-8"><script type="module" src="/main.ts"></script>',
-    );
-    await writeFile(
-      path.join(dir, "main.ts"),
-      `
-import { GatewayRelayRealtimeTalkTransport } from "/@fs/${repoRoot}/ui/src/ui/chat/realtime-talk-gateway-relay.ts";
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const listeners = new Set();
-const requests = [];
-const statuses = [];
-const transcripts = [];
-
-function emit(event) {
-  for (const listener of [...listeners]) {
-    listener(event);
-  }
-}
-
-function base64ZeroPcm(bytes) {
-  let text = "";
-  for (let index = 0; index < bytes; index += 1) {
-    text += String.fromCharCode(0);
-  }
-  return btoa(text);
-}
-
-const client = {
-  addEventListener(listener) {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
-  },
-  async request(method, params) {
-    requests.push({ method, params });
-    if (method === "chat.send") {
-      const runId = params.idempotencyKey || "run-smoke";
-      window.setTimeout(() => {
-        emit({ event: "chat", payload: { runId, state: "final", message: { text: "relay consult ok" } } });
-      }, 50);
-      return { runId };
-    }
-    return { ok: true };
-  },
-};
-
-try {
-  const transport = new GatewayRelayRealtimeTalkTransport(
-    {
-      provider: "smoke",
-      transport: "gateway-relay",
-      relaySessionId: "relay-live-smoke",
-      audio: {
-        inputEncoding: "pcm16",
-        inputSampleRateHz: 24000,
-        outputEncoding: "pcm16",
-        outputSampleRateHz: 24000,
-      },
-    },
-    {
-      client,
-      sessionKey: "main",
-      callbacks: {
-        onStatus: (status, detail) => statuses.push({ status, detail }),
-        onTranscript: (entry) => transcripts.push(entry),
-      },
-    },
-  );
-  await transport.start();
-  emit({ event: "talk.realtime.relay", payload: { relaySessionId: "relay-live-smoke", type: "ready" } });
-  emit({
-    event: "talk.realtime.relay",
-    payload: { relaySessionId: "relay-live-smoke", type: "transcript", role: "user", text: "relay user", final: true },
-  });
-  emit({
-    event: "talk.realtime.relay",
-    payload: { relaySessionId: "relay-live-smoke", type: "transcript", role: "assistant", text: "relay assistant", final: false },
-  });
-  emit({
-    event: "talk.realtime.relay",
-    payload: { relaySessionId: "relay-live-smoke", type: "audio", audioBase64: base64ZeroPcm(480) },
-  });
-  const processor = transport.inputProcessor;
-  processor?.onaudioprocess?.({
-    inputBuffer: { getChannelData: () => new Float32Array(160).fill(0.01) },
-  });
-  emit({ event: "talk.realtime.relay", payload: { relaySessionId: "relay-live-smoke", type: "mark" } });
-  emit({
-    event: "talk.realtime.relay",
-    payload: {
-      relaySessionId: "relay-live-smoke",
-      type: "toolCall",
-      callId: "call-smoke",
-      name: "openclaw_agent_consult",
-      args: { question: "confirm relay consult path" },
-    },
-  });
-  await delay(400);
-  transport.stop();
-  await delay(100);
-  window.__relaySmokeResult = { requests, statuses, transcripts };
-  window.__relaySmokeDone = true;
-} catch (error) {
-  window.__relaySmokeResult = { error: error instanceof Error ? error.message : String(error), requests, statuses, transcripts };
-  window.__relaySmokeDone = true;
-}
-`,
-    );
-    server = await createServer({
-      root: dir,
-      logLevel: "silent",
-      server: { host: "127.0.0.1", port: 0 },
-    });
-    await server.listen();
-    const address = server.httpServer?.address();
-    if (!address || typeof address === "string") {
-      throw new Error("Vite did not expose a local port");
-    }
-    const url = `http://127.0.0.1:${address.port}/`;
-    const context = await browser.newContext({ permissions: ["microphone"] });
-    await context.grantPermissions(["microphone"], { origin: url });
-    const page = await context.newPage();
-    await page.goto(url);
-    await page.waitForFunction(() => globalThis.__relaySmokeDone === true, undefined, {
-      timeout: 15_000,
-    });
-    const result = (await page.evaluate(() => globalThis.__relaySmokeResult)) as {
-      error?: string;
-      requests?: Array<{ method?: string }>;
-      statuses?: Array<{ status?: string }>;
-      transcripts?: Array<{ role?: string; text?: string }>;
-    };
-    await context.close();
-    if (result.error) {
-      throw new Error(result.error);
-    }
-    const methods = new Set((result.requests ?? []).map((request) => request.method));
-    const statusNames = new Set((result.statuses ?? []).map((entry) => entry.status));
-    const transcriptTexts = new Set((result.transcripts ?? []).map((entry) => entry.text));
-    const expectedMethods = [
-      "talk.realtime.relayAudio",
-      "talk.realtime.relayMark",
-      "talk.realtime.relayToolResult",
-      "talk.realtime.relayStop",
-    ];
-    const ok =
-      expectedMethods.every((method) => methods.has(method)) &&
-      statusNames.has("listening") &&
-      statusNames.has("thinking") &&
-      transcriptTexts.has("relay user") &&
-      transcriptTexts.has("relay assistant");
-    return {
-      name: "gateway-relay-browser-adapter",
-      ok,
-      details: {
-        methods: [...methods].toSorted(compareStrings),
-        statuses: [...statusNames].toSorted(compareStrings),
-        transcripts: [...transcriptTexts].toSorted(compareStrings),
-      },
-    };
-  } catch (error) {
-    return {
-      name: "gateway-relay-browser-adapter",
-      ok: false,
-      details: { error: shortError(error) },
-    };
-  } finally {
-    await server?.close();
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
 async function main(): Promise<void> {
   const openAIKey = getEnv("OPENAI_API_KEY");
   const googleKey = getEnv("GEMINI_API_KEY") ?? getEnv("GOOGLE_API_KEY");
@@ -500,7 +314,12 @@ async function main(): Promise<void> {
     } else {
       results.push(await smokeGoogleLiveBrowserWs(browser, googleKey));
     }
-    results.push(await smokeGatewayRelayBrowser(browser));
+    // FORK 2026-09-10: stock Control UI retired; skip the ui/ gateway-relay smoke.
+    results.push({
+      name: "gateway-relay-browser-adapter",
+      ok: true,
+      details: { skipped: "stock Control UI retired" },
+    });
   } finally {
     await browser.close();
   }

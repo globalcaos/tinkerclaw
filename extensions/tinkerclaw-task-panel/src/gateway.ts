@@ -12,7 +12,7 @@ import type { OpenClawPluginApi } from "../api.js";
 import type { ControlPanelResolvedConfig } from "./paths.js";
 import { addAxis, deleteAxis, listAxes, reorderAxes, updateAxis } from "./store/axes.js";
 import { syncGoogleCalendarRange } from "./store/calendar-sync.js";
-import { getCalendarDensity, listCalendarEvents } from "./store/calendar.js";
+import { getCalendarDensity, listCalendarEvents, type CalendarSource } from "./store/calendar.js";
 import {
   addEstPreset,
   deleteEstPreset,
@@ -91,6 +91,8 @@ export function registerTaskPanelMethods(params: {
         briefing_pass_id: typeof p?.briefing_pass_id === "string" ? p.briefing_pass_id : undefined,
         since_ts: typeof p?.since_ts === "number" ? p.since_ts : undefined,
         limit: typeof p?.limit === "number" ? p.limit : undefined,
+        operatorId: typeof p?.operatorId === "string" ? p.operatorId : undefined,
+        includeShared: p?.includeShared === false ? false : true,
       };
       const rows = listTasks(cfg, filter);
       respond(true, { tasks: rows, count: rows.length });
@@ -120,6 +122,12 @@ export function registerTaskPanelMethods(params: {
         due_date: typeof p.due_date === "string" ? p.due_date : null,
         est_minutes: typeof p.est_minutes === "number" ? p.est_minutes : null,
         hands: p.hands as "user" | "assistant" | "either" | undefined,
+        operator_id:
+          typeof p.operatorId === "string"
+            ? p.operatorId
+            : typeof p.operator_id === "string"
+              ? p.operator_id
+              : null,
         inferred_signal: p.inferred_signal,
         metadata: p.metadata,
         recurrence_rule_text:
@@ -156,6 +164,12 @@ export function registerTaskPanelMethods(params: {
           p.due_date === null ? null : typeof p.due_date === "string" ? p.due_date : undefined,
         est_minutes: typeof p.est_minutes === "number" ? p.est_minutes : undefined,
         hands: p.hands as "user" | "assistant" | "either" | undefined,
+        operator_id:
+          typeof p.operatorId === "string"
+            ? p.operatorId
+            : typeof p.operator_id === "string"
+              ? p.operator_id
+              : undefined,
         inferred_signal: p.inferred_signal,
         metadata: p.metadata,
         note: typeof p.note === "string" ? p.note : undefined,
@@ -293,10 +307,7 @@ export function registerTaskPanelMethods(params: {
       const rows = listCalendarEvents(cfg, {
         from: p.from,
         to: p.to,
-        source:
-          typeof p.source === "string"
-            ? (p.source as "google.primary" | "outlook.work" | "manual")
-            : undefined,
+        source: typeof p.source === "string" ? (p.source as CalendarSource) : undefined,
       });
       respond(true, { events: rows, sync: syncInfo });
     }),
@@ -316,10 +327,7 @@ export function registerTaskPanelMethods(params: {
       const rows = getCalendarDensity(cfg, {
         from: p.from,
         to: p.to,
-        source:
-          typeof p.source === "string"
-            ? (p.source as "google.primary" | "outlook.work" | "manual")
-            : undefined,
+        source: typeof p.source === "string" ? (p.source as CalendarSource) : undefined,
       });
       respond(true, { density: rows });
     }),

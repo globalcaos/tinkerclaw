@@ -12,6 +12,7 @@ import {
   readSessionTitleFieldsFromTranscript,
   readSessionPreviewItemsFromTranscript,
   resolveSessionTranscriptCandidates,
+  USAGE_TAIL_MAX_BYTES,
 } from "./session-utils.fs.js";
 
 function registerTempSessionStore(
@@ -507,6 +508,158 @@ describe("readSessionMessages", () => {
     expect(typeof marker.timestamp).toBe("number");
   });
 
+  // FORK 2026-09-07 (the architect: "I clicked compact ... nothing seem to have happened") — an
+  // ENGRAM-mode compaction writes a POINTER MANIFEST, not an LLM summary, and its record has a
+  // shape neither branch of this mapper read: `details.tokensEvicted` carries the saving, and
+  // there is NO `tokensAfter` at all. The chat banner needs before+after to draw "x → y", so it
+  // fell through to printing `tokensBefore` on its own — and `tokensBefore` is NOT this session's
+  // size. The fixture below is the verbatim record from the live incident: a session whose
+  // conversation was 175,850 tokens produced `tokensBefore: 7855029` (a store-wide running
+  // total), so the banner would have announced "7855k tok compacted" for a compaction that freed
+  // 128,260. Pin the real counter through BOTH mapper branches — flat and tree — because the file
+  // duplicates the block and fixing one is how half a bug survives.
+  const ENGRAM_COMPACTION_RECORD = {
+    type: "compaction",
+    id: "comp-engram",
+    timestamp: "2026-09-07T08:15:31.465Z",
+    summary:
+      "[Pointer manifest: events 01M1XEZKKR0000RM..01M1XEZKM60001T6 (48 events, ~128260 tokens). Use recall(query) to retrieve.]",
+    firstKeptEntryId: "comp-engram",
+    tokensBefore: 7855029,
+    details: { engramEventsStored: 48, tokensEvicted: 128260 },
+    fromHook: true,
+  } as const;
+
+  test("surfaces details.tokensEvicted as evictedTokens on the compaction marker (flat transcript)", () => {
+    const sessionId = "test-session-compaction-engram-flat";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({ message: { role: "user", content: "Hello" } }),
+      JSON.stringify(ENGRAM_COMPACTION_RECORD),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    const marker = out.find(
+      (m) => (m as { __openclaw?: { kind?: string } }).__openclaw?.kind === "compaction",
+    ) as { __openclaw?: { evictedTokens?: number; tokensBefore?: number; tokensAfter?: number } };
+    expect(marker).toBeDefined();
+    expect(marker.__openclaw?.evictedTokens).toBe(128260);
+    // The misleading pair is still passed through unchanged — the renderer decides which to
+    // prefer, and it can only do that if it can see both.
+    expect(marker.__openclaw?.tokensBefore).toBe(7855029);
+    expect(marker.__openclaw?.tokensAfter).toBeUndefined();
+  });
+
+  // FORK 2026-09-07 (the architect: "I can see a message like it was me prompting it but with some
+  // strange html code") — OpenClaw injects runtime events (a finished subagent, a cron result)
+  // into the conversation as a role:"user" message wrapped in
+  // <<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>> … <<<END_OPENCLAW_INTERNAL_CONTEXT>>>. The LIVE stream
+  // hides it — live-chat-projector.ts:53 calls stripInternalRuntimeContext — but this reader,
+  // which serves chat.history, never did. So the block was invisible while it happened and
+  // reappeared, wearing the user's own bubble, the moment the tab was reloaded or switched to.
+  // 3,249 such entries were sitting in 273 transcripts when this was found.
+  const INTERNAL_CONTEXT_BLOCK = [
+    "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
+    "OpenClaw runtime context (internal):",
+    "This context is runtime-generated, not user-authored. Keep internal details private.",
+    "",
+    "[Internal task completion event]",
+    "source: subagent",
+    "task: customerco-video-audit",
+    "status: completed successfully",
+    "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
+  ].join("\n");
+
+  function markerTexts(messages: unknown[]): string[] {
+    return messages.map((m) => {
+      const msg = m as { content?: unknown };
+      const c = msg.content;
+      if (typeof c === "string") {
+        return c;
+      }
+      if (Array.isArray(c)) {
+        return c.map((b) => (b as { text?: string })?.text ?? "").join("\n");
+      }
+      return "";
+    });
+  }
+
+  test("chat.history strips the internal runtime-context envelope the live stream already hides", () => {
+    const sessionId = "test-session-internal-context";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({ message: { role: "user", content: "what is the plan?" } }),
+      // A message that is ONLY the envelope: the user never wrote it, so it must not survive
+      // as an empty bubble either — it has to disappear entirely.
+      JSON.stringify({ message: { role: "user", content: INTERNAL_CONTEXT_BLOCK } }),
+      JSON.stringify({ message: { role: "assistant", content: "here it is" } }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    const texts = markerTexts(out);
+    expect(texts.join("\n")).not.toContain("BEGIN_OPENCLAW_INTERNAL_CONTEXT");
+    expect(texts.join("\n")).not.toContain("customerco-video-audit");
+    // The real conversation is untouched.
+    expect(texts).toContain("what is the plan?");
+    expect(texts).toContain("here it is");
+    expect(out).toHaveLength(2);
+  });
+
+  test("keeps the user's own words when the envelope is only appended to them", () => {
+    const sessionId = "test-session-internal-context-mixed";
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      JSON.stringify({ type: "session", version: 1, id: sessionId }),
+      JSON.stringify({
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `check the cameras\n\n${INTERNAL_CONTEXT_BLOCK}` }],
+        },
+      }),
+    ];
+    fs.writeFileSync(transcriptPath, lines.join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath);
+    expect(out).toHaveLength(1);
+    const text = markerTexts(out)[0] ?? "";
+    expect(text).toContain("check the cameras");
+    expect(text).not.toContain("BEGIN_OPENCLAW_INTERNAL_CONTEXT");
+  });
+
+  test("surfaces details.tokensEvicted as evictedTokens on the compaction marker (tree transcript)", () => {
+    const sessionId = "test-session-compaction-engram-tree";
+    const sessionFile = path.join(tmpDir, `${sessionId}.jsonl`);
+    const lines = [
+      {
+        type: "session",
+        version: 3,
+        id: sessionId,
+        cwd: tmpDir,
+        timestamp: "2026-09-07T08:00:00.000Z",
+      },
+      {
+        type: "message",
+        id: "ask",
+        parentId: null,
+        timestamp: "2026-09-07T08:00:01.000Z",
+        message: { role: "user", content: "Hello", timestamp: 1 },
+      },
+      { ...ENGRAM_COMPACTION_RECORD, parentId: "ask" },
+    ];
+    fs.writeFileSync(sessionFile, lines.map((line) => JSON.stringify(line)).join("\n"), "utf-8");
+
+    const out = readSessionMessages(sessionId, storePath, sessionFile);
+    const marker = out.find(
+      (m) => (m as { __openclaw?: { kind?: string } }).__openclaw?.kind === "compaction",
+    ) as { __openclaw?: { evictedTokens?: number } } | undefined;
+    expect(marker).toBeDefined();
+    expect(marker?.__openclaw?.evictedTokens).toBe(128260);
+  });
+
   // FORK 2026-07-28 — the fallback half of the branch above. A compaction entry with no summary
   // (or a whitespace-only one) must still render a readable marker rather than an empty bubble.
   test("falls back to the literal 'Compaction' when the entry carries no summary", () => {
@@ -795,6 +948,13 @@ describe("readLatestSessionUsageFromTranscript", () => {
     storePath = nextStorePath;
   });
 
+  // Several tests below spy on fs.readSync/fs.readFileSync/fs.fstatSync; vi.spyOn on an
+  // already-spied method returns the SAME persistent mock instance with its call history intact,
+  // so a spy left unrestored here would leak call counts into every later test's assertions.
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test("returns the latest assistant usage snapshot and skips delivery mirrors", () => {
     const sessionId = "usage-session";
     writeTranscript(tmpDir, sessionId, [
@@ -877,7 +1037,12 @@ describe("readLatestSessionUsageFromTranscript", () => {
     expect(snapshot?.costUsd).toBeCloseTo(0.0115, 8);
   });
 
-  test("reads earlier assistant usage outside the old tail window", () => {
+  test("falls back to a full scan when BOTH usage records sit outside the 256 KiB tail, and still aggregates them", () => {
+    // Plan task 6 (ruling R6): readLatestSessionUsageFromTranscript now reads only the last 256 KiB
+    // first. Both usage-bearing lines here are pushed well outside that window (80 filler lines
+    // before the second one, 20 more filler lines after it — the trailing block alone is ~400 KB,
+    // so the tail read lands entirely inside pure filler and finds nothing). That must trigger the
+    // full-scan fallback and reproduce EXACTLY the old, full-file aggregate — not a partial one.
     const sessionId = "usage-full-transcript";
     const filler = "x".repeat(20_000);
     writeTranscript(tmpDir, sessionId, [
@@ -909,6 +1074,8 @@ describe("readLatestSessionUsageFromTranscript", () => {
           },
         },
       },
+      // Pushes the second usage record itself outside the 256 KiB tail window (~400 KB of filler).
+      ...Array.from({ length: 20 }, () => ({ message: { role: "user", content: filler } })),
     ]);
 
     const snapshot = readLatestSessionUsageFromTranscript(sessionId, storePath);
@@ -924,6 +1091,97 @@ describe("readLatestSessionUsageFromTranscript", () => {
     expect(snapshot?.costUsd).toBeCloseTo(0.0063, 8);
   });
 
+  test("reads the tail only (bounded fs.readSync bytes, no fallback) when the last usage record is within 256 KiB of the end", () => {
+    // Part (b) of the task-6 brief: a 2 MB transcript whose only usage record sits in the final
+    // 10 KB must be served from the tail read alone — total bytes read must stay bounded, proving
+    // no full-file fallback ran.
+    const sessionId = "usage-tail-only";
+    const filler = "x".repeat(20_000);
+    writeTranscript(tmpDir, sessionId, [
+      { type: "session", version: 1, id: sessionId },
+      ...Array.from({ length: 110 }, () => ({ message: { role: "user", content: filler } })),
+      {
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          usage: {
+            input: 900,
+            output: 180,
+            cacheRead: 40,
+            cost: { total: 0.0033 },
+          },
+        },
+      },
+    ]);
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    expect(fs.statSync(transcriptPath).size).toBeGreaterThan(2 * 1024 * 1024);
+
+    // spyOn without mockImplementation still delegates to the real fs.readSync — it only observes.
+    const readSyncSpy = vi.spyOn(fs, "readSync");
+    const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
+
+    const snapshot = readLatestSessionUsageFromTranscript(sessionId, storePath);
+
+    expect(snapshot).toMatchObject({
+      modelProvider: "anthropic",
+      model: "claude-sonnet-4-6",
+      inputTokens: 900,
+      outputTokens: 180,
+      cacheRead: 40,
+      // totalTokens is a prompt/context snapshot (input + cacheRead), deliberately excluding
+      // output — see deriveSessionTotalTokens in src/agents/usage.ts.
+      totalTokens: 940,
+      totalTokensFresh: true,
+    });
+    expect(readFileSyncSpy).not.toHaveBeenCalled();
+    expect(readSyncSpy).toHaveBeenCalledTimes(1);
+    // fs.readSync is overloaded (a 3-arg options-object form exists alongside the 5-arg positional
+    // form); the implementation always uses the positional form (fd, buffer, offset, length,
+    // position), so the call args are cast to that shape rather than the union `Parameters<>` infers.
+    const [, , , length] = readSyncSpy.mock.calls[0] as unknown as [
+      number,
+      NodeJS.ArrayBufferView,
+      number,
+      number,
+      number | null,
+    ];
+    expect(length).toBeLessThanOrEqual(256 * 1024);
+  });
+
+  test("a transcript smaller than 256 KiB is read in full by the tail path (no fallback needed)", () => {
+    const sessionId = "usage-small-file";
+    writeTranscript(tmpDir, sessionId, [
+      { type: "session", version: 1, id: sessionId },
+      {
+        message: {
+          role: "assistant",
+          provider: "openai",
+          model: "gpt-5.4",
+          usage: { input: 10, output: 5, cacheRead: 0, cost: { total: 0.0001 } },
+        },
+      },
+      {
+        message: {
+          role: "assistant",
+          usage: { input: 20, output: 8, cacheRead: 0, cost: { total: 0.0002 } },
+        },
+      },
+    ]);
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    expect(fs.statSync(transcriptPath).size).toBeLessThan(256 * 1024);
+
+    const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
+    const snapshot = readLatestSessionUsageFromTranscript(sessionId, storePath);
+    expect(readFileSyncSpy).not.toHaveBeenCalled();
+    expect(snapshot).toMatchObject({
+      inputTokens: 30,
+      outputTokens: 13,
+      cacheRead: 0,
+    });
+    expect(snapshot?.costUsd).toBeCloseTo(0.0003, 8);
+  });
+
   test("returns null when the transcript has no assistant usage snapshot", () => {
     const sessionId = "usage-empty";
     writeTranscript(tmpDir, sessionId, [
@@ -933,6 +1191,127 @@ describe("readLatestSessionUsageFromTranscript", () => {
     ]);
 
     expect(readLatestSessionUsageFromTranscript(sessionId, storePath)).toBeNull();
+  });
+
+  test("a short read (file shrunk in place between fstatSync and readSync) does not corrupt the real latest record into a stale one — CONTROL vs the old buf.toString() behavior", () => {
+    // Controller fix round 1: readTranscriptTailChunk used to decode fs.readSync's WHOLE declared
+    // buffer, ignoring its actual return value. Buffer.alloc zero-fills, so a short read (the real,
+    // documented behavior of a positional fs.readSync near EOF — not an error) leaves the untouched
+    // tail as NUL bytes, glued directly onto whatever real content WAS read, with no separating
+    // newline. Reproduced here by lying only to fstatSync (a bigger `size` than the file truly is);
+    // the REAL fs.readSync then genuinely short-reads because the requested length exceeds the
+    // real, current EOF — exactly the shape of a concurrent in-place truncate/rewrite race.
+    const sessionId = "usage-short-read";
+    const header = { type: "session", version: 1, id: sessionId };
+    const earlyEntry = {
+      message: {
+        role: "assistant",
+        provider: "openai",
+        model: "early-model",
+        usage: { input: 100, output: 20, cacheRead: 5, cost: { total: 0.001 } },
+      },
+    };
+    // The file's REAL last byte is this record's closing brace — no trailing newline, matching how
+    // writeTranscript (and real transcripts mid-write) leave the tail.
+    const newLatestEntry = {
+      message: {
+        role: "assistant",
+        provider: "anthropic",
+        model: "new-latest-model",
+        usage: { input: 900, output: 300, cacheRead: 50, cost: { total: 0.009 } },
+      },
+    };
+    const realText = [header, earlyEntry, newLatestEntry].map((l) => JSON.stringify(l)).join("\n");
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    fs.writeFileSync(transcriptPath, realText, "utf-8");
+
+    // A size fstatSync would have reported BEFORE a since-happened shrink: bigger than the real
+    // file, but still well under the 256 KiB tail window so readStart stays 0.
+    const fakeStaleSize = realText.length + 10_000;
+    const realFstatSync = fs.fstatSync.bind(fs);
+    const fstatSpy = vi
+      .spyOn(fs, "fstatSync")
+      .mockImplementationOnce(
+        (fd: number) => ({ ...realFstatSync(fd), size: fakeStaleSize }) as fs.Stats,
+      );
+
+    // CONTROL: replicate ONLY the buggy line the fix removed (`buf.toString()` over the whole
+    // declared length) against the SAME real file and the SAME oversized length, to show exactly
+    // what the old code handed to the JSON parser.
+    const controlFd = fs.openSync(transcriptPath, "r");
+    const controlReadLen = Math.min(fakeStaleSize, USAGE_TAIL_MAX_BYTES);
+    const controlBuf = Buffer.alloc(controlReadLen);
+    const controlBytesRead = fs.readSync(controlFd, controlBuf, 0, controlReadLen, 0);
+    fs.closeSync(controlFd);
+    expect(controlBytesRead).toBe(realText.length); // the short read really happened
+    expect(controlBytesRead).toBeLessThan(controlReadLen);
+    const buggyRaw = controlBuf.toString("utf-8"); // the OLD, pre-fix decode
+    const fixedRaw = controlBuf.subarray(0, controlBytesRead).toString("utf-8"); // the NEW decode
+    expect(fixedRaw).toBe(realText);
+    expect(buggyRaw).not.toBe(realText);
+    expect(buggyRaw.startsWith(realText)).toBe(true);
+    expect(buggyRaw.length).toBeGreaterThan(realText.length);
+    const buggyLastLine = buggyRaw.split("\n").at(-1) ?? "";
+    const fixedLastLine = fixedRaw.split("\n").at(-1) ?? "";
+    // The real, current "latest" record — glued to NUL padding with no newline in between — fails
+    // to parse under the old decode. The earlier record's own line is untouched either way (each
+    // full line is terminated by its own real newline), so the old code would still find IT and
+    // report success instead of falling back — returning the stale early record.
+    expect(() => JSON.parse(buggyLastLine)).toThrow();
+    expect(JSON.parse(fixedLastLine)).toEqual(newLatestEntry);
+
+    // The real, shipped function: under the identical race, it must see the CURRENT tail correctly
+    // and report the true latest record (new-latest), not the stale early one.
+    const snapshot = readLatestSessionUsageFromTranscript(sessionId, storePath);
+    expect(fstatSpy).toHaveBeenCalledTimes(1);
+    expect(snapshot).toMatchObject({
+      modelProvider: "anthropic",
+      model: "new-latest-model",
+      inputTokens: 1_000,
+      outputTokens: 320,
+      cacheRead: 55,
+    });
+    expect(snapshot?.costUsd).toBeCloseTo(0.01, 8);
+  });
+
+  test("a multi-byte UTF-8 character split at the 256 KiB cut is dropped along with the rest of the partial line (no mangled character reaches the parser)", () => {
+    // The reviewer reasoned this case is already safe (the whole leading partial line is dropped,
+    // regardless of WHY it's partial) — pinned here cheaply since it shares the same tail-read path
+    // as the fix above.
+    const sessionId = "usage-utf8-cut";
+    const header = { type: "session", version: 1, id: sessionId };
+    // Padding built from "€" (U+20AC, 3 bytes in UTF-8). Verified by direct computation for this
+    // exact fixture (sessionId, N, and entry shapes all fixed): the 256 KiB tail boundary lands 1
+    // byte into a "€" sequence (readStart - runStart === 938017, mod 3 === 1) — a genuine
+    // mid-character split, not a probabilistic one.
+    const paddingText = "€".repeat(400_000);
+    const lines = [
+      header,
+      { message: { role: "user", content: paddingText } },
+      {
+        message: {
+          role: "assistant",
+          provider: "anthropic",
+          model: "claude-sonnet-4-6",
+          usage: { input: 700, output: 140, cacheRead: 30, cost: { total: 0.0025 } },
+        },
+      },
+    ];
+    writeTranscript(tmpDir, sessionId, lines);
+    const transcriptPath = path.join(tmpDir, `${sessionId}.jsonl`);
+    expect(fs.statSync(transcriptPath).size).toBeGreaterThan(USAGE_TAIL_MAX_BYTES);
+
+    const readFileSyncSpy = vi.spyOn(fs, "readFileSync");
+    const snapshot = readLatestSessionUsageFromTranscript(sessionId, storePath);
+    expect(readFileSyncSpy).not.toHaveBeenCalled();
+    expect(snapshot).toMatchObject({
+      modelProvider: "anthropic",
+      model: "claude-sonnet-4-6",
+      inputTokens: 700,
+      outputTokens: 140,
+      cacheRead: 30,
+    });
+    expect(snapshot?.costUsd).toBeCloseTo(0.0025, 8);
   });
 });
 

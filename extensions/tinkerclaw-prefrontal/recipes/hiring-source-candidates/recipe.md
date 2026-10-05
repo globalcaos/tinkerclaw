@@ -528,6 +528,10 @@ worse than no attachment, and the mismatch is invisible to whoever forwards it.
   search again. Re-scoring the existing pool moved a candidate from tenth to third — he
   had been in hand the whole time, mis-ranked by the old weights. Re-rank before
   re-searching.
+- **Newest CV is not first place (2026-09-16, 09-25, 09-28):** the architect had to say it three
+  times. For the ACME programmer role the summary PDF ranks **neural-net / computer-vision
+  first**, then complementary profiles. Completeness, recency, or a tidy CV does not
+  outrank the missing primary skill. Re-order the existing table before adding anyone new.
 - **Exclusion check as a silent drop:** An unresolved customer/supplier question against
   a strong candidate risks either quietly losing them or writing to them by mistake.
   Exclusions now gate contact rather than discovery, appear in the row, and carry a

@@ -16,15 +16,26 @@ import {
 import { resolveQuotaAwareAutoModel } from "../../agents/quota-aware-auto-model.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+import { emitJRouteDecisionFromPlan } from "../../infra/events/j-rows.js";
 import { readOrcaBias } from "../../infra/orca-bias-store.js";
+import {
+  buildThalamusBoardParts,
+  buildThalamusCatalog,
+  thalamusSuggestionFor,
+} from "../../infra/thalamus-board-build.js";
+import { readThalamusCooling } from "../../infra/thalamus-cooling.js";
+import {
+  buildThalamusTurnDecision,
+  emitThalamusTurnDecision,
+} from "../../infra/thalamus-turn-telemetry.js";
 import { getUsageSnapshot } from "../../infra/usage-snapshot-store.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
-import { relCostLookup } from "../../shared/rel-cost-table.js";
+import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import {
   classifyTaskDomain,
-  frontierRungsFor,
   type TaskDomain,
   THALAMUS_BIAS_GAP,
+  THALAMUS_DEFAULT_BIAS_IDX,
 } from "../../shared/thalamus-frontier.js";
 import {
   thalamusPlan,
@@ -32,7 +43,7 @@ import {
   type ReservedReason,
   type RungVeto,
 } from "../../shared/thalamus-plan.js";
-import { supplyStates, type SupplyId, type SupplyState } from "../../shared/thalamus-supply.js";
+import { type SupplyId, type SupplyState } from "../../shared/thalamus-supply.js";
 import { formatProviderModelRef } from "../model-runtime.js";
 import type { ThinkLevel } from "./directives.js";
 export {
@@ -247,6 +258,15 @@ export async function createModelSelectionState(params: {
   /** True when heartbeat.model was explicitly resolved for this run.
    *  In that case, skip session-stored overrides so the heartbeat selection wins. */
   hasResolvedHeartbeatModelOverride?: boolean;
+  /**
+   * FORK 2026-09-08 — `/model auto` (see model-directive-auto.ts). Clear the session's stored
+   * model pin INSIDE this turn, before choosing, and choose as Auto: no stored override, no
+   * directive, so the quota veto and THALAMUS run. This is the picker's Auto made atomic with the
+   * send; the fire-and-forget `sessions.patch{model:null}` it replaced lost a race it could not win
+   * when the store was slow. Not the "override not allowed" reset: `resetModelOverride` stays
+   * false, so no reverted-to notice fires.
+   */
+  resetStoredModelOverride?: boolean;
   /** The user's message for THIS turn, used ONLY to classify the task domain
    *  (`classifyTaskDomain`). Omitted => domain "general", i.e. the plain bias
    *  pick with no expertise switch. Never logged, never persisted. */
@@ -352,13 +372,49 @@ export async function createModelSelectionState(params: {
     }
   }
 
-  const storedOverride = resolveStoredModelOverride({
-    sessionEntry,
-    sessionStore,
-    sessionKey,
-    parentSessionKey,
-    defaultProvider,
-  });
+  // FORK 2026-09-08 — THE PICKER'S AUTO RIDES THE SEND (the architect, work tab: "I have Auto model
+  // selected, and I see a Sol thinking indicator ... Sol has reached a token limit"). The stored
+  // pin is cleared HERE, in the turn that asked for Auto, with the same write the allowlist branch
+  // above already uses — not by a separate patch the send then races. Provider/model fall back to
+  // the configured default so the quota substitution and THALAMUS below start from the anchor, and
+  // `storedOverride` is left null so this turn is not an explicit selection.
+  const resetStoredOverride = params.resetStoredModelOverride === true;
+  if (
+    resetStoredOverride &&
+    sessionEntry &&
+    (normalizeOptionalString(sessionEntry.modelOverride) ||
+      normalizeOptionalString(sessionEntry.providerOverride))
+  ) {
+    const { updated } = applyModelOverrideToSessionEntry({
+      entry: sessionEntry,
+      selection: { provider: defaultProvider, model: defaultModel, isDefault: true },
+    });
+    if (updated && sessionStore && sessionKey) {
+      sessionStore[sessionKey] = sessionEntry;
+      if (storePath) {
+        await (
+          await loadSessionStoreRuntime()
+        ).updateSessionStore(storePath, (store) => {
+          store[sessionKey] = sessionEntry;
+        });
+      }
+    }
+    logStage("auto-reset-cleared-stored-override", `to=${defaultProvider}/${defaultModel}`);
+  }
+  if (resetStoredOverride) {
+    provider = defaultProvider;
+    model = defaultModel;
+  }
+
+  const storedOverride = resetStoredOverride
+    ? null
+    : resolveStoredModelOverride({
+        sessionEntry,
+        sessionStore,
+        sessionKey,
+        parentSessionKey,
+        defaultProvider,
+      });
   // Skip stored session model override only when an explicit heartbeat.model
   // was resolved. Heartbeat runs without heartbeat.model should still inherit
   // the regular session/parent model override behavior.
@@ -416,10 +472,19 @@ export async function createModelSelectionState(params: {
   // side effect, which is exactly what this feature must not have. The auth
   // profile is therefore still validated against the Auto selection.
   let quotaSubstitution: QuotaAwareAutoSubstitution | undefined;
+  // FORK 2026-09-08 (the architect: "Now Grok is triggering in Auto, this is insane. Thalamus should
+  // select opus first, right?") — a stored override the RUNNER wrote (`modelOverrideSource:
+  // "auto"`, the fallback it landed on after a failure) is a starting point, not a pin. Counting
+  // it as explicit hard-stopped the quota veto and THALAMUS on every later turn of that session,
+  // so the tab that fell back to grok at 11:36 was still on grok at 12:00 with opus available and
+  // the dial at balanced. The bible's own warning about the router — "a written override would be
+  // indistinguishable from a user pin next turn" — is exactly this override, written elsewhere.
+  // A user pin, and a legacy pin with no source, stay explicit (agent-scope.ts draws the same line).
+  const storedOverrideIsAuto = storedOverride?.overrideSource === "auto";
   const hasExplicitModelSelection =
     params.hasModelDirective === true ||
     params.hasResolvedHeartbeatModelOverride === true ||
-    Boolean(storedOverride?.model);
+    (Boolean(storedOverride?.model) && !storedOverrideIsAuto);
   if (!hasExplicitModelSelection) {
     // `snapshot` and `nowMs` are ARGUMENTS, never read inside the resolver: it is pure so every
     // decision is reproducible in a test, and so the gateway and the browser cannot disagree about
@@ -512,60 +577,49 @@ export async function createModelSelectionState(params: {
   // not own. The `priced` guard means those fixtures never reach the import.
   let thalamusRoute: ThalamusAutoRoute | undefined;
   if (!hasExplicitModelSelection && process.env.OPENCLAW_THALAMUS_ROUTING !== "off") {
-    const configuredModels = cfg.agents?.defaults?.models ?? {};
-    const thalamusCatalog: Record<string, { intelligenceIndex: number }> = {};
-    for (const [rawKey, entry] of Object.entries(configuredModels)) {
-      const index = entry?.intelligenceIndex;
-      if (typeof index !== "number" || !Number.isFinite(index)) {
-        continue;
-      }
-      const slash = rawKey.indexOf("/");
-      if (slash <= 0 || slash === rawKey.length - 1) {
-        continue;
-      }
-      const ref = normalizeModelRef(rawKey.slice(0, slash), rawKey.slice(slash + 1));
-      thalamusCatalog[modelKey(ref.provider, ref.model)] = { intelligenceIndex: index };
-    }
+    // The board (catalog, reachable rungs, supplies, windows) is built by `infra/thalamus-board-build.ts`, the
+    // same function the v4 per-call router calls, so the two cannot drift. `thalamusCandidates` is still loaded
+    // by the dynamic import below and handed in, for the partial-mock reason above.
+    const thalamusCatalog = buildThalamusCatalog(cfg.agents?.defaults?.models);
     if (Object.keys(thalamusCatalog).length > 0) {
       try {
         const { thalamusCandidates } = await import("../../shared/thalamus-candidates.js");
-        const reachable = thalamusCandidates({
-          catalog: thalamusCatalog,
-          // `?? undefined`: the store returns `| null`, the module's param is
-          // `| undefined`. Both mean "no quota data", read as UNKNOWN, never headroom.
-          snapshot: getUsageSnapshot() ?? undefined,
-          nowMs: Date.now(),
-          // The key already carries "provider/model", which is exactly what
-          // `relCostKey` wants, so it goes straight through.
-          relCostFor: (key) => relCostLookup(key),
-          allowedModelKeys: allowedModelKeys.size > 0 ? allowedModelKeys : undefined,
-        });
-        const rungs = reachable.considered.flatMap((candidate) =>
-          candidate.relCost === undefined
-            ? []
-            : frontierRungsFor(candidate.key, candidate.intelligenceIndex, candidate.relCost),
-        );
-        const domain = classifyTaskDomain(params.promptText ?? "");
         const nowMs = Date.now();
-        // SUPPLIES — the inventory, not the provider list. Absent from `windows` is UNKNOWN,
-        // never headroom; `supplyStates` keeps that distinction and prices only what it can see.
-        const supplies = supplyStates(getUsageSnapshot()?.windows, nowMs);
+        const snapshot = getUsageSnapshot() ?? undefined;
+        const biasNow = readOrcaBias();
+        const suggestion = thalamusSuggestionFor(biasNow);
         // CONTEXT WINDOWS come from the live catalog, never from a table in this tree: the
         // catalog is the only copy that moves when a vendor raises a limit. A model the catalog
         // does not describe is UNKNOWN and passes the capacity veto (see `fitsContext`).
-        const ctxByKey = new Map<string, number>();
-        for (const entry of allowedModelCatalog) {
-          if (typeof entry.contextWindow === "number" && entry.contextWindow > 0) {
-            ctxByKey.set(modelKey(entry.provider, entry.id), entry.contextWindow);
-          }
-        }
+        const { reachable, rungs, supplies, contextWindowFor } = buildThalamusBoardParts({
+          catalog: thalamusCatalog,
+          thalamusCandidates,
+          // `?? undefined`: the store returns `| null`, the module's param is `| undefined`. Both mean
+          // "no quota data", read as UNKNOWN, never headroom.
+          snapshot,
+          nowMs,
+          allowedModelKeys,
+          suggestedModelKey: suggestion?.key,
+          windowRows: allowedModelCatalog,
+        });
+        const domain = classifyTaskDomain(params.promptText ?? "");
+        // THE SUGGESTION AND THE COOLING STORE (the architect, 2026-10-02, full deploy). The dial's stop may carry a
+        // suggested model and effort; the router starts from it and moves off only for a reason (a limit, a
+        // cooling supply, a context too small, the allowlist, or a rung that still wins for this task after the
+        // 10 % prior). A pin used to beat the plan outright; it is now a prior inside the plan. Suggestions apply
+        // on Auto only: this whole block is gated on `!hasExplicitModelSelection`. The key is normalised the way
+        // the catalog's keys are, so a file written as `claude-opus-5-5` meets the board's key.
+        const cooled = readThalamusCooling({ nowMs });
         const plan = thalamusPlan({
           rungs,
           supplies,
-          biasIdx: readOrcaBias(),
+          biasIdx: biasNow,
           domain,
           promptText: params.promptText,
-          contextWindowFor: (key) => ctxByKey.get(key),
+          cooling: cooled.set.size > 0 ? cooled.set : undefined,
+          coolingUntil: cooled.until,
+          suggestion,
+          contextWindowFor,
           // OPENROUTER IS UNFUNDED BY POLICY (the architect, 2026-09-03: "I will keep openrouter
           // without credits unless necessary because we are making too many mistakes trying to
           // route to it, and it is way too expensive for regular use"). It is METERED, so it
@@ -577,7 +631,26 @@ export async function createModelSelectionState(params: {
               : (new Set<SupplyId>(["openrouter"]) as ReadonlySet<SupplyId>),
           nowMs,
         });
+        // J-series row (logging.md §4.12 j.route.decision): the plan's own decision — domain,
+        // house, mode, score and margin — recorded once per planned turn. It is the router's
+        // choice, so it is written whether or not the suggestion for the dial's stop is the rung that runs.
+        if (plan) {
+          emitJRouteDecisionFromPlan(plan, { sessionKey: params.sessionKey });
+        }
         const route = plan?.route;
+        if (plan?.suggestion?.state === "ignored") {
+          // A suggestion for a model the board does not have is an unset stop, said once per turn it happens.
+          logStage(
+            "thalamus-suggestion-ignored",
+            `key=${plan.suggestion.key} reason=${plan.suggestion.reason}`,
+          );
+        }
+        if (plan?.suggestion?.state === "kept" && plan.suggestion.effortAsked) {
+          logStage(
+            "thalamus-suggestion-effort-missing",
+            `key=${plan.suggestion.key} asked=${plan.suggestion.effortAsked} ran=${plan.suggestion.effort || "(none)"}`,
+          );
+        }
         logStage(
           "thalamus-considered",
           `catalog=${Object.keys(thalamusCatalog).length} reachable=${reachable.considered.length} rungs=${rungs.length} domain=${domain}` +
@@ -587,6 +660,11 @@ export async function createModelSelectionState(params: {
         const routedKey = route?.rung.key ?? "";
         const slash = routedKey.indexOf("/");
         if (route && slash > 0 && slash < routedKey.length - 1) {
+          const rungEffort = route.rung.effort ?? "";
+          const chainKeys = (plan?.chain ?? []).map((r) => r.key);
+          const routeReason = plan?.reason ?? route.reason ?? "";
+          const routeBias = route?.biasIdx ?? biasNow ?? THALAMUS_DEFAULT_BIAS_IDX;
+          const routeDomain = route.domain ?? domain;
           const normalized = normalizeModelRef(
             routedKey.slice(0, slash),
             routedKey.slice(slash + 1),
@@ -601,25 +679,25 @@ export async function createModelSelectionState(params: {
             // route only when the model or the effort moved, which meant a turn that stayed on
             // Opus carried NO recovery chain — precisely the turn that stalls on a 429. The
             // chain is published whenever there is one.
-            if (movesModel || route.rung.effort || (plan && plan.chain.length > 0)) {
+            if (movesModel || rungEffort || chainKeys.length > 0) {
               thalamusRoute = {
                 provider: normalized.provider,
                 model: normalized.model,
-                effort: route.rung.effort,
-                domain: route.domain,
-                smart: route.rung.smart,
-                cost: route.rung.cost,
-                biasIdx: route.biasIdx,
-                reason: plan?.reason ?? route.reason,
+                effort: rungEffort,
+                domain: routeDomain,
+                smart: route.rung.smart ?? 0,
+                cost: route.rung.cost ?? 0,
+                biasIdx: routeBias,
+                reason: routeReason,
                 notice: formatThalamusRouteNotice({
-                  biasIdx: route.biasIdx,
-                  domain: route.domain,
+                  biasIdx: routeBias,
+                  domain: routeDomain,
                   provider: normalized.provider,
                   model: normalized.model,
-                  effort: route.rung.effort,
-                  reason: plan?.reason ?? route.reason,
+                  effort: rungEffort,
+                  reason: routeReason,
                 }),
-                chain: (plan?.chain ?? []).map((r) => r.key),
+                chain: chainKeys,
                 mode: plan?.mode ?? "solo",
                 panel: plan?.panel ?? [],
                 chair: plan?.chair,
@@ -628,11 +706,36 @@ export async function createModelSelectionState(params: {
                 vetoes: plan?.vetoes ?? [],
                 supplies: plan?.supplies ?? [],
               };
+              // The Tinker THALAMUS panel shows this turn's pick and why (src/infra/thalamus-turn-telemetry.ts).
+              emitThalamusTurnDecision(
+                params.sessionKey,
+                buildThalamusTurnDecision({
+                  routedKey: routeKey,
+                  effort: rungEffort,
+                  biasIdx: routeBias,
+                  domain: routeDomain,
+                  subject: plan?.subject,
+                  suggestion: plan?.suggestion,
+                  coolingShift: plan?.coolingShift,
+                  routeRung: { key: route.rung.key, effort: route.rung.effort },
+                  biasRung: route.biasRung
+                    ? { key: route.biasRung.key, effort: route.biasRung.effort }
+                    : undefined,
+                  vetoes: plan?.vetoes,
+                  mode: plan?.mode,
+                  panel: plan?.panel,
+                  chair: plan?.chair,
+                  chain: chainKeys,
+                  reason: routeReason,
+                }),
+              );
               provider = normalized.provider;
               model = normalized.model;
               logStage(
                 "thalamus-routed",
-                `to=${routeKey} effort=${route.rung.effort || "(none)"} bias=${route.biasIdx} domain=${route.domain}`,
+                `to=${routeKey} effort=${rungEffort || "(none)"} bias=${routeBias} domain=${routeDomain}` +
+                  (plan?.suggestion ? ` suggestion=${plan.suggestion.state}` : "") +
+                  (plan?.coolingShift ? ` cooling=${plan.coolingShift.supply}` : ""),
               );
             }
           } else {

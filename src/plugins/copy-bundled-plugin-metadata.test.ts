@@ -259,6 +259,42 @@ describe("copyBundledPluginMetadata", () => {
     expectBundledSkills(repoRoot, "tlon", ["./bundled-skills/@tloncorp/tlon-skill"]);
   });
 
+  it("copies declared runtime asset folders verbatim and replaces stale copies", () => {
+    const repoRoot = makeRepoRoot("openclaw-bundled-plugin-runtime-assets-");
+    const pluginDir = createPlugin(repoRoot, {
+      id: "guard",
+      packageName: "@openclaw/guard",
+      manifest: { runtimeAssets: ["./questions", "./hooks", "./missing"] },
+      packageOpenClaw: { extensions: ["./index.ts"] },
+    });
+    fs.mkdirSync(path.join(pluginDir, "questions"), { recursive: true });
+    fs.writeFileSync(path.join(pluginDir, "questions", "safety.json"), "{}\n", "utf8");
+    fs.mkdirSync(path.join(pluginDir, "hooks"), { recursive: true });
+    fs.writeFileSync(path.join(pluginDir, "hooks", "pre-tool.mjs"), "export {};\n", "utf8");
+    const stale = path.join(bundledPluginDir(repoRoot, "guard"), "questions", "retired.json");
+    fs.mkdirSync(path.dirname(stale), { recursive: true });
+    fs.writeFileSync(stale, "{}\n", "utf8");
+
+    copyBundledPluginMetadata({ repoRoot });
+
+    const dist = bundledPluginDir(repoRoot, "guard");
+    expect(fs.readFileSync(path.join(dist, "questions", "safety.json"), "utf8")).toBe("{}\n");
+    expect(fs.existsSync(path.join(dist, "hooks", "pre-tool.mjs"))).toBe(true);
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(fs.existsSync(path.join(dist, "missing"))).toBe(false);
+  });
+
+  it("refuses a runtime asset path that escapes the plugin root", () => {
+    const repoRoot = makeRepoRoot("openclaw-bundled-plugin-runtime-escape-");
+    createPlugin(repoRoot, {
+      id: "guard",
+      packageName: "@openclaw/guard",
+      manifest: { runtimeAssets: ["../outside"] },
+      packageOpenClaw: { extensions: ["./index.ts"] },
+    });
+    expect(() => copyBundledPluginMetadata({ repoRoot })).toThrow(/escapes plugin root/);
+  });
+
   it("omits missing declared skill paths and removes stale generated outputs", () => {
     const repoRoot = makeRepoRoot("openclaw-bundled-plugin-missing-skill-");
     createTlonSkillPlugin(repoRoot);

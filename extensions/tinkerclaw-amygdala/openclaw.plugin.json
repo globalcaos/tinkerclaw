@@ -1,0 +1,127 @@
+{
+  "id": "tinkerclaw-amygdala",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": false,
+  "runtimeAssets": ["./questions", "./cases", "./hooks"],
+  "name": "Amygdala (Jev)",
+  "description": "Digital amygdala: a typed fast judge (Jev) answers questions about each agent step and code chooses the response (proceed, note, proof check, ask, hold, send back). Ships disabled. Shadow mode by default: it decides and logs and enforces nothing through the judge. Replaces AMYGDALA v3.1 (tinkerclaw-learned-intuition) after cutover.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["shadow", "enforce"],
+        "default": "shadow",
+        "description": "shadow = decide and log, enforce nothing through the judge; enforce = the judge's responses reach the agent through the hooks."
+      },
+      "families": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "safety": {
+            "type": "boolean",
+            "default": true
+          },
+          "secondOpinion": {
+            "type": "boolean",
+            "default": true
+          },
+          "doubleCheck": {
+            "type": "boolean",
+            "default": true
+          },
+          "efficiency": {
+            "type": "boolean",
+            "default": false
+          },
+          "personality": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "enforceFamilies": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": ["safety", "secondOpinion", "doubleCheck", "efficiency", "personality"]
+        },
+        "default": [],
+        "description": "Families whose notes act while mode is shadow. A note only adds a line to the agent's context; nothing is held or blocked."
+      },
+      "jev": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "default": "https://api.typesafe.ai"
+          },
+          "model": {
+            "type": "string",
+            "default": "jev-latest"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "default": 2600
+          },
+          "sendRealSituations": {
+            "type": "boolean",
+            "default": false,
+            "description": "When false, real situations never leave the machine: only synthetic cases reach Jev. The key is read from the TYPESAFE_API_KEY environment variable only."
+          }
+        }
+      },
+      "dataDir": {
+        "type": "string",
+        "description": "Defaults to ~/.openclaw/data/amygdala-jev"
+      },
+      "failClosedOnLevel3": {
+        "type": "boolean",
+        "default": false,
+        "description": "When the judge is unreachable, hold danger-level-3 steps instead of letting them proceed. Hard rules always fail closed regardless."
+      },
+      "cost": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "eurPerUsd": {
+            "type": "number",
+            "default": 0.92
+          }
+        }
+      },
+      "learn": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "autoLoosen": {
+            "type": "boolean",
+            "default": true
+          },
+          "capsPerWeek": {
+            "type": "number",
+            "default": 2
+          },
+          "capsPerDay": {
+            "type": "number",
+            "default": 6
+          }
+        }
+      },
+      "hooks": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    }
+  }
+}

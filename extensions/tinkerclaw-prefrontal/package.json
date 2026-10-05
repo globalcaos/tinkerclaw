@@ -1,10 +1,15 @@
 {
   "name": "@globalcaos/tinker-prefrontal",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Prefrontal — real-time agent orchestration: BROCA recipe engine, ORCA routing, plan board and a force-directed topology panel. Part of the TinkerClaw fork.",
   "homepage": "https://github.com/globalcaos/tinkerclaw",
   "license": "MIT-0",
   "repository": "https://github.com/globalcaos/tinkerclaw",
+  "files": [
+    "dist/",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "type": "module",
   "main": "./index.ts",
   "openclaw": {

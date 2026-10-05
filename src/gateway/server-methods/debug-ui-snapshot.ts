@@ -6,10 +6,9 @@
  * file on disk, instead of round-tripping through the browser relay or
  * asking the user "what does it look like?". File mirror lives at
  *   ~/.openclaw/data/tinker-ui-snapshot.html         (newest render, ANY session)
- *   ~/.openclaw/data/tinker-ui-snapshot.json         (ts + viewport + url + styles + identity)
- *   ~/.openclaw/data/tinker-ui-snapshot.<slug>.html  (per-session — see the CAVEAT under 3 below:
- *   ~/.openclaw/data/tinker-ui-snapshot.<slug>.json   no current caller passes `sessionKey`, so
- *                                                     these two do NOT exist on disk yet)
+ *   ~/.openclaw/data/tinker-ui-snapshot.json         (ts + viewport + url + styles + identity + build)
+ *   ~/.openclaw/data/tinker-ui-snapshot.<slug>.html  (per-session pair — LIVE since 8cf0d941878,
+ *   ~/.openclaw/data/tinker-ui-snapshot.<slug>.json   2026-08-28: app.ts sends `sessionKey`/`tabId`)
  *
  * FORK 2026-08-28 — the probe used to destroy itself. Three defects, all measured live:
  *
@@ -34,7 +33,7 @@
  *     meta landed FIRST. The meta is renamed LAST now, so `meta.ts`/`meta.bytes` never describe
  *     bytes the html has not yet received.
  *
- *  3. A SINGLE GLOBAL SLOT WITH NO IDENTITY — SERVER HALF ONLY; **NOT YET LIVE**. Both paths were
+ *  3. A SINGLE GLOBAL SLOT WITH NO IDENTITY — FIXED END TO END (note below). Both paths were
  *     fixed constants and nothing in the payload named the session, so every tab showing any
  *     session overwrote the same file, last writer wins. That produced a textbook FALSE
  *     content-loss report: an injected test stamp was present inside `#messages` at 12:52:49Z and
@@ -42,12 +41,24 @@
  *     DIFFERENT conversation (stamped into `agent:main:tinker:mt4ata2g`; the file then showed
  *     `agent:main:tinker:mt79j0oy` for 12 consecutive samples). The message was durable on disk the
  *     whole time.
- *     CAVEAT — READ THIS BEFORE BELIEVING THE ARTEFACT HAS AN IDENTITY: this handler now ACCEPTS
- *     `sessionKey`/`tabId` and writes a per-session pair when it receives them, but the only
- *     production caller (`tinker-ui/src/app.ts` → `scheduleUiSnapshotDump`, ~line 6450) sends
- *     NEITHER. Until that call site is updated, `meta.sessionKey`/`meta.tabId`/`meta.sessionSlug`
- *     are `null` on every render, no `tinker-ui-snapshot.<slug>.*` file is ever created, and the
- *     artefact on disk is STILL the anonymous global slot. The client change is a separate unit.
+ *     LIVE END TO END since 8cf0d941878 (2026-08-28): `tinker-ui/src/app.ts` →
+ *     `scheduleUiSnapshotDump` sends `sessionKey`/`tabId` on every render, the per-session pair
+ *     exists on disk, and `meta.sessionKey`/`meta.tabId`/`meta.sessionSlug` are populated. (The
+ *     CAVEAT that stood here — "the caller sends NEITHER, the client change is a separate unit" —
+ *     was written in the very commit that shipped the client half and was stale on arrival; it
+ *     stood uncorrected for eleven days. Corrected 2026-09-08.)
+ *
+ *  4. NO BUILD PROVENANCE — FIXED 2026-09-08. The meta named the CONVERSATION but not the JS that
+ *     rendered it: the client announces only "Tinker UI webchat v0.3", so when a tab sat on stale
+ *     code for hours behind the HMR deferral (app.ts, `HMR_DEFER_CEILING_MS`) nothing on disk could
+ *     say whether a fix had reached it — a fix could be shown in a diff but never PROVEN against a
+ *     real tab. The client now sends `build` (`<short-sha>@<iso>`, spliced in by `define` in
+ *     tinker-ui/vite.config.ts) plus a small `clientMeta` bag (what the last history reconcile
+ *     did); both are persisted into BOTH sidecars, and the mirrored html carries the same stamp as
+ *     `#messages[data-ui-build]`. `build` is a string or `null` (an unbundled client), never
+ *     absent — a reader greps the key and gets an honest "unknown" rather than a missing field.
+ *     Proof against a live tab: `jq '{ts,build}' ~/.openclaw/data/tinker-ui-snapshot.<slug>.json`
+ *     and `grep -o 'data-ui-build="[^"]*"' …<slug>.html` must agree.
  *
  * Also: the client ships `.right-panels` AHEAD of the chat area — 449 KB of a 632 KB payload (the
  * `<!--CHAT-AREA-->` marker sits at byte 449,279 of 635,822). The panels echo arbitrary strings
@@ -349,6 +360,10 @@ export type UiSnapshotInput = {
   sessionKey?: unknown;
   tabId?: unknown;
   includePanels?: unknown;
+  /** `<short-sha>@<iso>` of the bundle that rendered the DOM (header §4). Untrusted RPC input. */
+  build?: unknown;
+  /** Opaque client-side render facts (history reconcile, …), carried VERBATIM like computedStyles. */
+  clientMeta?: unknown;
   /** Test seam: fires on each REAL (non-coalesced) filesystem step. */
   onStep?: (step: string) => void;
   /** Test seam: defaults to ~/.openclaw/data. Deliberately NOT forwarded from the RPC params. */
@@ -398,12 +413,20 @@ export async function writeUiSnapshot(input: UiSnapshotInput): Promise<UiSnapsho
     url: typeof input.url === "string" ? input.url : null,
     computedStyles: input.computedStyles ?? null,
     // FORK 2026-08-28 — identity. Without these the file is an anonymous global slot and a reader
-    // cannot tell a re-render from a different conversation. `sessionKey` is the RAW key, and it
-    // is `null` on every render until the `app.ts` call site starts sending it (see header §3).
+    // cannot tell a re-render from a different conversation. `sessionKey` is the RAW key; app.ts
+    // has sent it since 8cf0d941878 (header §3), so `null` here means an older or foreign caller.
     sessionKey,
     tabId,
     sessionSlug,
     panelsIncluded: includePanels,
+    // FORK 2026-09-08 — provenance (header §4). Identity above says which CONVERSATION the file
+    // holds; these say whether the code that rendered it is the code you just edited. `build` is
+    // the client's `__UI_BUILD__` (`<short-sha>@<iso>`) or `null` — always present, so a reader
+    // can tell "unstamped client" from "field not written". `clientMeta` is carried verbatim,
+    // exactly like `computedStyles`: its keys are the client's to define, and this file
+    // deliberately knows nothing about them, so a new client fact needs no server change.
+    build: typeof input.build === "string" ? input.build : null,
+    clientMeta: input.clientMeta ?? null,
   };
   const metaJson = `${JSON.stringify(meta, null, 2)}\n`;
 
@@ -464,7 +487,7 @@ export async function writeUiSnapshot(input: UiSnapshotInput): Promise<UiSnapsho
 }
 
 export const debugUiSnapshotHandlers: GatewayRequestHandlers = {
-  "debug.dumpUiSnapshot": async ({ params, respond }) => {
+  "debug.dumpUiSnapshot": async ({ params, respond, context }) => {
     const p = (params ?? {}) as {
       html?: unknown;
       css?: unknown;
@@ -474,6 +497,8 @@ export const debugUiSnapshotHandlers: GatewayRequestHandlers = {
       sessionKey?: unknown;
       tabId?: unknown;
       includePanels?: unknown;
+      build?: unknown;
+      clientMeta?: unknown;
     };
     const html = typeof p.html === "string" ? p.html : "";
     if (!html) {
@@ -483,21 +508,31 @@ export const debugUiSnapshotHandlers: GatewayRequestHandlers = {
       respond(true, { ok: false, reason: "html required" }, undefined);
       return;
     }
-    try {
-      const res = await writeUiSnapshot({
-        html,
-        url: p.url,
-        viewport: p.viewport,
-        computedStyles: p.computedStyles,
-        sessionKey: p.sessionKey,
-        tabId: p.tabId,
-        includePanels: p.includePanels,
-      });
-      // `htmlPath`/`metaPath` keep their old names and meaning for existing callers. `coalesced`
-      // is the field that keeps `bytes` honest — see UiSnapshotWriteResult.
-      respond(true, { ok: true, ...res }, undefined);
-    } catch (err) {
-      respond(true, { ok: false, reason: (err as Error).message }, undefined);
-    }
+    // FORK 2026-09-14 — acknowledge BEFORE the write lands. The client fires this on every
+    // render (300 ms debounce), ignores the answer ("best-effort; failures are silent"), and only
+    // ever needs the LATEST payload on disk — which enqueueCoalesced already guarantees. Waiting
+    // for the coalesced write to land made each call's latency the sum of every event-loop stall
+    // its ~8 awaits happened to straddle: on 2026-09-14 that was 656 calls, 99 minutes of
+    // measured server time, individual calls up to 65 s — all queue wait, none of it work the
+    // caller was waiting for. The write still happens, still atomically, still coalesced; a
+    // failure is logged instead of reported to a client that never read the report.
+    const sessionKey = typeof p.sessionKey === "string" ? p.sessionKey : null;
+    const write = writeUiSnapshot({
+      html,
+      url: p.url,
+      viewport: p.viewport,
+      computedStyles: p.computedStyles,
+      sessionKey: p.sessionKey,
+      tabId: p.tabId,
+      includePanels: p.includePanels,
+      build: p.build,
+      clientMeta: p.clientMeta,
+    });
+    respond(true, { ok: true, queued: true, sessionKey, bytes: html.length }, undefined);
+    write.catch((err) => {
+      context.logGateway.warn(
+        `[ui-snapshot] write failed for ${sessionKey ?? "<no session>"}: ${(err as Error).message}`,
+      );
+    });
   },
 };

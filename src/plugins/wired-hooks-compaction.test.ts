@@ -27,6 +27,10 @@ import {
 } from "../agents/embedded-agent-subscribe.handlers.compaction.js";
 
 describe("compaction hook wiring", () => {
+  // FORK 2026-09-24: pi-auto publishes the full A1 contract (src/infra/compaction-telemetry.ts).
+  // These contexts carry no pi session model and no modelProvider, so the lane is "embedded".
+  const PI_AUTO = { trigger: "pi-auto", lane: "embedded", provenance: "estimated" };
+
   beforeEach(() => {
     hookMocks.runner.hasHooks.mockClear();
     hookMocks.runner.hasHooks.mockReturnValue(false);
@@ -59,8 +63,6 @@ describe("compaction hook wiring", () => {
       maybeResolveCompactionWait: vi.fn(),
       incrementCompactionCount: vi.fn(),
       getCompactionCount: () => params.compactionCount ?? 0,
-      noteCompactionTokensAfter: vi.fn(),
-      getLastCompactionTokensAfter: vi.fn(() => undefined),
       ...(params.withRetryHooks
         ? {
             noteCompactionRetry: vi.fn(),
@@ -151,14 +153,16 @@ describe("compaction hook wiring", () => {
       expectedSessionKey: "agent:main:web-abc123",
     });
     expect(ctx.ensureCompactionPromise).toHaveBeenCalledTimes(1);
+    // FORK 2026-09-25: pi-auto's target names the run's session, so the bus event carries it.
     expect(hookMocks.emitAgentEvent).toHaveBeenCalledWith({
       runId: "r1",
+      sessionKey: "agent:main:web-abc123",
       stream: "compaction",
-      data: { phase: "start" },
+      data: { phase: "start", ...PI_AUTO },
     });
     expect(ctx.params.onAgentEvent).toHaveBeenCalledWith({
       stream: "compaction",
-      data: { phase: "start" },
+      data: { phase: "start", ...PI_AUTO },
     });
   });
 
@@ -186,12 +190,12 @@ describe("compaction hook wiring", () => {
       expectedSessionKey: "agent:main:web-xyz",
     });
     expect(ctx.incrementCompactionCount).toHaveBeenCalledTimes(1);
-    expect(ctx.noteCompactionTokensAfter).toHaveBeenCalledWith(undefined);
     expect(ctx.maybeResolveCompactionWait).toHaveBeenCalledTimes(1);
     expect(hookMocks.emitAgentEvent).toHaveBeenCalledWith({
       runId: "r2",
+      sessionKey: "agent:main:web-xyz",
       stream: "compaction",
-      data: { phase: "end", willRetry: false, completed: true },
+      data: { phase: "end", ...PI_AUTO, willRetry: false, completed: true },
     });
   });
 
@@ -215,7 +219,7 @@ describe("compaction hook wiring", () => {
     expect(hookMocks.emitAgentEvent).toHaveBeenCalledWith({
       runId: "r3",
       stream: "compaction",
-      data: { phase: "end", willRetry: true, completed: true },
+      data: { phase: "end", ...PI_AUTO, willRetry: true, completed: true },
     });
   });
 
@@ -254,8 +258,6 @@ describe("compaction hook wiring", () => {
       maybeResolveCompactionWait: vi.fn(),
       getCompactionCount: () => 1,
       incrementCompactionCount: vi.fn(),
-      noteCompactionTokensAfter: vi.fn(),
-      getLastCompactionTokensAfter: vi.fn(() => undefined),
     };
 
     runCompactionEnd(ctx, { willRetry: false, result: { summary: "compacted" } });

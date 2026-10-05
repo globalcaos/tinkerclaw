@@ -529,3 +529,28 @@ describe("buildReplyPayloads media filter integration", () => {
     expect(replyPayloads[0]?.text).toBe("hello world!");
   });
 });
+
+// FORK 2026-09-24: these payloads are the body of the backstop chat `final`, and the Tinker UI
+// reconciles it against the lifecycle `final` (the raw streamed text) by finding the shown text
+// inside it. Any rewrite here makes that impossible and the whole answer renders twice — which is
+// what `applyJarvisVoiceMarkup` did to every reply carrying a `**Jarvis:**` voice line.
+describe("buildReplyPayloads leaves the reply text as the model wrote it", () => {
+  it("does not wrap a **Jarvis:** voice line in presentation markup", async () => {
+    const text = "**Jarvis:** *The box is back.*\n\nThe cable was loose.\n\n**Jarvis:** *Done.*";
+    const { replyPayloads } = await buildReplyPayloads({ ...baseParams, payloads: [{ text }] });
+
+    expect(replyPayloads).toHaveLength(1);
+    expect(replyPayloads[0]?.text).toBe(text);
+  });
+
+  it("keeps the text unchanged when a stray HEARTBEAT_OK is stripped from it", async () => {
+    const { replyPayloads } = await buildReplyPayloads({
+      ...baseParams,
+      payloads: [{ text: "**Jarvis:** *All quiet.* HEARTBEAT_OK" }],
+    });
+
+    expect(replyPayloads).toHaveLength(1);
+    expect(replyPayloads[0]?.text).not.toContain("<span");
+    expect(replyPayloads[0]?.text).toContain("**Jarvis:** *All quiet.*");
+  });
+});

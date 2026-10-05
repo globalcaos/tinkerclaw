@@ -21,7 +21,7 @@ import {
 } from "../../plugins/memory-state.js";
 import type { TemplateContext } from "../templating.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
-import { __testing as replyRunRegistryTesting } from "./reply-run-registry.js";
+import { replyRunRegistry, __testing as replyRunRegistryTesting } from "./reply-run-registry.js";
 import { createMockTypingController } from "./test-helpers.js";
 
 function createCliBackendTestConfig() {
@@ -2531,5 +2531,104 @@ describe("runReplyAgent mid-turn rate-limit fallback", () => {
       mediaUrl: "https://example.test/image.png",
     });
     expect(payload?.text).toBeUndefined();
+  });
+});
+
+// FORK 2026-10-02 — bug-log [reset-refused-after-a-turn]. `sessions.reset` waits for every reply
+// operation of the session to go idle (session-reset-service.ts endSessionTurns) and answers
+// "still active" after 15 s. A turn that ended normally left its operation registered: nothing on
+// this runner's success path called complete(), and an abort clears only a QUEUED operation. Every
+// reset after a turn was refused until a gateway restart (9 of 12 resets since 2026-09-25; the 3
+// that worked came before any turn of their gateway). The next prompt hid it: createReplyOperation
+// force-clears a stale entry (FORK 2026-04-20).
+//
+// CONTROL. Before the fix the first two tests fail: the operation is still active after the turn.
+describe("runReplyAgent ends its reply operation", () => {
+  const SESSION_KEY = "agent:main:tinker:reset-probe";
+
+  function createRun() {
+    const typing = createMockTypingController();
+    const sessionCtx = {
+      Provider: "webchat",
+      OriginatingTo: "chat",
+      AccountId: "primary",
+      MessageSid: "msg",
+      Surface: "webchat",
+    } as unknown as TemplateContext;
+    const resolvedQueue = { mode: "interrupt" } as unknown as QueueSettings;
+    const followupRun = {
+      prompt: "hello",
+      summaryLine: "hello",
+      enqueuedAt: Date.now(),
+      run: {
+        sessionId: "session-reset-probe",
+        sessionKey: SESSION_KEY,
+        messageProvider: "webchat",
+        sessionFile: "/tmp/session.jsonl",
+        workspaceDir: "/tmp",
+        config: createCliBackendTestConfig(),
+        skillsSnapshot: {},
+        provider: "anthropic",
+        model: "claude",
+        thinkLevel: "low",
+        verboseLevel: "off",
+        elevatedLevel: "off",
+        bashElevated: { enabled: false, allowed: false, defaultLevel: "off" },
+        timeoutMs: 1_000,
+        blockReplyBreak: "message_end",
+      },
+    } as unknown as FollowupRun;
+    return runReplyAgent({
+      commandBody: "hello",
+      followupRun,
+      queueKey: SESSION_KEY,
+      resolvedQueue,
+      shouldSteer: false,
+      shouldFollowup: false,
+      isActive: false,
+      isStreaming: false,
+      typing,
+      sessionCtx,
+      sessionKey: SESSION_KEY,
+      defaultModel: "anthropic/claude-opus-4-6",
+      resolvedVerboseLevel: "off",
+      isNewSession: false,
+      blockStreamingEnabled: false,
+      resolvedBlockStreamingBreak: "message_end",
+      shouldInjectGroupIntro: false,
+      typingMode: "instant",
+    });
+  }
+
+  it("leaves no reply operation behind after a turn that answered", async () => {
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [{ text: "done" }], meta: {} });
+    await createRun();
+    expect(replyRunRegistry.isActive(SESSION_KEY)).toBe(false);
+    await expect(replyRunRegistry.waitForIdle(SESSION_KEY, 100)).resolves.toBe(true);
+  });
+
+  it("lets the session reset right after a turn that answered (sessions.reset path)", async () => {
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [{ text: "done" }], meta: {} });
+    await createRun();
+    const { endSessionTurns } = await import("../../gateway/session-reset-service.js");
+    vi.useFakeTimers();
+    const pending = endSessionTurns({
+      keys: { requestedKey: SESSION_KEY, canonicalKey: SESSION_KEY, storeKeys: [SESSION_KEY] },
+      reason: "session-reset",
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    await expect(pending).resolves.toMatchObject({ ended: true });
+  });
+
+  it("leaves none behind after a turn that answered nothing", async () => {
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({ payloads: [], meta: {} });
+    await createRun();
+    expect(replyRunRegistry.isActive(SESSION_KEY)).toBe(false);
+  });
+
+  it("leaves none behind after a turn that failed", async () => {
+    runEmbeddedPiAgentMock.mockRejectedValueOnce(new Error("boom"));
+    await createRun().catch(() => undefined);
+    expect(replyRunRegistry.isActive(SESSION_KEY)).toBe(false);
   });
 });

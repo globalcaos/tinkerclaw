@@ -1,7 +1,7 @@
 {
   "id": "tinkerclaw-fractal-reflection",
   "name": "Fractal Reflection",
-  "description": "v3 parallel post-turn reflection (bible §5.67a/b — supersedes the v1 in-band follow-up injector): a read-only triage lane grades each finished turn out-of-band, escalates real findings to a budgeted fix lane, records every decision (including skips) in a ledger, and runs under a derived quota governor with suspend/resume kill switch.",
+  "description": "Opt-in parallel post-turn reflection (bible §5.67a/b): a triage subagent grades each finished turn out-of-band on its own run, records every decision (including skips) in an append-only ledger, and runs under a quota governor with a suspend/resume kill switch. OFF BY DEFAULT and billed: when enabled it spawns one triage subagent per finished agent turn. The triage lane is read-only by enforcement — a before_tool_call hook blocks every tool except read/grep/find/ls/memory_search/memory_get for fractal lane sessions. Drop 1 ships the COLD arm only — findings are recorded as `flagged`; no fix lane exists, so nothing is edited on your behalf.",
   "activation": {
     "onStartup": true
   },
@@ -12,46 +12,50 @@
     "properties": {
       "enabled": {
         "type": "boolean",
-        "default": true,
-        "description": "Runtime master toggle. The plugin entry itself ships enabledByDefault:false — go-live is an explicit witnessed plugins.entries flag flip (bible §5.67b Deploy)."
+        "default": false,
+        "description": "Master opt-in, required IN ADDITION to enabling the plugin entry. Only a literal true arms it. While not true, no agent_end or before_tool_call hook is registered and no triage ever spawns. Turning it on means: one billed subagent run per finished main turn."
       },
       "triageArm": {
         "type": "string",
-        "enum": ["cold", "observer", "fork-warm"],
+        "enum": [
+          "cold",
+          "observer",
+          "fork-warm"
+        ],
         "default": "cold",
-        "description": "Triage transport arm. cold = fresh spawn (Drop 1, zero core code); observer = persistent per-main-session observer fed per-turn delta digests; fork-warm = --fork-session warm-cache fork (locks fixModel/model = parent — caches are per-model)."
+        "description": "Triage transport arm. NOT IN EFFECT in Drop 1 — only the cold arm (a fresh spawn per turn) is implemented and it is always used; observer and fork-warm are reserved names."
       },
       "triageThinkLevel": {
         "type": "string",
         "default": "low",
-        "description": "Think level for triage-lane spawns. Triage is structurally read-only (disallowedTools), so keep it cheap."
+        "description": "Think level for triage-lane spawns. NOT IN EFFECT in Drop 1 — the plugin subagent.run surface has no thinking parameter, so the host default applies; reserved so config written today keeps working."
       },
       "fixThinkLevel": {
         "type": "string",
         "default": "max",
-        "description": "Think level for escalated fix-lane spawns."
+        "description": "Think level for escalated fix-lane spawns. NOT IN EFFECT in Drop 1 — the fix lane is not implemented yet; this key is reserved so config written today keeps working when it lands."
       },
       "fixModel": {
         "type": "string",
-        "description": "Optional model override for fix-lane spawns. Default = the parent session's main model. Invalid for models with reasoning:false on thinking arms; fork-warm triage locks model = parent."
+        "description": "Optional model override for fix-lane spawns. NOT IN EFFECT in Drop 1 (no fix lane yet). Default = the parent session's main model. Invalid for models with reasoning:false on thinking arms; fork-warm triage locks model = parent."
       },
       "laneConcurrency": {
         "type": "integer",
         "minimum": 1,
         "default": 1,
-        "description": "Concurrency for the fractal command lanes (fractal-triage / fractal-fix)."
+        "description": "Concurrency for the fractal lanes. NOT IN EFFECT in Drop 1 — concurrency is fixed at one in-flight triage per session (single-flight, latest-wins)."
       },
       "maxFixTurnsCeiling": {
         "type": "integer",
         "minimum": 1,
         "default": 25,
-        "description": "Safety CEILING (design-principle #19) on a fix spawn's --max-turns; the working turn budget is derived per-spawn from the finding's scope and capped here. Exhaustion winds down gracefully (flagged + incomplete:true), never counts toward the circuit breaker."
+        "description": "Safety CEILING (design-principle #19) on a fix spawn's --max-turns. NOT IN EFFECT in Drop 1 (no fix lane yet). Exhaustion winds down gracefully (flagged + incomplete:true), never counts toward the circuit breaker."
       },
       "maxFixSpawnsPerHour": {
         "type": "integer",
         "minimum": 0,
         "default": 10,
-        "description": "Governor fallback CEILING on fix-lane spawns per hour, used when no fresh quota signal exists (fail-to-neutral throttle branch). The derived pressure score, not this number, is the primary throttle."
+        "description": "Hourly ceiling on fix-lane spawns. NOT IN EFFECT in Drop 1 (no fix lane yet). The triage lane is bounded by a fixed spawn-token bucket of 30 per hour and the circuit breaker."
       },
       "artifactRoots": {
         "type": "array",
@@ -59,7 +63,7 @@
           "type": "string"
         },
         "default": [],
-        "description": "Extra filesystem roots the fix lane may treat as artifact targets (in addition to runtime defaults in types.ts)."
+        "description": "Extra filesystem roots the fix lane may treat as artifact targets (in addition to runtime defaults in types.ts). NOT IN EFFECT in Drop 1 — no lane writes files today."
       }
     }
   }

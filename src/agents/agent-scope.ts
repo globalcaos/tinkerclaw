@@ -209,16 +209,52 @@ export function resolveEffectiveModelFallbacks(params: {
   agentId: string;
   hasSessionModelOverride: boolean;
   modelOverrideSource?: "auto" | "user";
+  /**
+   * FORK 2026-09-03 — THALAMUS's recovery ladder for THIS turn: ordered `provider/model` keys,
+   * at most one per OTHER supply, already normalized and already filtered to the BIAS dial's
+   * floor (`ThalamusAutoRoute.chain`, src/auto-reply/reply/model-selection.ts). Consumed
+   * VERBATIM — re-parsing or re-aliasing it here would stand a second normalizer beside the
+   * router's own, and `resolveFallbackCandidates` already resolves aliases and de-duplicates
+   * every candidate against the primary by `modelKey`.
+   *
+   * It is a COMPUTED ladder, so it holds the LOWEST precedence: it fills a vacuum, it never
+   * overrules a human. That vacuum is the normal case — `agents.defaults.model.fallbacks` is
+   * literally `[]` in the live config, so the complete failover machinery underneath
+   * (`runWithModelFallback`, auth-profile rotation, `FallbackSummaryError`) has been handed an
+   * empty ladder on every turn, and a 429 therefore ENDS the turn instead of moving it to
+   * another supply. Absent or empty means Thalamus found no alternative — a fact, not a default
+   * worth hiding — and today's behaviour then stands unchanged in every branch.
+   */
+  thalamusChain?: readonly string[];
 }): string[] | undefined {
-  const agentFallbacksOverride = resolveAgentModelFallbacksOverride(params.cfg, params.agentId);
-  if (!params.hasSessionModelOverride) {
-    return agentFallbacksOverride;
-  }
-  if (params.modelOverrideSource !== "auto") {
+  // A USER PIN IS A HARD STOP, AND IT IS CHECKED FIRST. "Run it on THIS model" must never be
+  // answered by a different one, so a pinned turn keeps its empty ladder even when a chain is
+  // handed in. This is the second of two independent guards — THALAMUS also declines to route a
+  // pinned turn at all (`hasExplicitModelSelection` gates the whole router) — because a single
+  // guard on a rule this load-bearing is a hope, not an invariant.
+  if (params.hasSessionModelOverride && params.modelOverrideSource !== "auto") {
     return [];
   }
+  const agentFallbacksOverride = resolveAgentModelFallbacksOverride(params.cfg, params.agentId);
+  // AN AGENT-LEVEL DECISION IS FINAL, INCLUDING THE EMPTY ONE. `[]` here is not "nothing
+  // configured": it is `fallbacks: []`, or an agent that owns a primary and lists no fallbacks —
+  // both of which mean "this agent does not fall back". A computed chain must not reopen a door
+  // the architect explicitly closed, so `undefined` (nothing configured at all) is the ONLY
+  // state that lets the chain through.
+  if (agentFallbacksOverride !== undefined) {
+    return agentFallbacksOverride;
+  }
   const defaultFallbacks = resolveAgentModelFallbackValues(params.cfg.agents?.defaults?.model);
-  return agentFallbacksOverride ?? defaultFallbacks;
+  const chain = params.thalamusChain ?? [];
+  // THE EMPTINESS TEST LOOKS THROUGH `undefined`. Returning `undefined` is not "no ladder": it
+  // tells `resolveFallbackCandidates` to go and resolve `agents.defaults.model.fallbacks`
+  // itself. So the vacuum has to be measured on the DEFAULTS, never on this function's return
+  // value — otherwise the chain would never be reached on the ordinary Auto turn (no session
+  // override, no agent override), which is exactly the turn this fix exists for.
+  if (defaultFallbacks.length === 0 && chain.length > 0) {
+    return [...chain];
+  }
+  return params.hasSessionModelOverride ? defaultFallbacks : undefined;
 }
 
 function normalizePathForComparison(input: string): string {

@@ -83,7 +83,14 @@ import {
   ChatAbortParamsSchema,
   type ChatEvent,
   ChatEventSchema,
+  type ChatHistoryArchive,
+  ChatHistoryArchiveSchema,
+  type ChatHistoryCursor,
+  ChatHistoryCursorSchema,
+  type ChatHistoryParams,
   ChatHistoryParamsSchema,
+  type ChatHistoryResult,
+  ChatHistoryResultSchema,
   type ChatInjectParams,
   ChatInjectParamsSchema,
   ChatSendParamsSchema,
@@ -579,7 +586,8 @@ export const validateExecApprovalsNodeSetParams = ajv.compile<ExecApprovalsNodeS
   ExecApprovalsNodeSetParamsSchema,
 );
 export const validateLogsTailParams = ajv.compile<LogsTailParams>(LogsTailParamsSchema);
-export const validateChatHistoryParams = ajv.compile(ChatHistoryParamsSchema);
+export const validateChatHistoryParams = ajv.compile<ChatHistoryParams>(ChatHistoryParamsSchema);
+export const validateChatHistoryResult = ajv.compile<ChatHistoryResult>(ChatHistoryResultSchema);
 export const validateChatSendParams = ajv.compile(ChatSendParamsSchema);
 export const validateChatAbortParams = ajv.compile<ChatAbortParams>(ChatAbortParamsSchema);
 export const validateChatInjectParams = ajv.compile<ChatInjectParams>(ChatInjectParamsSchema);
@@ -763,6 +771,9 @@ export {
   ExecApprovalRequestParamsSchema,
   ExecApprovalResolveParamsSchema,
   ChatHistoryParamsSchema,
+  ChatHistoryArchiveSchema,
+  ChatHistoryCursorSchema,
+  ChatHistoryResultSchema,
   ChatSendParamsSchema,
   ChatInjectParamsSchema,
   UpdateRunParamsSchema,
@@ -910,5 +921,9 @@ export type {
   WebPushTestParams,
   UpdateStatusParams,
   UpdateRunParams,
+  ChatHistoryParams,
+  ChatHistoryArchive,
+  ChatHistoryCursor,
+  ChatHistoryResult,
   ChatInjectParams,
 };

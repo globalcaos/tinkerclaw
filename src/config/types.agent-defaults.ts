@@ -236,6 +236,11 @@ export type AgentDefaultsConfig = {
   repoRoot?: string;
   /** Optional full system prompt replacement. Primarily for prompt debugging and controlled experiments. */
   systemPromptOverride?: string;
+  /**
+   * FORK: the agent's own opening identity sentence, placed FIRST in the system prompt.
+   * It is ADDED ahead of the harness sentence, never a replacement for it.
+   */
+  identityLine?: string;
   /** Provider-independent prompt overlays applied by model family. */
   promptOverlays?: PromptOverlaysConfig;
   /** Skip bootstrap (BOOTSTRAP.md creation, etc.) for pre-configured deployments. */

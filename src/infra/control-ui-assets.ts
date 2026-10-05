@@ -1,6 +1,5 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { runCommandWithTimeout } from "../process/exec.js";
 import { defaultRuntime, type RuntimeEnv } from "../runtime.js";
 import * as controlUiFsRuntime from "./control-ui-assets.fs.runtime.js";
 import { resolveOpenClawPackageRoot, resolveOpenClawPackageRootSync } from "./openclaw-root.js";
@@ -274,78 +273,18 @@ export type EnsureControlUiAssetsResult = {
   message?: string;
 };
 
-function summarizeCommandOutput(text: string): string | undefined {
-  const lines = text
-    .split(/\r?\n/g)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  if (!lines.length) {
-    return undefined;
-  }
-  const last = lines.at(-1);
-  if (!last) {
-    return undefined;
-  }
-  return last.length > 240 ? `${last.slice(0, 239)}…` : last;
-}
-
 export async function ensureControlUiAssetsBuilt(
-  runtime: RuntimeEnv = defaultRuntime,
-  opts?: { timeoutMs?: number },
+  _runtime: RuntimeEnv = defaultRuntime,
+  _opts?: { timeoutMs?: number },
 ): Promise<EnsureControlUiAssetsResult> {
   const health = await resolveControlUiDistIndexHealth({ argv1: process.argv[1] });
-  const indexFromDist = health.indexPath;
   if (health.exists) {
     return { ok: true, built: false };
   }
-
-  const repoRoot = resolveControlUiRepoRoot(process.argv[1]);
-  if (!repoRoot) {
-    const hint = indexFromDist
-      ? `Missing Control UI assets at ${indexFromDist}`
-      : "Missing Control UI assets";
-    return {
-      ok: false,
-      built: false,
-      message: `${hint}. Build them with \`pnpm ui:build\` (auto-installs UI deps).`,
-    };
-  }
-
-  const indexPath = resolveControlUiDistIndexPathForRoot(repoRoot);
-  if (controlUiFsRuntime.existsSync(indexPath)) {
-    return { ok: true, built: false };
-  }
-
-  const uiScript = path.join(repoRoot, "scripts", "ui.js");
-  if (!controlUiFsRuntime.existsSync(uiScript)) {
-    return {
-      ok: false,
-      built: false,
-      message: `Control UI assets missing but ${uiScript} is unavailable.`,
-    };
-  }
-
-  runtime.log("Control UI assets missing; building (ui:build, auto-installs UI deps)…");
-
-  const build = await runCommandWithTimeout([process.execPath, uiScript, "build"], {
-    cwd: repoRoot,
-    timeoutMs: opts?.timeoutMs ?? 10 * 60_000,
-  });
-  if (build.code !== 0) {
-    return {
-      ok: false,
-      built: false,
-      message: `Control UI build failed: ${summarizeCommandOutput(build.stderr) ?? `exit ${build.code}`}`,
-    };
-  }
-
-  if (!controlUiFsRuntime.existsSync(indexPath)) {
-    return {
-      ok: false,
-      built: true,
-      message: `Control UI build completed but ${indexPath} is still missing.`,
-    };
-  }
-
-  return { ok: true, built: true };
+  // FORK 2026-09-10: stock Control UI retired. Do not auto-build ui/.
+  return {
+    ok: true,
+    built: false,
+    message: "Stock Control UI assets are retired; Tinker is the operator UI.",
+  };
 }

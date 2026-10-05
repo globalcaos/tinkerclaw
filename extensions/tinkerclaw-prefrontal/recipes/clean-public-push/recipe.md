@@ -45,10 +45,13 @@ A repo that is N commits ahead of its public remote leaks PII through **history*
 
 ## Step 0 — backup + clean worktree + collapse
 
+- **Claim the publish first (2026-09-29).** A publish, a history rewrite or a force-push must have exactly one owner. Before any of them, check for a sibling session working the same request (`ListAgents`, and `ps -eo args | grep "[f]ilter-repo"`), then create a claim file with `mkdir ~/.local/state/tinkerclaw/locks/publish-<repo>` (the command fails if the directory exists) and write your session name into it. If the directory already exists, stop and message its owner. Remove it when you finish. On 2026-09-29 one prompt reached two sessions; both started the same public-history rewrite, and one ran `filter-repo` inside the other's working mirror before either noticed.
+
 - Back up WIP: `git -C {{repoRoot}} diff HEAD > $HOME/<repo>-wip-backup-<ts>.patch` (+ `git status --short`).
 - `git -C {{repoRoot}} fetch {{remote}}`.
-- Throwaway worktree at the tip (no WIP): `git -C {{repoRoot}} worktree add --detach /tmp/clean-pub $(git -C {{repoRoot}} rev-parse {{branch}})`; symlink `node_modules` (+ sub-package) for build/test.
+- Throwaway worktree at the tip (no WIP): `git -C {{repoRoot}} worktree add --detach /tmp/clean-pub $(git -C {{repoRoot}} rev-parse {{branch}})`; symlink `node_modules` (+ sub-package) for build/test. Link only when no step runs the package manager's install; otherwise install the worktree's own from the store (`CI=true pnpm install --frozen-lockfile`), because pnpm purges a linked `node_modules` it did not create, and that folder is the shared checkout's (master-worker-coding Step 1, 2026-10-01).
 - Collapse: `git -C /tmp/clean-pub reset --soft {{remote}}/{{branch}}` → whole net diff staged on the public base; tree = clean tip content.
+- **Deletion check (2026-09-29).** The public branch can hold content the source branch never had (skills published straight onto it). The collapse makes the public tree equal to the source tip, so each such path becomes a silent public DELETION. List them: `git -C /tmp/clean-pub diff --cached --diff-filter=D --name-only {{remote}}/{{branch}}`. For each one, either bring it back to the source branch first or confirm the deletion is intended. The first run of this check found 14 public skills that a publish would have deleted.
 
 ## Step 1 — identify PII files
 
@@ -65,9 +68,11 @@ Apply `{{replacements}}` in order across the PII files (e.g. `perl -i -pe 's/<fi
 ## Step 4 — verify + squash-commit + FF push
 
 - Verify the sanitized tree: touched tests (single-file, not parallel), a typecheck, and `{{verifyCmd}}` (slow — a `timeout` kill is NOT a failure; confirm all _run_ checks pass).
+- **Run the touched tests through the repo's own runner (2026-10-05).** One `pnpm vitest run <files>` call over files from several vitest projects stops before any test with `Projects "unit" and "unit-fast" have different 'maxWorkers' but same 'sequence.groupOrder'` and reports "no tests". Use `node scripts/test-projects.mjs <root files>`, then `cd tinker-ui && npx vitest run <ui files>`; sum the "Test Files … passed" lines and compare with the number of files you passed in.
+- **Build the exact commit you will push** with `scripts/deploy-worktree.sh --sha <squash> --dry-run`. On 2026-10-05 develop itself failed the plugin-sdk dts step (a type error a day old, every vitest green); fix it on the source branch first, then apply the same fix to the squash.
 - One squashed commit (message summarizes the published body of work; co-author trailer).
 - Assert FF: `HEAD^ == {{remote}}/{{branch}}`. Re-run the PII gate on `git diff {{remote}}/{{branch}}..HEAD`.
-- `git push {{remote}} HEAD:{{branch}}` (fast-forward; NO force-push). The repo's `core.hooksPath` pre-push runs as a backstop.
+- `git push {{remote}} HEAD:{{branch}}` (fast-forward; NO force-push). The repo's `core.hooksPath` pre-push runs as a backstop. That hook also runs `pnpm bible:invariants`, which takes more than 15 minutes: run the push as a tracked background job with a limit of an hour or more. A shorter `timeout` kills the hook and the push with it (2026-10-05: rc 124, nothing pushed).
 - Clean up the worktree + temp scripts; keep the WIP backup until confirmed.
 
 ## Don't-regress

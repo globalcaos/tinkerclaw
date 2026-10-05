@@ -12,6 +12,40 @@
 // the top-left outline … use the graph in €/task"). The ring now marks a FRONTIER
 // RUNG, not a considered model; the path is the frontier in task-cost order.
 //
+// WHAT THE 2026-09-05 RESCALE TAUGHT. Artificial Analysis rebased the Intelligence
+// Index overnight: every scored model fell ~15-25% AND some pairs SWAPPED ORDER. The
+// dominated-model test named its example — Opus 4.8 — and went red, because on the new
+// board Opus 4.8 sits ON the frontier and OPUS 5, the model that used to do the
+// dominating, is the one shut out. Nothing was wrong with the frontier: a fixture had
+// pinned a RANKING, which is denominated in a vendor's units and therefore theirs to
+// change. Same class as the panel floor pinned as the literal 53 the same morning
+// (aa-panel-floor.ts). So no test here may name WHICH model is dominated, any more than
+// it may name which are enveloped: it asks the same shared functions and asserts only
+// the RELATION between their answers, which is ours and survives any rescale.
+//
+// AND ONE STEP FURTHER, because "goes red loudly on the next rescale" is still a suite
+// a vendor can redden. Sweeping the real board for whoever is shut out today buys the
+// relation but not the QUESTION: a board on which nobody is dominated leaves the sweep
+// with nothing to check. So the victim is also CONSTRUCTED — `shadowOf` builds a model
+// from the live frontier's own floor rung, moved by DIMENSIONLESS ratios (0.9x its
+// intelligence, 2x its €/task), which pins no AA quantity. A dominated model therefore
+// exists whatever AA does to the board, and its mirror image (0.5x the floor's €/task,
+// same intelligence) is the CONTROL that the missing ring is domination and not
+// unreachability. The sweep over the REAL models runs beside them, not instead of them.
+//
+// READ THAT FRONTIER WITH ONE CAVEAT, open as this was written (2026-09-05): the two AA
+// tables are on DIFFERENT SCALES. `aa-effort-index.ts` (MEASURED) was regenerated after
+// the rebase; `aa-effort-estimate.ts` (ESTIMATED) is still the 2026-09-04 pre-rebase
+// generation, and `frontierRungsFor` Pareto-compares the two in one plane. Its own
+// generator promises an estimate is "clamped between the model's measured neighbours",
+// and that promise is violated INSIDE single families today — claude-opus-4-8 xhigh
+// estimates 55.73 against its own measured max of 46.44, claude-sonnet-5 xhigh 53.68
+// against a measured 45.11 — which is the cheapest available proof of the split. THAT,
+// not the frontier code, is why Opus 5 currently holds no frontier rung at all, in the
+// chart and in the router alike. The repair is to regenerate the estimate table and to
+// gate the clamp invariant in the AA tables' own suite. Nothing in THIS file may
+// compensate for it: a test that quietly absorbs a data split stops reporting it.
+//
 // Each safety claim carries its CONTROL: first a fixture where the old/naive
 // answer really differs, then the assertion. An assertion with no control passes
 // equally against a broken fixture.
@@ -33,7 +67,7 @@ import {
   scPointsFor,
   scRungTag,
   scThalamusRelCost,
-  scTokenRatio,
+  scTaskCostFactor,
   scWrapFooter,
   SC_THALAMUS,
   type ScModel,
@@ -82,19 +116,24 @@ const COPILOT_OPUS: Fixture = {
   ctx: 200_000,
   color: "#BF09A3",
 };
-/** 4.0 — also over the ceiling, from a different vendor. */
-const GLM53: Fixture = {
-  id: "openrouter/z-ai/glm-5.3",
-  name: "GLM 5.3",
+/** 4.0 — also over the ceiling, from a different vendor. GLM 5 Turbo, not a model on
+ *  the picker: its table row is a frozen legacy price. This fixture named glm-5.3 until
+ *  2026-10-01, when the nightly re-price (live endpoints, Baidu $0.4884) took glm-5.3
+ *  under the ceiling and two tests went red on correct data — a fixture for "dear" must
+ *  not borrow the id of a model whose price the cron moves. */
+const GLM_DEAR: Fixture = {
+  id: "openrouter/z-ai/glm-5-turbo",
+  name: "GLM 5 Turbo",
   provider: "openrouter",
   index: 50,
   relCost: 4,
   ctx: 128_000,
   color: "#80EE24",
 };
-/** REACHABLE (same table price as Opus 5, under the ceiling) but DOMINATED on
- *  every rung: dearer per task AND dumber than an Opus 5 rung at each effort. The
- *  old envelope ringed it; the frontier must not. */
+/** REACHABLE — the same table price as Opus 5, under the ceiling — on a ladder that
+ *  interleaves with Opus 5's rung for rung, so the two trade frontier rungs and one of
+ *  them can end up with none. WHICH one is AA's call, not ours: it was Opus 4.8 until
+ *  the 2026-09-05 rescale and is Opus 5 after it. Nothing below names either. */
 const OPUS48: Fixture = {
   id: "claude-code/claude-opus-4-8",
   name: "Opus 4.8",
@@ -135,7 +174,7 @@ const SOLE_A: Fixture = {
 };
 const SOLE_B: Fixture = { ...SOLE_A, id: "acme/beta", name: "Beta", index: 60, relCost: 0.2 };
 
-const CATALOG: Fixture[] = [OPUS5, SONNET5, HAIKU45, COPILOT_OPUS, GLM53];
+const CATALOG: Fixture[] = [OPUS5, SONNET5, HAIKU45, COPILOT_OPUS, GLM_DEAR];
 
 /** THE REFERENCE ANSWER for REACH — the function itself, called with exactly the
  *  arguments the renderer builds. Never a literal. */
@@ -253,7 +292,7 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
 
   test("the frontier's rungs are the chart's own points: same €/task, same index", () => {
     // frontierRungsFor(id, index, relCost) must price a rung exactly as the dots
-    // loop does (`p.cost * scTokenRatio(id, lvl)`), or a ring lands beside its dot.
+    // loop does (`p.cost * scTaskCostFactor(id, lvl)`), or a ring lands beside its dot.
     const byId = new Map(CATALOG.map((m) => [m.id, m]));
     for (const c of reference(CATALOG).considered) {
       const m = byId.get(c.key)!;
@@ -263,7 +302,7 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
       for (const p of pts) {
         const r = rungs.find((x) => x.effort === p.lvl);
         expect(r, `${m.id}@${p.lvl}`).toBeDefined();
-        expect(r!.cost).toBeCloseTo(p.cost * scTokenRatio(m.id, p.lvl), 9);
+        expect(r!.cost).toBeCloseTo(p.cost * scTaskCostFactor(m.id, p.lvl), 9);
         expect(r!.smart).toBe(p.smart);
       }
     }
@@ -271,15 +310,28 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
 
   test("a model priced over the ceiling loses every ring — in BOTH the function and the render", () => {
     // CONTROL: under its real price the model IS considered and does ring…
-    const cheap = { ...GLM53, id: "claude-code/claude-sonnet-4-6", relCost: 0.0893 };
-    const withCheap = [HAIKU45, cheap];
+    //
+    // RESCALE 2026-09-05: the companion's smartness is DERIVED, not typed. This control
+    // paired `cheap` with HAIKU45's hardcoded `index: 40`, which sat below sonnet-4-6's
+    // ladder until Artificial Analysis rebased the Intelligence Index — after which
+    // sonnet-4-6's own max fell to 38.4674, haiku@minimal became cheapest AND smartest,
+    // and it dominated every rung of `cheap`. The control went red on correct data and
+    // took the nightly refresh gate with it. Price must be the ONLY thing under test
+    // here, so the companion is pinned strictly below `cheap`'s weakest rung, wherever
+    // the vendor moves that rung next.
+    const cheap = { ...GLM_DEAR, id: "claude-code/claude-sonnet-4-6", relCost: 0.0893 };
+    const cheapFloor = Math.min(
+      ...frontierRungsFor(cheap.id, cheap.index, cheap.relCost).map((r) => r.smart),
+    );
+    const dumber = { ...HAIKU45, index: cheapFloor - 1 };
+    const withCheap = [dumber, cheap];
     expect(reference(withCheap).considered.map((c) => c.key)).toContain(cheap.id);
     expect(frontierOf(withCheap).some((r) => r.key === cheap.id)).toBe(true);
     expect(envelopedIds(renderSmartCostChart(withCheap))).toContain(cheap.id);
-    // …and swapping in the id the table prices at 4.0 removes it from both.
-    const withDear = [OPUS5, GLM53];
-    expect(reference(withDear).considered.map((c) => c.key)).not.toContain(GLM53.id);
-    expect(envelopedIds(renderSmartCostChart(withDear))).not.toContain(GLM53.id);
+    // …and swapping in the id the table prices at 4.0 (glm-5-turbo) removes it from both.
+    const withDear = [OPUS5, GLM_DEAR];
+    expect(reference(withDear).considered.map((c) => c.key)).not.toContain(GLM_DEAR.id);
+    expect(envelopedIds(renderSmartCostChart(withDear))).not.toContain(GLM_DEAR.id);
   });
 
   test("a BRAND-NEW frontier model appears in the envelope with no code change", () => {
@@ -301,22 +353,86 @@ describe("thalamus envelope — membership is the FRONTIER's answer, never a lis
   });
 
   test("a CONSIDERED but DOMINATED model (dearer per task AND dumber) gets NO ring", () => {
-    const models = [OPUS5, OPUS48];
-    // CONTROL: thalamus can REACH it — the old envelope would have ringed it.
-    expect(reference(models).considered.map((c) => c.key)).toContain(OPUS48.id);
-    // The function's verdict: every one of its rungs is dominated by some Opus 5 rung.
+    // THE VICTIM IS BUILT, NOT NAMED. `paretoFrontier` returns cost-ascending, so its
+    // first element is the cheapest — and least smart — rung on the whole board. Any
+    // model strictly dearer AND strictly dumber than that rung is dominated BY it, on
+    // any scale, in any year: the only numbers below are dimensionless ratios of the
+    // board's own floor, so a rescale carries the fixture with it. `claude-code/
+    // fixture-*` borrows a REAL graded ladder (four rungs) while matching no AA family
+    // and no REL_COST_TABLE row, so every rung scores at the fixture's own `index` and
+    // the model is UNPRICED — reached rather than cost-vetoed, per the UNPRICED test.
+    const floorRung = frontierOf([...CATALOG, OPUS48])[0];
+    // CONTROL for the construction itself: a floor at or below 0 would make "0.9x" a
+    // shave upward and the victim would not be dumber at all.
+    expect(floorRung.smart).toBeGreaterThan(0);
+    const shadowOf = (id: string, costX: number): Fixture => ({
+      ...HAIKU45,
+      id,
+      name: "Shadow",
+      index: floorRung.smart * 0.9,
+      // Priced at 1 the rungs read as the ladder's SHAPE; scale it so the CHEAPEST of
+      // them lands at costX x the floor rung's €/task.
+      relCost:
+        (floorRung.cost * costX) /
+        Math.min(...frontierRungsFor(id, floorRung.smart, 1).map((r) => r.cost)),
+    });
+    const DEARER = shadowOf("claude-code/fixture-dearer-and-dumber", 2);
+    const CHEAPER = shadowOf("claude-code/fixture-cheaper-and-dumber", 0.5);
+    const models = [...CATALOG, OPUS48, DEARER, CHEAPER];
+    const considered = reference(models).considered.map((c) => c.key);
+    // CONTROL that REACH is a live filter in this fixture — two models sit over the
+    // cost ceiling — and `rungsOf` spans only `considered`, so every id below is one
+    // thalamus can reach. A missing ring is the FRONTIER's verdict, never the
+    // ceiling's, which is the whole distinction this test exists to draw.
+    expect(considered.length).toBeLessThan(models.length);
+    expect(considered).toContain(DEARER.id);
     const rungs = rungsOf(models);
-    for (const r of rungs.filter((x) => x.key === OPUS48.id)) {
-      expect(
-        rungs.some((o) => o.key === OPUS5.id && o.cost <= r.cost && o.smart >= r.smart),
-        scRungTag(r),
-      ).toBe(true);
+    const ids = [...new Set(rungs.map((r) => r.key))];
+    // WHO ELSE is dominated is a fact about today's prices and AA scores, not about
+    // this file — the rescale swapped Opus 5 and Opus 4.8 around — so the rest of the
+    // victims are ASKED FOR, never typed: every reachable model with no frontier rung.
+    const onFrontier = new Set(paretoFrontier(rungs).map((r) => r.key));
+    const shutOut = ids.filter((id) => !onFrontier.has(id));
+    // CONTROL against a vacuous pass at BOTH ends: the constructed victim must be
+    // among the shut out (nobody shut out ⇒ the loop below proves nothing), and it
+    // must not be everybody (an EMPTY envelope would satisfy every not.toContain).
+    expect(shutOut, "the constructed victim reached the frontier").toContain(DEARER.id);
+    expect(shutOut.length).toBeLessThan(considered.length);
+    // Being off the frontier must MEAN dominated, re-derived from the NAIVE reading —
+    // some OTHER model's rung is cheaper-or-equal per task AND smarter-or-equal. Asking
+    // paretoFrontier again would only make it agree with itself; this catches a frontier
+    // that dropped a model for any other reason.
+    const dominated = (id: string) =>
+      rungs
+        .filter((r) => r.key === id)
+        .every((r) => rungs.some((o) => o.key !== id && o.cost <= r.cost && o.smart >= r.smart));
+    for (const id of shutOut) {
+      for (const r of rungs.filter((x) => x.key === id)) {
+        expect(
+          rungs.some((o) => o.key !== id && o.cost <= r.cost && o.smart >= r.smart),
+          scRungTag(r),
+        ).toBe(true);
+      }
     }
-    expect(frontierOf(models).some((r) => r.key === OPUS48.id)).toBe(false);
-    // And the render agrees: rings on Opus 5 only.
+    // …and the converse, so the two computations pin each other: nothing dominated
+    // survived onto the frontier.
+    for (const id of onFrontier) {
+      expect(dominated(id), id).toBe(false);
+    }
+    // And the render agrees: every ring drawn is a frontier rung, and no shut-out model
+    // carries one. The set equality is load-bearing — `not.toContain` alone would pass
+    // just as happily on a chart that drew no rings at all.
     const svg = renderSmartCostChart(models);
-    expect(envelopedIds(svg)).toEqual([OPUS5.id]);
     expect(envelopedRungs(svg)).toEqual(tags(frontierOf(models)));
+    for (const id of shutOut) {
+      expect(envelopedIds(svg), id).not.toContain(id);
+    }
+    // THE CONTROL THE WHOLE TEST RESTS ON: the SAME construction priced BELOW the floor
+    // rung instead of above it is on the frontier and DOES ring. So the absent ring is
+    // caused by domination — not by the id being synthetic, unpriced or unreachable.
+    expect(considered).toContain(CHEAPER.id);
+    expect(shutOut).not.toContain(CHEAPER.id);
+    expect(envelopedIds(svg)).toContain(CHEAPER.id);
   });
 
   test("ONE ring per FRONTIER RUNG — a model may carry several, or none", () => {
@@ -592,7 +708,7 @@ describe("thalamus envelope — the footer reports the payload, never a literal"
     expect(line).toContain(env.costVerified ? "cost verified" : "cost UNVERIFIED");
     expect(line).toContain(`${env.excluded.length} cost-veto`);
     // CONTROL: the numbers move with the data rather than being printed constants.
-    const smaller = footer(renderSmartCostChart([OPUS5, GLM53]));
+    const smaller = footer(renderSmartCostChart([OPUS5, GLM_DEAR]));
     expect(smaller).toContain("across 1/2 models");
     expect(smaller).not.toContain(`across ${env.considered.length}/${env.catalogSize} models`);
   });

@@ -10,6 +10,7 @@ import { createOpenClawCodingTools } from "../../agents/pi-tools.js";
 import { resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
 import { buildWorkspaceSkillSnapshot } from "../../agents/skills.js";
 import { getSkillsSnapshotVersion } from "../../agents/skills/refresh-state.js";
+import { resolveSystemPromptIdentityLine } from "../../agents/system-prompt-override.js";
 import { buildSystemPromptParams } from "../../agents/system-prompt-params.js";
 import { buildAgentSystemPrompt } from "../../agents/system-prompt.js";
 import type { WorkspaceBootstrapFile } from "../../agents/workspace.js";
@@ -150,6 +151,7 @@ export async function resolveCommandsSystemPromptBundle(
 
   const systemPrompt = buildAgentSystemPrompt({
     workspaceDir,
+    identityLine: resolveSystemPromptIdentityLine({ config: params.cfg, agentId: sessionAgentId }),
     defaultThinkLevel: params.resolvedThinkLevel,
     reasoningLevel: params.resolvedReasoningLevel,
     extraSystemPrompt: undefined,

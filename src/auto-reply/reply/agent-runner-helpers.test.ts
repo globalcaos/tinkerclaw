@@ -71,6 +71,22 @@ describe("agent runner helpers", () => {
     expect(shouldEmitOutput()).toBe(true);
   });
 
+  // FORK 2026-09-23 — the gate runs per tool event: it must borrow the cached
+  // store (clone:false) instead of deep-cloning all of sessions.json per call.
+  it("reads the session level from a read-only borrow of the cached store", () => {
+    const frozenStore = Object.freeze({
+      "agent:main:main": Object.freeze({ verboseLevel: "full" }),
+    });
+    hoisted.loadSessionStoreMock.mockReturnValue(frozenStore);
+    const shouldEmitOutput = createShouldEmitToolOutput({
+      sessionKey: "agent:main:main",
+      storePath: "/tmp/store.json",
+      resolvedVerboseLevel: "off",
+    });
+    expect(shouldEmitOutput()).toBe(true);
+    expect(hoisted.loadSessionStoreMock).toHaveBeenCalledWith("/tmp/store.json", { clone: false });
+  });
+
   it("falls back when store read fails or session value is invalid", () => {
     hoisted.loadSessionStoreMock.mockImplementation(() => {
       throw new Error("boom");

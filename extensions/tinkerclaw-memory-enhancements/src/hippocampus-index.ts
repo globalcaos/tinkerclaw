@@ -32,6 +32,59 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
+
+/**
+ * J14 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.mnemo.lookup` (§9 step 9) — a ROLLUP, not a
+ * row per lookup.
+ *
+ * Lookups are a hot path (one or more per turn, each O(tokens)), and L3 forbids hanging an
+ * unbounded row rate off one, so the producer aggregates in memory and writes ONE row per
+ * window, stamped at the START of that window (§4's `rollup` convention). A window opens at the
+ * first lookup after the previous one closed, so every lookup a row counts happened within
+ * MNEMO_LOOKUP_ROLLUP_WINDOW_MS of its stamp — an idle hour never smears one late lookup back
+ * onto a stale start time.
+ *
+ * n1 = lookups, n2 = total_ms (sub-millisecond, from performance.now(): a concept lookup is far
+ * below 1 ms, and a Date.now() total would read 0 for almost every window), n3 = index_size
+ * (concepts held at flush). Parts and never a mean (design-principles #20): "does concept lookup
+ * stay flat as the store grows?" is answered by dividing at query time, against the index size
+ * carried in the same row.
+ *
+ * NO TIMER: a plugin that installs an interval keeps the process awake and has to be torn down.
+ * The window is closed lazily by the first lookup after it expires, and by `persist()` (the
+ * nightly sweep and shutdown), so the last partial window is never silently lost.
+ *
+ * KNOWN GAP (at the time of writing): the plugin's index.ts load()s and stats() this index but
+ * nothing in production calls lookup() yet, so this row stays empty until retrieval is wired to
+ * it. The producer sits here so that wiring needs no second telemetry change.
+ */
+export const MNEMO_LOOKUP_ROLLUP_WINDOW_MS = 60_000;
+
+let lookupWindowStartMs = 0;
+let lookupWindowCount = 0;
+let lookupWindowTotalMs = 0;
+
+function flushLookupRollup(indexSize: number): void {
+  if (lookupWindowCount === 0) {
+    return;
+  }
+  emitEvent("j.mnemo.lookup", {
+    tsMs: lookupWindowStartMs,
+    n1: lookupWindowCount,
+    n2: lookupWindowTotalMs,
+    n3: indexSize,
+  });
+  lookupWindowCount = 0;
+  lookupWindowTotalMs = 0;
+}
+
+/** Test seam: drop an in-flight window so one test's lookups cannot leak into the next. */
+export function resetMnemoLookupRollup(): void {
+  lookupWindowStartMs = 0;
+  lookupWindowCount = 0;
+  lookupWindowTotalMs = 0;
+}
 
 export interface HippocampusIndexConfig {
   indexDir: string;
@@ -94,6 +147,29 @@ export class HippocampusIndex {
    * hits — caller should fall through to hybrid search.
    */
   lookup(queryText: string): Set<string> {
+    const startedAtMs = Date.now();
+    const startedAt = performance.now();
+    try {
+      return this.lookupInner(queryText);
+    } finally {
+      // J14 `j.mnemo.lookup`: EVERY lookup counts, including the empty-index short circuit —
+      // that is the cheap end of the latency-against-size curve, and dropping it would flatter
+      // the very number the paper's claim rests on.
+      if (
+        lookupWindowCount > 0 &&
+        startedAtMs - lookupWindowStartMs >= MNEMO_LOOKUP_ROLLUP_WINDOW_MS
+      ) {
+        flushLookupRollup(this.concepts.size);
+      }
+      if (lookupWindowCount === 0) {
+        lookupWindowStartMs = startedAtMs;
+      }
+      lookupWindowCount += 1;
+      lookupWindowTotalMs += performance.now() - startedAt;
+    }
+  }
+
+  private lookupInner(queryText: string): Set<string> {
     if (!this.loaded) {
       this.load();
     }
@@ -151,6 +227,9 @@ export class HippocampusIndex {
 
   /** Persist the index to disk. Call on nightly sweep and on shutdown. */
   persist(): void {
+    // Close any partial `j.mnemo.lookup` window here: persist() is the nightly sweep and the
+    // shutdown call, so a window that never reached its 60 s still reaches the database.
+    flushLookupRollup(this.concepts.size);
     const anchorsPath = this.anchorsPath();
     fs.mkdirSync(path.dirname(anchorsPath), { recursive: true });
     const serialized: Record<

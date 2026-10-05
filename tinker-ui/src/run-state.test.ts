@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
   bareModelTail,
+  catalogKeyIn,
   clientRunIsFresh,
   liveCountForModel,
   liveRunCountsByModel,
+  liveRunSessionsByModel,
+  liveSessionsForModel,
   modelCountKey,
   resolveSessionRunState,
   RUN_STALE_MS,
   sessionHasFreshClientRun,
+  transcriptWriterIsLive,
   type ClientRun,
   type KeyMatcher,
   type SessionRow,
@@ -466,6 +470,77 @@ describe("liveRunCountsByModel", () => {
   });
 });
 
+// FORK 2026-10-02: the hover on a model row names the sessions behind its count badge.
+describe("liveRunSessionsByModel / liveSessionsForModel", () => {
+  const rows: SessionRow[] = [
+    { key: "agent:main:tinker:a", status: "running", model: "gpt-5.6-sol", modelProvider: "codex" },
+    { key: "agent:main:tinker:b", status: "running", model: "gpt-5.6-sol", modelProvider: "codex" },
+    {
+      key: "agent:main:cron:c",
+      status: "running",
+      model: "claude-opus-5",
+      modelProvider: "claude-code",
+    },
+    { key: "agent:main:tinker:d", status: "done", model: "gpt-5.6-sol", modelProvider: "codex" },
+  ];
+
+  it("names exactly the sessions the count counts, in both lanes", () => {
+    const params = {
+      rows,
+      runs: [run({ sessionKey: "agent:main:tinker:fresh" })],
+      matches,
+      now: NOW,
+    };
+    const sessions = liveRunSessionsByModel(params);
+    const counts = liveRunCountsByModel(params);
+    expect(sessions.get("codex/gpt-5.6-sol")).toEqual([
+      "agent:main:tinker:a",
+      "agent:main:tinker:b",
+      "agent:main:tinker:fresh",
+    ]);
+    expect(sessions.get("claude-code/claude-opus-5")).toEqual(["agent:main:cron:c"]);
+    for (const [key, list] of sessions) {
+      expect(counts.get(key)).toBe(list.length);
+    }
+    expect(counts.size).toBe(sessions.size);
+  });
+
+  it("looks a catalog row up by the count's rule: exact key, then the bare tail", () => {
+    const sessions = liveRunSessionsByModel({
+      rows: [
+        ...rows,
+        // provider-less (a cc-bridge effort event shape): lands on the bare tail
+        { key: "agent:main:tinker:e", status: "running", model: "gemini-3.1-pro-preview" },
+      ],
+      runs: [],
+      matches,
+      now: NOW,
+    });
+    expect(liveSessionsForModel(sessions, "codex/gpt-5.6-sol")).toHaveLength(2);
+    expect(liveSessionsForModel(sessions, "google/gemini-3.1-pro-preview")).toEqual([
+      "agent:main:tinker:e",
+    ]);
+    // a twin on another provider does not borrow a qualified key's sessions
+    expect(liveSessionsForModel(sessions, "github-copilot/gpt-5.6-sol")).toEqual([]);
+    expect(liveSessionsForModel(sessions, undefined)).toEqual([]);
+    expect(liveSessionsForModel(sessions, "")).toEqual([]);
+  });
+
+  it("catalogKeyIn and liveCountForModel agree on every row", () => {
+    const sessions = liveRunSessionsByModel({ rows, runs: [], matches, now: NOW });
+    const counts = liveRunCountsByModel({ rows, runs: [], matches, now: NOW });
+    for (const id of [
+      "codex/gpt-5.6-sol",
+      "github-copilot/gpt-5.6-sol",
+      "claude-code/claude-opus-5",
+      "openrouter/moonshotai/kimi-k3",
+    ]) {
+      expect(liveSessionsForModel(sessions, id).length).toBe(liveCountForModel(counts, id));
+      expect(catalogKeyIn(sessions, id)).toBe(catalogKeyIn(counts, id));
+    }
+  });
+});
+
 describe("bareModelTail / liveCountForModel", () => {
   it("strips a provider prefix and matches a prefixed catalog id", () => {
     expect(bareModelTail("claude-code/claude-opus-4-8")).toBe("claude-opus-4-8");
@@ -881,5 +956,57 @@ describe("sessionHasFreshClientRun", () => {
       });
       expect(predicate, `age=${NOW - lastEventAt}ms: resolver says ${resolver}`).toBe(resolver);
     }
+  });
+});
+
+// FORK 2026-09-04 — the frozen-transcript veto.
+// "I see my last prompt in the Smart x cost tab is also missing, as if I went back in time and the
+// prompt never happened." loadChat refused to merge server history while `streamRunId !== null`,
+// and that cursor is cleared only by a terminal event — so a run that died without one froze the
+// tab permanently and every later prompt, though accepted and answered on the server, never showed.
+describe("transcriptWriterIsLive", () => {
+  const T = 1_786_999_000_000;
+  const run = (lastEventAt: number): ClientRun => ({ lastEventAt }) as ClientRun;
+
+  it("is live while deltas are still arriving", () => {
+    expect(transcriptWriterIsLive({ lastDeltaAt: T - 500, streamRun: undefined, now: T })).toBe(
+      true,
+    );
+  });
+
+  it("is live while the cursor's run is still fresh, even with no delta yet", () => {
+    // A tool-only turn emits heartbeats but no text; the run entry is the writer.
+    expect(transcriptWriterIsLive({ lastDeltaAt: 0, streamRun: run(T - 1_000), now: T })).toBe(
+      true,
+    );
+  });
+
+  it("is DEAD when the cursor names a run whose events stopped — the reported bug", () => {
+    // The cursor is still set (no terminal event ever arrived) but nothing is emitting. Vetoing the
+    // merge here is what pinned the transcript to an old snapshot forever.
+    expect(
+      transcriptWriterIsLive({
+        lastDeltaAt: T - RUN_STALE_MS - 1,
+        streamRun: run(T - RUN_STALE_MS - 1),
+        now: T,
+      }),
+    ).toBe(false);
+  });
+
+  it("is DEAD when the cursor's run is gone from the map entirely", () => {
+    expect(transcriptWriterIsLive({ lastDeltaAt: 0, streamRun: undefined, now: T })).toBe(false);
+  });
+
+  it("treats a never-streamed tab as having no writer", () => {
+    expect(transcriptWriterIsLive({ lastDeltaAt: 0, streamRun: null, now: T })).toBe(false);
+  });
+
+  it("does not read lastDeltaAt = 0 as 'a delta at the epoch'", () => {
+    expect(transcriptWriterIsLive({ lastDeltaAt: 0, streamRun: run(T - 1_000), now: T })).toBe(
+      true,
+    );
+    expect(
+      transcriptWriterIsLive({ lastDeltaAt: 0, streamRun: run(T - RUN_STALE_MS - 1), now: T }),
+    ).toBe(false);
   });
 });

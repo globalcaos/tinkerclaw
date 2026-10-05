@@ -2,22 +2,18 @@
  * FORK 2026-06-14 — YouTube channel-stats poller (public Data API v3).
  *
  * Reads a channel's PUBLIC statistics (subscriberCount / viewCount / videoCount)
- * via the YouTube Data API. Auth is a project API key (no OAuth, no expiry) —
- * created 2026-06-14 in GCP project organic-storm-486018-u9, restricted to
- * youtube.googleapis.com, stored chmod 600 at ~/.config/youtube-cli/data-api.key.
+ * via the YouTube Data API. Auth is a project API key (no OAuth, no expiry),
+ * OPERATOR-SUPPLIED: a file containing just the key, named by
+ * `plugins.tinkerclaw-pulse-panel.credentials.youtubeApiKeyFile`. No default path — with
+ * nothing configured this poller is skipped.
  *
  * source string: "youtube.channelStats:<subscribers|views|videos>:<channelId>"
- *   e.g. youtube.channelStats:subscribers:UCh_am-9EG0_a-DBronOMC4w (thetinkerzone)
  *
  * These are absolute monotonic totals (a growing line) — NOT cumulative running
  * sums; do not set the cumulative flag in SERIES_STYLE.
  */
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { readCredentialFile } from "./credentials.js";
 import type { PollerFn } from "./index.js";
-
-const KEY_PATH = path.join(os.homedir(), ".config", "youtube-cli", "data-api.key");
 
 const FIELD: Record<string, "subscriberCount" | "viewCount" | "videoCount"> = {
   subscribers: "subscriberCount",
@@ -35,7 +31,7 @@ export const youtubeChannelStats: PollerFn = async (args) => {
       `youtube.channelStats needs "<subscribers|views|videos>:<channelId>", got "${args}"`,
     );
   }
-  const key = fs.readFileSync(KEY_PATH, "utf8").trim();
+  const key = readCredentialFile("youtubeApiKeyFile").trim();
   const res = await fetch(
     `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelId}&key=${key}`,
   );

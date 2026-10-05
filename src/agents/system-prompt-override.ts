@@ -25,3 +25,24 @@ export function resolveSystemPromptOverride(params: {
   }
   return trimNonEmpty(config.agents?.defaults?.systemPromptOverride);
 }
+
+/**
+ * FORK 2026-09-22: the agent's opening identity sentence (per-agent, then defaults).
+ * Shared code serves several agents (Jarvis, Goku...), so the name lives in config.
+ */
+export function resolveSystemPromptIdentityLine(params: {
+  config?: OpenClawConfig;
+  agentId?: string;
+}): string | undefined {
+  const config = params.config;
+  if (!config) {
+    return undefined;
+  }
+  const agentLine = trimNonEmpty(
+    params.agentId ? resolveAgentConfig(config, params.agentId)?.identityLine : undefined,
+  );
+  if (agentLine) {
+    return agentLine;
+  }
+  return trimNonEmpty(config.agents?.defaults?.identityLine);
+}

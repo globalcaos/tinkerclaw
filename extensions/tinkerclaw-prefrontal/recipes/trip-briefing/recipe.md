@@ -102,10 +102,11 @@ to re-mint it from the shared **Teams** tab via the browser relay:
   ```bash
   SK=~/.openclaw/jarvis-workspace/.claude/skills/outlook-hack/scripts
   python3 $SK/outlook-sync.py                       # incremental
-  python3 $SK/outlook-sync.py --query "<city|airline|Andromeda|reserva>"
+  python3 $SK/outlook-sync.py --query "<city|airline|agency|reserva>"
   ```
-  Corporate travel is often an agency (the company uses **a travel agency**); the
-  booking email may be a colleague forwarding attachments (Mireia Peña). Query DB
+  Corporate travel is often booked through the company's travel agency (put its
+  name in the query); the booking email may be a colleague forwarding
+  attachments. Query DB
   directly for attachment-bearing mail:
   ```python
   # emails JOIN attachments WHERE name LIKE '%vuelo%|%hotel%|%coche%|%ticket%'

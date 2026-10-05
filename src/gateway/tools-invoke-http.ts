@@ -107,6 +107,21 @@ function getErrorMessage(err: unknown): string {
   return String(err);
 }
 
+// A refused attachment (a file type the channel will not send, a path outside the allowed roots)
+// is the caller's input, and its reason is safe to return. Without it the MCP bridge saw only
+// "tool execution failed" for an HTML file the CLI had refused by name (2026-10-02).
+function isRefusedMediaError(err: object): boolean {
+  const { name, message } = err as { name?: unknown; message?: unknown };
+  if (name === "LocalMediaAccessError") {
+    return true;
+  }
+  return (
+    name === "GatewayClientRequestError" &&
+    typeof message === "string" &&
+    message.startsWith("LocalMediaAccessError:")
+  );
+}
+
 function resolveToolInputErrorStatus(err: unknown): number | null {
   if (err instanceof ToolInputError) {
     const status = (err as { status?: unknown }).status;
@@ -114,6 +129,9 @@ function resolveToolInputErrorStatus(err: unknown): number | null {
   }
   if (typeof err !== "object" || err === null || !("name" in err)) {
     return null;
+  }
+  if (isRefusedMediaError(err)) {
+    return 400;
   }
   const name = (err as { name?: unknown }).name;
   if (name !== "ToolInputError" && name !== "ToolAuthorizationError") {
@@ -145,12 +163,17 @@ export async function handleToolsInvokeHttpRequest(
     res.end(JSON.stringify({ error: "bad_request", message: "Invalid request URL" }));
     return true;
   }
-  if (url.pathname !== "/tools/invoke") {
+  // FORK 2026-09-22: GET /tools/list — the same scoped tool set /tools/invoke would
+  // execute, with JSON schemas, so an external MCP client (`openclaw mcp tools`) can
+  // advertise the agent's tools without loading a second plugin runtime.
+  const isList = url.pathname === "/tools/list";
+  if (url.pathname !== "/tools/invoke" && !isList) {
     return false;
   }
 
-  if (req.method !== "POST") {
-    sendMethodNotAllowed(res, "POST");
+  const expectedMethod = isList ? "GET" : "POST";
+  if (req.method !== expectedMethod) {
+    sendMethodNotAllowed(res, expectedMethod);
     return true;
   }
 
@@ -171,6 +194,35 @@ export async function handleToolsInvokeHttpRequest(
     return true;
   }
   const { cfg, requestAuth } = authResult;
+
+  if (isList) {
+    const rawKey = normalizeOptionalString(url.searchParams.get("sessionKey") ?? undefined);
+    const listSessionKey = !rawKey || rawKey === "main" ? resolveMainSessionKey(cfg) : rawKey;
+    const listIsOwner = resolveOpenAiCompatibleHttpSenderIsOwner(req, requestAuth);
+    const { agentId: listAgentId, tools: listTools } = resolveGatewayScopedTools({
+      cfg,
+      sessionKey: listSessionKey,
+      allowGatewaySubagentBinding: true,
+      allowMediaInvokeCommands: true,
+      surface: "http",
+      disablePluginTools: false,
+      senderIsOwner: listIsOwner,
+    });
+    sendJson(res, 200, {
+      ok: true,
+      agentId: listAgentId,
+      sessionKey: listSessionKey,
+      tools: applyOwnerOnlyToolPolicy(listTools, listIsOwner).map((t) => ({
+        name: t.name,
+        description: t.description ?? "",
+        parameters:
+          t.parameters && typeof t.parameters === "object" && "type" in t.parameters
+            ? t.parameters
+            : { type: "object", properties: {} },
+      })),
+    });
+    return true;
+  }
 
   const bodyUnknown = await readJsonBodyOrError(req, res, opts.maxBodyBytes ?? DEFAULT_BODY_BYTES);
   if (bodyUnknown === undefined) {

@@ -1,5 +1,6 @@
 import { updateSessionStoreEntry, type SessionEntry } from "../config/sessions.js";
 import type { AgentEventPayload } from "../infra/agent-events.js";
+import { isGatewayShuttingDown } from "./gateway-shutdown-state.js";
 import { loadSessionEntry } from "./session-utils.js";
 import type { GatewaySessionRow, SessionRunStatus } from "./session-utils.types.js";
 
@@ -132,7 +133,22 @@ export function deriveGatewaySessionLifecycleSnapshot(params: {
 export function derivePersistedSessionLifecyclePatch(params: {
   entry?: Partial<PersistedLifecycleSessionShape> | null;
   event: LifecycleEventLike;
+  /** The gateway is stopping (gateway-shutdown-state.ts). */
+  shuttingDown?: boolean;
 }): Partial<PersistedLifecycleSessionShape> {
+  // FORK 2026-09-29 (lifecycles.md L4b): a run that ends because the gateway is stopping was CUT, not
+  // finished. Leave it `running` and say so, which is exactly the state boot recovery resumes
+  // (markRunningMainSessionsAsInterrupted → recoverRestartAbortedMainSessions). A turn that really did
+  // finish inside the shutdown window costs nothing: recovery's idle-tail check settles it unresumed.
+  const phase = resolveLifecyclePhase(params.event);
+  if (params.shuttingDown && (phase === "end" || phase === "error")) {
+    const endedAt = resolveLifecycleEndedAt(params.event);
+    return {
+      updatedAt: endedAt ?? params.entry?.updatedAt,
+      status: "running",
+      abortedLastRun: true,
+    };
+  }
   const snapshot = deriveGatewaySessionLifecycleSnapshot({
     session: params.entry ?? undefined,
     event: params.event,
@@ -164,6 +180,7 @@ export async function persistGatewaySessionLifecycleEvent(params: {
       derivePersistedSessionLifecyclePatch({
         entry,
         event: params.event,
+        shuttingDown: isGatewayShuttingDown(),
       }),
   });
 }

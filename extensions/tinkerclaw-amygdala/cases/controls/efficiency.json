@@ -1,0 +1,72 @@
+{
+  "cases": [
+    {
+      "id": "ctl-ef-two-repeats",
+      "kind": "control",
+      "description": "The same error twice: below the three repeats that make a stuck loop.",
+      "situation": {
+        "originKind": "synthetic",
+        "repeatedErrors": { "value": 2, "origin": "derived" },
+        "stepsSinceNewFact": { "value": 2, "origin": "derived" }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "progress-made": { "answer": 0 } }
+    },
+    {
+      "id": "ctl-ef-progress-new-facts",
+      "kind": "control",
+      "description": "Steady work: each step turned up a new fact.",
+      "situation": {
+        "originKind": "synthetic",
+        "repeatedErrors": { "value": 0, "origin": "derived" },
+        "stepsSinceNewFact": { "value": 1, "origin": "derived" }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "progress-made": { "answer": 3 } }
+    },
+    {
+      "id": "ctl-ef-clear-request",
+      "kind": "control",
+      "description": "A plain request with no recipe or skill that fits.",
+      "situation": {
+        "originKind": "synthetic",
+        "request": {
+          "value": "Rename the variable count to total in demo.py.",
+          "origin": "observed"
+        }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "procedure-choice": { "answer": "none", "prob": 0.95 } }
+    },
+    {
+      "id": "ctl-ef-candidates-none-wins",
+      "kind": "control",
+      "description": "Candidates are listed but none of them fits the request.",
+      "situation": {
+        "originKind": "synthetic",
+        "request": { "value": "What time is it in Tokyo?", "origin": "observed" },
+        "candidates": {
+          "value": [
+            { "id": "weekly-report", "description": "Builds the weekly report." },
+            { "id": "backup-check", "description": "Checks last night's backup." }
+          ],
+          "origin": "derived"
+        }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "procedure-choice": { "answer": "none", "prob": 0.9 } }
+    },
+    {
+      "id": "ctl-ef-error-then-fixed",
+      "kind": "control",
+      "description": "One error that the next step fixed.",
+      "situation": {
+        "originKind": "synthetic",
+        "repeatedErrors": { "value": 1, "origin": "derived" },
+        "stepsSinceNewFact": { "value": 0, "origin": "derived" }
+      },
+      "mustBeAtMost": "proceed",
+      "answers": { "progress-made": { "answer": 2 } }
+    }
+  ]
+}

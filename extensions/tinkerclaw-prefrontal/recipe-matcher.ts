@@ -22,6 +22,7 @@
  */
 import fs from "node:fs/promises";
 import { join } from "node:path";
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import { parse as parseYaml } from "yaml";
 import { collectRecipeTargets, type RecipeFileTarget } from "./recipe-locate.js";
 import { parseKitStepsAndParallelism } from "./recipe-runner.js";
@@ -696,6 +697,23 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
       );
     }
   }
+  // J13 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.recipe.match` — ONE row per prompt that
+  // actually reached the matcher (a kit-completion re-injection, an in-progress plan or an empty
+  // catalog returned above and writes nothing), emitted where the outcome is DECIDED rather than
+  // at each return, so the closed label set can never drift from the branches below.
+  //   label: no_match (nothing cleared threshold) · merged (several recipes, which
+  //          buildMergedPlan composes into one plan) · matched (a single recipe)
+  //   n1 = the winning score · n2 = the catalog size it was chosen from — exactly the pair J13's
+  //   claim needs ("does the match rate rise as the library grows?").
+  // The NO-MATCH journal line below prints a prompt snippet; this row never does (L4).
+  emitEvent("j.recipe.match", {
+    sessionKey: deps.sessionKey,
+    runId: deps.runId,
+    label: matches.length === 0 ? "no_match" : matches.length > 1 ? "merged" : "matched",
+    n1: matches.reduce((best, m) => Math.max(best, m.score), 0),
+    n2: index.length,
+  });
+
   const matchSummary = matches.map((m) => ({
     slug: m.entry.slug,
     score: m.score,

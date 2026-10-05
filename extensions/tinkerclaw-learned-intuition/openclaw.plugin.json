@@ -3,8 +3,9 @@
   "activation": {
     "onStartup": true
   },
+  "enabledByDefault": false,
   "name": "Learned Intuition",
-  "description": "AMYGDALA v3.1 \u2014 safety gate: deterministic AEGIS rules enforced pre-execution (tinker-bridge PreToolUse hook + native), a validated k-NN novelty 'ask' channel that habituates with experience, and a clause-cosine incongruity check. The legacy 5-net ONNX ensemble is retired from the decision path (re-enable with legacyEnsemble).",
+  "description": "AMYGDALA v3.1 — safety gate: deterministic AEGIS rules, a k-NN novelty 'ask' channel that habituates with experience, and a clause-cosine incongruity check. Observe-only by default: nothing is blocked, AEGIS matches included, until observeOnly is false. The legacy 5-net ONNX ensemble is retired from the decision path (re-enable with legacyEnsemble). Pre-execution ENFORCEMENT (a claude-cli PreToolUse hook matching every tool) is a separate opt-in via hookEnforcement.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -12,20 +13,22 @@
       "phase": {
         "type": "number",
         "default": 1,
-        "description": "Deployment phase (1=observe-only soft-blocks, 2+=active neural blocking). AEGIS hard-blocks enforce regardless."
+        "description": "Deployment phase. Only matters when observeOnly is false: 1 = only AEGIS hard-blocks block; 2+ = neural soft-blocks block too."
       },
       "alphaPrudence": {
         "type": "number",
-        "default": 0.0
+        "default": 0.0,
+        "description": "Prudence weight applied to the trust model. 0.0 = neutral."
       },
       "aegisEnabled": {
         "type": "boolean",
         "default": true,
-        "description": "v3.1: AEGIS deterministic veto on by default (resolves the old manifest-off vs code-on contradiction). Set false to fully disable the rule floor."
+        "description": "Evaluate the in-process AEGIS deterministic destructive-action rules on every tool call. It adds no hooks outside this process and mutates no prompt. Matches are only logged while observeOnly is true (the default) and are blocked once observeOnly is false. Set false to remove the rule floor entirely."
       },
       "observeOnly": {
         "type": "boolean",
-        "default": true
+        "default": true,
+        "description": "Log what would have been blocked without blocking it. True by default and applies to every in-process block, AEGIS hard-blocks included. Set false to let the gate block."
       },
       "modelsDir": {
         "type": "string",
@@ -36,10 +39,15 @@
         "default": false,
         "description": "Run the retired 5-net ONNX prudence/personality ensemble in the decision path. Off by default (trained on mislabelled data; frozen-MiniLM danger classification measured below chance). The embedding pipeline is retained for novelty regardless."
       },
+      "personalityNudge": {
+        "type": "boolean",
+        "default": false,
+        "description": "Generate a personality nudge from the ONNX personality models and write it to ~/.openclaw/cognitive/personality-nudge.json, where the Identity Persistence plugin can inject it into prompts. OFF by default: it produces text intended to steer the model, so it is a prompt mutation with an extra step. Requires the ONNX personality models to be present."
+      },
       "hookEnforcement": {
         "type": "boolean",
-        "default": true,
-        "description": "Write the claude-cli PreToolUse hook settings so destructive-execution AEGIS rules deny synchronously on the tinker-bridge runner (works under bypassPermissions). False removes the settings file (observe-only spool)."
+        "default": false,
+        "description": "OPT-IN, and the broadest thing this plugin does. When true it stages a hook script and writes ~/.openclaw/data/amygdala/cc-hook-settings.json, a claude-cli settings file registering a PreToolUse hook with matcher \"*\" — tinker-bridge then passes it via --settings on EVERY spawn, so the hook can synchronously DENY any tool call (it works even under bypassPermissions). False (default) writes no settings file and deletes any existing one, leaving an observe-only spool."
       }
     }
   }

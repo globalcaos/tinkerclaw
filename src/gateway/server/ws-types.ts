@@ -10,6 +10,8 @@ export type GatewayWsClient = {
   sharedGatewaySessionGeneration?: string;
   presenceKey?: string;
   clientIp?: string;
+  /** Hivemind seat (connect.seatId, else the tinker_seat cookie on the upgrade request). */
+  seatId?: string;
   canvasHostUrl?: string;
   canvasCapability?: string;
   canvasCapabilityExpiresAtMs?: number;

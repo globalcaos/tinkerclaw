@@ -129,10 +129,11 @@ nothing afterwards.
 
 ### 3. Refactor
 
-**Done when:** Every increment is its own commit with that module's tests green, and no commit mixes a structural change with a behaviour change.
+uses: git-instructions
+**Done when:** Every increment is its own hop-commit with that module's tests green, and no commit mixes a structural change with a behaviour change.
 
 Apply structural changes in small increments. Run the affected tests after each
-one. One concern per commit; stage only that increment's files and read
+one. One hop per commit (`git-instructions`); stage only that increment's files and read
 `git diff --cached --stat` before committing. Update JSDoc and doc headers to
 match the new structure in the same commit that moves the code.
 
@@ -169,7 +170,7 @@ delete branch and worktree → state the status line. Never ask about pushing.
 - Stage only the increment's files. Never stage the whole tree; a dirty repository will commit work you did not write.
 - Never bypass commit hooks.
 - After the scope is agreed, implementation-detail choices are rulings you log, not questions. Only four things stop the run: an irreversible operation, a security-sensitive action, a side effect outside the worktree, or a scope so broken every path is a guess.
-- Composition: multi-file writes → `parallel-build`; evidence for any claim → `verification-gate`; branch closure → `finish-branch`.
+- Composition: hop grain → `git-instructions`; multi-file writes → `parallel-build`; evidence for any claim → `verification-gate`; branch closure → `finish-branch`.
 
 ## Safety Notes
 

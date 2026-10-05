@@ -15,7 +15,18 @@ note: |
   is right and the prose is the bug. Every measured table below carries a date for that reason.
 verify:
   - name: capability coverage — the BLIND count never rises (ratchet; a new capability arrives instrumented or not at all)
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/capability-coverage.mjs
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/capability-coverage.mjs
+  - name: the scorer treats fixture files as test code, so a golden fixture never scores as a BLIND panel (2026-10-01)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node --test scripts/bible/capability-coverage.test.mjs
+  - name: the cap this optic STATES in §8 is the cap the build ENFORCES (prose drifted to 377 for a month while BLIND_CAP was 358)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/observability-cap-prose-pin.mjs
+  - name: LLM ledger — the agent streamFn AND the one-shot completion path both record (§10)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -q wrapStreamFnWithLedger src/agents/embedded-agent-runner/run/attempt.ts && grep -q withLedgerCompletion src/agents/simple-completion-runtime.ts
+  - name: LLM ledger — chat.send names the driver before the run starts (§10)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -q "noteSessionDriver(sessionKey, driverForGatewayClient(client))" src/gateway/server-methods/chat.ts
+  # Resolves paths against the checkout whose bible is being verified (BIBLE_DIR, else the shared checkout).
+  - name: instrument liveness is persisted (§7) — the report sink writes instrument.census and instrument.transition WITH `to`, the catalog declares `to`, and the gateway starts the sink
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'emit("instrument.census"' src/infra/events/bridge-diagnostic-bus.ts && grep -qF 'fields: { from, to: state }' src/infra/events/bridge-diagnostic-bus.ts && grep -qF 'fields: { from: "enum", to: "enum" }' src/infra/events/catalog.ts && grep -qF 'startDiagnosticBusBridge()' src/gateway/server.impl.ts
 ---
 
 # Observability — what we can prove is working
@@ -188,23 +199,23 @@ source-only for part of 2026-08-04. `grep -rl '<id>' dist/` is the check and it 
 After teaching the scorer about the central RPC dispatch seam:
 
 ```
-748 capabilities derived — OBSERVED 204 (27%) · DECLARED 400 (53%) · BLIND 144 (19%)
-RATCHET  structural BLIND 144 / cap 144
+749 capabilities derived — OBSERVED 199 (27%) · DECLARED 405 (54%) · BLIND 145 (19%)
+RATCHET  structural BLIND 145 / cap 145
 ```
 
 | Subsystem      | Total | OBSERVED | DECLARED | BLIND |
 | -------------- | ----: | -------: | -------: | ----: |
-| gateway-core   |   188 |       29 |      159 |     0 |
+| gateway-core   |   188 |       27 |      161 |     0 |
 | gateway-plugin |   138 |       10 |       39 |    89 |
-| stores         |   228 |       82 |      146 |     0 |
-| OBS            |    66 |       48 |       18 |     0 |
-| tinker-ui      |    44 |        4 |        0 |    40 |
+| stores         |   228 |       76 |      152 |     0 |
+| OBS            |    66 |       51 |       15 |     0 |
+| tinker-ui      |    45 |        4 |        0 |    41 |
 | plugins        |    32 |       15 |       16 |     1 |
 | hooks          |    26 |        2 |       20 |     4 |
 | crons          |    18 |       14 |        1 |     3 |
 | tools          |     8 |        0 |        1 |     7 |
 
-The structural drop, 358→144, was **not 214 new instruments**. The gateway had already
+The 213-row structural drop, 358→145, was **not 213 new instruments**. The gateway had already
 called `noteRpcDispatch(req.method)` centrally since 2026-08-04. The scorer still treated missing
 WS `res` lines as blindness, forgetting that in-process and other transports pass through the same
 handler seam. The correction credits enabled RPCs as DECLARED — proof of dispatch, never proof of
@@ -421,6 +432,42 @@ regex over a log line**, which is precisely the failure documented above.
 already exist as R11/R12. A handful of lines, zero runtime cost, and it would have caught
 `compression:headroom-mcp` on the day it was written.
 
+### Landed 2026-09-25 — the record is durable; the registry is not (yet)
+
+`src/infra/instrument-liveness.ts` now hands each 60 s report to a SINK
+(`InstrumentLivenessReportSnapshot`: the counts the `[instrument-liveness]` line prints, plus every
+instrument's verdict). The events bridge — `createInstrumentReportBridge` in
+`src/infra/events/bridge-diagnostic-bus.ts`, started from `server.impl.ts` after the writer
+(`5962378d5ce`) — writes it to the events database (`logging.md` §4.10):
+
+- `instrument.census`, every tick: n1 declared · n2 live · n3 never · n4 stale; fields pending, idle,
+  by_config.
+- `instrument.transition`, on each verdict change: label = the instrument id, fields `from` and `to`.
+  `to` was declared on 2026-09-25 (`bba2b8c956a`). Before that a transition said only where an
+  instrument came FROM, and no instrument's first verdict in a process was written at all; now the
+  first sighting is written with `to` alone, so the state each boot starts from is on record.
+
+Both keep writing with `diagnostics.enabled: false` (they do not ride the bus), and both stop with the
+events writer (`OPENCLAW_EVENTS_DB=0`). Against the six defects above:
+
+| #   | Now                                                                                                                                                                                                                                                                                                   |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Half-fixed.** The in-memory registry still resets on restart (`instrument-liveness.ts` has no `writeFile`, checked 2026-09-25), so the LIVE `never` still means "never since this boot". The transition history outlives the process, so "never on any boot on record" is now a query, not a guess. |
+| 2   | **Fixed in the record, not in the log.** Every instrument's verdict becomes a row on first sight and on each change, healthy ones included; the journal line still cannot name a `live` one.                                                                                                          |
+| 3–6 | Unchanged.                                                                                                                                                                                                                                                                                            |
+
+The other half of "the one change" — the rows through `gateway.observability.snapshot` — has NOT
+landed: the snapshot handler carries no instrument field (checked 2026-09-25), so `post-deploy-smoke`
+still reads a log line. To read the record today, `tinkerclaw logs catalog` gives both rows' counts
+and last-seen times; for the history, locally:
+
+```bash
+tinkerclaw logs sql "SELECT ts_ms, label, json_extract(fields, '$.from') AS from_state, json_extract(fields, '$.to') AS to_state FROM events WHERE name = 'instrument.transition' ORDER BY ts_ms DESC LIMIT 50"
+```
+
+No saved query covers it yet. **RUN: built at the wave-0924 HEAD and not deployed on 2026-09-25 —
+live behaviour UNVERIFIED.**
+
 ### A caveat on the algorithm ledger
 
 `recordAlgorithmOutcome` families auto-register **by firing** (7 families, 5,319 rows on
@@ -432,9 +479,29 @@ instrument; never substitute it for one.
 ## 8. The ratchet
 
 `BLIND_CAP` in `scripts/bible/capability-coverage.mjs` is the measured structural status quo —
-**144 on 2026-09-07** — and the build stops when that measurement rises. The stop is intentionally
+**154 on 2026-10-05** — and the build stops when that measurement rises. The stop is intentionally
 cheap and binary; the diagnosis is neither. It asks whether a capability arrived with nothing
 watching it, or whether the scorer lost context about a signal that already exists.
+
+**2026-10-01: 145 → 153, and green again.** Scoring `2c59c99a222` (where 145 was set) and develop
+against the same config, then diffing the two `--blind` lists, names all nine rows that arrived since.
+Seven are `tinker-ui` panel modules (`amygdala`, `call-timeline`, `call-timeline-canvas`,
+`context-buttons`, `context-counters`, `model-surface-catalog`, `thalamus-v4-card`), BLIND by rule R16
+because nothing under `tinker-ui/src` calls `declareInstrument`, so no UI module can score anything
+else. One is `rpc:thalamus.learning.run`: the Thalamus plugin ships off and outside `plugins.allow`,
+and the method moves to DECLARED the day it is enabled. The ninth was a misread, a test fixture
+(`routing-rationale.golden.fixtures.ts`) scored as a panel; `isTestFile` now excludes fixture files and
+`scripts/bible/capability-coverage.test.mjs` pins it. The risk the cap protects did not rise for any of
+the eight: the UI rows are a gap the scorer reports on every run, not a monitor someone forgot. The
+real fix for them is a UI liveness signal, which would lower this number by about 50. Until then, a
+cap held below the measurement only kept the gate red for six days (09-25 to 10-01), which is how a
+gate teaches bypass.
+
+**2026-10-05: 153 → 154.** The gate blocked a public push of develop. Diffing the `--blind` ids of
+`ea21dccdda4` (where 153 was set) and develop names three new `tinker-ui` panel modules
+(`call-timeline-persist`, `thalamus-roles`, `thalamus-turn`), BLIND by R16 like the seven before them;
+`eeg-scope` left the list. The protected risk did not rise: these are the same UI gap, not a monitor
+someone forgot.
 
 The cap is deliberately **not zero and not a target**. Hundreds of blind capabilities are not a
 session's work, and a gate demanding zero on day one gets switched off by Friday. Keep the cap equal
@@ -466,3 +533,29 @@ assertion on the value, which is §6's job and `slos.md`'s — not this score's.
 **The scope excludes the 145 upstream provider extensions** — not ours to instrument, and they
 would drown the number. The script prints that exclusion on every run rather than letting the total
 read as "everything". Nothing is dropped silently; that would be the same sin the file is about.
+
+## 10. The LLM ledger — every model call, and who drove it (2026-09-17)
+
+The owner asked for a full forensic record of every message sent to or received from any LLM, with the
+human behind each call, shipped by default. Before this, the record was spread over trajectory
+files and forensic dumps that session maintenance prunes (enforce, 30 days, 500 entries), and it
+had no attribution: on the first hive host, 0 of 252 sessions carried an operator.
+
+- **Where:** `<state>/forensic/llm-ledger.sqlite`, table `calls`. Request (system prompt, messages,
+  tools) and response are gzipped JSON; provider, model, usage, outcome and timing are columns.
+  Outside `sessions/`, so maintenance never prunes it. Nothing deletes rows. Owner:
+  `src/forensic/llm-ledger.ts`. Opt out: `OPENCLAW_LLM_LEDGER=0`.
+- **Instrument placement:** the outermost agent `streamFn` in `attempt.ts` (every agent turn, every
+  provider) plus each direct one-shot caller (`simple-completion-runtime`, conversation labels,
+  image and PDF tools, TTS summary, `/btw`, model-scan probes, forensic summarize). A new direct
+  `complete()` caller that skips `withLedgerCompletion`/`ledgeredCompletion` is BLIND by construction.
+- **Driver:** `chat.send` notes the sender's seat (`connect.seatId`, else the `tinker_seat` cookie)
+  mapped through `operators.json`. The seat cookie is scoped to `/tinker` and never reaches the root
+  WebSocket, so the UI must send `seatId` in `connect`. Subagents inherit their parent; crons and
+  channel peers are named from the session key; `OPENCLAW_LLM_LEDGER_DEFAULT_DRIVER` covers the
+  rest, else `unknown`. The last human driver of a session is carried across restarts from the ledger.
+- **Known blind spots:** calls a CLI bridge makes inside its own process (tool loops inside `claude`)
+  are seen only at the request/response boundary; the Codex app-server harness path is not wrapped.
+- **History:** `scripts/llm-ledger-backfill.ts` imports trajectory files (idempotent, skips anything
+  after the first live row). Pairing trap: `seq` restarts and `runId` repeats inside one trace, and
+  keying on `seq` silently dropped 691 of 941 calls on that host's data.

@@ -7,11 +7,12 @@ import type {
   SessionMessageSubscriberRegistry,
 } from "./server-chat.js";
 import { resolveSessionKeyForTranscriptFile } from "./session-transcript-key.js";
+import type { SessionMessagesRead } from "./session-utils.fs.js";
 import {
   attachOpenClawTranscriptMeta,
   loadGatewaySessionRow,
   loadSessionEntry,
-  readSessionMessages,
+  readSessionMessagesWithCursor,
   type GatewaySessionRow,
 } from "./session-utils.js";
 
@@ -83,6 +84,34 @@ function buildGatewaySessionSnapshot(params: {
   };
 }
 
+/**
+ * FORK 2026-09-23 (chat.history rehaul, plan task 6, ruling R6) — the seq a push event carries MUST
+ * be the same number `chat.history` cursors use: the `__openclaw.seq` of the served row whose
+ * `__openclaw.id` matches the appended entry. A raw branch-index position (`view.entries.findIndex
+ * (...) + 1`) is NOT that number — it counts non-message entries (prompt-key markers) and
+ * runtime-context-only rows that the message projection silently drops before it bumps `seq`, so a
+ * positional index runs ahead of the true seq the moment either has appeared earlier in the branch.
+ * `read` is already the SAME cached, index-backed call `chat.history` itself makes (Task 5), so this
+ * costs nothing extra beyond the lookup.
+ */
+function resolveMessageSeqFromCursorRead(
+  read: SessionMessagesRead | undefined,
+  messageId: string | undefined,
+): number | undefined {
+  if (!read || typeof messageId !== "string") {
+    return undefined;
+  }
+  for (let i = read.messages.length - 1; i >= 0; i--) {
+    const row = read.messages[i] as { __openclaw?: { id?: unknown; seq?: unknown } } | null;
+    if (row?.__openclaw?.id !== messageId) {
+      continue;
+    }
+    const seq = row.__openclaw?.seq;
+    return typeof seq === "number" ? seq : undefined;
+  }
+  return undefined;
+}
+
 export function createTranscriptUpdateBroadcastHandler(params: {
   broadcastToConnIds: GatewayBroadcastToConnIdsFn;
   sessionEventSubscribers: SessionEventSubscribers;
@@ -104,9 +133,14 @@ export function createTranscriptUpdateBroadcastHandler(params: {
       return;
     }
     const { entry, storePath } = loadSessionEntry(sessionKey);
-    const messageSeq = entry?.sessionId
-      ? readSessionMessages(entry.sessionId, storePath, entry.sessionFile).length
+    // Same cached, index-backed read `chat.history` serves cursors from (Task 5) — an append just
+    // ahead of this call is a guaranteed cache miss, but the TranscriptIndex beneath it tail-parses
+    // only the bytes appended since its last refresh, never the whole transcript again.
+    const cursorRead = entry?.sessionId
+      ? readSessionMessagesWithCursor(entry.sessionId, storePath, entry.sessionFile)
       : undefined;
+    const epoch = cursorRead?.epoch ?? null;
+    const messageSeq = resolveMessageSeqFromCursorRead(cursorRead, update.messageId);
     const sessionSnapshot = buildGatewaySessionSnapshot({
       sessionRow: loadGatewaySessionRow(sessionKey),
       includeSession: true,
@@ -122,6 +156,7 @@ export function createTranscriptUpdateBroadcastHandler(params: {
         {
           sessionKey,
           message,
+          epoch,
           ...(typeof update.messageId === "string" ? { messageId: update.messageId } : {}),
           ...(typeof messageSeq === "number" ? { messageSeq } : {}),
           ...sessionSnapshot,
@@ -141,6 +176,7 @@ export function createTranscriptUpdateBroadcastHandler(params: {
         sessionKey,
         phase: "message",
         ts: Date.now(),
+        epoch,
         ...(typeof update.messageId === "string" ? { messageId: update.messageId } : {}),
         ...(typeof messageSeq === "number" ? { messageSeq } : {}),
         ...sessionSnapshot,

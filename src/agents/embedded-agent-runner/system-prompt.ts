@@ -31,6 +31,8 @@ export function buildEmbeddedSystemPrompt(params: {
   workspaceNotes?: string[];
   /** Tier 1 persona block from CORTEX runtime — injected near the top of the prompt. */
   personaBlock?: string;
+  /** FORK: agent opening identity sentence (agents.*.identityLine). */
+  identityLine?: string;
   amygdalaNudge?: string[];
   /** Controls which hardcoded sections to include. Defaults to "full". */
   promptMode?: PromptMode;
@@ -86,6 +88,7 @@ export function buildEmbeddedSystemPrompt(params: {
     workspaceNotes: params.workspaceNotes,
     reactionGuidance: params.reactionGuidance,
     personaBlock: params.personaBlock,
+    identityLine: params.identityLine,
     amygdalaNudge: params.amygdalaNudge,
     promptMode: params.promptMode,
     silentReplyPromptMode: params.silentReplyPromptMode,

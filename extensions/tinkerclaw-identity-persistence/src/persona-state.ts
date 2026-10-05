@@ -209,14 +209,10 @@ export function createDefaultPersonaState(name: string, identity: string): Perso
     lastUpdated: new Date().toISOString(),
     name,
     identityStatement: identity,
-    hardRules: [
-      {
-        id: "HR-VOICE",
-        category: "identity",
-        rule: "Tinker home chat: first line of every substantive reply is **Jarvis:** *italic spoken text*. Italics required for purple. Do not wait for a script to inject it.",
-        examples: ["**Jarvis:** *The patch is sitting in source. Purple lives in this line.*"],
-      },
-    ],
+    // No default hard rules. A bootstrap persona ships EMPTY: any rule seeded
+    // here is injected into every prompt of every install, so hard rules must
+    // come from the owner's own persona file, never from this factory.
+    hardRules: [],
     traits: [],
     voiceMarkers: {
       avgSentenceLength: 15,

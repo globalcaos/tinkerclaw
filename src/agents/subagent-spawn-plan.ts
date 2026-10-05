@@ -1,6 +1,10 @@
 import { formatThinkingLevels } from "../auto-reply/thinking.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { resolveSubagentSpawnModelSelection } from "./model-selection.js";
+import { pickOwnedModel } from "../infra/thalamus-call-router.js";
+import {
+  resolveSubagentConfiguredModelSelection,
+  resolveSubagentSpawnModelSelection,
+} from "./model-selection.js";
 import { resolveSubagentThinkingOverride } from "./subagent-spawn-thinking.js";
 
 export function splitModelRef(ref?: string) {
@@ -45,18 +49,45 @@ export function resolveSubagentModelAndThinkingPlan(params: {
   targetAgentConfig?: unknown;
   modelOverride?: string;
   thinkingOverrideRaw?: string;
+  /** The child's task and label: what Thalamus prices when it owns a spawn that names no model. */
+  task?: string;
+  label?: string;
 }) {
-  const resolvedModel = resolveSubagentSpawnModelSelection({
-    cfg: params.cfg,
-    agentId: params.targetAgentId,
-    modelOverride: params.modelOverride,
-  });
+  // FORK 2026-10-03 (the architect: "Make sure Thalamus is owner of all those model choices when it is working"). A spawn that
+  // names no model is priced by Thalamus when it owns the `subagent` site; the configured default stays the fallback.
+  // A model named on purpose is never replaced: the spawn's own, or one configured for sub-agents or for the target
+  // agent. With no resolver, or one in shadow, this is exactly the old path.
+  const owned =
+    !params.modelOverride?.trim() &&
+    params.task?.trim() &&
+    !resolveSubagentConfiguredModelSelection({ cfg: params.cfg, agentId: params.targetAgentId })
+      ? pickOwnedModel("subagent", {
+          prompt: params.task,
+          ...(params.label ? { label: params.label } : {}),
+          ...(params.thinkingOverrideRaw ? { thinking: params.thinkingOverrideRaw } : {}),
+        })
+      : undefined;
+  const resolvedModel =
+    owned?.model ??
+    resolveSubagentSpawnModelSelection({
+      cfg: params.cfg,
+      agentId: params.targetAgentId,
+      modelOverride: params.modelOverride,
+    });
 
-  const thinkingPlan = resolveSubagentThinkingOverride({
+  let thinkingPlan = resolveSubagentThinkingOverride({
     cfg: params.cfg,
     targetAgentConfig: params.targetAgentConfig,
-    thinkingOverrideRaw: params.thinkingOverrideRaw,
+    thinkingOverrideRaw: params.thinkingOverrideRaw ?? owned?.thinking,
   });
+  // Thalamus's effort is advice: one this model does not accept is dropped, never turned into a failed spawn.
+  if (thinkingPlan.status === "error" && !params.thinkingOverrideRaw && owned?.thinking) {
+    thinkingPlan = resolveSubagentThinkingOverride({
+      cfg: params.cfg,
+      targetAgentConfig: params.targetAgentConfig,
+      thinkingOverrideRaw: undefined,
+    });
+  }
   if (thinkingPlan.status === "error") {
     const { provider, model } = splitModelRef(resolvedModel);
     const hint = formatThinkingLevels(provider, model);

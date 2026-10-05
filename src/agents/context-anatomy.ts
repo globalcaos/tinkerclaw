@@ -11,6 +11,12 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { SessionSystemPromptReport } from "../config/sessions/types.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+// FORK 2026-09-24 (A9) — the ONE shared marker. `src/moral-code/contract.ts` is the published
+// contract every harness reads; detecting the pack with a private copy of the literal is exactly how
+// `tinker-ui/src/injected-context.ts` and `extensions/tinkerclaw-moral-code/src/pack.ts` already
+// drifted into three copies (bible context-window-panel.md F6, B1).
+import { MORAL_CODE_MARKER } from "../moral-code/contract.js";
+import { estimateTokens } from "../shared/anatomy-token-estimate.js";
 // FORK 2026-07-28: single owner of "is this a tool result?" — it handles the production
 // `"toolResult"` role plus the `"tool"` / `type:"toolResult"` variants. Reusing it is the point:
 // this file previously carried its own, differently-wrong role test.
@@ -33,6 +39,20 @@ export type ContextAnatomyEvent = {
   turn: number;
   /** Round number within this turn (1-based). Each tool-use loop iteration is one round. */
   roundNumber?: number;
+  /**
+   * WHICH COMPOSITION THIS EVENT CARRIES — FORK 2026-09-24 (A9, bible context-window-panel.md F5).
+   *
+   * `pre-call`  — built from the messages snapshot as it was handed to the model, so the turn's own
+   *               user prompt is still the LAST message and lands in `userMessageChars`.
+   * `post-turn` — built after the reply committed, so the last message is the assistant's and the
+   *               user prompt has already slid into `conversationHistoryChars`. That is F5: the
+   *               post-turn snapshot structurally CANNOT itemise the prompt it was asked about, and
+   *               the panel must badge it rather than present it as the composition that was sent.
+   *
+   * `undefined` means nothing stamped this row. Every row written before schema v6 is in that state,
+   * and it is not the same as `post-turn` — it is "unknown", which is the honest reading.
+   */
+  snapshot?: "pre-call" | "post-turn";
   /** How many compactions have occurred in this session so far. */
   compactionCycle: number;
   /** ISO-8601 timestamp. */
@@ -51,6 +71,19 @@ export type ContextAnatomyEvent = {
   topicTransition?: { from: string[]; to: string[]; changed: boolean };
   /** Breakdown of context sent to the model. */
   contextSent: {
+    /**
+     * The TinkerClaw moral-code pack — FIRST, because it outranks everything after it (bible
+     * context-window-panel.md P3: fixed order, moral code first, never truncated).
+     *
+     * Never counted twice. A pack found inside bytes a slab ALREADY counted (a message, or the part
+     * of the system prompt the report measured) is CARVED OUT of that slab, so the total does not
+     * move. A pack found in bytes NO slab counted is ADDED: the per-turn runtime context the gateway
+     * appends to the system prompt after the report was built, and the cc-bridge case, where the
+     * pack lives inside the CLI's own `--resume` transcript that the gateway never sees. Those bytes
+     * were part of the unitemised gap to the billed prompt.
+     */
+    moralCodeChars: number;
+    moralCodeTokens: number;
     systemPromptChars: number;
     systemPromptTokens: number;
     injectedFiles: ContextAnatomyFileEntry[];
@@ -119,9 +152,87 @@ export type ContextAnatomyEvent = {
 // Token estimation
 // ---------------------------------------------------------------------------
 
-/** Rough chars-to-tokens ratio. Good enough for anatomy — not billing. */
-export function estimateTokens(chars: number): number {
-  return Math.ceil(chars / 3.5);
+// The one anatomy estimator (P11) lives in src/shared so the UI's call timeline uses the same number.
+export { estimateTokens };
+
+// ---------------------------------------------------------------------------
+// Moral code detection (FORK 2026-09-24 — A9, bible context-window-panel.md F6)
+// ---------------------------------------------------------------------------
+
+/**
+ * The closing tag, DERIVED from the one shared opening constant rather than written out again.
+ *
+ * `</moral_code>` already exists as a bare literal in `extensions/tinkerclaw-moral-code/src/pack.ts`
+ * and in `tinker-ui/src/injected-context.ts`. Adding a third would make the close tag a fact with no
+ * owner, which is the same failure the open marker was hoisted into `src/moral-code/contract.ts` to
+ * stop. Deriving it means a contract change moves both halves at once.
+ *
+ * The throw is deliberate and LOUD. If the marker ever stops being an opening tag, a silent fallback
+ * literal would keep this module compiling while it measured the wrong span forever; a module-scope
+ * throw fails the gateway's very first import with the reason printed.
+ */
+const MORAL_CODE_TAG_NAME = /^<([A-Za-z0-9_-]+)/.exec(MORAL_CODE_MARKER)?.[1];
+if (!MORAL_CODE_TAG_NAME) {
+  throw new Error(
+    `[context-anatomy] MORAL_CODE_MARKER is not an opening tag and the closing tag cannot be derived from it: ${MORAL_CODE_MARKER}`,
+  );
+}
+const MORAL_CODE_CLOSE = `</${MORAL_CODE_TAG_NAME}>`;
+
+/**
+ * The opening marker as it appears inside JSON-SERIALISED text (`source=\"tinkerclaw\"`).
+ *
+ * NOT optional. `buildContextAnatomy` measures a message whose content is a block array as
+ * `JSON.stringify(msg.content)`, and every prompt pi-agent-core stores is a block array — so in the
+ * messages this module actually sees, the marker's quotes are ESCAPED and a search for the raw
+ * marker finds nothing, ever. `src/moral-code/contract.ts` makes the same distinction for the CLI
+ * transcript (its private `MORAL_CODE_MARKER_JSON`); this is the same derivation from the same
+ * constant, not a new literal. The closing tag has no quotes and no `/` escaping under
+ * JSON.stringify, so it is identical in both forms.
+ */
+const MORAL_CODE_MARKER_JSON = JSON.stringify(MORAL_CODE_MARKER).slice(1, -1);
+
+/** Next pack opening at or after `from`, in either form; -1 with length 0 when there is none. */
+function findMoralCodeOpen(text: string, from: number): { at: number; length: number } {
+  const raw = text.indexOf(MORAL_CODE_MARKER, from);
+  const json = text.indexOf(MORAL_CODE_MARKER_JSON, from);
+  if (raw < 0 && json < 0) {
+    return { at: -1, length: 0 };
+  }
+  if (json < 0 || (raw >= 0 && raw <= json)) {
+    return { at: raw, length: MORAL_CODE_MARKER.length };
+  }
+  return { at: json, length: MORAL_CODE_MARKER_JSON.length };
+}
+
+/**
+ * Total chars of every moral-code pack span inside `text` (0 when there is none).
+ *
+ * Loops rather than measuring one span: the pack is re-delivered after EVERY compaction
+ * (`extensions/tinkerclaw-moral-code/index.ts` returns `{prependContext: pack}` on the first turn and
+ * after each compaction), so a long session's transcript legitimately carries several copies and
+ * a single `indexOf` would under-report a resident cost the model keeps paying.
+ *
+ * An UNTERMINATED pack (truncated mid-injection) counts to the end of the text rather than to zero:
+ * the bytes reached the model whether or not the closing tag survived, and reporting 0 there would
+ * reproduce the "tool results 0" defect this file already carries a monument to.
+ */
+export function measureMoralCodeChars(text: string | null | undefined): number {
+  if (!text) {
+    return 0;
+  }
+  let total = 0;
+  let from = 0;
+  for (;;) {
+    const open = findMoralCodeOpen(text, from);
+    if (open.at < 0) {
+      return total;
+    }
+    const close = text.indexOf(MORAL_CODE_CLOSE, open.at + open.length);
+    const end = close < 0 ? text.length : close + MORAL_CODE_CLOSE.length;
+    total += end - open.at;
+    from = end;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -336,12 +447,56 @@ export function buildContextAnatomy(params: {
   totalTokensUsed?: number;
   outputTokens?: number;
   authProfileId?: string;
+  /**
+   * The system-prompt bytes ACTUALLY SENT, when the caller has them. Used only to locate the moral
+   * code: `SessionSystemPromptReport` carries char COUNTS, never text, so without this the pack can
+   * never be attributed to the system prompt. Omitting it is safe — the messages are still scanned.
+   */
+  systemPromptText?: string;
+  /**
+   * cc-bridge only: TRUE when the Claude Code transcript for this turn carries the marker
+   * (`transcriptHasMoralCode`, src/moral-code/contract.ts). The gateway cannot see inside the CLI's
+   * own `--resume` transcript, so there is nothing local to measure.
+   */
+  moralCodeInTranscript?: boolean;
+  /** cc-bridge only: size of the PUBLISHED pack (`readPublishedMoralCode(stateDir).length`). */
+  moralCodePackChars?: number;
+  /** Which composition this is — see `ContextAnatomyEvent.snapshot`. */
+  snapshot?: "pre-call" | "post-turn";
 }): ContextAnatomyEvent {
   const { systemPromptReport: report } = params;
   const now = Date.now();
 
   // System prompt (non-project-context = framework instructions, runtime info, etc)
-  const systemPromptChars = report.systemPrompt.nonProjectContextChars;
+  const rawSystemPromptChars = report.systemPrompt.nonProjectContextChars;
+  // FORK 2026-09-24 (A9) — a pack in the system-prompt TEXT is either inside the bytes the report
+  // measured (carve it out of the slab) or inside bytes appended AFTER the report was built (add
+  // it). The second is the common case, not an edge: `buildSystemPromptReport` runs on the base
+  // prompt, and the moral code arrives later as a `before_prompt_build` prependContext. When the
+  // turn has a transcript prompt, attempt.ts moves that context into a turn-local system-prompt
+  // override (`buildRuntimeContextSystemContext`). Those bytes are in `systemPromptText` and in no
+  // report count. Carving 40k chars out of a slab that never held them would zero the system-prompt
+  // slab (the clamp only hides the negative) and under-count the total by exactly the bytes wiped.
+  //
+  // The split uses the only evidence available: the sent text's length beyond what the report
+  // measured (`report.systemPrompt.chars`) is bytes the report never saw. The pack claims that
+  // excess first. Whatever remains must have been inside the report's count and is carved,
+  // clamped so a slab can never go negative. It is an estimate — the remembered report can be a
+  // turn old — and it errs by at most the drift in base-prompt length between two turns.
+  const systemPromptPackChars = measureMoralCodeChars(params.systemPromptText);
+  const unreportedSystemPromptChars =
+    params.systemPromptText == null
+      ? 0
+      : Math.max(0, params.systemPromptText.length - report.systemPrompt.chars);
+  const systemPromptAddedMoralCodeChars = Math.min(
+    systemPromptPackChars,
+    unreportedSystemPromptChars,
+  );
+  const systemPromptCarvedMoralCodeChars = Math.min(
+    systemPromptPackChars - systemPromptAddedMoralCodeChars,
+    rawSystemPromptChars,
+  );
+  const systemPromptChars = rawSystemPromptChars - systemPromptCarvedMoralCodeChars;
 
   // Injected workspace files
   const injectedFiles: ContextAnatomyFileEntry[] = report.injectedWorkspaceFiles
@@ -363,6 +518,8 @@ export function buildContextAnatomy(params: {
   let conversationHistoryChars = 0;
   let toolResultsChars = 0;
   let userMessageChars = 0;
+  /** Moral-code chars found in the messages, removed from the slab each one rode in on. */
+  let messageMoralCodeChars = 0;
   /** Chars matching no slab. Non-zero means the composition under-reads the real context. */
   let unattributedChars = 0;
 
@@ -376,7 +533,14 @@ export function buildContextAnatomy(params: {
       continue;
     }
     const content = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
-    const chars = content.length;
+    // FORK 2026-09-24 (A9, bible F6 "the ethics are cut off from the bar"). On every non-Claude
+    // provider the moral code arrives as `prependContext` at priority 1000 — i.e. as the HEAD of
+    // this turn's user message — so without this carve-out the most important part of the prompt is
+    // indistinguishable from whatever the human typed. `chars` is the message's NET size: the pack
+    // moves to its own slab, the total does not move at all.
+    const moralCodeInMessage = measureMoralCodeChars(content);
+    messageMoralCodeChars += moralCodeInMessage;
+    const chars = content.length - moralCodeInMessage;
     const isLast = i === messages.length - 1;
 
     // FORK 2026-07-28 — THIS CHAIN SILENTLY DROPPED EVERY TOOL RESULT.
@@ -414,7 +578,25 @@ export function buildContextAnatomy(params: {
     );
   }
 
+  // FORK 2026-09-24 (A9) — three sources, ordered by how much the number can be trusted:
+  //   1. the system-prompt bytes actually sent  -> split into carved / added above,
+  //   2. the messages snapshot                  -> carved out of User/Conv/Results above,
+  //   3. cc-bridge ONLY: the pack sits inside the Claude Code `--resume` transcript, which the
+  //      gateway never sees. Nothing local to detect, nothing to carve out, so the caller that CAN
+  //      see it passes the PUBLISHED pack size and it is ADDED — those bytes were in no slab (they
+  //      were part of the unitemised gap between this total and the billed prompt).
+  // (3) fires only when (1) and (2) found NOTHING, so a pack visible in the snapshot is never also
+  // counted from the file. Guessing would be the easy error here: an added-AND-carved pack would
+  // read as a 2x moral code and nothing downstream could tell.
+  const detectedMoralCodeChars = systemPromptPackChars + messageMoralCodeChars;
+  const transcriptMoralCodeChars =
+    detectedMoralCodeChars === 0 && params.moralCodeInTranscript
+      ? Math.max(0, params.moralCodePackChars ?? 0)
+      : 0;
+  const moralCodeChars = detectedMoralCodeChars + transcriptMoralCodeChars;
+
   const totalChars =
+    moralCodeChars +
     systemPromptChars +
     injectedFilesTotalChars +
     skillsChars +
@@ -464,13 +646,19 @@ export function buildContextAnatomy(params: {
   const previousTopics = stateKey ? sessionTopicsState.get(stateKey) : undefined;
   const topicTransition =
     previousTopics !== undefined ? computeTopicTransition(previousTopics, topics) : undefined;
-  if (stateKey) {
+  // FORK 2026-09-24 (A9) — a PRE-CALL build reads the topic history but does not advance it. A
+  // turn is now built twice (pre-call, then post-turn), and if both advanced the state the
+  // post-turn transition would compare the turn against ITSELF (same last user message, so
+  // `changed` false every time), and that transition is the one the upsert keeps. Advancing only
+  // on the post-turn build keeps "previous" meaning the previous TURN for both builds.
+  if (stateKey && params.snapshot !== "pre-call") {
     sessionTopicsState.set(stateKey, topics);
   }
 
   return {
     turn: params.turn,
     roundNumber: params.roundNumber,
+    snapshot: params.snapshot,
     compactionCycle: params.compactionCycle,
     timestamp: new Date(now).toISOString(),
     timestampMs: now,
@@ -480,6 +668,8 @@ export function buildContextAnatomy(params: {
     topics,
     topicTransition,
     contextSent: {
+      moralCodeChars,
+      moralCodeTokens: estimateTokens(moralCodeChars),
       systemPromptChars,
       systemPromptTokens: estimateTokens(systemPromptChars),
       injectedFiles,

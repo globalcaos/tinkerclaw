@@ -69,6 +69,15 @@ describe("downloadInboundMedia", () => {
     await expectMimetype(message, mimetype);
   });
 
+  it("copies whatsmeow's capital URL to url so Baileys accepts the media", async () => {
+    const audioMessage = { URL: "https://mmg.whatsapp.net/v/x", directPath: "/v/x", ptt: true };
+    await downloadInboundMedia({ message: { audioMessage } } as never, mockSock as never);
+    const passed = downloadMediaMessage.mock.calls[0]?.[0] as {
+      message: { audioMessage: { url?: string } };
+    };
+    expect(passed.message.audioMessage.url).toBe("https://mmg.whatsapp.net/v/x");
+  });
+
   it("preserves fileName from document messages", async () => {
     const msg = {
       message: {

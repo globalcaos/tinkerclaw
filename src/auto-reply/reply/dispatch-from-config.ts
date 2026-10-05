@@ -266,7 +266,9 @@ const createShouldEmitVerboseProgress = (params: {
   return () => {
     if (params.sessionKey && params.storePath) {
       try {
-        const store = loadSessionStore(params.storePath);
+        // FORK 2026-09-23 — READ-ONLY borrow (clone:false): runs per progress
+        // event and only the level leaves. Never mutate `store` or `entry`.
+        const store = loadSessionStore(params.storePath, { clone: false });
         const entry = resolveSessionStoreEntry({ store, sessionKey: params.sessionKey }).existing;
         const currentLevel = normalizeVerboseLevel(entry?.verboseLevel ?? "");
         if (currentLevel) {

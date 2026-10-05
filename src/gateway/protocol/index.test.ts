@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { TALK_TEST_PROVIDER_ID } from "../../test-utils/talk-test-provider.js";
 import {
   formatValidationErrors,
+  validateChatHistoryParams,
+  validateChatHistoryResult,
   validateChatSendParams,
   validateModelsListParams,
   validateNodeEventResult,
@@ -247,5 +249,77 @@ describe("validateChatSendParams", () => {
 
   it("still rejects unknown properties", () => {
     expect(validateChatSendParams({ ...base, bogusField: 1 })).toBe(false);
+  });
+});
+
+// Plan task 5 (chat.history rehaul): seq cursors. Legacy callers send none of the new fields.
+describe("validateChatHistoryParams", () => {
+  const base = { sessionKey: "agent:main:main" };
+
+  it("accepts the legacy shape and each cursor field", () => {
+    expect(validateChatHistoryParams(base)).toBe(true);
+    expect(validateChatHistoryParams({ ...base, limit: 50, maxChars: 1000 })).toBe(true);
+    expect(validateChatHistoryParams({ ...base, afterSeq: 0, epoch: "e1" })).toBe(true);
+    expect(validateChatHistoryParams({ ...base, beforeSeq: 1, epoch: "e1", limit: 20 })).toBe(true);
+  });
+
+  it("rejects out-of-range cursors and unknown properties", () => {
+    expect(validateChatHistoryParams({ ...base, afterSeq: -1 })).toBe(false);
+    expect(validateChatHistoryParams({ ...base, beforeSeq: 0 })).toBe(false);
+    expect(validateChatHistoryParams({ ...base, afterSeq: 1.5 })).toBe(false);
+    expect(validateChatHistoryParams({ ...base, epoch: 7 })).toBe(false);
+    expect(validateChatHistoryParams({ ...base, cursor: 3 })).toBe(false);
+  });
+});
+
+describe("validateChatHistoryResult", () => {
+  const cursor = { epoch: "e1", firstSeq: 1, lastSeq: 4, hasMoreBefore: false, reset: false };
+
+  it("accepts a served window, with a null epoch for transcripts the index cannot number", () => {
+    expect(
+      validateChatHistoryResult({
+        sessionKey: "agent:main:main",
+        sessionId: "sess-1",
+        messages: [{ role: "user", content: "hi" }],
+        thinkingLevel: "low",
+        fastMode: false,
+        verboseLevel: "off",
+        cursor,
+      }),
+    ).toBe(true);
+    expect(
+      validateChatHistoryResult({
+        sessionKey: "agent:main:main",
+        messages: [],
+        cursor: { ...cursor, epoch: null, firstSeq: 0, lastSeq: 0, reset: true },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts a reply WITHOUT a cursor (an older gateway; ruling R37)", () => {
+    expect(validateChatHistoryResult({ sessionKey: "agent:main:main", messages: [] })).toBe(true);
+  });
+
+  it("accepts cursor.userRowsBefore as an integer >= 0 (R36)", () => {
+    const base = { sessionKey: "agent:main:main", messages: [] };
+    expect(validateChatHistoryResult({ ...base, cursor: { ...cursor, userRowsBefore: 12 } })).toBe(
+      true,
+    );
+    expect(validateChatHistoryResult({ ...base, cursor: { ...cursor, userRowsBefore: -1 } })).toBe(
+      false,
+    );
+    expect(validateChatHistoryResult({ ...base, cursor: { ...cursor, userRowsBefore: 1.5 } })).toBe(
+      false,
+    );
+  });
+
+  it("rejects unknown cursor fields", () => {
+    expect(
+      validateChatHistoryResult({
+        sessionKey: "agent:main:main",
+        messages: [],
+        cursor: { ...cursor, extra: 1 },
+      }),
+    ).toBe(false);
   });
 });

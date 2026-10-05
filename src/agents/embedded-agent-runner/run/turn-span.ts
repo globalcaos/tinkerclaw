@@ -1,4 +1,5 @@
 import { emitAgentEvent, getAgentRunContext } from "../../../infra/agent-events.js";
+import { recordTurnSpan } from "../../../infra/events/turn-events.js";
 import { log } from "../logger.js";
 
 /** Stream name for one pre-model runner stage. Mirrored in `tinker-ui/src/turn-phase.ts`. */
@@ -83,6 +84,7 @@ export function markSpan(
   plugin?: string,
 ): void {
   log.info(`[turn-span] runId=${runId ?? "-"} stage=${stage} ms=${ms}`);
+  recordTurnSpan(runId, stage, ms);
   emitStage(runId, stage, ms, plugin);
 }
 
@@ -171,6 +173,8 @@ export async function turnSpan<T>(
       `[turn-span] runId=${runId ?? "-"} stage=${stage} ms=${ms}` +
         (gapBefore === undefined ? "" : ` gapMs=${gapBefore}`),
     );
+    // logging.md §4.6: the same span, and the unnamed gap before it, as `turn.span` rows.
+    recordTurnSpan(runId, stage, ms, gapBefore);
     // The gap is emitted as its own stage so the UI breakdown tiles: an unnamed interval is
     // exactly what "not accounted for by any stage" was made of.
     if (gapBefore !== undefined && gapBefore > 0) {
@@ -196,6 +200,7 @@ export function turnSpanSync<T>(runId: string | undefined, stage: string, fn: ()
       `[turn-span] runId=${runId ?? "-"} stage=${stage} ms=${ms}` +
         (gapBefore === undefined ? "" : ` gapMs=${gapBefore}`),
     );
+    recordTurnSpan(runId, stage, ms, gapBefore);
     // The gap is emitted as its own stage so the UI breakdown tiles: an unnamed interval is
     // exactly what "not accounted for by any stage" was made of.
     if (gapBefore !== undefined && gapBefore > 0) {

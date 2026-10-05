@@ -33,6 +33,10 @@ export async function startGatewayEarlyRuntime(params: {
   nodeRegistry: Parameters<typeof setSkillsRemoteRegistry>[0];
   pluginRegistry?: PluginRegistry;
   broadcast: Parameters<typeof startGatewayMaintenanceTimers>[0]["broadcast"];
+  broadcastToConnIds: Parameters<typeof startGatewayMaintenanceTimers>[0]["broadcastToConnIds"];
+  getSessionEventSubscriberConnIds: Parameters<
+    typeof startGatewayMaintenanceTimers
+  >[0]["getSessionEventSubscriberConnIds"];
   nodeSendToAllSubscribed: Parameters<
     typeof startGatewayMaintenanceTimers
   >[0]["nodeSendToAllSubscribed"];
@@ -109,6 +113,8 @@ export async function startGatewayEarlyRuntime(params: {
     ? null
     : startGatewayMaintenanceTimers({
         broadcast: params.broadcast,
+        broadcastToConnIds: params.broadcastToConnIds,
+        getSessionEventSubscriberConnIds: params.getSessionEventSubscriberConnIds,
         nodeSendToAllSubscribed: params.nodeSendToAllSubscribed,
         getPresenceVersion: params.getPresenceVersion,
         getHealthVersion: params.getHealthVersion,

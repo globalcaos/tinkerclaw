@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# FORK 2026-09-30 — clear the formatter's phantom index entries after a pathspec commit.
+#
+# `git commit -- <paths>` runs pre-commit against a TEMPORARY index (GIT_INDEX_FILE). The pre-commit
+# formatter re-stages its output there, so the commit gets the formatted blob while the REAL index
+# keeps the pre-format one: `MM` on a file whose disk copy already equals HEAD. Those phantoms look
+# like another session's staged work, and `git merge` refuses while anything is staged (it blocked a
+# merge in the shared checkout on 2026-09-29). By the time this hook runs the real index is written,
+# so clear the entry, but only for paths of the commit just made whose disk copy equals HEAD: the
+# index entry then holds nothing that is not already committed or on disk. Never fails a commit.
+unset GIT_INDEX_FILE
+git diff-tree --no-commit-id --name-only -r -z HEAD 2>/dev/null | while IFS= read -r -d '' f; do
+  git diff --cached --quiet -- "$f" 2>/dev/null && continue
+  git diff --quiet HEAD -- "$f" 2>/dev/null || continue
+  git restore --staged -- "$f" 2>/dev/null
+done
+exit 0

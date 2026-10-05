@@ -585,7 +585,6 @@ describe("runGatewayUpdate", () => {
     expect(calls).toContain("pnpm install");
     expect(calls).toContain("pnpm build");
     expect(calls).toContain("pnpm lint");
-    expect(calls).toContain("pnpm ui:build");
     expect(pnpmEnvPaths.some((value) => value.includes("openclaw-update-pnpm-"))).toBe(true);
   });
 
@@ -1735,51 +1734,5 @@ describe("runGatewayUpdate", () => {
     expect(result.status).toBe("error");
     expect(result.reason).toBe("doctor-entry-missing");
     expect(result.steps.at(-1)?.name).toBe("openclaw doctor entry");
-  });
-
-  it("repairs UI assets when doctor run removes control-ui files", async () => {
-    await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
-    const uiIndexPath = await setupUiIndex();
-
-    const stableTag = "v1.0.1-1";
-    const { runCommand, calls, doctorKey, getUiBuildCount } = await createStableTagRunner({
-      stableTag,
-      uiIndexPath,
-      onUiBuild: async (count) => {
-        await fs.mkdir(path.dirname(uiIndexPath), { recursive: true });
-        await fs.writeFile(uiIndexPath, `<html>${count}</html>`, "utf-8");
-      },
-      onDoctor: removeControlUiAssets,
-    });
-
-    const result = await runWithCommand(runCommand, { channel: "stable" });
-
-    expect(result.status).toBe("ok");
-    expect(getUiBuildCount()).toBe(2);
-    expect(await pathExists(uiIndexPath)).toBe(true);
-    expect(calls).toContain(doctorKey);
-  });
-
-  it("fails when UI assets are still missing after post-doctor repair", async () => {
-    await setupGitCheckout({ packageManager: "pnpm@8.0.0" });
-    const uiIndexPath = await setupUiIndex();
-
-    const stableTag = "v1.0.1-1";
-    const { runCommand } = await createStableTagRunner({
-      stableTag,
-      uiIndexPath,
-      onUiBuild: async (count) => {
-        if (count === 1) {
-          await fs.mkdir(path.dirname(uiIndexPath), { recursive: true });
-          await fs.writeFile(uiIndexPath, "<html>built</html>", "utf-8");
-        }
-      },
-      onDoctor: removeControlUiAssets,
-    });
-
-    const result = await runWithCommand(runCommand, { channel: "stable" });
-
-    expect(result.status).toBe("error");
-    expect(result.reason).toBe("ui-assets-missing");
   });
 });

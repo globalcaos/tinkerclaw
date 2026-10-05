@@ -1,4 +1,5 @@
 import { emitAgentEvent } from "../infra/agent-events.js";
+import { recordHookSpan } from "../infra/events/turn-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
 /**
@@ -70,12 +71,21 @@ const hookSpanLog = createSubsystemLogger("hooks");
  * the funnel, and timing the post-answer ones would be noise for work nobody waits on. No
  * duration threshold, for the reason given in `turn-span.ts`: a fast stage that is never
  * written down is indistinguishable from one that never ran.
+ *
+ * Each line is also a `hook.span` row (TINKER_UI_DESIGN_BIBLE/logging.md §4.6), keyed by the
+ * hook context's runId and sessionKey so it joins the turn it belongs to (logging.md L8).
  */
-export function logHookHandlerSpan(hookName: string, pluginId: string, ms: number): void {
+export function logHookHandlerSpan(
+  hookName: string,
+  pluginId: string,
+  ms: number,
+  ctx?: unknown,
+): void {
   if (!TURN_PHASE_LABELS[hookName]) {
     return;
   }
   hookSpanLog.info(`[hook-span] hook=${hookName} plugin=${pluginId} ms=${ms}`);
+  recordHookSpan(hookName, pluginId, ms, ctx);
 }
 
 /** One handler's contribution to a narrated stage. `id` is the plugin id, `ms` its wall time. */

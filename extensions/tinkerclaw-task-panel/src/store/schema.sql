@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS task (
   source TEXT NOT NULL,
   source_ref TEXT,
   briefing_pass_id TEXT REFERENCES briefing_pass(id),
-  priority_axis TEXT CHECK (priority_axis IN ('online','family','me','acme','meta')),
+  -- Any axis id: axes are user data in task_axis (no enumerated CHECK).
+  priority_axis TEXT,
   priority_rank INTEGER NOT NULL DEFAULT 50,
   carry_days INTEGER NOT NULL DEFAULT 0,
   age_seconds INTEGER NOT NULL DEFAULT 0,
@@ -75,6 +76,7 @@ CREATE TABLE IF NOT EXISTS task (
   dismissal_note TEXT,
   est_minutes INTEGER,
   hands TEXT CHECK (hands IN ('user','assistant','either')),
+  operator_id TEXT,
   inferred_signal_json TEXT,
   metadata_json TEXT,
   recurrence_rule_text TEXT,

@@ -15,6 +15,8 @@
  * have no challenge/ratify phases).
  */
 
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
+import { providerOf } from "./cognitive-diversity.js";
 import {
   fanOut,
   moderatedTribunal,
@@ -158,4 +160,55 @@ export async function getOrchestrator(id: string): Promise<DebateOrchestrator | 
     }
   }
   return null;
+}
+
+/**
+ * J6 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.synapse.debate` (§9 step 9) — one span row per
+ * debate, whichever choreography produced it.
+ *
+ * WHY NOT A WRAPPER ON THE ORCHESTRATOR. `raacOrchestrator.runDebate` IS the bare `runDebate`
+ * reference and the orchestrator suite asserts that identity ("no wrapper indirection"), as it
+ * does for `getOrchestrator("raac") === raacOrchestrator`. Wrapping either would break a
+ * deliberate don't-regress guard, so the telemetry is an explicit call the one caller makes
+ * after the debate settles: orchestrator-agnostic by construction, and unable to change what any
+ * orchestrator returns.
+ *
+ * `providers` is counted from the RESOLVED refs, never from the cosmetic `ProviderProfile.modelId`
+ * label (cognitive-diversity.ts is explicit that only the ref is load-bearing), and through that
+ * module's own `providerOf` rather than a second split of the same string (design-principles #18).
+ *
+ * `position_changes` is the measurement J6's claim stands or falls on: a participant whose
+ * ratification differs from its own vote in the previous round CHANGED POSITION. Counted across
+ * consecutive rounds, so a one-round debate is necessarily 0 — which is the honest reading, not a
+ * missing number.
+ */
+export function emitSynapseDebate(params: {
+  result: DebateResult;
+  durMs: number;
+  participantCount: number;
+  /** Resolved "provider/model" refs of the participants — NOT their modelId labels. */
+  refs: readonly string[];
+  sessionKey?: string;
+  runId?: string;
+}): void {
+  const rounds = params.result.rounds;
+  let positionChanges = 0;
+  for (let i = 1; i < rounds.length; i++) {
+    const prev = rounds[i - 1].ratification ?? {};
+    const cur = rounds[i].ratification ?? {};
+    for (const [participant, vote] of Object.entries(cur)) {
+      if (participant in prev && prev[participant] !== vote) {
+        positionChanges += 1;
+      }
+    }
+  }
+  emitEvent("j.synapse.debate", {
+    ...(params.sessionKey !== undefined ? { sessionKey: params.sessionKey } : {}),
+    ...(params.runId !== undefined ? { runId: params.runId } : {}),
+    durMs: params.durMs,
+    n1: params.participantCount,
+    n2: new Set(params.refs.map(providerOf)).size,
+    n3: rounds.length,
+    n4: positionChanges,
+  });
 }

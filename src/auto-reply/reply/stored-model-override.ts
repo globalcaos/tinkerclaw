@@ -7,6 +7,12 @@ export type StoredModelOverride = {
   provider?: string;
   model: string;
   source: "session" | "parent";
+  /**
+   * FORK 2026-09-08 — who WROTE the override: "user" (a `/model` pin, the picker), "auto" (the
+   * failover runner persisting the candidate it landed on), undefined (a legacy entry, read as the
+   * user's). model-selection.ts treats only the auto-sourced one as non-explicit.
+   */
+  overrideSource?: "auto" | "user";
 };
 
 function resolveParentSessionKeyCandidate(params: {
@@ -37,7 +43,11 @@ export function resolveStoredModelOverride(params: {
     overrideModel: params.sessionEntry?.modelOverride,
   });
   if (direct) {
-    return { ...direct, source: "session" };
+    return {
+      ...direct,
+      source: "session",
+      overrideSource: params.sessionEntry?.modelOverrideSource,
+    };
   }
   const parentKey = resolveParentSessionKeyCandidate({
     sessionKey: params.sessionKey,
@@ -55,5 +65,5 @@ export function resolveStoredModelOverride(params: {
   if (!parentOverride) {
     return null;
   }
-  return { ...parentOverride, source: "parent" };
+  return { ...parentOverride, source: "parent", overrideSource: parentEntry?.modelOverrideSource };
 }

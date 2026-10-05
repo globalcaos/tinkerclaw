@@ -1,0 +1,53 @@
+{
+  "note": "Example TRANSCRIBED_CHARTS file. The topics and numbers are invented. Each top-level key is a substring of a slide title (the harvest's Title field). charts[] go into the slide's picture slots, largest slot first, unless cx/cy (slot centre as a fraction of slide width/height) is set. With \"picture\": true the picture stays and the numbers go into the slide notes instead. Only the numbers are typed by hand; everything else is measured. Off unless TRANSCRIBED_CHARTS points at a file like this.",
+  "Website traffic": {
+    "charts": [
+      {
+        "type": "line",
+        "title": "Visits per month (thousands)",
+        "categories": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
+        "series": {
+          "Visits": [42, 38, 51, 47, 55, 60],
+          "Goal": [50, 50, 50, 50, 50, 50]
+        },
+        "colors": { "Goal": [255, 0, 0] },
+        "number_format": "0",
+        "legend": "t"
+      }
+    ]
+  },
+  "Warehouse": {
+    "charts": [
+      {
+        "type": "column",
+        "title": "Units shipped and returned",
+        "categories": ["2021", "2022", "2023", "2024"],
+        "series": {
+          "Shipped (k)": [12.4, 13.9, 15.2, 14.7],
+          "Returned (k)": [0.8, 1.1, 0.9, 1.0]
+        },
+        "number_format": "0.0",
+        "labels": true,
+        "cx": 0.3,
+        "cy": 0.55
+      },
+      {
+        "type": "line",
+        "title": "Stock on hand by count date",
+        "date_axis": true,
+        "date_in": "%Y-%m-%d",
+        "date_format": "dd/mm/yyyy",
+        "cat_rot": -45,
+        "categories": ["2024-01-15", "2024-03-10", "2024-06-02", "2024-09-20"],
+        "series": {
+          "Units": [3400, 2950, 3720, 3310],
+          "Minimum": [3000, 3000, 3000, 3000]
+        },
+        "number_format": "#,##0",
+        "lang": "en-US",
+        "cx": 0.75,
+        "cy": 0.55
+      }
+    ]
+  }
+}

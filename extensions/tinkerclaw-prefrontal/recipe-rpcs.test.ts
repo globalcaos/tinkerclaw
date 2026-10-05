@@ -56,6 +56,9 @@ describe("recipe-rpcs", () => {
       ]);
 
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -93,6 +96,9 @@ describe("recipe-rpcs", () => {
       ]);
 
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -111,6 +117,9 @@ describe("recipe-rpcs", () => {
       .intercept({ path: "/api/kits/globalcaos/feature", method: "GET" })
       .reply(200, { slug: "feature", title: "Build Feature" });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -134,6 +143,9 @@ describe("recipe-rpcs", () => {
         risk: [{ source: "snyk", level: "Critical", alertCount: 3 }],
       });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -158,6 +170,9 @@ describe("recipe-rpcs", () => {
         risk: [{ source: "snyk", level: "Safe" }],
       });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -182,6 +197,9 @@ describe("recipe-rpcs", () => {
         risk: [{ source: "snyk", level: "High Risk", alertCount: 1 }],
       });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -240,6 +258,9 @@ describe("recipe-rpcs", () => {
       });
 
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -296,6 +317,9 @@ describe("recipe-rpcs", () => {
       });
 
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -316,6 +340,9 @@ describe("recipe-rpcs", () => {
       files: [{ path: "kit.md", content: "x" }],
     });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -339,6 +366,9 @@ describe("recipe-rpcs", () => {
       ],
     });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -352,6 +382,9 @@ describe("recipe-rpcs", () => {
 
   it("prefrontal.recipe.publish requires apiKey", async () => {
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -383,6 +416,9 @@ describe("recipe-rpcs", () => {
       });
 
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: "test-key",
@@ -415,6 +451,9 @@ describe("recipe-rpcs", () => {
       });
 
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: "test-key",
@@ -509,6 +548,9 @@ describe("recipe-rpcs", () => {
       "utf-8",
     );
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -544,6 +586,9 @@ describe("recipe-rpcs", () => {
       ],
     });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -573,6 +618,9 @@ describe("recipe-rpcs", () => {
       ],
     });
     const rpcs = createRecipeRpcs({
+      // These cases exercise the enabled paths; the gates default OFF.
+      allowRecipePublish: true,
+      allowRemoteRecipeInstall: true,
       store,
       baseUrl: "https://www.journeykits.ai",
       apiKey: null,
@@ -622,6 +670,9 @@ describe("recipe-rpcs", () => {
     const spy = vi.spyOn(kitMatcher, "matchRecipesDetailed");
     try {
       const rpcs = createRecipeRpcs({
+        // These cases exercise the enabled paths; the gates default OFF.
+        allowRecipePublish: true,
+        allowRemoteRecipeInstall: true,
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
@@ -664,6 +715,9 @@ describe("recipe-rpcs", () => {
     const spy = vi.spyOn(kitMatcher, "matchRecipesDetailed");
     try {
       const rpcs = createRecipeRpcs({
+        // These cases exercise the enabled paths; the gates default OFF.
+        allowRecipePublish: true,
+        allowRemoteRecipeInstall: true,
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
@@ -702,6 +756,9 @@ describe("recipe-rpcs", () => {
     callGatewaySpy.mockClear();
     try {
       const rpcs = createRecipeRpcs({
+        // These cases exercise the enabled paths; the gates default OFF.
+        allowRecipePublish: true,
+        allowRemoteRecipeInstall: true,
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
@@ -757,6 +814,9 @@ describe("recipe-rpcs", () => {
     callGatewaySpy.mockClear();
     try {
       const rpcs = createRecipeRpcs({
+        // These cases exercise the enabled paths; the gates default OFF.
+        allowRecipePublish: true,
+        allowRemoteRecipeInstall: true,
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
@@ -810,6 +870,9 @@ describe("recipe-rpcs", () => {
       });
     try {
       const rpcs = createRecipeRpcs({
+        // These cases exercise the enabled paths; the gates default OFF.
+        allowRecipePublish: true,
+        allowRemoteRecipeInstall: true,
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
@@ -842,6 +905,9 @@ describe("recipe-rpcs", () => {
         ],
       });
       const rpcs = createRecipeRpcs({
+        // These cases exercise the enabled paths; the gates default OFF.
+        allowRecipePublish: true,
+        allowRemoteRecipeInstall: true,
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,
@@ -864,6 +930,9 @@ describe("recipe-rpcs", () => {
     it("returns ok:false when the skill search yields no hits", async () => {
       callGatewaySpy.mockResolvedValueOnce({ skills: [] });
       const rpcs = createRecipeRpcs({
+        // These cases exercise the enabled paths; the gates default OFF.
+        allowRecipePublish: true,
+        allowRemoteRecipeInstall: true,
         store,
         baseUrl: "https://www.journeykits.ai",
         apiKey: null,

@@ -477,7 +477,15 @@ export function resolveSessionRunState(params: {
  * still land on the bare tail — see `modelCountKey` for why that residue cannot be removed, and
  * `liveCountForModel` for what it costs at lookup time.
  */
-export function liveRunCountsByModel(params: {
+export function liveRunCountsByModel(params: LiveRunParams): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const [key, sessions] of liveRunSessionsByModel(params)) {
+    counts.set(key, sessions.length);
+  }
+  return counts;
+}
+
+type LiveRunParams = {
   rows: readonly SessionRow[] | null | undefined;
   runs: Iterable<ClientRun>;
   matches: KeyMatcher;
@@ -485,14 +493,33 @@ export function liveRunCountsByModel(params: {
   rowsFetchedAt?: number;
   /** sessionKey -> when this client last saw that session end. */
   endedAt?: Map<string, number>;
-}): Map<string, number> {
+};
+
+/**
+ * The sessions behind each live count, keyed exactly like `liveRunCountsByModel`.
+ *
+ * FORK 2026-10-02 (the architect: "On mouseover on them, I would like to see the names of the tabs that are
+ * using them"). The count is this list's length, so the badge and its hover read one walk and can
+ * never name a different number of sessions than the badge shows. A session appears once per live
+ * contribution; a duplicate key is a session counted twice, and stays visible as such.
+ */
+export function liveRunSessionsByModel(params: LiveRunParams): Map<string, string[]> {
   const { rows, runs, matches, now, rowsFetchedAt, endedAt } = params;
-  const counts = new Map<string, number>();
+  const sessions = new Map<string, string[]>();
   const seen = new Set<string>();
-  const add = (model?: string | null, provider?: string | null) => {
+  const add = (
+    model: string | null | undefined,
+    provider: string | null | undefined,
+    sk: string,
+  ) => {
     const key = modelCountKey(model, provider);
     if (key) {
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const list = sessions.get(key);
+      if (list) {
+        list.push(sk);
+      } else {
+        sessions.set(key, [sk]);
+      }
     }
   };
 
@@ -518,7 +545,7 @@ export function liveRunCountsByModel(params: {
       // `provider/model` pair that exists in no catalog, and the row would never light at all.
       const model = state.model || row.model;
       const provider = model === row.model ? row.modelProvider || state.provider : state.provider;
-      add(model, provider);
+      add(model, provider, row.key);
     }
   }
 
@@ -533,10 +560,38 @@ export function liveRunCountsByModel(params: {
     if (![...seen].some((k) => matches(key, k))) {
       // A client entry always carries its own provider — `providerOf(modelPin)` at send time, or the
       // provider on lifecycle:start — so this lane can qualify itself without consulting a row.
-      add(run.model, run.provider);
+      add(run.model, run.provider, key);
     }
   }
-  return counts;
+  return sessions;
+}
+
+/**
+ * Which key of a count-keyed map answers for catalog row `modelId` (`provider/model`)? The rule
+ * `liveCountForModel` documents below, as a key, so every map keyed by `modelCountKey` (the count,
+ * the sessions behind it, the recent-use ledger) is read the same way.
+ */
+export function catalogKeyIn<T>(
+  map: Map<string, T>,
+  modelId: string | undefined,
+): string | undefined {
+  if (typeof modelId !== "string" || modelId.length === 0) {
+    return undefined;
+  }
+  if (map.has(modelId)) {
+    return modelId;
+  }
+  const tail = bareModelTail(modelId);
+  return tail && map.has(tail) ? tail : undefined;
+}
+
+/** The sessions behind catalog row `modelId`'s live count; its length IS that count. */
+export function liveSessionsForModel(
+  sessions: Map<string, string[]>,
+  modelId: string | undefined,
+): readonly string[] {
+  const key = catalogKeyIn(sessions, modelId);
+  return key ? (sessions.get(key) ?? []) : [];
 }
 
 /**
@@ -555,13 +610,56 @@ export function liveCountForModel(
   counts: Map<string, number>,
   modelId: string | undefined,
 ): number {
-  if (typeof modelId !== "string" || modelId.length === 0) {
-    return 0;
+  const key = catalogKeyIn(counts, modelId);
+  return key ? (counts.get(key) ?? 0) : 0;
+}
+
+/**
+ * Is anything ACTUALLY writing to the viewed transcript right now?
+ *
+ * FORK 2026-09-04 (the architect: "I see my last prompt in the Smart x cost tab is also missing,
+ * as if I went back in time and the prompt never happened").
+ *
+ * THE VETO THAT COULD NEVER EXPIRE. `loadChat` refuses to merge server history while a live writer
+ * owns the screen, and it identified that writer by two raw nullability checks — `streamRunId !==
+ * null` and `streamMsgUid !== null`. Both are cleared only by a terminal chat event. A run that
+ * died without one (a killed cc-bridge worker, a lost lifecycle:end, a close frame that landed on a
+ * superseded dial) left the cursor set with no narrator behind it, and from that moment the tab
+ * could never merge history again — not even under `force`, which deliberately overrides
+ * `viewedSessionBusy()` but not these two.
+ *
+ * The consequence is the reported one, and it is worse than a stuck pill: the transcript is pinned
+ * to the last snapshot it managed to take. A prompt the user sent afterwards — accepted by the
+ * gateway, answered by the model, sitting in the session file on disk — simply never appears. The
+ * tab has gone back in time, permanently, and no amount of waiting or re-sending fixes it because
+ * every later reload hits the same veto.
+ *
+ * So ask the question the veto MEANT to ask. A cursor is not a writer; a writer is something
+ * currently emitting. Deltas arriving inside `RUN_STALE_MS`, or a run entry still fresh, is a
+ * writer. Anything else is a cursor pointing at a corpse, and refusing the merge to protect it
+ * protects nothing while costing the user their prompt.
+ *
+ * Degrades in the safe direction, the same rule the rest of this area obeys: if this ever answers
+ * `false` too early the merge runs and the preserve loop re-anchors client-only bubbles, which is
+ * the ordinary path taken on every tab switch. Answering `true` forever is the failure being fixed.
+ *
+ * Pure and total — the caller owns the state, this only does the arithmetic.
+ */
+export function transcriptWriterIsLive(params: {
+  /** Wall-clock ms of the most recent text delta, or 0 when none has arrived. */
+  lastDeltaAt: number;
+  /** The run the delta cursor names, looked up in the client run map. Undefined when it is gone. */
+  streamRun: ClientRun | undefined | null;
+  now: number;
+}): boolean {
+  const { lastDeltaAt, streamRun, now } = params;
+  if (
+    typeof lastDeltaAt === "number" &&
+    Number.isFinite(lastDeltaAt) &&
+    lastDeltaAt > 0 &&
+    now - lastDeltaAt <= RUN_STALE_MS
+  ) {
+    return true;
   }
-  const exact = counts.get(modelId);
-  if (typeof exact === "number") {
-    return exact;
-  }
-  const tail = bareModelTail(modelId);
-  return tail ? (counts.get(tail) ?? 0) : 0;
+  return clientRunIsFresh(streamRun, now);
 }

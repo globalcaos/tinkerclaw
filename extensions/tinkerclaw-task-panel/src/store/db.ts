@@ -30,10 +30,9 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   // CREATE TABLE IF NOT EXISTS makes this idempotent — subsequent boots are no-ops.
   db.exec(CONTROL_PANEL_SCHEMA_SQL);
 
-  // v3.1.1 migration — old DBs have a CHECK constraint on task.priority_axis
-  // that lists only ('online','family','me','acme','meta'). The new schema
-  // drops that constraint so we can add 'ventures' (and future axes) without
-  // a schema migration each time. Detect + rewrite in-place; idempotent.
+  // v3.1.1 migration — old DBs enumerate the allowed ids in a CHECK on
+  // task.priority_axis. Axes are user data, so the rebuild drops the
+  // enumeration and keeps every row as-is. Detect + rewrite in-place; idempotent.
   migrateRemoveAxisCheck(db);
 
   // v3.3 migration — old DBs have status CHECK without 'back_burner'. Widen
@@ -46,6 +45,7 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   // ALTER TABLE ADD COLUMN (SQLite supports it for NULL-default columns with
   // a FK target); idempotent via PRAGMA table_info check.
   addAxisParentIdColumn(db);
+  addTaskOperatorIdColumn(db);
 
   // FORK 2026-05-22: Todoist deprecation cleanup. Walk task.metadata_json and
   // remove every `todoist_*` key. Idempotent one-shot — subsequent boots find
@@ -61,43 +61,39 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   return db;
 }
 
-function migrateRemoveAxisCheck(db: Database.Database): void {
+// Matches the enumerated axis CHECK that pre-v3.1.1 schemas put on
+// task.priority_axis, whatever ids it happened to list.
+const AXIS_CHECK_RE = /\s*CHECK\s*\(\s*priority_axis\s+IN\s*\([^()]*\)\s*\)/i;
+const TASK_CREATE_RE = /^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["'`[]?task["'`\]]?\s*\(/i;
+
+/**
+ * v3.1.1 — drop the enumerated CHECK on task.priority_axis. Axes are user data
+ * (the task_axis table), so the column accepts any id. Detection is generic:
+ * any `priority_axis IN (...)` clause triggers the rebuild. The new table is
+ * the stored CREATE statement minus that one clause, so every column, row and
+ * value (including axis ids the old CHECK listed) is carried over verbatim.
+ * Idempotent: a table without the clause is left alone.
+ */
+export function migrateRemoveAxisCheck(db: Database.Database): void {
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task'")
     .get() as { sql: string } | undefined;
-  if (!row?.sql) return;
-  if (!row.sql.includes("priority_axis IN ('online','family','me','acme','meta')")) {
+  if (!row?.sql || !AXIS_CHECK_RE.test(row.sql)) {
     return; // already migrated or fresh schema
   }
+  const createNew = row.sql
+    .replace(AXIS_CHECK_RE, "")
+    .replace(TASK_CREATE_RE, "CREATE TABLE task_new (");
+  if (!createNew.startsWith("CREATE TABLE task_new (")) {
+    return; // unexpected shape — leave alone rather than guess
+  }
+  // Foreign keys off for the rebuild so dropping the old table cannot cascade
+  // into rows that reference it (the PRAGMA is a no-op inside a transaction).
+  const fkOn = (db.pragma("foreign_keys", { simple: true }) as number) === 1;
+  if (fkOn) db.pragma("foreign_keys = OFF");
   db.exec("BEGIN");
   try {
-    db.exec(`
-      CREATE TABLE task_new (
-        id TEXT PRIMARY KEY,
-        text TEXT NOT NULL,
-        context_md TEXT,
-        status TEXT NOT NULL CHECK (status IN ('open','in_progress','resolved','dropped','dismissed')),
-        source TEXT NOT NULL,
-        source_ref TEXT,
-        briefing_pass_id TEXT REFERENCES briefing_pass(id),
-        priority_axis TEXT,
-        priority_rank INTEGER NOT NULL DEFAULT 50,
-        carry_days INTEGER NOT NULL DEFAULT 0,
-        age_seconds INTEGER NOT NULL DEFAULT 0,
-        due_date TEXT,
-        dismissal_kind TEXT CHECK (dismissal_kind IN ('not_a_task','not_relevant','wrong_priority','duplicate','out_of_scope','other')),
-        dismissal_note TEXT,
-        est_minutes INTEGER,
-        hands TEXT CHECK (hands IN ('user','assistant','either')),
-        inferred_signal_json TEXT,
-        metadata_json TEXT,
-        recurrence_rule_text TEXT,
-        recurrence_parent_id TEXT REFERENCES task(id),
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        resolved_at INTEGER
-      );
-    `);
+    db.exec(createNew);
     db.exec("INSERT INTO task_new SELECT * FROM task");
     db.exec("DROP TABLE task");
     db.exec("ALTER TABLE task_new RENAME TO task");
@@ -113,6 +109,8 @@ function migrateRemoveAxisCheck(db: Database.Database): void {
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
+  } finally {
+    if (fkOn) db.pragma("foreign_keys = ON");
   }
 }
 
@@ -185,6 +183,13 @@ function migrateWidenStatusCheck(db: Database.Database): void {
 // ALTER TABLE works here because the new column is nullable + has no
 // CHECK constraint. Idempotent via PRAGMA table_info — re-running on an
 // already-migrated DB is a no-op.
+export function addTaskOperatorIdColumn(db: Database.Database): void {
+  const cols = db.prepare("PRAGMA table_info(task)").all() as Array<{ name: string }>;
+  if (cols.some((c) => c.name === "operator_id")) return;
+  db.exec("ALTER TABLE task ADD COLUMN operator_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS task_operator ON task(operator_id)");
+}
+
 export function addAxisParentIdColumn(db: Database.Database): void {
   const cols = db.prepare("PRAGMA table_info(task_axis)").all() as Array<{ name: string }>;
   if (cols.some((c) => c.name === "parent_id")) return; // idempotent
@@ -246,7 +251,7 @@ function seedTaxonomyDefaults(db: Database.Database): void {
       { id: "online", label: "💰 Online", position: 20 },
       { id: "family", label: "👨‍👩‍👧 Family", position: 30 },
       { id: "me", label: "🏃 Me", position: 40 },
-      { id: "acme", label: "🏭 ACME", position: 50 },
+      { id: "work", label: "💼 Work", position: 50 },
       { id: "meta", label: "⚙️ Meta", position: 60 },
     ];
     db.exec("BEGIN");

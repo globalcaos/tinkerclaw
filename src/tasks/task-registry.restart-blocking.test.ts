@@ -77,7 +77,7 @@ function installRuntime(tasks: TaskRecord[]) {
         entry: undefined,
         storeReadFailed: false,
       }) satisfies AcpSessionStoreEntry,
-    loadSessionStore: () => sessionStore,
+    hasSessionStoreEntry: (_storePath, sessionKey) => Boolean(sessionStore[sessionKey]),
     resolveStorePath: () => "",
     isCronJobActive: () => false,
     getAgentRunContext: () => undefined,

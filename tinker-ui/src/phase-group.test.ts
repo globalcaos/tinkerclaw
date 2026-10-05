@@ -7,7 +7,9 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  closeOpenPhaseEntries,
   MAX_PHASE_ENTRIES,
+  PHASE_CLOSE_MAX_MS,
   PHASE_DECOMPOSE_THRESHOLD_MS,
   needsDecomposition,
   phaseChildrenInOrder,
@@ -300,5 +302,47 @@ describe("bounds and labels", () => {
   it("pluralises the count", () => {
     expect(phaseGroupCountLabel([finished("a", 1)])).toBe("1 stage");
     expect(phaseGroupCountLabel([finished("a", 1), finished("b", 1)])).toBe("2 stages");
+  });
+});
+
+// FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — the terminal close.
+// Every test here is a way a phantom "running" block could come back: an entry left open by an
+// aborted/cleared turn is persisted and re-hydrates as live forever unless a terminal signal
+// closes it.
+describe("closeOpenPhaseEntries — the terminal close", () => {
+  it("closes every open entry as done+inferred with the closing reason, never dropping it", () => {
+    const entries: PhaseEntry[] = [finished("sending", 500, 1000), running("thinking", 2000)];
+    const r = closeOpenPhaseEntries(entries, 5000, "aborted");
+    expect(r.changed).toBe(true);
+    expect(r.entries).toHaveLength(2);
+    expect(r.entries[1]).toMatchObject({
+      done: true,
+      inferred: true,
+      closedBy: "aborted",
+      ms: 3000,
+    });
+    expect(phaseGroupIsLive(r.entries)).toBe(false);
+    // Pure: the input array's entry is untouched.
+    expect(entries[1].done).toBe(false);
+  });
+
+  it("reports no change when nothing is open, and still hands back a fresh array", () => {
+    const entries: PhaseEntry[] = [finished("a", 10, 0)];
+    const r = closeOpenPhaseEntries(entries, 99, "final");
+    expect(r.changed).toBe(false);
+    expect(r.entries).toEqual(entries);
+    expect(r.entries).not.toBe(entries);
+  });
+
+  it("caps the derived duration — a block restored days later must not claim days of runtime", () => {
+    const r = closeOpenPhaseEntries([running("thinking", 0)], 72 * 3600 * 1000, "stale-restore");
+    expect(r.entries[0].ms).toBe(PHASE_CLOSE_MAX_MS);
+    expect(r.entries[0].done).toBe(true);
+  });
+
+  it("an entry with no startedAt closes at 0ms rather than an invented duration", () => {
+    const r = closeOpenPhaseEntries([{ label: "x", ms: 0, done: false }], 500, "final");
+    expect(r.entries[0].ms).toBe(0);
+    expect(r.entries[0].done).toBe(true);
   });
 });

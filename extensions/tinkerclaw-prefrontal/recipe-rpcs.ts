@@ -562,6 +562,60 @@ export interface KitRpcsDeps {
    * (back-compat: a fitness-less deploy / offline test keeps working).
    */
   engramBaseDir?: string;
+  /**
+   * Opt-in gates for the three RPCs that reach beyond local recipe state. Each is
+   * OFF unless the operator enables it in the plugin config (index.ts maps the
+   * config keys named below onto these fields):
+   *   allowOrchestrationScripts ← orchestration.allowScripts
+   *     prefrontal.recipe.orchestrate evaluates a caller-supplied JavaScript body
+   *     inside the gateway process with full privileges.
+   *   allowRecipePublish        ← marketplace.allowPublish
+   *     prefrontal.recipe.publish uploads a local recipe to JourneyKits.
+   *   allowRemoteRecipeInstall  ← marketplace.allowRemoteInstall
+   *     prefrontal.recipe.install downloads recipe files from JourneyKits.
+   */
+  allowOrchestrationScripts?: boolean;
+  allowRecipePublish?: boolean;
+  allowRemoteRecipeInstall?: boolean;
+}
+
+/**
+ * Resolve `candidate` to a real path and return it only when it is a `.md` file
+ * inside one of `roots` (roots are realpath'd too, so a symlink cannot step out).
+ */
+async function resolveRecipePathInsideRoots(
+  candidate: string,
+  roots: string[],
+): Promise<string | null> {
+  if (!candidate.trim().toLowerCase().endsWith(".md")) {
+    return null;
+  }
+  let real: string;
+  try {
+    real = await fs.realpath(path.resolve(candidate.trim()));
+  } catch {
+    return null;
+  }
+  for (const root of roots) {
+    let realRoot: string;
+    try {
+      realRoot = await fs.realpath(root);
+    } catch {
+      continue;
+    }
+    const rel = path.relative(realRoot, real);
+    if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+      return real;
+    }
+  }
+  return null;
+}
+
+/** Thrown when an opt-in RPC is called while its config gate is off. */
+function refuseDisabled(method: string, configKey: string): never {
+  throw new Error(
+    `${method} is disabled. Set plugins.entries.tinkerclaw-prefrontal.config.${configKey} = true to enable it.`,
+  );
 }
 
 // ─── BROCA visibility (2026-06-06): recipe.read return contract ──────────────
@@ -862,6 +916,12 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       }
 
       // ── Journey install path (with transitive dep resolution) ────────────────
+      if (deps.allowRemoteRecipeInstall !== true) {
+        refuseDisabled(
+          "prefrontal.recipe.install (JourneyKits download)",
+          "marketplace.allowRemoteInstall",
+        );
+      }
       // FORK 2026-06-01 (U12): resolve a version-constraint to a concrete release
       // before fetching the install payload (marketplace-less → ref passes through).
       const seen = new Set<string>([p.kitRef]);
@@ -968,10 +1028,23 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       const slug = p.slug ?? (p.kitRef ? p.kitRef.split("/")[1] : undefined);
 
       // Resolve a LOCAL recipe md (ours, then downloaded), mirroring recipe.list.
+      // An explicit `path` is only honoured for a .md file that resolves (symlinks
+      // followed) inside one of the recipe directories this plugin owns; any other
+      // path is refused rather than read.
       let md: string | null = null;
       if (typeof p.path === "string" && p.path.trim()) {
+        const target = await resolveRecipePathInsideRoots(p.path, [
+          deps.ownRecipesDir,
+          deps.recipeInstallSandbox,
+          resolveRecipeOverlayDir(),
+        ]);
+        if (!target) {
+          throw new Error(
+            "prefrontal.recipe.read: path must be a .md file inside the recipe directories (own recipes, install sandbox or ~/.openclaw/recipes)",
+          );
+        }
         try {
-          md = await fs.readFile(p.path, "utf-8");
+          md = await fs.readFile(target, "utf-8");
         } catch {
           md = null;
         }
@@ -1062,6 +1135,9 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     },
 
     "prefrontal.recipe.publish": async (raw: unknown) => {
+      if (deps.allowRecipePublish !== true) {
+        refuseDisabled("prefrontal.recipe.publish", "marketplace.allowPublish");
+      }
       const p = check<PrefrontalKitPublishParams>(vPublish, raw, "prefrontal.recipe.publish");
       if (!deps.apiKey)
         throw new Error(
@@ -1167,7 +1243,7 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       // events into — co-locating the attribution marker with the run's episode.
       const engramBaseDir =
         deps.engramBaseDir ??
-        path.join(process.env.OPENCLAW_HOME ?? homedir(), ".openclaw", "engram");
+        path.join(process.env.OPENCLAW_HOME ?? path.join(homedir(), ".openclaw"), "engram");
       const skillLibrary = createSkillLibrary({ baseDir: engramBaseDir });
 
       // SS1 follow-up (U1 fitness CONSUMER): fold the recipe's empirical success
@@ -1514,6 +1590,9 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     // production spawn path (orchestration-deps) mirrors reasoning-runtime.ts and is
     // type-clean but awaits a live-restart smoke test.
     "prefrontal.recipe.orchestrate": async (raw: unknown) => {
+      if (deps.allowOrchestrationScripts !== true) {
+        refuseDisabled("prefrontal.recipe.orchestrate", "orchestration.allowScripts");
+      }
       const p = check<PrefrontalKitOrchestrateParams>(
         vOrchestrate,
         raw,

@@ -22,6 +22,8 @@
 
 export type SectionedReply = {
   answer?: string;
+  /** FORK 2026-10-01 — the curiosity sense's extra: discoveries, a teaching step, a deep question (✨ DEEPER). */
+  deeper?: string;
   fractal?: string;
   other?: string;
 };
@@ -37,6 +39,10 @@ export type SectionedReply = {
 // header is no longer a recognised section; it falls through to `other`/answer.
 const ANS_MARKER_RE =
   /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*💬\s*(?:\*\*|__)?\s*ANSWER:?(?:\*\*|__)?:?\s*/i;
+// FORK 2026-10-01 (the architect) — the curiosity sense adds its extra information in its own bubble with a
+// yellow border, after the answer and before the reflection. Same tolerance as the markers around it.
+const DEE_MARKER_RE =
+  /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*✨\s*(?:\*\*|__)?\s*DEEPER:?(?:\*\*|__)?:?\s*/i;
 const FRA_MARKER_RE =
   /(^|\n|[.!?])\s*#{0,4}\s*(?:\*\*|__)?\s*🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?:?(?:\*\*|__)?:?\s*/i;
 
@@ -61,13 +67,14 @@ export function splitSectionedReply(text: string): SectionedReply | null {
     return null;
   }
   const ansIdx = text.search(ANS_MARKER_RE);
+  const deeIdx = text.search(DEE_MARKER_RE);
   const fraIdx = text.search(FRA_MARKER_RE);
-  if (ansIdx < 0 && fraIdx < 0) {
+  if (ansIdx < 0 && deeIdx < 0 && fraIdx < 0) {
     return null;
   }
   // Split by whichever markers exist, in order of appearance.
-  const markers: { key: "answer" | "fractal"; start: number; hdrLen: number }[] = [];
-  const pushMarker = (idx: number, key: "answer" | "fractal", re: RegExp) => {
+  const markers: { key: "answer" | "deeper" | "fractal"; start: number; hdrLen: number }[] = [];
+  const pushMarker = (idx: number, key: "answer" | "deeper" | "fractal", re: RegExp) => {
     if (idx < 0) {
       return;
     }
@@ -84,6 +91,7 @@ export function splitSectionedReply(text: string): SectionedReply | null {
     markers.push({ key, start: idx + skip, hdrLen: m[0].length - skip });
   };
   pushMarker(ansIdx, "answer", ANS_MARKER_RE);
+  pushMarker(deeIdx, "deeper", DEE_MARKER_RE);
   pushMarker(fraIdx, "fractal", FRA_MARKER_RE);
   markers.sort((a, b) => a.start - b.start);
   const result: SectionedReply = {};
@@ -120,7 +128,7 @@ export function splitSectionedReply(text: string): SectionedReply | null {
 // (the emoji MUST precede the label) so ordinary prose like "the answer is 42" is
 // NEVER matched. The replace callback below preserves the surrounding text shape.
 const RESIDUAL_MARKER_RE =
-  /(^|\n|\s)\s*#{0,4}\s*(?:\*\*|__)?\s*(?:💬\s*(?:\*\*|__)?\s*ANSWER|🧠\s*(?:\*\*|__)?\s*AMYGDALA|🫀\s*(?:\*\*|__)?\s*AMYGDALA|🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?)\s*:?\s*(?:\*\*|__)?\s*:?/gi;
+  /(^|\n|\s)\s*#{0,4}\s*(?:\*\*|__)?\s*(?:💬\s*(?:\*\*|__)?\s*ANSWER|✨\s*(?:\*\*|__)?\s*DEEPER|🧠\s*(?:\*\*|__)?\s*AMYGDALA|🫀\s*(?:\*\*|__)?\s*AMYGDALA|🌿\s*(?:\*\*|__)?\s*FRACTAL(?:\s+ACTION)?)\s*:?\s*(?:\*\*|__)?\s*:?/gi;
 export function scrubResidualSectionMarkers(text: string): string {
   // Preserve the captured leading boundary so surrounding words/lines don't fuse:
   // a newline stays a newline (standalone-line marker), any other whitespace
@@ -353,6 +361,17 @@ export function renderSectionedReply(
   md: (text: string) => string,
   esc: (s: string) => string,
   anchorAttr = "",
+  // FORK 2026-09-06: the caller owns fold persistence; an empty key disables it.
+  foldAttrs: (key: string) => string = () => "",
+  foldKey = "",
+  // FORK 2026-10-03: the served row's history identity (app.ts `ocIdAttrs`):
+  // ` data-oc-id="…" data-oc-part="<part>"`, or "" for a client-written bubble. A served sectioned
+  // answer used to carry none, so every census that tells a served row from a client-written one by
+  // that attribute counted it as client-written. Only the parts drawn as bubbles carry it (the answer,
+  // the deeper bubble): the Commentary and 🌿 bodies sit in folds that are usually closed, and
+  // Chromium reports a box for a closed fold's content, so a stamped fold body could become the row
+  // the reload anchor names (review round 1).
+  idAttrs: (part: string) => string = () => "",
 ): string {
   let h = "";
   // Pre-marker narration (sec.other) PLUS any leading inter-tool narration peeled
@@ -379,12 +398,12 @@ export function renderSectionedReply(
   // in practice, but it is a safety net against blanking the answer).
   const answerBody = sec.answer
     ? peel.answer
-    : sec.other && sec.fractal
+    : sec.other && (sec.fractal || sec.deeper)
       ? peel.answer || sec.other
       : undefined;
   if (leadingNarration) {
     h +=
-      `<details class="reasoning-group narration-details">` +
+      `<details class="reasoning-group narration-details${""}"${foldAttrs(foldKey ? `c:${foldKey}` : "")}>` +
       `<summary class="reasoning-header">▸ Commentary</summary>` +
       `<div class="reasoning-content">` +
       `<div class="msg assistant msg-thinking">` +
@@ -392,10 +411,10 @@ export function renderSectionedReply(
       `</div></div></details>`;
   }
   if (answerBody) {
-    h += `<div class="msg assistant">${md(scrubResidualSectionMarkers(answerBody))}${elapsed}</div>`;
-  } else if (sec.other && !sec.fractal && !leadingNarration) {
+    h += `<div class="msg assistant"${idAttrs("main")}>${md(scrubResidualSectionMarkers(answerBody))}${elapsed}</div>`;
+  } else if (sec.other && !sec.fractal && !sec.deeper && !leadingNarration) {
     // No markers at all and nothing peeled — fall back to raw.
-    h += `<div class="msg assistant">${md(sec.other)}${elapsed}</div>`;
+    h += `<div class="msg assistant"${idAttrs("main")}>${md(sec.other)}${elapsed}</div>`;
   }
   // The compacted fractal view shows a one-line content summary; if the turn
   // changed an internal md (or code) file, that is surfaced FIRST (📝 file —
@@ -434,10 +453,16 @@ export function renderSectionedReply(
     const ln = firstLine(t);
     return { html: ln ? esc(ln) : fallback, cls: "" };
   };
+  if (sec.deeper) {
+    // Expanded, not folded: this is the part the architect asked to SEE (2026-10-01).
+    h +=
+      `<div class="msg assistant msg-deeper"${idAttrs("deeper")}>` +
+      `<div class="deeper-label">✨ Deeper</div>${md(scrubResidualSectionMarkers(sec.deeper))}</div>`;
+  }
   if (sec.fractal) {
     const s = artifactSummary(sec.fractal, "<em>Fractal</em> — reflection");
     h +=
-      `<details class="fractal-details"${anchorAttr}>` +
+      `<details class="fractal-details"${anchorAttr}${foldAttrs(foldKey ? `f:${foldKey}` : "")}>` +
       `<summary class="fractal-summary${s.cls}">🌿 ${s.html}</summary>` +
       `<div class="msg msg-fractal">${md(sec.fractal)}</div>` +
       `</details>`;

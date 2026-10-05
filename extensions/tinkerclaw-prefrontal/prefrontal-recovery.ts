@@ -1,5 +1,9 @@
 // extensions/prefrontal/prefrontal-recovery.ts
 // FORK: Prefrontal crash recovery — write/read recovery state for guardian relaunch.
+//
+// The file lives under the operator's own OpenClaw state directory, not a shared
+// /tmp path, so another local user cannot plant a recovery file that the gateway
+// would load on startup. It is written owner-only (dir 0700, file 0600).
 
 import {
   writeFileSync,
@@ -9,19 +13,29 @@ import {
   unlinkSync,
   renameSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import os from "node:os";
+import { dirname, join } from "node:path";
 import type { PrefrontalRecoveryState, PrefrontalTreeResponse } from "./prefrontal-types.js";
 
-const RECOVERY_PATH = "/tmp/prefrontal/recovery.json";
+export function recoveryPath(): string {
+  return join(
+    process.env.OPENCLAW_HOME ?? join(os.homedir(), ".openclaw"),
+    "workspace",
+    "state",
+    "prefrontal",
+    "recovery.json",
+  );
+}
 
 export function writeRecoveryState(
   prefrontalSessionKey: string,
   tree: PrefrontalTreeResponse,
   originalPrompt: string,
 ): void {
-  const dir = dirname(RECOVERY_PATH);
+  const file = recoveryPath();
+  const dir = dirname(file);
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
   const state: PrefrontalRecoveryState = {
@@ -40,17 +54,18 @@ export function writeRecoveryState(
     originalPrompt,
   };
 
-  const tmpPath = `${RECOVERY_PATH}.tmp`;
-  writeFileSync(tmpPath, JSON.stringify(state, null, 2));
-  renameSync(tmpPath, RECOVERY_PATH);
+  const tmpPath = `${file}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(state, null, 2), { mode: 0o600 });
+  renameSync(tmpPath, file);
 }
 
 export function readRecoveryState(): PrefrontalRecoveryState | null {
-  if (!existsSync(RECOVERY_PATH)) {
+  const file = recoveryPath();
+  if (!existsSync(file)) {
     return null;
   }
   try {
-    const raw = readFileSync(RECOVERY_PATH, "utf-8");
+    const raw = readFileSync(file, "utf-8");
     return JSON.parse(raw) as PrefrontalRecoveryState;
   } catch {
     return null;
@@ -58,7 +73,8 @@ export function readRecoveryState(): PrefrontalRecoveryState | null {
 }
 
 export function clearRecoveryState(): void {
-  if (existsSync(RECOVERY_PATH)) {
-    unlinkSync(RECOVERY_PATH);
+  const file = recoveryPath();
+  if (existsSync(file)) {
+    unlinkSync(file);
   }
 }

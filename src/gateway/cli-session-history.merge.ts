@@ -40,6 +40,26 @@ function memoised<T>(
   return value;
 }
 
+/**
+ * FORK 2026-09-23 (the architect: "in the work tab, I see an injection of the ethical rules as
+ * if it was my prompt") — the PREFIX twin of the `<!-- TINKERCLAW -->` suffix rule below.
+ *
+ * When the tinker-bridge resumes a claude-cli session that does not yet carry the moral code, it
+ * prefixes the pack to the next message it forwards (tinker-bridge worker.ts,
+ * `pendingMoralCodePrefix`). The claude-cli JSONL therefore stores
+ * `<moral_code source="tinkerclaw">…40k…</moral_code>` + the prompt, while the local transcript
+ * holds the prompt alone. The texts differed, the dedup below kept both, and the 65k import row
+ * rendered as a second, giant "user prompt" right under the real one. Measured on
+ * agent:main:tinker:mtshq738 rows 940 (local) / 941 (claude-cli import), 2026-09-23 08:56.
+ *
+ * Only a block that OPENS the message is stripped, and only for comparison — nothing is rewritten.
+ */
+const BRIDGE_CONTEXT_BLOCK_RE = /^\s*<(moral_code) source="tinkerclaw">[\s\S]*?<\/\1>\s*/;
+
+export function stripBridgeDeliveredContext(text: string): string {
+  return text.replace(BRIDGE_CONTEXT_BLOCK_RE, "");
+}
+
 function extractComparableText(message: unknown): string | undefined {
   return memoised(comparableTextCache, message, () => extractComparableTextUncached(message));
 }
@@ -75,7 +95,8 @@ function extractComparableTextUncached(message: unknown): string | undefined {
   if (!joined) {
     return undefined;
   }
-  let visible = role === "user" ? stripInboundMetadata(joined) : joined;
+  let visible =
+    role === "user" ? stripInboundMetadata(stripBridgeDeliveredContext(joined)) : joined;
   // FORK 2026-06-20: cc-bridge appends "<!-- TINKERCLAW … -->" narration-contract
   // blocks to every user message before forwarding to claude-cli. The JSONL therefore
   // stores a longer version of each user message than the OpenClaw local session file,
@@ -292,24 +313,49 @@ function compareHistoryMessages(a: HistoryMergeEntry, b: HistoryMergeEntry): num
 const IMPORT_PREHISTORY_GRACE_MS = 15 * 60 * 1000; // 15 min before first local msg
 const ASSISTANT_SLOT_COVER_MS = 5 * 60 * 1000; // 5 min around each local assistant
 
+/** The earliest timestamp layer 1 of the merge below measures its prehistory floor from. */
+export function resolveEarliestLocalTimestamp(
+  localMessages: readonly unknown[],
+): number | undefined {
+  let earliest: number | undefined;
+  for (const msg of localMessages) {
+    const ts = resolveComparableTimestamp(msg);
+    if (ts !== undefined && (earliest === undefined || ts < earliest)) {
+      earliest = ts;
+    }
+  }
+  return earliest;
+}
+
 export function mergeImportedChatHistoryMessages(params: {
   localMessages: unknown[];
   importedMessages: unknown[];
+  /**
+   * FORK 2026-09-23 (chat.history rehaul, plan task 5) — a local timestamp layer 1 counts as if
+   * its row were in `localMessages`. chat.history's seq cursors merge a SLICE of the local store
+   * and pass the whole store's earliest timestamp (resolveEarliestLocalTimestamp), so the floor
+   * sits where the whole-store merge puts it. Measured from the slice, the floor rises to the
+   * slice's first row and drops imports the whole-store window serves: every step of a tool loop
+   * longer than the grace, before an afterSeq delta's first row.
+   */
+  earliestLocalTs?: number;
 }): unknown[] {
   if (params.importedMessages.length === 0) {
     return params.localMessages;
   }
 
+  const wholeStoreEarliest =
+    typeof params.earliestLocalTs === "number" && Number.isFinite(params.earliestLocalTs)
+      ? params.earliestLocalTs
+      : undefined;
   let filteredImports = params.importedMessages;
-  if (params.localMessages.length > 0) {
+  if (params.localMessages.length > 0 || wholeStoreEarliest !== undefined) {
     // --- layer 1: timestamp floor ---
-    let localTsMin = Infinity;
-    for (const msg of params.localMessages) {
-      const ts = resolveComparableTimestamp(msg);
-      if (ts !== undefined && ts < localTsMin) {
-        localTsMin = ts;
-      }
-    }
+    const givenEarliest = resolveEarliestLocalTimestamp(params.localMessages);
+    const localTsMin = Math.min(
+      givenEarliest ?? Number.POSITIVE_INFINITY,
+      wholeStoreEarliest ?? Number.POSITIVE_INFINITY,
+    );
     const importFloor = Number.isFinite(localTsMin)
       ? localTsMin - IMPORT_PREHISTORY_GRACE_MS
       : -Infinity;

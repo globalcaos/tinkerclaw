@@ -1,0 +1,7 @@
+{
+  "model": "jev-latest",
+  "answers": {
+    "q-noul": { "type": "noul", "noul": 0.83, "confidence": 0.9 }
+  },
+  "usage": { "input_tokens": 35088, "output_tokens": 4 }
+}

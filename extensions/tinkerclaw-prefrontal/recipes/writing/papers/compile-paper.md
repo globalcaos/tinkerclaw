@@ -41,9 +41,11 @@ Not for: bulk-building all 15 papers (use `revise-publish-batch`, which composes
 ### 2. Plan figures
 
 **Tools:** read
-**Done when:** Two lists locked: figures referenced in the `.md` and figures present on disk
+**Done when:** Three lists locked: figures referenced in the `.md`, figures present on disk, and sections that need a figure and have none
 
 Grep the chosen `.md` for `![...](path)` image references. Cross-reference against the on-disk inventory from step 1. Produce a missing-figure list (referenced but absent) and an orphan-figure list (present but not referenced — informational only, do not delete).
+
+The first two lists only check references the draft already has, so they pass a draft that never asked for figures. The third list is the coverage check, and it is made on every run. Count first: `command grep -c '!\[' <paper>.md` for figures and `command grep -c '^## ' <paper>.md` for sections. Then go through the sections: each one whose argument is a flow, an architecture, a cycle, a taxonomy or a progression, and has no figure, goes on the third list. A non-empty list goes to {{paper-figures}} from its Step 1, and comes back here before step 3. A section whose table already carries the mapping is covered (paper-figures, Failures Overcome). (2026-10-03: the temporal-network paper had 1 figure across 13 sections and this step found nothing missing.)
 
 ### 3. Generate missing figures
 
@@ -126,6 +128,26 @@ A clean `pdflatex` log proves nothing about how the PDF _looks_. The defect that
 
 ## Failures Overcome
 
+- **No references, no figures (2026-10-03).** The temporal-network paper reached the PDF with one D2 drawing, since Step 2 only lists figures the draft already references. the architect: "Great work on the paper, but you forgot to inject in it napkin diagrams as our recipe calls for." Step 2 now sends a figureless draft to paper-figures. That first fix (`6f89f988559`) still fired only on a draft with no conceptual figure, and this paper had one D2 drawing of design B, so it would have passed again. the architect then asked whether Fractal had caught the gap; it had not. Step 2 now builds a per-section coverage list on every run (1 figure across 13 sections flags; the shipped version has 7).
+
+- **A forced page break goes stale on the next text edit (J11 v6.0 → v6.1, 2026-09-29):** a `\clearpage` that
+  kept '5.6 One vocabulary' with its table in v6.0 became, after the introduction grew, one orphan line and a
+  blank page 13. Fix a stranded title with a conditional reserve (`\keepspace{N\baselineskip}`, which breaks only
+  when the room is really short), never with `\clearpage`, and re-run the layout report after every TEXT edit,
+  not only after layout edits.
+
+- **Every table unwrapped, a figure at a third of body size (a 62-page company paper, 2026-10-03):** under pandoc
+  2.9.2 all 19 pipe tables came out as `l`-columns; where pandoc did size them it put `minipage` cells inside the
+  `l`-columns, so wrapping them in `p`-columns again sized them twice (377 overfull lines, worst 46 pt). The working
+  post-process: strip the minipages, size `p`-columns from the MEAN cell length (one long cell must not widen a
+  symbol column; the row-label column gets at least 13 %), set tables of six or more columns in `\footnotesize`, start
+  each cell with `\hspace{0pt}` so its first word can hyphenate, wrap web addresses in `\url{}`; 377 became 24, none
+  visible. For a non-J-series paper the same script swaps the footer and declares the symbols pdflatex lacks (σ, Δ,
+  subscripts). The figure: `fig-legibility.py` matched the first page whose BODY text held the caption word, and on
+  the right page it locked onto a 129x41 px sub-box; pass a phrase only the caption has, and cross-check with the
+  drawing's own numbers (label px / canvas px x shown width in pt). A wide D2 canvas with 24 px labels shown at 55 %
+  gave about 3 pt labels; redrawn with 36 px labels on short lines and shown at 36 %, the ratio measured 1.00. Never
+  rebuild while the tool runs: it read a half-written PDF and crashed.
 - **Silent `paper.tex`:** Previous runs (J3) produced `paper.tex` instead of the dated name. `md-to-tex.sh` now fails fast on bad filenames so this can't happen.
 - **Broken refs:** Hand-entered `.bib` entries without URLs make every citation a dead link. The enrichment step is per-entry isolated so one lookup failure doesn't block the build.
 - **Missing figures:** Pandoc happily emits `\includegraphics{fig-X.png}` for a path that doesn't exist; the PDF builds with `!! ERROR` markers instead. Step 2 surfaces the gap before step 6.
@@ -135,4 +157,7 @@ A clean `pdflatex` log proves nothing about how the PDF _looks_. The defect that
 - **Verifying the wrong artifact:** "I checked the figure" meant the standalone PNG, not the page. The only valid figure check renders the built PDF page at the embedded scale and reads it.
 - **Figures stretched to fill the page → text 4× body (J10, the real root cause):** pandoc emits `\includegraphics[width=0.92\textwidth,height=\textheight]{...}`, and `jseries-paper.sty` did NOT set `keepaspectratio`. graphicx then treats width AND height as exact targets and STRETCHES every PNG to 0.92\textwidth × full \textheight — page-filling and vertically distorted, so the figure text rendered ~4× the body. Fix (applied): `\setkeys{Gin}{keepaspectratio}` after `\RequirePackage{graphicx}` in `jseries-paper.sty` — now width/height is a bounding box, the image fits inside preserving aspect, width binds, and on-page text scales linearly with the embed width (so Step 7's `new_width% = old% × 0.9/ratio` works). This was missed for two rounds because the figure was only ever inspected as a CROP; the full page would have shown it filling the sheet. `fig-legibility.py` now catches it numerically.
 - **Wrong base version:** "Latest = highest-dated filename" picks a stale base when an undated `<topic>.md` is the real current version (J8: `curiosity-motivation.md` was v6.0 vs the dated v1.0). Step 1 now compares version headers, not filename dates.
+- **Empty References section (J11 v5.0, found by the owner 2026-09-28):** `md-to-tex.sh` appended `\bibliography{refs}` unconditionally, so a paper with its own markdown reference list and no `\cite` got a second, EMPTY "References" heading at the end of the PDF. Census that day: 18 of 21 papers' latest `.tex` affected. `md-to-tex.sh` now emits the bibliography only when the body cites something; papers built before 2026-09-28 still carry it until rebuilt. Verification step: `pdftotext paper.pdf - | grep -c "^References$"` must be 1, and LOOK at the last page, not only page 1.
+- **Blank first page (J11 v5.0, 2026-09-28):** `md-to-tex.sh` puts the abstract in a box right under the title; if title + box do not fit one page, LaTeX moves the box to page 2 and page 1 is only the title. Keep the title to about two lines and the abstract to about 350 words, then render page 1 and LOOK. The box also has no paragraph spacing: insert `\medskip` between abstract paragraphs in the generated `.tex`.
+- **Wide tables (J11 v5.0):** a six-column pipe table takes its column widths from the dash counts in the separator row; give the text columns explicit proportions (e.g. `|---|---------------|---------------------------|…`) and wrap `longtable` in `{\small …}` in the generated `.tex`, or the narrow columns overflow into their neighbours. Worked script: `J11_learned_intuition/postprocess-v5-tex.py`.
 - **Dropped code blocks (J2 full run):** `jseries-paper.sty` ships no pandoc syntax-highlighting preamble, so a paper with fenced code blocks emits `Shaded`/`Highlighting` undefined (~50 undefined control sequences) and the code silently vanishes from the PDF. Fix per-build: inject pandoc's `fancyvrb`/`framed` `Shaded`+`Highlighting` environments, the `*Tok` token macros, and `\DeclareUnicodeCharacter` for any non-ASCII glyphs (≤ ≈ × → · κ †) into the generated `.tex` preamble between `\usepackage{jseries-paper}` and `\begin{document}`. These injections are lost if `md-to-tex.sh` is re-run — the durable fix is to fold the highlighting preamble into `jseries-paper.sty` (toolchain change, needs the owner's OK).

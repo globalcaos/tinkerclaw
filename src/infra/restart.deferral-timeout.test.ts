@@ -137,4 +137,117 @@ describe("deferGatewayRestartUntilIdle timeout", () => {
     expect(hooks.onCheckError).toHaveBeenCalledOnce();
     expect(hooks.onReady).not.toHaveBeenCalled();
   });
+
+  // FORK 2026-09-14 — the cap must never force a restart on top of live work. On 2026-09-14
+  // 12:46:28 "restart timeout after 901633ms … restarting anyway" SIGTERMed a 21-minute turn and
+  // every other in-flight chat; the count it waited on never drains on a busy day, so the cap
+  // was the normal path. `canForceOnTimeout` gates it.
+  describe("canForceOnTimeout gate", () => {
+    it("keeps polling past the cap while the gate is closed, then restarts the tick it opens", () => {
+      let forceAllowed = false;
+      const hooks: RestartDeferralHooks = {
+        onTimeout: vi.fn(),
+        onTimeoutDeferred: vi.fn(),
+        onStillPending: vi.fn(),
+        onReady: vi.fn(),
+      };
+
+      deferGatewayRestartUntilIdle({
+        getPendingCount: () => 1,
+        maxWaitMs: 60_000,
+        canForceOnTimeout: () => forceAllowed,
+        hooks,
+      });
+
+      // Cap elapses: the old code would have fired onTimeout here and emitted the restart.
+      vi.advanceTimersByTime(60_500);
+      expect(hooks.onTimeout).not.toHaveBeenCalled();
+      expect(hooks.onTimeoutDeferred).toHaveBeenCalledOnce();
+
+      // Ten more minutes of live work: still no forced restart, and the deferred notice is
+      // rate-limited to the same 30 s cadence as onStillPending (not once per 500 ms poll).
+      vi.advanceTimersByTime(600_000);
+      expect(hooks.onTimeout).not.toHaveBeenCalled();
+      expect(hooks.onTimeoutDeferred.mock.calls.length).toBeLessThanOrEqual(22);
+      expect(hooks.onTimeoutDeferred.mock.calls.length).toBeGreaterThanOrEqual(20);
+      // Past the cap the "still deferred" notice yields to the "cap reached" notice.
+      const stillPendingCalls = (hooks.onStillPending as ReturnType<typeof vi.fn>).mock.calls
+        .length;
+
+      // The gate opens (last live turn finished): the very next poll restarts.
+      forceAllowed = true;
+      vi.advanceTimersByTime(500);
+      expect(hooks.onTimeout).toHaveBeenCalledOnce();
+      expect(hooks.onReady).not.toHaveBeenCalled();
+      expect((hooks.onStillPending as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+        stillPendingCalls,
+      );
+
+      // And nothing keeps polling afterwards.
+      vi.advanceTimersByTime(60_000);
+      expect(hooks.onTimeout).toHaveBeenCalledOnce();
+    });
+
+    it("drains normally past the cap: pending → 0 fires onReady, not onTimeout", () => {
+      let pending = 2;
+      const hooks: RestartDeferralHooks = {
+        onTimeout: vi.fn(),
+        onTimeoutDeferred: vi.fn(),
+        onReady: vi.fn(),
+      };
+
+      deferGatewayRestartUntilIdle({
+        getPendingCount: () => pending,
+        maxWaitMs: 30_000,
+        canForceOnTimeout: () => false,
+        hooks,
+      });
+
+      vi.advanceTimersByTime(90_000);
+      expect(hooks.onTimeout).not.toHaveBeenCalled();
+      expect(hooks.onReady).not.toHaveBeenCalled();
+
+      pending = 0;
+      vi.advanceTimersByTime(500);
+      expect(hooks.onReady).toHaveBeenCalledOnce();
+      expect(hooks.onTimeout).not.toHaveBeenCalled();
+    });
+
+    it("a throwing gate restores the old forced-restart behaviour rather than wedging", () => {
+      const hooks: RestartDeferralHooks = {
+        onTimeout: vi.fn(),
+        onTimeoutDeferred: vi.fn(),
+      };
+
+      deferGatewayRestartUntilIdle({
+        getPendingCount: () => 1,
+        maxWaitMs: 10_000,
+        canForceOnTimeout: () => {
+          throw new Error("gate bug");
+        },
+        hooks,
+      });
+
+      vi.advanceTimersByTime(10_500);
+      expect(hooks.onTimeout).toHaveBeenCalledOnce();
+      expect(hooks.onTimeoutDeferred).not.toHaveBeenCalled();
+    });
+
+    it("without a gate the cap behaves exactly as before", () => {
+      const hooks: RestartDeferralHooks = {
+        onTimeout: vi.fn(),
+        onTimeoutDeferred: vi.fn(),
+      };
+
+      deferGatewayRestartUntilIdle({
+        getPendingCount: () => 1,
+        maxWaitMs: 10_000,
+        hooks,
+      });
+
+      vi.advanceTimersByTime(10_500);
+      expect(hooks.onTimeout).toHaveBeenCalledOnce();
+      expect(hooks.onTimeoutDeferred).not.toHaveBeenCalled();
+    });
+  });
 });

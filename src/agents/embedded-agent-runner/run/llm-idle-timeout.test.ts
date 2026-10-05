@@ -1,3 +1,28 @@
+/**
+ * Target file: src/agents/embedded-agent-runner/run/llm-idle-timeout.ts
+ *
+ * Justification for testing upstream-owned code (required by
+ * TINKER_UI_DESIGN_BIBLE/unit-tests.md, "Don't test upstream code"): the resolver
+ * itself is upstream, but the constant it resolves against --
+ * src/config/agent-timeout-defaults.ts -- is fork-owned and fork-tuned, and the
+ * resolution ladder is the only thing standing between a long reasoning turn and a
+ * SIGTERM. The ladder's behaviour is a fork behaviour even though the function is not.
+ *
+ * Bible sections: failures.md M1 (idle-watchdog SIGTERM), config-shape.md
+ * (models.providers.<id>.timeoutSeconds and trap T1), tool-loop.md (tool chains that
+ * emit no pi-ai stream events and so look idle).
+ *
+ * Bug history: 2026-05-05 heavy claude-code turns SIGTERMed at ~128s; 2026-05-10 the
+ * catalog's timeoutSeconds was dead code until the provider-config overlay landed;
+ * 2026-09-03 the 120s base default killed 7 xai / openai-codex reasoning turns in one
+ * day because those providers ship no overlay and inherited the raw default.
+ *
+ * What it catches: a regression of the resolution ORDER (model timeout, then run
+ * bound, then agent bound, then cron-disable, then default), and a silent revert of
+ * the 600s base default. The literal is pinned below precisely because every other
+ * assertion in this file is symbolic against DEFAULT_LLM_IDLE_TIMEOUT_MS and would
+ * stay green at any value -- which is why the 2026-09-03 regression was invisible here.
+ */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
 import {
@@ -16,8 +41,12 @@ describe("resolveLlmIdleTimeoutMs", () => {
     expect(resolveLlmIdleTimeoutMs({ cfg })).toBe(DEFAULT_LLM_IDLE_TIMEOUT_MS);
   });
 
+  // 300 -> 900 (FORK 2026-09-03): the intent of this test is that an implicit agent
+  // timeout is CAPPED at the default watchdog, so the input must exceed the default.
+  // With the default at 600s, 300s is no longer capped -- that case moved to its own
+  // assertion at the bottom of this describe.
   it("caps agents.defaults.timeoutSeconds fallback at the default idle watchdog", () => {
-    const cfg = { agents: { defaults: { timeoutSeconds: 300 } } } as OpenClawConfig;
+    const cfg = { agents: { defaults: { timeoutSeconds: 900 } } } as OpenClawConfig;
     expect(resolveLlmIdleTimeoutMs({ cfg })).toBe(DEFAULT_LLM_IDLE_TIMEOUT_MS);
   });
 
@@ -81,9 +110,44 @@ describe("resolveLlmIdleTimeoutMs", () => {
     expect(resolveLlmIdleTimeoutMs({ cfg, trigger: "cron" })).toBe(0);
   });
 
+  // 300 -> 900 (FORK 2026-09-03): same reason as the non-cron cap test above -- the
+  // input must clear the new 600s default for the cap to be the thing under test.
   it("caps agents.defaults.timeoutSeconds for cron before disabling the default idle timeout", () => {
-    const cfg = { agents: { defaults: { timeoutSeconds: 300 } } } as OpenClawConfig;
+    const cfg = { agents: { defaults: { timeoutSeconds: 900 } } } as OpenClawConfig;
     expect(resolveLlmIdleTimeoutMs({ cfg, trigger: "cron" })).toBe(DEFAULT_LLM_IDLE_TIMEOUT_MS);
+  });
+
+  // FORK 2026-09-03: every assertion above is written symbolically against
+  // DEFAULT_LLM_IDLE_TIMEOUT_MS, so this suite passes at ANY default value -- it would
+  // have stayed green through the 120s watchdog that killed 7 gpt-5.6-sol / grok-4.6
+  // reasoning turns on 2026-09-03, and it would stay green if someone reverted 600 to
+  // 120 tomorrow. The assertions below pin the literal and the paths that reach it.
+  it("defaults to 600s when neither config nor a model timeout is set", () => {
+    expect(DEFAULT_LLM_IDLE_TIMEOUT_MS).toBe(600_000);
+    expect(resolveLlmIdleTimeoutMs()).toBe(600_000);
+
+    const cfg = { agents: {} } as OpenClawConfig;
+    expect(resolveLlmIdleTimeoutMs({ cfg })).toBe(600_000);
+  });
+
+  it("lets a 600s provider request timeout win the min against longer run/agent bounds", () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 10_800 } } } as OpenClawConfig;
+    expect(
+      resolveLlmIdleTimeoutMs({ cfg, modelRequestTimeoutMs: 600_000, runTimeoutMs: 10_800_000 }),
+    ).toBe(600_000);
+  });
+
+  it("clamps a 3h implicit run timeout down to the 600s idle watchdog", () => {
+    expect(resolveLlmIdleTimeoutMs({ runTimeoutMs: 10_800_000 })).toBe(600_000);
+  });
+
+  it("still disables the idle watchdog for cron with no configured timeout", () => {
+    expect(resolveLlmIdleTimeoutMs({ trigger: "cron" })).toBe(0);
+  });
+
+  it("no longer caps a 300s agent timeout at 120s: the implicit ceiling is now 600s", () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 300 } } } as OpenClawConfig;
+    expect(resolveLlmIdleTimeoutMs({ cfg })).toBe(300_000);
   });
 });
 

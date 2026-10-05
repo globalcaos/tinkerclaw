@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   domainStrengthFor,
   frontierRungsFor,
+  TASK_DOMAINS,
   thalamusRoutesByDomain,
 } from "../../../src/shared/thalamus-frontier";
 import type { ThalamusRoute } from "../../../src/shared/thalamus-frontier";
@@ -9,9 +10,13 @@ import { scThalamusRelCost } from "./smart-cost-chart";
 import {
   renderThalamusRoutes,
   scBestBySkill,
+  scColumnOrder,
+  SD_RANKED_PLACES,
   sdRouteSwitched,
   renderCnProviderMatrix,
+  cnPrettyName,
   cnMatrixColumns,
+  cnCheapestSummary,
   CN_PROVIDER_PRICES,
   scDossierFor,
   scRankBySkill,
@@ -23,11 +28,20 @@ import {
   SC_SPLITS,
   SC_DOSSIER_RULES,
   SC_TOPICS,
+  SC_TOPIC_GROUP,
+  SC_TOPIC_PLAIN,
+  scTopicGroups,
   SC_SKILLS,
   SC_SKILL_RANK,
   SC_REFERENCE_ROWS,
   scTopicFactLine,
   scRefusalLine,
+  META_TOPICS,
+  MIMO_TOPICS,
+  MINIMAX_TOPICS,
+  HUNYUAN_TOPICS,
+  STEP_TOPICS,
+  COPILOT_TOPICS,
 } from "./smart-model-dossier";
 
 describe("smart-model dossier — coverage", () => {
@@ -36,7 +50,8 @@ describe("smart-model dossier — coverage", () => {
       for (const s of SC_SKILLS) {
         const cell = rule.entry.skills[s.key];
         expect(cell, `${rule.match} missing skill ${s.key}`).toBeDefined();
-        expect(["weak", "ok", "strong", "top"]).toContain(cell.v);
+        // "none" = no defensible grade, first used by the 2026-10-02 verticals.
+        expect(["none", "weak", "ok", "strong", "top"]).toContain(cell.v);
         expect(cell.tip.length).toBeGreaterThan(20);
       }
     }
@@ -290,8 +305,10 @@ describe("smart-model dossier — rendering", () => {
 
   it("renders one row per model, sorted by index desc", () => {
     const html = renderDossierTable(rows);
-    // group + header + 2 configured rows + the low-refusal reference rows
-    expect(html.split("<tr").length - 1).toBe(4 + SC_REFERENCE_ROWS.length);
+    // TWO tables since 2026-10-02 (capability, censorship), each with group + header +
+    // 2 configured rows + the low-refusal reference rows.
+    expect(html.split("<tr").length - 1).toBe(2 * (4 + SC_REFERENCE_ROWS.length));
+    expect(html.split("<table").length - 1).toBe(2);
     expect(html.indexOf("Claude Opus 5")).toBeLessThan(html.indexOf("Kimi K3"));
   });
 
@@ -299,11 +316,30 @@ describe("smart-model dossier — rendering", () => {
     const html = renderDossierTable(rows);
     for (const t of SC_TOPICS) expect(html).toContain(`>${t.label}<`);
     for (const s of SC_SKILLS) expect(html).toContain(`>${s.label}<`);
-    // (rows + 1 header) × (skills + topics), plus one name tip per row and the
-    // MODEL header's own tip.
+    // (rows + 1 header) × (skills + topics), plus one name tip per row IN EACH of the
+    // two tables, and the capability table's MODEL header tip.
     const n = 2 + SC_REFERENCE_ROWS.length;
     const tips = html.split("data-tip=").length - 1;
-    expect(tips).toBe((SC_SKILLS.length + SC_TOPICS.length) * (n + 1) + n + 1);
+    expect(tips).toBe((SC_SKILLS.length + SC_TOPICS.length) * (n + 1) + 2 * n + 1);
+  });
+
+  it("the refusal bands tile every topic column exactly once, in render order", () => {
+    const bands = scTopicGroups();
+    expect(bands.reduce((n, b) => n + b.span, 0)).toBe(SC_TOPICS.length);
+    // contiguity: rebuilding the key order from the bands must reproduce SC_TOPICS
+    const rebuilt = bands.flatMap((b) => Array.from({ length: b.span }, () => b.group));
+    expect(rebuilt).toEqual(SC_TOPICS.map((t) => SC_TOPIC_GROUP[t.key]));
+    const html = renderDossierTable(rows);
+    // the band label is HTML-escaped on the way out ("LAW & RIGHTS" -> "LAW &amp; RIGHTS")
+    for (const b of bands) expect(html).toContain(`>${b.group.replace(/&/g, "&amp;")} <i>`);
+  });
+
+  it("every refusal cell carries a verdict wash, and every refusal column its plain line", () => {
+    const html = renderDossierTable(rows);
+    // one wash class per rendered refusal cell — colour is additive, the glyph stays
+    const washes = (html.match(/sd-lock-(hard|gated|soft|open|none)/g) ?? []).length;
+    expect(washes).toBe(SC_TOPICS.length * (2 + SC_REFERENCE_ROWS.length));
+    for (const t of SC_TOPICS) expect(html).toContain(SC_TOPIC_PLAIN[t.key]);
   });
 
   it("the prose best-at moves to the model-name tooltip, not a column", () => {
@@ -330,8 +366,8 @@ describe("smart-model dossier — rendering", () => {
   it("renders the vendor mark when given one, the colour dot when not", () => {
     const withLogo = renderDossierTable([{ ...rows[0], logo: "<svg id='kmark'></svg>" }]);
     expect(withLogo).toContain("<span class=\"sd-logo\"><svg id='kmark'></svg></span>");
-    // Only the reference rows lack a logo, so they are the only dots left.
-    expect(withLogo.split("sd-dot").length - 1).toBe(SC_REFERENCE_ROWS.length);
+    // Only the reference rows lack a logo, so they are the only dots left — once per table.
+    expect(withLogo.split("sd-dot").length - 1).toBe(2 * SC_REFERENCE_ROWS.length);
     expect(renderDossierTable(rows)).toContain("sd-dot");
   });
 
@@ -349,22 +385,71 @@ describe("smart-model dossier — rendering", () => {
   });
 });
 
-// FORK 2026-08-15 (the architect): the CN provider × model price matrix at the foot of the
-// dossier. Assert PROPERTIES against the generated data, never literal prices — the
-// figures are regenerated daily and any hardcoded number here would go red within days,
-// which is exactly how assertions in this UI have rotted five times already.
-describe("CN provider × model matrix", () => {
-  it("bolds exactly the cheapest provider in every row", () => {
+// FORK 2026-08-15 (the architect), widened 2026-09-23: the CN supplier × model price matrix at
+// the foot of the dossier. Assert PROPERTIES against the generated data, never literal
+// prices — the figures AND the roster are regenerated daily, and any hardcoded number
+// or model id here would go red within days, which is exactly how assertions in this UI
+// have rotted five times already.
+describe("CN supplier × model matrix", () => {
+  const priced = Object.entries(CN_PROVIDER_PRICES.models).filter(([, m]) => m.cheapest);
+
+  it("bolds exactly the cheapest supplier in every priced row", () => {
     const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
-    for (const [id, m] of Object.entries(CN_PROVIDER_PRICES.models)) {
+    for (const [id, m] of priced) {
       const cheapest = Math.min(...Object.values(m.providers).map((p) => p.out));
-      expect(m.cheapest.out).toBeCloseTo(cheapest, 6);
-      expect(m.providers[m.cheapest.provider]?.out).toBeCloseTo(cheapest, 6);
+      expect(m.cheapest!.out).toBeCloseTo(cheapest, 6);
+      expect(m.providers[m.cheapest!.provider]?.out).toBeCloseTo(cheapest, 6);
       expect(html).toContain(id);
     }
-    // One bold per model row, in the cheapest cell, plus one in the cheapest column.
+    // One bold per priced row, in the cheapest cell, plus one in the cheapest column.
     const bolds = (html.match(/<b>/g) ?? []).length;
-    expect(bolds).toBeGreaterThanOrEqual(Object.keys(CN_PROVIDER_PRICES.models).length);
+    expect(bolds).toBeGreaterThanOrEqual(priced.length);
+  });
+
+  // 2026-10-02 (the architect's bank blocked OpenRouter): the "without OpenRouter" column.
+  it("gives every row a without-OpenRouter cell naming the cheapest direct seller", () => {
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    const body = html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>"));
+    const rows = body.split("<tr>").slice(1);
+    expect(rows.length).toBe(Object.keys(CN_PROVIDER_PRICES.models).length);
+    expect(html).toContain("without OpenRouter</th>");
+    for (const [id, m] of Object.entries(CN_PROVIDER_PRICES.models)) {
+      const row = rows.find((r) => r.includes(`title="${id} — `))!;
+      const d = m.direct;
+      if (!d?.cheapest) continue;
+      const min = Math.min(...Object.values(d.sellers).map((s) => s.out));
+      expect(d.cheapest.out).toBeCloseTo(min, 6);
+      expect(row).toContain(`sd-cn-direct" title=`);
+      expect(row).toContain(`${d.cheapest.seller} <b>`);
+    }
+    // The case this guards is live: at least one model is sold outside OpenRouter.
+    expect(Object.values(CN_PROVIDER_PRICES.models).some((m) => m.direct?.cheapest)).toBe(true);
+  });
+
+  // 2026-10-02 (the architect: "lacks nice logos for every model, make it all prettier").
+  it("names each row the way a person says it, and draws the lab's mark when given one", () => {
+    expect(cnPrettyName("z-ai/glm-5.3")).toBe("GLM 5.3");
+    expect(cnPrettyName("xiaomi/mimo-v2.6-pro")).toBe("MiMo V2.6 Pro");
+    expect(cnPrettyName("moonshotai/kimi-k3")).toBe("Kimi K3");
+    expect(cnPrettyName("deepseek/deepseek-v4-pro-0813")).toBe("DeepSeek V4 Pro 0813");
+    expect(cnPrettyName("bytedance-seed/seed-2-1-turbo")).toBe("Seed 2.1 Turbo");
+    expect(cnPrettyName("tencent/hy4-preview")).toBe("HY4 Preview");
+    const ids = Object.keys(CN_PROVIDER_PRICES.models);
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES, {
+      logoFor: () => "<svg id='lab'></svg>",
+    });
+    expect(html.split("<svg id='lab'></svg>").length - 1).toBe(ids.length);
+    expect(renderCnProviderMatrix(CN_PROVIDER_PRICES)).not.toContain("sd-cn-logo");
+  });
+
+  it("renders data generated before the direct column existed, with a dash", () => {
+    const old = structuredClone(CN_PROVIDER_PRICES);
+    delete old.directSources;
+    for (const m of Object.values(old.models)) delete m.direct;
+    const html = renderCnProviderMatrix(old);
+    const body = html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>"));
+    expect(body).not.toContain("sd-cn-direct");
+    expect((body.match(/<tr>/g) ?? []).length).toBe(Object.keys(old.models).length);
   });
 
   it("marks subscription vs pay-per-use, and flags unconfirmed plans", () => {
@@ -378,7 +463,7 @@ describe("CN provider × model matrix", () => {
     if (unconfirmed.length) expect(html).toContain("sub?");
   });
 
-  it("chooses columns by measured coverage, never a pinned list", () => {
+  it("chooses supplier columns by measured coverage, never a pinned list", () => {
     const cols = cnMatrixColumns(CN_PROVIDER_PRICES);
     expect(cols.length).toBeGreaterThan(2);
     const labs = new Set(
@@ -394,6 +479,183 @@ describe("CN provider × model matrix", () => {
     expect(CN_PROVIDER_PRICES.fetchedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(renderCnProviderMatrix(CN_PROVIDER_PRICES)).toContain(
       CN_PROVIDER_PRICES.fetchedAt.slice(0, 10),
+    );
+  });
+
+  // ── 2026-10-03: "the best chinese models are not in the table" (the architect) ────────
+  // The roster used to follow price and a 75-day window on OpenRouter's `created`,
+  // which is not a release date. That dropped MiniMax entirely and kept StepFun's
+  // cheap tier while its best model, sold only by StepFun, never appeared. These ids
+  // are the labs' best, so the rule may add rows but must not lose these.
+  it("keeps each lab's best model, including one OpenRouter does not sell", () => {
+    const ids = Object.keys(CN_PROVIDER_PRICES.models);
+    for (const id of [
+      "qwen/qwen3.8-max-0902",
+      "z-ai/glm-5.3",
+      "moonshotai/kimi-k3",
+      "xiaomi/mimo-v2.6-pro",
+      "minimax/minimax-m3",
+      "deepseek/deepseek-v4-pro-0813",
+      "stepfun/step-5-preview",
+    ]) {
+      expect(ids, id).toContain(id);
+    }
+    // Step 5 Preview is priced from StepFun's own page, in dollars, so it ranks
+    // with the others instead of showing a dash.
+    const step = CN_PROVIDER_PRICES.models["stepfun/step-5-preview"];
+    expect(step.cheapest?.out).toBeGreaterThan(0);
+    expect(step.labDirect?.usdOut).toBe(step.cheapest?.out);
+    // A $0 promo must never take a row.
+    for (const m of Object.values(CN_PROVIDER_PRICES.models)) {
+      if (m.cheapest) expect(m.cheapest.out).toBeGreaterThan(0);
+    }
+  });
+
+  // ── 2026-09-23: "openrouter needs to be there" (the architect) ──────────────────────
+  // The table listed the hosts BEHIND OpenRouter but never OpenRouter's own default
+  // route — the price most people actually pay. These guard that it cannot go missing
+  // again, and that its fee caveat travels with it.
+  it("gives OpenRouter its own column, priced from its DEFAULT route", () => {
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    expect(html).toContain(">OpenRouter</th>");
+    const withRoute = priced.filter(([, m]) => m.openrouter);
+    expect(withRoute.length).toBeGreaterThan(5);
+    for (const [, m] of withRoute) {
+      // The default route is a real price, and never cheaper than the cheapest host —
+      // if it were, the cheapest-host column would be wrong.
+      expect(m.openrouter!.out).toBeGreaterThan(0);
+      expect(m.openrouter!.out).toBeGreaterThanOrEqual(m.cheapest!.out - 1e-9);
+    }
+  });
+
+  it("quotes OpenRouter's credit fee from a FETCHED source, or says it could not", () => {
+    const fee = CN_PROVIDER_PRICES.openrouterFee;
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    expect(fee.source).toContain("openrouter.ai");
+    expect(fee.checkedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    if (fee.card) {
+      // A fee is only ever a fetched string; the renderer must not invent a number.
+      expect(fee.card).toMatch(/%/);
+      expect(html).toContain(fee.card);
+    } else {
+      expect(html).toContain("could not be read");
+    }
+  });
+
+  // ── the table has to ANSWER the question, not just hold the numbers ─────────
+  it("summarises who is cheapest most often, from the same rows it renders", () => {
+    const sum = cnCheapestSummary(CN_PROVIDER_PRICES);
+    expect(sum.priced).toBe(priced.length);
+    // Wins are counted ONLY where more than one supplier sells the model. Being the
+    // sole seller is not being the cheapest, and counting it would hand the headline
+    // to whoever happens to host the monopoly rows.
+    const contested = priced.filter(([, m]) => Object.keys(m.providers).length > 1);
+    expect(sum.contested).toBe(contested.length);
+    expect(sum.soleSupplier).toBe(priced.length - contested.length);
+    const totalWins = sum.hosts.reduce((a, h) => a + h.wins, 0);
+    expect(totalWins).toBe(contested.length);
+    for (const h of sum.hosts) {
+      const n = contested.filter(([, m]) => m.cheapest!.provider === h.host).length;
+      expect(h.wins).toBe(n);
+    }
+    // Sorted most-wins-first, so the headline names the real leader.
+    for (let i = 1; i < sum.hosts.length; i += 1) {
+      expect(sum.hosts[i - 1]!.wins).toBeGreaterThanOrEqual(sum.hosts[i]!.wins);
+    }
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    expect(html).toContain("CHEAPEST SUPPLIER OVERALL");
+    if (sum.hosts[0]) expect(html).toContain(sum.hosts[0].host);
+  });
+
+  // The median that made this rewrite necessary: folding the already-cheapest rows in
+  // printed "saves a median 0%" over a table whose real spread reaches 65%. True, and
+  // completely misleading. Every saving stat now carries its own n AND the count it
+  // deliberately excludes, so the claim cannot be read wider than the evidence.
+  it("medians savings only where a cheaper host exists, and says how many it excluded", () => {
+    const sum = cnCheapestSummary(CN_PROVIDER_PRICES);
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    for (const st of [sum.vsLab, sum.vsOr]) {
+      // Shopping around can never COST more than the reference it is measured against.
+      if (st.median !== null) {
+        expect(st.median).toBeGreaterThan(0);
+        expect(st.n).toBeGreaterThan(0);
+      }
+      expect(st.alreadyBest).toBeGreaterThanOrEqual(0);
+      expect(st.n + st.alreadyBest).toBeLessThanOrEqual(sum.priced);
+    }
+    // Both sample sizes are printed next to their median, never a bare percentage.
+    if (sum.vsLab.median !== null) expect(html).toContain(`the ${sum.vsLab.n} model`);
+    if (sum.vsOr.median !== null) expect(html).toContain(`the ${sum.vsOr.n} model`);
+    // Recompute vsOr independently: the summary must not drift from the raw rows.
+    const expected = priced
+      .filter(([, m]) => m.openrouter && m.openrouter.out > 0)
+      .map(([, m]) => ((m.openrouter!.out - m.cheapest!.out) / m.openrouter!.out) * 100)
+      .filter((v) => v >= 0.5);
+    expect(sum.vsOr.n).toBe(expected.length);
+  });
+
+  // "pay/use" is a CLAIM about a lab, not a default. It may only be printed for a lab
+  // we actually checked — an explicit entry in SUBSCRIPTIONS.
+  it("never claims pay-per-use for a lab whose plans were not checked", () => {
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    const checked = new Set(Object.keys(CN_PROVIDER_PRICES.subscriptions));
+    const unchecked = Object.values(CN_PROVIDER_PRICES.models)
+      .map((m) => m.lab)
+      .filter((l): l is string => !!l && !checked.has(l));
+    expect(unchecked.length).toBeGreaterThan(0); // the case this guards is live
+    // Count inside the table body only — the legend mentions the tag by name.
+    const body = html.slice(html.indexOf("<tbody>"), html.indexOf("</tbody>"));
+    const tags = (body.match(/pay\/use/g) ?? []).length;
+    const payg = Object.entries(CN_PROVIDER_PRICES.subscriptions).filter(([, v]) => !v);
+    const paygRows = Object.values(CN_PROVIDER_PRICES.models).filter(
+      (m) => m.lab && payg.some(([lab]) => lab === m.lab),
+    ).length;
+    expect(tags).toBe(paygRows);
+  });
+
+  it("keeps the quantisation caveat visible in the summary, not only on hover", () => {
+    const sum = cnCheapestSummary(CN_PROVIDER_PRICES);
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    expect(html).toContain("fp4/fp8");
+    expect(html).toContain(String(sum.lowPrecisionWins));
+    // The count is real: it must match the routes whose quantisation says so.
+    const n = priced.filter(([, m]) => /fp4|fp8|int4|int8/i.test(m.cheapest!.quant)).length;
+    expect(sum.lowPrecisionWins).toBe(n);
+  });
+
+  // ── "all the major frontier chinese models need to be represented" ──────────
+  it("covers the frontier Chinese labs broadly, and stays readable", () => {
+    const labs = new Set(
+      Object.values(CN_PROVIDER_PRICES.models)
+        .map((m) => m.lab)
+        .filter(Boolean) as string[],
+    );
+    expect(labs.size).toBeGreaterThanOrEqual(10);
+    // Readability is the other half of the brief: a table nobody scans answers nothing.
+    expect(Object.keys(CN_PROVIDER_PRICES.models).length).toBeLessThanOrEqual(20);
+    // Every row must say WHY it is in the table, so a retired model is a visible edit.
+    for (const m of Object.values(CN_PROVIDER_PRICES.models)) {
+      expect(m.why.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("renders a lab-direct-only model honestly instead of omitting or inventing it", () => {
+    const labOnly = Object.entries(CN_PROVIDER_PRICES.models).filter(([, m]) => !m.cheapest);
+    if (!labOnly.length) return; // every roster model was on OpenRouter this run
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    for (const [id, m] of labOnly) {
+      expect(html).toContain(id);
+      expect(m.labDirect).not.toBeNull();
+      expect(m.labDirect!.source).toMatch(/^https?:\/\//);
+      // No price reached ⇒ the cell says so. It must never show a number we made up.
+      if (m.labDirect!.cny1k === null) expect(html).toContain("no first-party price reached");
+    }
+  });
+
+  it("publishes the roster rule, so nobody assumes the model list is hand-typed", () => {
+    expect(CN_PROVIDER_PRICES.rosterRule).toMatch(/derived from the live catalog/);
+    expect(renderCnProviderMatrix(CN_PROVIDER_PRICES)).toContain(
+      "Which models appear is decided by the data",
     );
   });
 });
@@ -471,7 +733,11 @@ describe("smart-model dossier — best per column + THALAMUS routes", () => {
     const routes = thalamusRoutesByDomain(rungs, 0);
     const domains = Object.keys(routes);
     expect(domains[0]).toBe("general");
-    expect(domains.length).toBe(9);
+    // "general" + every TASK_DOMAIN. Derived, not a literal: the count went 9 -> 16 on
+    // 2026-09-23 and a hardcoded number is how the strip silently stops listing a domain
+    // somebody added to the type.
+    expect(domains.length).toBe(TASK_DOMAINS.length + 1);
+    expect(domains.slice(1)).toEqual([...TASK_DOMAINS]);
     const html = renderThalamusRoutes(rows, 0);
     expect(html).toContain("THALAMUS ROUTES · bias 0 (fast)");
     expect((html.match(/class="sd-route( sd-route-switch)?"/g) ?? []).length).toBe(domains.length);
@@ -501,5 +767,176 @@ describe("smart-model dossier — best per column + THALAMUS routes", () => {
     expect(h0.indexOf("sd-routes")).toBeLessThan(h0.indexOf("<table"));
     expect(h0).toContain(`GENERAL</b> → ${nameOf(fast)}${eff(fast)}`);
     expect(h6).toContain(`GENERAL</b> → ${nameOf(smart)}${eff(smart)}`);
+  });
+});
+
+// ── The six topic maps that no rule points at yet (2026-09-23) ──────────────
+// They are exported and unreferenced on purpose: SC_DOSSIER_RULES is another
+// unit's file and wires them at merge. That means the coverage loop at the top
+// of this file — which walks SC_DOSSIER_RULES — cannot see them, so a missing or
+// empty cell in any of the six would ship silently. This block is the net until
+// the rules land, and it should KEEP passing afterwards.
+describe("smart-model dossier — topic maps awaiting a rule", () => {
+  const ORPHANS: [string, Record<string, { v: string; tip: string }>][] = [
+    ["META_TOPICS", META_TOPICS],
+    ["MIMO_TOPICS", MIMO_TOPICS],
+    ["MINIMAX_TOPICS", MINIMAX_TOPICS],
+    ["HUNYUAN_TOPICS", HUNYUAN_TOPICS],
+    ["STEP_TOPICS", STEP_TOPICS],
+    ["COPILOT_TOPICS", COPILOT_TOPICS],
+  ];
+
+  it("each one carries a verdict and a real tip for every topic column", () => {
+    for (const [name, map] of ORPHANS) {
+      for (const t of SC_TOPICS) {
+        const cell = map[t.key];
+        expect(cell, `${name} missing topic ${t.key}`).toBeDefined();
+        expect(["open", "soft", "gated", "hard"]).toContain(cell.v);
+        expect(cell.tip.length, `${name}.${t.key} tip too short`).toBeGreaterThan(20);
+      }
+    }
+  });
+
+  it("the two absolutes hold on every one of them", () => {
+    for (const [name, map] of ORPHANS) {
+      expect(map.csam.v, `${name} csam`).toBe("hard");
+      expect(map.cbrn.v, `${name} cbrn`).toBe("hard");
+    }
+  });
+
+  it("an unmeasured cell says so rather than implying a benchmark", () => {
+    // The four newest Chinese families have no published refusal eval. The value
+    // of the row is that it admits that; a cell that quietly looked measured
+    // would be worse than no row at all.
+    for (const map of [MIMO_TOPICS, MINIMAX_TOPICS, HUNYUAN_TOPICS, STEP_TOPICS]) {
+      expect(map.cnpolitics.tip).toMatch(/JUDGED/);
+    }
+    // ...and MiMo is the one that does have a number, so it must cite it.
+    expect(MIMO_TOPICS.explosives.tip).toMatch(/73\.80/);
+  });
+
+  it("Copilot is STRICTER than the OpenAI model underneath it", () => {
+    // The whole point of the row: refusal is a service property, not only a model
+    // property. If this ever stops being true the row has lost its reason to exist.
+    const openai = scDossierFor("openai-codex/gpt-6-sol")!;
+    expect(openai.topics.secwork.v).toBe("gated");
+    expect(COPILOT_TOPICS.secwork.v).toBe("hard");
+    // Azure's protected-material filter is the named example for the COPYRIGHT column.
+    expect(COPILOT_TOPICS.copyright.tip).toMatch(/[Pp]rotected [Mm]aterial/);
+  });
+
+  it("Meta names conventional firearms, which is why WEAPONS is its own column", () => {
+    expect(META_TOPICS.weapons.v).toBe("hard");
+    expect(META_TOPICS.weapons.tip).toMatch(/guns and illegal weapons/);
+  });
+});
+
+// FORK 2026-10-02 (the architect): "the capability table is hard to read at a glance. Make the
+// rankings more visible ... which one is first, second, third ... maybe stop at 5th?" and
+// "for the chinese models table add the intelligence index for each of them next to the
+// title, like the other two tables". Expectations are COMPUTED from scColumnOrder and the
+// generated tables, never a pinned winner: the Epoch data is regenerated daily.
+describe("smart-model dossier — places 1–5 per column, AA index on the CN table", () => {
+  const rows = [
+    { id: "claude-code/claude-opus-5", name: "Claude Opus 5", color: "#E8702A", index: 60.7 },
+    { id: "xai/grok-4.6", name: "Grok 4.6", color: "#000000", index: 59.5 },
+    { id: "openrouter/moonshotai/kimi-k3", name: "Kimi K3", color: "#07B2FE", index: 57.1 },
+    { id: "claude-code/claude-sonnet-4-6", name: "Sonnet 4.6", color: "#E8702A", index: 52 },
+    { id: "openrouter/z-ai/glm-5.3", name: "GLM 5.3", color: "#3859FF", index: 44.8 },
+    { id: "openrouter/qwen/qwen3.8-max-0902", name: "Qwen 3.8 Max", color: "#615CED", index: 45.4 },
+    { id: "claude-code/claude-haiku-4-5", name: "Haiku 4.5", color: "#E8702A", index: 29.9 },
+  ];
+  /** The place badge drawn in one row's cell for one column, or undefined. */
+  const badgeIn = (html: string, name: string, key: string): number | undefined => {
+    const tr = html.split("<tr").find((c) => c.includes(`>${name} `) && c.includes("data-ranks"));
+    const td = tr?.split("<td").find((c) => c.includes(`data-col="${key}"`));
+    const m = td?.match(/class="sd-rk sd-rk-(\d)/);
+    return m ? Number(m[1]) : undefined;
+  };
+
+  it("badges exactly the places 1–5 of every column, in header-click order", () => {
+    const html = renderDossierTable(rows);
+    for (const s of SC_SKILLS) {
+      for (const o of scColumnOrder(rows, s.key)) {
+        const want = o.place <= SD_RANKED_PLACES ? o.place : undefined;
+        expect(badgeIn(html, o.row.name, s.key), `${s.key} · ${o.row.name}`).toBe(want);
+      }
+    }
+  });
+
+  it("orders by measured percentile, then grade, then AA index — the sort handler's keys", () => {
+    for (const s of SC_SKILLS) {
+      const order = scColumnOrder(rows, s.key);
+      const keyOf = (id: string, index: number) => {
+        const d = TASK_DOMAINS.includes(s.key as never)
+          ? domainStrengthFor(id, s.key as never)
+          : undefined;
+        return [d?.p ?? -1, SC_SKILL_RANK[scDossierFor(id)?.skills[s.key].v ?? "weak"], index];
+      };
+      for (let n = 1; n < order.length; n++) {
+        const a = keyOf(order[n - 1].row.id, order[n - 1].row.index!);
+        const b = keyOf(order[n].row.id, order[n].row.index!);
+        const cmp = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+        expect(
+          cmp,
+          `${s.key} ${order[n - 1].row.name} before ${order[n].row.name}`,
+        ).toBeGreaterThanOrEqual(0);
+        expect(order[n].place).toBe(cmp === 0 ? order[n - 1].place : n + 1);
+      }
+    }
+  });
+
+  it("place 1 IS the gold best cell, and still exactly one best mark per column", () => {
+    const html = renderDossierTable(rows);
+    for (const s of SC_SKILLS) {
+      expect(scColumnOrder(rows, s.key)[0].row.id, s.key).toBe(scBestBySkill(rows, s.key)!.row.id);
+    }
+    expect(html.split("sd-best-mark").length - 1).toBe(SC_SKILLS.length);
+    // The grade chip stays the cell's first child, so the best-cell selector still matches.
+    expect(html).not.toMatch(/data-col="[a-z]+"[^>]*><sup/);
+  });
+
+  it("ties share a place: two routes to one model never pretend one beats the other", () => {
+    const twin = [
+      { id: "claude-code/claude-opus-5", name: "A", color: "#000", index: 60 },
+      { id: "claude-code/claude-opus-5", name: "B", color: "#000", index: 60 },
+      { id: "claude-code/claude-opus-5", name: "C", color: "#000", index: 50 },
+    ];
+    expect(scColumnOrder(twin, "code").map((o) => o.place)).toEqual([1, 1, 3]);
+  });
+
+  it("never places a reference row, and the legend shows the five steps", () => {
+    const html = renderDossierTable(rows);
+    const refPlaced = html
+      .split("<tr")
+      .filter((tr) => tr.startsWith(' class="sd-ref"') && /sd-rk|sd-rank-/.test(tr));
+    expect(refPlaced).toEqual([]);
+    for (let n = 1; n <= SD_RANKED_PLACES; n++) {
+      expect(html).toContain(`<span class="sd-leg-place sd-rank-${n}">`);
+    }
+    expect(html).not.toContain("sd-heat-");
+  });
+
+  it("the CN table prints the AA index beside each name, a dash when AA has none", () => {
+    const ids = Object.keys(CN_PROVIDER_PRICES.models);
+    const scored = ids[0]!;
+    const html = renderCnProviderMatrix(CN_PROVIDER_PRICES, {
+      indexFor: (id) => (id === scored ? 45.4152 : undefined),
+    });
+    expect(html).toContain("model · AA idx");
+    const heads = html.split('<th class="sd-model sd-cn-model"').slice(1);
+    expect(heads.length).toBe(ids.length);
+    expect(heads[0]).toContain('<span class="sd-idx">45.4</span>');
+    for (const h of heads.slice(1))
+      expect(h).toMatch(/<span class="sd-idx" title="[^"]+">—<\/span>/);
+    // Without the option the column is not drawn at all.
+    const bare = renderCnProviderMatrix(CN_PROVIDER_PRICES);
+    expect(bare).not.toContain("sd-idx");
+    expect(bare).not.toContain("AA idx");
+  });
+
+  it("joins only standalone version numbers in CN names", () => {
+    expect(cnPrettyName("qwen/qwen3.8-2.4t-a95b")).toBe("Qwen3.8 2.4t A95B");
+    expect(cnPrettyName("bytedance-seed/seed-2-1-turbo")).toBe("Seed 2.1 Turbo");
   });
 });

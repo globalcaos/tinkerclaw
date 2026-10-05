@@ -45,11 +45,19 @@ try {
     {
       encoding: "utf8",
       maxBuffer: 8 * 1024 * 1024,
+      // gog waits forever on a locked "gogcli" keyring (no error, no prompt), and a new run
+      // starts every half hour, so without a cap the hung processes pile up.
+      timeout: 120_000,
     },
   );
   const parsed = JSON.parse(out);
   events = parsed.events ?? parsed.items ?? (Array.isArray(parsed) ? parsed : []);
 } catch (err) {
+  if (err.code === "ETIMEDOUT") {
+    console.error(
+      "gog timed out after 120 s — is the 'gogcli' keyring locked? (Passwords and Keys → gogcli → Unlock)",
+    );
+  }
   console.error("Failed to fetch from gog:", err.message);
   process.exit(2);
 }

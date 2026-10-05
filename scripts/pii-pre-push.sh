@@ -19,23 +19,17 @@
 # accumulated state is checked at every push.
 #
 # Bypass for genuine intentional inclusions (e.g. when the maintainer's
-# full name is the byline being added):
+# full-name byline is being added):
 #     PII_GUARD=off git push …
 #
-# Public-OK tokens (do not match):
-#   - "Oscar Serra" (full name, OSS author byline allowed)
-#   - "globalcaos" (the GitHub handle, already public on URL/badges/org)
-#
-# Private tokens (do match — block push):
-#   - First-name narrative use: "the architect said …", "the architect wants …", etc.
-#     Detected by "the architect(?! Serra)" — the full-name byline "Oscar Serra" passes
-#     but bare first-name narrative use does not.
-#     NOTE: generic role nouns ("the user", "the architect", "the operator") are
-#     the SANITIZED forms prescribed by pii-boundary.md — they do NOT match.
-#   - Family/contact first names
-#   - Location strings
-#   - Host paths
-#   - Business contact tokens, GitLab tokens, work email
+# Token list — two layers (FORK 2026-09-29):
+#   - Generic patterns live here: the pusher's own home path, GitLab/GitHub tokens.
+#   - The PRIVATE list (people's names, places, employer, customers, lab subnets)
+#     lives OUTSIDE the repo, one PCRE alternation per line, at
+#     $TINKERCLAW_PII_FILE (default ~/.config/tinkerclaw/pii-private.re).
+#     A public hook that spells those words out would itself leak them.
+#   Generic role nouns ("the user", "the architect", "the operator") are the
+#   sanitized forms prescribed by pii-boundary.md and never match.
 #
 # Exits 0 if clean, 1 if hits.
 
@@ -76,13 +70,22 @@ declare -a exclude_paths=(
   ":(exclude)CLAUDE.md"
 )
 
-# Pattern: full name "Oscar Serra" is allowed (Perl lookahead so "Oscar Serra"
-# passes but bare "the architect" narrative use is a leak). Generic role nouns such as
-# "the user", "the operator", "the architect" are the SANITIZED forms prescribed
-# by pii-boundary.md and MUST NOT be matched — they are not leaks.
-# ugrep is not used because not all dev hosts have it.
-# Use grep -P (PCRE) which supports lookbehind/lookahead.
-PII_RE='the architect(?! Serra)|Alex[er]?\b|Doé|the city|/home/user|ACME Industries|robovendor|glpat-|owner@'
+# ugrep is not used because not all dev hosts have it; grep -P (PCRE) supports
+# lookbehind/lookahead, which the private list relies on.
+# The ONE literal definition (the bible checks source it from here): generic tokens only.
+# FORK 2026-10-05: obvious fakes in redaction tests (an alphabet run, x's, 1234567890) are not
+# secrets; the first publish after the rewrite was blocked by six of them.
+PII_RE='glpat-|gh[pousr]_(?![a-z]*abcdefgh|[a-z0-9]*x{8}|[0-9a-z]*1234567890)[A-Za-z0-9]{30,}'
+PII_FILE="${TINKERCLAW_PII_FILE:-$HOME/.config/tinkerclaw/pii-private.re}"
+PII_RE+="|$(printf '%s' "$HOME" | sed 's/[][\.*^$+?(){}|]/\\&/g')"
+if [[ -r "$PII_FILE" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    PII_RE+="|${line}"
+  done < "$PII_FILE"
+else
+  echo "[pii-pre-push] WARNING: no private token list at $PII_FILE; only generic patterns are checked." >&2
+fi
 
 hit_count=0
 hit_buffer=""
@@ -157,7 +160,7 @@ if [[ "$hit_count" -gt 0 ]]; then
   echo "  1. push-range (commits being pushed now)" >&2
   echo "  2. accumulated-drift vs origin/main (catches earlier-merged PII)" >&2
   echo "" >&2
-  echo "If this is intentional (e.g. adding 'Oscar Serra' byline), bypass with:" >&2
+  echo "If this is intentional (e.g. adding the author byline), bypass with:" >&2
   echo "    PII_GUARD=off git push …" >&2
   echo "" >&2
   echo "See TINKER_UI_DESIGN_BIBLE/pii-boundary.md for the full rule and" >&2

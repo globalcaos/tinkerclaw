@@ -191,7 +191,8 @@ export function openAnatomyDb(): Database.Database {
       harness TEXT,
       effort TEXT,
       route TEXT,
-      harness_version TEXT
+      harness_version TEXT,
+      snapshot TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_timestamp_ms ON anatomy_events(timestamp_ms);
@@ -204,15 +205,20 @@ export function openAnatomyDb(): Database.Database {
     -- the UPDATE itself from a 67.13 ms median-of-5 to 0.01 ms — measured on a byte copy of
     -- the live DB (185,593,856 B + a 36 MB -wal), never on the live file. better-sqlite3 is
     -- SYNCHRONOUS, so that was 67 ms of BLOCKED gateway event loop on the per-TURN path
-    -- (src/fork/attempt-hooks.ts:1103, conditional). Sizing honesty: the per-ROUND caller at
-    -- attempt-hooks.ts:792 sits inside emitRoundComplete(), which has ZERO callers — this fix
-    -- is NOT justified off that dead path.
+    -- (onTurnComplete in src/fork/attempt-hooks.ts, when the turn has a runId and usage totals).
+    -- Sizing honesty: the per-ROUND caller that sat inside emitRoundComplete() never ran (that
+    -- function never had a caller and was deleted 2026-09-25), so this fix was never justified off
+    -- it; onTurnComplete is the one caller.
     -- Lives in this block rather than in a migrateToVN() on purpose: the block re-executes on
     -- EVERY open and both columns predate v1, so existing DBs pick the index up too. Cost is a
     -- one-off index build on the next open (measured 105 ms on that same copy), plus one extra
     -- b-tree write per INSERT.
     CREATE INDEX IF NOT EXISTS idx_run_round ON anatomy_events(run_id, round_number);
   `);
+
+  // FORK 2026-09-24 (A9): BEFORE migrateFromJsonl — that import writes through the upsert, which
+  // needs the snapshot column and the partial unique index to exist. See ensureSnapshotUniqueness.
+  ensureSnapshotUniqueness(db);
 
   // Mark schema version if this is a brand-new DB (version 0).
   // migrateFromJsonl() will advance version to 2 when done.
@@ -227,6 +233,7 @@ export function openAnatomyDb(): Database.Database {
   migrateToV3(db);
   migrateToV4(db);
   migrateToV5(db);
+  migrateToV6(db);
 
   // FORK 2026-08-28: arm WAL truncation. Deliberately AFTER the migrations — the first tick is
   // a minute out, so a partially-migrated DB is never checkpointed.
@@ -551,6 +558,83 @@ function migrateToV5(database: Database.Database): void {
 }
 
 // ---------------------------------------------------------------------------
+// Schema v6 migration — `snapshot`, and the (run_id, round_number) uniqueness the
+// pre-call writer needs (FORK 2026-09-24 — bible context-window-panel.md §6.1 A9)
+// ---------------------------------------------------------------------------
+
+/**
+ * The PARTIAL-INDEX predicate, written once and reused verbatim by the upsert's conflict target.
+ *
+ * SQLite requires an upsert's `ON CONFLICT (...) WHERE <expr>` to match the partial index it is
+ * targeting. Two hand-written copies of the same predicate is precisely the drift the named
+ * `ANATOMY_BUSY_TIMEOUT_MS` above exists to prevent, so there is one constant and both sites
+ * interpolate it.
+ */
+const ANATOMY_UPSERT_PREDICATE =
+  "run_id IS NOT NULL AND round_number IS NOT NULL AND snapshot IS NOT NULL";
+
+/**
+ * ONE ROW PER (run_id, round_number) — BUT ONLY FOR ROWS A SNAPSHOT-AWARE WRITER WROTE.
+ *
+ * `attempt-hooks.ts` has carried the instruction for this since 2026-07: "if emitPrePromptAnatomy is
+ * wired in the future, add a UNIQUE(run_id, round_number) constraint". A9 wires it, so a turn now
+ * writes the SAME (run_id, round_number) twice — once before the call with the real pre-call
+ * composition, once after with the response side. Without a constraint that is two rows, and every
+ * consumer that reads "the anatomy for this call" gets whichever one the planner hands back.
+ *
+ * WHY THE INDEX IS PARTIAL, and why the predicate is `snapshot IS NOT NULL` rather than a timestamp
+ * cutoff. SQLite cannot ADD a constraint to an existing table, so the only options are a unique
+ * INDEX or a full table rebuild — and a plain unique index FAILS OUTRIGHT if the live 185 MB table
+ * already holds one duplicate pair. Deduplicating first would mean DELETING history from a store
+ * whose own header promises "no pruning — data kept indefinitely". A timestamp cutoff would work but
+ * bakes a magic number into two places that must agree forever.
+ *
+ * `snapshot IS NOT NULL` costs nothing and says exactly the right thing: every row written before
+ * this migration has snapshot NULL and is therefore OUTSIDE the index, so the CREATE cannot fail
+ * whatever history contains; every row written by code that knows about the constraint stamps a
+ * snapshot and is inside it. The predicate IS the sentence "rows this version wrote".
+ *
+ * NEITHER the column nor the index is version-guarded — both re-run on every open (each a no-op
+ * once present), the same choice and for the same reason as `idx_run_round` above. The upsert's
+ * conflict target is only valid while that index exists, and an insert path throwing "ON CONFLICT
+ * clause does not match any PRIMARY KEY or UNIQUE constraint" would take every anatomy row down
+ * with it.
+ *
+ * And it runs BEFORE `migrateFromJsonl`, not beside the other migrateToVN calls. That one-time
+ * import inserts through `insertAnatomyEvent`, i.e. through the upsert, so on a fresh DB with legacy
+ * JSONL on disk the statement would be prepared before the index existed, every file would fail
+ * inside its per-file catch, and the import would then mark itself done having imported nothing.
+ */
+function ensureSnapshotUniqueness(database: Database.Database): void {
+  const cols = new Set(
+    (database.prepare("PRAGMA table_info(anatomy_events)").all() as Array<{ name: string }>).map(
+      (c) => c.name,
+    ),
+  );
+  if (!cols.has("snapshot")) {
+    database.exec("ALTER TABLE anatomy_events ADD COLUMN snapshot TEXT");
+  }
+  database.exec(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_run_round_unique
+       ON anatomy_events(run_id, round_number)
+       WHERE ${ANATOMY_UPSERT_PREDICATE}`,
+  );
+}
+
+/** Stamp schema v6 once `ensureSnapshotUniqueness` has run (it runs first, on every open). */
+function migrateToV6(database: Database.Database): void {
+  const version = database.pragma("user_version", { simple: true }) as number;
+  if (version < 6) {
+    database.pragma("user_version = 6");
+    console.log(
+      "[anatomy-db] Migrated to v6: added snapshot column + partial UNIQUE(run_id, round_number) " +
+        "scoped to snapshot-stamped rows (history keeps whatever duplicates it has — a migration " +
+        "that deletes evidence to satisfy a constraint is not a migration)",
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // WAL maintenance — periodic TRUNCATE checkpoint (FORK 2026-08-28)
 // ---------------------------------------------------------------------------
 
@@ -702,6 +786,28 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
   const database = openAnatomyDb();
 
   if (!insertStmt) {
+    // FORK 2026-09-24 (A9) — UPSERT, not a bare INSERT. A turn now writes this key twice: the
+    // pre-call row before the request, the post-turn row after it. WHAT SURVIVES A CONFLICT IS THE
+    // WHOLE DESIGN, so it is spelled out rather than left to `INSERT OR REPLACE`:
+    //
+    //   KEPT from the existing row — `context_sent`, `snapshot`, `timestamp_ms`, `turn`,
+    //     `session_key`, `harness`. The pre-call composition is the PREFERRED one (bible §5.4) and
+    //     the only one that can itemise the turn's own user prompt, because by post-turn that
+    //     message is no longer last and has slid into conversation history (F5). Overwriting it
+    //     with the post-turn composition would delete the one number this row exists to carry.
+    //   FILLED from the incoming row — every response-side column, plus `context_window` (post-turn
+    //     knows the billed usage the pre-call row could only estimate) and the routing columns.
+    //
+    // `timestamp_ms` surviving is not incidental. `duration_ms` is stamped from the PRE-PROMPT hook
+    // (attempt-hooks.ts markRunStarted), so the EEG's interval `[timestampMs, timestampMs+duration]`
+    // was `[end, end+duration]` — a whole turn late — whenever timestamp_ms came from turn
+    // completion. Keeping the pre-call insert's timestamp makes that interval literally [send, end].
+    //
+    // COALESCE(excluded.x, x) and not plain `excluded.x`: a post-turn write that has nothing to say
+    // about a column must not blank what the pre-call write already knew.
+    //
+    // Rows with snapshot NULL are outside the partial index, so for them this is still a plain
+    // INSERT — every writer that does not stamp a snapshot behaves exactly as before.
     insertStmt = database.prepare(`
       INSERT INTO anatomy_events (
         session_key, run_id, turn, round_number, timestamp_ms,
@@ -710,7 +816,8 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
         topics, topic_transition, memories_injected,
         response_tokens, response_thinking_tokens, response_text_tokens,
         response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
-        response_content, user_message, assistant_response, harness, effort, route, harness_version
+        response_content, user_message, assistant_response, harness, effort, route, harness_version,
+        snapshot
       ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
@@ -718,8 +825,34 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
         ?, ?, ?,
         ?, ?, ?,
         ?, ?, ?,
-        ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?,
+        ?
       )
+      ON CONFLICT(run_id, round_number) WHERE ${ANATOMY_UPSERT_PREDICATE}
+      DO UPDATE SET
+        model = COALESCE(excluded.model, anatomy_events.model),
+        provider = COALESCE(excluded.provider, anatomy_events.provider),
+        auth_profile_id = COALESCE(excluded.auth_profile_id, anatomy_events.auth_profile_id),
+        duration_ms = COALESCE(excluded.duration_ms, anatomy_events.duration_ms),
+        stop_reason = COALESCE(excluded.stop_reason, anatomy_events.stop_reason),
+        compaction_cycle = COALESCE(excluded.compaction_cycle, anatomy_events.compaction_cycle),
+        context_window = COALESCE(excluded.context_window, anatomy_events.context_window),
+        tools_triggered = COALESCE(excluded.tools_triggered, anatomy_events.tools_triggered),
+        topics = COALESCE(excluded.topics, anatomy_events.topics),
+        topic_transition = COALESCE(excluded.topic_transition, anatomy_events.topic_transition),
+        memories_injected = COALESCE(excluded.memories_injected, anatomy_events.memories_injected),
+        response_tokens = COALESCE(excluded.response_tokens, anatomy_events.response_tokens),
+        response_thinking_tokens = COALESCE(excluded.response_thinking_tokens, anatomy_events.response_thinking_tokens),
+        response_text_tokens = COALESCE(excluded.response_text_tokens, anatomy_events.response_text_tokens),
+        response_tool_call_tokens = COALESCE(excluded.response_tool_call_tokens, anatomy_events.response_tool_call_tokens),
+        cache_read_tokens = COALESCE(excluded.cache_read_tokens, anatomy_events.cache_read_tokens),
+        cache_creation_tokens = COALESCE(excluded.cache_creation_tokens, anatomy_events.cache_creation_tokens),
+        response_content = COALESCE(excluded.response_content, anatomy_events.response_content),
+        user_message = COALESCE(excluded.user_message, anatomy_events.user_message),
+        assistant_response = COALESCE(excluded.assistant_response, anatomy_events.assistant_response),
+        effort = COALESCE(excluded.effort, anatomy_events.effort),
+        route = COALESCE(excluded.route, anatomy_events.route),
+        harness_version = COALESCE(excluded.harness_version, anatomy_events.harness_version)
     `);
   }
 
@@ -759,6 +892,12 @@ export function insertAnatomyEvent(event: ContextAnatomyEvent): void {
     (ext["effort"] as string) ?? null,
     resolveVendorAndRoute(event.provider).route,
     (ext["harnessVersion"] as string) ?? resolveHarnessVersion(),
+    // NO DEFAULT, on purpose. A writer that does not say which composition it holds gets NULL, which
+    // both leaves the row OUTSIDE the v6 uniqueness index (so no existing caller changes behaviour)
+    // and reads honestly downstream as "unknown" rather than as "post-turn". Defaulting here would
+    // make the partial index cover callers that never opted in, and would erase the difference
+    // between a row A9 stamped and a row from before it.
+    event.snapshot ?? null,
   );
 }
 
@@ -799,7 +938,8 @@ export function copyAnatomyEventsToNewKey(fromKey: string, toKey: string): numbe
         topics, topic_transition, memories_injected,
         response_tokens, response_thinking_tokens, response_text_tokens,
         response_tool_call_tokens, cache_read_tokens, cache_creation_tokens,
-        response_content, user_message, assistant_response, harness, effort, route, harness_version
+        response_content, user_message, assistant_response, harness, effort, route, harness_version,
+        snapshot
       )
       SELECT
         ?, (run_id || ?), turn, round_number, timestamp_ms,
@@ -811,7 +951,10 @@ export function copyAnatomyEventsToNewKey(fromKey: string, toKey: string): numbe
         -- harness is COPIED, not re-defaulted: a fork of a claude-code turn is still a record of
         -- a claude-code turn. Re-stamping it 'tinkerclaw' here would launder provenance through a
         -- session fork, which is precisely the kind of quiet rewrite this column exists to prevent.
-        response_content, user_message, assistant_response, harness, effort, route, harness_version
+        -- snapshot is copied for the same reason, and the copy cannot collide with its source
+        -- under the v6 uniqueness index: run_id is suffixed with the clone key above.
+        response_content, user_message, assistant_response, harness, effort, route, harness_version,
+        snapshot
       FROM anatomy_events
       WHERE session_key = ?
     `,
@@ -921,6 +1064,7 @@ interface AnatomyRow {
   response_content: string | null;
   user_message: Buffer | string | null;
   assistant_response: Buffer | string | null;
+  snapshot: string | null;
 }
 
 /**
@@ -948,6 +1092,8 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
       row.topic_transition,
     ),
     contextSent: decompressJson(row.context_sent) ?? {
+      moralCodeChars: 0,
+      moralCodeTokens: 0,
       systemPromptChars: 0,
       systemPromptTokens: 0,
       injectedFiles: [],
@@ -974,6 +1120,10 @@ export function parseRow(row: AnatomyRow): ContextAnatomyEvent & Record<string, 
     authProfileId: row.auth_profile_id ?? undefined,
     responseTokens: row.response_tokens ?? undefined,
     memoriesInjected: decompressJson(row.memories_injected) ?? { autoRecall: [], searched: [] },
+    // `snapshot` IS on the canonical type: which composition this row's `context_sent` holds. NULL
+    // on every row written before schema v6, and that reads as UNKNOWN, never as 'post-turn' — the
+    // panel badges an unknown composition rather than presenting it as what was sent.
+    snapshot: (row.snapshot ?? undefined) as ContextAnatomyEvent["snapshot"],
     // Extended fields not yet on the canonical type
     runId: row.run_id ?? undefined,
     durationMs: row.duration_ms ?? undefined,

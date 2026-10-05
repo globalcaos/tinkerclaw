@@ -7,12 +7,19 @@
 import path from "node:path";
 import { resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
 
+/**
+ * A calendar the sync can read, written "<provider>.<account>" — for example
+ * `google.primary` or `outlook.work`. The account half is whatever name the
+ * operator gives that calendar; the plugin JSON schema enforces the same form.
+ */
+export type CalendarSyncSource = `${"google" | "outlook"}.${string}`;
+
 export type ControlPanelPluginConfig = {
   dataDir?: string;
   calendarSync?: {
     enabled?: boolean;
     cadenceSeconds?: number;
-    sources?: Array<"google.primary" | "outlook.work">;
+    sources?: Array<CalendarSyncSource>;
   };
   briefingImport?: boolean;
   execMode?: {
@@ -29,7 +36,7 @@ export type ControlPanelResolvedConfig = {
   calendarSync: {
     enabled: boolean;
     cadenceSeconds: number;
-    sources: Array<"google.primary" | "outlook.work">;
+    sources: Array<CalendarSyncSource>;
   };
   briefingImport: boolean;
   execMode: {

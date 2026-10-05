@@ -3,6 +3,12 @@ import path from "node:path";
 import "./monitor-inbox.test-harness.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WhatsAppRetryableInboundError } from "./inbound/dedupe.js";
+
+// 2026-09-17: the inbound pipeline refuses to auto-reply to messages older than
+// 12h (inbound/monitor.ts), so a fixture frozen at a 2023 epoch now models a
+// history-sync replay rather than a live message. Offsets preserve ordering.
+const FIXTURE_TS = Math.floor(Date.now() / 1000);
+
 import {
   type InboxMonitorOptions,
   InboxOnMessage,
@@ -56,7 +62,7 @@ async function primeInboundReplyHandle(params: {
       id: nextMessageId(params.upsertId),
       remoteJid: "999@s.whatsapp.net",
       text: "ping",
-      timestamp: 1_700_000_000,
+      timestamp: FIXTURE_TS,
       pushName: "Tester",
     }),
   );
@@ -105,7 +111,7 @@ describe("web monitor inbox", () => {
               },
             },
           },
-          messageTimestamp: 1_700_000_000,
+          messageTimestamp: FIXTURE_TS,
           pushName: "Tester",
         },
       ],
@@ -158,7 +164,7 @@ describe("web monitor inbox", () => {
       id: messageId,
       remoteJid: "999@s.whatsapp.net",
       text: "ping",
-      timestamp: 1_700_000_000,
+      timestamp: FIXTURE_TS,
       pushName: "Tester",
     });
 
@@ -233,7 +239,7 @@ describe("web monitor inbox", () => {
         id: nextMessageId("pending-hydration"),
         remoteJid: "999@s.whatsapp.net",
         text: "ping",
-        timestamp: 1_700_000_000,
+        timestamp: FIXTURE_TS,
         pushName: "Tester",
       }),
     );
@@ -254,7 +260,7 @@ describe("web monitor inbox", () => {
         id: nextMessageId("replacement-socket"),
         remoteJid: "999@s.whatsapp.net",
         text: "ping",
-        timestamp: 1_700_000_000,
+        timestamp: FIXTURE_TS,
         pushName: "Tester",
       }),
     );
@@ -347,7 +353,7 @@ describe("web monitor inbox", () => {
           id: nextMessageId("debounce-close-1"),
           remoteJid: "999@s.whatsapp.net",
           text: "first",
-          timestamp: 1_700_000_000,
+          timestamp: FIXTURE_TS,
           pushName: "Tester",
         }),
       );
@@ -357,7 +363,7 @@ describe("web monitor inbox", () => {
           id: nextMessageId("debounce-close-2"),
           remoteJid: "999@s.whatsapp.net",
           text: "second",
-          timestamp: 1_700_000_001,
+          timestamp: FIXTURE_TS + 1,
           pushName: "Tester",
         }),
       );
@@ -446,7 +452,7 @@ describe("web monitor inbox", () => {
       id: nextMessageId("dedupe"),
       remoteJid: "999@s.whatsapp.net",
       text: "ping",
-      timestamp: 1_700_000_000,
+      timestamp: FIXTURE_TS,
       pushName: "Tester",
     });
 
@@ -473,7 +479,7 @@ describe("web monitor inbox", () => {
       id: nextMessageId("retryable-dedupe"),
       remoteJid: "999@s.whatsapp.net",
       text: "ping",
-      timestamp: 1_700_000_000,
+      timestamp: FIXTURE_TS,
       pushName: "Tester",
     });
 
@@ -498,7 +504,7 @@ describe("web monitor inbox", () => {
       id: nextMessageId("lid-store"),
       remoteJid: "999@lid",
       text: "ping",
-      timestamp: 1_700_000_000,
+      timestamp: FIXTURE_TS,
       pushName: "Tester",
     });
 
@@ -528,7 +534,7 @@ describe("web monitor inbox", () => {
       id: nextMessageId("lid-authdir"),
       remoteJid: "555@lid",
       text: "ping",
-      timestamp: 1_700_000_000,
+      timestamp: FIXTURE_TS,
       pushName: "Tester",
     });
 
@@ -556,7 +562,7 @@ describe("web monitor inbox", () => {
       remoteJid: "123@g.us",
       participant: "444@lid",
       text: "ping",
-      timestamp: 1_700_000_000,
+      timestamp: FIXTURE_TS,
     });
 
     sock.ev.emit("messages.upsert", upsert);
@@ -592,12 +598,12 @@ describe("web monitor inbox", () => {
         {
           key: { id: "abc1", fromMe: false, remoteJid: "999@s.whatsapp.net" },
           message: { conversation: "ping" },
-          messageTimestamp: 1_700_000_000,
+          messageTimestamp: FIXTURE_TS,
         },
         {
           key: { id: "abc2", fromMe: false, remoteJid: "999@s.whatsapp.net" },
           message: { conversation: "pong" },
-          messageTimestamp: 1_700_000_001,
+          messageTimestamp: FIXTURE_TS + 1,
         },
       ],
     };

@@ -31,12 +31,25 @@ describe("subscribeEmbeddedAgentSession", () => {
   });
 
   it("does not count compaction until end event", async () => {
+    // FORK 2026-09-24: pi's context size after a compaction reaches consumers on the A1 end event
+    // (src/infra/compaction-telemetry.ts), no longer through a subscription getter:
+    // getLastCompactionTokensAfter left with noteCompactionTokensAfter (FORK 2026-04-28 chunk-21).
+    // So the figure is read where it ships: the run's own compaction stream.
+    const compactionEvents: Array<Record<string, unknown>> = [];
     const { emit, subscription } = createSubscribedSessionHarness({
       runId: "run-compaction-count",
+      onAgentEvent: (evt) => {
+        if (evt.stream === "compaction") {
+          compactionEvents.push(evt.data);
+        }
+      },
     });
 
     emit({ type: "compaction_start" });
     expect(subscription.getCompactionCount()).toBe(0);
+    expect(compactionEvents).toEqual([
+      { phase: "start", trigger: "pi-auto", lane: "embedded", provenance: "estimated" },
+    ]);
 
     // willRetry with result — counter IS incremented (overflow compaction succeeded)
     emit({
@@ -45,7 +58,15 @@ describe("subscribeEmbeddedAgentSession", () => {
       result: { summary: "s", tokensAfter: 12_345 },
     });
     expect(subscription.getCompactionCount()).toBe(1);
-    expect(subscription.getLastCompactionTokensAfter()).toBe(12_345);
+    expect(compactionEvents[1]).toMatchObject({
+      phase: "end",
+      trigger: "pi-auto",
+      completed: true,
+      willRetry: true,
+      tokensAfter: 12_345,
+    });
+    // Absent, not zero: pi reported no tokensBefore, so the event carries none.
+    expect(compactionEvents[1]).not.toHaveProperty("tokensBefore");
 
     // willRetry=false with result — counter incremented again
     emit({
@@ -54,7 +75,13 @@ describe("subscribeEmbeddedAgentSession", () => {
       result: { summary: "s2", tokensAfter: 6_789 },
     });
     expect(subscription.getCompactionCount()).toBe(2);
-    expect(subscription.getLastCompactionTokensAfter()).toBe(6_789);
+    expect(compactionEvents[2]).toMatchObject({
+      phase: "end",
+      completed: true,
+      willRetry: false,
+      tokensAfter: 6_789,
+    });
+    expect(compactionEvents).toHaveLength(3);
   });
 
   it("does not count compaction when result is absent", async () => {

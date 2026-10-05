@@ -18,6 +18,8 @@
  * (the exact J16 anti-pattern).
  */
 
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
+
 export interface SpawnBudgetSignals {
   /** Count of required typed fields this step must populate (wider → more units). */
   requiredFieldCount?: number;
@@ -61,5 +63,32 @@ export function deriveSpawnBudget(signals: SpawnBudgetSignals): number {
       ? Math.floor(signals.remainingTokenBudget / signals.estStepTokens)
       : Number.POSITIVE_INFINITY;
 
-  return Math.max(1, Math.min(Math.round(derivedUnits), affordable));
+  const units = Math.max(1, Math.min(Math.round(derivedUnits), affordable));
+
+  // J16 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.bound.derived` (§9 step 9).
+  //   label = the bound's name (the one categorical dimension)
+  //   n1 = derived_value  — what this call actually returns
+  //   n2 = ceiling        — the affordability clamp; NULL when no budget is threaded, so an
+  //                         inert clamp reads as an honest gap, not a zero (and never as an
+  //                         Infinity the writer would have to reject and count as invalid).
+  //   n3 = fired          — 1 when the ceiling actually BIT (it, not the derivation, set the
+  //                         answer). This is the number that says whether a bound is doing work
+  //                         or is decorative; a ceiling that never fires is slack.
+  //   n4 = sample_size    — how many of the five signals the caller supplied, i.e. how much live
+  //                         evidence this derivation had rather than defaults.
+  emitEvent("j.bound.derived", {
+    label: "spawn",
+    n1: units,
+    n2: Number.isFinite(affordable) ? affordable : null,
+    n3: Number.isFinite(affordable) && Math.round(derivedUnits) > affordable ? 1 : 0,
+    n4: [
+      signals.requiredFieldCount,
+      signals.skillInvoked,
+      signals.fitnessSuccessRate,
+      signals.remainingTokenBudget,
+      signals.estStepTokens,
+    ].filter((s) => s != null).length,
+  });
+
+  return units;
 }
