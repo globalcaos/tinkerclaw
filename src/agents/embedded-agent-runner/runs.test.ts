@@ -63,6 +63,102 @@ describe("queueEmbeddedPiMessage in-flight steer (P4)", () => {
     }
   });
 
+  // FORK 2026-09-06 (record the steer). A successful steer used to leave no
+  // trace: no user row in the transcript, so the Tinker UI outbox — which
+  // retires an entry only on transcript proof — re-sent the prompt on every
+  // reconnect until a copy landed idle and ran as a duplicate turn. onDelivered
+  // is what lets the caller persist the row. It must fire on the two success
+  // paths and NEVER on a drop path, or the message is delivered twice.
+  it("reports a successful in-flight steer via onDelivered", async () => {
+    vi.useFakeTimers();
+    try {
+      setActiveEmbeddedRun("sess-ok", {
+        queueMessage: async () => {},
+        isStreaming: () => false,
+        isCompacting: () => false,
+        abort: () => {},
+      });
+      registerInflightSteerHook(() => true);
+      const delivered: Array<[string, string]> = [];
+      const lost: string[] = [];
+      queueEmbeddedPiMessage("sess-ok", "record me", {
+        onDelivered: (combined, via) => delivered.push([combined, via]),
+        onDeliveryLost: (_t, combined) => lost.push(combined),
+      });
+      await vi.advanceTimersByTimeAsync(350);
+      expect(delivered).toEqual([["record me", "inflight-steer"]]);
+      expect(lost).toEqual([]); // never both
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports next-round delivery via onDelivered when no live worker accepts", async () => {
+    vi.useFakeTimers();
+    try {
+      setActiveEmbeddedRun("sess-next", {
+        queueMessage: async () => {},
+        isStreaming: () => false,
+        isCompacting: () => false,
+        abort: () => {},
+      });
+      registerInflightSteerHook(() => false);
+      const delivered: Array<[string, string]> = [];
+      queueEmbeddedPiMessage("sess-next", "next round", {
+        onDelivered: (combined, via) => delivered.push([combined, via]),
+      });
+      await vi.advanceTimersByTimeAsync(350);
+      expect(delivered).toEqual([["next round", "next-round"]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // FORK 2026-09-06 (steer while thinking). The gate used to be
+  // `if (!handle.isStreaming()) return false`, so a prompt typed while the agent
+  // was THINKING or RUNNING TOOLS — the common case — never entered the steer
+  // buffer and came back later as its own turn ("answers out of the blue").
+  // claude-cli drains stdin between tool rounds, so an active run accepts it.
+  it("steers into an ACTIVE run that is not currently streaming (thinking / running tools)", async () => {
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      setActiveEmbeddedRun("sess-thinking", {
+        queueMessage,
+        isStreaming: () => false, // mid-tool-round: no text is being emitted
+        isCompacting: () => false,
+        abort: () => {},
+      });
+      const steered: Array<[string, string]> = [];
+      registerInflightSteerHook((sid, text) => {
+        steered.push([sid, text]);
+        return true;
+      });
+
+      expect(queueEmbeddedPiMessage("sess-thinking", "actually, make it blink")).toBe(true);
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(steered).toEqual([["sess-thinking", "actually, make it blink"]]);
+      expect(queueMessage).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still refuses to steer while the run is COMPACTING", () => {
+    setActiveEmbeddedRun("sess-compacting", {
+      queueMessage: async () => {},
+      isStreaming: () => false,
+      isCompacting: () => true,
+      abort: () => {},
+    });
+    expect(queueEmbeddedPiMessage("sess-compacting", "not now")).toBe(false);
+  });
+
+  it("still refuses to steer when there is no active run at all", () => {
+    expect(queueEmbeddedPiMessage("sess-absent", "nobody home")).toBe(false);
+  });
+
   it("falls back to the pi steeringQueue when no live worker accepts (hook returns false)", async () => {
     vi.useFakeTimers();
     try {

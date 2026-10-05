@@ -12,6 +12,7 @@ import {
   readConfigFileSnapshot,
   recoverConfigFromLastKnownGood,
   registerConfigWriteListener,
+  resolveConfigSnapshotHash,
 } from "../config/io.js";
 import { replaceConfigFile } from "../config/mutate.js";
 import { isNixMode } from "../config/paths.js";
@@ -25,11 +26,28 @@ import {
   setDiagnosticsEnabledForProcess,
 } from "../infra/diagnostic-events.js";
 import { isTruthyEnvValue, isVitestRuntimeEnv, logAcceptedEnvOption } from "../infra/env.js";
+import { startDiagnosticBusBridge } from "../infra/events/bridge-diagnostic-bus.js";
+import { startEventWriter, stopEventWriter } from "../infra/events/emit.js";
+import {
+  emitGatewayBoot,
+  startGatewayHealthSampler,
+} from "../infra/events/samplers/gateway-health.js";
+import {
+  startWorkerResourceSampler,
+  stopWorkerResourceSampler,
+} from "../infra/events/samplers/worker-resources.js";
+import { resolveCommitHash } from "../infra/git-commit.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
+import { releaseRestartDrain } from "../infra/restart-drain.js";
 import { setGatewaySigusr1RestartPolicy, setPreRestartDeferralCheck } from "../infra/restart.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import type { VoiceWakeRoutingConfig } from "../infra/voicewake-routing.js";
-import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/diagnostic.js";
+import {
+  type DiagnosticReplyPhaseProbe,
+  getDiagnosticWorkCounts,
+  startDiagnosticHeartbeat,
+  stopDiagnosticHeartbeat,
+} from "../logging/diagnostic.js";
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
 import { getActiveBundledRuntimeDepsInstallCount } from "../plugins/bundled-runtime-deps-activity.js";
 import {
@@ -51,6 +69,8 @@ import {
 } from "../tasks/task-registry.maintenance.js";
 import { createAuthRateLimiter, type AuthRateLimiter } from "./auth-rate-limit.js";
 import { resolveGatewayAuth } from "./auth.js";
+import { clearGatewayShutdownState } from "./gateway-shutdown-state.js";
+import { findReplyOperation } from "./reply-registry-key.js";
 import { createGatewayAuxHandlers } from "./server-aux-handlers.js";
 import { createChannelManager } from "./server-channels.js";
 import { resolveGatewayControlUiRootState } from "./server-control-ui-root.js";
@@ -113,6 +133,49 @@ function resolveMediaCleanupTtlMs(ttlHoursRaw: number): number {
     throw new Error(`Invalid media.ttlHours: ${String(ttlHoursRaw)}`);
   }
   return ttlMs;
+}
+
+/**
+ * FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §7 G6). The reply-phase probe for the
+ * `[diagnostic] stuck session` line: the phase of the reply operation the session holds, so a turn
+ * the gateway accepted but has not taken to the model reads `phase=queued` instead of looking like
+ * a hung model call. src/logging/diagnostic.ts owns the seam and must not import reply-pipeline
+ * code; src/gateway/ already reads the reply-run registry, so the gateway builds the probe.
+ *
+ * KEY SPELLINGS. The diagnostic state is keyed by the RAW inbound `ctx.SessionKey`
+ * (dispatch-from-config.ts markProcessing); the reply operation by the key initSessionState
+ * derives from it, which agent-runner uses as replySessionKey. A chat.send turn already dispatches
+ * that key, so the raw lookup hits; a short, legacy, mixed-case or global-scope spelling does not.
+ * findReplyOperation (reply-registry-key.ts, the one owner of that derivation) tries the key as
+ * given, then the key initSessionState derives from it, and nothing else. Deliberately not the
+ * store key: resolveSessionStoreKey folds a legacy `agent:main:<mainKey>` onto the default agent
+ * (`agent:ops:work`), where a DIFFERENT dispatch's turn registers. On an exact hit, or with no
+ * operation registered at all, the probe reads no config.
+ *
+ * Reads `phase=none` because the key alone cannot reach the operation: a native command's or a
+ * bound conversation's retarget (the operation lives on another session), a channel plugin's own
+ * explicit-key normaliser keyed on the inbound provider, and a state that carries only a
+ * sessionId (the registry exports no sessionId-to-phase lookup). A throw is not caught here: the
+ * seam reports it as `phase=unknown`.
+ */
+export function createGatewayReplyPhaseProbe(
+  getConfig: () => OpenClawConfig = getRuntimeConfig,
+): DiagnosticReplyPhaseProbe {
+  return ({ sessionKey }) => findReplyOperation(sessionKey, getConfig)?.phase;
+}
+
+/**
+ * Starts the diagnostic heartbeat the way the gateway runs it: the config read live on every tick,
+ * and the reply-phase probe on the stuck-session line. Startup calls this and nothing else, so a
+ * test starts exactly what production starts (diagnostic-phase-wiring.test.ts).
+ */
+export function startGatewayDiagnosticHeartbeat(
+  getConfig: () => OpenClawConfig = getRuntimeConfig,
+): void {
+  startDiagnosticHeartbeat(undefined, {
+    getConfig,
+    replyPhaseProbe: createGatewayReplyPhaseProbe(getConfig),
+  });
 }
 
 const log = createSubsystemLogger("gateway");
@@ -315,6 +378,13 @@ export async function startGatewayServer(
   port = 18789,
   opts: GatewayServerOptions = {},
 ): Promise<GatewayServer> {
+  // FORK 2026-09-29 (lifecycles.md L4b): an in-process (SIGUSR1) restart keeps module state, so the
+  // previous close handler's "shutting down" mark must not outlive it into the new server.
+  clearGatewayShutdownState();
+  // The same holds for the restart drain: left active, it would hold every new run at its first
+  // model call. Releasing also lets go of whatever this process still holds (a cc-bridge worker
+  // frozen for the stop that turned out to be in-process); aborted turns ignore a release.
+  void releaseRestartDrain();
   bootstrapGatewayNetworkRuntime();
 
   const minimalTestGateway =
@@ -385,7 +455,7 @@ export async function startGatewayServer(
   const diagnosticsEnabled = isDiagnosticsEnabled(cfgAtStart);
   setDiagnosticsEnabledForProcess(diagnosticsEnabled);
   if (diagnosticsEnabled) {
-    startDiagnosticHeartbeat(undefined, { getConfig: getRuntimeConfig });
+    startGatewayDiagnosticHeartbeat();
   }
   setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
   setPreRestartDeferralCheck(
@@ -656,6 +726,27 @@ export async function startGatewayServer(
   } = createGatewayNodeSessionRuntime({ broadcast });
   applyGatewayLaneConcurrency(cfgAtStart);
 
+  // FORK 2026-09-24 (logging.md §9 step 3): start the structured-events writer. A no-op when
+  // OPENCLAW_EVENTS_DB=0, and refused by paths.ts under a test runner; stopped in runClosePrelude.
+  startEventWriter();
+  // FORK 2026-09-25 (logging.md §4.9, §9 step 5): the per-worker memory and CPU trend sampler.
+  // A no-op while the writer is disabled; stopped in runClosePrelude, before the writer.
+  startWorkerResourceSampler();
+
+  // FORK 2026-09-25 (logging.md §9 step 4): the gateway's own rows. The diagnostic bridge maps
+  // three bus types (gw.liveness.warning, gw.memory.pressure, gw.session.stuck) and the
+  // instrument-liveness report (instrument.census, instrument.transition); gw.health.sample reads
+  // a stall-clock monitor of its OWN every 30 s, whether or not diagnostics are enabled. Started
+  // after the writer on purpose: both install nothing while no writer runs. gw.boot is emitted
+  // once the deferred channel plugins have loaded (below). All stop in runClosePrelude, before
+  // the writer's final flush.
+  const stopDiagnosticBusBridge = startDiagnosticBusBridge();
+  const gatewayHealthLoop = createGatewayEventLoopHealthMonitor();
+  const gatewayHealthSampler = startGatewayHealthSampler({
+    readLoopHealth: gatewayHealthLoop.snapshot,
+    readWork: getDiagnosticWorkCounts,
+  });
+
   runtimeState = createGatewayServerLiveState({
     hooksConfig: initialHooksConfig,
     hookClientIpConfig: initialHookClientIpConfig,
@@ -670,6 +761,17 @@ export async function startGatewayServer(
 
   const runClosePrelude = async () => {
     clearCurrentPluginMetadataSnapshot();
+    // FORK 2026-09-25 (logging.md §9 step 4): stop the gateway's own row producers before the
+    // writer, so its final flush below carries their last rows and nothing emits into it after.
+    stopDiagnosticBusBridge();
+    gatewayHealthSampler.stop();
+    gatewayHealthLoop.stop();
+    // FORK 2026-09-25 (logging.md §4.9): the worker-resources sampler, before the writer: a sample
+    // taken after its stop would only be counted as dropped.
+    stopWorkerResourceSampler();
+    // FORK 2026-09-24 (logging.md §7.5 Shutdown): flush the events queue (2 s deadline) and stop
+    // the writer thread; records still queued are counted in its final journal line.
+    await stopEventWriter().catch((err) => log.warn(`events writer shutdown: ${String(err)}`));
     const { runGatewayClosePrelude } = await loadGatewayCloseModule();
     await runGatewayClosePrelude({
       ...(diagnosticsEnabled ? { stopDiagnostics: stopDiagnosticHeartbeat } : {}),
@@ -756,6 +858,8 @@ export async function startGatewayServer(
         nodeRegistry,
         pluginRegistry,
         broadcast,
+        broadcastToConnIds,
+        getSessionEventSubscriberConnIds: sessionEventSubscribers.getAll,
         nodeSendToAllSubscribed,
         getPresenceVersion,
         getHealthVersion,
@@ -924,6 +1028,17 @@ export async function startGatewayServer(
         runtimeState.gatewayMethods = listActiveGatewayMethods(baseGatewayMethods);
       }
     }
+
+    // FORK 2026-09-25 (logging.md §4.1 gw.boot): once per boot, after the deferred channel
+    // plugins reloaded `pluginRegistry`, so plugin_count is the set this boot actually serves.
+    // Each source is read inside emitGatewayBoot's guard: a failing one is a NULL, never a
+    // failed boot.
+    emitGatewayBoot({
+      commit: () => resolveCommitHash({ moduleUrl: import.meta.url }),
+      pluginCount: () =>
+        pluginRegistry.plugins.filter((plugin) => plugin.status === "loaded").length,
+      configHash: () => resolveConfigSnapshotHash(startupLastGoodSnapshot),
+    });
 
     attachGatewayWsHandlers({
       wss,

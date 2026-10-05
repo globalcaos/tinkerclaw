@@ -9,6 +9,7 @@
  *   - before_prompt_build (priority 50): retrieval pack injection
  *   - llm_output: assistant response ingestion (fire-and-forget)
  *   - before_compaction: persist messages being compacted
+ *   - gateway_stop: end the FTS worker thread the pack refreshes use
  *
  * Tool:  recall (query + optional limit)
  * Gateway method: engram.search (Tinker UI search)
@@ -17,7 +18,7 @@
  * so other extensions (e.g. Round Table) can detect Total Recall availability.
  */
 
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
@@ -30,10 +31,11 @@ import { declareInstrument, noteInstrumentFired } from "openclaw/plugin-sdk/fork
 // see src/plugin-sdk/memory-engram.ts and
 // TINKER_UI_DESIGN_BIBLE/canonical-derivations.md.
 import {
-  assembleRetrievalPack,
+  assembleRetrievalPackAsync,
   createEventStore,
   createIngestionPipeline,
   recall as recallSearch,
+  shutdownFtsWorker,
   type EventStore,
   type IngestionPipeline,
 } from "openclaw/plugin-sdk/memory-engram";
@@ -244,8 +246,88 @@ export interface CachedPack {
   eventCount: number;
   ccEventCount: number;
   builtAtMs: number;
+  /**
+   * FORK 2026-09-03 — set ONLY on the placeholder a cold session installs before its
+   * background rebuild has produced anything. It marks an entry that is worth nothing to
+   * serve, so a FAILED rebuild can drop it and let the next turn retry, instead of pinning
+   * an empty pack in the cache for the whole PACK_REBUILD_MAX_AGE_MS window.
+   *
+   * A rebuild that legitimately yields "" is NOT seeded and stays cached — that is the
+   * behaviour which stops an unproductive store re-running FTS on every single turn.
+   */
+  seeded?: true;
 }
 const packCache = new Map<string, CachedPack>();
+
+// -- Persisted pack (FORK 2026-09-03) -----------------------------------------
+//
+// `packCache` is process memory, so every gateway restart made every session cold again —
+// and a cold session is what used to freeze the loop for 20-28s. Writing the last built
+// pack to disk turns "cold" into "one turn of extra staleness" instead of "one turn of
+// nothing", for one ~8KB file per session.
+//
+// Deliberately the WHOLE CachedPack, not just the text: `builtAtMs` and the two counts are
+// what `packIsStillFresh` reasons about, and re-stamping them to "now" on load would claim
+// a pack from last week was minutes old and suppress the 30-minute rebuild.
+const PACK_CACHE_DIR = join(ENGRAM_BASE_DIR, "packs");
+
+/**
+ * A persisted pack older than this is not served at all. A pack from the previous run is a
+ * fair seed for one turn; a pack from last week is just wrong text in the prompt, and the
+ * rebuild is scheduled either way.
+ */
+const PERSISTED_PACK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+type PersistedPack = CachedPack & { sessionKey: string };
+
+function packCachePath(sessionKey: string): string {
+  // Session keys carry ':' (agent:main:main) and could in principle carry '/'. Sanitise for
+  // the filename and keep the REAL key inside the file, so two keys that collapse to the
+  // same filename are detected on read instead of silently swapping packs.
+  return join(PACK_CACHE_DIR, `${sessionKey.replace(/[^A-Za-z0-9._-]+/gu, "_")}.json`);
+}
+
+function loadPersistedPack(sessionKey: string): CachedPack | undefined {
+  try {
+    const parsed = JSON.parse(readFileSync(packCachePath(sessionKey), "utf-8")) as
+      | Partial<PersistedPack>
+      | undefined;
+    if (
+      !parsed ||
+      parsed.sessionKey !== sessionKey ||
+      typeof parsed.pack !== "string" ||
+      typeof parsed.eventCount !== "number" ||
+      typeof parsed.ccEventCount !== "number" ||
+      typeof parsed.builtAtMs !== "number"
+    ) {
+      return undefined;
+    }
+    return {
+      pack: parsed.pack,
+      eventCount: parsed.eventCount,
+      ccEventCount: parsed.ccEventCount,
+      builtAtMs: parsed.builtAtMs,
+    };
+  } catch {
+    // Absent, truncated or half-written: a cold start with no seed is the correct
+    // degradation, and it is exactly what happened before this file existed.
+    return undefined;
+  }
+}
+
+function persistPack(sessionKey: string, entry: CachedPack): void {
+  try {
+    ensureDir(PACK_CACHE_DIR);
+    const target = packCachePath(sessionKey);
+    const tmp = `${target}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ sessionKey, ...entry }), "utf-8");
+    // Write-then-rename: a reader never sees a half-written pack.
+    renameSync(tmp, target);
+  } catch (err) {
+    // Never fatal — the only thing lost is the NEXT cold start's warm seed.
+    console.log(`[total-recall] pack persist failed session=${sessionKey}: ${String(err)}`);
+  }
+}
 
 // The CC-experience store is written by an EXTERNAL process — the jarvis-memory-bridge
 // SessionEnd hook — but createEventStore() memoises the file on first read
@@ -324,9 +406,10 @@ const PACK_REBUILD_MAX_AGE_MS = 30 * 60 * 1000;
 function emitTurnStage(runId: string | undefined, sessionKey: string, stage: string, ms: number) {
   try {
     if (!runId || !sessionKey) {
-      // FORK 2026-08-24 — this bail used to be silent, while the caller's `pack rebuilt …
-      // tookMs=${emitBuildStage(...)}` log line printed either way. The log line was then read as
-      // proof the stage had been emitted; it only proves the duration was computed. Log the drop.
+      // FORK 2026-08-24 — this bail used to be silent, while the caller's
+      // `pack cold-start … coldMs=${emitBuildStage(...)}` log line printed either way. The log
+      // line was then read as proof the stage had been emitted; it only proves the duration was
+      // computed. Log the drop.
       console.log(
         `[total-recall] [turn-stage] DROPPED stage=${stage} reason=${!runId ? "no-runId" : "no-sessionKey"}`,
       );
@@ -345,10 +428,22 @@ function emitTurnStage(runId: string | undefined, sessionKey: string, stage: str
   }
 }
 
-/** Emit the build stage AND return its duration, so the log line and the row cannot disagree. */
-function emitBuildStage(runId: string | undefined, sessionKey: string, startedAt: number): number {
+/**
+ * Emit a stage AND return its duration, so the log line and the row cannot disagree.
+ *
+ * FORK 2026-09-03 — the stage NAME is a parameter now. The cold path no longer runs
+ * search+rank on the hook, so reporting its on-path time as `engram-search-rank` would have
+ * put a ~0ms row in the UI for a stage that had merely moved off the loop, and the real
+ * search cost would have vanished from the breakdown entirely.
+ */
+function emitBuildStage(
+  runId: string | undefined,
+  sessionKey: string,
+  startedAt: number,
+  stage: string,
+): number {
   const ms = Date.now() - startedAt;
-  emitTurnStage(runId, sessionKey, "engram-search-rank", ms);
+  emitTurnStage(runId, sessionKey, stage, ms);
   return ms;
 }
 
@@ -414,43 +509,350 @@ export function packIsStillFresh(
   return nowMs - cached.builtAtMs < PACK_REBUILD_MAX_AGE_MS;
 }
 
-/**
- * Sessions with a refresh already running. Without this, a burst of turns each fires its
- * own FTS + vector search over the same store — the thundering herd the synchronous path
- * was structurally immune to, because it blocked.
- */
-const packRefreshInFlight = new Set<string>();
+// -- Pack refresh scheduler (FORK 2026-09-23, plan task 14) --------------------
+//
+// MEASURED (two 20 s `diagnostic.cpuProfile` runs on the live gateway): ~35-42% of the main
+// thread was FTS self time under `refreshPackInBackground`, logged at `tookMs=15240` and
+// `tookMs=238676` per refresh — and refreshes from several tabs OVERLAPPED, because every stale
+// tab's turn started its own full-corpus scan the next tick. Each scan yields between slices, so
+// no single one froze the loop; together they pinned a core. The per-session in-flight set this
+// replaces only stopped a session racing ITSELF.
+//
+// So, process-wide: ONE refresh at a time; FIFO across sessions; a queued session's newer request
+// REPLACES its args (the latest query wins) and keeps its place; a running session's newer
+// requests fold into ONE follow-up; and a session is refreshed at most once per
+// PACK_REFRESH_MIN_INTERVAL_MS, measured from the END of one run to the START of the next.
+// The stale pack keeps being served meanwhile — the hook never waits on any of this.
+//
+// The one exemption from the interval is a cold placeholder (`seeded`): it holds nothing to
+// serve, so its first pack must not wait out a timer.
+
+/** Minimum time between the END of one refresh of a session and the START of its next. */
+export const PACK_REFRESH_MIN_INTERVAL_MS = 60_000;
 
 /**
- * Rebuild a session's retrieval pack OFF the critical path and update the cache for the
- * next turn. Never throws: this runs detached, so an unhandled rejection here would be an
- * unhandled rejection in the gateway.
+ * FORK 2026-09-24 (ruling R38) — a refresh still unsettled this long is abandoned FOR QUEUE
+ * PURPOSES: its slot is freed and the queue moves on. It cannot be cancelled, so it may keep
+ * burning CPU until it ends; when it does, the scheduler ignores it (and logs that once), and its
+ * pack reaches the cache only if no newer refresh of the session has started (`packWriter`). Without
+ * this, one hung refresh held the single-flight slot and no session's pack was refreshed again.
+ * Above the FTS worker's own 120 s timeout (R34), so a timed-out worker falls back first.
  */
-async function refreshPackInBackground(args: {
+export const PACK_REFRESH_WATCHDOG_MS = 180_000;
+
+export interface PackRefreshScheduler<A> {
+  /** Ask for a refresh. Never runs it on the caller's tick. */
+  request(sessionKey: string, args: A): void;
+}
+
+export function createPackRefreshScheduler<A>(options: {
+  run: (args: A) => Promise<void>;
+  /** True when the session's cached pack is the cold placeholder: it skips the interval. */
+  isCold: (sessionKey: string) => boolean;
+  minIntervalMs?: number;
+  /** `run` should not throw; if it does, the error lands here and the queue moves on. */
+  onError?: (sessionKey: string, err: unknown) => void;
+  watchdogMs?: number;
+  /** A run exceeded the watchdog and was abandoned for queue purposes. */
+  onAbandoned?: (sessionKey: string, watchdogMs: number) => void;
+  /** An abandoned run settled after all; ignored beyond this call (once per abandoned run). */
+  onLateSettle?: (sessionKey: string, tookMs: number) => void;
+}): PackRefreshScheduler<A> {
+  const minIntervalMs = options.minIntervalMs ?? PACK_REFRESH_MIN_INTERVAL_MS;
+  const watchdogMs = options.watchdogMs ?? PACK_REFRESH_WATCHDOG_MS;
+  /** Queued session keys in arrival order; each appears at most once. */
+  const order: string[] = [];
+  const queuedArgs = new Map<string, A>();
+  const lastEndedAt = new Map<string, number>();
+  let running: string | undefined;
+  let followUp: { args: A } | undefined;
+  let pumpPending = false;
+  let wakeTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const enqueue = (sessionKey: string, args: A): void => {
+    if (!queuedArgs.has(sessionKey)) {
+      order.push(sessionKey);
+    }
+    queuedArgs.set(sessionKey, args);
+  };
+
+  // setImmediate, not a direct call: the hook must return having done no search work at all,
+  // and a run executes synchronously up to its first await.
+  const schedulePump = (): void => {
+    if (pumpPending) {
+      return;
+    }
+    pumpPending = true;
+    setImmediate(() => {
+      pumpPending = false;
+      pump();
+    });
+  };
+
+  const dueAt = (sessionKey: string): number => {
+    const ended = lastEndedAt.get(sessionKey);
+    return ended === undefined || options.isCold(sessionKey) ? 0 : ended + minIntervalMs;
+  };
+
+  /** The run holding the slot: its end (or its abandonment) frees the slot exactly once. */
+  let current: object | undefined;
+
+  const execute = async (sessionKey: string, args: A): Promise<void> => {
+    running = sessionKey;
+    const run = {};
+    current = run;
+    const startedAt = Date.now();
+    const end = (): void => {
+      if (current !== run) {
+        return;
+      }
+      current = undefined;
+      lastEndedAt.set(sessionKey, Date.now());
+      running = undefined;
+      if (followUp) {
+        enqueue(sessionKey, followUp.args);
+        followUp = undefined;
+      }
+      schedulePump();
+    };
+    let abandoned = false;
+    const watchdog = setTimeout(() => {
+      abandoned = true;
+      options.onAbandoned?.(sessionKey, watchdogMs);
+      end();
+    }, watchdogMs);
+    watchdog.unref?.();
+    try {
+      await options.run(args);
+    } catch (err) {
+      if (!abandoned) {
+        options.onError?.(sessionKey, err);
+      }
+    } finally {
+      clearTimeout(watchdog);
+      if (abandoned) {
+        options.onLateSettle?.(sessionKey, Date.now() - startedAt);
+      } else {
+        end();
+      }
+    }
+  };
+
+  function pump(): void {
+    if (wakeTimer) {
+      clearTimeout(wakeTimer);
+      wakeTimer = undefined;
+    }
+    if (running !== undefined) {
+      return; // the run's `finally` pumps again
+    }
+    const now = Date.now();
+    for (const [key, ended] of lastEndedAt) {
+      if (now - ended >= minIntervalMs) {
+        lastEndedAt.delete(key); // no longer constrains anything; keeps the map bounded
+      }
+    }
+    let earliest = Infinity;
+    for (let i = 0; i < order.length; i++) {
+      const sessionKey = order[i];
+      const due = dueAt(sessionKey);
+      if (due <= now) {
+        order.splice(i, 1);
+        const args = queuedArgs.get(sessionKey) as A;
+        queuedArgs.delete(sessionKey);
+        void execute(sessionKey, args);
+        return;
+      }
+      earliest = Math.min(earliest, due);
+    }
+    if (earliest !== Infinity) {
+      wakeTimer = setTimeout(pump, earliest - now);
+      wakeTimer.unref?.();
+    }
+  }
+
+  return {
+    request(sessionKey, args) {
+      if (running === sessionKey) {
+        followUp = { args };
+        return;
+      }
+      enqueue(sessionKey, args);
+      schedulePump();
+    },
+  };
+}
+
+type PackRefreshArgs = {
   sessionKey: string;
   query: string;
+  /** Called when the refresh RUNS, never when it is requested: see packRefreshInputs. */
+  resolveStores: () => { store: EventStore; ccStore: EventStore };
+  budgetTokens: number;
+  logger: { info?: (m: string) => void; warn?: (m: string) => void };
+};
+
+/**
+ * FORK 2026-09-24 (ruling R38) — the stores a refresh searches, and their event counts, taken
+ * when it STARTS. A request can wait in the queue (behind other sessions, or its interval) past a
+ * CC-experience reload — getCcExperienceStore drops its memoised store when the file changes — and
+ * args captured at request time pinned the superseded store, which the refresh then indexed for
+ * nothing. The counts go into the rebuilt pack's freshness stamp, so they are read here too.
+ */
+export function packRefreshInputs(resolveStores: PackRefreshArgs["resolveStores"]): {
   store: EventStore;
   ccStore: EventStore;
   eventCount: number;
   ccCount: number;
-  budgetTokens: number;
-  logger: { info?: (m: string) => void; warn?: (m: string) => void };
-}): Promise<void> {
-  const { sessionKey, query, store, ccStore, eventCount, ccCount, budgetTokens, logger } = args;
-  if (packRefreshInFlight.has(sessionKey)) {
-    return;
-  }
-  packRefreshInFlight.add(sessionKey);
+} {
+  const { store, ccStore } = resolveStores();
+  return { store, ccStore, eventCount: store.count(), ccCount: ccStore.count() };
+}
+
+// -- Pack writes (FORK 2026-09-24, R38 follow-up) ------------------------------
+//
+// The R38 watchdog abandons a refresh FOR QUEUE PURPOSES only; it cannot cancel it. An abandoned
+// refresh (FTS worker timeout + in-thread fallback: 120 s, then 15-239 s) therefore settles LATE,
+// and it used to write unconditionally: the OLDER query's pack, with its older freshness stamp,
+// went into the cache and onto disk over the pack a NEWER refresh of the session had built. A late
+// FAILURE likewise dropped the cold placeholder the newer refresh was about to replace, sending the
+// next turn down the cold path to queue yet another refresh.
+//
+// Rule: a SUPERSEDED refresh — one whose session has started a newer refresh since it began — may
+// not replace a real cached pack, and may not drop the cold placeholder. A refresh nothing newer
+// has superseded writes as before, abandoned or not: its pack is the freshest there is. (A warm
+// session's successor is not due until PACK_REFRESH_MIN_INTERVAL_MS after the abandonment, and
+// only once the queue reaches it, so there this bites a refresh running past ~240 s — which the
+// worker timeout plus the in-thread fallback reaches. A cold session's successor is due at once.)
+//
+// Two choices, and what each buys:
+//   - Superseded means a newer refresh STARTED, not that a newer pack was WRITTEN. Otherwise a
+//     superseded run settling while the newer one is still scanning would change the pack moments
+//     before the newer one changes it again, and every pack change respawns the claude-cli worker
+//     and rewrites the prompt-cache prefix (see packIsStillFresh). Prompt stability over a pack
+//     that is already superseded. (Ordering by `builtAtMs` instead would be worse: the stale run
+//     writes first, and the NEWER run's write is the one refused.)
+//   - The exception is an entry worth nothing — absent, or the cold placeholder (`seeded`): any
+//     real pack beats it, superseded or not, even at the price of that second change. Content over
+//     stability, because the alternative is serving no memory at all until the newer run lands.
+// Runs are numbered by a process-local counter, not Date.now(): the order must not depend on the
+// wall clock, and the number never leaves the process (it is not part of CachedPack or the file).
+
+export interface PackWriter {
+  /** Number a refresh as it STARTS, before it reads its inputs; it becomes its session's latest. */
+  begin(sessionKey: string): number;
+  /**
+   * Cache the refreshed pack, then persist it — unless the run is superseded and the cache holds a
+   * real pack. Returns whether it wrote; a refused write is logged, once (a run commits once).
+   */
+  commit(sessionKey: string, runSeq: number, entry: CachedPack): boolean;
+  /**
+   * The refresh failed: drop the session's cold placeholder so the next turn retries the cold
+   * path — unless the run is superseded, in which case the placeholder is the newer refresh's to
+   * replace (logged). Returns whether it dropped.
+   */
+  dropFailedPlaceholder(sessionKey: string, runSeq: number): boolean;
+}
+
+export function createPackWriter(options: {
+  cache: Map<string, CachedPack>;
+  persist: (sessionKey: string, entry: CachedPack) => void;
+  log: (message: string) => void;
+}): PackWriter {
+  let lastSeq = 0;
+  /**
+   * Each session's latest-started refresh, while it is in flight. A run that finds anything else
+   * here — a newer number, or nothing because the newer run already settled — is superseded.
+   * Released when the latest run settles, so the map only ever holds sessions mid-refresh.
+   */
+  const latest = new Map<string, number>();
+  const superseded = (sessionKey: string, runSeq: number): boolean =>
+    latest.get(sessionKey) !== runSeq;
+  const release = (sessionKey: string, runSeq: number): void => {
+    if (latest.get(sessionKey) === runSeq) {
+      latest.delete(sessionKey);
+    }
+  };
+  return {
+    begin(sessionKey) {
+      lastSeq += 1;
+      latest.set(sessionKey, lastSeq);
+      return lastSeq;
+    },
+    commit(sessionKey, runSeq, entry) {
+      const cached = options.cache.get(sessionKey);
+      const refused = cached !== undefined && !cached.seeded && superseded(sessionKey, runSeq);
+      release(sessionKey, runSeq);
+      if (refused) {
+        options.log(
+          `[total-recall] superseded pack refresh NOT written session=${sessionKey}: a newer ` +
+            "refresh of this session started after it (the cached pack is kept)",
+        );
+        return false;
+      }
+      options.cache.set(sessionKey, entry);
+      options.persist(sessionKey, entry);
+      return true;
+    },
+    dropFailedPlaceholder(sessionKey, runSeq) {
+      const isPlaceholder = options.cache.get(sessionKey)?.seeded === true;
+      const wasSuperseded = superseded(sessionKey, runSeq);
+      release(sessionKey, runSeq);
+      if (!isPlaceholder) {
+        return false;
+      }
+      if (wasSuperseded) {
+        options.log(
+          `[total-recall] superseded pack refresh failed session=${sessionKey}: the cold ` +
+            "placeholder is kept for the newer refresh to replace",
+        );
+        return false;
+      }
+      options.cache.delete(sessionKey);
+      return true;
+    },
+  };
+}
+
+/** Every refresh writes through this: the only path by which a refresh changes `packCache`. */
+const packWriter = createPackWriter({
+  cache: packCache,
+  // Survive a gateway restart — this is what makes the NEXT cold session warm.
+  persist: persistPack,
+  // The same sink as the scheduler's onAbandoned/onLateSettle, so one incident reads as one story.
+  log: (message) => {
+    console.log(message);
+  },
+});
+
+/**
+ * Rebuild a session's retrieval pack OFF the critical path and update the cache for the
+ * next turn. Never throws: this runs detached, so an unhandled rejection here would be an
+ * unhandled rejection in the gateway. Only ever called by `packRefreshScheduler`, which
+ * guarantees no two of these START at once — not that no two RUN at once: one the R38 watchdog
+ * abandoned keeps running and can settle after a newer one has started. So every change this
+ * makes to the cache goes through `packWriter`.
+ */
+async function refreshPackInBackground(args: PackRefreshArgs): Promise<void> {
+  const { sessionKey, query, budgetTokens, logger } = args;
   const startedMs = Date.now();
+  // Numbered before the inputs are read, so a refresh numbered later took NEWER inputs.
+  const runSeq = packWriter.begin(sessionKey);
   try {
+    const { store, ccStore, eventCount, ccCount } = packRefreshInputs(args.resolveStores);
     const ccBudget = ccCount > 0 ? Math.floor(budgetTokens * CC_EXPERIENCE_BUDGET_SHARE) : 0;
     const sessionBudget = budgetTokens - ccBudget;
+    // FORK 2026-09-03 — the YIELDING assembler. `assembleRetrievalPack` is synchronous (it
+    // returns a string, not a promise), so awaiting it handed the loop back exactly never:
+    // "OFF-PATH" named where the call sat in the source, not where it ran. The journal shows
+    // the price — `pack refreshed OFF-PATH … tookMs=24130` with nothing interleaved, i.e. 24s
+    // of dead event loop for every connected client.
     const [sessionPack, ccPack] = await Promise.all([
       eventCount > 0 && sessionBudget > 0
-        ? assembleRetrievalPack(query, store, { maxTokens: sessionBudget })
+        ? assembleRetrievalPackAsync(query, store, { maxTokens: sessionBudget })
         : Promise.resolve(""),
       ccBudget > 0
-        ? assembleRetrievalPack(query, ccStore, { maxTokens: ccBudget })
+        ? assembleRetrievalPackAsync(query, ccStore, { maxTokens: ccBudget })
         : Promise.resolve(""),
     ]);
     const sections: string[] = [];
@@ -467,22 +869,59 @@ async function refreshPackInBackground(args: {
       );
     }
     const rendered = sections.join("\n");
-    packCache.set(sessionKey, {
+    const entry: CachedPack = {
       pack: rendered,
       eventCount,
       ccEventCount: ccCount,
       builtAtMs: Date.now(),
-    });
+    };
+    // Cache, then disk — refused if a newer refresh of this session has started (packWriter).
+    if (!packWriter.commit(sessionKey, runSeq, entry)) {
+      return;
+    }
     logger.info?.(
       `[total-recall] pack refreshed OFF-PATH session=${sessionKey} events=${eventCount} ` +
         `ccEvents=${ccCount} chars=${rendered.length} tookMs=${Date.now() - startedMs}`,
     );
   } catch (err) {
-    // The stale pack stays cached and keeps being served — degraded, not broken.
+    // The stale pack stays cached and keeps being served — degraded, not broken. But a cold
+    // session's PLACEHOLDER is not a stale pack, it is nothing: leaving it cached would make
+    // ONE failed rebuild suppress retrieval for the whole 30-minute freshness window. Drop it
+    // so the next turn takes the cold path again — which is what the pre-2026-09-03 code did
+    // implicitly, by never caching anything when the build threw. Not if a newer refresh of this
+    // session has started, though: the placeholder is then that refresh's to replace (packWriter).
+    packWriter.dropFailedPlaceholder(sessionKey, runSeq);
     logger.warn?.(`[total-recall] background refresh failed session=${sessionKey}: ${err}`);
-  } finally {
-    packRefreshInFlight.delete(sessionKey);
   }
+}
+
+const packRefreshScheduler = createPackRefreshScheduler<PackRefreshArgs>({
+  run: refreshPackInBackground,
+  isCold: (sessionKey) => packCache.get(sessionKey)?.seeded === true,
+  onError: (sessionKey, err) => {
+    console.log(`[total-recall] pack refresh threw session=${sessionKey}: ${String(err)}`);
+  },
+  onAbandoned: (sessionKey, ms) => {
+    console.log(
+      `[total-recall] pack refresh session=${sessionKey} still running after ${ms} ms: ` +
+        "abandoned for the queue (it may still finish)",
+    );
+  },
+  onLateSettle: (sessionKey, tookMs) => {
+    console.log(
+      `[total-recall] abandoned pack refresh session=${sessionKey} settled after ${tookMs} ms ` +
+        "(ignored by the queue)",
+    );
+  },
+});
+
+/**
+ * Hand a background refresh to the process-wide scheduler (single-flight, coalesced,
+ * rate-limited per session). Nothing runs on the caller's tick: the point of both call sites
+ * is that the hook returns having done no search work at all.
+ */
+function schedulePackRefresh(args: PackRefreshArgs): void {
+  packRefreshScheduler.request(args.sessionKey, args);
 }
 
 // -- Plugin Entry --
@@ -619,82 +1058,87 @@ export default definePluginEntry({
         // reuse path this function has always taken. A session with NO pack at all still
         // builds synchronously, because serving nothing is worse than waiting once.
         if (cached) {
-          void refreshPackInBackground({
+          schedulePackRefresh({
             sessionKey,
             query,
-            store,
-            ccStore,
-            eventCount,
-            ccCount,
+            resolveStores: () => ({
+              store: getOrCreateStore(sessionKey),
+              ccStore: getCcExperienceStore(),
+            }),
             budgetTokens,
             logger: api.logger,
           });
           return cached.pack ? { prependSystemContext: cached.pack } : undefined;
         }
 
-        // Cold session: no pack exists, so this one turn pays for it.
-        emitTurnPhase(context.runId, sessionKey, "recall", "searching memory (first turn)");
-
-        // FORK 2026-08-22 — the SYNCHRONOUS path has never carried a timer, while its
-        // off-path twin has had `tookMs=` since 2026-08-15. Measured consequence: 594 of 691
-        // pack builds in a 7-day window had no recorded duration, so every statement about
-        // "the pack build" was derived from the 14% of builds that happened to log one.
-        const buildStartedAt = Date.now();
+        // FORK 2026-09-03 — A COLD SESSION NO LONGER BLOCKS THE PROMPT (OR THE GATEWAY).
+        //
+        // This branch used to build the pack inline. The build is SYNCHRONOUS — the
+        // `await Promise.all([...])` was resolving strings that had already been computed — so
+        // the whole gateway event loop stopped for it. Proven from the journal: nothing at all
+        // logs between `[hook-span] hook=before_prompt_build plugin=tinkerclaw-identity-
+        // persistence` and `[total-recall] pack rebuilt … tookMs=20312 / 22496 / 24516 /
+        // 28392`. Four cold sessions, 20-28s each, during which no timer fired and no socket
+        // was read. "This one turn pays for it" was never the price: EVERY session paid.
+        //
+        // The warm path above already has the right shape — serve what we hold, refresh off
+        // the critical path. A cold session has nothing in memory to serve, so it serves the
+        // closest thing: the pack this session last persisted to disk, or nothing at all.
+        // Either way the hook returns in the SAME TICK and the rebuild is scheduled, so the
+        // next turn gets the full pack. That is the identical one-turn lag the warm path has
+        // accepted by design since 2026-08-15.
+        const coldStartedAt = Date.now();
+        emitTurnPhase(context.runId, sessionKey, "recall", "warming memory (background)");
         try {
-          // Two sources, separate budgets. Session recall answers "what were WE
-          // doing"; CC experience answers "what has been learned, ever". They are
-          // scored independently so a chatty session cannot crowd out a hard-won
-          // correction, and vice versa.
-          const ccBudget = ccCount > 0 ? Math.floor(budgetTokens * CC_EXPERIENCE_BUDGET_SHARE) : 0;
-          const sessionBudget = budgetTokens - ccBudget;
-
-          const [sessionPack, ccPack] = await Promise.all([
-            eventCount > 0 && sessionBudget > 0
-              ? assembleRetrievalPack(query, store, { maxTokens: sessionBudget })
-              : Promise.resolve(""),
-            ccBudget > 0
-              ? assembleRetrievalPack(query, ccStore, { maxTokens: ccBudget })
-              : Promise.resolve(""),
-          ]);
-
-          const sections: string[] = [];
-          if (sessionPack) {
-            sections.push("## Retrieved Memory Context\n\n" + sessionPack + "\n");
-          }
-          if (ccPack) {
-            // Labelled distinctly and attributed. A row here was written by a
-            // DIFFERENT agent, and Jarvis should weigh it knowing that.
-            sections.push(
-              "## Learned From Claude Code Sessions\n\n" +
-                "(distilled experience synced from Claude Code; each row carries its " +
-                "provenance tags)\n\n" +
-                ccPack +
-                "\n",
-            );
-          }
-          const rendered = sections.join("\n");
-
-          // Cache the EMPTY result too — otherwise a session whose store yields
-          // nothing re-runs FTS + vector search on every single turn forever.
-          packCache.set(sessionKey, {
-            pack: rendered,
+          const persistedRaw = loadPersistedPack(sessionKey);
+          const persisted =
+            persistedRaw && nowMs - persistedRaw.builtAtMs <= PERSISTED_PACK_MAX_AGE_MS
+              ? persistedRaw
+              : undefined;
+          const seed: CachedPack = persisted ?? {
+            pack: "",
             eventCount,
             ccEventCount: ccCount,
             builtAtMs: nowMs,
+            seeded: true,
+          };
+
+          // Cache BEFORE scheduling. Two reasons: the refresh overwrites this entry when it
+          // finishes (so it must not be able to land first and then be clobbered), and caching
+          // even an EMPTY seed is what stops the next turn re-entering this branch and queueing
+          // a second rebuild — the same reason the old code cached empty rebuilds. The `seeded`
+          // flag is what lets a FAILED rebuild drop the empty entry again.
+          packCache.set(sessionKey, seed);
+          schedulePackRefresh({
+            sessionKey,
+            query,
+            resolveStores: () => ({
+              store: getOrCreateStore(sessionKey),
+              ccStore: getCcExperienceStore(),
+            }),
+            budgetTokens,
+            logger: api.logger,
           });
-          api.logger.info(
-            `[total-recall] pack rebuilt session=${sessionKey} events=${eventCount} ` +
-              `ccEvents=${ccCount} chars=${rendered.length} ` +
-              // storeLoadMs and tookMs are reported SEPARATELY rather than summed: the first is
-              // disk and JSON.parse, the second is search and ranking, and they are fixed by
-              // completely different changes. A single total would hide which one to attack.
-              `storeLoadMs=${storeLoadMs} tookMs=${emitBuildStage(context.runId, sessionKey, buildStartedAt)} ` +
-              `reuseUntil=+${PACK_REBUILD_EVENT_DELTA}events/` +
-              `${PACK_REBUILD_MAX_AGE_MS / 60000}min`,
+
+          const coldMs = emitBuildStage(
+            context.runId,
+            sessionKey,
+            coldStartedAt,
+            "engram-pack-coldstart",
           );
-          return rendered ? { prependSystemContext: rendered } : undefined;
+          // storeLoadMs and coldMs stay SEPARATE rather than summed: the first is disk and
+          // JSON.parse (and is now by far the larger of the two — it is the next thing to
+          // attack), the second is this branch's own work. A single total would hide which.
+          api.logger.info(
+            `[total-recall] pack cold-start session=${sessionKey} events=${eventCount} ` +
+              `ccEvents=${ccCount} ` +
+              `source=${persisted ? "persisted" : persistedRaw ? "expired" : "empty"} ` +
+              `chars=${seed.pack.length} storeLoadMs=${storeLoadMs} coldMs=${coldMs} ` +
+              `rebuild=scheduled`,
+          );
+          return seed.pack ? { prependSystemContext: seed.pack } : undefined;
         } catch (err) {
-          api.logger.warn(`[total-recall] retrieval failed: ${err}`);
+          api.logger.warn(`[total-recall] cold-start seed failed: ${err}`);
           return;
         }
       },
@@ -817,6 +1261,19 @@ export default definePluginEntry({
         }
       },
     );
+
+    // -------------------------------------------------------------------
+    // Hook 4: gateway_stop -- end the engram FTS worker thread (plan task 16)
+    // Pack refreshes run their FTS in a worker. It is unref'd while idle, so this only
+    // changes a shutdown that lands mid-scan: the worker is terminated and its request
+    // rejected ("shutdown"), and that refresh then finishes its FTS on the main thread (the
+    // in-thread fallback, assembleRetrievalPackAsync) while the gateway stops — the scan is
+    // moved, not abandoned. Skipping it would need a stop signal threaded into engram's
+    // fallback, so it is left as is (final fix wave, T16 minor).
+    // -------------------------------------------------------------------
+    api.on("gateway_stop", async () => {
+      await shutdownFtsWorker();
+    });
 
     // -------------------------------------------------------------------
     // Tool: recall -- memory search

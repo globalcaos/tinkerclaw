@@ -61,8 +61,7 @@ Context accumulation is the single biggest token drain. Every message re-sends t
 **What to do:**
 
 - Use `/compact` during long sessions to summarize and shrink context
-- Configure automatic session resets nightly (cron job or bash script)
-- After completing a big task, reset the session before starting the next one
+- After completing a big task, reset the session yourself (`/new`) before starting the next one
 
 **In AGENTS.md or your system prompt, add:**
 
@@ -228,57 +227,47 @@ Agree on time blocks. One agent does heavy work in the morning, the other in the
 
 ---
 
-## 10. Automate Maintenance with System Cron (~5% of total budget saved)
+## 10. Keep Maintenance Out of the LLM (~5% of total budget saved)
 
-Don't rely on the LLM to keep itself clean. Set up bash scripts on system crontab for recurring maintenance. These run without any token cost.
+Housekeeping does not need a model. A plain bash script costs zero tokens.
 
-**Recommended nightly cron scripts:**
+### Session archiver
 
-### a. Session Trimmer (02:00)
-
-Archives session files larger than 5MB or older than 7 days. Prevents context bloat from accumulating silently.
+Lists session transcripts not modified in 7 days. **By default it only prints them and changes nothing.** With `--apply` it moves them into an archive directory and appends each move to `trim.log` there. It never deletes anything, never overwrites a file already in the archive, and does not touch any file changed in the last 7 days (so live sessions are left alone). To undo a move, move the file back.
 
 ```bash
 #!/bin/bash
-# nightly-session-trim.sh
+# session-archive.sh
+#   session-archive.sh           dry run: list what would be archived
+#   session-archive.sh --apply   move those files to ARCHIVE_DIR
+set -euo pipefail
 SESSION_DIR="$HOME/.openclaw/agents/main/sessions"
 ARCHIVE_DIR="$HOME/.openclaw/agents/main/sessions-archive"
-mkdir -p "$ARCHIVE_DIR"
+APPLY=0
+[ "${1:-}" = "--apply" ] && APPLY=1
 
-# Archive sessions > 5MB
-find "$SESSION_DIR" -name "*.jsonl" -size +5M -exec mv {} "$ARCHIVE_DIR/" \;
-
-# Archive sessions not touched in 7 days
-find "$SESSION_DIR" -name "*.jsonl" -mtime +7 -exec mv {} "$ARCHIVE_DIR/" \;
-
-# Delete archives older than 30 days
-find "$ARCHIVE_DIR" -name "*.jsonl" -mtime +30 -delete
+find "$SESSION_DIR" -maxdepth 1 -type f -name '*.jsonl' -mtime +7 -print0 |
+  while IFS= read -r -d '' f; do
+    dest="$ARCHIVE_DIR/$(basename "$f")"
+    if [ "$APPLY" -eq 0 ]; then
+      echo "would archive: $f"
+    elif [ -e "$dest" ]; then
+      echo "skip (already in archive): $f"
+    else
+      mkdir -p "$ARCHIVE_DIR"
+      mv -- "$f" "$dest"
+      echo "$(date -Is) $f -> $dest" >> "$ARCHIVE_DIR/trim.log"
+    fi
+  done
 ```
 
-### b. Daily Backup (03:00)
-
-Git push for md files + Google Drive upload for databases. See disaster recovery section.
-
-### c. Session Reset (23:00)
-
-Reset group and agent sessions nightly to prevent context snowball.
-
-### d. Usage Guard (every 30 min)
-
-Monitor subscription utilization and auto-switch to API key at 90% threshold.
-
-**Install all four:**
+Run it by hand without `--apply` first and read the list. Only if you want it to run on a schedule, add it to your crontab yourself with the flag:
 
 ```bash
 crontab -e
-# Add:
-0 2 * * * /path/to/nightly-session-trim.sh
-0 3 * * * /path/to/daily-backup.sh
-0 23 * * * /path/to/reset-whatsapp-sessions.sh
-*/30 * * * * /path/to/claude-usage-guard.sh
+# Add (optional):
+0 2 * * * /path/to/session-archive.sh --apply
 ```
-
-These scripts cost zero tokens and prevent the problems that waste tokens.
 
 ---
 
@@ -287,7 +276,7 @@ These scripts cost zero tokens and prevent the problems that waste tokens.
 | Step                                  | Saves       | Effort                     |
 | ------------------------------------- | ----------- | -------------------------- |
 | 1. Heartbeat → Haiku                  | ~25%        | 1 minute (config change)   |
-| 2. Compact sessions / control context | ~20%        | 10 minutes (prompt + cron) |
+| 2. Compact sessions / control context | ~20%        | 10 minutes (prompt)        |
 | 3. Simple crons → bash                | ~15%        | 1-2 hours (per script)     |
 | 4. Cron jobs → Sonnet                 | ~10%        | 5 minutes (per job)        |
 | 5. Isolate large outputs              | ~10%        | 10 minutes (prompt rules)  |
@@ -295,7 +284,7 @@ These scripts cost zero tokens and prevent the problems that waste tokens.
 | 7. Workspace cleanup                  | ~7%         | 30 minutes                 |
 | 8. Cache retention                    | ~3%         | 1 minute (config change)   |
 | 9. Coordinate agents                  | ~2%         | Agreement                  |
-| 10. Automate maintenance crons        | ~5%         | 1-2 hours (scripts)        |
+| 10. Maintenance as bash, not LLM      | ~5%         | 15 minutes (one script)    |
 | **Combined**                          | **~80-90%** | **One afternoon**          |
 
 ---

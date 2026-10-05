@@ -134,6 +134,12 @@
       .indicator.yellow {
         background: #f59e0b;
       }
+      .hint {
+        margin: 8px 0 0 0;
+        color: #9a8e7a;
+        font-size: 11px;
+        line-height: 1.5;
+      }
     </style>
   </head>
   <body>
@@ -143,6 +149,16 @@
     <div class="card">
       <h2>Connection Status</h2>
       <div id="conn-status" class="status info">Checking...</div>
+    </div>
+
+    <div class="card">
+      <h2>Relay Host</h2>
+      <label>Where the gateway relay runs (default 127.0.0.1)</label>
+      <input type="text" id="host" placeholder="127.0.0.1" spellcheck="false" />
+      <p class="hint">
+        Use a LAN address (e.g. 192.0.2.100) or an SSH tunnel endpoint to drive this browser
+        from a gateway on another machine. A non-loopback host always needs the token below.
+      </p>
     </div>
 
     <div class="card">

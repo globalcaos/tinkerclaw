@@ -1,11 +1,17 @@
 /**
  * FORK: Identity Persistence (CORTEX) extension entry point.
  *
- * Registers three plugin hooks:
- * 1. `before_prompt_build` (priority 100) -- Persona injection from SOUL.md,
- *    AMYGDALA personality nudge, and mid-context re-injection when EWMA drifts.
+ * OPT-IN. Nothing here runs until BOTH hold: `config.enabled === true`, and a
+ * persona markdown file already exists (explicit `personaPath`, else the
+ * default `~/.openclaw/workspace/SOUL.md`). Otherwise register() returns having
+ * hooked nothing. The plugin never creates a persona file.
+ *
+ * Once opted in, registers three plugin hooks:
+ * 1. `before_prompt_build` (priority 100) -- Persona injection into the system
+ *    context of EVERY prompt, AMYGDALA personality nudge, and mid-context
+ *    re-injection when EWMA drifts.
  * 2. `llm_output` -- SyncScore evaluation every N turns (EWMA smoothing).
- * 3. `llm_output` -- Observation extraction at 30K token threshold.
+ * 3. `llm_output` -- Observation extraction, appended to disk.
  *
  * Writes shared state to `~/.openclaw/cognitive/identity-persistence.json`
  * so other extensions (e.g. Computational Humor) can read persona data.
@@ -30,7 +36,11 @@ import {
 // Paths
 // ---------------------------------------------------------------------------
 
-const OPENCLAW_DIR = join(homedir(), ".openclaw");
+// $HOME first, homedir() as the fallback: os.homedir() resolves the passwd
+// entry and ignores a redirected HOME, so a test could not keep this plugin's
+// writes (shared state, observation log) out of the developer's real
+// ~/.openclaw. Same value in production.
+const OPENCLAW_DIR = join(process.env.HOME ?? homedir(), ".openclaw");
 const COGNITIVE_DIR = join(OPENCLAW_DIR, "cognitive");
 const CORTEX_LOG_DIR = join(OPENCLAW_DIR, "cortex");
 const IDENTITY_STATE_PATH = join(COGNITIVE_DIR, "identity-persistence.json");
@@ -39,6 +49,47 @@ const TOTAL_RECALL_STATE_PATH = join(COGNITIVE_DIR, "total-recall.json");
 const OBSERVATION_LOG_PATH = join(CORTEX_LOG_DIR, "observations.jsonl");
 const SYNC_SCORE_LOG_PATH = join(CORTEX_LOG_DIR, "sync-score-log.jsonl");
 const DEFAULT_SOUL_PATH = join(OPENCLAW_DIR, "workspace", "SOUL.md");
+
+/**
+ * Neutral fallback name, used only when the host config names no agent. It is
+ * deliberately generic: shipping a specific character here would brand every
+ * install with this fork author's persona.
+ */
+const DEFAULT_AGENT_NAME = "Agent";
+
+/**
+ * The agent's configured name, in the order the gateway resolves it for the UI header:
+ * `ui.assistant.name` -> `agents.defaults.name` -> `Name:` in the workspace IDENTITY.md ->
+ * DEFAULT_AGENT_NAME. The persona header, the shared state and every voice rule say THIS name,
+ * so a second deployment of the fork (Goku) answers as itself, not as the fork author's agent.
+ */
+function resolveAgentName(config: unknown): string {
+  const c = config as
+    | { ui?: { assistant?: { name?: unknown } }; agents?: { defaults?: Record<string, unknown> } }
+    | undefined;
+  for (const v of [c?.ui?.assistant?.name, c?.agents?.defaults?.name]) {
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+  }
+  const ws = c?.agents?.defaults?.workspace;
+  const workspace =
+    typeof ws === "string" && ws.trim()
+      ? ws.replace(/^~/, homedir())
+      : join(OPENCLAW_DIR, "workspace");
+  try {
+    const match = readFileSync(join(workspace, "IDENTITY.md"), "utf8").match(
+      /^\s*-?\s*[*_]*name[*_]*\s*:\s*[*_]*\s*(.+?)\s*$/im,
+    );
+    const name = match?.[1]?.replace(/[*_]+$/, "").trim();
+    if (name) {
+      return name;
+    }
+  } catch {
+    // no workspace identity file: fall through to the neutral default
+  }
+  return DEFAULT_AGENT_NAME;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,31 +102,26 @@ function ensureDir(dir: string): void {
 }
 
 /**
- * Resolve the persona source path. Checks pluginConfig.personaPath first,
- * then falls back to ~/.openclaw/SOUL.md. If neither exists, bootstraps a
- * default SOUL.md (never overwrites existing files).
+ * Resolve the persona source path, or null when there is nothing to inject.
+ *
+ * The persona must be a file the OWNER wrote. This function never creates,
+ * bootstraps or overwrites one: a plugin that invents a persona for you is
+ * injecting someone else's identity into every prompt.
+ *
+ * - `personaPath` set and present  -> that file.
+ * - `personaPath` set and MISSING  -> null (no silent fallback: an explicit
+ *   path that does not resolve is a configuration error, not a cue to
+ *   substitute a different persona).
+ * - `personaPath` unset            -> the default path if it already exists,
+ *   otherwise null.
  */
-function resolveSoulPath(cfg: Record<string, unknown>, agentName: string): string {
+function resolvePersonaPath(cfg: Record<string, unknown>): string | null {
   const configPath = cfg.personaPath as string | undefined;
   if (configPath) {
     const resolved = configPath.replace(/^~/, homedir());
-    if (existsSync(resolved)) {
-      return resolved;
-    }
+    return existsSync(resolved) ? resolved : null;
   }
-  // Bootstrap default SOUL.md if it doesn't exist
-  if (!existsSync(DEFAULT_SOUL_PATH)) {
-    try {
-      writeFileSync(
-        DEFAULT_SOUL_PATH,
-        `# ${agentName}\n\nA helpful, thoughtful AI assistant.\n`,
-        "utf8",
-      );
-    } catch {
-      // Non-fatal: persona will be created from defaults
-    }
-  }
-  return DEFAULT_SOUL_PATH;
+  return existsSync(DEFAULT_SOUL_PATH) ? DEFAULT_SOUL_PATH : null;
 }
 
 /**
@@ -171,17 +217,43 @@ export default definePluginEntry({
   id: "tinkerclaw-identity-persistence",
   name: "Identity Persistence",
   description:
-    "CORTEX -- Persona injection from SOUL.md, EWMA SyncScore drift detection, " +
-    "mid-context identity reinforcement, and observation extraction.",
+    "CORTEX -- Opt-in persona injection from a persona markdown file, EWMA " +
+    "SyncScore drift detection, mid-context identity reinforcement, and " +
+    "observation extraction. Registers no hooks unless enabled with a persona file.",
   register(api: OpenClawPluginApi) {
     const cfg = (api.pluginConfig ?? {}) as Record<string, unknown>;
     const threshold = (cfg.syncScoreThreshold as number) ?? 0.6;
     const evaluationInterval = (cfg.evaluationInterval as number) ?? 10;
-    const agentName =
-      ((api.config?.agents?.defaults as Record<string, unknown>)?.name as string) ?? "JarvisOne";
+    const personalityNudge = cfg.personalityNudge === true;
+    const agentName = resolveAgentName(api.config);
+
+    // -----------------------------------------------------------------------
+    // Opt-in gate. This plugin mutates the system context of EVERY prompt and
+    // writes extracted observations to disk, so neither happens until the owner
+    // asks for it in two explicit ways: `enabled: true`, and a persona file
+    // that already exists. Registering nothing is the whole point — a hook that
+    // is registered and then no-ops is still a hook on every turn.
+    // -----------------------------------------------------------------------
+    if (cfg.enabled !== true) {
+      api.logger.info(
+        "[identity-persistence] disabled — set config.enabled=true to inject the persona (no hooks registered)",
+      );
+      return;
+    }
+
+    const soulPath = resolvePersonaPath(cfg);
+    if (!soulPath) {
+      api.logger.warn(
+        `[identity-persistence] no persona file — ${
+          cfg.personaPath
+            ? `configured personaPath '${String(cfg.personaPath)}' does not exist`
+            : `default ${DEFAULT_SOUL_PATH} does not exist`
+        }. Write one (or point personaPath at it); the plugin never creates a persona. No hooks registered.`,
+      );
+      return;
+    }
 
     // -- Initialize cortex runtime --
-    const soulPath = resolveSoulPath(cfg, agentName);
     const runtimeOpts: CortexRuntimeOptions = {
       soulPath,
       name: agentName,
@@ -222,8 +294,11 @@ export default definePluginEntry({
         // Tier 1 persona block
         const personaBlock = cortex.getPersonaBlock();
 
-        // AMYGDALA personality nudge (optional)
-        const nudge = readPersonalityNudge();
+        // AMYGDALA personality nudge — a SECOND prompt mutation, sourced from a
+        // file this plugin does not own (Learned Intuition writes it). Opt-in
+        // separately: enabling persona injection is not consent to inject
+        // whatever another plugin last dropped on disk.
+        const nudge = personalityNudge ? readPersonalityNudge() : "";
         const nudgeBlock = nudge ? `\n[Personality Nudge] ${nudge}\n` : "";
 
         // Mid-context re-injection when EWMA drifts below threshold
@@ -322,7 +397,8 @@ export default definePluginEntry({
     );
 
     api.logger.info(
-      `[identity-persistence] ready (persona=${cortex.persona.name}, threshold=${threshold}, interval=${evaluationInterval})`,
+      `[identity-persistence] ready (persona=${cortex.persona.name}, source=${soulPath}, ` +
+        `threshold=${threshold}, interval=${evaluationInterval}, personalityNudge=${personalityNudge})`,
     );
   },
 });

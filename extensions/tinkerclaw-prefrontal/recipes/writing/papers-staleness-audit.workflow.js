@@ -59,7 +59,8 @@ List every folder \`${BASE}/J*_*\`. For each, find the GENUINELY-latest version 
 
 == STEP 2 — live Building Jarvis posts ==
   PW=\$(grep '^WP_APP_PASSWORD=' ~/.openclaw/workspace/skills/wordpress-ultimate/.env | cut -d= -f2-)
-  curl -s -u "owner:\$PW" "https://thetinkerzone.com/wp-json/wp/v2/posts?categories=29&per_page=50&status=publish,draft&context=edit&_fields=id,status,slug,content"
+  WPU=\${WP_USER:-\$(grep '^WP_USER=' ~/.openclaw/workspace/skills/wordpress-ultimate/.env | cut -d= -f2-)}
+  curl -s -u "\${WPU:-admin}:\$PW" "https://thetinkerzone.com/wp-json/wp/v2/posts?categories=29&per_page=50&status=publish,draft&context=edit&_fields=id,status,slug,content"
 For each post, extract the PDF version it references (regex \`/uploads/2026/\\d\\d/(.+?\\.pdf)\` in the content; the version token is the \`vX.Y\` in that filename). Map each post to its paper folder by codename/topic in the slug+filename.
 
 == STEP 3 — diff + verdict (per folder) ==

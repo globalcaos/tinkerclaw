@@ -1,9 +1,11 @@
 {
   "id": "tinkerclaw-prefrontal",
-  "activation": { "onStartup": true },
+  "activation": {
+    "onStartup": true
+  },
   "name": "Prefrontal",
   "description": "Real-time agent topology tracking with force-directed graph visualization",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "configSchema": {
     "type": "object",
     "additionalProperties": true,
@@ -74,6 +76,84 @@
       "persistPath": {
         "type": "string",
         "description": "Path to persist topology state across restarts"
+      },
+      "hooks": {
+        "type": "object",
+        "description": "HIGH AUTHORITY. Permission hooks execute operator-supplied scripts inside the gateway on every tool call, and their verdict can block the call. Disabled unless `enabled` is true.",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Opt in to EXECUTING the scripts listed in before_tool. Defining a hook is not by itself consent to run it. Hooks fail CLOSED: a hook that is misconfigured, times out, crashes or emits invalid JSON denies the tool call."
+          },
+          "allowedRoots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Directories a hook script must live under, symlinks resolved. Default: ~/.openclaw/hooks. Scripts outside these roots, and scripts that are group- or world-writable, are refused."
+          },
+          "before_tool": {
+            "type": "array",
+            "description": "Hooks consulted before each tool call.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "tool": {
+                  "type": "string",
+                  "description": "Tool name to gate, or \"*\" for every tool."
+                },
+                "script": {
+                  "type": "string",
+                  "description": "Absolute path to an EXECUTABLE FILE inside an allowed root. Not a shell command — it is run with execFile and no shell, so pipes, globs and interpolation are not available."
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Arguments passed to the script verbatim. No shell expansion."
+                },
+                "timeout": {
+                  "type": "number",
+                  "default": 5000,
+                  "description": "Milliseconds before the hook is killed and the call DENIED."
+                }
+              },
+              "required": ["tool", "script"]
+            }
+          },
+          "denialLimit": {
+            "type": "number",
+            "default": 3,
+            "description": "Consecutive denials of one tool before the agent is told to escalate to the user."
+          }
+        }
+      },
+      "orchestration": {
+        "type": "object",
+        "properties": {
+          "allowScripts": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable the prefrontal.recipe.orchestrate gateway method, which evaluates a caller-supplied JavaScript function body inside the gateway process with the gateway's privileges and can spawn subagents."
+          }
+        }
+      },
+      "marketplace": {
+        "type": "object",
+        "properties": {
+          "allowPublish": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable prefrontal.recipe.publish, which uploads a local recipe to JourneyKits using integrations.journey.apiKey."
+          },
+          "allowRemoteInstall": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable JourneyKits downloads in prefrontal.recipe.install (files are written under ~/.openclaw/workspace/kits). Converting a SKILL.md passed as skillMd stays available without this."
+          }
+        }
       }
     }
   }

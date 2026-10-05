@@ -3,14 +3,38 @@
  * Ring buffer of last 40 calls. Colors from Mission Control anatomy page.
  */
 
+// Type-only: call-timeline.ts imports this module's palette at RUNTIME, so a value import back
+// would close a cycle. The column below reads the call timeline's record, never its code.
+import type { TimelineCall } from "./call-timeline.js";
+import { getRoutedLogoSvg } from "./provider-logos.js";
+
 // ─── Segment palette (shared with treemap) ───
+//
+// FORK 2026-09-24 (B1, context-window-panel.md §5.8) — `moralCode` leads the table because it
+// leads the BAR (P3: fixed order, moral code first, never truncated). The key order here IS the
+// draw order, so this is not cosmetic.
+//
+// The hex was not picked by eye. context-cache.bar.test.ts measures the OKLab ΔE of this key
+// against every other key, against RESPONSE_COLOR, against `--red` (the token the absent-moral-code
+// slot is outlined in) and against both papers a segment sits on. Measured 2026-09-24: the nearest
+// rival is RESPONSE_COLOR at 0.133, then `conversation` at 0.150 and `--red` at 0.145 — all above
+// the 0.12 floor the test states, and better than two pairs the bar already ships (toolSchemas vs
+// conversation, 0.104). Rejected with its number: fuchsia-400 #e879f9, 0.068 against RESPONSE_COLOR,
+// i.e. under the 0.12 floor and under every pair the bar already draws — the magenta end is spent.
 export const SEGMENT_COLORS: Record<string, string> = {
+  moralCode: "#f472b6",
   systemPrompt: "#6366f1",
   injectedFiles: "#22c55e",
   skills: "#eab308",
   toolSchemas: "#f97316",
   conversation: "#ef4444",
-  toolResults: "#a855f7",
+  // FORK 2026-09-30 (the architect: "remove the purple from that graph ... this graph only is supposed to
+  // visualize the input tokens"). Tool results ARE input: the tool's output, fed back to the model
+  // in the prompt (context-anatomy.ts counts the `toolResult` messages). They were purple-500, one
+  // shade from RESPONSE_COLOR (0.110 OKLab ΔE), so a fifth of the prompt read as the model's own
+  // output. Lime-400 keeps them on the bar and leaves purple to mean output only: ΔE 0.405 against
+  // RESPONSE_COLOR, 0.146 to its nearest key (injectedFiles), 0.62 to the paper.
+  toolResults: "#a3e635",
   userMessage: "#94a3b8",
   // response segments
   responseThinking: "#06b6d4", // cyan-500  (thinking/reasoning)
@@ -20,14 +44,39 @@ export const SEGMENT_COLORS: Record<string, string> = {
 
 export const RESPONSE_COLOR = "#c084fc"; // purple-400 — LLM output
 
+/**
+ * The moral-code pack's wire marker — the ONE copy the UI is allowed to hold.
+ *
+ * FORK 2026-09-24 (B1). `src/moral-code/contract.ts` owns this string gateway-side (same name, so
+ * one grep finds both), but the tinker-ui bundle has its own vite root and does not import from
+ * `src/`, so the UI needs a mirror. It gets exactly one: this module already owns the segment's
+ * identity (colour, label, draw order), which makes it the honest home for "what the pack looks
+ * like on the wire" too.
+ *
+ * OWED, not done here: `tinker-ui/src/injected-context.ts` still declares MORAL_CODE_OPEN /
+ * MORAL_CODE_CLOSE as a second literal copy. Re-pointing it at these two is a two-line delete; it
+ * is left out only because that file belongs to another edit-unit. Two literals is how the chat's
+ * recognition and the bar's accounting drift apart the day the envelope changes.
+ */
+export const MORAL_CODE_MARKER = '<moral_code source="tinkerclaw">';
+export const MORAL_CODE_MARKER_CLOSE = "</moral_code>";
+
 export const SEGMENT_LABELS: Record<string, string> = {
+  moralCode: "Moral code",
   systemPrompt: "System",
   injectedFiles: "Files",
   skills: "Skills",
   toolSchemas: "Tools",
   conversation: "Conv",
-  toolResults: "Results",
+  // "Results" alone read as the model's results. These are the TOOLS' results (2026-09-30).
+  toolResults: "Tool results",
   userMessage: "User",
+  // Not an anatomy component: the billed remainder the gateway could not break down. It gets a
+  // LABEL here so the bar, its legend and the THIS CALL stat cannot drift on what to call it, and
+  // deliberately NO entry in SEGMENT_COLORS — it is painted by .cache-seg--unitemised, a hatch
+  // derived from --text, because "we could not attribute this" must not read as one more forensic
+  // category with a colour of its own (context-window-panel.md §5.8).
+  unitemised: "Unitemised",
   // response segments
   responseThinking: "Thinking",
   responseText: "Text Output",
@@ -36,6 +85,7 @@ export const SEGMENT_LABELS: Record<string, string> = {
 
 // Ordered top-to-bottom in the stacked bar (rendered bottom-to-top via column-reverse)
 const SEGMENT_ORDER = [
+  "moralCode",
   "systemPrompt",
   "injectedFiles",
   "skills",
@@ -54,6 +104,10 @@ export interface AnatomyEvent {
   model?: string;
   provider?: string;
   contextSent?: {
+    /** B1/A9 — tokens of the moral-code pack in this prompt. A NUMBER 0 means measured and ABSENT;
+     *  the field MISSING means no producer reports it yet. P10: those are not the same state, and
+     *  A9 must emit the zero rather than omit the key for the bar's absent slot to fire. */
+    moralCodeTokens?: number;
     systemPromptTokens?: number;
     injectedFiles?: Array<{ name: string; chars: number; tokens: number }>;
     injectedFilesTotalTokens?: number;
@@ -71,8 +125,16 @@ export interface AnatomyEvent {
     utilizationPercent?: number;
   };
   responseTokens?: number;
-  durationMs?: number; // round duration from round-complete
-  stopReason?: string; // why the round ended
+  durationMs?: number; // a call column: send → exact end; an anatomy row: the turn's
+  stopReason?: string; // why the call ended
+  /** B6 — a column built by callColumn from `stream:"call"`: ONE model call, a size and no
+   *  composition (the run's anatomy column carries that). */
+  callColumn?: boolean;
+  /** B6, P5 — where a call column's size came from. */
+  promptProvenance?: "exact" | "estimated" | "none";
+  /** A9 — which composition an anatomy row holds: `pre-call` is the prompt as sent; `post-turn`
+   *  also holds the turn's own replies and tool results (F5). */
+  snapshot?: "pre-call" | "post-turn";
   toolsTriggered?: Array<{
     // tools called after this round
     name: string;
@@ -108,16 +170,8 @@ interface BufferEntry {
 
 interface TimelineController {
   pushEvent(event: AnatomyEvent, runId?: string): void;
-  pushRoundComplete(
-    runId: string,
-    data: {
-      roundNumber: number;
-      outputTokens?: number;
-      durationMs?: number;
-      stopReason?: string;
-      toolCallsRequested?: number;
-    },
-  ): void;
+  /** B6 — upsert the column of ONE model call (built by callColumn). Never selects it. */
+  pushCall(runId: string, column: AnatomyEvent): void;
   pushToolExec(
     runId: string,
     data: {
@@ -147,6 +201,10 @@ const COLUMN_CHROME_PX = 60;
 
 // Map our segment keys to the flat field names in contextSent (input) or top-level event (response)
 const SEGMENT_TOKEN_FIELDS: Record<string, string> = {
+  // A9 will carry the pack's size in `moralCodeTokens`. context-cache.ts spells the same field;
+  // the `moral-code-first` gate in context-window-panel.md asserts the two agree, because a typo
+  // here does not crash — it just reports "unknown" forever, which is the silent kind of wrong.
+  moralCode: "moralCodeTokens",
   systemPrompt: "systemPromptTokens",
   injectedFiles: "injectedFilesTotalTokens",
   skills: "skillsTokens",
@@ -159,6 +217,71 @@ const SEGMENT_TOKEN_FIELDS: Record<string, string> = {
   responseText: "responseTextTokens",
   responseToolCalls: "responseToolCallTokens",
 };
+
+/**
+ * B6 (context-window-panel.md §6.2) — the ctx-timeline column of ONE model call, built from the
+ * call timeline's record of it (CallTimelineStore.applyCall) rather than from the wire: the `call`
+ * stream has one reader (parseCallFrame) and one interpreter (that store), and both widgets show
+ * what they decided. It replaces the per-round lifecycle pair, whose producers never had a caller
+ * (F9), so until now no call ever drew a column here.
+ *
+ * P5 — only what the call itself measured: the prompt size is exact once usage landed, else the
+ * producer's own pre-call estimate (flagged), else absent; output only when EXACT (an apportioned
+ * turn total is not a call's output); duration only from an exact end. No composition: a call
+ * column carries a size, the run's anatomy column carries the breakdown, and a stand-in painted
+ * here would read as this call's own (F5).
+ */
+export function callColumn(
+  c: Pick<
+    TimelineCall,
+    | "index"
+    | "sendAt"
+    | "endAt"
+    | "endProvenance"
+    | "model"
+    | "prompt"
+    | "outFinal"
+    | "outProvenance"
+    | "stopReason"
+  >,
+  meta: { runId: string; sessionKey?: string; maxWindow?: number },
+): AnatomyEvent {
+  const exact = c.prompt.exact;
+  const estimate = c.prompt.estimate;
+  const ev: AnatomyEvent = {
+    callColumn: true,
+    runId: meta.runId,
+    roundNumber: c.index,
+    timestampMs: c.sendAt,
+    promptProvenance: exact !== undefined ? "exact" : estimate !== undefined ? "estimated" : "none",
+    contextSent: { totalTokens: exact ?? estimate ?? 0 },
+  };
+  if (meta.sessionKey) {
+    ev.sessionKey = meta.sessionKey;
+  }
+  if (c.model) {
+    ev.model = c.model;
+  }
+  if (meta.maxWindow !== undefined && meta.maxWindow > 0) {
+    ev.contextWindow = { maxTokens: meta.maxWindow };
+  }
+  if (c.prompt.cacheRead !== undefined) {
+    ev.cacheReadTokens = c.prompt.cacheRead;
+  }
+  if (c.prompt.cacheWrite !== undefined) {
+    ev.cacheCreationTokens = c.prompt.cacheWrite;
+  }
+  if (c.outProvenance === "exact" && c.outFinal !== undefined) {
+    ev.responseTokens = c.outFinal;
+  }
+  if (c.endProvenance === "exact" && c.endAt !== undefined) {
+    ev.durationMs = c.endAt - c.sendAt;
+  }
+  if (c.stopReason) {
+    ev.stopReason = c.stopReason;
+  }
+  return ev;
+}
 
 export type BarSelectMode = "context" | "response" | "context-summarize" | "response-summarize";
 
@@ -186,6 +309,20 @@ export function mountContextTimeline(
   let _currentGlobalMax = 200_000;
   let hasMoreHistory = false;
   let loadingMore = false;
+  // B6 — a call column changes up to three times per model call (send, usage, end), and render()
+  // rebuilds every column. Those repaints are coalesced to one per animation frame; an anatomy
+  // push still paints at once, because it also selects its bar and drives the treemap.
+  let renderQueued = false;
+  function scheduleRender() {
+    if (renderQueued) {
+      return;
+    }
+    renderQueued = true;
+    requestAnimationFrame(() => {
+      renderQueued = false;
+      render();
+    });
+  }
 
   /** Fetch timeline data via WS (preferred) or HTTP fallback. */
   async function fetchAnatomy(method: string, params: unknown): Promise<unknown> {
@@ -317,6 +454,10 @@ export function mountContextTimeline(
       text = `R${round} · ${text}`;
     }
     text += ` · ${fmtK(total)} in`;
+    if (ev.callColumn === true && ev.promptProvenance !== "exact") {
+      // P5 — a call column's size is exact only once the call's usage landed.
+      text += ev.promptProvenance === "estimated" ? " (estimated)" : " (size not reported yet)";
+    }
     if (resp) {
       text += ` · ${fmtK(resp)} out`;
     }
@@ -653,11 +794,19 @@ export function mountContextTimeline(
           line.style.height = `${Math.round(maxBarHeight * 0.75)}px`;
           line.title = "Show prompt context";
           const gi = groupIndex;
+          const gid = entry.groupId;
           const firstEv = entry.event;
           line.addEventListener("click", (e) => {
             e.stopPropagation();
-            console.log("[timeline] lollipop click group=%d event=", gi, firstEv);
-            onGroupLineClick(gi, firstEv);
+            // B6 — a run's group now opens with its CALL columns, which carry a size and no
+            // composition; the prompt's context is the run's anatomy column, which lands at the
+            // end of the turn. So: the group's first non-call column, looked up at click time.
+            const withComposition = buffer.find(
+              (b) => b.groupId === gid && b.event.callColumn !== true,
+            );
+            const ev = withComposition?.event ?? firstEv;
+            console.log("[timeline] lollipop click group=%d event=", gi, ev);
+            onGroupLineClick(gi, ev);
           });
           groupEl.appendChild(line);
         }
@@ -679,11 +828,17 @@ export function mountContextTimeline(
       barArea.className = "ct-bar-area";
       barArea.style.height = `${maxBarHeight}px`;
 
-      // Provider icon + short model label — inside bar-area so it sits just above the bar
+      // Logo from MODEL id, not provider key. OpenRouter GLM/Qwen/Kimi all report
+      // provider "openrouter", which is in no icon table — that was the blank circle
+      // on the forensic bars (the architect 2026-09-09). Same resolver as the models panel.
       const iconEl = document.createElement("div");
       iconEl.className = "ct-provider";
       const provider = ev.provider ?? "";
-      if (providerIcons && providerIcons[provider]) {
+      const modelId = ev.model ?? "";
+      const routed = getRoutedLogoSvg(modelId, provider);
+      if (routed) {
+        iconEl.innerHTML = routed;
+      } else if (providerIcons && providerIcons[provider]) {
         iconEl.innerHTML = providerIcons[provider];
       } else if (provider) {
         iconEl.textContent = provider[0].toUpperCase();
@@ -691,10 +846,9 @@ export function mountContextTimeline(
         iconEl.style.fontWeight = "700";
         iconEl.style.color = "var(--muted)";
       }
-      // Short model label: "opus", "sonnet", "qwen3", "gemini", etc.
-      const modelShort = shortModelName(ev.model ?? "");
+      const modelShort = shortModelName(modelId);
       if (modelShort) {
-        iconEl.title = `${provider}/${cleanModelName(ev.model ?? "")}`;
+        iconEl.title = `${provider}/${cleanModelName(modelId)}`;
       }
       barArea.appendChild(iconEl);
 
@@ -709,7 +863,8 @@ export function mountContextTimeline(
       const segTotal = segments.reduce((s, seg) => s + seg.tokens, 0);
 
       if (segments.length === 0 && total > 0) {
-        // No segment breakdown yet (round-start before anatomy arrives) — show placeholder
+        // No breakdown: a call column (B6) carries its size, and the run's anatomy column carries
+        // the composition. A neutral fill, never a guessed split.
         bar.style.background = "rgba(148,163,184,0.35)";
       }
       for (const seg of segments) {
@@ -877,9 +1032,26 @@ export function mountContextTimeline(
       if (runId && event.roundNumber != null) {
         for (let i = buffer.length - 1; i >= 0; i--) {
           const entry = buffer[i];
-          if (entry.runId === runId && entry.event.roundNumber === event.roundNumber) {
-            // Merge: preserve existing fields, overlay new segment data
-            Object.assign(entry.event, event);
+          if (
+            entry.runId === runId &&
+            entry.event.callColumn !== true &&
+            entry.event.roundNumber === event.roundNumber
+          ) {
+            // Merge: overlay the newer row, except the composition. The anatomy DB's own upsert
+            // (context-anatomy-db.ts insertAnatomyEvent), mirrored so the live bar is the bar a
+            // reload paints: a PRE-CALL composition survives a post-turn row for the same
+            // (run, round), because only it itemises the prompt that was actually sent (F5). A
+            // call column (B6) is never a merge target: it is a different record of the call.
+            const kept =
+              entry.event.snapshot === "pre-call" && event.snapshot === "post-turn"
+                ? {
+                    contextSent: entry.event.contextSent,
+                    snapshot: entry.event.snapshot,
+                    timestampMs: entry.event.timestampMs,
+                    turn: entry.event.turn,
+                  }
+                : {};
+            Object.assign(entry.event, event, kept);
             selectedIdx = i;
             render();
             onBarSelect(entry.event, "context");
@@ -895,27 +1067,25 @@ export function mountContextTimeline(
       onBarSelect(event, "context");
     },
 
-    pushRoundComplete(
-      runId: string,
-      data: {
-        roundNumber: number;
-        outputTokens?: number;
-        durationMs?: number;
-        stopReason?: string;
-        toolCallsRequested?: number;
-      },
-    ) {
-      // Find the matching buffer entry by runId + roundNumber
+    pushCall(runId: string, column: AnatomyEvent) {
+      // One column per model call: the `call` stream's send, usage and end all land on the column
+      // for (runId, roundNumber = the call timeline's own 1-based index). Only call columns match;
+      // an anatomy row is a different record and never merges into one (see pushEvent).
       for (let i = buffer.length - 1; i >= 0; i--) {
         const entry = buffer[i];
-        if (entry.runId === runId && entry.event.roundNumber === data.roundNumber) {
-          entry.event.responseTokens = data.outputTokens;
-          entry.event.durationMs = data.durationMs;
-          entry.event.stopReason = data.stopReason;
-          render();
+        if (
+          entry.runId === runId &&
+          entry.event.callColumn === true &&
+          entry.event.roundNumber === column.roundNumber
+        ) {
+          // Assign, not swap: the tools pushToolExec attached live on the same event.
+          Object.assign(entry.event, column);
+          scheduleRender();
           return;
         }
       }
+      push({ event: column, runId, groupId: assignGroupId(runId, column) });
+      scheduleRender();
     },
 
     pushToolExec(
@@ -970,7 +1140,8 @@ export function mountContextTimeline(
           });
         }
       }
-      render();
+      // Coalesced like pushCall: tool events now find their run's call column (B6) and repaint.
+      scheduleRender();
     },
 
     async loadSession(sessionKey: string) {

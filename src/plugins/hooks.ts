@@ -542,7 +542,7 @@ export function createHookRunner(
           // burns its whole 15s budget and then fails is exactly the one worth seeing.
           // A `break` above runs this too.
           const handlerMs = Date.now() - handlerStartedAt;
-          logHookHandlerSpan(hookName, hook.pluginId, handlerMs);
+          logHookHandlerSpan(hookName, hook.pluginId, handlerMs, ctx);
           phaseSpan?.recordHandler(hook.pluginId, handlerMs);
         }
       }

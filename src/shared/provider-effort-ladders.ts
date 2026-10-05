@@ -148,7 +148,11 @@ export function resolveProviderEffortLadder(provider: string, modelId: string): 
     // Named rather than generalised: AA publishes low/medium/high/xhigh/max for THIS
     // model, which is evidence for this id and not a licence to loosen the lookahead
     // for every future point release.
-    if (/(?:fable-5[.-]1|opus-5|fable-5|sonnet-5|opus-4[.-]8|opus-4[.-]7)(?![.\d])/.test(id)) {
+    if (
+      /(?:fable-5[.-]1|opus-5[.-]5|sonnet-5[.-]5|opus-5|fable-5|sonnet-5|opus-4[.-]8|opus-4[.-]7)(?![.\d])/.test(
+        id,
+      )
+    ) {
       return {
         kind: "graded",
         levels: [...CLAUDE_EFFORT_5],
@@ -249,12 +253,12 @@ export function resolveProviderEffortLadder(provider: string, modelId: string): 
     // docs.x.ai reasoning page, fetched 2026-08-27. The in-tree plugin still
     // declares levels:[off] and strips reasoning_effort on the wire — that is a
     // send-path bug, not the vendor's ladder. The chart follows the vendor.
-    if (/grok-4\.6|grok-4-6/.test(id)) {
+    if (/grok-4\.[67]|grok-4-[67]/.test(id)) {
       return {
         kind: "graded",
         levels: ["low", "medium", "high", "xhigh"],
         defaultLevel: "high",
-        note: "xAI grok-4.6: low/medium/high/xhigh (vendor page 2026-08-27)",
+        note: "xAI grok-4.7/4.6: low/medium/high/xhigh (4.7 catalog 2026-09-22; 4.6 vendor page 2026-08-27)",
       };
     }
     if (/grok-4\.5|grok-4-5/.test(id)) {

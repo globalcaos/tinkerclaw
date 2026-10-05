@@ -1647,6 +1647,46 @@ describe("dispatchReplyFromConfig", () => {
     expect(dispatcher.sendFinalReply).toHaveBeenCalledWith({ text: "done" });
   });
 
+  // FORK 2026-09-23 — the progress gate runs per plan/approval/patch event: it must
+  // borrow the cached store (clone:false), never deep-clone all of sessions.json.
+  it("reads the session verbose level for progress gating from a read-only borrow", async () => {
+    setNoAbort();
+    sessionStoreMocks.currentEntry = { verboseLevel: "off" };
+    const cfg = {
+      ...emptyConfig,
+      agents: { defaults: { verboseDefault: "on" } },
+    } satisfies OpenClawConfig;
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      Provider: "telegram",
+      ChatType: "direct",
+      SessionKey: "agent:main:main",
+    });
+    const gateLoads: unknown[][] = [];
+    const replyResolver = async (
+      _ctx: MsgContext,
+      opts?: GetReplyOptions,
+      _cfg?: OpenClawConfig,
+    ) => {
+      sessionStoreMocks.loadSessionStore.mockClear();
+      await opts?.onPlanUpdate?.({
+        phase: "update",
+        explanation: "Inspect code, patch it, run tests.",
+        steps: ["Inspect code", "Patch code", "Run tests"],
+      });
+      gateLoads.push(...(sessionStoreMocks.loadSessionStore.mock.calls as unknown[][]));
+      return { text: "done" } satisfies ReplyPayload;
+    };
+
+    await dispatchReplyFromConfig({ ctx, cfg, dispatcher, replyResolver });
+
+    expect(dispatcher.sendToolResult).not.toHaveBeenCalled();
+    expect(gateLoads.length).toBeGreaterThan(0);
+    for (const call of gateLoads) {
+      expect(call[1]).toEqual({ clone: false });
+    }
+  });
+
   it("suppresses plan and working-status progress when session verbose is off", async () => {
     setNoAbort();
     sessionStoreMocks.currentEntry = {

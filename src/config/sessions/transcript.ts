@@ -209,6 +209,97 @@ export async function appendAssistantMessageToSessionTranscript(params: {
   });
 }
 
+/**
+ * FORK 2026-09-06 — persist a STEERED user turn.
+ *
+ * A prompt typed mid-turn is folded into the running turn by writing it to the
+ * live claude-cli stdin (runs.ts tryInflightSteer -> worker.steer). That path
+ * bypasses pi entirely, so it never wrote a user row: the message was answered
+ * but left no trace in the transcript. The Tinker UI outbox retires an entry
+ * ONLY on transcript proof (tinker-ui/src/outbox.ts) and re-arms every unproven
+ * entry on reconnect, so a successfully-steered prompt replayed on every tab
+ * reload until one landed while idle and ran as a duplicate turn. Measured
+ * 2026-09-06: one prompt answered three times, the last 1h47m after it was typed.
+ *
+ * Stamping the client's idempotencyKey is the point — chat.ts documents that the
+ * key is what makes the outbox replay exact rather than a text-match guess.
+ * The dedupe below makes this safe to call unconditionally.
+ */
+type SessionManagerAppendMessage = SessionManager["appendMessage"];
+
+export async function appendUserMessageToSessionTranscript(params: {
+  agentId?: string;
+  sessionKey: string;
+  text: string;
+  idempotencyKey?: string;
+  storePath?: string;
+  updateMode?: SessionTranscriptUpdateMode;
+}): Promise<SessionTranscriptAppendResult> {
+  const sessionKey = params.sessionKey.trim();
+  if (!sessionKey) {
+    return { ok: false, reason: "missing sessionKey" };
+  }
+  const text = params.text;
+  if (!text.trim()) {
+    return { ok: false, reason: "empty message" };
+  }
+
+  const storePath = params.storePath ?? resolveDefaultSessionStorePath(params.agentId);
+  const store = loadSessionStore(storePath, { skipCache: true });
+  const normalizedKey = normalizeStoreSessionKey(sessionKey);
+  const entry = (store[normalizedKey] ?? store[sessionKey]) as SessionEntry | undefined;
+  if (!entry?.sessionId) {
+    return { ok: false, reason: `unknown sessionKey: ${sessionKey}` };
+  }
+
+  let sessionFile: string;
+  try {
+    const resolved = await resolveAndPersistSessionFile({
+      sessionId: entry.sessionId,
+      sessionKey,
+      sessionStore: store,
+      storePath,
+      sessionEntry: entry,
+      agentId: params.agentId,
+      sessionsDir: path.dirname(storePath),
+    });
+    sessionFile = resolved.sessionFile;
+  } catch (err) {
+    return { ok: false, reason: formatErrorMessage(err) };
+  }
+
+  await ensureSessionHeader({ sessionFile, sessionId: entry.sessionId });
+
+  if (params.idempotencyKey) {
+    const existingMessageId = await transcriptHasIdempotencyKey(sessionFile, params.idempotencyKey);
+    if (existingMessageId) {
+      return { ok: true, sessionFile, messageId: existingMessageId };
+    }
+  }
+
+  const message = {
+    role: "user" as const,
+    content: [{ type: "text" as const, text }],
+    timestamp: Date.now(),
+    ...(params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : {}),
+  } as Parameters<SessionManagerAppendMessage>[0];
+  const { SessionManager } = await loadPiCodingAgentModule();
+  const sessionManager = SessionManager.open(sessionFile);
+  const messageId = sessionManager.appendMessage(message);
+
+  switch (params.updateMode ?? "inline") {
+    case "inline":
+      emitSessionTranscriptUpdate({ sessionFile, sessionKey, message, messageId });
+      break;
+    case "file-only":
+      emitSessionTranscriptUpdate(sessionFile);
+      break;
+    case "none":
+      break;
+  }
+  return { ok: true, sessionFile, messageId };
+}
+
 export async function appendExactAssistantMessageToSessionTranscript(params: {
   agentId?: string;
   sessionKey: string;

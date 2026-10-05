@@ -11,6 +11,15 @@
  *
  * Injection is skipped when the user's own message is already a slash command
  * (so we never clobber an explicit `/model`, `/clear`, etc.) or is empty.
+ *
+ * FORK 2026-09-08 — EXCEPT a message that leads with the user's own `/think`. "/think xhigh keep
+ * going" is how the architect types half his turns, and under the blanket rule neither a picker
+ * pin nor the picker's Auto reset (`model: "auto"`, see auto-reply/reply/model-directive-auto.ts)
+ * ever reached those turns: the exhausted, still-pinned model kept running while the picker read
+ * Auto. A leading `/think` is an inline directive the sliders themselves inject in this very
+ * position, not a command that owns the turn, so the model directive is prepended in front of it.
+ * The per-turn `thinking` param is NOT added then — the user's typed level is the explicit one and
+ * two `/think`s in one body would leave the parser to pick.
  */
 export function buildChatSendCommandBody(params: {
   message: string;
@@ -18,7 +27,11 @@ export function buildChatSendCommandBody(params: {
   model?: string;
 }): string {
   const trimmed = params.message.trim();
-  const isUserCommand = !trimmed || trimmed.startsWith("/");
+  if (!trimmed) {
+    return params.message;
+  }
+  const leadsWithThink = /^\/think(?:\s|$)/i.test(trimmed);
+  const isUserCommand = trimmed.startsWith("/") && !leadsWithThink;
   if (isUserCommand) {
     return params.message;
   }
@@ -26,7 +39,7 @@ export function buildChatSendCommandBody(params: {
   if (params.model) {
     directives.push(`/model ${params.model}`);
   }
-  if (params.thinking) {
+  if (params.thinking && !leadsWithThink) {
     directives.push(`/think ${params.thinking}`);
   }
   return directives.length > 0 ? `${directives.join(" ")} ${params.message}` : params.message;

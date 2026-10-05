@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import AjvPkg from "ajv";
 import type { Plan } from "openclaw/plugin-sdk/fork-prefrontal-schema";
 import type { SkillLibrary } from "openclaw/plugin-sdk/fork-recipe-engine";
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import { parse as parseYaml } from "yaml";
 import { deriveCombinatorFanOut, deriveUsesDepthBudget } from "./combinator-budget.js";
 import { deriveOverseerLoopBudget } from "./overseer-budget.js";
@@ -1482,7 +1483,51 @@ export function deriveAskTimeoutMs(signals: {
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
+/**
+ * J13 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.recipe.run` (§9 step 9) — ONE span row per
+ * recipe run, whatever exit the run takes. A composed sub-recipe (`uses:`, fallback) is its own
+ * runRecipe call and so its own row, carrying the same session.
+ *
+ * WHY A WRAPPER rather than an emit at each return: runRecipeInner has well over a dozen `return`
+ * points (load failure, compile checks, param validation, early exit, group abort, completion).
+ * An emit per return is a maintenance trap — the next return added silently makes the row
+ * under-count and nothing fails. One wrapper is the single structural producer, so the row exists
+ * even for a path nobody remembered to instrument.
+ *
+ * `n1` counts the steps that reported a result and `n2` the ones that reported an error, both
+ * harvested from the result the run already returns — never a second tally of a counted fact
+ * (design-principles #18). `durMs` is the whole call, so a run that dies at load still costs
+ * measurable time rather than looking free.
+ */
 export async function runRecipe(opts: RecipeRunOptions): Promise<RecipeRunResult> {
+  const startedAtMs = Date.now();
+  const emitRunRow = (label: string, results: StepResult[] | undefined): void => {
+    emitEvent("j.recipe.run", {
+      sessionKey: opts.sessionKey,
+      label,
+      durMs: Date.now() - startedAtMs,
+      n1: results?.length ?? 0,
+      n2: results?.filter((r) => r.status === "error").length ?? 0,
+    });
+  };
+  try {
+    const result = await runRecipeInner(opts);
+    // A dry run dispatches nothing, so it is labelled apart: counting it as `done` would inflate
+    // the completion rate J13 reads off this row.
+    emitRunRow(
+      result.dryRunPlan !== undefined ? "dry_run" : result.ok ? "done" : "error",
+      result.results,
+    );
+    return result;
+  } catch (err) {
+    // runRecipeInner is not supposed to throw; if it ever does, the row still exists and says so
+    // rather than leaving a run with no record at all.
+    emitRunRow("throw", undefined);
+    throw err;
+  }
+}
+
+async function runRecipeInner(opts: RecipeRunOptions): Promise<RecipeRunResult> {
   // Resolve directories
   const thisDir = dirname(fileURLToPath(import.meta.url));
   const ownRecipesDir = opts.ownRecipesDir ?? resolveOwnRecipesDir(thisDir);

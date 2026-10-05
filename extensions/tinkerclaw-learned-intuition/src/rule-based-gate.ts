@@ -22,6 +22,7 @@
  *   - `scope`: "all"  → matched against tool name + serialized input.
  */
 
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import type { GateDecision } from "./types.js";
 
 export interface RuleBasedResult {
@@ -181,6 +182,42 @@ export const AEGIS_RULES: AegisRule[] = [
 ];
 
 /**
+ * J9 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.aegis.decision` (§9 step 9) — one row per
+ * evaluation of the rule set, written at the gate itself, so "which security rules fire" is
+ * answered by the rule set's OWN evaluation rather than by a second count kept downstream
+ * (design-principles #18).
+ *
+ * CADENCE. On the default v3.1 path the rule set is evaluated exactly once per gated tool call
+ * (the AEGIS pre-check, `evaluateAegisEnforced` via the checker index.ts wires into
+ * AmygdalaHook.evaluate), so a row IS a gated tool call. The legacy ensemble modes (off unless
+ * `legacyEnsemble` is set) evaluate the rules a second time — the rule-based fallback calls
+ * `evaluateRuleBased`, the ONNX path re-runs the checker as a post-check — and so write two rows
+ * for one call. That is stated here rather than hidden; the bible row owes the note.
+ *
+ * `label` is the matched rule id, and `none` — a closed value, never null — when nothing matched,
+ * so the allow rate is queryable from the same column.
+ *
+ * `overridden` is deliberately ABSENT. This function cannot know whether a human later overrode
+ * the block; that fact lives with `logHumanOverride` in runtime-hook.ts, which owns the training
+ * log. An honest gap is actionable; a field hardcoded to false would silently answer "nothing is
+ * ever overridden" (VERIFICATION DISCIPLINE #6).
+ */
+function noteAegisDecision(result: RuleBasedResult): RuleBasedResult {
+  emitEvent("j.aegis.decision", {
+    label: result.rule ?? "none",
+    fields: {
+      decision:
+        result.decision === "hard_block"
+          ? "block"
+          : result.decision === "soft_block"
+            ? "ask"
+            : "allow",
+    },
+  });
+  return result;
+}
+
+/**
  * Evaluate a tool call through the rule-based safety gate (in-process path).
  *
  * Unchanged contract: matches the combined "<toolName> <argsStr>" against every
@@ -198,19 +235,19 @@ export function evaluateRuleBased(toolName: string, argsStr: string): RuleBasedR
 
   for (const { pattern, rule, explanation } of AEGIS_RULES) {
     if (pattern.test(combined)) {
-      return {
+      return noteAegisDecision({
         decision: "hard_block",
         rule,
         explanation: `Rule-based block [${rule}]: ${explanation}`,
-      };
+      });
     }
   }
 
-  return {
+  return noteAegisDecision({
     decision: "allow",
     rule: null,
     explanation: "No rule-based safety concerns detected.",
-  };
+  });
 }
 
 /**
@@ -225,18 +262,18 @@ export function evaluateAegisEnforced(toolName: string, argsStr: string): RuleBa
   const combined = `${toolName} ${argsStr}`;
   for (const { pattern, rule, explanation, enforce } of AEGIS_RULES) {
     if (enforce && pattern.test(combined)) {
-      return {
+      return noteAegisDecision({
         decision: "hard_block",
         rule,
         explanation: `Rule-based block [${rule}]: ${explanation}`,
-      };
+      });
     }
   }
-  return {
+  return noteAegisDecision({
     decision: "allow",
     rule: null,
     explanation: "No enforced rule-based safety concerns detected.",
-  };
+  });
 }
 
 /**

@@ -23,8 +23,9 @@
 //   1. RUNGS. Every reachable (model, thinking effort) is a point on the chart's
 //      €/TASK axis — the architect 2026-09-02: "make sure to use the graph in €/task to make
 //      the envelope, not the €/token". cost = the route's €/Mtok x
-//      EFFORT_COST_MULT[effort] x tokenRatioFor(model, effort) (tokens-per-task.ts,
-//      normalised to Opus 5 @high like the chart's task view); smart = AA's measured
+//      tokenRatioFor(model, effort) (tokens-per-task.ts, normalised to Opus 5 @high
+//      like the chart's task view; the effort ladder is already IN those tokens, so it
+//      is applied once — see taskCostFactor, 2026-09-30); smart = AA's measured
 //      index at that effort, else the flagged estimate (aa-effort-estimate.ts), else
 //      the headline index. A verbose model is therefore DEARER per task than its
 //      token price suggests, which is exactly the point of that axis.
@@ -46,7 +47,6 @@
 
 import { aaEstimateAt, aaFamilyOf, aaScoreAt } from "./aa-effort-index.js";
 import { DOMAIN_STRENGTH } from "./domain-strength.generated.js";
-import { EFFORT_COST_MULT } from "./effort-cost-mult.js";
 import { resolveProviderEffortLadder } from "./provider-effort-ladders.js";
 import { tokenRatioFor } from "./tokens-per-task.js";
 
@@ -61,7 +61,7 @@ export type FrontierRung = {
   /** AA Intelligence Index (measured, estimated or headline — see `basis`). */
   smart: number;
   /** €/TASK at this effort, on the chart's task axis: route relCost x
-   *  EFFORT_COST_MULT[effort] x tokenRatioFor(model, effort). NOT €/Mtok. */
+   *  tokenRatioFor(model, effort), effort counted once. NOT €/Mtok. */
   cost: number;
   basis: RungBasis;
 };
@@ -89,7 +89,7 @@ export function frontierRungsFor(key: string, index: number, relCost: number): F
       key,
       effort,
       smart: measured ?? est?.v ?? index,
-      cost: relCost * (EFFORT_COST_MULT[effort] ?? 1) * tokenRatioFor(key, effort),
+      cost: relCost * tokenRatioFor(key, effort),
       basis: measured !== undefined ? "measured" : est ? "estimated" : "headline",
     };
   });
@@ -136,8 +136,15 @@ export function paretoFrontier(rungs: readonly FrontierRung[]): FrontierRung[] {
  */
 export const THALAMUS_BIAS_GAP: readonly number[] = [15, 10, 7, 5, 3, 1.5, 0];
 
+/**
+ * Where the dial sits when nobody has set it: the MIDDLE stop, "default" (the architect, 2026-10-02, full deploy:
+ * "an unset dial is default"). It was SMART from 2026-10-01 to 2026-10-02. One constant for the gateway's
+ * router, the tier bands and the page's dial, so an unset dial can never mean two things.
+ */
+export const THALAMUS_DEFAULT_BIAS_IDX = 3;
+
 export function clampBiasIdx(biasIdx: number | undefined): number {
-  const n = Number.isFinite(biasIdx) ? Math.round(biasIdx as number) : 3;
+  const n = Number.isFinite(biasIdx) ? Math.round(biasIdx as number) : THALAMUS_DEFAULT_BIAS_IDX;
   return Math.max(0, Math.min(THALAMUS_BIAS_GAP.length - 1, n));
 }
 
@@ -267,41 +274,205 @@ export function anchoredBiasPick(
 
 // ─── task domain (Fugu / J6 §3.6: route by measured expertise, not by one number) ───
 
+/**
+ * The task domains THALAMUS routes along — one per CAPABILITY column of the dossier
+ * (smart-model-dossier.ts `SC_SKILLS`), minus SPEED and COST, which are properties of
+ * the route rather than of the work.
+ *
+ * WIDENED 2026-09-23 (the architect: "the table that explains which model is best at what
+ * should be more granular, more visual, and it finally influences Thalamus"). Eight
+ * domains became fifteen. The split is not cosmetic — each new domain is a question
+ * whose answer is a DIFFERENT model, which is the only test a routing domain has to
+ * pass:
+ *
+ *   code → code + frontend   SWE-bench and WebDev Arena disagree at the top. On the
+ *                            2026-09-22 WebDev board GPT-6 Astra leads at 1793 Elo
+ *                            while Fable 5.1 (SWE-bench Verified 95%, the CODE leader)
+ *                            is second at 1755. One column could not say that.
+ *   reason → maths + science + reason
+ *                            FrontierMath, GPQA and ARC-AGI are three different
+ *                            abilities that Epoch publishes as three different tables.
+ *   world  → factual + world The old WORLD column mixed live retrieval (its stated
+ *                            question) with MMLU and TriviaQA (parametric recall),
+ *                            which is exactly the two-bases error the dossier header
+ *                            forbids. The measurement moved to FACTUAL, which is the
+ *                            column it answers; WORLD keeps the transport question and
+ *                            is honestly unmeasured.
+ *   new    → data, languages, instruct
+ *                            Spreadsheets/SQL, working in Catalan and Spanish, and
+ *                            obeying an exact output format are three things the
+ *                            architect routes by and this module could not name.
+ *
+ * WIDENED AGAIN 2026-10-02 (the architect: "find more verticals so we can better choose in
+ * Thalamus the best model per task"): shell, ml, cad, research, office, security, health.
+ * Six of the seven are MEASURED from day one, because Epoch already ships the tables and
+ * they were being averaged into a broader domain (Terminal Bench in code, WeirdML in
+ * reason, Cybench and GDPval in agentic, CadEval in vision). HEALTH has no Epoch rows yet
+ * and keeps the bias pick until it does. Cue words were MOVED, never copied, where two
+ * domains wanted them: `terminal|shell|cron` left AGENTIC and `kubernetes` left CODE for
+ * SHELL, because a word in two lists turns an ordinary prompt into a tie, i.e. "general".
+ *
+ * A domain with no Epoch table is NOT an error: `domainStrengthFor` returns undefined
+ * and `thalamusRoute` keeps the bias pick, exactly as it already does for any family
+ * with no run. Adding a domain can therefore never break routing — at worst it is a
+ * no-op until a benchmark exists.
+ */
 export type TaskDomain =
+  // BUILD
   | "code"
+  | "frontend"
+  | "shell"
+  | "data"
+  | "ml"
+  | "cad"
+  // WORK
   | "agentic"
+  | "research"
+  | "office"
+  | "security"
+  // THINK
+  | "maths"
+  | "science"
   | "reason"
+  // TALK
   | "write"
+  | "languages"
   | "psych"
+  | "instruct"
+  // SEE & KNOW
   | "context"
   | "vision"
+  | "factual"
+  | "health"
   | "world"
   | "general";
+
+/** Every domain except "general", in dossier column order — the one list to extend. */
+export const TASK_DOMAINS: readonly TaskDomain[] = [
+  "code",
+  "frontend",
+  "shell",
+  "data",
+  "ml",
+  "cad",
+  "agentic",
+  "research",
+  "office",
+  "security",
+  "maths",
+  "science",
+  "reason",
+  "write",
+  "languages",
+  "psych",
+  "instruct",
+  "context",
+  "vision",
+  "factual",
+  "health",
+  "world",
+];
 
 const DOMAIN_CUES: { domain: TaskDomain; re: RegExp; w: number }[] = [
   {
     domain: "code",
-    re: /\b(code|coding|bug|fix|refactor|compile|build|test suite|typescript|python|javascript|rust|golang|sql|regex|function|class|api|endpoint|stack ?trace|exception|npm|pnpm|git|commit|merge|pull request|lint|unit test|vitest|pytest|script|debug|implement|deploy|dockerfile|kubernetes|yaml|json schema)\b/gi,
+    re: /\b(code|coding|bug|fix|refactor|compile|build|test suite|typescript|python|javascript|rust|golang|regex|function|class|api|endpoint|stack ?trace|exception|npm|pnpm|git|commit|merge|pull request|lint|unit test|vitest|pytest|script|debug|implement|deploy|dockerfile|yaml|json schema)\b/gi,
+    w: 1,
+  },
+  // FRONTEND, 2026-09-23. Kept clear of the CODE list on purpose: a prompt that says
+  // "code" must stay CODE, so nothing here is a generic programming word. The signal is
+  // the surface — a page, a component, a stylesheet — not the act of programming.
+  {
+    domain: "frontend",
+    re: /\b(css|html|tailwind|react|vue|svelte|jsx|tsx|front-?end|web ?page|web ?site|landing page|\bui\b|\bux\b|layout|stylesheet|responsive|component|button|modal|navbar|sidebar|dark mode|viewport|flexbox|animation|hover state|design system)\b/gi,
     w: 1,
   },
   {
     domain: "agentic",
-    re: /\b(browse|scrape|crawl|fill (?:in|out) the form|book|order|schedule|automate|workflow|pipeline|run the|execute|terminal|shell|cron|orchestrat\w*|subagent|multi-step|tool calls?|navigate)\b/gi,
+    re: /\b(browse|scrape|crawl|fill (?:in|out) the form|book|order|schedule|automate|workflow|pipeline|run the|execute|orchestrat\w*|subagent|multi-step|tool calls?|navigate)\b/gi,
+    w: 1,
+  },
+  // ── 2026-10-02 verticals. Each list is the research agent's cue set for its column,
+  //    trimmed of any word another domain already owns.
+  {
+    domain: "shell",
+    re: /\b(bash|shell|terminal|command line|ssh|systemd|systemctl|journalctl|docker|container|kubernetes|nginx|apt(?:-get)?|cron(?:tab)?|firewall|dns|sudo|chmod|disk (?:is )?full|mount|reboot|server (?:is )?down|service failed|linux|ubuntu|ip route|tls certificate|tmux|port forward\w*)\b/gi,
     w: 1,
   },
   {
+    domain: "ml",
+    re: /\b(train (?:a|the) model|training run|fine-?tun\w*|lora|qlora|hyperparameters?|learning rate|batch size|epochs?|loss curve|overfitting|pytorch|tensorflow|data augmentation|model weights|validation accuracy|confusion matrix|neural (?:net|network)s?|convnet|yolo|object detection|segmentation|class imbalance|cuda out of memory|distillation|retrain\w*|embedding model)\b/gi,
+    w: 1,
+  },
+  {
+    domain: "cad",
+    re: /\b(cad|openscad|cadquery|freecad|build123d|solidworks|fusion 360|stl|step file|dxf|b-rep|3d print\w*|parametric|tolerances?|clearance fit|fillet|chamfer|extrude|revolve|bracket|enclosure|gears?|thread pitch|cross-section|dimensioned drawing|mechanical design)\b/gi,
+    w: 1,
+  },
+  {
+    domain: "research",
+    re: /\b(deep research|research (?:the|into|on)|find out|literature review|survey the field|state of the art|market research|competitors?|references|bibliography|cross-check|primary sources?|papers on|arxiv|news roundup|background check|dig up|look into)\b/gi,
+    w: 1,
+  },
+  {
+    domain: "office",
+    re: /\b(report|deck|slide deck|slides|presentation|powerpoint|pptx|docx|memo|proposal|quote|rfp|client|deliverable|executive summary|business case|white paper|briefing note|board paper|one-pager|pitch|consulting|due diligence|statement of work|meeting minutes|financial model|stakeholders?|handover)\b/gi,
+    w: 1,
+  },
+  {
+    domain: "security",
+    re: /\b(vulnerabilit\w*|cve|exploit\w*|pentest\w*|penetration test|ctf|capture the flag|xss|sql injection|csrf|buffer overflow|privilege escalation|reverse engineer\w*|malware|fuzz\w*|threat model|attack surface|hardening|security audit|zero-day|0day|rce|owasp|nmap|burp|metasploit|phishing|incident response|forensics)\b/gi,
+    w: 1,
+  },
+  // DATA, 2026-09-23. `sql` MOVED HERE from the CODE list: a text-to-SQL ask is data
+  // work, and leaving it in CODE meant every query question routed to the SWE-bench
+  // leader. `plot the` rather than a bare `chart`, because VISION owns `chart` (reading
+  // one) and a shared token would tie the two domains into "general".
+  {
+    domain: "data",
+    re: /\b(spreadsheet|excel|xlsx|csv|\bsql\b|query|database|dataset|pivot|dashboard|kpi|metrics?|plot the|aggregate|group by|row count|tabular|data ?frame|pandas|bigquery|forecast the|trend)\b/gi,
+    w: 1,
+  },
+  {
+    domain: "maths",
+    re: /\b(prove|proof|theorem|lemma|derive|derivation|equation|integral|derivative|matrix|algebra|geometry|calculus|arithmetic|probability|statistics|aime|math|maths|mathematical|solve for|calculate|compute the|estimate the|sum of|factorial|modulo)\b/gi,
+    w: 1,
+  },
+  {
+    domain: "science",
+    re: /\b(physics|chemistry|biology|biochem\w*|molecul\w*|quantum|thermodynamic\w*|genetics?|astronomy|astrophysic\w*|gpqa|reaction|enzyme|protein|electron|photon|isotope|hypothesis|scientific|experiment)\b/gi,
+    w: 1,
+  },
+  // REASON keeps what is left once maths and science leave: puzzles, logic, lateral
+  // thinking — the ARC-AGI / SimpleBench shape.
+  {
     domain: "reason",
-    re: /\b(prove|proof|theorem|derive|equation|integral|probability|statistics|math|maths|physics|chemistry|puzzle|logic|riddle|optimi[sz]e the|algorithm complexity|big-o|calculate|compute the|estimate the|why does)\b/gi,
+    re: /\b(puzzle|riddle|logic|logical|lateral thinking|brain ?teaser|deduc\w*|paradox|chess|sudoku|counterintuitive|trick question|reason through|why does|optimi[sz]e the|algorithm complexity|big-o)\b/gi,
     w: 1,
   },
   {
     domain: "write",
-    re: /\b(write|draft|rewrite|edit|proofread|essay|blog|post|article|email|e-mail|letter|copy|headline|tagline|caption|story|poem|newsletter|readme|documentation|docs|tone|wording|paragraph|summari[sz]e|translate)\b/gi,
+    re: /\b(write|draft|rewrite|edit|proofread|essay|blog|post|article|email|e-mail|letter|copy|headline|tagline|caption|story|poem|newsletter|readme|documentation|docs|tone|wording|paragraph|summari[sz]e)\b/gi,
+    w: 1,
+  },
+  // LANGUAGES, 2026-09-23. `translate` MOVED HERE from WRITE. The architect works in
+  // Catalan and Spanish, so the language names are cues in their own right.
+  {
+    domain: "languages",
+    re: /\b(translat\w*|traducci\w*|in (?:spanish|catalan|french|german|italian|portuguese|chinese|japanese|dutch|basque|galician)|castellano|catal[\u00e0a]n?|espa[\u00f1n]ol|multilingual|bilingual|localis\w*|localiz\w*|subtitle|native speaker|idioma|llengua)\b/gi,
     w: 1,
   },
   {
     domain: "psych",
     re: /\b(feel|feelings|emotion\w*|anxious|anxiety|stress\w*|relationship|partner|friend|family|argument|conflict|motivat\w*|therapy|therapist|advice|cope|coping|grief|angry|upset|difficult conversation|how do i tell|should i say|empath\w*|burnout|self-esteem|habits?)\b/gi,
+    w: 1,
+  },
+  // INSTRUCT, 2026-09-23. Deliberately NOT given `yaml`, `schema` or `json`: CODE owns
+  // those, and a shared token would tie a perfectly ordinary coding prompt into
+  // "general". What is left is the vocabulary of a CONSTRAINT on the output itself.
+  {
+    domain: "instruct",
+    re: /\b(exactly \d+|no more than \d+|at most \d+|word limit|character limit|bullet points?|follow the format|in the format|output only|only output|respond with only|nothing else|do not include|verbatim|strictly|template)\b/gi,
     w: 1,
   },
   {
@@ -314,9 +485,24 @@ const DOMAIN_CUES: { domain: TaskDomain; re: RegExp; w: number }[] = [
     re: /\b(image|photo|picture|screenshot|diagram|chart|figure|drawing|sketch|video|frame|ocr|what do you see|look at this|floor ?plan|blueprint)\b/gi,
     w: 1,
   },
+  // FACTUAL, 2026-09-23. These cues were WORLD's. They ask what the model already
+  // knows, which is the AA-Omniscience / SimpleQA question, not the live-retrieval one.
+  {
+    domain: "factual",
+    re: /\b(who is|who was|when did|where is|what year|capital of|population|born|died|founded|trivia|fact.?check|is it true that|how many|define|meaning of|citation|cite the|source for|according to|verify that)\b/gi,
+    w: 1,
+  },
+  // HEALTH, 2026-10-02. Kept clear of PSYCH's list on purpose (anxiety, stress, therapy
+  // stay there): this is the body, its medicines and the plants that act like them.
+  {
+    domain: "health",
+    re: /\b(symptoms?|diagnos\w*|dosage|dose|mg|drug interactions?|medications?|medicines?|prescription|side effects?|lab results|blood test|blood pressure|antibiotics?|painkillers?|supplements?|herbal|medicinal plants?|tincture|infusion|contraindicat\w*|allerg\w*|rash|fever|pregnan\w*|see a doctor|insomnia|cholesterol)\b/gi,
+    w: 1,
+  },
+  // WORLD now means what its dossier column always claimed: BEYOND THE CUT-OFF.
   {
     domain: "world",
-    re: /\b(who is|who was|when did|where is|what year|capital of|history of|population|born|died|founded|trivia|fact check|is it true that|how many|define|meaning of|what is the (?:difference|origin))\b/gi,
+    re: /\b(today|yesterday|this (?:week|month|morning)|right now|currently|latest|breaking|news|headline|current (?:price|events|state)|stock price|weather|just announced|up to date|since your (?:training|cut.?off)|real.?time)\b/gi,
     w: 1,
   },
 ];
@@ -369,6 +555,49 @@ export const DOMAIN_SWITCH_MIN_GAIN = 0.1;
  *  it is at the domain. */
 export const DOMAIN_SWITCH_MAX_COST_MULT = 5;
 
+/**
+ * A SUGGESTION IS A PRIOR, NOT A PIN (the architect, 2026-10-02: "his picks are suggestions"). The suggested rung runs
+ * unless it cannot (the plan removes it: a limit, a cooling supply, a context too small, the allowlist) or
+ * another rung still beats it for THIS TASK after a bonus of this fraction of the suggestion's own score. "For this
+ * task" means the measured domain strength `p` of the task's domain, the only task-specific evidence the router
+ * has. A general task, or a suggestion with no measured row for the domain, has nothing to move it, so it keeps
+ * the turn: comparing on the AA index instead would let every smarter rung in the band beat a suggestion set at
+ * a low effort, and the stop would never run what he picked. A relative bonus survives a vendor rescaling its
+ * measure; a fixed number of points would not. 10 % is the architect's default to tune.
+ */
+export const SUGGESTION_PRIOR = 0.1;
+
+export type RouteSuggestion = { key: string; effort?: string };
+
+export type SuggestionVerdict = {
+  state: "kept" | "moved";
+  /** The suggestion's own rung (the effort asked for, or the nearest the model has). */
+  key: string;
+  effort: string;
+  /** The effort the suggestion asked for, when the model has no rung at it. */
+  effortAsked?: string;
+  /** Moved: the rung that won, and how far it leads the suggestion on the domain strength, in percent. */
+  to?: { key: string; effort: string };
+  gainPct?: number;
+};
+
+/** The suggestion's rung: the effort asked for, else the model's rung nearest the dial's own pick. */
+function suggestionRung(
+  rungs: readonly FrontierRung[],
+  s: RouteSuggestion,
+  nearest: FrontierRung,
+): FrontierRung | undefined {
+  const own = rungs.filter((r) => r.key === s.key);
+  if (own.length === 0) return undefined;
+  if (s.effort) {
+    const exact = own.find((r) => r.effort === s.effort);
+    if (exact) return exact;
+  }
+  return own.reduce((a, b) =>
+    Math.abs(b.smart - nearest.smart) < Math.abs(a.smart - nearest.smart) ? b : a,
+  );
+}
+
 export type ThalamusRoute = {
   /** The rung thalamus routes to. */
   rung: FrontierRung;
@@ -392,6 +621,8 @@ export type ThalamusRoute = {
   domain: TaskDomain;
   /** Strength of `rung`'s model in `domain`, when measured. */
   strength?: DomainStrength;
+  /** Present when a suggestion was given and its rung is on the board: kept, or moved off and why. */
+  suggestion?: SuggestionVerdict;
   /** One line a human can read: why THIS model at THIS effort. */
   reason: string;
 };
@@ -407,6 +638,9 @@ export type ThalamusRouteParams = {
   /** Admit the reserved set for a NAMED reason the caller owns — a ballistic window, or a
    *  feasibility veto that left nothing else. The top dial stop opens it on its own. */
   allowReserved?: boolean;
+  /** The architect's suggestion for this dial stop (model, and effort). Applies on Auto turns only; the caller
+   *  passes it only when its rung survived the vetoes. */
+  suggestion?: RouteSuggestion;
 };
 
 function fmtRung(r: FrontierRung): string {
@@ -451,16 +685,22 @@ export function thalamusRoute(params: ThalamusRouteParams): ThalamusRoute | unde
     target,
     (anchor?.smart ?? frontier[frontier.length - 1].smart) - THALAMUS_BELOW_ANCHOR[0],
   );
-  const bestCost = Math.min(
-    frontier[frontier.length - 1].cost,
-    biasRung.cost * DOMAIN_SWITCH_MAX_COST_MULT,
-  );
+  // THE SMART STOP MEANS THE BEST MODEL FOR THIS DECISION (the architect, 2026-10-01). Below it the dial
+  // is also a statement about money, so a specialist must fit the cost cap and lead by
+  // DOMAIN_SWITCH_MIN_GAIN. At the top stop neither applies: the measured leader of the task's
+  // domain takes the turn whatever it costs, by any measured lead, at its strongest effort. The
+  // floor stays: a specialist below the anchor is still not "the best model".
+  const topStop = biasIdx >= THALAMUS_BIAS_GAP.length - 1;
+  const bestCost = topStop
+    ? Infinity
+    : Math.min(frontier[frontier.length - 1].cost, biasRung.cost * DOMAIN_SWITCH_MAX_COST_MULT);
   const base: ThalamusRoute = {
     rung: biasRung,
     biasRung,
     frontier,
     biasIdx,
     target,
+    chainFloor,
     domain,
     reason:
       `bias ${biasIdx} anchored on ${anchorLabel}` +
@@ -470,15 +710,28 @@ export function thalamusRoute(params: ThalamusRouteParams): ThalamusRoute | unde
       ` → ${fmtRung(biasRung)} (idx ${biasRung.smart.toFixed(1)}, €${biasRung.cost.toPrecision(3)}/task)` +
       (anchorOpts.allowReserved && isReservedKey(biasRung.key) ? " · reserved model opened" : ""),
   };
-  if (domain === "general") return base;
-  const pickStrength = strengthFor(biasRung.key, domain);
-  base.strength = pickStrength;
   const band = params.rungs.filter(
     (r) =>
       r.smart >= target &&
       r.cost <= bestCost &&
       (anchorOpts.allowReserved || !isReservedKey(r.key)),
   );
+  const sRung = params.suggestion
+    ? suggestionRung(params.rungs, params.suggestion, biasRung)
+    : undefined;
+  if (params.suggestion && sRung) {
+    return routeFromSuggestion({
+      base,
+      sRung,
+      asked: params.suggestion,
+      band,
+      domain,
+      strengthFor,
+    });
+  }
+  if (domain === "general") return base;
+  const pickStrength = strengthFor(biasRung.key, domain);
+  base.strength = pickStrength;
   let bestRung: FrontierRung | undefined;
   let bestStrength: DomainStrength | undefined;
   for (const r of band) {
@@ -487,7 +740,8 @@ export function thalamusRoute(params: ThalamusRouteParams): ThalamusRoute | unde
     if (
       !bestStrength ||
       s.p > bestStrength.p ||
-      (s.p === bestStrength.p && byCostThenSmart(r, bestRung!) < 0)
+      (s.p === bestStrength.p &&
+        (topStop ? r.smart > bestRung!.smart : byCostThenSmart(r, bestRung!) < 0))
     ) {
       bestStrength = s;
       bestRung = r;
@@ -498,7 +752,7 @@ export function thalamusRoute(params: ThalamusRouteParams): ThalamusRoute | unde
     return base;
   }
   const gain = bestStrength.p - (pickStrength?.p ?? 0);
-  if (bestRung.key === biasRung.key || gain < DOMAIN_SWITCH_MIN_GAIN) {
+  if (bestRung.key === biasRung.key || (topStop ? gain <= 0 : gain < DOMAIN_SWITCH_MIN_GAIN)) {
     base.reason += ` · domain ${domain}: ${bestRung.key} leads at p${(bestStrength.p * 100).toFixed(0)} but gain ${(gain * 100).toFixed(0)}pt < ${DOMAIN_SWITCH_MIN_GAIN * 100}, bias pick keeps the turn`;
     return base;
   }
@@ -512,6 +766,76 @@ export function thalamusRoute(params: ThalamusRouteParams): ThalamusRoute | unde
   };
 }
 
+/**
+ * The route when the architect suggested a rung: start from it, give it the prior, and move off only for a
+ * rival that still wins for this task. The rivals are the dial's own band (its floor, its cost cap, the reserved
+ * set only when a named reason opened it), so a stop set to "budget" is never moved to a model far above its price.
+ * Compared on the measured domain strength; see SUGGESTION_PRIOR for why nothing else moves it.
+ */
+function routeFromSuggestion(i: {
+  base: ThalamusRoute;
+  sRung: FrontierRung;
+  asked: RouteSuggestion;
+  band: readonly FrontierRung[];
+  domain: TaskDomain;
+  strengthFor: (key: string, domain: TaskDomain) => DomainStrength | undefined;
+}): ThalamusRoute {
+  const { base, sRung, band, domain } = i;
+  const sStrength = domain === "general" ? undefined : i.strengthFor(sRung.key, domain);
+  const asked =
+    i.asked.effort && i.asked.effort !== sRung.effort ? { effortAsked: i.asked.effort } : {};
+  const kept = (why: string): ThalamusRoute => ({
+    ...base,
+    rung: sRung,
+    strength: sStrength,
+    suggestion: { state: "kept", key: sRung.key, effort: sRung.effort, ...asked },
+    reason: `${base.reason} · suggestion ${fmtRung(sRung)} kept (${why})`,
+  });
+  if (!sStrength) {
+    return kept(
+      domain === "general"
+        ? "nothing task-specific to move it"
+        : `no measured ${domain} strength to move it`,
+    );
+  }
+  let winner: FrontierRung | undefined;
+  let winnerStrength: DomainStrength | undefined;
+  // The suggestion's own model is not a rival at another effort: the effort is part of what was suggested.
+  for (const r of band) {
+    if (r.key === sRung.key) continue;
+    const st = i.strengthFor(r.key, domain);
+    if (!st) continue;
+    if (
+      !winnerStrength ||
+      st.p > winnerStrength.p ||
+      (st.p === winnerStrength.p && byCostThenSmart(r, winner!) < 0)
+    ) {
+      winner = r;
+      winnerStrength = st;
+    }
+  }
+  if (!winner || !winnerStrength || winnerStrength.p <= sStrength.p * (1 + SUGGESTION_PRIOR)) {
+    return kept(
+      `${SUGGESTION_PRIOR * 100}% prior on ${domain} strength p${(sStrength.p * 100).toFixed(0)}`,
+    );
+  }
+  const gainPct = Math.round((winnerStrength.p / sStrength.p - 1) * 100);
+  return {
+    ...base,
+    rung: winner,
+    strength: winnerStrength,
+    suggestion: {
+      state: "moved",
+      key: sRung.key,
+      effort: sRung.effort,
+      to: { key: winner.key, effort: winner.effort },
+      gainPct,
+      ...asked,
+    },
+    reason: `${base.reason} · suggestion ${fmtRung(sRung)} moved to ${fmtRung(winner)}: +${gainPct}% on ${domain} strength after the ${SUGGESTION_PRIOR * 100}% prior`,
+  };
+}
+
 /** The per-domain routes for a whole board — what the chart footer and the dossier show. */
 export function thalamusRoutesByDomain(
   rungs: readonly FrontierRung[],
@@ -519,17 +843,9 @@ export function thalamusRoutesByDomain(
   strengthFor?: ThalamusRouteParams["strengthFor"],
 ): Partial<Record<TaskDomain, ThalamusRoute>> {
   const out: Partial<Record<TaskDomain, ThalamusRoute>> = {};
-  const domains: TaskDomain[] = [
-    "general",
-    "code",
-    "agentic",
-    "reason",
-    "write",
-    "psych",
-    "context",
-    "vision",
-    "world",
-  ];
+  // "general" first, then TASK_DOMAINS in dossier column order — one list, so a new
+  // domain cannot be added to the type and silently missed by the strip.
+  const domains: TaskDomain[] = ["general", ...TASK_DOMAINS];
   for (const d of domains) {
     const r = thalamusRoute({ rungs, biasIdx, domain: d, strengthFor });
     if (r) out[d] = r;

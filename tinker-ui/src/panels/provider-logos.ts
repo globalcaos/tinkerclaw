@@ -13,16 +13,29 @@ const ANTHROPIC_LOGO_SVG = `<svg width="14" height="14" viewBox="0 0 24 24"><pol
 // than PNG so it stays crisp at 14px and needs no retina twin.
 const COPILOT_LOGO_IMG = `<img src="${ASSET_BASE}copilot-logo.svg" width="14" height="14" alt="Copilot" style="display:block"/>`;
 
+// FORK 2026-09-03 (the architect: "The logo in the models panel next to the gemini
+// models is flashing, not nice. Use the one we had before, the G from google,
+// the colorful one"). The previous mark was a ring whose stroke cycled the four
+// Google colours on a 4s SMIL loop. That flash was already wrong on the smart-
+// cost chart (frozen 2026-08-06 after "why is gemini flash pulsating?") and the
+// leftover exception — "panels that show ONE logo keep their animation" — was a
+// misread: he does not want the flash anywhere. Same four-colour G as the old
+// models-panel icon. Exported so app.ts cannot drift a second copy.
+export const GOOGLE_G_LOGO_SVG = `<svg width="14" height="14" viewBox="0 0 48 48"><path d="M43.6 20.5H42V20H24v8h11.3C33.6 33.4 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" fill="#FFC107"/><path d="M6.3 14.7l6.6 4.8C14.5 15.9 18.9 13 24 13c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" fill="#FF3D00"/><path d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.3c-2 1.5-4.5 2.3-7.3 2.3-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z" fill="#4CAF50"/><path d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.7l6.2 5.3C37 39.4 44 34 44 24c0-1.2-.1-2.3-.4-3.5z" fill="#1976D2"/></svg>`;
+
 export const PROVIDER_LOGO_SVG: Record<string, string> = {
   anthropic: ANTHROPIC_LOGO_SVG,
   // FORK: tinker-bridge = claude CLI; keep Anthropic branding in timeline/treemap.
   "claude-code": ANTHROPIC_LOGO_SVG,
-  google: `<svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="6" fill="none" stroke-width="2"><animate attributeName="stroke" values="#4285f4;#ea4335;#fbbc04;#34a853;#4285f4" dur="4s" repeatCount="indefinite"/></circle><circle cx="7" cy="7" r="3" fill="url(#gg)"/><defs><radialGradient id="gg"><stop offset="0%" stop-color="#4285f4"/><stop offset="100%" stop-color="#34a853"/></radialGradient></defs></svg>`,
+  google: GOOGLE_G_LOGO_SVG,
   // FORK 2026-08-28 (the architect: chart ChatGPT bubbles used a white "AI" disc).
   // Same blossom as PROVIDER_ICONS.openai in app.ts (models panel), tinted the
   // EEG / circle colour #10A37F so the mark and the ring agree.
   openai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22.28 9.37a5.88 5.88 0 0 0-.51-4.86 5.97 5.97 0 0 0-6.43-2.83A5.9 5.9 0 0 0 10.87 0a5.97 5.97 0 0 0-5.69 4.13 5.88 5.88 0 0 0-3.93 2.85 5.97 5.97 0 0 0 .74 6.99 5.88 5.88 0 0 0 .51 4.86 5.97 5.97 0 0 0 6.43 2.83A5.9 5.9 0 0 0 13.4 24a5.97 5.97 0 0 0 5.69-4.13 5.88 5.88 0 0 0 3.93-2.85 5.97 5.97 0 0 0-.74-6.99zM13.4 22.3a4.42 4.42 0 0 1-2.84-1.03l.14-.08 4.72-2.73a.77.77 0 0 0 .39-.67v-6.66l2 1.15a.07.07 0 0 1 .04.06v5.52a4.46 4.46 0 0 1-4.46 4.44zM3.48 18.2a4.42 4.42 0 0 1-.53-2.97l.14.08 4.72 2.73a.77.77 0 0 0 .77 0l5.76-3.33v2.31a.07.07 0 0 1-.03.06l-4.77 2.76a4.46 4.46 0 0 1-6.06-1.64zM2.2 7.87A4.42 4.42 0 0 1 4.52 5.9v5.62a.77.77 0 0 0 .39.67l5.76 3.33-2 1.15a.07.07 0 0 1-.07 0L3.83 13.9A4.46 4.46 0 0 1 2.2 7.87zm17.33 4.03l-5.76-3.33 2-1.15a.07.07 0 0 1 .07 0l4.77 2.76a4.46 4.46 0 0 1-.69 8.05v-5.66a.77.77 0 0 0-.39-.67zM21.5 9.7l-.14-.08-4.72-2.73a.77.77 0 0 0-.77 0L10.1 10.2V7.9a.07.07 0 0 1 .03-.06l4.77-2.76a4.46 4.46 0 0 1 6.6 4.62zM8.93 13.34l-2-1.15a.07.07 0 0 1-.04-.06V6.61a4.46 4.46 0 0 1 7.3-3.42l-.14.08-4.72 2.73a.77.77 0 0 0-.39.67zm1.08-2.34L12 9.77l1.99 1.15v2.3L12 14.36l-1.99-1.15z" fill="#10A37F"/></svg>`,
   "github-copilot": COPILOT_LOGO_IMG,
+  // FORK 2026-09-23: M365 Copilot (provider `copilot`, Think Deeper) had no key and drew
+  // the neutral router glyph on the chart and dossier. Same ribbon as GitHub Copilot.
+  copilot: COPILOT_LOGO_IMG,
   ollama: `<svg width="14" height="14" viewBox="0 0 14 14"><rect width="14" height="14" rx="3" fill="#ff6b35"/><text x="7" y="11" text-anchor="middle" font-size="9">🦙</text></svg>`,
   // FORK 2026-07-21 (the architect): Grok/xAI "planet with one ring" mark (white on dark).
   xai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18.6 8.9 A7.3 7.3 0 0 1 8.9 18.6" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M5.4 15.1 A7.3 7.3 0 0 1 15.1 5.4" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M3.2 20.8 L8 16 M16 8 L20.8 3.2" stroke="#fff" stroke-width="1.9" stroke-linecap="round"/></svg>`,
@@ -36,7 +49,20 @@ PROVIDER_LOGO_SVG["openai-codex"] = PROVIDER_LOGO_SVG.openai;
 // Neutral "reached through a router, vendor unidentified" glyph — three nodes and a
 // branch, in the chart's own cream at low weight so it never reads as a brand. This
 // is what an unknown provider gets instead of somebody else's logo.
-const UNKNOWN_MARK_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 12h4M14 7h6M14 17h6" stroke="#b9ab97" stroke-width="1.8" stroke-linecap="round"/><path d="M8 12c0-2.8 2.2-5 6-5M8 12c0 2.8 2.2 5 6 5" stroke="#b9ab97" stroke-width="1.8" stroke-linecap="round"/><circle cx="3.4" cy="12" r="1.7" fill="#b9ab97"/><circle cx="20.6" cy="7" r="1.7" fill="#b9ab97"/><circle cx="20.6" cy="17" r="1.7" fill="#b9ab97"/></svg>`;
+//
+// FORK 2026-09-03: it now carries a <title>. A wordless node-and-branch mark is
+// indistinguishable from a ROUTER's logo, which is exactly how it was read ("an
+// OpenRouter icon on a Claude turn") — the glyph was honest and still misled, because
+// it said nothing. The title makes it say what it is.
+//
+// SAFE on all three surfaces, EFFECTIVE on two. scStill() strips only
+// animate/animateTransform/animateMotion/set and scSvgSafeMark() only tests
+// /^<svg[\s>]/, so the title survives the chart's sanitiser — but the chart wraps the
+// mark in `<g class="sc-logo" pointer-events="none">`, so there the title never
+// renders and the chart's own hit-circle <title> speaks instead. It DOES render on
+// .pf-logo (prefrontal-tree.ts) and .model-provider-icon (app.ts modelIcon), neither
+// of which sets a competing title, so nothing is shadowed.
+const UNKNOWN_MARK_SVG = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" role="img"><title>provider unknown</title><path d="M4 12h4M14 7h6M14 17h6" stroke="#b9ab97" stroke-width="1.8" stroke-linecap="round"/><path d="M8 12c0-2.8 2.2-5 6-5M8 12c0 2.8 2.2 5 6 5" stroke="#b9ab97" stroke-width="1.8" stroke-linecap="round"/><circle cx="3.4" cy="12" r="1.7" fill="#b9ab97"/><circle cx="20.6" cy="7" r="1.7" fill="#b9ab97"/><circle cx="20.6" cy="17" r="1.7" fill="#b9ab97"/></svg>`;
 
 // The vendor segment of a routed id (`openrouter/<vendor>/<model>`) mapped onto the
 // PROVIDER_LOGO_SVG keys. Only vendors whose official art we already ship appear
@@ -57,6 +83,12 @@ const ROUTED_VENDOR_ALIASES: Record<string, string> = {
   xiaomi: "xiaomimimo",
   upstage: "upstage",
   meituan: "longcat",
+  // FORK 2026-10-02 — the four labs the CN price matrix still drew with the glyph.
+  bytedance: "bytedance",
+  "bytedance-seed": "bytedance",
+  stepfun: "stepfun",
+  baidu: "wenxin",
+  inclusionai: "antgroup",
 };
 
 // ─── OpenRouter vendor marks (FORK 2026-09-02) ───
@@ -79,9 +111,10 @@ const ROUTED_VENDOR_ALIASES: Record<string, string> = {
 // not conglomerates — Tencent the company also makes WeChat. If a Tencent model ever
 // ships outside the Hunyuan family, this alias is the line that has to change.
 //
-// STILL UNCOVERED, and honestly so: Thinking Machines (inkling, inkling-small),
-// InclusionAI (ling-3.0-flash) and Nex AGI (nex-n2-pro) ship no mark in the package
-// — verified by name and by parent org. Those four models keep the neutral glyph.
+// STILL UNCOVERED, and honestly so: Thinking Machines (inkling, inkling-small) and Nex AGI
+// (nex-n2-pro) ship no mark in the package — verified by name and by parent org. Those
+// models keep the neutral glyph. (InclusionAI was on this list until 2026-10-02; it now
+// wears its parent Ant Group's mark, see the block below the upstage entry.)
 // official NVIDIA green, straight off the package's -color variant
 PROVIDER_LOGO_SVG["nvidia"] =
   `<svg width="14" height="14" fill="#74B71B" fill-rule="evenodd" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M10.212 8.976V7.62c.127-.01.256-.017.388-.021 3.596-.117 5.957 3.184 5.957 3.184s-2.548 3.647-5.282 3.647a3.227 3.227 0 01-1.063-.175v-4.109c1.4.174 1.681.812 2.523 2.258l1.873-1.627a4.905 4.905 0 00-3.67-1.846 6.594 6.594 0 00-.729.044m0-4.476v2.025c.13-.01.259-.019.388-.024 5.002-.174 8.261 4.226 8.261 4.226s-3.743 4.69-7.643 4.69c-.338 0-.675-.031-1.007-.092v1.25c.278.038.558.057.838.057 3.629 0 6.253-1.91 8.794-4.169.421.347 2.146 1.193 2.501 1.564-2.416 2.083-8.048 3.763-11.24 3.763-.308 0-.603-.02-.894-.048V19.5H24v-15H10.21zm0 9.756v1.068c-3.356-.616-4.287-4.21-4.287-4.21a7.173 7.173 0 014.287-2.138v1.172h-.005a3.182 3.182 0 00-2.502 1.178s.615 2.276 2.507 2.931m-5.961-3.3c1.436-1.935 3.604-3.148 5.961-3.336V6.523C5.81 6.887 2 10.723 2 10.723s2.158 6.427 8.21 7.015v-1.166C5.77 16 4.25 10.958 4.25 10.958h-.002z"></path></svg>`;
@@ -104,12 +137,174 @@ PROVIDER_LOGO_SVG["xiaomimimo"] =
 PROVIDER_LOGO_SVG["upstage"] =
   `<svg width="14" height="14" fill="#A88BFF" fill-rule="evenodd" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19.763 0l-.373 1.297h2.594L22.354 0h-2.591z"></path><path d="M16.192 2.27l-.376 1.298h5.52l.37-1.298h-5.514z"></path><path d="M12.897 4.54l-.377 1.298h8.167l.37-1.297h-8.16z"></path><path d="M2.85 6.81l-.377 1.298h17.565l.37-1.297H2.85z"></path><path d="M3.884 9.081l-.376 1.297H19.39l.37-1.297H3.883z"></path><path d="M4.088 24l.376-1.297H1.866L1.5 24h2.588z"></path><path d="M7.662 21.73l.376-1.298H2.515L2.15 21.73h5.513z"></path><path d="M10.957 19.46l.377-1.298h-8.17l-.367 1.297h8.16z"></path><path d="M21.005 17.19l.376-1.298H3.812l-.366 1.297h17.559z"></path><path d="M19.967 14.919l.376-1.297H4.461l-.366 1.297h15.872z"></path><path d="M18.787 12.649l.376-1.298H4.26l-.366 1.298h14.893z"></path></svg>`;
 
+// FORK 2026-10-02 (the architect: "The chinese provider ranking lacks nice logos for every model").
+// Four labs in the CN price matrix still wore the neutral glyph. All four ship an official
+// -color mark in @lobehub/icons-static-svg@1.95.1 (npm pack into /tmp, inlined, not a
+// dependency), so none is drawn by hand. Two are PRODUCT marks, per this file's rule that
+// the chart plots models, not conglomerates: Baidu resolves to WENXIN (ERNIE's own mark).
+// Two are parent marks because the lab has no product mark of its own: ByteDance for the
+// Seed team, and Ant Group for inclusionAI, which is Ant Group's AI research org.
+// official ByteDance colours from the -color variant
+PROVIDER_LOGO_SVG["bytedance"] =
+  `<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M14.944 18.587l-1.704-.445V10.01l1.824-.462c1-.254 1.84-.461 1.88-.453.032 0 .056 2.235.056 4.972v4.973l-.176-.008c-.104 0-.952-.207-1.88-.446z" fill="#00C8D2" fill-rule="nonzero"></path><path d="M7 16.542c0-2.736.024-4.98.064-4.98.032-.008.872.2 1.88.454l1.816.461-.016 4.05-.024 4.049-1.632.422c-.896.23-1.736.445-1.856.469L7 21.523v-4.98z" fill="#3C8CFF" fill-rule="nonzero"></path><path d="M19.24 12.477c0-9.03.008-9.515.144-9.475.072.024.784.207 1.576.406.792.207 1.576.405 1.744.445l.296.08-.016 8.56-.024 8.568-1.624.414c-.888.23-1.728.437-1.856.47l-.24.055v-9.523z" fill="#78E6DC" fill-rule="nonzero"></path><path d="M1 12.509c0-4.678.024-8.505.064-8.505.032 0 .872.207 1.872.454l1.824.461v7.582c0 4.16-.016 7.574-.032 7.574-.024 0-.872.215-1.88.47L1 21.013v-8.505z" fill="#325AB4"></path></svg>`;
+// official StepFun gradient from the -color variant
+PROVIDER_LOGO_SVG["stepfun"] =
+  `<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M22.012 0h1.032v.927H24v.968h-.956V3.78h-1.032V1.896h-1.878v-.97h1.878V0zM2.6 12.371V1.87h.969v10.502h-.97zm10.423.66h10.95v.918h-6.208v9.579h-4.742V13.03zM5.629 3.333v12.356H0v4.51h10.386V8L20.859 8l-.003-4.668-15.227.001z" fill="url(#lobe-icons-stepfun-_R_0_)" fill-rule="evenodd"></path><defs><linearGradient gradientUnits="userSpaceOnUse" id="lobe-icons-stepfun-_R_0_" x1="1.646" x2="18.342" y1="1.916" y2="22.091"><stop stop-color="#01A9FF"></stop><stop offset="1" stop-color="#0160FF"></stop></linearGradient></defs></svg>`;
+// official Wenxin (ERNIE) colours from the -color variant
+PROVIDER_LOGO_SVG["wenxin"] =
+  `<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M11.32 1.176a1.4 1.4 0 011.36 0l8.64 4.843c.421.234.68.67.68 1.141v9.68c0 .472-.259.908-.68 1.143l-8.64 4.84a1.4 1.4 0 01-1.36 0l-8.64-4.84A1.31 1.31 0 012 16.84V7.159c0-.471.259-.907.68-1.142l8.64-4.84zm7.42 13.839V8.227L12.002 12 12 19.551l6.059-3.394a1.31 1.31 0 00.68-1.142zM12.68 4.833a1.393 1.393 0 00-1.36 0L5.944 7.846c-.421.235-.68.67-.68 1.142v6.027c0 .47.259.905.68 1.142l2.795 1.566V11.09a1.546 1.546 0 00.221.79 1.527 1.527 0 01-.216-.834l.004-.094.02-.15.018-.084.017-.062.039-.117.062-.142.035-.065.081-.13.094-.122.084-.091.08-.075.125-.1.071-.048.134-.076 5.87-3.29-2.796-1.566z" fill="url(#lobe-icons-wenxin-_R_0_)"></path><path d="M12 11.088c0-.875-.73-1.584-1.631-1.584a1.66 1.66 0 00-.855.237c-.027.016-.055.033-.08.05a2.361 2.361 0 00-.123.093c-.022.02-.045.038-.066.059l-.048.045-.063.067c-.014.016-.028.031-.04.048a2.303 2.303 0 00-.094.125l-.042.069a1.7 1.7 0 00-.07.13l-.036.081a.764.764 0 00-.022.06c-.01.03-.02.058-.028.087l-.017.062a.883.883 0 00-.03.16c-.002.025-.007.05-.008.074a1.527 1.527 0 00.213.929c.302.508.85.792 1.414.792.277 0 .558-.068.814-.212l.815-.457v-.914L12 11.088z" fill="#012F8D"></path><defs><linearGradient id="lobe-icons-wenxin-_R_0_" x1="9.155%" x2="90.531%" y1="75.177%" y2="25.028%"><stop offset="0%" stop-color="#0A51C3"></stop><stop offset="100%" stop-color="#23A4FB"></stop></linearGradient></defs></svg>`;
+// official Ant Group colours from the -color variant
+PROVIDER_LOGO_SVG["antgroup"] =
+  `<svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.797 6.282a.451.451 0 01-.336-.315 1.019 1.019 0 010-.505c.156-.86.3-1.725.501-2.577.14-.7.42-1.367.823-1.96.305-.431.75-.746 1.262-.89.877-.217 1.24.629.937 1.348-.259.593-.877.914-1.334 1.348-.835.795-1.096 2.14-1.336 3.212a.427.427 0 01-.186.277.437.437 0 01-.331.062z" fill="url(#lobe-icons-ant-group-0-_R_0_)" transform="translate(3)"></path><path d="M6.334 4.672c.33-.121.682.146.946.297.278.145.587.219.901.214.231.01.466 0 .688.018 4.098.176 7.484 3.22 8.05 7.237.565 4.016-1.852 7.859-5.745 9.134-3.894 1.276-8.153-.38-10.126-3.935A8.339 8.339 0 013.133 7.081c.348-.278.716-.53 1.102-.755a8.404 8.404 0 001.318-.79c.28-.243.45-.742.781-.864zm4.406 2.15c-2.841.003-4.898 2.533-4.628 5.642.27 3.109 2.781 5.641 5.613 5.665 2.832.024 4.932-2.512 4.658-5.644-.273-3.133-2.802-5.666-5.643-5.663zm.357.57a4.707 4.707 0 013.304 1.446 5.703 5.703 0 011.643 3.49 4.841 4.841 0 01-1.141 3.705v.015a3.923 3.923 0 01-2.808 1.303 4.664 4.664 0 01-3.367-1.387 5.678 5.678 0 01-1.71-3.518 4.832 4.832 0 011.14-3.753 3.923 3.923 0 012.813-1.3h.126z" fill="url(#lobe-icons-ant-group-1-_R_0_)" transform="translate(3)"></path><path d="M2.346 2.054a1.26 1.26 0 01.384-.594.842.842 0 011.165.11c.694.82.169 2.078.142 3.02.013.805.208 1.597.57 2.318.084.134.147.279.186.43a.539.539 0 01-.3.577c-.345.17-.568-.19-.709-.446-.324-.6-.617-1.216-.877-1.846a8.698 8.698 0 01-.618-1.987 7.523 7.523 0 01-.051-.37 3.717 3.717 0 01-.024-.34 2.506 2.506 0 01.132-.872z" fill="url(#lobe-icons-ant-group-2-_R_0_)" transform="translate(3)"></path><defs><linearGradient id="lobe-icons-ant-group-0-_R_0_" x1="31.373%" x2="61.365%" y1="95.551%" y2="-.348%"><stop offset="0%" stop-color="#06F"></stop><stop offset="20%" stop-color="#1677FF"></stop><stop offset="100%" stop-color="#04A6FF"></stop></linearGradient><linearGradient id="lobe-icons-ant-group-1-_R_0_" x1="4.366%" x2="94.359%" y1="65.982%" y2="32.918%"><stop offset="0%" stop-color="#06F"></stop><stop offset="20%" stop-color="#1677FF"></stop><stop offset="100%" stop-color="#04A6FF"></stop></linearGradient><linearGradient id="lobe-icons-ant-group-2-_R_0_" x1="56.255%" x2="45.986%" y1="99.257%" y2="1.384%"><stop offset="0%" stop-color="#06F"></stop><stop offset="20%" stop-color="#1677FF"></stop><stop offset="100%" stop-color="#04A6FF"></stop></linearGradient></defs></svg>`;
+
+// FORK 2026-09-04 (the architect: "Openrouter has the wrong logo, do they have a specific one?").
+// They do, and we were not shipping it, so the SMART x COST legend fell back to
+// getRoutedLogoSvg(sample) — the mark of whichever model happened to be FIRST in the
+// group. OpenRouter's tail starts with an NVIDIA re-sell, so the chip for a router
+// that fronts 13 vendors wore NVIDIA's green eye. The models were never mislabelled;
+// the GROUP was, which is the same lie one level up. Official mark and official
+// colour, straight off the package's -color variant, same source as the block above.
+//
+// DELIBERATELY NOT IN PROVIDER_LOGO_SVG, and this is the whole subtlety. Putting it
+// there fixed the chip and broke 15 dots: getRoutedLogoSvg's step 3 is "the provider's
+// own mark", so every model the router carries that we CANNOT identify — Thinking
+// Machines' inkling, Nex AGI, InclusionAI — would have started wearing OpenRouter's
+// logo instead of the honest neutral glyph. That is the same lie as the NVIDIA eye
+// with a friendlier face: OpenRouter did not make inkling. Two tests caught it.
+// A GROUP may be branded by its router; a MODEL may not.
+const OPENROUTER_MARK_SVG = `<svg width="14" height="14" fill="#C8FF00" fill-rule="evenodd" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18.654 3.87a5.087 5.087 0 110 10.174L23.7 19.09c.64.641.187 1.737-.72 1.737H8.48a8.479 8.479 0 010-16.958h10.175zM8.479 7.26a5.087 5.087 0 100 10.176 5.087 5.087 0 000-10.175z"></path></svg>`;
+
+// ─── Vendor-segment and model-family fallbacks (FORK 2026-09-03) ───
+// the architect, on a Claude turn: "why is there an OpenRouter icon there?". There was not.
+// It was UNKNOWN_MARK_SVG, the neutral glyph above. A live browser probe pinned the
+// RESOLVER rather than the artwork:
+//
+//   getRoutedLogoSvg("claude-opus-5", "")              -> router glyph
+//   getRoutedLogoSvg("claude-opus-5", "claude-opus-5") -> router glyph
+//   getRoutedLogoSvg("claude-code/claude-opus-5", "")  -> router glyph
+//   getRoutedLogoSvg("claude-opus-5", "claude-code")   -> Anthropic sparkle
+//
+// Only the last one carries a provider. The thinking indicator builds its provider as
+// `(synthetic ? viewedSessionRowProvider() : primary.provider) || ""` (app.ts ~14542
+// and ~14584), so ANY run that never reported one landed on the glyph — while the
+// model id said "claude" in plain English the whole time.
+//
+// CODE, NOT PROMPT: the want is "one model, one mark, every turn"; the producer
+// already exists (one resolver, three call sites); nothing here needs judgement at
+// runtime; and provider-logos.test.ts goes red if it stops firing. A prompt cannot
+// make a renderer consistent.
+//
+// TWO ALTERNATIVES REJECTED — both would have re-armed the "lie generator" the
+// 2026-08-30 fork above was written to disarm:
+//
+//   · Running these reads BEFORE the provider lookup (as first specified).
+//     `github-copilot` and `ollama` are PROVIDER_LOGO_SVG keys and app.ts's
+//     providerOf() returns them for `github-copilot/gpt-4o` and `ollama/qwen3:14b`,
+//     so going first would strip two correct marks to answer a question already
+//     answered. Both new steps therefore run LAST — only where this function used to
+//     return the glyph — so neither can turn a correct mark into a wrong one.
+//
+//   · Putting open-weight ARCHITECTURE names (llama, mistral, qwen, gemma) in the
+//     family table. They are not vendor claims: `hermes-3-llama-3.1-405b` is Nous
+//     Research's, `llama-3.1-sonar-large` is Perplexity's, `gemma4:26b` under Ollama
+//     is Google's architecture on someone else's runtime. Reading Meta out of any of
+//     them paints a registered trademark on a model its owner never shipped — the
+//     hazard vendor-marks.ts:71-76 already calls load-bearing ("the owning vendor is
+//     the one in the PROVIDER segment, not the one in the architecture suffix").
+//     `/llama/i` also matches the substring inside "ollama", which would have branded
+//     every local Ollama row as Meta. Those ids keep the glyph, which is the honest
+//     answer; getVendorSegmentLogoSvg below recovers the ones that SAY who they are
+//     (`nvidia/llama-3.3-nemotron-super-49b` is NVIDIA's fine-tune, not Meta's model).
+//
+// So only families whose name can belong to exactly ONE org are listed, and every key
+// is an EXISTING PROVIDER_LOGO_SVG key. No artwork is invented here.
+//
+// ORDER IS LOAD-BEARING, the same way it is in vendorOfModel(): first match wins. The
+// o-series entry is LAST and is the only generic one — it identifies OpenAI by a
+// letter and a digit, so every brand token must beat it. (`grok-code-fast-1` is xAI
+// because /grok/ is tested before the OpenAI group, and `-code-` is not `-codex`.)
+//
+// None of these regexes carry /g. RegExp.test on a global regex advances lastIndex and
+// answers differently on alternate calls; with `isolate: false` in
+// test/vitest/vitest.tinker-ui.config.ts these module-level tables are shared across
+// test FILES, so that heisenbug would cross file boundaries. Keep them unflagged.
+const MODEL_FAMILY_MARKS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/claude/i, "anthropic"],
+  [/grok/i, "xai"],
+  [/gemini/i, "google"],
+  [/(^|[-/_])(chatgpt-|gpt-|codex)/i, "openai"],
+  [/(^|[-/])o\d/i, "openai"],
+];
+
+/** `TABLE[key]` alone answers "constructor" and "toString" with something off
+ *  Object.prototype — truthy, and not a mark. Every key reaching these tables came off
+ *  a server-supplied string, so every lookup is own-property checked. */
+function hasOwnKey(table: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(table, key);
+}
+
+/**
+ * The mark for a vendor SEGMENT of a model id — the middle of
+ * `openrouter/<vendor>/<model>`, or the leading `<vendor>/<model>` of the 2-segment
+ * ids this catalog actually stores (`tencent/hy3`, `minimax/minimax-m3`, `xai/grok-4.5`,
+ * `nvidia/llama-3.3-nemotron-super-49b`). That 2-segment shape is why the `>= 3` gate
+ * below was never enough: it is the ONLY shape in openclaw.json.
+ *
+ * This is the vendor SAYING who it is, which is why it outranks the family read.
+ */
+function getVendorSegmentLogoSvg(segment: string): string | undefined {
+  const key = (segment || "").toLowerCase();
+  const alias = hasOwnKey(ROUTED_VENDOR_ALIASES, key) ? ROUTED_VENDOR_ALIASES[key] : "";
+  return alias && hasOwnKey(PROVIDER_LOGO_SVG, alias) ? PROVIDER_LOGO_SVG[alias] : undefined;
+}
+
+/**
+ * The mark for a LEGEND GROUP, resolved from the group's own key rather than from a
+ * member model — `openrouter` gets OpenRouter's mark, not the mark of its first
+ * re-sell.
+ *
+ * FORK 2026-09-04. The chart's legend used to call getRoutedLogoSvg(g.ids[0]), which
+ * answers "who made this MODEL" — the right question for a dot, the wrong one for a
+ * chip that stands for a whole vendor. The two coincide for every group whose key IS
+ * its vendor (openai, google, kimi) and diverge for exactly the routers, which is why
+ * the bug hid: 14 of 15 chips were right.
+ *
+ * Undefined when the key names nothing we hold art for, so the caller keeps its
+ * existing per-model fallback. This function never invents a brand — same rule as
+ * every other resolver in this file.
+ */
+export function getVendorKeyLogoSvg(key: string): string | undefined {
+  const k = (key || "").toLowerCase();
+  // Router marks live here and ONLY here — see the note above OPENROUTER_MARK_SVG for
+  // why they must not reach the per-model resolver.
+  if (k === "openrouter") return OPENROUTER_MARK_SVG;
+  if (hasOwnKey(PROVIDER_LOGO_SVG, k)) return PROVIDER_LOGO_SVG[k];
+  return getVendorSegmentLogoSvg(k);
+}
+
+/**
+ * The mark for a model FAMILY, read out of the id text. Undefined when no family
+ * matches — and also when one matches but this file holds no art for its key, which
+ * returns immediately rather than falling through to a later, wronger entry. That
+ * guard is what stops a future addition from inventing a brand: name a family here
+ * whose mark we do not ship and it gets the honest glyph, not somebody else's logo.
+ */
+function getFamilyLogoSvg(modelId: string): string | undefined {
+  const id = modelId || "";
+  for (const [re, key] of MODEL_FAMILY_MARKS) {
+    if (!re.test(id)) continue;
+    return hasOwnKey(PROVIDER_LOGO_SVG, key) ? PROVIDER_LOGO_SVG[key] : undefined;
+  }
+  return undefined;
+}
+
 export const PROVIDER_COLORS: Record<string, string> = {
   anthropic: "#D97757",
   "claude-code": "#D97757",
   google: "#8ab4f8",
   openai: "#ccc",
   "github-copilot": "#00A4EF",
+  copilot: "#00A4EF",
   ollama: "#ff9b6b",
   xai: "#111",
   grok: "#111",
@@ -122,6 +317,7 @@ export const PROVIDER_BORDER_COLORS: Record<string, string> = {
   google: "#1a73e8",
   openai: "#444",
   "github-copilot": "#0078D4",
+  copilot: "#0078D4",
   ollama: "#ff6b35",
   unknown: "#30363d",
 };
@@ -150,7 +346,12 @@ export function getProviderBorderColor(provider: string): string {
 // An unknown provider now returns a NEUTRAL routed mark. Being unidentified is a fact
 // the chart is allowed to show; being mislabelled as a competitor is not.
 export function getProviderLogoSvg(provider: string): string {
-  return PROVIDER_LOGO_SVG[provider] ?? UNKNOWN_MARK_SVG;
+  // hasOwnKey, not a bare index: getProviderLogoSvg("constructor") returned
+  // Object.prototype.constructor — a truthy FUNCTION — and every caller of this
+  // function drops the result straight into innerHTML or a template string.
+  const own =
+    provider && hasOwnKey(PROVIDER_LOGO_SVG, provider) ? PROVIDER_LOGO_SVG[provider] : undefined;
+  return own ?? UNKNOWN_MARK_SVG;
 }
 
 /**
@@ -161,7 +362,16 @@ export function getProviderLogoSvg(provider: string): string {
  *   2. the vendor named in the id's MIDDLE segment — `openrouter/<vendor>/<model>` —
  *      when that vendor is one whose official art we already ship,
  *   3. the provider's own mark,
- *   4. a neutral routed glyph.
+ *   4. the vendor named in a 2-SEGMENT id's leading segment (`tencent/hy3`) — the
+ *      only shape openclaw.json actually stores, which step 2's `>= 3` gate never saw,
+ *   5. the model FAMILY read out of the id text, restricted to closed-weight names
+ *      that can belong to exactly one org (`claude-opus-5` says Anthropic in English),
+ *   6. a neutral routed glyph, which now carries a <title> saying so.
+ *
+ * Steps 4 and 5 are FORK 2026-09-03 and run ONLY where 1–3 all missed — i.e. exactly
+ * where this function used to return the glyph. Neither can turn a correct mark into a
+ * wrong one; the alternatives rejected to get that property are written out above
+ * MODEL_FAMILY_MARKS.
  *
  * Step 2 is what recovers `openrouter/google/gemini-3.7-flash` and
  * `openrouter/anthropic/claude-fable-5.1`: the vendor is stated verbatim in the id
@@ -175,32 +385,62 @@ export function getProviderLogoSvg(provider: string): string {
  * middle SEGMENT, not on any model, so the `openai` and `anthropic` aliases stay and
  * keep resolving whatever routed id arrives next.
  *
- * There is deliberately NO step that guesses. Vendors we hold no art for (NVIDIA,
- * Meta, Tencent, MiniMax, Xiaomi, Meituan, Upstage, Thinking Machines, Nex AGI,
- * InclusionAI) land on the neutral glyph and are told apart by their bubble colour
- * and label, which is honest. Their real marks need the @lobehub/icons-static-svg
- * package that generated vendor-marks.ts and is no longer installed.
+ * There is still deliberately NO step that guesses a BRAND. Step 4 reads a vendor the
+ * id STATES; step 5 reads a family name only one org ships. Neither invents artwork,
+ * and a segment or family whose mark this file does not hold returns undefined rather
+ * than a neighbour's logo. Open-weight architecture names (llama, mistral, qwen,
+ * gemma) are deliberately absent from the family table — `hermes-3-llama-3.1-405b` is
+ * Nous Research's and `llama-3.1-sonar-large` is Perplexity's, so reading Meta out of
+ * either would be the lie this whole file exists to stop.
+ *
+ * CORRECTED 2026-09-03. This paragraph used to say NVIDIA, Meta, Tencent, MiniMax,
+ * Xiaomi, Meituan and Upstage "land on the neutral glyph", and that their marks "need
+ * the @lobehub/icons-static-svg package … no longer installed". Both went false on
+ * 2026-09-02, when the block above shipped all seven marks — and a stale optic is
+ * worse than a missing one, because it is read and believed. Still genuinely unmarked,
+ * and honestly so: Thinking Machines (inkling), Nex AGI (nex-n2-pro), InclusionAI
+ * (ling-3.0-flash) and Mistral. Those keep the glyph and are told apart by their
+ * bubble colour and label.
  */
 export function getRoutedLogoSvg(modelId: string, provider: string): string {
   const byModel = getModelLogoSvg(modelId);
   if (byModel) return byModel;
   const seg = (modelId || "").split("/");
   if (seg.length >= 3) {
-    const alias = ROUTED_VENDOR_ALIASES[seg[1].toLowerCase()];
-    if (alias && PROVIDER_LOGO_SVG[alias]) return PROVIDER_LOGO_SVG[alias];
+    const routed = getVendorSegmentLogoSvg(seg[1]);
+    if (routed) return routed;
   }
-  return PROVIDER_LOGO_SVG[provider] ?? UNKNOWN_MARK_SVG;
+  const byProvider =
+    provider && hasOwnKey(PROVIDER_LOGO_SVG, provider) ? PROVIDER_LOGO_SVG[provider] : undefined;
+  if (byProvider) return byProvider;
+  // Everything past here runs only when steps 1–3 all missed, which is precisely where
+  // this function used to return UNKNOWN_MARK_SVG. A provider that is empty, that
+  // merely ECHOES the model id, or that names something we hold no mark for are all
+  // the same fact — "we were never told" — and all three arrive here together.
+  if (seg.length === 2) {
+    const owned = getVendorSegmentLogoSvg(seg[0]);
+    if (owned) return owned;
+  }
+  return getFamilyLogoSvg(modelId) ?? UNKNOWN_MARK_SVG;
 }
 
 // FORK 2026-08-04 (the architect): the OpenRouter vendors (Kimi, Qwen, GLM, DeepSeek) all
 // report provider "openrouter", so getProviderLogoSvg fell through to its Anthropic
 // default and painted a Claude sparkle next to a Kimi model. Identity for these is
 // carried by the MODEL id, so callers that have one should prefer this function and
-// fall back to getProviderLogoSvg only when THIS function returns undefined
-// (getProviderLogoSvg itself never does — it always defaults to the sparkle).
-// CAVEAT: vendorOfModel() is first-match-wins and tests qwen before deepseek, so a
-// cross-vendor id like "deepseek/deepseek-r1-distill-qwen-32b" resolves to qwen.
-// That ordering fix belongs in vendor-marks.ts, not here.
+// fall back to getProviderLogoSvg only when THIS function returns undefined.
+//
+// TWO CORRECTIONS, 2026-09-03 — both sentences that stood here had gone false, and a
+// false comment is read and believed:
+//   · "(getProviderLogoSvg itself never does — it always defaults to the sparkle)":
+//     FORK 2026-08-30 removed the sparkle default. It returns the neutral glyph.
+//   · "CAVEAT: vendorOfModel() … tests qwen before deepseek, so
+//     'deepseek/deepseek-r1-distill-qwen-32b' resolves to qwen. That ordering fix
+//     belongs in vendor-marks.ts": vendor-marks.ts:77 tests DEEPSEEK FIRST, under a
+//     comment marked ORDER IS LOAD-BEARING. The bug was fixed there; this note kept
+//     describing it as live and pointed the next reader at correct code to "fix".
+//     provider-logos.test.ts now locks the real behaviour instead of asserting it in
+//     prose.
 export function getModelLogoSvg(modelId: string): string | undefined {
   const key = vendorOfModel(modelId);
   return key ? VENDOR_MARKS[key]?.svg : undefined;

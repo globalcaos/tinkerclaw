@@ -26,6 +26,11 @@ Produce a well-structured, evidence-based document that communicates complex ide
 
 ### 1. Outline
 
+Shape the outline as a story before anything else: vision, claim, explanation, proof where possible, with an
+abstract that opens on the vision (`adversarial-review-loop` § What a paper is).
+Write the contributions list first (each refutable, each tied to the section that will prove it), then
+an outline of one sentence per planned paragraph (Peyton Jones; Mensh & Kording, rule 9).
+
 **Tools:** write
 **Done when:** Section structure with bullet points for each section
 
@@ -41,9 +46,11 @@ Gather supporting material. Read relevant code, docs, or prior work. Collect spe
 ### 3. Draft
 
 **Tools:** write, edit
-**Done when:** Complete first draft with all sections filled
+**Done when:** Complete first draft with all sections filled, and every section whose argument is a flow, an architecture, a cycle, a taxonomy or a progression carries a figure reference (`![caption](images/fig-<name>.png)`) drawn by {{paper-figures}}
 
 Write each section following the outline. Don't self-edit during drafting -- get ideas down first. Use concrete examples over abstract descriptions. Include diagrams or tables where they clarify.
+
+Figures belong to the draft, not to the build. While drafting, list the sections that need one, write each Napkin brief to `images/briefs/<name>.md`, and run {{paper-figures}} (concepts through Napkin, numbers through matplotlib) before calling the draft done. {{compile-paper}} draws only the figures the draft already references, so a draft with no references ships with none.
 
 ### 4. Review
 
@@ -82,4 +89,5 @@ Address review findings. Tighten prose -- remove filler words, shorten sentences
 
 - **Stream of consciousness draft:** Agent writes without structure, producing a wall of text. The outline step prevents this by requiring section structure first.
 - **Unsupported claims:** Agent makes technical assertions without checking code. The research step requires gathering evidence before drafting.
+- **A 34,000-word paper shipped with one figure (2026-10-03).** The AcmeVision temporal-network paper was drafted, reviewed and compiled with a single D2 drawing: no step asked for figures, and compile-paper found nothing missing because the draft referenced nothing. the architect: "Great work on the paper, but you forgot to inject in it napkin diagrams as our recipe calls for." Step 3 now plans the figures and runs paper-figures.
 - **Infinite polish loop:** Agent keeps "improving" the same paragraph. Polish step is bounded -- address review findings, then stop.

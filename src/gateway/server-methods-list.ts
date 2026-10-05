@@ -12,6 +12,15 @@ const BASE_METHODS = [
   "doctor.memory.repairDreamingArtifacts",
   "doctor.memory.dedupeDreamDiary",
   "logs.tail",
+  "logs.writer.stats",
+  // FORK 2026-09-25 (logging.md §9 step 10): the query surface — saved queries by name and the
+  // catalog. Classified READ in method-scopes.ts in the same change.
+  "logs.query",
+  "logs.catalog",
+  // FORK 2026-09-25 (logging.md §9 step 7): the UI's telemetry ingest — the UI must be able to call
+  // it. Classified WRITE in method-scopes.ts in the same change: unclassified is default-deny for
+  // clients and silently ADMIN on the server.
+  "logs.ingest",
   "channels.status",
   "channels.start",
   "channels.logout",
@@ -166,6 +175,7 @@ export const GATEWAY_EVENTS = [
   "connect.challenge",
   "agent",
   "chat",
+  "chat.notice",
   "session.message",
   "session.tool",
   "sessions.changed",

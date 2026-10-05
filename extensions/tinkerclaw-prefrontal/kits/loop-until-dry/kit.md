@@ -25,7 +25,7 @@ parallelism:
     re-invoke this kit — that is the only loop mechanism available.
 model:
   provider: "anthropic"
-  name: "claude-sonnet-4-6"
+  name: "claude-sonnet-5-5"
   hosting: "cloud API"
 ---
 

@@ -64,9 +64,7 @@ function mtime(p) {
   }
 }
 
-const targets = [
-  { name: "core runtime", src: path.join(ROOT, "src"), built: path.join(ROOT, "dist", "entry.js") },
-];
+const targets = [{ name: "core runtime", src: path.join(ROOT, "src"), built: path.join(ROOT, "dist", "entry.js") }];
 
 const extDir = path.join(ROOT, "extensions");
 for (const e of fs.existsSync(extDir) ? fs.readdirSync(extDir, { withFileTypes: true }) : []) {
@@ -90,16 +88,12 @@ if (stale.length === 0) {
 }
 
 stale.sort((a, b) => b.gapH - a.gapH);
-console.log(
-  `STALE: ${stale.length} of ${targets.length} build targets are older than their source.`,
-);
+console.log(`STALE: ${stale.length} of ${targets.length} build targets are older than their source.`);
 for (const s of stale) {
   console.log(
     `  ${s.name.padEnd(34)} built ${new Date(s.built).toISOString().slice(0, 16)}  ` +
       `source is ${s.gapH.toFixed(1)}h newer`,
   );
 }
-console.log(
-  `\nThe gateway runs the BUILT artifact. Rebuild + restart, or these fixes are not live.`,
-);
+console.log(`\nThe gateway runs the BUILT artifact. Rebuild + restart, or these fixes are not live.`);
 process.exit(STRICT ? 1 : 0);

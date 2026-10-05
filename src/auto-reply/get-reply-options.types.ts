@@ -31,6 +31,21 @@ export type ReplyThreadingPolicy = {
 
 export type SourceReplyDeliveryMode = "automatic" | "message_tool_only";
 
+/**
+ * FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 wire contract + §7 step G2,
+ * principle PQ-8 "DISPOSITION IS REPORTED, NOT GUESSED"): what the gateway did with an accepted
+ * prompt when a turn was already running.
+ *
+ * - "steered"    the running turn ACCEPTED the text for delivery (queueEmbeddedPiMessage true).
+ * - "backlogged" a follow-up turn was really queued behind the running turn (enqueue returned true).
+ * - "dropped"    the queue policy refused the turn outright.
+ *
+ * WIRE MIRROR: these three literals are re-declared as a TypeBox union on `ChatEventSchema` in
+ * src/gateway/protocol/schema/logs-chat.ts. That object is `additionalProperties: false`, so the
+ * two lists MUST stay identical — change one and change the other in the SAME commit.
+ */
+export type PromptDisposition = "steered" | "backlogged" | "dropped";
+
 export type GetReplyOptions = {
   /** Override run id for agent events (defaults to random UUID). */
   runId?: string;
@@ -169,4 +184,21 @@ export type GetReplyOptions = {
   hasRepliedRef?: { value: boolean };
   /** Override agent timeout in seconds (0 = no timeout). Threads through to resolveAgentTimeoutMs. */
   timeoutOverrideSeconds?: number;
+  /**
+   * FORK 2026-09-24 (prompt-queue.md §7 step G2): called by the agent-runner queue branches when a
+   * prompt did NOT start its own run, so the caller can REPORT the placement instead of letting the
+   * client guess it (PQ-8). Never called for a prompt that runs now — absence is the "run now, or an
+   * old gateway" case, and callers must keep their pre-G2 behaviour for it.
+   *
+   * May be called MORE THAN ONCE for one prompt: "steered" when the running turn accepts the text,
+   * then "backlogged" if that delivery is later lost (the §2 STEERED → BEHIND edge). Reports are
+   * best-effort and unordered with respect to the caller's own completion — the second one fires
+   * from a debounce timer inside the steer buffer and may arrive after the caller has already
+   * published the first. Treat this as a placement HINT, never as a terminal.
+   *
+   * `runPreparedReply` forwards the whole options object into `runReplyAgent`, so this threads
+   * through unchanged; any future `Omit<GetReplyOptions, ...>` in the dispatch chain must NOT drop
+   * it or the report dies silently.
+   */
+  onPromptDisposition?: (disposition: PromptDisposition) => void;
 };

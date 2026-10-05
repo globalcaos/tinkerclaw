@@ -5,6 +5,7 @@ import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { ensureContextEnginesInitialized } from "../../context-engine/init.js";
 import { resolveContextEngine } from "../../context-engine/registry.js";
+import { resolveChannelReplyTexts } from "../../fork/channel-reply.js";
 import { emitAgentPlanEvent } from "../../infra/agent-events.js";
 import { sleepWithAbort } from "../../infra/backoff.js";
 import { freezeDiagnosticTraceContext } from "../../infra/diagnostic-trace-context.js";
@@ -152,7 +153,50 @@ import { createUsageAccumulator, mergeUsageIntoAccumulator } from "./usage-accum
 
 type ApiKeyInfo = ResolvedProviderAuth;
 
-const MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES = 1;
+const MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES = 2;
+
+/**
+ * Should a turn killed by the LLM idle watchdog be retried on the SAME model?
+ *
+ * FORK 2026-09-04. This used to reuse `canRestartForLiveSwitch`, which demands
+ * `toolMetas.length === 0 && assistantTexts.length === 0` — a correct guard for its own
+ * purpose (switching model mid-turn would discard work) but wrong here, and in fact
+ * self-contradictory when combined with `!producedNoContent`: that requires text OR
+ * thinking, while the other requires no text. Only a thinking-only stall satisfied both.
+ * Measured consequence over one week: 1 retry against 77 surfaced idle timeouts, and the
+ * architect typed "keep going" after ~40 of them.
+ *
+ * Retrying the same model after an idle stall loses nothing — the partial tool results and
+ * assistant text are already persisted to the transcript, so the retry re-prompts with that
+ * context. That is precisely what typing "continue" does by hand.
+ *
+ * What DOES still block a retry are the two side effects that must never happen twice:
+ * a message already sent through a messaging tool, and an approval prompt already shown.
+ * `producedNoContent` stays out because an empty attempt belongs to the empty-response
+ * retry path (run/incomplete-turn.ts), not here.
+ */
+export function allowIdleTimeoutRetry(params: {
+  timedOut: boolean;
+  idleTimedOut: boolean;
+  timedOutDuringCompaction: boolean;
+  fallbackConfigured: boolean;
+  producedNoContent: boolean;
+  didSendViaMessagingTool: boolean;
+  didSendDeterministicApprovalPrompt: boolean;
+  retriesSoFar: number;
+  maxRetries?: number;
+}): boolean {
+  return (
+    params.timedOut &&
+    params.idleTimedOut &&
+    !params.timedOutDuringCompaction &&
+    !params.fallbackConfigured &&
+    !params.producedNoContent &&
+    !params.didSendViaMessagingTool &&
+    !params.didSendDeterministicApprovalPrompt &&
+    params.retriesSoFar < (params.maxRetries ?? MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES)
+  );
+}
 type EmbeddedRunAttemptForRunner = Awaited<ReturnType<typeof runEmbeddedAttemptWithBackend>>;
 
 function normalizeEmbeddedRunAttemptResult(
@@ -928,6 +972,7 @@ export async function runEmbeddedPiAgent(
             skillsSnapshot: params.skillsSnapshot,
             prompt,
             transcriptPrompt: params.transcriptPrompt,
+            promptKeys: params.promptKeys,
             images: params.images,
             imageOrder: params.imageOrder,
             clientTools: params.clientTools,
@@ -984,6 +1029,7 @@ export async function runEmbeddedPiAgent(
             inputProvenance: params.inputProvenance,
             streamParams: params.streamParams,
             modelRun: params.modelRun,
+            continueFromTranscript: params.continueFromTranscript,
             promptMode: params.promptMode,
             ownerNumbers: params.ownerNumbers,
             enforceFinalTag: params.enforceFinalTag,
@@ -1833,14 +1879,18 @@ export async function runEmbeddedPiAgent(
             timedOut,
             idleTimedOut,
             timedOutDuringCompaction,
-            allowSameModelIdleTimeoutRetry:
-              timedOut &&
-              idleTimedOut &&
-              !timedOutDuringCompaction &&
-              !fallbackConfigured &&
-              canRestartForLiveSwitch &&
-              !producedNoContent &&
-              sameModelIdleTimeoutRetries < MAX_SAME_MODEL_IDLE_TIMEOUT_RETRIES,
+            allowSameModelIdleTimeoutRetry: allowIdleTimeoutRetry({
+              timedOut,
+              idleTimedOut,
+              timedOutDuringCompaction,
+              fallbackConfigured,
+              producedNoContent,
+              didSendViaMessagingTool: Boolean(attempt.didSendViaMessagingTool),
+              didSendDeterministicApprovalPrompt: Boolean(
+                attempt.didSendDeterministicApprovalPrompt,
+              ),
+              retriesSoFar: sameModelIdleTimeoutRetries,
+            }),
             assistantProfileFailureReason,
             lastProfileId,
             modelId,
@@ -1923,8 +1973,22 @@ export async function runEmbeddedPiAgent(
           const finalAssistantVisibleText = resolveFinalAssistantVisibleText(sessionLastAssistant);
           const finalAssistantRawText = resolveFinalAssistantRawText(sessionLastAssistant);
 
-          const payloads = buildEmbeddedRunPayloads({
+          // FORK 2026-10-02 (channel-reply): a provider that coalesces a tool-loop turn into one
+          // text may stamp its message with the part a chat channel should get (src/fork/channel-reply.ts).
+          const channelReply = resolveChannelReplyTexts({
             assistantTexts: attempt.assistantTexts,
+            assistant: currentAttemptAssistant,
+          });
+          if (channelReply.applied) {
+            const line = `[channel-reply] applied=${channelReply.applied} runId=${params.runId} sessionKey=${params.sessionKey ?? params.sessionId}`;
+            if (channelReply.applied === "length-mismatch") {
+              log.warn(line);
+            } else {
+              log.info(line);
+            }
+          }
+          const payloads = buildEmbeddedRunPayloads({
+            assistantTexts: channelReply.assistantTexts,
             toolMetas: attempt.toolMetas,
             lastAssistant: attempt.lastAssistant,
             lastToolError: attempt.lastToolError,

@@ -3,9 +3,14 @@
 Budget Collector Daemon
 
 Periodically collects usage data from:
-1. OpenClaw transcript files (local)
+1. OpenClaw transcript files (local) — ONLY when TOKEN_PANEL_READ_TRANSCRIPTS=1
 2. Anthropic Usage API (if configured)
 3. Manus task tracking (manual + polling)
+
+Transcripts hold your prompts and the replies in full. Reading them is opt-in and off by
+default: the collector checks TOKEN_PANEL_READ_TRANSCRIPTS at the call site before it
+constructs a scan, and the parser enforces the same variable independently. Only token
+counts are extracted either way — message text is never written to the database.
 
 Run with: python collector.py
 Or as service: systemctl start budget-collector
@@ -14,6 +19,7 @@ Or as service: systemctl start budget-collector
 import asyncio
 import argparse
 import logging
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -29,13 +35,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger("budget-collector")
 
+# Opt-in switch for reading local session transcripts. Checked here as well as inside
+# TranscriptParser: a reader that is gated in only one place is one refactor away from
+# being ungated.
+READ_TRANSCRIPTS_ENV = "TOKEN_PANEL_READ_TRANSCRIPTS"
+
 
 class BudgetCollector:
     """Main collector daemon."""
     
     def __init__(self):
         self.conn = db.get_connection()
-        self.transcript_parser = TranscriptParser()
+        # NOT constructed here. TranscriptParser refuses to exist unless the opt-in is
+        # set, so building it eagerly made the whole collector unstartable for anyone
+        # who had not enabled transcript reading — which is a poor reason to switch on
+        # reading your prompts. It is built inside scan_transcripts(), after the check.
+        self.transcript_parser = None
         self.anthropic_parser = AnthropicParser()
         self.manus_parser = ManusParser()
         self.gemini_parser = GeminiParser()
@@ -45,13 +60,23 @@ class BudgetCollector:
         self.state_file = Path.home() / ".openclaw" / "data" / "collector-state.json"
     
     def scan_transcripts(self):
-        """Scan OpenClaw transcripts for new usage data."""
+        """Scan OpenClaw transcripts for new usage data — only if you switched it on."""
+        if os.environ.get(READ_TRANSCRIPTS_ENV) != "1":
+            logger.info(
+                "Transcript scanning is off (set %s=1 to enable). Skipping.",
+                READ_TRANSCRIPTS_ENV,
+            )
+            return 0
+
         logger.info("Scanning transcripts...")
-        
+
+        if self.transcript_parser is None:
+            self.transcript_parser = TranscriptParser()
+
         # Only scan files modified since last scan
         since = self.last_scan
         count = 0
-        
+
         for usage in self.transcript_parser.scan_all_sessions(since=since):
             # Calculate cost if not present
             if usage.get("cost_usd", 0) == 0:
@@ -153,7 +178,7 @@ class BudgetCollector:
         """Run a single collection cycle."""
         logger.info("Starting collection cycle...")
         
-        # Scan local transcripts
+        # Scan local transcripts — no-ops unless TOKEN_PANEL_READ_TRANSCRIPTS=1
         self.scan_transcripts()
         
         # Fetch from APIs if configured

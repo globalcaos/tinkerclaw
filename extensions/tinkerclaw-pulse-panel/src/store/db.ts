@@ -6,12 +6,19 @@
  * calls reuse the cached connection. Mirrors the pattern from
  * extensions/tinkerclaw-whatsapp/src/history/db.ts — schema lives inline
  * because tsdown bundlers don't ship .sql assets.
+ *
+ * SCOPE (2026-09-08): by default this opens ONLY the metric tables the Pulse
+ * panel owns. The task/briefing/calendar tables in the same SQLite file belong
+ * to the sibling `tinkerclaw-task-panel`, which creates and migrates them
+ * itself; a metrics panel must not rewrite another plugin's task rows as a side
+ * effect of booting. Operators running Pulse without the task panel can opt in
+ * with `manageTaskSchema: true`, which restores the old bootstrap + migrations.
  */
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type { ControlPanelResolvedConfig } from "../paths.js";
-import { CONTROL_PANEL_SCHEMA_SQL } from "./schema.js";
+import { PULSE_PANEL_SCHEMA_SQL, TASK_PANEL_SCHEMA_SQL } from "./schema.js";
 
 let db: Database.Database | null = null;
 let initializedAt = 0;
@@ -28,76 +35,72 @@ export function getDb(cfg: ControlPanelResolvedConfig): Database.Database {
   db.pragma("foreign_keys = ON");
 
   // CREATE TABLE IF NOT EXISTS makes this idempotent — subsequent boots are no-ops.
-  db.exec(CONTROL_PANEL_SCHEMA_SQL);
+  db.exec(PULSE_PANEL_SCHEMA_SQL);
 
-  // v3.1.1 migration — old DBs have a CHECK constraint on task.priority_axis
-  // that lists only ('online','family','me','acme','meta'). The new schema
-  // drops that constraint so we can add 'ventures' (and future axes) without
-  // a schema migration each time. Detect + rewrite in-place; idempotent.
-  migrateRemoveAxisCheck(db);
-
-  // v3.3 migration — old DBs have status CHECK without 'back_burner'. Widen
-  // the constraint so the new "snooze indefinitely" feature can write the
-  // status. Same in-place rewrite pattern as the axis migration above.
-  migrateWidenStatusCheck(db);
-
-  // v3.5 migration — old DBs have task_axis without the parent_id column that
-  // backs the group → sub-group hierarchy in the Today card redesign. Plain
-  // ALTER TABLE ADD COLUMN (SQLite supports it for NULL-default columns with
-  // a FK target); idempotent via PRAGMA table_info check.
-  addAxisParentIdColumn(db);
-
-  // FORK 2026-05-22: Todoist deprecation cleanup. Walk task.metadata_json and
-  // remove every `todoist_*` key. Idempotent one-shot — subsequent boots find
-  // nothing to strip and are no-ops.
-  stripTodoistMetadata(db);
-
-  // v3.3 — seed task_axis + task_est_preset with the prior hardcoded defaults
-  // if the tables are empty. Idempotent — only inserts on truly empty tables,
-  // so user edits survive subsequent boots.
-  seedTaxonomyDefaults(db);
+  // The task-side schema and its migrations are OFF by default: those tables
+  // belong to tinkerclaw-task-panel, which bootstraps and migrates them on its
+  // own boot. Enabling this makes the Pulse panel rewrite the `task` table and
+  // seed taxonomy rows, so it stays an explicit operator choice.
+  if (cfg.manageTaskSchema) {
+    db.exec(TASK_PANEL_SCHEMA_SQL);
+    migrateTaskSchema(db);
+  }
 
   initializedAt = Date.now();
   return db;
 }
 
-function migrateRemoveAxisCheck(db: Database.Database): void {
+/**
+ * The task-table migrations + first-boot seeds, run ONLY under
+ * `manageTaskSchema: true`. Each step is individually idempotent.
+ *
+ * v3.1.1 — drop the priority_axis CHECK constraint.
+ * v3.3   — widen the status CHECK to include 'back_burner'.
+ * v3.5   — add task_axis.parent_id for the group → sub-group hierarchy.
+ * FORK 2026-05-22 — strip deprecated `todoist_*` keys from task.metadata_json.
+ * v3.3   — seed task_axis + task_est_preset when those tables are empty.
+ */
+export function migrateTaskSchema(db: Database.Database): void {
+  migrateRemoveAxisCheck(db);
+  migrateWidenStatusCheck(db);
+  addAxisParentIdColumn(db);
+  stripTodoistMetadata(db);
+  seedTaxonomyDefaults(db);
+}
+
+// Matches the enumerated axis CHECK that pre-v3.1.1 schemas put on
+// task.priority_axis, whatever ids it happened to list.
+const AXIS_CHECK_RE = /\s*CHECK\s*\(\s*priority_axis\s+IN\s*\([^()]*\)\s*\)/i;
+const TASK_CREATE_RE = /^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["'`[]?task["'`\]]?\s*\(/i;
+
+/**
+ * v3.1.1 — drop the enumerated CHECK on task.priority_axis. Axes are user data
+ * (the task_axis table), so the column accepts any id. Detection is generic:
+ * any `priority_axis IN (...)` clause triggers the rebuild. The new table is
+ * the stored CREATE statement minus that one clause, so every column, row and
+ * value (including axis ids the old CHECK listed) is carried over verbatim.
+ * Idempotent: a table without the clause is left alone.
+ */
+export function migrateRemoveAxisCheck(db: Database.Database): void {
   const row = db
     .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task'")
     .get() as { sql: string } | undefined;
-  if (!row?.sql) return;
-  if (!row.sql.includes("priority_axis IN ('online','family','me','acme','meta')")) {
+  if (!row?.sql || !AXIS_CHECK_RE.test(row.sql)) {
     return; // already migrated or fresh schema
   }
+  const createNew = row.sql
+    .replace(AXIS_CHECK_RE, "")
+    .replace(TASK_CREATE_RE, "CREATE TABLE task_new (");
+  if (!createNew.startsWith("CREATE TABLE task_new (")) {
+    return; // unexpected shape — leave alone rather than guess
+  }
+  // Foreign keys off for the rebuild so dropping the old table cannot cascade
+  // into rows that reference it (the PRAGMA is a no-op inside a transaction).
+  const fkOn = (db.pragma("foreign_keys", { simple: true }) as number) === 1;
+  if (fkOn) db.pragma("foreign_keys = OFF");
   db.exec("BEGIN");
   try {
-    db.exec(`
-      CREATE TABLE task_new (
-        id TEXT PRIMARY KEY,
-        text TEXT NOT NULL,
-        context_md TEXT,
-        status TEXT NOT NULL CHECK (status IN ('open','in_progress','resolved','dropped','dismissed')),
-        source TEXT NOT NULL,
-        source_ref TEXT,
-        briefing_pass_id TEXT REFERENCES briefing_pass(id),
-        priority_axis TEXT,
-        priority_rank INTEGER NOT NULL DEFAULT 50,
-        carry_days INTEGER NOT NULL DEFAULT 0,
-        age_seconds INTEGER NOT NULL DEFAULT 0,
-        due_date TEXT,
-        dismissal_kind TEXT CHECK (dismissal_kind IN ('not_a_task','not_relevant','wrong_priority','duplicate','out_of_scope','other')),
-        dismissal_note TEXT,
-        est_minutes INTEGER,
-        hands TEXT CHECK (hands IN ('user','assistant','either')),
-        inferred_signal_json TEXT,
-        metadata_json TEXT,
-        recurrence_rule_text TEXT,
-        recurrence_parent_id TEXT REFERENCES task(id),
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        resolved_at INTEGER
-      );
-    `);
+    db.exec(createNew);
     db.exec("INSERT INTO task_new SELECT * FROM task");
     db.exec("DROP TABLE task");
     db.exec("ALTER TABLE task_new RENAME TO task");
@@ -113,6 +116,8 @@ function migrateRemoveAxisCheck(db: Database.Database): void {
   } catch (err) {
     db.exec("ROLLBACK");
     throw err;
+  } finally {
+    if (fkOn) db.pragma("foreign_keys = ON");
   }
 }
 
@@ -246,7 +251,7 @@ function seedTaxonomyDefaults(db: Database.Database): void {
       { id: "online", label: "💰 Online", position: 20 },
       { id: "family", label: "👨‍👩‍👧 Family", position: 30 },
       { id: "me", label: "🏃 Me", position: 40 },
-      { id: "acme", label: "🏭 ACME", position: 50 },
+      { id: "work", label: "💼 Work", position: 50 },
       { id: "meta", label: "⚙️ Meta", position: 60 },
     ];
     db.exec("BEGIN");

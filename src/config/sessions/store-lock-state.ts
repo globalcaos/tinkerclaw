@@ -6,6 +6,18 @@ export type SessionStoreLockTask = {
   reject: (reason: unknown) => void;
   timeoutMs?: number;
   staleMs: number;
+  /**
+   * TINKER_UI_DESIGN_BIBLE/logging.md §4.3 — the `site` label of `store.lock.held`
+   * and `store.lock.timeout`: WHICH writer this acquisition belongs to. Always a
+   * printable-ASCII tag with no whitespace (emit.ts's LABEL_VALUE), derived from the
+   * store path when the caller passed none, so the label column is never free text
+   * and never unbounded.
+   */
+  site: string;
+  /** Wall clock when the task entered the queue; `wait_ms` is measured from here. */
+  enqueuedAtMs: number;
+  /** Writers in the queue when this one ARRIVED: those ahead of it, plus itself. */
+  queueDepth: number;
 };
 
 export type SessionStoreLockQueue = {

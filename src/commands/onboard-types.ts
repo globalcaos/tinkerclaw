@@ -37,6 +37,8 @@ export type OnboardOptions = OnboardDynamicProviderOptions & {
   /** "manual" is an alias for "advanced". */
   flow?: "quickstart" | "advanced" | "manual" | "import";
   workspace?: string;
+  /** FORK: the agent's name; sets agents.defaults.identityLine. */
+  agentName?: string;
   nonInteractive?: boolean;
   /** Required for non-interactive setup; skips the interactive risk prompt when true. */
   acceptRisk?: boolean;

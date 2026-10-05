@@ -3622,6 +3622,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
               systemPromptOverride: {
                 type: "string",
               },
+              identityLine: {
+                type: "string",
+              },
               promptOverlays: {
                 type: "object",
                 properties: {
@@ -6161,6 +6164,9 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                   type: "string",
                 },
                 systemPromptOverride: {
+                  type: "string",
+                },
+                identityLine: {
                   type: "string",
                 },
                 agentRuntime: {

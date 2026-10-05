@@ -18,6 +18,20 @@ const ROOT_RUNTIME_ALIAS_PATTERN = /^(?<base>.+\.(?:runtime|contract))-[A-Za-z0-
  * Each entry: { src: repo-root-relative source, dest: dist-relative dest }
  */
 export const STATIC_EXTENSION_ASSETS = [
+  // FORK 2026-09-22: tinkerclaw-moral-code reads its bundled defaults (ethical rules,
+  // objectives, starter kit) from prompts/ at run time; undeclared = absent from dist.
+  ...[
+    "ethical-rules-default.md",
+    "objectives-default.md",
+    "verification-discipline.md",
+    "persistence-and-blockers.md",
+    "engineering-discipline.md",
+    "memory-discipline.md",
+    "reflection-loop.md",
+  ].map((file) => ({
+    src: `extensions/tinkerclaw-moral-code/prompts/${file}`,
+    dest: `dist/extensions/tinkerclaw-moral-code/prompts/${file}`,
+  })),
   // acpx MCP proxy — co-deployed alongside the acpx index bundle so that
   // `path.resolve(dirname(import.meta.url), "mcp-proxy.mjs")` resolves correctly
   // at runtime from the built ACPX extension directory.

@@ -7,6 +7,7 @@ import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { deriveContextPromptTokens, hasNonzeroUsage, normalizeUsage } from "../../agents/usage.js";
 import {
+  appendUserMessageToSessionTranscript,
   loadSessionStore,
   resolveSessionPluginStatusLines,
   resolveSessionPluginTraceLines,
@@ -69,9 +70,11 @@ import {
   type FollowupRun,
   type QueueSettings,
 } from "./queue.js";
+import { resolveFollowupRunPromptKeys } from "./queue/types.js";
 import { createReplyMediaContext } from "./reply-media-paths.js";
 import {
   createReplyOperation,
+  recordSteeredReplyPrompt,
   type ReplyOperation,
   ReplyRunAlreadyActiveError,
 } from "./reply-run-registry.js";
@@ -943,7 +946,19 @@ export async function runReplyAgent(params: {
     agentCfgContextTokens,
   });
 
-  if (shouldSteer && isStreaming) {
+  // FORK 2026-09-24 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3, §7 G3 and G5): the prompt key(s)
+  // this turn answers, one definition for every consumer below: the steer buffer, a lost steer's
+  // follow-up, the STEERED record and this turn's reply operation. For webchat it is the chat.send
+  // idempotencyKey (`messageId`); resolveFollowupRunPromptKeys also folds in a follow-up's
+  // `promptKeys`.
+  const turnPromptKeys = resolveFollowupRunPromptKeys(followupRun);
+
+  // FORK 2026-09-06: `isActive`, not `isStreaming` — see runs.ts
+  // queueEmbeddedPiMessage. A turn that is thinking or running tools is exactly
+  // when the user types a correction, and claude-cli accepts stdin between tool
+  // rounds. Gating on "currently emitting text" made the steer path unreachable
+  // for most mid-turn prompts, which then came back as their own turn later.
+  if (shouldSteer && isActive) {
     // FORK 2026-08-28 — GIVE THE BUFFERED MESSAGE SOMEWHERE TO LAND.
     //
     // MEASURED (the architect, 2026-08-28): with steer-backlog on webchat, a prompt typed mid-turn is
@@ -962,17 +977,88 @@ export async function runReplyAgent(params: {
     // Delivering `combined` rather than `followupRun.prompt`: the buffer coalesces every message
     // queued inside the debounce window, and the surviving fallback belongs to the LAST caller, so
     // enqueueing only that caller's own prompt would silently drop its predecessors. One follow-up
-    // turn carrying the combined text is what the steer path itself would have injected.
+    // turn carrying the combined text is what the steer path itself would have injected. The same
+    // holds for the prompt KEYS (FORK 2026-09-24, prompt-queue.md §7 G3): `promptKeys` hands the
+    // buffer this caller's key, the buffer keeps every caller's, and the fallback gets them all.
     const steered = queueEmbeddedPiMessage(followupRun.run.sessionId, followupRun.prompt, {
-      onDeliveryLost: (_texts, combined) => {
-        enqueueFollowupRun(
+      promptKeys: turnPromptKeys,
+      // FORK 2026-09-06 — RECORD THE STEER, or it replays forever.
+      //
+      // A steered prompt reaches the running claude-cli via stdin and is answered
+      // inside that turn, but that path bypasses pi and wrote NO user row. The
+      // Tinker UI outbox retires an entry only on transcript proof and re-arms
+      // every unproven entry on reconnect, so the prompt was re-sent on each tab
+      // reload until a copy landed while idle and ran as its OWN turn — answered
+      // a second and third time, out of context, up to 1h47m later (measured
+      // 2026-09-06 on agent:main:tinker:mtocsumz).
+      //
+      // Stamping followupRun.messageId is what makes this exact: for webchat it
+      // IS the client's idempotencyKey, so the outbox matches on the key instead
+      // of guessing by text. The append dedupes on that key, so a re-send that
+      // races this write is a no-op rather than a second row.
+      onDelivered: (combined) => {
+        // sessionKey is optional on the run descriptor; without it the append
+        // cannot resolve a store entry, so skip rather than write to the wrong
+        // session. Falls back to the pre-fix behaviour (an unproven outbox
+        // entry) instead of mis-filing a user turn.
+        const steerSessionKey = followupRun.run.sessionKey;
+        if (!steerSessionKey) {
+          return;
+        }
+        void appendUserMessageToSessionTranscript({
+          agentId: followupRun.run.agentId,
+          sessionKey: steerSessionKey,
+          text: combined,
+          idempotencyKey: followupRun.messageId,
+        }).catch(() => {
+          // Best-effort: a failed transcript write must never break a delivered
+          // steer. The worst case is the pre-fix behaviour (an unproven entry).
+        });
+      },
+      onDeliveryLost: (_texts, combined, bufferedPromptKeys) => {
+        // FORK 2026-09-24 (prompt-queue.md §6.3 / §7 G2, PQ-8) — THE STEERED → BEHIND CORRECTION.
+        //
+        // This is a correction, not a first report: "steered" was already reported below the moment
+        // the buffer ACCEPTED the text. `onDeliveryLost` fires from flushSteerBuffer, which always
+        // runs behind a debounce timer, so it may or may not land before the caller publishes its
+        // report. Whatever the caller holds when it publishes is what ships; a later report is lost
+        // BY DESIGN. The authoritative BEHIND → PREPARING move is the follow-up run's `promptKeys`
+        // (plan step G3), never this hint. The steer buffer also keeps only the LAST caller's
+        // fallback (runs.ts: "latest caller-supplied fallback wins"), so when several prompts share
+        // one debounce window only the last caller's disposition is corrected here; the earlier
+        // callers' early finals keep "steered". Their prompts are still linked (§7 G3): the buffer
+        // keeps EVERY caller's key and hands them all to this fallback, the follow-up below carries
+        // them as `promptKeys`, sessions.list reports each one BEHIND (the queue beats the STEERED
+        // record, gateway/session-utils.ts deriveSessionPendingPrompts), and that follow-up run's
+        // `followup` start event names every one (followup-runner.ts resolveFollowupPromptKeys).
+        //
+        // Reported only on a PROVEN enqueue: enqueueFollowupRun returns false on three paths
+        // (message-id dedupe, already queued, and a full queue under dropPolicy "new"), and telling
+        // the client "backlogged" for a prompt that was discarded is exactly the authoritative-wrong
+        // answer PQ-8 exists to abolish.
+        //
+        // `bufferedPromptKeys` already ends with this caller's own keys (handed to the buffer
+        // above), so folding `turnPromptKeys` in again changes nothing in production. It keeps this
+        // caller's key on the follow-up when the fallback is fired with the older two arguments (the
+        // G2 disposition test double does), which is also why the list is read defensively.
+        const lostPromptKeys = resolveFollowupRunPromptKeys({
+          promptKeys: [...(bufferedPromptKeys ?? []), ...turnPromptKeys],
+        });
+        const enqueued = enqueueFollowupRun(
           queueKey,
-          combined === followupRun.prompt ? followupRun : { ...followupRun, prompt: combined },
+          {
+            ...followupRun,
+            prompt: combined,
+            ...(lostPromptKeys.length > 0 ? { promptKeys: lostPromptKeys } : {}),
+          },
           resolvedQueue,
           "message-id",
           queuedRunFollowupTurn,
           false,
         );
+        if (enqueued) {
+          opts?.onPromptDisposition?.("backlogged");
+        }
         // Same liveness re-check the ordinary enqueue path makes below: by the time a lost
         // delivery surfaces the original run has usually ALREADY finished, which is precisely the
         // case that would otherwise leave the followup queue idle forever.
@@ -982,6 +1068,24 @@ export async function runReplyAgent(params: {
       },
     });
     if (steered) {
+      // FORK 2026-09-24 (prompt-queue.md §6.3 / §7 G2, PQ-8): REPORT the placement, never make the
+      // client guess it. True here means ACCEPTED FOR DELIVERY into the running turn — which is
+      // exactly what the §2 STEERED state claims — and the onDeliveryLost hook above corrects it to
+      // "backlogged" if that delivery is later lost.
+      opts?.onPromptDisposition?.("steered");
+      // FORK 2026-09-24 (prompt-queue.md §2 STEERED, §7 G5): and KEEP it where sessions.list can
+      // read it. The running turn's reply operation is the one holder that lives exactly as long as
+      // the STEERED state (it ends with the host turn), so each key is recorded on it; the steer
+      // buffer empties within 1.5 s and cannot be that holder. Recorded on acceptance, like the
+      // disposition above: when the delivery is later lost, the re-enqueued follow-up reports the
+      // key BEHIND and the queue beats this record. With no unsettled operation on the session (a
+      // run that has no reply operation) nothing is recorded and nothing is claimed.
+      const steerSessionKey = sessionKey ?? followupRun.run.sessionKey;
+      if (steerSessionKey) {
+        for (const promptKey of turnPromptKeys) {
+          recordSteeredReplyPrompt(steerSessionKey, promptKey);
+        }
+      }
       // FORK: Always return after successful steer — don't also enqueue as
       // followup, which would cause the message to be processed twice.
       await touchActiveSessionEntry();
@@ -998,12 +1102,26 @@ export async function runReplyAgent(params: {
   });
 
   if (activeRunQueueAction === "drop") {
+    // FORK 2026-09-24 (prompt-queue.md §6.3 / §7 G2, PQ-8): the only branch that truly discards the
+    // turn. resolveActiveRunQueueAction returns "drop" only for an ACTIVE session's HEARTBEAT, and
+    // chat.send never sets `isHeartbeat`, so no webchat prompt reaches this line today — it is
+    // reported anyway so the value is correct for any channel that wires the callback up later.
+    opts?.onPromptDisposition?.("dropped");
     typing.cleanup();
     return undefined;
   }
 
   if (activeRunQueueAction === "enqueue-followup") {
-    enqueueFollowupRun(
+    // FORK 2026-09-24 (prompt-queue.md §6.3 / §7 G2, PQ-8): report BEHIND only on a PROVEN enqueue.
+    // enqueueFollowupRun returns false on three paths — a recent message-id dedupe hit (which the
+    // Tinker outbox's original-key replay reaches routinely), an identical item already in the
+    // queue, and a full queue under dropPolicy "new" — and only the last of those actually discards
+    // the prompt. The boolean cannot tell them apart, so a false reports NOTHING: an absent field
+    // leaves today's client behaviour intact, whereas a wrong "backlogged" would strand the badge
+    // forever and a wrong "dropped" would offer Resend for a prompt that is really queued.
+    // Disambiguating needs enqueueFollowupRun to return a REASON (follow-up unit owning
+    // src/auto-reply/reply/queue/enqueue.ts).
+    const enqueued = enqueueFollowupRun(
       queueKey,
       followupRun,
       resolvedQueue,
@@ -1011,6 +1129,9 @@ export async function runReplyAgent(params: {
       queuedRunFollowupTurn,
       false,
     );
+    if (enqueued) {
+      opts?.onPromptDisposition?.("backlogged");
+    }
     // Re-check liveness after enqueue so a stale active snapshot cannot leave
     // the followup queue idle if the original run already finished.
     if (!isRunActive?.()) {
@@ -1082,6 +1203,9 @@ export async function runReplyAgent(params: {
         sessionId: followupRun.run.sessionId,
         sessionKey: replySessionKey ?? "",
         resetTriggered: resetTriggered === true,
+        // FORK 2026-09-24 (prompt-queue.md §7 G5): the prompt(s) this turn answers, so sessions.list
+        // reports them PREPARING, then RUNNING (gateway/session-utils.ts deriveSessionPendingPrompts).
+        promptKeys: turnPromptKeys,
         upstreamAbortSignal: opts?.abortSignal,
       });
   } catch (error) {
@@ -1805,5 +1929,13 @@ export async function runReplyAgent(params: {
     // Calling this twice is harmless — cleanup() is guarded by the
     // `active` flag.  Same pattern as the followup runner fix (#26881).
     typing.markDispatchIdle();
+    // FORK 2026-10-02 (bug-log [reset-refused-after-a-turn]): the runner that created the reply
+    // operation ends it, on every path, as followup-runner.ts does. Nothing on the success path
+    // did, so a finished turn stayed registered: sessions.reset waited on it and answered "still
+    // active" until a gateway restart. complete() keeps a result already set (failed, aborted).
+    // A provided operation belongs to its caller.
+    if (!providedReplyOperation) {
+      replyOperation.complete();
+    }
   }
 }

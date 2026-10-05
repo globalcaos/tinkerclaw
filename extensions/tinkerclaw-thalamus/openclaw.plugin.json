@@ -1,0 +1,347 @@
+{
+  "id": "tinkerclaw-thalamus",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": false,
+  "runtimeAssets": ["./questions", "./hooks", "./prompts"],
+  "name": "Thalamus v4",
+  "description": "Routes each model call, ranks the assistant's skills, recipes and plugins for each task, and records what it would have done. Ships disabled. Mode off by default; shadow computes and records and changes nothing; only enforce hands the agent a short list.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["off", "shadow", "enforce"],
+        "default": "off",
+        "description": "off = load nothing and open nothing; shadow = compute and record the per-call decision and the short list, change nothing; enforce = hand the agent the short list."
+      },
+      "jev": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Ask Jev at all. Off: every read comes from local rules."
+          },
+          "sendRealSituations": {
+            "type": "boolean",
+            "default": false,
+            "description": "Real conversations may go to Jev. Synthetic cases always may."
+          },
+          "baseUrl": {
+            "type": "string",
+            "default": "https://api.typesafe.ai"
+          },
+          "model": {
+            "type": "string",
+            "default": "jev-latest"
+          },
+          "timeoutMs": {
+            "type": "number",
+            "default": 2600
+          }
+        }
+      },
+      "reads": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "confidenceFloor": {
+            "type": "number",
+            "default": 0.6,
+            "description": "Below this Jev confidence an answer is unsure and the cautious option is taken."
+          }
+        }
+      },
+      "privacy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "privateSources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": ["channel:*"],
+            "description": "Sources whose content goes only to approved providers, and never to Jev unless approved below."
+          },
+          "privatePaths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "approvedProviders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": ["claude-code"]
+          },
+          "jevApprovedSources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        }
+      },
+      "policy": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "table": {
+            "type": "object",
+            "default": {},
+            "description": "Vendor by topic class: allow or deny."
+          }
+        }
+      },
+      "shortlist": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "budgetMs": {
+            "type": "number",
+            "default": 800,
+            "description": "How long the prompt waits for the short list before going without it."
+          }
+        }
+      },
+      "dataDir": {
+        "type": "string",
+        "description": "Defaults to ~/.openclaw/data/thalamus-v4"
+      },
+      "retentionDays": {
+        "type": "number",
+        "default": 90,
+        "description": "Decisions older than this are pruned."
+      },
+      "enforce": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: a reader condenses long text tool results, the raw result kept on disk under a name."
+          },
+          "check": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: a model of another family checks a run that commits to something or claims a fact before it finishes."
+          },
+          "finish": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: one writer puts the words the user reads of a run that several models worked on."
+          },
+          "workerAgents": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only, Claude Code lane: hand the bridge worker --agents sub-agents from the plugin."
+          },
+          "workerModel": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only, Claude Code lane: let the plugin set the worker's model per turn."
+          },
+          "perCall": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: the embedded lane replaces the model per call. The call seam only observes today, so this records the owner's decision and acts when the seam can replace a model."
+          },
+          "midThread": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: a running thread may be switched at all. Off: only fresh points (a new unit, a check, a finish, a digest) switch."
+          },
+          "hedge": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: a second copy of a slow critical-path unit on another provider; the first answer wins. Shadow records the hedge it would send and sends nothing."
+          },
+          "orchestrateAuto": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: model \"auto\" in an orchestrate script resolves to a routed claude-code model instead of the default leaf model."
+          },
+          "ownModelChoices": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: Thalamus picks every model that used to be fixed (a leaf with no model, a sub-agent spawned with no model, the Claude roles of a round-table), each keeping its fixed model as the fallback. A model named on purpose is never replaced."
+          },
+          "shortlist": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enforce only: hand the agent the enhancement short list on every prompt and answer the Claude Code hook route with it. Off: enforce routes but injects no list, as shadow does."
+          }
+        }
+      },
+      "digest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "minResultTokens": {
+            "type": "number",
+            "default": 2000
+          },
+          "digestTokens": {
+            "type": "number",
+            "default": 1200
+          },
+          "timeoutMs": {
+            "type": "number",
+            "default": 20000
+          }
+        }
+      },
+      "check": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeoutMs": {
+            "type": "number",
+            "default": 20000
+          },
+          "maxChars": {
+            "type": "number",
+            "default": 12000
+          }
+        }
+      },
+      "finish": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeoutMs": {
+            "type": "number",
+            "default": 30000
+          },
+          "maxChars": {
+            "type": "number",
+            "default": 16000
+          },
+          "preferred": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "en": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "es": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "ca": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              },
+              "default": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              }
+            }
+          }
+        }
+      },
+      "scheduler": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "providerCaps": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number",
+              "minimum": 1
+            },
+            "default": {
+              "claude-code": 4,
+              "xai": 4,
+              "openai-codex": 4,
+              "copilot": 2
+            },
+            "description": "Concurrent calls per provider, so a fan-out never queues behind itself."
+          }
+        }
+      },
+      "hedge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "margin": {
+            "type": "number",
+            "default": 1.5,
+            "minimum": 1,
+            "description": "A copy starts when a critical-path unit has run this multiple of its usual time."
+          }
+        }
+      },
+      "orchestrate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "allowedLeafProviders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": ["claude-code"],
+            "description": "Providers model \"auto\" may pick from in an orchestrate script. Widening it changes billing exposure, so it is the owner's."
+          }
+        }
+      },
+      "learning": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "The nightly run may write its estimates, rung times and card versions. A dry run never writes."
+          },
+          "apply": {
+            "type": "boolean",
+            "default": false,
+            "description": "The router uses the learned estimates in place of the public map alone."
+          },
+          "explore": {
+            "type": "boolean",
+            "default": false,
+            "description": "Overnight jobs, at most five per cent of their calls, try an option the router would not normally take."
+          },
+          "shuffle": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enforce only: overnight short lists are shown in a shuffled order so the loop can measure how much the agent follows position."
+          },
+          "replayMaxChars": {
+            "type": "number",
+            "default": 2000,
+            "minimum": 200,
+            "maximum": 8000,
+            "description": "Characters of a redacted task kept for replay."
+          }
+        }
+      }
+    }
+  }
+}

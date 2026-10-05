@@ -1,8 +1,8 @@
 {
-  "name": "@globalcaos/tinker-bridge",
+  "name": "@globalcaos/cc-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "Tinker Bridge — drive the real Claude Code CLI as a persistent per-session subprocess from OpenClaw/TinkerClaw, inheriting your existing `claude` OAuth login so your Claude Code subscription works as a first-class streaming model provider (thinking + tools). Uses your own Claude OAuth; review Anthropic's terms before distributing.",
+  "description": "cc-bridge: one Claude login for your whole agent. Drives the real Claude Code CLI as a persistent per-session subprocess from OpenClaw/TinkerClaw, so every session uses your single `claude` login as a first-class streaming model provider (thinking + tools). Do NOT use together with harness-id: combining them may breach the terms of an Anthropic subscription. Review Anthropic's terms before distributing.",
   "license": "Apache-2.0",
   "type": "module",
   "devDependencies": {

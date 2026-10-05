@@ -4,10 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mockState: { db: Database.Database | null } = { db: null };
 
 vi.mock("../../history/db.js", () => ({
-  getDb: () => {
-    if (!mockState.db) throw new Error("no db");
-    return mockState.db;
-  },
+  getDbIfExists: () => mockState.db ?? null,
 }));
 
 const { prefetchContactCard } = await import("./contact-card-prefetch.js");

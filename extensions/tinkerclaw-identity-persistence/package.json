@@ -1,7 +1,7 @@
 {
-  "name": "@globalcaos/openclaw-identity-persistence",
-  "version": "0.1.0",
-  "description": "All agents drift from their persona — we measure it with EWMA SyncScore, re-inject SOUL.md before it's gone.",
+  "name": "@globalcaos/tinker-identity-persistence",
+  "version": "0.1.1",
+  "description": "Opt-in persona persistence: your persona file re-injected on measured EWMA drift. Off until you enable it.",
   "keywords": [
     "openclaw",
     "openclaw-plugin"
@@ -22,6 +22,7 @@
   },
   "files": [
     "index.ts",
+    "dist/",
     "src/",
     "openclaw.plugin.json",
     "README.md"

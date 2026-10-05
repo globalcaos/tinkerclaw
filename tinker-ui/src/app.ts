@@ -3,7 +3,21 @@ import MarkdownIt from "markdown-it";
 // FORK 2026-09-03 (the architect): the €/task Pareto frontier THALAMUS routes along — the same
 // module behind the chart's yellow envelope and the reply-path router, so the routing
 // card's "would route" line cannot disagree with either.
-import { frontierRungsFor, thalamusRoute } from "../../src/shared/thalamus-frontier.js";
+import {
+  CONDUCTOR_STORAGE_KEY,
+  GATEWAY_TOKEN_STORAGE_KEY,
+  OPERATOR_ID_STORAGE_KEY,
+  SEAT_ID_STORAGE_KEY,
+  TINKER_SEAT_COOKIE,
+  formatAgentBanner,
+  parseCookieHeader,
+} from "../../src/shared/hivemind-seats.ts";
+// FORK 2026-07-25 (the architect): the "why this routing" card under the MODEL slider — two
+// phrases justifying the model/effort in force and the fan-out count, each with its reason.
+// FORK 2026-10-01 (the architect: "Make the smart bias the default"): the unset dial is the GATEWAY's constant, so the page and
+// the router cannot disagree. The retired routing card keeps its own 3; its golden file pins it byte for byte.
+import { THALAMUS_DEFAULT_BIAS_IDX as BIAS_DEFAULT_IDX } from "../../src/shared/thalamus-frontier.js";
+import { createAmygdalaUi } from "./amygdala-ui.js";
 // FORK 2026-08-18 (the architect: "if a process is attached to a tab and it prevents me to send more
 // prompts ... I would prefer if it was shown as a progress indicator with a stop button, so I can
 // kill it or understand it better"). The ATTACHED ACTIVITY strip's pure rules — live age, row
@@ -27,32 +41,161 @@ import {
   touchBackgroundRuns,
   type BackgroundRun,
 } from "./background-runs.js";
+import { answeringModel, railTitle, type ChatRail, type RailModel } from "./chat-rail.js";
 // FORK 2026-08-13 (the architect) — the gateway's own narration of the 21-36s pre-turn gap.
 // FORK 2026-08-16 — what each timing row MEANS, plus the papers behind it. Pure data + lookup,
 // unit-tested; app.ts owns only the overlay that renders it.
-import { missingClientRows, recordClientRow, updateClientRow } from "./client-rows.js";
+// FORK 2026-09-23 (plan task 9) — the chat's run builder: rows → keyed units of markup, and the
+// keyed renderer that puts them on the page without rebuilding the rows that did not change.
+import {
+  freshElements,
+  graftTimingBlocks,
+  clearOrphanedViewerOpen,
+  renderChatInto,
+  unitElement,
+  unitKeyOf,
+  type ChatRenderOptions,
+} from "./chat-render.js";
+import { buildChatUnits, type ChatUnit } from "./chat-units.js";
+// FORK 2026-10-02 — each tab's viewport memory (follow latch + the row it was reading), saved on
+// leave, restored on enter and after a reload. See chat-viewport.ts.
+import {
+  backgroundStubAllowed,
+  decodeViewportMemory,
+  encodeViewportMemory,
+  FOLLOWING,
+  isProgrammaticEcho,
+  lateGrowthAdjustment,
+  pendingRestoreStep,
+  viewportChoiceId,
+  viewportMemory,
+  type ViewportAnchor,
+  type ViewportMemory,
+} from "./chat-viewport.js";
+import {
+  missingClientRows,
+  readClientRows,
+  recordClientRow,
+  updateClientRow,
+} from "./client-rows.js";
 // FORK 2026-08-24: the single predicate that decides whether an assistant bubble is an
 // error report and whether that error is one the system can ride out. Both render paths and
 // the retry lifecycle read it, so bubble colour and countdown cannot disagree — and a marker
 // added later cannot land on one render path only, which is precisely how a 529 came to be
 // painted as an ordinary answer. See error-bubble.ts.
 import { assistantTextOfPayloadMessage, classifyErrorBubble } from "./error-bubble.js";
+// FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/logging.md §9 step 7: the page's catalog rows
+// (`ui.outbox.state`, `ui.prompt.state`, `ui.context.action`) leave through ONE bounded client that
+// batches them into the `logs.ingest` RPC and sends nothing outside the catalog's closed sets.
+import {
+  contextActionEvent,
+  createEventIngest,
+  outboxStateEvent,
+  promptStateEvent,
+  type UiEvent,
+} from "./event-ingest.js";
 // FORK 2026-08-05 — THE LAW for the final reconciliation (a bubble's text may only GROW; a
 // divergent remainder comes back as `appendTail` to be PUSHED, never written over a bubble the
 // user has already read) lives in a pure, unit-tested module. See stream-reslice.ts.
-import {
-  fingerprintText,
-  runTextBubbles,
-  sameTextCount,
-  supersedingAppendTail,
-} from "./final-supersede.js";
+// FORK 2026-10-03 — and so does the choice of WHICH bubbles a final reconciles (finalTextBubbles)
+// together with the write (planFinalWrite): selecting inline here took reasoning bubbles too.
+import { bubbleText, finalTextBubbles, planFinalWrite, runTextBubbles } from "./final-supersede.js";
 // FORK 2026-06-11 (fractal v3, bible §5.67b) — fractal dock renderer lives in its
 // own one-concern module (the sectioned-reply.ts extraction precedent); app.ts
 // keeps only the KNOWN_STREAMS entry, the stream:"fractal" dispatch, and the
 // dock-anchor lookup over app.ts-owned message state.
 import { upsertFractalDock, renderTranscriptSection, type FractalDockRow } from "./fractal-dock.js";
-import { splitInjectedPrompt, skillNoticeFromTool, type InjectedKind } from "./injected-prompt.js";
+import { isGatewayRestartResume, stripInjectedFractalDoctrine } from "./fractal-prompt-strip.js";
+import {
+  applyOlderPage,
+  applyOlderReply,
+  applyResetArchivePage,
+  archiveOf,
+  nextResetPaging,
+  oldestServerRowTs,
+  inResetGap,
+  resetGapStep,
+  planHistoryAroundLooseRows,
+  planResetArchivePage,
+  RESET_PAGING_START,
+  resetArchiveRequest,
+  type ResetPaging,
+  backgroundTrimDue,
+  foldTailReply,
+  type HoleFill,
+  holeFillAfterFold,
+  holeFillAfterTrim,
+  holeFillRequest,
+  holeFillStillOwed,
+  holeFillWaitsForTrim,
+  isCursorRequest,
+  legacyReadAfterRejectedCursor,
+  nextHoleFill,
+  olderPageBackedOff,
+  type OlderReplyOutcome,
+  pageHoldsServerRows,
+  planTrim,
+  removeRowsInPlace,
+  replyFitsPage,
+  stubTrimCutoff,
+  tailRequestForPage,
+  turnNumberOf,
+  userRowOffset,
+  viewedTrimCutoff,
+  windowToFold,
+} from "./history-paging.js";
+import {
+  DEFAULT_HISTORY_RECONCILE_DEPS,
+  historyPromptKey,
+  historyRowIdentity,
+  historyRowTime,
+  isLiveClientRow,
+  reconcileHistoryIntoPage,
+  WATCHED_WINDOW_SLACK_MS,
+} from "./history-reconcile.js";
+import {
+  BG_STUB_ROWS,
+  buildOlderRequest,
+  cursorOf,
+  emptyWindow,
+  type HistoryWindow,
+} from "./history-window.js";
+// FORK 2026-08-24 — the post-restart wake-up is injected as a USER turn; this tells it apart from
+// something the human actually typed so it can be rendered as an automated notice. See
+// system-notice.ts.
+import { detectInjectedContext } from "./injected-context.js";
+import {
+  splitInjectedPrompt,
+  skillNoticeFromTool,
+  skillNoticeFromInjectedBody,
+  type InjectedKind,
+} from "./injected-prompt.js";
+import {
+  advanceCursor,
+  closeSegment,
+  nextSegmentWrite,
+  resumedRunWatchedFrom,
+  resumedTurnOf,
+  resumedTurnStart,
+  type ResumedTurn,
+  type RunScope,
+  runShownTexts,
+  runTurnStart,
+  shownPrefixEnd,
+  type SegmentCursor,
+} from "./live-continuation.js";
 import { openExternalLinksInNewTab } from "./md-links.js";
+// FORK 2026-10-02 (the architect): models seen live in the last 30 min stay pinned in the collapsed SMART
+// MODELS group, and a row's hover names the tabs running it (or that ran it lately).
+import {
+  modelRowHint,
+  parseRecentModels,
+  pruneRecentModels,
+  recentUseForRow,
+  recordLiveModels,
+  serializeRecentModels,
+  type RecentModelLedger,
+} from "./model-recent-use.js";
 import {
   getModelUsage as sharedGetModelUsage,
   type ModelUsageInfo,
@@ -63,13 +206,21 @@ import {
 // message this client ever put on screen) live in a pure, unit-tested module. app.ts never
 // re-derives either rule inline; it only stamps and reads. See msg-order.ts.
 import {
+  PROVEN_PROMPT_FACTS,
+  describeTurnAnchor,
   findByUid,
-  isClientOnlyBubble,
+  isBrowserOnlyPrompt,
+  notePromptFacts,
+  outboxPromptFacts,
+  placeByTime,
+  promptBubbleMarks,
+  promptFactsOf,
+  promptStateOf,
   reinsertByTurnAnchor,
   renderOrder,
   stampOrder,
+  stampTurnAnchorOn,
   turnAnchorOf,
-  type AnchoredMsg,
 } from "./msg-order.js";
 // FORK 2026-08-16 — bug "a prompt typed while the gateway/UI is being rebuilt is silently lost":
 // the durable outbox. A typed prompt is persisted BEFORE any await or network call and removed
@@ -77,26 +228,90 @@ import {
 import {
   OUTBOX_REPLAY_GRACE_MS,
   appendJournal,
+  dismissOutboxEntry,
   dueForReplay,
+  enqueueLadderRetry,
   enqueueOutbox,
+  markAnswered,
   markAttempted,
+  markCancelled,
+  markProofChecked,
   outboxEntriesNeedingBubble,
   outboxForSession,
+  outboxNeedsTailProofRead,
+  outboxProofRequest,
+  outboxSessionsNeedingProof,
+  outboxTailProofRequest,
   readOutbox,
   reconcileWithHistory,
   removeFromOutbox,
   type OutboxEntry,
   type OutboxStore,
+  markAcked,
+  normalizeForMatch,
+  readJournal,
 } from "./outbox.js";
+// FORK 2026-09-29 (U9, plan 2026-09-29-chat-usage-chips-and-typed-outcomes.md) — typed turn
+// outcomes. The gateway classifies a failed turn ONCE and ships `message.outcome`; both assistant
+// render chains read it through `outcomeOf`, which falls back to a narrow derivation from
+// stopReason/errorMessage for rows served before that build. Measured 2026-09-29: 334 failed turns
+// rendered as plain answers after a reload because renderMsg read neither field, and 63 more
+// because the text-match list did not carry the gateway's own wording.
+import { answerTextOf, isTurnOutcome, outcomeOf, renderOutcomeBubble } from "./outcome-bubble.js";
 // FORK 2026-06-06 — BROCA recipe visibility: shared render module for the
 // single-recipe (recipe-detail) page. renderBrocaProgram turns a parsed recipe
 // into interleaved code+prose; BrocaRecipe is the read DTO shape.
+import { aaPanelFloor } from "./panels/aa-panel-floor.js";
 import { renderBrocaProgram, type BrocaRecipe } from "./panels/broca.js";
+import { mountCallTimeline, type CallTimelineView } from "./panels/call-timeline-canvas.js";
+import { loadLastRun, saveLastRun } from "./panels/call-timeline-persist.js";
+// FORK 2026-09-24 (B5, context-window-panel.md §5) — the CALL TIMELINE: a pure store + geometry
+// module and its canvas renderer. app.ts owns only the feed (one call per agent / chat event) and
+// the static `#cache-timeline` host beside `#cache-panel-body` (P9).
+import { CallTimelineStore, parseCallFrame, type TimelineCall } from "./panels/call-timeline.js";
+// FORK 2026-09-24 — EVICT / COMPACT availability (context-window-panel.md §6.2 B4, P8): pure
+// rules pinned by context-buttons.test.ts; app.ts gathers the inputs and paints the answer.
+import {
+  buttonState,
+  CACHE_ACT_CONFIRM_WINDOW_MS,
+  CACHE_ACT_DESCRIPTION,
+  cacheActArmed,
+  cacheActOutcome,
+  cacheActPress,
+  cacheActResultToast,
+  cacheActRoute,
+  CLI_COMPACT_COMMAND,
+  cliCompactionToast,
+  COMPACTION_LIVE_MAX_MS,
+  compactionIsLive,
+  compactionPulseStep,
+  isCompactCommand,
+  resolveNextCallProvider,
+  type CacheAct,
+  type CacheButtonState,
+} from "./panels/context-buttons.js";
 // FORK 2026-07-25 (the architect) — 💾 CONTEXT CACHE panel renderer. Pure markup module (the
 // fractal-dock.ts / routing-rationale.ts one-concern precedent); app.ts owns only the
 // state + the two dispatch sites that feed it.
-import { renderCachePanelHtml, type CachePanelState } from "./panels/context-cache.js";
-import { mountContextTimeline } from "./panels/context-timeline.js";
+import {
+  keepsPreCallComposition,
+  renderCachePanelHtml,
+  type CachePanelState,
+} from "./panels/context-cache.js";
+// FORK 2026-09-25 — THIS SESSION counters (context-window-panel.md §6.2 B3; P6, P10, F4, F7): the
+// row's counts, the call store's turns and calls, each drop sized once. Pure, pinned by
+// context-counters.test.ts; app.ts gathers the inputs and paints the answer.
+import {
+  compactionDrop,
+  EMPTY_COUNTERS,
+  readRowCounters,
+  reduceCounters,
+  rowCountersKey,
+  sessionCounters,
+  type CounterEvent,
+  type CountersState,
+} from "./panels/context-counters.js";
+import { callColumn, mountContextTimeline, type AnatomyEvent } from "./panels/context-timeline.js";
 // Tinker UI — Command Center v0.3
 import { mountContextTreemap } from "./panels/context-treemap.js";
 import {
@@ -156,6 +371,7 @@ import {
 // mounts it (effort stream → record, lifecycle end → turnEnd, history → backfill).
 import {
   EegTraceStore,
+  eegProviderPaint,
   eegStopLeftCss,
   eegRelCost,
   resolveEegPaint,
@@ -183,19 +399,18 @@ import {
 import {
   renderPresenceGraphsHtml,
   attachPresenceGraphs,
+  applyLinkX,
+  loadLinkX,
   type GGroup,
 } from "./panels/presence-graph.js";
 // FORK 2026-08-04 (the architect): vendor-resolved logo + accent for OpenRouter models —
 // the MODEL id, not the provider key, carries the vendor.
-import { getRoutedLogoSvg } from "./panels/provider-logos.js";
-import { mountResponseTreemap } from "./panels/response-treemap.js";
-// FORK 2026-07-25 (the architect): the "why this routing" card under the MODEL slider — two
-// phrases justifying the model/effort in force and the fan-out count, each with its reason.
 import {
-  BIAS_DEFAULT_IDX,
-  renderRoutingRationale,
-  type RoutingSignals,
-} from "./panels/routing-rationale.js";
+  getRoutedLogoSvg,
+  getVendorKeyLogoSvg,
+  GOOGLE_G_LOGO_SVG,
+} from "./panels/provider-logos.js";
+import { mountResponseTreemap } from "./panels/response-treemap.js";
 // FORK 2026-08-29 (the architect: the rail lit a model while the picker said Auto). Which
 // override a session row actually carries, and which model actually served its last turn, are
 // two different facts that three call sites below (both slider derivations + the Auto tooltip)
@@ -215,7 +430,6 @@ import {
   scComputeScales,
   scCostX,
   scCostFromX,
-  scUtilAtCost,
   scCostAtUtil,
   SC_PLAN_UTIL,
   type ScModel,
@@ -223,7 +437,6 @@ import {
   type ScView,
   scClampView,
   SC_VIEW_FULL,
-  scThalamusRelCost,
 } from "./panels/smart-cost-chart.js";
 // FORK 2026-08-06 #3 (the architect): SMART MODELS dossier — best-at + trained refusals.
 import {
@@ -235,6 +448,26 @@ import {
   scDossierFor,
   type DossierRow,
 } from "./panels/smart-model-dossier.js";
+import {
+  ROLES,
+  roleLetters,
+  roleWord,
+  rolesAtEffort,
+  rolesOfModel,
+  suggestionLine,
+  suggestionsFromReply,
+  type RoleSuggestions,
+  type RoleTier,
+} from "./panels/thalamus-roles.js";
+// FORK 2026-10-01 (the architect): the THALAMUS card shows the present turn only — who ran, at what effort, doing what, and why.
+import {
+  buildThalamusTurnView,
+  effortWord,
+  renderThalamusTurn,
+  type ThalamusTurnDecision,
+  type ThalamusTurnFallback,
+} from "./panels/thalamus-turn.js";
+import { renderThalamusV4 } from "./panels/thalamus-v4-card.js";
 // FORK 2026-08-02 (the architect) — unified UI-state store (spec 2026-08-02-unified-ui-state-
 // persistence-design.md, jarvis-icu docs/superpowers/specs). Grown from the 2026-07-25
 // per-panel right-rail collapse map: ONE module now owns every piece of persisted UI
@@ -244,6 +477,7 @@ import {
 // folds lean on the collapsed namespace's documented `false`.
 import {
   applyStoredOrder,
+  flushPendingUiStateMirror,
   getChoice,
   getFlag,
   getOrderedIds,
@@ -251,12 +485,17 @@ import {
   isCollapsed,
   loadCollapsed,
   migrateLegacyUiState,
+  rehydrateUiState,
   scheduleUiStateMirror,
   setChoice,
   setCollapsed,
   setFlag,
   setOrderedIds,
   TABS_KEY,
+  recordClosedTab,
+  writeTabList,
+  type TabRecord,
+  uiStateHydrateOutcome,
 } from "./panels/ui-state.js";
 import { vendorOfModel, vendorMarkFor } from "./panels/vendor-marks.js";
 import {
@@ -270,6 +509,7 @@ import {
 // FORK 2026-08-24 (the architect) — ONE live timing block per turn, upserted in place, instead of one
 // chat row per finished stage walking down the transcript. Pure + unit-tested.
 import {
+  closeOpenPhaseEntries,
   needsDecomposition,
   phaseChildrenInOrder,
   phaseGroupCountLabel,
@@ -283,20 +523,64 @@ import {
 import {
   clearPreModelFor as clearPreModelForIn,
   openPreModelWindow,
+  preModelReportDue,
+  sendingLatchIsLive,
   sessionPending as sessionPendingIn,
   terminalClosesPreModelWindow,
 } from "./pre-model-window.js";
+// FORK 2026-09-26 — the 🐛 on a LOST prompt: what the page knows about it, as one report.
+import {
+  buildPromptBugReport,
+  type BugHistoryInputRow,
+  type BugHistoryRead,
+} from "./prompt-bug-report.js";
+// FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md step U2: the facts a user bubble's one
+// `_promptState` holds. msg-order.ts reads them; prompt-state.ts derives the one state from them.
+// Step U4 adds the gateway's evidence about a prompt (`gatewayHolderFacts`) and the LOST prompt's
+// two actions (`promptActionsHtml`). Step U5 adds `promptIndicator`: the orange retry countdown
+// renders through the same table's RETRYING row (`renderRetryWarningBubble`).
+import {
+  createPromptStateTracker,
+  gatewayHolderFacts,
+  promptActionsHtml,
+  promptIndicator,
+  type GatewayHolderFacts,
+  type PendingPromptSnapshot,
+  type PromptStateInputs,
+  type PromptStateName,
+} from "./prompt-state.js";
 // FORK 2026-06-08 — bug "queued prompts stick forever + show in every tab": pure, unit-tested
 // helpers that scope the queued-send array by session (render only the active tab's entries; settle
 // a session's entries when ITS turn ends, independent of which tab is viewed). See queued-sends.ts.
-import { queuedForSession, settleQueuedSession, shouldQueue } from "./queued-sends.js";
-import { narrationIndices, type RunMsgKind } from "./reply-grouping.js";
+// FORK 2026-09-24 (prompt-queue.md U3) — and the rule for WHICH entries a terminal releases: a
+// disposition final names one prompt, a linked follow-up run names its keys (PQ-7).
+// `strandedQueuedEntries` is one input of step U4's LOST derivation (strandedPromptIds), and
+// `ownRunTerminal` is what the terminal of a prompt's own run records on it (notePromptTerminal).
+import {
+  FOLLOWUP_STARTED_FACTS,
+  FOLLOWUP_STREAM,
+  addSessionPromptKey,
+  chatTerminalScope,
+  followupRunLink,
+  ownRunTerminal,
+  ownRunTerminalRecorded,
+  queuedForSession,
+  rememberFollowupLink,
+  settleQueuedSession,
+  shouldQueue,
+  strandedQueuedEntries,
+  takeSessionPromptKeys,
+  terminalPromptFacts,
+  type TerminalScope,
+} from "./queued-sends.js";
 // FORK 2026-08-04 (auto-retry x background tabs): the auto-retry LIFECYCLE decision —
 // whose track a chat event moves, and which way — is a pure sibling of retry-policy.ts,
 // extracted so the per-session keying is unit-testable (queued-sends.ts precedent, same
 // class of viewed-session-gate bug). See retry-lifecycle.ts.
 import {
+  pageSentPromptKey,
   retryLifecycleAction,
+  retryPromptForRun,
   type RetryLifecycleDeps,
   type RetryLifecycleEvent,
 } from "./retry-lifecycle.js";
@@ -314,27 +598,34 @@ import {
 import {
   bareModelTail,
   clientRunIsFresh,
-  liveCountForModel,
-  liveRunCountsByModel,
+  liveRunSessionsByModel,
+  liveSessionsForModel,
   resolveSessionRunState,
   sessionHasFreshClientRun,
+  transcriptWriterIsLive,
 } from "./run-state.js";
+// FORK 2026-09-29 (u14) — the chat follow latch's decision table: the owner's composer send
+// re-arms follow; only a real gesture can turn it off. app.ts owns the DOM events;
+// scroll-follow.ts owns the verdict (and the one copy of the BOTTOM_EPS number).
+import { FOLLOW_BOTTOM_EPS, nextFollowState } from "./scroll-follow.js";
 // FORK 2026-06-10 (amygdala retirement): the 3-section reply split/render logic
 // lives in its own unit-tested module. Recognises only 💬 ANSWER / 🌿 FRACTAL;
 // the retired 🧠 AMYGDALA section is no longer split or compacted (live panel owns it).
 import {
-  isFractalSectionText,
   renderSectionedReply,
   splitSectionedReply,
   splitLeadingNarration,
   splitReasoningFromAnswer,
 } from "./sectioned-reply.js";
-import { isSentenceContinuation, sameRun } from "./sentence-continuation.js";
+import { captureSendTarget, sendTargetIsActive } from "./send-target.js";
 // FORK 2026-08-24 — the server lane, kept LIVE. `sessions[]` used to be written only by
 // loadSessions() (connect / first message / turn end / abort), so `row.run` — the gateway's
 // authoritative run set — was a snapshot taken before the turn began. See session-rows-live.ts.
 import { extractChangedRow, mergeChangedRow, type LiveSessionRow } from "./session-rows-live.js";
-import { resliceSegments } from "./stream-reslice.js";
+// FORK 2026-09-12: sessions.list request hygiene — omit default filters, and a
+// failed fetch never masquerades as an empty server list.
+import { buildSessionsListParams, settleSessionsFetch } from "./sessions-list-params";
+import { isCapRebase, rebaseAnchors } from "./stream-rebase.js";
 import {
   subagentBelongsToViewedTab,
   type SubagentAttributionDeps,
@@ -342,10 +633,7 @@ import {
 // FORK 2026-05-30: shared per-subagent identity color (chat sub-bubble + RECIPES
 // panel row + thinking-row all import the SAME function so colors always match).
 import { colorForSubagent, shortSubagentId } from "./subagent-color.js";
-// FORK 2026-08-24 — the post-restart wake-up is injected as a USER turn; this tells it apart from
-// something the human actually typed so it can be rendered as an automated notice. See
-// system-notice.ts.
-import { detectSystemNotice } from "./system-notice.js";
+import { detectAgentMessage, detectSystemNotice } from "./system-notice.js";
 import {
   SESSION_PANEL_ORDER_KEY,
   dropBeforeId,
@@ -356,6 +644,10 @@ import {
   restoreTabsWithMain,
   sessionKeysOfTabs,
 } from "./tab-session-order.js";
+// FORK 2026-09-23 (plan task 9) — md() by text, memoized (the delta fast path).
+import { memoizeText } from "./text-memo.js";
+// FORK 2026-10-01 (THALAMUS v4, phase G): the v4 block in that card. Inert until the gateway answers `thalamus.panel`.
+import { createThalamusV4Ui } from "./thalamus-v4-ui.js";
 import { compactUnknownModelLabel, isTranscriptOnlyModel } from "./transcript-only-models.js";
 import {
   appendTurnPhase,
@@ -369,6 +661,18 @@ import {
   turnPhaseSteps,
   type TurnPhase,
 } from "./turn-phase.js";
+// FORK 2026-09-29 (plan 2026-09-29-chat-usage-chips-and-typed-outcomes, U10): ONE producer for
+// every usage chip — recipe (§5.8N), skill (§5.8O) and the new plugin chip — fed by the gateway's
+// typed `usage` marks and, for rows served before the gateway restart, by the UI's own legacy
+// tells. See usage-chips.ts for why the mark type is mirrored rather than imported from src/.
+import {
+  collectUsage,
+  recipeMark,
+  renderUsageChip,
+  renderUsageChips,
+  skillMark,
+  type UsageMark,
+} from "./usage-chips.js";
 
 // FORK 2026-08-02 (the architect) — durable UI state: HYDRATE BEFORE ANYTHING READS IT.
 // localStorage stopped being the source of truth for UI chrome. On the architect's machine Chrome
@@ -388,7 +692,27 @@ import {
 // timeout, transport failure or blocked Storage. A rejection at top level would abort
 // module evaluation and black-page the entire UI, so that guarantee is enforced on the
 // callee side (panels/ui-state.ts) rather than papered over with a handler here.
+// Hivemind seats (ported from main 01bf3e2, 2026-09-21): copy the seat chosen at the door into this
+// tab BEFORE the desk loads. The desk code below reads `tinker.seatId`, but on develop nothing ever
+// set it, so every seated person silently landed on the owner's desk with no name on the banner.
+try {
+  const seatFromCookie = parseCookieHeader(document.cookie, TINKER_SEAT_COOKIE);
+  if (seatFromCookie) sessionStorage.setItem(SEAT_ID_STORAGE_KEY, seatFromCookie);
+} catch {
+  // Blocked storage: this load falls back to the owner desk.
+}
 await hydrateUiState();
+
+// FORK 2026-09-08 — the build stamp this bundle was served with, `<short-sha>@<iso>`, spliced in by
+// `define` in tinker-ui/vite.config.ts (uiBuildStamp() there says what each half means and what it
+// does NOT mean). Ambient: `declare` emits nothing, so the top-level await above is still the first
+// statement after the import block. Read it ONLY through uiBuild(): the vitest project imports
+// modules straight from source with no vite `define`, so there the identifier is simply absent and
+// a bare read would throw ReferenceError on a debug-only line.
+declare const __UI_BUILD__: string;
+function uiBuild(): string | null {
+  return typeof __UI_BUILD__ === "string" ? __UI_BUILD__ : null;
+}
 
 // FORK 2026-05-09: linkify was auto-converting plain text like "BRIEFING.md"
 // into <a href="http://BRIEFING.md"> which navigates to a search page on click.
@@ -457,9 +781,142 @@ if (PF_DEBUG_STATE.debug) {
   );
 }
 
-// Runtime config: injected by the tinker plugin into index.html, or via URL params
+// FORK 2026-09-09 (the architect: "the token budget panel is gone, again. Just the graph.").
+//
+// The usage bars have vanished twice this month (2026-08-15 blank minute waiting on
+// sessions.usage; 2026-09-03 budget.usage hang wiping budgetUsageData) and both times
+// the console was empty: every RPC in loadBudget swallowed its error with
+// `.catch(() => null)`, and a throw inside updateBudgetPanel aborted the paint with
+// no log. So the next disappearance had nothing to inspect.
+//
+// Failure logs are ALWAYS ON — a vanished panel is the event, not the debug flag.
+// The per-paint dump (what each RPC returned, how many bars painted) is gated:
+// `localStorage.tinker-bp-debug = "1"` or `?bpdebug=1`, then `__bp.enable()`.
+const BP_DEBUG_STATE = {
+  debug:
+    new URLSearchParams(window.location.search).get("bpdebug") === "1" ||
+    localStorage.getItem("tinker-bp-debug") === "1",
+  lastLoad: null as unknown,
+  lastPaint: null as unknown,
+  loadCount: 0,
+  paintCount: 0,
+  failCount: 0,
+};
+function bpLog(level: "log" | "warn" | "error", label: string, payload?: unknown): void {
+  const ts = new Date().toISOString().split("T")[1].replace("Z", "");
+  const prefix = `%c[BP ${ts}] ${label}`;
+  const style =
+    level === "error"
+      ? "color:#ef4444;font-weight:700"
+      : level === "warn"
+        ? "color:#f59e0b;font-weight:600"
+        : "color:#f59e0b;font-weight:600";
+  if (payload === undefined) {
+    console[level](prefix, style);
+    return;
+  }
+  console[level](prefix, style, payload);
+}
+function bpFail(label: string, payload?: unknown): void {
+  BP_DEBUG_STATE.failCount += 1;
+  bpLog("error", label, payload);
+}
+function bpWarn(label: string, payload?: unknown): void {
+  bpLog("warn", label, payload);
+}
+function bpDebug(label: string, payload?: unknown): void {
+  if (!BP_DEBUG_STATE.debug) {
+    return;
+  }
+  bpLog("log", label, payload);
+}
+(window as unknown).__bp = {
+  get debug() {
+    return BP_DEBUG_STATE.debug;
+  },
+  enable() {
+    BP_DEBUG_STATE.debug = true;
+    localStorage.setItem("tinker-bp-debug", "1");
+    console.log(
+      "%c[BP] debug ON (persists across reloads). Failures always log; this dumps every paint. `__bp.state` for the last load/paint.",
+      "color:#f59e0b;font-weight:600",
+    );
+  },
+  disable() {
+    BP_DEBUG_STATE.debug = false;
+    localStorage.removeItem("tinker-bp-debug");
+    console.log("[BP] debug OFF — failures still log.");
+  },
+  dump() {
+    console.log("%c[BP] state", "color:#f59e0b;font-weight:600", {
+      debug: BP_DEBUG_STATE.debug,
+      loadCount: BP_DEBUG_STATE.loadCount,
+      paintCount: BP_DEBUG_STATE.paintCount,
+      failCount: BP_DEBUG_STATE.failCount,
+      lastLoad: BP_DEBUG_STATE.lastLoad,
+      lastPaint: BP_DEBUG_STATE.lastPaint,
+    });
+  },
+  state: BP_DEBUG_STATE,
+};
+if (BP_DEBUG_STATE.debug) {
+  console.log(
+    "%c[BP] debug active — budget-panel paints will log here. `__bp.disable()` to quiet the dumps. Failures always log.",
+    "color:#f59e0b;font-weight:600",
+  );
+}
+
+/** Short, console-safe error text. `String(err)` on most Error subclasses is `[object Object]`
+ *  — the same swallow that hid the last two vanishings. */
+function bpErrMsg(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err)
+    return String((err as { message: unknown }).message);
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return "unknown error";
+  }
+}
+
+/** Which provider legs are present in a `budget.usage` payload — the thing that decides
+ *  whether the orange-green bars exist. Null payload = every bar is empty. */
+function budgetUsageShape(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== "object") {
+    return { present: false, type: data === null ? "null" : typeof data };
+  }
+  const d = data as Record<string, unknown>;
+  const rec = (v: unknown) =>
+    v && typeof v === "object" ? Object.keys(v as object) : v == null ? v : typeof v;
+  return {
+    present: true,
+    keys: Object.keys(d),
+    claude: rec(d.claude),
+    claudeProfiles: rec(d.claudeProfiles),
+    gemini: rec(d.gemini),
+    xai: rec(d.xai),
+    copilot: rec(d.copilot),
+    chatgpt: rec(d.chatgpt),
+    openaiCosts: rec(d.openaiCosts),
+    manus: rec(d.manus),
+  };
+}
+
+// Runtime config used to gift the gateway token in HTML. Hivemind door (2026-09-10):
+// the browser holds it after /tinker/login. URL ?token= is ignored on purpose.
 const __cfg = (window as unknown).__TINKER_CONFIG ?? {};
-const TOKEN = __cfg.token ?? new URLSearchParams(window.location.search).get("token") ?? "";
+function readStoredGatewayToken(): string {
+  try {
+    return sessionStorage.getItem(GATEWAY_TOKEN_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+const TOKEN = readStoredGatewayToken() || (typeof __cfg.token === "string" ? __cfg.token : "");
+if (!TOKEN && !window.location.pathname.includes("/login")) {
+  window.location.replace(`${(import.meta.env.BASE_URL ?? "/tinker/").replace(/\/?$/, "/")}login`);
+}
 // In dev mode (vite), connect WS directly to the gateway; in prod the plugin serves from the gateway itself
 const GW_WS = import.meta.env.DEV
   ? `ws://localhost:18789`
@@ -499,6 +956,109 @@ function zoneDoc(key: keyof typeof ZONE_DOCS): string {
  * accept handler that writes it so the ordering is a fact rather than a timing assumption.
  */
 let pendingHmrReload = false;
+const HMR_DEFER_CEILING_MS = 10 * 60_000;
+let pendingHmrSince = 0;
+/**
+ * FORK 2026-10-03 — WHY the deferred reload is wanted, so the drain below can name it when it
+ * fires (the latest request wins). RELOAD_CAUSE_KEY is where reloadPage leaves that cause for the
+ * page load that follows: sessionStorage survives a reload, is per tab, and dies with the tab.
+ */
+const RELOAD_CAUSE_KEY = "tinker.reloadCause";
+let pendingReloadCause = "";
+let pendingReloadWhy = "";
+let reloadInFlight = false;
+
+/**
+ * FORK 2026-09-30 (the architect: "make code changes and deploy them hot, from now on") — ONE reload path
+ * for a dev HMR update and for a production deploy (the ui-build watcher below). Both obey the
+ * rules this file already learned: never on top of a turn in flight, a ten-minute ceiling after
+ * which only live streaming holds it back, and (new) never under a hand typing in the composer.
+ * The composer's draft survives a reload anyway (per-tab write-through, DRAFT_STORAGE_KEY_PREFIX).
+ */
+let lastComposerInputAt = 0;
+const COMPOSER_QUIET_MS = 8_000;
+document.addEventListener(
+  "input",
+  (ev) => {
+    if ((ev.target as HTMLElement | null)?.id === "chat-textarea") {
+      lastComposerInputAt = Date.now();
+    }
+  },
+  true,
+);
+/**
+ * FORK 2026-10-03 — the bundle this page runs (`assets/index-<hash>.js`), read once at load; null
+ * under the vite dev server. It lived inside the ui-build watcher below; reloadPage records it and
+ * the rebuild button compares it with the served build, so it is module-level now.
+ */
+const OWN_BUNDLE: string | null =
+  (
+    document.querySelector(
+      'script[type="module"][src*="/assets/index-"]',
+    ) as HTMLScriptElement | null
+  )
+    ?.getAttribute("src")
+    ?.match(/assets\/index-[A-Za-z0-9_-]+\.js/)?.[0] ?? null;
+function composerInUse(): boolean {
+  return (
+    document.activeElement?.id === "chat-textarea" &&
+    Date.now() - lastComposerInputAt < COMPOSER_QUIET_MS
+  );
+}
+/**
+ * FORK 2026-10-03 — the ONLY place this page reloads itself. The page kept reloading and nothing
+ * said who asked or why. Each self-reload now leaves its cause in sessionStorage; the next load
+ * reports it to tinker-prod-ui (POST /api/page-load) and says it on screen. A bare
+ * location.reload() anywhere else is a silent reload: route it through here. `deferredMs` is read
+ * from pendingHmrReload here, so a caller clears that flag AFTER this call, never before.
+ */
+function reloadPage(
+  cause: string,
+  detail: string,
+  when: "immediate" | "after-turn" | "ceiling",
+): void {
+  // The first reload wins. location.reload() only STARTS a navigation: until this page unloads, the
+  // 20 s build poll or a push can ask again, and its record would overwrite the real cause (seen in
+  // the sandbox proof, 2026-10-03: a drain's "after-turn" relabelled "immediate", wait 0 s).
+  if (reloadInFlight) {
+    return;
+  }
+  reloadInFlight = true;
+  const now = Date.now();
+  try {
+    sessionStorage.setItem(
+      RELOAD_CAUSE_KEY,
+      JSON.stringify({
+        cause,
+        detail,
+        when,
+        at: now,
+        bundle: OWN_BUNDLE,
+        deferredMs: pendingHmrReload ? now - pendingHmrSince : 0,
+        idleMs: lastComposerInputAt ? now - lastComposerInputAt : null,
+        busy: viewedSessionBusy(),
+      }),
+    );
+  } catch {
+    // sessionStorage blocked or full: the reload still happens, and the next load can only
+    // report it as a browser reload ("manual")
+  }
+  console.info(`[ui-reload] ${cause} (${when}): ${detail}`);
+  location.reload();
+}
+function requestUiReload(cause: string, why: string): void {
+  if (viewedSessionBusy() || composerInUse()) {
+    console.info(`[ui-reload] ${why} — deferred until the turn ends and the composer is quiet`);
+    if (!pendingHmrReload) {
+      pendingHmrSince = Date.now();
+    }
+    pendingHmrReload = true;
+    pendingReloadCause = cause;
+    pendingReloadWhy = why;
+    return;
+  }
+  reloadPage(cause, why, "immediate");
+}
 
 if (import.meta.hot) {
   import.meta.hot.accept(() => {
@@ -513,30 +1073,211 @@ if (import.meta.hot) {
     //
     // This is the chat's immutability rule ("once something is written it should not be erased")
     // colliding with a dev-server convenience. The rule wins: the edit waits for the turn.
-    if (viewedSessionBusy()) {
-      console.info("[hmr] update deferred — a turn is in flight; reloading when it finishes");
-      pendingHmrReload = true;
-      return;
-    }
-    location.reload();
+    requestUiReload("hmr", "hmr update");
   });
 }
+
+/**
+ * FORK 2026-09-08 — a CEILING on the deferral. Measured: a fix landed at 21:50, vite pushed the
+ * update at 06:08 the next morning, and the tab was still running the old code at 06:05 because
+ * its viewed session had never been quiet for a second in between — every fix of the day reached
+ * the dev server and none of them reached the page. "Never reload on top of a turn" stays the rule
+ * for the first ten minutes; after that the reload goes through at the first instant nothing is
+ * actually being written into the viewed transcript (`transcriptWriterLive`, a freshness-bounded
+ * predicate, not the busy flag that can stay up for a whole task).
+ */
 
 /**
  * Drain the deferred reload once the turn is over.
  *
  * Polled rather than called from each turn-end site: there are several of them, they are edited
  * often and by other sessions, and a reload that silently never happens is a worse dev experience
- * than one that arrives a second late. Dev-only — the whole block is stripped from the production
- * build with `import.meta.hot`.
+ * than one that arrives a second late. FORK 2026-09-30: no longer dev-only — a production deploy
+ * (the ui-build watcher below) defers through the same drain.
  */
-if (import.meta.hot) {
-  setInterval(() => {
-    if (pendingHmrReload && !viewedSessionBusy()) {
-      pendingHmrReload = false;
-      location.reload();
+setInterval(() => {
+  if (!pendingHmrReload || composerInUse()) {
+    return;
+  }
+  // FORK 2026-10-03: both branches reload through reloadPage, so the reload names its cause, and
+  // clear pendingHmrReload only AFTER it, because reloadPage reads it to record the wait.
+  if (!viewedSessionBusy()) {
+    reloadPage(
+      pendingReloadCause || "new-build",
+      pendingReloadWhy || "deferred reload",
+      "after-turn",
+    );
+    pendingHmrReload = false;
+    return;
+  }
+  if (Date.now() - pendingHmrSince > HMR_DEFER_CEILING_MS && !transcriptWriterLive()) {
+    console.info("[ui-reload] deferral ceiling reached with nothing streaming; reloading");
+    reloadPage(pendingReloadCause || "new-build", pendingReloadWhy || "deferred reload", "ceiling");
+    pendingHmrReload = false;
+  }
+}, 1000);
+
+/**
+ * FORK 2026-10-03 — a pushed build's reload detail names who asked for that build and why, when
+ * tinker-prod-ui says so (`cause` on the ui-build push, `lastPush.cause` on /api/ui-build).
+ * Without a cause it is the text this page has logged since 2026-09-30.
+ */
+type PushedBuildCause = { kind?: string; by?: string; requester?: string; reason?: string };
+function describePushedBuild(
+  bundle: string,
+  cause: PushedBuildCause | null | undefined,
+  ownBundle: string,
+): string {
+  if (cause) {
+    return `new build ${bundle} from ${cause.requester || cause.by || "unknown"}: ${cause.reason || "no reason given"}`;
+  }
+  return `a newer Tinker build is live (${bundle}, this page runs ${ownBundle})`;
+}
+
+/**
+ * FORK 2026-09-30 (the architect: "yet I do not see it live … to make code changes and deploy them hot,
+ * from now on"). Measured: every UI deploy of the night reached tinker-prod-ui and none reached his
+ * page; at 06:10 it still ran the bundle of 2026-09-29 04:07. A production page has no HMR, and
+ * nothing told it a newer bundle was being served. Now it asks tinker-prod-ui which bundle it
+ * serves (/api/ui-build) every 20 s and when the tab comes back into view, and reloads onto a new
+ * one through requestUiReload, whatever deployed it (the ↻ buttons, the agent skill, the staged
+ * build a gateway restart swaps in, a hand-run vite build). Production only: under the vite dev
+ * server, HMR already does this.
+ */
+if (!import.meta.hot) {
+  const ownBundle = OWN_BUNDLE;
+  let uiBuildRoute = true;
+  const checkUiBuild = () => {
+    if (!ownBundle || !uiBuildRoute || pendingHmrReload) {
+      return;
     }
-  }, 1000);
+    void fetch("/api/ui-build", { cache: "no-store" })
+      .then((r) => {
+        if (r.status === 404) {
+          uiBuildRoute = false; // an older tinker-prod-ui: nothing to compare against
+          return null;
+        }
+        return r.ok
+          ? (r.json() as Promise<{
+              bundle?: string | null;
+              lastPush?: {
+                bundle?: string | null;
+                at?: number;
+                cause?: PushedBuildCause | null;
+              } | null;
+            }>)
+          : null;
+      })
+      .then((d) => {
+        if (d?.bundle && d.bundle !== ownBundle) {
+          // FORK 2026-10-03: lastPush names who asked for a build, but only counts for this bundle.
+          const push = d.lastPush;
+          const cause = push && push.bundle === d.bundle ? push.cause : null;
+          requestUiReload("new-build", describePushedBuild(d.bundle, cause, ownBundle));
+        }
+      })
+      .catch(() => {
+        // tinker-prod-ui briefly unreachable (restarting): the next check asks again
+      });
+  };
+  setInterval(checkUiBuild, 20_000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      checkUiBuild();
+    }
+  });
+  // FORK 2026-09-30 (the architect: "bake a refresh into the skill … so I can see it without having to
+  // refresh manually"): tinker-prod-ui PUSHES a new build the moment it is served, instead of the
+  // page finding out within 20 s, and learns from this stream which build this page runs (the
+  // skill's "live on your screen" check). EventSource reconnects by itself, across a restart of
+  // tinker-prod-ui too; an older server answers 404 and the stream stays closed (the poll remains).
+  if (ownBundle && typeof EventSource !== "undefined") {
+    const uiEvents = new EventSource(`/api/ui-events?have=${encodeURIComponent(ownBundle)}`);
+    uiEvents.addEventListener("ui-build", (ev) => {
+      try {
+        const d = JSON.parse((ev as MessageEvent<string>).data) as {
+          bundle?: string | null;
+          cause?: PushedBuildCause | null;
+        };
+        if (d.bundle && d.bundle !== ownBundle) {
+          requestUiReload("new-build", describePushedBuild(d.bundle, d.cause, ownBundle));
+        }
+      } catch {
+        // a malformed event: the poll still catches the new build
+      }
+    });
+  }
+  // FORK 2026-10-03 — every production page load reports WHY it happened (POST /api/page-load,
+  // which tinker-prod-ui logs), so a reload nobody asked for can be traced after the fact. A
+  // self-reload left its cause in sessionStorage (reloadPage). The record is dropped as it is read,
+  // and one older than two minutes is stale: a reload takes a second, two minutes means the browser
+  // restored an old tab. With no fresh record, a "reload" navigation was a hand F5 or the browser
+  // itself, anything else a page being opened. Wrapped whole, because a diagnostic must never be
+  // what stops this module from loading.
+  try {
+    type StoredReloadCause = {
+      cause?: string;
+      detail?: string;
+      when?: "immediate" | "after-turn" | "ceiling" | null;
+      at?: number;
+      bundle?: string | null;
+      deferredMs?: number | null;
+      idleMs?: number | null;
+      busy?: boolean | null;
+    };
+    const stored = ((): StoredReloadCause | null => {
+      try {
+        const raw = sessionStorage.getItem(RELOAD_CAUSE_KEY);
+        if (raw === null) {
+          return null;
+        }
+        sessionStorage.removeItem(RELOAD_CAUSE_KEY);
+        const parsed: unknown = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? (parsed as StoredReloadCause) : null;
+      } catch {
+        return null; // sessionStorage blocked, or a record that does not parse
+      }
+    })();
+    const navType =
+      (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)
+        ?.type ?? "unknown";
+    const recordAgeMs = stored && typeof stored.at === "number" ? Date.now() - stored.at : null;
+    const fresh =
+      stored && typeof stored.cause === "string" && recordAgeMs !== null && recordAgeMs <= 120_000
+        ? stored
+        : null;
+    const handReload = navType === "reload";
+    const detail = fresh
+      ? String(fresh.detail ?? "")
+      : handReload
+        ? "reloaded by hand (F5 / browser button) or by the browser"
+        : "page opened";
+    const pageLoad = {
+      cause: fresh?.cause ?? (handReload ? "manual" : "opened"),
+      detail: detail.slice(0, 1000), // the endpoint takes a body of at most 4 KB
+      when: fresh?.when ?? null,
+      bundle: OWN_BUNDLE,
+      prevBundle: fresh?.bundle ?? null,
+      navType,
+      deferredMs: fresh?.deferredMs ?? null,
+      idleMs: fresh?.idleMs ?? null,
+      busy: fresh?.busy ?? null,
+      ageMs: fresh ? recordAgeMs : null,
+    };
+    void fetch("/api/page-load", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Tinker-Action": "page-load" },
+      body: JSON.stringify(pageLoad),
+    }).catch(() => undefined); // tinker-prod-ui restarting, or an older one without the route
+    // A self-reload says so on screen too; a hand F5 needs no toast. The delay lets the chat
+    // paint first.
+    if (fresh && pageLoad.cause !== "manual") {
+      const toast = `↻ Page reloaded: ${pageLoad.detail}`;
+      setTimeout(() => showToast(toast, false, 10_000), 2000);
+    }
+  } catch (err) {
+    console.warn("[ui-reload] page-load report failed", err);
+  }
 }
 
 let ws: WebSocket | null = null;
@@ -556,6 +1297,105 @@ function releaseConnectedWaiters(): void {
   const waiters = connectedWaiters;
   connectedWaiters = [];
   for (const resolve of waiters) resolve();
+}
+
+// ─── UI events → the gateway's events database (FORK 2026-09-24) ─────────────────────────────
+//
+// TINKER_UI_DESIGN_BIBLE/logging.md §9 step 7, and `ui.context.action` from step 8. Three producers,
+// one door: the outbox's transitions (`outboxStore.onTransition`), the derived prompt state's
+// changes (`observePromptState`, from renderMsg and notePromptFactsById), and the context panel's
+// Evict / Compact presses (the delegated `data-cache-act` click handler). Each hands a builder's
+// event to `recordUiEvent`. event-ingest.ts batches them into `logs.ingest` from a timer, never on
+// the caller's stack, and sends nothing outside the catalog's closed sets: no text, no session key.
+//
+// Defined here, beside `ws`, so it exists before any producer can run (`req` is a hoisted function).
+// The call gets its own budget: the client keeps ONE batch in flight, so a call that never answered
+// would otherwise hold every later batch for req's 60 s stuck-forever guard. The gateway's side of
+// the call is validation plus an emit, which logging.md L3 bounds to an array push, so 10 s is
+// generous.
+const UI_EVENTS_RPC_TIMEOUT_MS = 10_000;
+const uiEventIngest = createEventIngest({
+  send: (events) => req("logs.ingest", { events }, { timeoutMs: UI_EVENTS_RPC_TIMEOUT_MS }),
+  isConnected: () => connected && ws !== null && ws.readyState === WebSocket.OPEN,
+});
+
+/** The one door for a UI event (see above). Never throws. */
+function recordUiEvent(event: UiEvent | null): void {
+  uiEventIngest.record(event);
+}
+
+// A reload (every vite rebuild of a UI file reloads the page) must not cost the rows still waiting
+// for the timer: hand the head batch to the socket on the way out. Best effort: nothing leaves if a
+// batch is already in flight or the socket is down, and what is held then dies with the page.
+window.addEventListener("pagehide", () => {
+  void uiEventIngest.flush();
+});
+// The client's counters (sent, rejected, requeued, dropped by cause, held for the socket), for the
+// console: `__tinkerUiEvents()`. logging.md L9: a recorder nobody can read looks like an idle one.
+(window as unknown as Record<string, unknown>).__tinkerUiEvents = () => uiEventIngest.stats();
+
+const promptStateTracker = createPromptStateTracker();
+
+/**
+ * logging.md §4.5 `ui.prompt.state` — record the bubble's derived prompt state if it CHANGED since
+ * it was last seen. Called where its facts are written (notePromptFactsById, which also reaches
+ * background tabs' pages that nothing paints, so a change is timed when it happens rather than when
+ * its tab is next shown) and, through observePaintedPromptState, where the state is derived for the
+ * paint (renderMsg). A repaint records nothing, and the first sighting of a key is a baseline
+ * (prompt-state.ts createPromptStateTracker). Never throws: it runs inside a render and a send.
+ */
+function observePromptState(msg: unknown, state: PromptStateName | null): void {
+  if (state === null) {
+    return;
+  }
+  try {
+    const id = (msg as Record<string, unknown> | null)?._clientMsgId;
+    // The cheap check first: this runs once per prompt bubble per paint, and the clock is read only
+    // on a change.
+    if (typeof id !== "string" || id.length === 0 || promptStateTracker.last(id) === state) {
+      return;
+    }
+    const t = promptStateTracker.observe(id, state, Date.now());
+    if (t !== null) {
+      recordUiEvent(promptStateEvent(t));
+    }
+  } catch {
+    /* a telemetry row must never break a render or a send */
+  }
+}
+
+/**
+ * The prompt keys renderMsg has already observed in the current paint; beginPromptPaint empties it
+ * at the start of each. A key drawn by two bubbles in one paint is observed once, from the first,
+ * so two copies holding different facts cannot swing the tracker between their states on every
+ * repaint. notePromptFactsById applies the same first-copy rule.
+ */
+const promptKeysPainted = new Set<string>();
+
+/** updateChat's call at the start of a paint. Never throws: it may run before this block has. */
+function beginPromptPaint(): void {
+  try {
+    promptKeysPainted.clear();
+  } catch {
+    /* before module evaluation reached the set: nothing was observed, nothing to clear */
+  }
+}
+
+/** renderMsg's half of observePromptState: once per prompt key per paint. Never throws. */
+function observePaintedPromptState(msg: unknown, state: PromptStateName | null): void {
+  if (state === null) {
+    return;
+  }
+  try {
+    const id = (msg as Record<string, unknown> | null)?._clientMsgId;
+    if (typeof id !== "string" || id.length === 0 || promptKeysPainted.has(id)) {
+      return;
+    }
+    promptKeysPainted.add(id);
+    observePromptState(msg, state);
+  } catch {
+    /* a telemetry row must never break a render */
+  }
 }
 
 // FORK 2026-08-24 — FIRST-PAINT SNAPSHOTS for the right rail.
@@ -636,6 +1476,11 @@ let sessions: unknown[] = [];
 // AGE of each lane's information instead of blindly preferring one: `sessionsFetchedAt` is when the
 // snapshot was taken, `sessionEndedAt` is when THIS client watched a session finish.
 let sessionsFetchedAt = 0;
+// FORK 2026-09-25 (prompt-queue.md U4) — when the `sessions.list` request whose reply `sessions`
+// holds was SENT. Only the pending-prompt derivation reads it (promptSnapshotFor): the gateway
+// builds a row after the request reaches it, so unlike `sessionsFetchedAt` (the reply's arrival)
+// this proves how new a row is. 0 until a live list lands: a first-paint snapshot never counts.
+let sessionsListAskedAt = 0;
 const sessionEndedAt = new Map<string, number>();
 
 // FORK 2026-08-23 (the architect: "when I delete a tab from the sessions panel, why does it take so
@@ -695,6 +1540,10 @@ async function deleteSession(rawKey: string | undefined | null): Promise<void> {
     SESSION_PANEL_ORDER_KEY,
     dropKeyFromOrder(getOrderedIds(SESSION_PANEL_ORDER_KEY), key, sessionKeyMatches),
   );
+  // FORK 2026-09-25: deleting a session releases its chain FIRST — otherwise the paired close
+  // would take the partner tab down with it, and a dead key would keep the pair "linked".
+  const chainsLeft = unlinkSession(liveTabChains(), key, sessionKeyMatches);
+  if (chainsLeft.length !== loadTabChains().length) saveTabChains(chainsLeft);
   const affectedTab = tabs.find((t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey));
   if (affectedTab && affectedTab.id !== "tab-main") {
     closeTab(affectedTab.id);
@@ -738,20 +1587,48 @@ async function deleteSession(rawKey: string | undefined | null): Promise<void> {
  * Cleared by proof the window closed: a model-bearing lifecycle event, a chat delta (the model is
  * already answering), or any terminal chat event — each recorded for EVERY session, above every
  * viewed gate. Bounded by PRE_MODEL_MAX_MS so a dropped clear degrades to a glow that stops, never
- * to one that never stops.
+ * to one that never stops. FORK 2026-09-24 (prompt-queue.md §7 step U6): past that bound the window
+ * is still believed while a FRESH `sessions.list` row reports the session's prompt `preparing`
+ * (gateway step G5's `pendingPrompts`, whose holder is the reply operation, not the run set).
+ * refreshPreModelReport below keeps that row fresh; a report that goes stale ends the belief.
  */
 const preModelSince = new Map<string, number>();
 
 /** Is this session in its pre-model window RIGHT NOW? Thin binding over pre-model-window.ts, which
  *  owns the rule (and its tests). THE ONE DERIVATION of `pending` — the chat pill and the tab glow
- *  both come through here, so they cannot answer differently. */
+ *  both come through here, so they cannot answer differently. The gateway report goes in so a
+ *  gateway that says `preparing` keeps the window open past the 120 s bound (U6); an old gateway's
+ *  rows carry no such report, and the bound stays exactly as it was. */
 function sessionPending(key: string): boolean {
-  return sessionPendingIn(preModelSince, key, Date.now(), sessionKeyMatches);
+  return sessionPendingIn(preModelSince, key, Date.now(), sessionKeyMatches, {
+    rows: sessions,
+    fetchedAt: sessionsFetchedAt,
+  });
 }
 
 /** Close the pre-model window for one session, wherever the proof arrived from. Idempotent. */
 function clearPreModelFor(key: unknown): void {
   clearPreModelForIn(preModelSince, key, sessionKeyMatches);
+}
+
+/**
+ * FORK 2026-09-24 — prompt-queue.md §7 step U6. Keep the gateway's `preparing` report FRESH while a
+ * pre-model window outlives PRE_MODEL_MAX_MS. `sessions[]` is otherwise re-fetched only on connect,
+ * first message, turn end and abort, never DURING a turn, so the report `sessionPending` trusts past
+ * the bound would be a fact from before the wait began. WHEN to ask is pre-model-window.ts
+ * `preModelReportDue`'s call: never inside a normal window, at most once a minute, and no longer
+ * once the belief has lapsed, so this cannot poll forever. Runs on the one clock, which does not
+ * tick while disconnected.
+ */
+let preModelReportAskedAt = 0;
+function refreshPreModelReport(): void {
+  const now = Date.now();
+  const lastAsked = Math.max(preModelReportAskedAt, sessionsFetchedAt);
+  if (!preModelReportDue(preModelSince, now, lastAsked, sessionPending)) {
+    return;
+  }
+  preModelReportAskedAt = now;
+  void loadSessions();
 }
 
 // FORK 2026-07-29 (STAGE 1 of the run-liveness rework) — give the freshness bound a CLOCK.
@@ -846,7 +1723,7 @@ function forLiveness(row: SessionRowForLiveness | undefined): SessionRowForLiven
  *     and drive the retry countdowns. Text-only on purpose: replacing the indicator NODE restarts
  *     its CSS dot animation, so a 2Hz node swap would visibly stutter.
  *   - on CHANGE (or every FULL_REPAINT_EVERY_TICKS as a backstop): the expensive surfaces.
- *     updateBudgetPanel -> liveRunCountsByModel walks EVERY session row (~900 live), so running it
+ *     updateBudgetPanel -> liveRunSessionsByModel walks EVERY session row (~900 live), so running it
  *     unconditionally at 2Hz would be 10x the work for an answer that is almost always identical.
  *
  * Net effect: 10x more responsive than the old 5s clock AND strictly less work when idle, because
@@ -886,6 +1763,15 @@ function activityTick(): void {
   // retries — so it must not be gated behind a repaint decision.
   driveRetryCountdowns();
   refreshElapsedCounters();
+  // FORK 2026-09-24 — prompt-queue.md §7 step U4 (PQ-5, PQ-11). The pending-prompt facts ride THE
+  // ONE CLOCK too: the gateway's `pendingPrompts` snapshot and the outbox say which prompt is BEHIND
+  // a running turn and which is LOST. A DISPLAY derivation (done-signals.md R2a): it records facts on
+  // prompt bubbles and repaints the chat only when a derived state changed. It clears no run,
+  // settles no queue and sends nothing. See derivePendingPromptFacts.
+  derivePendingPromptFacts();
+  // FORK 2026-09-24 (prompt-queue.md U6) — unconditional like the three above: a stalled pre-model
+  // wait changes nothing the fingerprint sees, so gating this behind a repaint would never ask.
+  refreshPreModelReport();
   const fingerprint = activityFingerprint();
   const forced = activityTickCount % FULL_REPAINT_EVERY_TICKS === 0;
   if (fingerprint === lastActivityFingerprint && !forced) {
@@ -1094,6 +1980,30 @@ let messages: unknown[] = [];
 /** `_uid` of the current streaming temporary message, or null when nothing is streaming. */
 let streamMsgUid: string | null = null;
 /**
+ * FORK 2026-09-23 — the thinking stream's cursors for the page on screen, per run (see
+ * live-continuation.ts). A bubble uid only means something on the page it was written to, so the
+ * map is cleared whenever the page is swapped or rewritten; the next thought then re-anchors from
+ * what that page shows (anchorRunCursor). Declared up here, beside the text cursor, because
+ * loadTabState clears it and may run during boot.
+ */
+const reasoningCursors = new Map<string, SegmentCursor>();
+/**
+ * FORK 2026-10-01 (TINKER_UI_DESIGN_BIBLE/bug-log.md [chat-divergence], cause 4) — runs that took
+ * over a turn a gateway restart froze, by their own id, with the turn each named on its events
+ * (noteResumedTurn; live-continuation.ts ResumedTurn). Read by the run's turn start and its
+ * `_watchedFrom`. Keyed by run, not by page, so a tab switch clears nothing; declared up here with
+ * the cursors for the same boot-order reason. In memory only: a reloaded page is written from
+ * history, which already holds the frozen turn's rows.
+ */
+const resumedTurns = new Map<string, ResumedTurn>();
+/**
+ * FORK 2026-10-03 — when each run started, from its `lifecycle:start` (the gateway's `startedAt`,
+ * else this browser's clock), first event wins. Only a page that saw the start knows it, and only
+ * then may a history row stamped before it be ruled out as the run's own text (runScopeOf). Bounded
+ * like resumedTurns; in memory only.
+ */
+const runStartedAt = new Map<string, number>();
+/**
  * FORK 2026-08-05 — sorted render is ON. Kept as a NAMED switch, and re-read from
  * `window.__tinkerRenderSorted` on every repaint, so it can be flipped from the browser console
  * without a redeploy if it ever misbehaves.
@@ -1119,16 +2029,64 @@ let streamProfileId = "";
 // "queued prompt appears in the middle of the last answer (fixed by hard refresh)" bug.
 // Rendered as trailing bubbles by updateChat; flushed by the chat final/error/aborted handler.
 let pendingQueuedSends: Array<Record<string, unknown>> = [];
+// FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md step U3 (PQ-7 "terminals are keyed").
+// The two facts a terminal needs in order to end ONLY what it names. The rules live in
+// queued-sends.ts; these are just the stores:
+//   followupPromptLinks — follow-up runId → the prompt keys it answers (gateway G3's `followup`
+//     start). That run's terminal releases exactly those keys, not the whole session.
+//   steeredPromptKeys  — session → the prompt keys the gateway folded into its running turn
+//     (G2 `steered`). They end with that session's next RUN terminal (§2 STEERED → ANSWERED).
+// Both stay EMPTY against an old gateway, and that is what keeps every terminal on today's path.
+const followupPromptLinks = new Map<string, readonly string[]>();
+const steeredPromptKeys = new Map<string, string[]>();
 /** Length of the last full delta text received (used to compute per-bubble
  * `_segmentStart` when a new bubble is created mid-stream — tool freeze or
  * >5s gap split). FORK 2026-05-09: replaced the global frozenTextEnd cursor
  * with per-bubble `_segmentStart` so concurrent freezes (tool + gap) don't
  * clobber each other's offsets. */
 let lastDeltaLen = 0;
+// FORK 2026-09-06 (duprep III) — the previous cumulative buffer verbatim. Only this can tell a
+// CAP tail-slice (new buffer is a strict SUFFIX of it) from a RESET, and the two must be handled
+// differently: on a CAP a leading span is dropped HISTORY, not new content to absorb.
+let lastDeltaText = "";
 /** FORK 2026-05-09 (Feature C): wall-clock ms of the most recent text_delta arrival.
  * Used to detect gaps >5s and split assistant bubbles. Reset on final/error/clear. */
 let lastDeltaAt = 0;
 let sending = false;
+/**
+ * When the viewed tab's `sending` latch was OPENED, or null when it is closed.
+ *
+ * FORK 2026-09-04 (the architect: "a few tabs like the amygdala get stuck 'preparing context' and
+ * never do anything"). `sending` is persisted per tab (TabState) and restored verbatim, and
+ * `shouldQueue()` reads it — so a `true` that never got its clear parked every prompt later typed
+ * into that tab, forever. Every neighbouring lane already had a time bound; this is the stamp that
+ * gives this one the same property. Written ONLY by setSending(), read ONLY through sendingNow().
+ */
+let sendingSince: number | null = null;
+
+/**
+ * THE ONE WRITER of the `sending` latch, so the flag and its age can never disagree.
+ *
+ * Opening an ALREADY-OPEN latch does not refresh the stamp. That is the anti-latch property, not
+ * an oversight: the re-assert sites fire while a run is live (a delta arriving with no phase:start,
+ * a fallback re-assert), and refreshing there would let a turn that re-announces itself hold the
+ * latch open indefinitely — which is the bug, one level up. A live turn does not need this flag:
+ * `shouldQueue`'s run-freshness term and `viewedSessionBusy()` both cover it.
+ */
+function setSending(next: boolean): void {
+  sending = next;
+  sendingSince = next ? (sendingSince ?? Date.now()) : null;
+}
+
+/**
+ * Is this tab actually mid-send RIGHT NOW? The ONE reader, so the queue gate, the pill and the
+ * composer button cannot answer differently. Degrades to "not sending" — the direction
+ * queued-sends.ts documents as safe, because a wrong `false` costs bubble ordering while a wrong
+ * `true` costs the prompt.
+ */
+function sendingNow(): boolean {
+  return sending && sendingLatchIsLive(sendingSince, Date.now());
+}
 /**
  * When `chat.send` RESOLVED, i.e. the gateway has the message and a runId exists but
  * has not yet emitted a lifecycle event naming the model. Null while the send is still
@@ -1191,20 +2149,22 @@ let orchestrationCaps: {
   cores?: number;
   policyPath?: string;
 } = {};
-// FORK 2026-07-26 (the architect): the ORCA fast↔smart dial, per session. Persisted CLIENT-SIDE like
-// the effort/model pins (webchat cannot patch session metadata) AND pushed to the gateway so
-// the orchestrator can actually read it — a dial that only moves a label would be decoration.
-const ORCA_BIAS_LS_PREFIX = "tinker-orca-bias:";
-const orcaBiasBySession = new Map<string, number>();
-function loadOrcaBias(key: string): number {
-  if (!key) return BIAS_DEFAULT_IDX;
-  const mem = orcaBiasBySession.get(key);
-  if (typeof mem === "number") return mem;
+// FORK 2026-07-26 (the architect): the fast↔smart dial. Kept on the page and pushed to the gateway, so the router can
+// actually read it — a dial that only moves a label would be decoration.
+// FORK 2026-10-01 — ONE DIAL, NOT ONE PER TAB. The gateway keeps a single value (~/.openclaw/orca-bias.json, read by
+// the router on every Auto turn), while this page stored one per session and pushed only on a drag. A tab could then
+// show "balanced" while the router used the "smart" another tab had pushed last. The page now keeps the one value,
+// and reads it back from the gateway on every budget load (syncOrcaBiasFromGateway), so the dial shows what routes.
+// The `key` parameters stay so the callers read unchanged; the old per-session entries are simply no longer read.
+const ORCA_BIAS_LS_KEY = "tinker-orca-bias";
+let orcaBiasShared: number | undefined;
+function loadOrcaBias(_key?: string): number {
+  if (typeof orcaBiasShared === "number") return orcaBiasShared;
   try {
-    const raw = localStorage.getItem(ORCA_BIAS_LS_PREFIX + key);
+    const raw = localStorage.getItem(ORCA_BIAS_LS_KEY);
     const n = raw === null ? Number.NaN : Number(raw);
     if (Number.isFinite(n)) {
-      orcaBiasBySession.set(key, n);
+      orcaBiasShared = n;
       return n;
     }
   } catch {
@@ -1212,17 +2172,30 @@ function loadOrcaBias(key: string): number {
   }
   return BIAS_DEFAULT_IDX;
 }
-function saveOrcaBias(key: string, idx: number): void {
-  if (!key) return;
-  orcaBiasBySession.set(key, idx);
+function rememberOrcaBias(idx: number): void {
+  orcaBiasShared = idx;
   try {
-    localStorage.setItem(ORCA_BIAS_LS_PREFIX + key, String(idx));
+    localStorage.setItem(ORCA_BIAS_LS_KEY, String(idx));
   } catch {
     /* ignore */
   }
-  // Best-effort push so the Conductor picks it up on the next routed run; a failed write
-  // costs the dial its effect on the NEXT run, never this repaint.
+}
+function saveOrcaBias(_key: string, idx: number): void {
+  rememberOrcaBias(idx);
+  // The router reads this on the next Auto turn; a failed write costs the dial its effect on that turn only.
   req("prefrontal.orcaBias", { biasIdx: idx }).catch(() => null);
+}
+/** Read the gateway's dial. Unset there (`biasIdx: null`) means the default, which is what loadOrcaBias returns. */
+function syncOrcaBiasFromGateway(): void {
+  req("prefrontal.orcaBias", {})
+    .then((r) => {
+      const n = (r as { biasIdx?: unknown } | null)?.biasIdx;
+      if (typeof n === "number" && Number.isFinite(n) && n !== orcaBiasShared) {
+        rememberOrcaBias(n);
+        updateBudgetPanel();
+      }
+    })
+    .catch(() => null);
 }
 // FORK 2026-07-25 (the architect): the routing calls ORCA made during the turn, as recorded by the
 // Conductor and served by `prefrontal.routes`. Raw model IDs — mapped to friendly names at
@@ -1321,6 +2294,15 @@ function cacheUsedTokens(state: CachePanelState): number {
   }
   return 0;
 }
+/**
+ * B2 (context-window-panel.md §6.2) — WHEN a composition was measured, read off the anatomy row
+ * that carried it: A9 stamps `snapshot` on every row it writes. Anything else is undefined, which
+ * the renderer shows as no badge at all (P5: silence, never a guessed "pre-call").
+ */
+function compositionSnapshotOf(row: any): "pre-call" | "post-turn" | undefined {
+  const v = row?.snapshot;
+  return v === "pre-call" || v === "post-turn" ? v : undefined;
+}
 // FORK 2026-08-28 (the architect: "when a specific model is selected ... show the context window of the
 // specific model being used").
 //
@@ -1392,29 +2374,104 @@ function loadCatalogWindows(): void {
 // as a win), an estimate of the amount of tokens saved by the eviction, the number of turns, the
 // number of compactions").
 //
-// Accumulated CLIENT-side from the live streams, per session. Keyed by session for the same
-// reason cachePanelStates is — a single global object would show whichever session emitted last
-// and never follow the tab (the 2026-07-26 bug).
+// FORK 2026-09-25 (context-window-panel.md §6.2 B3) — no longer a client tally. The numbers come
+// from three places, joined by sessionCounters (panels/context-counters.ts):
+//   - compactions, evictions, dropped: the session's sessions.list row (A7), so a reload, another
+//     tab or another browser shows the same numbers (P6), and a row without a field paints "—"
+//     (P10);
+//   - turns, calls: the session's CallTimelineStore totals() (F7: turns are turns, calls are calls);
+//   - saved, and THIS CALL's `evicted`: the drops this page watched, folded by reduceCounters.
+// It replaced a per-session tally that counted one manual press twice (the RPC reply AND the A1
+// `end` of the same press), started at 0 on every reload, and was seeded from the anatomy row's
+// per-ATTEMPT compaction counter (F3d, ≈ always 0).
 //
-// CORRECTED 2026-08-29: this comment used to say "nothing anywhere counts turns", and the panel
-// was built on that premise — so a reload or a session switch showed turns 0 / compactions 0 on
-// a session provably mid-conversation. The anatomy row DOES count both (`turn`,
-// `compactionCycle`); backfillCachePanel seeds these from it, and the live streams take over from
-// there. evictedTokens has no such source and genuinely still starts at the tab's attach.
-interface CacheSessionStats {
-  turns: number;
-  compactions: number;
-  evictedTokens: number;
-}
-const cacheSessionStats = new Map<string, CacheSessionStats>();
-function sessionStatsFor(key?: string): CacheSessionStats {
-  const k = key ?? sessionKey ?? "";
-  let v = cacheSessionStats.get(k);
-  if (!v) {
-    v = { turns: 0, compactions: 0, evictedTokens: 0 };
-    cacheSessionStats.set(k, v);
+// The live half lives in a WeakMap ON the session's CallTimelineStore, so it is bounded by the
+// store's LRU (CALL_TIMELINE_MAX_STORES) and never outlives the calls it integrates over: a map
+// keyed by session beside an evicted store could paint `saved` next to turns and calls that had
+// restarted from 0.
+const cacheCounterStates = new WeakMap<CallTimelineStore, CountersState>();
+
+/** Fold one event into a store's counters (the ONE reducer call). Returns whether anything moved. */
+function applyCounterEvent(store: CallTimelineStore, event: CounterEvent): boolean {
+  const prev = cacheCounterStates.get(store) ?? EMPTY_COUNTERS;
+  const next = reduceCounters(prev, event);
+  if (next === prev) {
+    return false;
   }
-  return v;
+  cacheCounterStates.set(store, next);
+  return true;
+}
+
+/**
+ * The call store's growth across one LIVE event, `before` being its totals() read before the
+ * event was applied: new calls feed `saved`'s integral, and a moved total on the viewed session
+ * repaints its THIS SESSION counters (nothing else repaints the panel on a `call` frame).
+ */
+function noteCallTimelineGrowth(
+  key: string,
+  store: CallTimelineStore,
+  before: { turns: number; calls: number },
+): void {
+  const after = store.totals();
+  if (after.calls > before.calls) {
+    applyCounterEvent(store, { kind: "calls", added: after.calls - before.calls });
+  }
+  if ((after.calls !== before.calls || after.turns !== before.turns) && sessionKeyMatches(key)) {
+    renderCachePanel();
+  }
+}
+
+/** The viewed session's sessions.list row, matched across key forms, if the list holds it. */
+function viewedSessionListRow(): unknown {
+  if (!sessionKey || !Array.isArray(sessions)) {
+    return undefined;
+  }
+  return (sessions as Array<Record<string, unknown>>).find(
+    (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, sessionKey),
+  );
+}
+
+/** The viewed session and its row's A7 fields, as renderCachePanel last painted them. */
+let cacheCounterRowPainted = "";
+
+/**
+ * Called by BOTH writers of `sessions` (loadSessions, the sessions.changed merge): repaint when
+ * the viewed row's A7 fields moved, and only then, because sessions.changed fires on every
+ * persisted message of every session.
+ */
+function repaintCacheCountersIfRowMoved(): void {
+  const painted = `${sessionKey}#${rowCountersKey(readRowCounters(viewedSessionListRow()))}`;
+  if (painted !== cacheCounterRowPainted) {
+    renderCachePanel();
+  }
+}
+
+/**
+ * P6 — a completed compaction, or a press that compacted, means the row's counts moved: re-read
+ * the list rather than count here (one increment path). Debounced, because one press lands its A1
+ * `end` and its reply together and pi can end several compactions in a burst; bounded by
+ * CACHE_COUNTER_REREAD_MAX_MS, so a steady stream of compactions across sessions cannot hold the
+ * re-read off for ever.
+ */
+const CACHE_COUNTER_REREAD_MS = 1_500;
+const CACHE_COUNTER_REREAD_MAX_MS = 6_000;
+let cacheCounterRereadTimer: ReturnType<typeof setTimeout> | null = null;
+let cacheCounterRereadFirstAt = 0;
+function scheduleCacheCounterReread(): void {
+  const now = Date.now();
+  if (cacheCounterRereadTimer !== null) {
+    clearTimeout(cacheCounterRereadTimer);
+  } else {
+    cacheCounterRereadFirstAt = now;
+  }
+  const wait = Math.min(
+    CACHE_COUNTER_REREAD_MS,
+    Math.max(0, cacheCounterRereadFirstAt + CACHE_COUNTER_REREAD_MAX_MS - now),
+  );
+  cacheCounterRereadTimer = setTimeout(() => {
+    cacheCounterRereadTimer = null;
+    void loadSessions();
+  }, wait);
 }
 
 // FORK 2026-08-29 (the architect: "whenever the numbers change, they should glow for 5 seconds").
@@ -1431,6 +2488,8 @@ const CACHE_GLOW_MS = 5000;
 const cacheGlowUntil = new Map<string, number>();
 /** Last painted value per stat key, so "changed" means changed — not merely re-rendered. */
 const cacheStatLast = new Map<string, number | undefined>();
+/** The session cacheStatLast describes (B3): another session's numbers are not a change. */
+let cacheStatSessionKey = "";
 let cacheGlowTimer: ReturnType<typeof setTimeout> | null = null;
 /** Arm the glow for every key whose value actually moved. Seeds silently on first sight, so a
  *  freshly attached tab does not light up every stat at once for something that did not change. */
@@ -1474,6 +2533,376 @@ function activeCacheGlow(): string[] {
   return live;
 }
 
+// ─── FORK 2026-09-24 (B5, context-window-panel.md §5) — the CALL TIMELINE's feed ───
+//
+// One CallTimelineStore per SESSION, fed for every session (not only the one on screen), so a
+// background tab's calls are already there when you switch to it — "sessions not on screen keep
+// their store, not a canvas" (§5.6). Bounded: past CALL_TIMELINE_MAX_STORES the least recently fed
+// store goes, never the one on screen.
+//
+// The gateway stamps the canonical key ("agent:main:tinker:x") while a tab holds the short one
+// ("tinker:x"). Keyed naively, one session's history would split across two stores and the tab
+// would show half of it, so the first spelling seen owns the store and every other spelling is
+// resolved onto it with sessionKeyMatches — the predicate every other consumer here uses.
+//
+// ONE entry point per envelope (feedCallTimelineAgentEvent / feedCallTimelineChatEvent), called at
+// the TOP of the agent and chat handlers: several stream consumers below them return early (the
+// thinking consumer returns before anything after it could see the event), so a tap per branch
+// would silently miss events. Each entry point swallows its own errors — the timeline must never
+// break a stream consumer.
+//
+// §5.4, what feeds it today (ctx-a8's `stream:"call"` is consumed the moment its producer ships;
+// nothing here waits for it):
+//   lifecycle start / end / error   turn start (call 1's inferred send), turn end; a start on a
+//                                   closed run is a fallback model re-opening it
+//   turn-phase                      the gateway's preparation window, dotted on the axis
+//   thinking (cumulative d.text)    responseThinking growth
+//   chat delta (cumulative text)    responseText growth
+//   tool start / result             responseToolCalls input, the tool capsule, the next call's send
+//   cache                           per-call exact prompt + output — but NOT on the cc-bridge lane,
+//                                   where it is a turn aggregate (F7) and P5 forbids drawing it as
+//                                   one call's prompt (CallTimelineStore.cacheSample)
+//   effort final output_tokens      the turn total, APPORTIONED across its calls (dotted, forever)
+//   compaction start / end          the red band across both lanes
+//   lifecycle context-anatomy       composition: a pre-call row belongs to its call, a post-turn
+//                                   row is a badged stand-in (F5)
+const CALL_TIMELINE_MAX_STORES = 16;
+const callTimelineStores = new Map<string, CallTimelineStore>();
+const callTimelineKeyAlias = new Map<string, string>();
+const callTimelineBackfilled = new Set<string>();
+let callTimelineView: CallTimelineView | null = null;
+let callTimelineViewStore: CallTimelineStore | null = null;
+const CALL_TIMELINE_LIFECYCLE_PHASES = new Set(["start", "end", "error", "context-anatomy"]);
+
+function callTimelineStoreKey(rawKey: string): string {
+  const hit = callTimelineKeyAlias.get(rawKey);
+  if (hit !== undefined && callTimelineStores.has(hit)) {
+    return hit;
+  }
+  let key = rawKey;
+  for (const k of callTimelineStores.keys()) {
+    if (sessionKeyMatches(rawKey, k)) {
+      key = k;
+      break;
+    }
+  }
+  if (callTimelineKeyAlias.size > 512) {
+    callTimelineKeyAlias.clear();
+  }
+  callTimelineKeyAlias.set(rawKey, key);
+  return key;
+}
+
+function callTimelineStoreFor(rawKey: string): CallTimelineStore {
+  const key = callTimelineStoreKey(rawKey);
+  let store = callTimelineStores.get(key);
+  if (!store) {
+    store = new CallTimelineStore();
+    // FORK 2026-10-02 (the owner: "it should always show the last run instead") — the session's last
+    // finished run as this browser saved it (call-timeline-persist.ts), so a reload does not leave
+    // the timeline with history rows only. restoreRun validates it and never overrides a live run.
+    try {
+      store.restoreRun(loadLastRun(key, sessionKeyMatches));
+    } catch {
+      /* a bad entry must never cost the session its store */
+    }
+  }
+  // Re-inserted on every touch, so Map order is least-recently-fed first.
+  callTimelineStores.delete(key);
+  callTimelineStores.set(key, store);
+  if (callTimelineStores.size > CALL_TIMELINE_MAX_STORES) {
+    for (const [k, v] of callTimelineStores) {
+      if (v !== callTimelineViewStore && v !== store) {
+        callTimelineStores.delete(k);
+        // B3 — its backfill latch goes with it: a store rebuilt for this session later must load
+        // its history again, or its turns and calls (THIS SESSION) restart from live events alone.
+        for (const b of Array.from(callTimelineBackfilled)) {
+          if (sessionKeyMatches(b, k)) {
+            callTimelineBackfilled.delete(b);
+          }
+        }
+        break;
+      }
+    }
+  }
+  return store;
+}
+
+/** The session an event belongs to, for the timeline — null for subagents (their calls are their own). */
+function callTimelineEventKey(p: any): string | null {
+  const k = p?.sessionKey ?? p?.data?.sessionKey ?? p?.data?.anatomy?.sessionKey;
+  return typeof k === "string" && k !== "" && !k.includes(":subagent:") ? k : null;
+}
+
+/**
+ * An anatomy API row's OWN runId (context-anatomy-db.ts maps run_id onto it), or undefined for a
+ * row written without one. The ctx-timeline merges a row into its (run, round) bar only by it.
+ */
+function anatomyRowRunId(row: unknown): string | undefined {
+  const id = row && typeof row === "object" ? (row as { runId?: unknown }).runId : undefined;
+  return typeof id === "string" && id ? id : undefined;
+}
+
+/**
+ * B6 (context-window-panel.md §6.2) — the ctx-timeline's half of the one `call` consumer: one
+ * column per model call, built from the call timeline's RECORD of it (callColumn), so the bottom
+ * bar and the rail read one interpretation of the stream. Scoped like the bar's own history: the
+ * viewed session, or every session in its "all" mode. Its own try: a ctx-timeline failure must
+ * not cost the call timeline its repaint.
+ */
+function feedContextTimelineCall(key: string, runId: string, call: TimelineCall): void {
+  try {
+    if (!timelineCtrl || (timelineCtrl.getFilterMode() !== "all" && !sessionKeyMatches(key))) {
+      return;
+    }
+    const maxWindow = cachePanelStates.get(key)?.maxWindow;
+    timelineCtrl.pushCall(runId, callColumn(call, { runId, sessionKey: key, maxWindow }));
+  } catch {
+    /* the ctx-timeline must never break the call timeline's feed */
+  }
+}
+
+function feedCallTimelineAgentEvent(p: any): void {
+  try {
+    const stream = p?.stream;
+    const d = p?.data ?? {};
+    const relevant =
+      stream === "call" ||
+      stream === "thinking" ||
+      stream === "tool" ||
+      stream === "cache" ||
+      stream === "effort" ||
+      stream === "compaction" ||
+      stream === TURN_PHASE_STREAM ||
+      (stream === "lifecycle" && CALL_TIMELINE_LIFECYCLE_PHASES.has(d.phase));
+    const key = relevant ? callTimelineEventKey(p) : null;
+    if (!key) {
+      return;
+    }
+    const runId = typeof p.runId === "string" ? p.runId : "";
+    const t = Date.now();
+    const store = callTimelineStoreFor(key);
+    // B3 — the totals before this event, so noteCallTimelineGrowth (below) sees what it added.
+    const before = store.totals();
+    if (stream === "call") {
+      // B6 — the ONE consumer of `stream:"call"`: read once (parseCallFrame, the stream's one
+      // reader), applied to this session's record, and that record feeds the ctx-timeline too.
+      const frame = parseCallFrame(d, t);
+      const call = frame ? store.applyCall(runId, frame) : null;
+      if (call) {
+        feedContextTimelineCall(key, runId, call);
+      }
+    } else if (stream === "thinking") {
+      if (typeof d.text === "string") {
+        store.outputCumulative(runId, "responseThinking", d.text.length, t);
+      }
+    } else if (stream === "tool") {
+      if (d.phase === "start" && d.toolCallId) {
+        let argsChars = 0;
+        try {
+          argsChars = d.args == null ? 0 : JSON.stringify(d.args).length;
+        } catch {
+          argsChars = 0;
+        }
+        store.toolStart(runId, String(d.toolCallId), String(d.name ?? "tool"), t, argsChars);
+      } else if (d.phase === "result" && d.toolCallId) {
+        store.toolEnd(String(d.toolCallId), t, Boolean(d.isError));
+      }
+    } else if (stream === "cache") {
+      store.cacheSample(runId, d, t);
+    } else if (stream === "effort") {
+      if (d.phase === "final" && typeof d.output_tokens === "number") {
+        store.turnOutput(runId, d.output_tokens, t);
+      }
+    } else if (stream === "compaction") {
+      if (d.phase === "start") {
+        store.compactionStart(t, d);
+      } else if (d.phase === "end") {
+        store.compactionEnd(t, d);
+      }
+    } else if (stream === TURN_PHASE_STREAM) {
+      store.prepTick(t);
+    } else if (d.phase === "start") {
+      store.turnStart(runId, t, typeof d.model === "string" ? d.model : undefined);
+    } else if (d.phase === "end" || d.phase === "error") {
+      store.turnEnd(runId, t);
+    } else {
+      store.composition(runId || undefined, d.anatomy, t);
+    }
+    noteCallTimelineGrowth(key, store, before);
+    if (store === callTimelineViewStore) {
+      callTimelineView?.invalidate();
+    }
+    scheduleCallTimelineSave(key);
+  } catch {
+    /* the timeline must never break a stream consumer */
+  }
+}
+
+function feedCallTimelineChatEvent(p: any): void {
+  try {
+    const key = callTimelineEventKey(p);
+    const runId = typeof p?.runId === "string" ? p.runId : "";
+    if (!key || !runId) {
+      return;
+    }
+    const t = Date.now();
+    let store: CallTimelineStore;
+    if (p.state === "delta") {
+      // The run's CUMULATIVE text, not a delta — the store turns the length into growth.
+      const text = p.message?.content?.[0]?.text;
+      if (typeof text !== "string") {
+        return;
+      }
+      store = callTimelineStoreFor(key);
+      // B3 — a first delta can open the run's turn and its call (the store's §5.4 fallbacks).
+      const before = store.totals();
+      store.outputCumulative(runId, "responseText", text.length, t);
+      noteCallTimelineGrowth(key, store, before);
+    } else if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+      store = callTimelineStoreFor(key);
+      store.turnEnd(runId, t);
+    } else {
+      return;
+    }
+    if (store === callTimelineViewStore) {
+      callTimelineView?.invalidate();
+    }
+    scheduleCallTimelineSave(key);
+  } catch {
+    /* the timeline must never break the chat consumer */
+  }
+}
+
+// FORK 2026-10-02 (the owner: "The CALL TIMELINE panel sometimes stays empty, it should always show
+// the last run instead") — each session's newest finished run, saved for the next page load
+// (call-timeline-persist.ts; restored in callTimelineStoreFor). Saved once the session has been
+// quiet for CALL_TIMELINE_SAVE_MS, so a streaming run costs nothing (a run still answering is never
+// snapshotted anyway), and late frames after a turn's end (effort final, a `call` end) land in the
+// same save. `pagehide` flushes what is pending, so the reload a rebuild pushes keeps the last run.
+const CALL_TIMELINE_SAVE_MS = 1_500;
+const callTimelineSaveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** The store version last saved per session: a quiet period that changed nothing writes nothing. */
+const callTimelineSavedVersion = new Map<string, number>();
+
+function scheduleCallTimelineSave(rawKey: string): void {
+  const key = callTimelineStoreKey(rawKey);
+  const pending = callTimelineSaveTimers.get(key);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+  }
+  callTimelineSaveTimers.set(
+    key,
+    setTimeout(() => {
+      callTimelineSaveTimers.delete(key);
+      saveCallTimelineRun(key);
+    }, CALL_TIMELINE_SAVE_MS),
+  );
+}
+
+function saveCallTimelineRun(key: string): void {
+  try {
+    const store = callTimelineStores.get(key);
+    if (!store || callTimelineSavedVersion.get(key) === store.version) {
+      return;
+    }
+    const snap = store.lastRunSnapshot();
+    if (snap && saveLastRun(key, snap, sessionKeyMatches, Date.now())) {
+      callTimelineSavedVersion.set(key, store.version);
+    }
+  } catch {
+    /* persisting is a convenience: it must never break the feed or the page's unload */
+  }
+}
+
+window.addEventListener("pagehide", () => {
+  for (const [key, timer] of callTimelineSaveTimers) {
+    clearTimeout(timer);
+    saveCallTimelineRun(key);
+  }
+  callTimelineSaveTimers.clear();
+});
+
+/**
+ * Mount once, and point the view at the viewed session's store. Called from renderCachePanel(),
+ * which the boot paint and every viewed-session switch already go through — one hook, not two.
+ */
+function syncCallTimeline(): void {
+  const host = document.getElementById("cache-timeline");
+  if (!host) {
+    return;
+  }
+  if (!callTimelineView) {
+    callTimelineView = mountCallTimeline(host, { isLive: () => viewedSessionBusy() });
+    // §5.6 — the perf probe, from devtools as well as from the Debug tab's Local State card.
+    (window as unknown as Record<string, unknown>).__tinkerCallTimeline = () =>
+      callTimelineView?.debugSnapshot();
+  }
+  const sk = sessionKey;
+  const store = sk ? callTimelineStoreFor(sk) : null;
+  if (store !== callTimelineViewStore) {
+    callTimelineViewStore = store;
+    callTimelineView.setStore(store);
+  } else {
+    callTimelineView.invalidate();
+  }
+  if (sk && store && !callTimelineBackfilled.has(sk)) {
+    callTimelineBackfilled.add(sk);
+    backfillCallTimeline(sk, store);
+  }
+}
+
+/** The anatomy rows one call-timeline backfill asks for; a reply this long may have left turns out. */
+const CALL_TIMELINE_HISTORY_LIMIT = 200;
+
+/**
+ * §5.3 — t0 is the earliest RETAINED event, not the page load: the session's anatomy rows (one per
+ * turn) seed the history, drawn as turn-level blocks labelled `aggregate`. Same-origin relative
+ * fetch, same as backfillCachePanel. A failure re-arms after 30 s rather than latching shut — a
+ * fail-shut gate with no retry is a slow leak.
+ */
+function backfillCallTimeline(sk: string, store: CallTimelineStore): void {
+  const hdrs: Record<string, string> = TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {};
+  fetch(
+    `/tinker/api/context-anatomy/${encodeURIComponent(sk)}?limit=${CALL_TIMELINE_HISTORY_LIMIT}`,
+    Object.keys(hdrs).length ? { headers: hdrs } : undefined,
+  )
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+    .then((body) => {
+      const rows: unknown[] = Array.isArray(body) ? body : (body?.events ?? []);
+      const before = store.totals();
+      store.loadHistory(rows);
+      // B3 — THIS SESSION learns the history was read (a 0 is now a measured 0, P10), how many of
+      // its calls are history rows (one turn drawn as ONE call, so `calls` becomes a floor), and
+      // whether the limit left older turns out (`turns` becomes a floor).
+      applyCounterEvent(store, {
+        kind: "history",
+        calls: store.totals().calls - before.calls,
+        truncated: rows.length >= CALL_TIMELINE_HISTORY_LIMIT,
+      });
+      if (sessionKeyMatches(sk)) {
+        // Re-syncs the view (syncCallTimeline invalidates it) and repaints the counters.
+        renderCachePanel();
+      }
+    })
+    .catch(() => {
+      setTimeout(() => callTimelineBackfilled.delete(sk), 30_000);
+    });
+}
+
+/** One line for the Debug tab: the §5.6 budget, read off the live probe. */
+function callTimelineDebugLine(): string {
+  const d = callTimelineView?.debugSnapshot();
+  if (!d) {
+    return "not mounted";
+  }
+  return (
+    `draw p95 ${d.p95Ms} ms (budget ${d.budgetMs} ms${d.overBudget ? ", OVER" : ""}) · p50 ${d.p50Ms} ms` +
+    ` · ${d.sampled} of ${d.frames} frames · ${d.calls} calls, ${d.bins} bins` +
+    (d.animating ? " · animating" : "")
+  );
+}
+
 /** Repaint the panel from the VIEWED session's state. Safe to call any time. */
 function renderCachePanel(): void {
   const body = document.getElementById("cache-panel-body");
@@ -1513,21 +2942,38 @@ function renderCachePanel(): void {
   // FORK 2026-08-29 — the two stat panels. Session counters and the glow set are attached HERE
   // rather than stored on the panel state, because they are per-VIEWED-session view data: the
   // renderer stays a pure function of what it is handed, and nothing it paints is written back.
-  const stats = sessionStatsFor();
+  // FORK 2026-09-25 (B3) — joined by sessionCounters from the session row, the call store and the
+  // drops this page watched (see cacheCounterStates). THIS CALL's `evicted` is the last such drop.
+  const counterRow = readRowCounters(viewedSessionListRow());
+  cacheCounterRowPainted = `${sessionKey}#${rowCountersKey(counterRow)}`;
+  const counterStore = sessionKey ? callTimelineStoreFor(sessionKey) : null;
+  const counters =
+    (counterStore ? cacheCounterStates.get(counterStore) : undefined) ?? EMPTY_COUNTERS;
+  const stats = sessionCounters({
+    row: counterRow,
+    state: counters,
+    totals: counterStore ? counterStore.totals() : undefined,
+  });
   state = {
     ...state,
-    sessionStats: {
-      turns: stats.turns,
-      compactions: stats.compactions,
-      evictedTokens: stats.evictedTokens,
-    },
+    lastEvictedTokens: counters.lastDropped,
+    lastEvictedProvenance: counters.lastDroppedProvenance,
+    sessionStats: stats,
   };
   // Arm glows BEFORE painting, so the very repaint that carries a new number also carries its
   // highlight — a change that lit up only on the following repaint would frequently never be
-  // seen at all.
+  // seen at all. Another session's numbers are not a CHANGE: on a switch the baseline re-seeds
+  // (silently), or every cell that differs between the two sessions would light up at once.
+  if (cacheStatSessionKey !== sessionKey) {
+    cacheStatSessionKey = sessionKey;
+    cacheStatLast.clear();
+    cacheGlowUntil.clear();
+  }
   const cr = pos0(state.cacheRead);
   const cw = pos0(state.cacheWrite);
   const pt = pos0(state.promptTokens);
+  // `saved` is left out on purpose: once a drop was watched it grows on every call (it is an
+  // integral), so its glow would never go out.
   noteCacheStatChanges({
     cached: pt > 0 ? cr : undefined,
     written: pt > 0 ? cw : undefined,
@@ -1535,7 +2981,9 @@ function renderCachePanel(): void {
     output: pos0(state.output) || undefined,
     evicted: state.lastEvictedTokens,
     turns: stats.turns,
+    calls: stats.calls,
     compactions: stats.compactions,
+    evictions: stats.evictions,
     "evicted-total": stats.evictedTokens,
   });
   const glow = activeCacheGlow();
@@ -1546,6 +2994,12 @@ function renderCachePanel(): void {
     const used = cacheUsedTokens(state);
     count.textContent = max > 0 && used > 0 ? `${Math.round((used / max) * 100)}%` : "";
   }
+  // FORK 2026-09-24 (B4) — the buttons and the pulse are viewed-session-scoped like everything
+  // else here, so they repaint in this same funnel: tab switch, pin change, every stream event.
+  paintCacheButtons();
+  // B5 — the CALL TIMELINE rides this same funnel: the boot paint and every viewed-session
+  // switch already call renderCachePanel(), so the timeline follows the tab with no second hook.
+  syncCallTimeline();
 }
 // FORK 2026-07-26 — one-shot backfill so a freshly loaded page (or a tab visited for the
 // first time) shows the LAST call's composition instead of an empty box. Without this the
@@ -1575,6 +3029,13 @@ function backfillCachePanel(key?: string): void {
       // fresher than the DB row and must win.
       if (!s.contextSent && latest.contextSent) {
         s.contextSent = latest.contextSent;
+        // B2 — the badge comes from the same row as the composition (see compositionSnapshotOf).
+        s.compositionSnapshot = compositionSnapshotOf(latest);
+        // FORK 2026-09-25 — and so does its (run, round): the DB row already holds the pre-call
+        // composition, so the live post-turn row of that same run must not replace it either.
+        s.compositionRunId = anatomyRowRunId(latest);
+        s.compositionRound =
+          typeof latest.roundNumber === "number" ? latest.roundNumber : undefined;
       }
       if (!s.model && typeof latest.model === "string") {
         s.model = latest.model;
@@ -1610,20 +3071,10 @@ function backfillCachePanel(key?: string): void {
       ) {
         s.output = latest.responseTokens;
       }
-      // THIS SESSION's counters. The comment on CacheSessionStats used to claim "nothing anywhere
-      // counts turns" — the anatomy row does, in `turn` (and compactions in `compactionCycle`).
-      // Only fill a counter still at its zero value, so live events that already landed win.
-      const st = sessionStatsFor(sk);
-      if (st.turns === 0 && typeof latest.turn === "number" && latest.turn > 0) {
-        st.turns = latest.turn;
-      }
-      if (
-        st.compactions === 0 &&
-        typeof latest.compactionCycle === "number" &&
-        latest.compactionCycle > 0
-      ) {
-        st.compactions = latest.compactionCycle;
-      }
+      // FORK 2026-09-25 (B3) — THIS SESSION's counters are no longer seeded from this row. Its
+      // `turn` counts the user messages in the pi snapshot, which a compaction shrinks (F7), and
+      // its compaction figure counts inside ONE attempt, so it is ≈ always 0 (F3d). The counts
+      // come from the session row and the call store now (renderCachePanel, sessionCounters).
       if (sk === sessionKey) {
         renderCachePanel();
       }
@@ -1657,21 +3108,223 @@ function flashCachePanel(kind: "read" | "write"): void {
 // context cache panel should be pulsating, meaning it is actively doing something (either
 // triggered manually or automatically)").
 //
-// A DEPTH COUNTER, not a boolean, because two independent sources raise it for what is often
-// the SAME operation: the button handler below (which knows when its RPC started and finished)
-// and the gateway's own `compaction` stream (which reports pi's compaction start/end). Pressing
-// "compact" produces both — and with a boolean the stream's `end` would clear the pulse while
-// the RPC was still in flight, so the panel would go quiet mid-operation. Clamped at 0 so a
-// stray `end` with no matching `start` (a compaction that began before this tab was opened)
-// cannot drive the counter negative and wedge the pulse on forever.
-let cacheBusyDepth = 0;
-function setCacheBusy(on: boolean): void {
-  cacheBusyDepth = on ? cacheBusyDepth + 1 : Math.max(0, cacheBusyDepth - 1);
-  const el = document.getElementById("cache-panel");
-  if (!el) {
+// FORK 2026-09-24 (context-window-panel.md §6.2 B4; P8, F10, F11) — the pulse and the two
+// buttons are painted from PER-SESSION facts, for the VIEWED session, by ONE painter
+// (paintCacheButtons). This replaced a tab-global DEPTH COUNTER that only events for the
+// then-viewed session could move, which failed two ways:
+//   - WEDGED ON: a compaction starts on tab A, the architect switches to B, A's `end` fails the
+//     viewed-session gate, the counter never drops, and B pulses until reload;
+//   - SILENT: a compaction already running when its tab is opened never pulses, and the claude
+//     CLI's own compactions run 2–3.6 min (F11), the longest pause a turn can have.
+// The counter existed because the button's RPC and the compaction stream can report the SAME
+// operation, and a plain boolean let the stream's `end` quiet a still-running RPC. Two per-session
+// facts OR-ed together keep that property with nothing that can drift: the pulse is on while the
+// viewed session has a button RPC in flight OR an unexpired compaction `start` with no `end`.
+//
+// Keys are stored as they arrive (the tab's key for an RPC, the gateway's canonical key for a
+// stream event) and matched with sessionKeyMatches, the rule that reconciles the two forms
+// everywhere else in this file.
+/** A button RPC in flight, per session, and which of the two it is. */
+const cacheActInFlight = new Map<string, CacheAct>();
+/** A compaction `start` seen with no `end` yet, per session: EVERY session, not only the viewed one. */
+const compactionStartedAt = new Map<string, { at: number; trigger?: string }>();
+/** The gateway's "nothing to do" answer, per session and button, until that session's next run. */
+const cacheActNothingToDo = new Map<string, Partial<Record<CacheAct, string>>>();
+/** The one armed first press of the non-blocking confirm, if any. */
+let cacheActArm: { act: CacheAct; key: string; at: number } | null = null;
+let cacheActArmTimer: ReturnType<typeof setTimeout> | null = null;
+let compactionExpiryTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** The viewed session's entry in a per-session map, matched across key forms. */
+function viewedCacheEntry<T>(map: Map<string, T>): T | undefined {
+  if (!sessionKey) {
+    return undefined;
+  }
+  const exact = map.get(sessionKey);
+  if (exact !== undefined) {
+    return exact;
+  }
+  for (const [key, value] of map) {
+    if (sessionKeyMatches(key, sessionKey)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+/** Drop every entry of a per-session map that names `key`, in any key form. */
+function deleteCacheEntries<T>(map: Map<string, T>, key: unknown): void {
+  if (typeof key !== "string" || !key) {
     return;
   }
-  el.classList.toggle("cache-busy", cacheBusyDepth > 0);
+  for (const k of Array.from(map.keys())) {
+    if (sessionKeyMatches(k, key)) {
+      map.delete(k);
+    }
+  }
+}
+
+/**
+ * The provider the viewed session's NEXT call goes to (P8's question): the tab's client pin, then
+ * the row's durable pin, then the provider that served the last call (resolveNextCallProvider).
+ */
+function viewedNextCallProvider(): string | undefined {
+  if (!sessionKey) {
+    return undefined;
+  }
+  const row = (Array.isArray(sessions) ? (sessions as Array<Record<string, unknown>>) : []).find(
+    (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, sessionKey),
+  );
+  return resolveNextCallProvider({
+    clientPin: modelPinBySession.get(sessionKey),
+    durablePinProvider: serverPinOf(
+      row as Parameters<typeof serverPinOf>[0],
+      autoAssertedSessions.has(sessionKey),
+    ).provider,
+    servedProvider: viewedSessionRowProvider() ?? cacheStateFor().provider,
+  });
+}
+
+/**
+ * buttonState for one button of the VIEWED session, from live state. The painter and the click
+ * handler both call this, so what a button shows and what a press does cannot disagree.
+ */
+function viewedCacheButtonState(act: CacheAct, now: number): CacheButtonState {
+  const live = viewedCacheEntry(compactionStartedAt);
+  return buttonState({
+    act,
+    sessionKey,
+    provider: viewedNextCallProvider(),
+    inFlight: viewedCacheEntry(cacheActInFlight),
+    compactionLive: live && compactionIsLive(live.at, now) ? { trigger: live.trigger } : undefined,
+    nothingToDo: viewedCacheEntry(cacheActNothingToDo)?.[act],
+    busy: sessionKey ? viewedSessionBusy() || viewedSessionPending() : false,
+    armed:
+      cacheActArm !== null &&
+      cacheActArm.act === act &&
+      cacheActArm.key === sessionKey &&
+      cacheActArmed(cacheActArm.at, now),
+  });
+}
+
+/**
+ * THE painter for the panel's two buttons and its busy pulse. renderCachePanel calls it (so every
+ * cache / anatomy / compaction event, tab switch and model-pin change repaints it), and so does
+ * every site that changes one of its inputs without a panel repaint.
+ */
+function paintCacheButtons(): void {
+  const panel = document.getElementById("cache-panel");
+  if (!panel) {
+    return;
+  }
+  const now = Date.now();
+  // A lost `end` must not pulse, nor lock the buttons, forever: a start past the bound is dropped
+  // here, where it is read.
+  for (const [key, c] of Array.from(compactionStartedAt)) {
+    if (!compactionIsLive(c.at, now)) {
+      compactionStartedAt.delete(key);
+    }
+  }
+  panel.classList.toggle(
+    "cache-busy",
+    viewedCacheEntry(cacheActInFlight) !== undefined ||
+      viewedCacheEntry(compactionStartedAt) !== undefined,
+  );
+  for (const btn of Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-cache-act]"))) {
+    const act = btn.dataset.cacheAct;
+    if (act !== "evict" && act !== "compact") {
+      continue;
+    }
+    const st = viewedCacheButtonState(act, now);
+    btn.disabled = st.disabled;
+    btn.title = st.title;
+    if (btn.textContent !== st.label) {
+      btn.textContent = st.label;
+    }
+  }
+}
+
+/**
+ * The PULSE half of the compaction-stream consumer, for EVERY session (the counters half is
+ * noteCompactionCounters, below). The transition is compactionPulseStep (context-buttons.ts),
+ * pure and pinned for every shape the A1 producers send: a repeated `start` keeps its FIRST stamp
+ * (an executor that repeats it cannot extend its life) and replaces one that went stale; an `end`
+ * ends the pulse whether or not its `start` was seen and whether or not it completed (the
+ * bridge's A3 reports a failed CLI compaction as an `end` with completed:false).
+ */
+function noteCompactionPhase(evtKey: unknown, data: unknown): void {
+  const key = typeof evtKey === "string" ? evtKey : "";
+  if (!key) {
+    return;
+  }
+  const step = compactionPulseStep(compactionStartedAt.get(key), data, Date.now());
+  if (step.kind === "ignore") {
+    return;
+  }
+  if (step.kind === "start") {
+    compactionStartedAt.set(key, step.next);
+    // One repaint when the newest start would go stale, so a lost `end` stops the pulse on its
+    // own rather than at the next unrelated event.
+    if (compactionExpiryTimer !== null) {
+      clearTimeout(compactionExpiryTimer);
+    }
+    compactionExpiryTimer = setTimeout(() => {
+      compactionExpiryTimer = null;
+      paintCacheButtons();
+    }, COMPACTION_LIVE_MAX_MS + 50);
+  } else {
+    deleteCacheEntries(compactionStartedAt, key);
+  }
+  paintCacheButtons();
+}
+
+/**
+ * B3 — the COUNTERS half of the compaction-stream consumer, for every session but a subagent's
+ * (the call timeline skips those too: their compactions are their own). The event goes to that
+ * session's counters, where an `end` may size a drop (context-counters.ts rule 4), and a
+ * completed `end` re-reads the row that COUNTS it (rule 3: nothing is counted here).
+ */
+function noteCompactionCounters(p: { data?: unknown } | null | undefined): void {
+  const key = callTimelineEventKey(p);
+  if (!key) {
+    return;
+  }
+  applyCounterEvent(callTimelineStoreFor(key), {
+    kind: "compaction",
+    data: p?.data,
+    at: Date.now(),
+  });
+  if (compactionDrop(p?.data) !== null) {
+    scheduleCacheCounterReread();
+  }
+}
+
+/**
+ * Arm the non-blocking confirm for one button of one session. It disarms itself after the window,
+ * and the painter shows the armed label only on that session.
+ */
+function armCacheAct(act: CacheAct, key: string, now: number): void {
+  cacheActArm = { act, key, at: now };
+  if (cacheActArmTimer !== null) {
+    clearTimeout(cacheActArmTimer);
+  }
+  cacheActArmTimer = setTimeout(() => {
+    cacheActArmTimer = null;
+    cacheActArm = null;
+    paintCacheButtons();
+  }, CACHE_ACT_CONFIRM_WINDOW_MS + 50);
+  paintCacheButtons();
+  showToast(
+    `A turn is running on this session and ${act} would interrupt it. Press ${act} again within ${CACHE_ACT_CONFIRM_WINDOW_MS / 1000} s to go ahead.`,
+  );
+}
+
+function disarmCacheAct(): void {
+  cacheActArm = null;
+  if (cacheActArmTimer !== null) {
+    clearTimeout(cacheActArmTimer);
+    cacheActArmTimer = null;
+  }
 }
 
 // FORK 2026-08-28 (the architect: "two small buttons ... one for 'evict', one for 'compact', which should
@@ -1692,6 +3345,10 @@ function setCacheBusy(on: boolean): void {
 //                                                            transcript outright. No model call,
 //                                                            instant, and the previous transcript
 //                                                            is archived as a .bak first.
+// FORK 2026-09-25 (context-window-panel.md §6.1 A6) — and on a lane that owns its context
+// (claude-code), compact → the `/compact` TURN, through send(): the CLI compacts its own context
+// (cacheActRoute). sessions.compact would compact the gateway's mirror there, which the CLI never
+// reads (F2).
 document.addEventListener("click", (ev) => {
   const btn = (ev.target as HTMLElement | null)?.closest?.("[data-cache-act]") as
     | HTMLButtonElement
@@ -1716,16 +3373,52 @@ document.addEventListener("click", (ev) => {
   }
   const act = btn.dataset.cacheAct;
   const sk = sessionKey;
-  if (!sk || (act !== "evict" && act !== "compact")) {
+  if (act !== "evict" && act !== "compact") {
     return;
   }
-  const buttons = Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-cache-act]"));
-  // Both buttons, not just the pressed one: a compaction running while an eviction rewrites the
-  // same transcript is precisely the race that corrupts a session.
-  for (const b of buttons) {
-    b.disabled = true;
+  // FORK 2026-09-24 (context-window-panel.md §6.2 B4, P8) — the press asks the SAME buttonState
+  // the painter asks, recomputed now: the painted state can be stale by the time of the click (a
+  // pin moved the lane, a turn started), and a press on a button that should be off says why and
+  // repaints instead of firing. On a busy session the first press only arms (the non-blocking
+  // confirm, cacheActPress); never window.confirm, which would freeze every stream handler.
+  const now = Date.now();
+  const state = viewedCacheButtonState(act, now);
+  const armedAt =
+    cacheActArm !== null && cacheActArm.act === act && cacheActArm.key === sk
+      ? cacheActArm.at
+      : undefined;
+  const press = cacheActPress(state, armedAt, now);
+  if (press === "ignore" || !sk) {
+    if (state.reason) {
+      showToast(`Cannot ${act}: ${state.reason}`, true);
+    }
+    paintCacheButtons();
+    return;
   }
-  setCacheBusy(true);
+  if (press === "arm") {
+    armCacheAct(act, sk, now);
+    return;
+  }
+  disarmCacheAct();
+  // FORK 2026-09-25 (context-window-panel.md §6.1 A6, the owner's decision: option (i)) — COMPACT
+  // on a lane that owns its context is the CLI's own `/compact`, sent as a TURN through send(), the
+  // path a typed prompt takes (outbox, idempotency key, bubble), and bare: buildInjectedPrompt
+  // appends nothing to it. buttonState enabled it only on an idle session, so it interrupts no turn.
+  // There is no RPC, so nothing is marked in flight and no reply is waited for: the pulse and the
+  // result toast come from the A1 stream (the bridge's A3 `start` on `compacting`, its exact `end`
+  // from compact_boundary; cliCompactionToast), and the counters pair no reply half with the CLI's
+  // `end`, whose trigger ("cli-internal") is not a press trigger in context-counters.ts. The
+  // composer's draft is left alone (`keepDraft`): this text was never typed. It records no
+  // `ui.context.action` row: that row's result is the RPC reply's class, which this route lacks.
+  if (cacheActRoute(act, viewedNextCallProvider()) === "cli-turn") {
+    void send(CLI_COMPACT_COMMAND, undefined, undefined, true);
+    return;
+  }
+  // Both buttons, not just the pressed one: a compaction running while an eviction rewrites the
+  // same transcript is precisely the race that corrupts a session. The in-flight mark turns both
+  // off (buttonState rule 3) and holds the pulse for as long as the RPC runs.
+  cacheActInFlight.set(sk, act);
+  paintCacheButtons();
   // REQ_TIMEOUT_MS is documented above as a stuck-forever guard sized for INTERACTIVE calls.
   // Compaction legitimately runs a model over the whole conversation; the `sessions.suggestTitle`
   // precedent (measured 61.5s–118.1s against a 60s ceiling, so it never once completed) is the
@@ -1734,29 +3427,91 @@ document.addEventListener("click", (ev) => {
     act === "compact"
       ? req("sessions.compact", { key: sk }, { timeoutMs: 180_000 })
       : req("sessions.compact", { key: sk, keepFraction: 0.5 });
+  // FORK 2026-09-24 (logging.md §4.7 `ui.context.action`, §9 step 8) — ONE row per press that
+  // FIRED, on its own subscription to the call, so nothing the handler below does (or throws) can
+  // add a second row or swallow the first. The result is `cacheActOutcome`'s, the classification
+  // the toast reads; a call that rejected (timeout, closed socket) is "error". A press that only
+  // armed the confirm, or was ignored, fired nothing and records nothing.
+  void call.then(
+    (res: unknown) => recordUiEvent(contextActionEvent(act, cacheActOutcome(res))),
+    () => recordUiEvent(contextActionEvent(act, "error")),
+  );
   void call
     .then((res: unknown) => {
-      const r = (res ?? {}) as { compacted?: unknown; reason?: unknown; evictedTokens?: unknown };
-      // FORK 2026-08-29 — a MANUAL eviction is a saving too, and it arrives on the RPC reply
-      // rather than on the compaction stream, so it has to be banked here or the THIS SESSION
-      // total would only ever count the automatic ones.
-      const evictedTokens = typeof r.evictedTokens === "number" ? r.evictedTokens : 0;
-      if (r.compacted && evictedTokens > 0) {
-        const st = sessionStatsFor(sk);
-        st.compactions += 1;
-        st.evictedTokens += evictedTokens;
-        cacheStateFor(sk).lastEvictedTokens = evictedTokens;
+      const r = (res ?? {}) as {
+        compacted?: unknown;
+        reason?: unknown;
+        tokensAfter?: unknown;
+      };
+      // FORK 2026-09-25 (B3, ONE increment path) — the reply counts nothing. It used to add a
+      // compaction and its saving here, and the A1 `end` the same press's executor publishes
+      // (A2 / A5) added the compaction again in the stream consumer: one press, two compactions.
+      // The session row counts it now, so a reply that compacted only asks for a re-read. It is
+      // also one HALF of the press's drop, and sizes that drop only when the `end` carried no
+      // size (COMPACT's engram `end` sends a store-wide tokensBefore; context-counters.ts rule 4).
+      applyCounterEvent(callTimelineStoreFor(sk), {
+        kind: "reply",
+        act,
+        reply: res,
+        at: Date.now(),
+      });
+      if (r.compacted) {
+        scheduleCacheCounterReread();
       }
-      showToast(
-        r.compacted
-          ? `${act === "compact" ? "Compacted" : "Evicted"}${evictedTokens > 0 ? ` — ${evictedTokens.toLocaleString()} tokens freed` : " — context window refreshed"}`
-          : `Nothing to ${act}${r.reason ? `: ${String(r.reason)}` : ""}`,
-      );
+      // FORK 2026-09-24 (B4, P8) — the toast reports the reply's before → after, and a "nothing
+      // to do" answer is remembered for this session and button until the session's next run
+      // (buttonState rule 5), so the button says so instead of inviting the same no-op again.
+      const toast = cacheActResultToast(act, res);
+      if (toast.nothingToDo) {
+        const declined = cacheActNothingToDo.get(sk) ?? {};
+        declined[act] = toast.nothingToDo;
+        cacheActNothingToDo.set(sk, declined);
+      }
+      showToast(toast.text, toast.isError);
+      // FORK 2026-09-07 — THE red-bar fix. Dropping the latch and re-fetching (below) CANNOT move
+      // the conversation segment, for two independent reasons:
+      //   1. every assignment in backfillCachePanel is gap-fill guarded (`if (!s.contextSent …)`),
+      //      so a populated panel refuses the newer row by construction; and
+      //   2. there is no newer row to take. The bar reads `contextSent.conversationHistoryTokens`
+      //      from a context-anatomy event, and those are written by a MODEL CALL. Engram-mode
+      //      compaction makes none — verified live: after a compaction that freed 128,260 tokens
+      //      the newest anatomy row for the session was still 20 HOURS old (turn 19, 175,850
+      //      conversation tokens). So the bar was honestly repainting a stale truth, forever, and
+      //      only the session's next real turn could ever have moved it.
+      // `tokensAfter` is the post-compaction prefix the gateway just banked into the session entry
+      // (`totalTokens`/`totalTokensFresh`), so it is the one authoritative number for what the
+      // NEXT call will actually send. Write it straight over the conversation segment.
+      const tokensAfter = typeof r.tokensAfter === "number" ? r.tokensAfter : null;
+      if (r.compacted && tokensAfter !== null && tokensAfter >= 0) {
+        const s = cacheStateFor(sk);
+        if (s.contextSent) {
+          s.contextSent = {
+            ...s.contextSent,
+            conversationHistoryTokens: tokensAfter,
+            // The chars figure is now a lie about a prefix that no longer exists, and nothing
+            // recomputes it until the next anatomy row lands. Drop it rather than keep a stale
+            // one paired with a fresh token count.
+            conversationHistoryChars: undefined,
+          };
+        }
+      }
       // backfillCachePanel is a one-shot latch keyed by session; without dropping the latch it
       // will not re-fetch, and the panel would keep showing the PRE-compaction composition until
-      // the next model call.
+      // the next model call. (Gap-fill only — it can restore what is MISSING, never correct what
+      // is stale; the explicit overwrite above is what makes the bar move.)
       cacheBackfilled.delete(sk);
       backfillCachePanel(sk);
+      if (sk === sessionKey) {
+        renderCachePanel();
+      }
+      // FORK 2026-09-07 — and THE chat fix. The server appends a `type:"compaction"` record to the
+      // transcript and session-utils.fs.ts maps it to a role:"system" marker that this UI already
+      // knows how to draw as a banner — but nothing ever re-read the history, and the
+      // `sessions.changed` lane only merges the session-LIST row. So the event existed on disk,
+      // was renderable, and stayed invisible until the user happened to hard-refresh.
+      if (r.compacted && sk === sessionKey) {
+        void loadChat({ force: true });
+      }
     })
     .catch((err: unknown) => {
       // Never throw into the event loop from a click handler — the panel has to stay readable,
@@ -1764,10 +3519,8 @@ document.addEventListener("click", (ev) => {
       showToast(`${act} failed: ${(err as { message?: string })?.message || String(err)}`, true);
     })
     .finally(() => {
-      setCacheBusy(false);
-      for (const b of buttons) {
-        b.disabled = false;
-      }
+      cacheActInFlight.delete(sk);
+      paintCacheButtons();
     });
 });
 
@@ -1798,6 +3551,16 @@ interface Tab {
   // fortune-cookie phrase. Persisted to localStorage via saveTabs(), so custom/auto names
   // survive both a hard refresh AND a gateway restart.
   titleLocked?: boolean;
+  // FORK 2026-09-15 — u7-tab-naming: WHO named this tab — "fortune" (cookie placeholder),
+  // "auto" (model) or "manual" (typed). The turn-end titler consults this, not titleLocked:
+  // fortune → name at the first prompt; auto → re-ask every TAB_TITLE_INTERVAL turns and land
+  // the answer only if the subject shifted; manual → NEVER. Persisted with the tab. Tabs saved
+  // before this field existed resolve via resolveTitleKind() (locked ⇒ manual, conservative).
+  titleKind?: TitleKind;
+  // FORK 2026-09-15 — u7-tab-naming: user-turn count at the moment the current auto-name landed.
+  // An auto refresh feeds the model only the prompts AFTER this, so "did the subject shift?" is
+  // judged on what was said since the name was chosen, not on the whole transcript again.
+  titledAtTurn?: number;
   // FORK 2026-06-24 — P2 shimmer: in-flight flag for the async auto-name. Held on the Tab model
   // (not the DOM) so renderTabs() re-applies the `tab-renaming` shimmer class on every rebuild,
   // independent of focus/tab-active. Set true around generateTabTitle()'s body, cleared in finally.
@@ -1816,6 +3579,50 @@ import { FORTUNE_COOKIES, fortuneForKey, randomFortune } from "../../src/shared/
 // cannot drift. See src/shared/reseller-route-policy.ts for why it is a vendor-namespace
 // predicate rather than a list of banned model names.
 import { isRedundantResellerRoute } from "../../src/shared/reseller-route-policy.js";
+import {
+  modelCatalogIdsForPickerAndPanel,
+  panelIdsDownToCopilot,
+  withoutRouteTwins,
+} from "./panels/model-surface-catalog.js";
+import { type ChainOverlay, createChainOverlay, type TabAnchor } from "./tab-chains-overlay.js";
+// FORK 2026-09-23 (the architect: "set conversation slave") — master/slave tab chains for the
+// conversation-loop skill; pure list + rope physics in tab-chains.ts, canvas in the overlay.
+import {
+  adjacentChainOrder,
+  chainColor,
+  chainOf,
+  chainOfSession,
+  CHAIN_COLORS,
+  linkTabs,
+  LOOP_CHAINS_CHOICE,
+  LOOP_CHAINS_DEFAULT,
+  nextChainColor,
+  pairChainedRows,
+  parseChains,
+  rebindChain,
+  serializeChains,
+  type TabChain,
+  unlinkSession,
+  unlinkTab,
+  withChainKeys,
+} from "./tab-chains.js";
+// FORK 2026-09-15 — u7-tab-naming: the fortune/auto/manual origin rule lives in a pure module
+// (unit-tested under the tinker-ui vitest project); app.ts only wires it to the tab model.
+import {
+  refreshAnchorInstruction,
+  resolveTitleKind,
+  sameSubject,
+  turnEndTitleAction,
+  type TitleKind,
+} from "./tab-title-policy.js";
+import { detailedModelLabel } from "./thinking-model-label.js";
+
+// Scores for Chinese models the cost table shows but AA_INTELLIGENCE_INDEX cannot
+// hold, because that map is also a chart-dot source and these models have no
+// OpenRouter route to plot (2026-10-03). Keyed by the bare catalog id.
+const CN_AA_INDEX: Record<string, number> = {
+  "stepfun/step-5-preview": 43.73, // AA 2026-10-03; StepFun direct, $1 / $2.70 per 1M
+};
 
 // FORK 2026-05-25 — emoji catalog for the inline group/sub-group
 // rename picker (openInlineAxisLabelEdit). Curated common set across
@@ -2516,12 +4323,64 @@ interface TabState {
   streamMsgUid: string | null;
   streamRunId: string | null;
   lastDeltaLen: number;
+  lastDeltaText: string;
   /** FORK 2026-05-09 (Feature C): timestamp of the last delta for gap detection. */
   lastDeltaAt: number;
   sending: boolean;
+  /**
+   * FORK 2026-09-04 — the three fields below make the PRE-MODEL WINDOW a property of the tab that
+   * owns it, which is what the rest of this area already assumes it is.
+   *
+   * `sendingSince` is the age that bounds `sending` (see setSending). The other two were module
+   * globals that saveCurrentTabState/loadTabState never touched, so they LEAKED ACROSS TABS: send
+   * in tab A, switch to tab B, and B's pill read `preparingSince !== null` from A's turn and
+   * printed "preparing context" with A's counter — on a tab that had sent nothing. That is why the
+   * stuck tabs said "preparing context" rather than "sending". `turnPhase`/`turnPhaseTrail` stay
+   * global on purpose: turnPhaseLabelFor/turnPhaseSteps re-check the session key at render, so
+   * they are already gated and cannot leak.
+   */
+  sendingSince: number | null;
+  preparingSince: number | null;
+  pendingSince: number | null;
   currentTurnNumber: number;
   expandedTools: Set<string>;
   draft: string;
+  /**
+   * FORK 2026-09-23 (chat.history rehaul, plan task 8) — the seq-cursor window of `messages`
+   * (history-window.ts): which rows this tab's page holds, so a read asks only for rows after
+   * them. Never a global: the viewed tab reads and writes it here too, through tabWindowOf /
+   * setTabWindow, so the save/load swap above cannot drop or cross it.
+   */
+  window: HistoryWindow;
+  /** The session key `window` was built for; a tab re-pointed at another key reads an empty one. */
+  windowKey: string | null;
+  /**
+   * FORK 2026-09-23 (plan task 8, ruling R12) — when this tab was last on screen (stamped as it is
+   * left). A background tab unviewed for BG_UNLOAD_MS is stubbed to its newest rows in memory;
+   * scrolling up after switching back pages them in again (trimIdleBackgroundTabs).
+   */
+  lastViewedAt: number;
+  /**
+   * FORK 2026-09-24 (ruling R32) — the older pages a fold that left a hole still owes this tab
+   * (history-paging.ts holeFillAfterFold), or a pinned trim that opened one under an older epoch's
+   * rows (holeFillAfterTrim); run while the tab is viewed and the owner is not pinned over it
+   * (fillHoleIfOwed — a plan the pinned trim holds back WAITS, it is never discarded).
+   */
+  holeFill: HoleFill | null;
+  /**
+   * FORK 2026-10-02 (chat-viewport.ts) — where this tab was left: following the latest row, or
+   * reading at an anchor row. Written by saveCurrentTabState as the tab is left (and persisted to
+   * ui-state for a reload), applied by loadTabState as it comes back. The live copy of the VIEWED
+   * tab is `chatFollow` + `pendingViewport` + the pane itself, never this field.
+   */
+  viewport: ViewportMemory;
+  /**
+   * FORK 2026-10-02 — how far this tab has paged into its session's RESET ARCHIVES (history-paging.ts
+   * ResetPaging), for the session key `resetPagingKey` it was built for. A session reset every turn
+   * (a master-worker build's worker) keeps only the current turn in its live transcript.
+   */
+  resetPaging: ResetPaging;
+  resetPagingKey: string | null;
 }
 
 const tabStates = new Map<string, TabState>();
@@ -2532,12 +4391,46 @@ function freshTabState(): TabState {
     streamMsgUid: null,
     streamRunId: null,
     lastDeltaLen: 0,
+    lastDeltaText: "",
     lastDeltaAt: 0,
     sending: false,
+    sendingSince: null,
+    preparingSince: null,
+    pendingSince: null,
     currentTurnNumber: 0,
     expandedTools: new Set(),
     draft: "",
+    window: emptyWindow(),
+    windowKey: null,
+    // A new tab counts as just seen, so the boot prefetch is not stubbed on the first tick.
+    lastViewedAt: Date.now(),
+    holeFill: null,
+    viewport: FOLLOWING,
+    resetPaging: RESET_PAGING_START,
+    resetPagingKey: null,
   };
+}
+
+/** The tab's cursor window for `key`, or an empty one when it was built for another session. */
+function tabWindowOf(st: TabState | undefined, key: string): HistoryWindow {
+  return st && st.windowKey !== null && sessionKeyMatches(key, st.windowKey)
+    ? st.window
+    : emptyWindow();
+}
+
+function setTabWindow(st: TabState, key: string, w: HistoryWindow): void {
+  st.window = w;
+  st.windowKey = key;
+}
+
+/**
+ * FORK 2026-09-24 (ruling R36) — the user rows before the VIEWED page (history-paging.ts
+ * userRowOffset): what turns and EEG prompt indexes add to a count taken on the page, so they
+ * number from the transcript's start. 0 when the gateway sends no count.
+ */
+function viewedUserRowOffset(): number {
+  const st = activeTabId ? tabStates.get(activeTabId) : undefined;
+  return sessionKey ? userRowOffset(messages, tabWindowOf(st, sessionKey)) : 0;
 }
 
 /** Save current globals into the active tab's TabState. */
@@ -2556,10 +4449,19 @@ function saveCurrentTabState() {
   s.streamMsgUid = streamMsgUid;
   s.streamRunId = streamRunId;
   s.lastDeltaLen = lastDeltaLen;
+  s.lastDeltaText = lastDeltaText;
   s.lastDeltaAt = lastDeltaAt;
   s.sending = sending;
+  s.sendingSince = sendingSince;
+  s.preparingSince = preparingSince;
+  s.pendingSince = pendingSince;
   s.currentTurnNumber = currentTurnNumber;
   s.expandedTools = expandedTools;
+  s.lastViewedAt = Date.now();
+  // FORK 2026-10-02 — the pane still shows THIS tab (the only caller, applyTabSwitch, saves before
+  // anything is swapped), so where it is being left can still be read off the DOM.
+  s.viewport = viewedViewportMemory();
+  persistViewport(activeTabId, s.viewport);
   const ta = $("chat-textarea") as HTMLTextAreaElement | null;
   if (ta) {
     s.draft = ta.value;
@@ -2571,6 +4473,19 @@ function saveCurrentTabState() {
   tabStates.set(activeTabId, s);
 }
 
+/**
+ * FORK 2026-09-23 — a background tab's cached page was (re)written from chat.history. Its saved
+ * text cursor pointed into the page as it was, so drop it: when the tab is next viewed, the first
+ * delta re-anchors on the page it actually shows (live-continuation.ts) instead of growing a
+ * bubble that is gone or no longer last.
+ */
+function forgetSavedTextCursor(st: TabState): void {
+  st.streamMsgUid = null;
+  st.lastDeltaLen = 0;
+  st.lastDeltaText = "";
+  st.lastDeltaAt = 0;
+}
+
 /** Load a tab's TabState into the globals. */
 function loadTabState(tabId: string) {
   const s = tabStates.get(tabId) ?? freshTabState();
@@ -2578,13 +4493,24 @@ function loadTabState(tabId: string) {
   // stays frozen while this tab streams. Pairs with the slice-on-save above —
   // together they guarantee no two tabs ever share a messages array.
   messages = (s.messages as unknown[]).slice();
+  // Thinking cursors point into the page being swapped OUT; the next thought re-anchors on this one.
+  reasoningCursors.clear();
   streamMsgUid = s.streamMsgUid;
   streamRunId = s.streamRunId;
   lastDeltaLen = s.lastDeltaLen;
+  lastDeltaText = s.lastDeltaText;
   lastDeltaAt = s.lastDeltaAt;
   sending = s.sending;
+  // Restored as a PAIR: the flag without its age is exactly the latched shape (sendingLatchIsLive
+  // reads a missing stamp as expired, which is what heals a tab saved before this field existed).
+  sendingSince = s.sendingSince ?? null;
+  preparingSince = s.preparingSince ?? null;
+  pendingSince = s.pendingSince ?? null;
   currentTurnNumber = s.currentTurnNumber;
   expandedTools = s.expandedTools;
+  // FORK 2026-10-02 — the latch and the row come back with the tab, before anything paints it or
+  // merges into it (loadChat's trim reads `chatFollow`).
+  enterViewport(tabId, s.viewport);
   const ta = $("chat-textarea") as HTMLTextAreaElement | null;
   if (ta) {
     ta.value = s.draft;
@@ -2637,6 +4563,12 @@ function clearSavedStreamStateFor(evtSessionKey: unknown, runId?: string | null)
     st.lastDeltaLen = 0;
     st.lastDeltaAt = 0;
     st.sending = false;
+    // The stamp and the two client windows go with the flag — a cleared `sending` that kept its
+    // `sendingSince` is harmless, but a cleared flag beside a live `preparingSince` would leave the
+    // background tab's pill primed to paint "preparing context" the moment it is opened.
+    st.sendingSince = null;
+    st.preparingSince = null;
+    st.pendingSince = null;
   }
 }
 
@@ -2727,8 +4659,9 @@ async function loadFractalTranscript(runForTranscript: string): Promise<string> 
 // Level 3 was mounted on (2) alone, so expanding (1) showed nothing new.
 //
 // This pass grafts the SAME renderTranscriptSection element into (1). It runs after
-// every chat render, is idempotent (a `data-fractal-transcript-mounted` latch, because
-// updateChat re-renders innerHTML), and is a no-op on bubbles the fractal lane never
+// every chat render, is idempotent (a `data-fractal-transcript-mounted` latch: since plan
+// task 9 updateChat re-parses only units whose HTML changed, so a reused bubble still carries
+// its graft and a re-parsed one gets a fresh one), and is a no-op on bubbles the fractal lane never
 // tagged — the parentRunId comes from the `data-fractal-parent-run` attribute app.ts
 // already stamps on the answer bubble, so no new state is introduced.
 function decorateFractalReplyBubbles(): void {
@@ -2788,55 +4721,9 @@ function decorateFractalReplyBubbles(): void {
   }
 }
 
-/**
- * FORK 2026-08-24 (the architect: "The timings of the fractal pass should show only when expanding
- * Fractal") — move a reflection's timing block INTO its 🌿 section.
- *
- * Grafted rather than rendered in place for the reason the level-3 expander is: the section is the
- * run's BOUNDARY message, emitted after the run's own contents, so at string-build time there is
- * nothing to nest into yet.
- *
- * Runs after every chat render, like `decorateFractalReplyBubbles`, and needs no latch: the moved
- * node is destroyed with the rest of `innerHTML` on the next pass and re-created from the message,
- * so there is nothing to leak and nothing to double-mount.
- */
-function graftReflectionTimingBlocks(): void {
-  const container = $("messages");
-  if (!container) {
-    return;
-  }
-  // Snapshotted BEFORE anything moves: each graft resolves against the layout as rendered, so an
-  // earlier move cannot change which section a later block lands in.
-  const grafts = Array.from(container.querySelectorAll<HTMLElement>("[data-phase-graft-into]"));
-  const sections = Array.from(container.querySelectorAll<HTMLElement>("details.fractal-details"));
-  grafts.forEach((graft) => {
-    const uid = graft.dataset.phaseGraftInto ?? "";
-    const escaped = uid.replace(/["\\]/g, "\\$&");
-    const details = uid
-      ? container.querySelector<HTMLElement>(
-          `details.fractal-details[data-fractal-uid="${escaped}"]`,
-        )
-      : // No uid: the block was tagged by runId while its own 🌿 section had not been emitted
-        // yet, so the section it belongs to is simply the next one in the transcript.
-        (sections.find(
-          (d) =>
-            (graft.compareDocumentPosition(d) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 &&
-            !d.contains(graft),
-        ) ?? null);
-    if (!details) {
-      // No section to nest into — the reflection rendered as a plain bubble, or a reloaded
-      // history carries no fractal markup for it. LEAVE THE BLOCK WHERE IT IS, visible: hiding a
-      // measurement because its preferred mount is missing turns a feature into a disappearance,
-      // which is the failure this area has produced twice already.
-      graft.classList.add("is-unnested");
-      return;
-    }
-    graft.classList.remove("is-unnested");
-    (details.querySelector<HTMLElement>(".msg-fractal, .msg.assistant") ?? details).appendChild(
-      graft,
-    );
-  });
-}
+// FORK 2026-08-24 — the reflection timing graft (graftReflectionTimingBlocks) moved to
+// chat-render.ts `graftTimingBlocks` (plan task 9): with keyed rendering its moves must be
+// recorded and undone before the next pass, which only the renderer can do.
 
 // FORK 2026-08-11 — REHYDRATE the fractal anchor from the ledger, closing the
 // "KNOWN REMAINING DEPENDENCY" recorded in bug-log.md and the standing
@@ -2986,6 +4873,35 @@ async function hydrateFractalAnchorsFromLedger(keyAtStart: string): Promise<void
   }
 }
 
+/**
+ * FORK 2026-09-29 (U10): merge live usage marks onto the user message that OPENED the running turn.
+ *
+ * Walks back past the tool_result rows the live stream pushes. Those carry `role:"user"` too, so
+ * the naive "last user message" search (what the recipe trail stamp below does) lands on one of
+ * them from the SECOND tool call onward — and a pure tool_result row is not a run boundary
+ * (chat-units.ts `isRunBoundary`), so `skillNoticesHtmlAfter` is never called for it and the marks
+ * would be silently lost. Merges rather than replaces: a turn can use a recipe, then a skill, then
+ * a plugin, and all three belong in the one row.
+ */
+function stampUsageOnCurrentTurn(raw: unknown): boolean {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return false;
+  }
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: string; content?: unknown; _usage?: unknown };
+    if (m?.role !== "user") continue;
+    const c = Array.isArray(m.content) ? m.content : [];
+    if (c.length > 0 && !c.some((b) => (b as { type?: string })?.type !== "tool_result")) {
+      continue; // mid-run tool plumbing, not the prompt that opened the turn
+    }
+    const merged = collectUsage(m._usage, raw);
+    if (merged.length === 0) return false;
+    m._usage = merged;
+    return true;
+  }
+  return false;
+}
+
 function sessionKeyMatches(evtKey: string | undefined | null, refKey?: string): boolean {
   const ref = refKey ?? sessionKey;
   if (!evtKey || !ref) {
@@ -3069,7 +4985,11 @@ function isSubagentOfViewedSession(info: ActiveRunInfo): boolean {
 const subagentAttributionDeps: SubagentAttributionDeps = {
   ownerOf: (subKey) => subagentOwnerTab.get(subKey),
   attachedTabCount: (agentRoot) => attachedTabCountForRoot(agentRoot),
-  keyMatches: (candidate) => sessionKeyMatches(candidate),
+  // FORK 2026-10-01: forward the REFERENCE key instead of dropping it. Every caller passes the
+  // viewed session, so this is a no-op for them (sessionKeyMatches defaults its ref to exactly
+  // that) — but it lets the rule be asked about a session other than the viewed one, which
+  // sessionIsBusy() below needs.
+  keyMatches: (candidate, ref) => sessionKeyMatches(candidate, ref),
   // FORK 2026-08-08: lets the rule tell a rival TAB from a controller lane like
   // `agent:main:orchestrator` — see subagent-attribution.ts (c').
   isTab: (candidate) => isKnownTabKey(candidate),
@@ -3101,6 +5021,532 @@ const subagentStreamUid = new Map<string, string>();
 // behind a <details> the user expands. Persisted here so it survives the per-delta
 // innerHTML rebuild in updateChat.
 const expandedSubagents = new Set<string>();
+// FORK 2026-09-06 (the architect: "when I expand a fractal reasoning or a compacted thinking and Jarvis is
+// actively thinking and writing in the chat, the items contract automatically and I cannot read
+// them"). The chat list is rebuilt wholesale on every streaming delta (`el.innerHTML = h`), which
+// destroys the NATIVE `open` state of any <details>. Three of the four families already survive
+// that: fractal-details is restored by data-fractal-uid, msg-subagent-details is rendered from
+// expandedSubagents, and the main reasoning group is a <div> driven by expandedTools. The
+// "▸ Commentary" narration block was the one carrying no key at all, so it snapped shut on every
+// delta — exactly while a turn is streaming and the user is trying to read it. Keyed on the
+// message's stable `_uid` for the same reason the fractal key was moved off ordinals on
+// 2026-08-05: an index hands one row's open state to a different row when messages shift.
+// FORK 2026-09-23 (plan task 9): the list is now rendered keyed (chat-render.ts), so an unchanged
+// row keeps its node and its native `open`; this set still decides the state of a row re-parsed
+// because its HTML changed.
+const openFolds = new Set<string>();
+
+// FORK 2026-10-02 (the architect: "when we expand anything, it should not compact automatically as it used
+// to do when new messages appear at the bottom"). Every keyed fold already survived a re-render;
+// what still hid an opened row was the TURN END: a finished run folds its tool rows, thinking and
+// timing into one "▸ Reasoning" group, created closed, so the row he had opened vanished inside it
+// the moment the answer landed. The group now forms OPEN when the owner had opened a row inside it.
+//
+// Only the owner's own clicks count — a turn-timing row is opened automatically while the turn
+// runs, and a forced-open fractal fires `toggle` too — so the ids he clicked are kept here (tool and
+// timing rows by `data-tid`, folds as `fold:<key>`, subagent bubbles as `sub:<id>`), bounded like
+// the auto-disclosure ledgers. `formedReasoningGroups` makes the decision once per group: after
+// that `expandedTools` owns it, so his click on the group header closes it like any other.
+const ownerOpenedFolds = new Set<string>();
+const formedReasoningGroups = new Set<string>();
+
+function unescapeAttr(v: string): string {
+  return v
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/** Does this markup hold a row the OWNER opened and that is open now? */
+function ownerOpenedIn(html: string): boolean {
+  for (const m of html.matchAll(/data-tid="([^"]*)"/g)) {
+    const id = unescapeAttr(m[1]);
+    if (expandedTools.has(id) && ownerOpenedFolds.has(id)) {
+      return true;
+    }
+  }
+  for (const m of html.matchAll(/data-fold-key="([^"]*)"/g)) {
+    const key = unescapeAttr(m[1]);
+    if (openFolds.has(key) && ownerOpenedFolds.has(`fold:${key}`)) {
+      return true;
+    }
+  }
+  for (const m of html.matchAll(/data-subagent-id="([^"]*)"/g)) {
+    const id = unescapeAttr(m[1]);
+    if (expandedSubagents.has(id) && ownerOpenedFolds.has(`sub:${id}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** chat-units.ts `openGroupOnForm`: asked once per Reasoning group, as it first forms. */
+function openReasoningGroupOnForm(groupId: string, innerHtml: string): boolean {
+  if (formedReasoningGroups.has(groupId)) {
+    return false;
+  }
+  rememberDisclosure(formedReasoningGroups, groupId);
+  if (!ownerOpenedIn(innerHtml)) {
+    return false;
+  }
+  expandedTools.add(groupId);
+  return true;
+}
+
+// FORK 2026-09-06 (the architect: "when I am writing a long text, the scroll in the chat changes
+// automatically, sometimes not letting me even see what I want to quote from the chat").
+//
+// Every follow decision used to RE-DERIVE geometry at three separate sites, each asking "am I
+// within 80px of the bottom?" on a pane whose height had just changed. The composer autosizes as
+// he types and shrinks .messages 1:1 with its own growth, which manufactures a false "at bottom" —
+// after which every streaming delta yanked the view down while he was still reading.
+//
+// Replaced by LATCHED INTENT: follow only while the user has actually parked at the bottom. The
+// flag is recomputed on every real user scroll, so scrolling back to the bottom always re-arms it
+// and it can never strand him. Programmatic writes are told apart by COMPARING VALUES, not by a
+// "suppress next event" boolean: updateChat fires on every delta, so a boolean would make the whole
+// stream a suppression window.
+//
+// FORK 2026-10-02 — the latch is now the VIEWED TAB's (it was the pane's, so a switch painted the
+// new tab with the old tab's latch and pixel offset — the "opens in the middle" report). Each tab
+// keeps its own in TabState.viewport (chat-viewport.ts); this global is the viewed tab's live copy.
+let chatFollow = true;
+/**
+ * Our last scroll write and when it was made (chat-viewport.ts isProgrammaticEcho). Consumed by the
+ * echo it produces: until 2026-10-02 it was a bare value that matched forever, so scrolling up and
+ * back down to an unchanged bottom produced an event equal to the last pin and was dropped as an
+ * echo — the gesture that should re-arm follow never did.
+ */
+let lastProgrammatic: { top: number; at: number } | null = null;
+// FORK 2026-09-29 (u14) — intent, not proximity — deliberately 2, not 80; the number now lives
+// in scroll-follow.ts (one source of truth, pinned by its test) and this is an alias of it.
+const BOTTOM_EPS = FOLLOW_BOTTOM_EPS;
+/** How near the top of the chat pane (px) a gesture must be to page older rows in (plan task 8). */
+const OLDER_PAGE_TRIGGER_PX = 300;
+
+function setChatScrollTop(el: HTMLElement, v: number): void {
+  const t = Math.max(0, Math.min(v, el.scrollHeight - el.clientHeight));
+  if (Math.abs(el.scrollTop - t) < 1) {
+    return; // no write ⇒ no scroll event for the listener to misread
+  }
+  lastProgrammatic = { top: t, at: performance.now() };
+  el.scrollTop = t;
+}
+
+function distanceFromBottom(el: HTMLElement): number {
+  return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+
+// ─── FORK 2026-10-02: the viewed tab's viewport memory (chat-viewport.ts) ─────────────────────
+//
+// A tab is left FOLLOWING or READING at an anchor row; it comes back the same way, after a switch
+// and after a reload. `pendingViewport` is a remembered row not yet put back on screen: the paint
+// that finds it restores it exactly; until then the pane shows the latest row (without arming the
+// latch, so neither the viewed trim nor the background stub cuts under it), older pages are read
+// looking for it (continuePendingViewport), and the owner's own gesture away from the bottom, a
+// send, a jump or a fold toggle ends the search.
+let pendingViewport: {
+  tabId: string;
+  anchor: ViewportAnchor;
+  since: number;
+  pages: number;
+} | null = null;
+/** Set by the first `hello` of a page load, which reads each tab's memory from ui-state. */
+let viewportsHydrated = false;
+
+/** True while a remembered row is being looked for on the viewed tab: the pane shows the latest. */
+function viewportSearchActive(): boolean {
+  return pendingViewport !== null && pendingViewport.tabId === activeTabId;
+}
+
+/**
+ * FORK 2026-10-03 (a peer's review) — whether a stamped row is SHOWN. A row folded inside a closed
+ * <details> does not measure zero in Chromium 147: its body still reports a box (measured: 53 px
+ * and 2,936 px tall) while `checkVisibility()` is false. A hidden row can never be the row the
+ * owner was reading, so the anchor walks skip it. Where the method is missing (jsdom), every row
+ * with a box counts as shown, as before.
+ */
+function rowShown(node: Element): boolean {
+  const check = (node as { checkVisibility?: () => boolean }).checkVisibility;
+  return typeof check !== "function" || check.call(node);
+}
+
+/**
+ * The first row on screen, named twice: by its keyed-render unit (any row, in-session) and by the
+ * nearest transcript row (`data-oc-id`, survives a reload) — the first one visible, else the last
+ * one above the pane when every row below is live-written. Null on an empty pane.
+ */
+function captureViewportAnchor(el: HTMLElement): ViewportAnchor | null {
+  const top = el.getBoundingClientRect().top;
+  let unit: string | null = null;
+  let unitOffset = 0;
+  for (const child of Array.from(el.children)) {
+    const r = child.getBoundingClientRect();
+    if (r.height > 0 && r.bottom > top) {
+      const key = unitKeyOf(child);
+      if (key) {
+        unit = key;
+        unitOffset = r.top - top;
+        break;
+      }
+    }
+  }
+  let oc: { id: string; part: string; offset: number } | null = null;
+  for (const node of el.querySelectorAll<HTMLElement>("[data-oc-id]")) {
+    const r = node.getBoundingClientRect();
+    if (r.height <= 0 || !rowShown(node)) {
+      continue;
+    }
+    oc = { id: node.dataset.ocId ?? "", part: node.dataset.ocPart ?? "", offset: r.top - top };
+    if (r.bottom > top) {
+      break;
+    }
+  }
+  if (!unit && !oc?.id) {
+    return null;
+  }
+  return {
+    unit,
+    unitOffset,
+    ocId: oc?.id || null,
+    ocPart: oc?.part ?? "",
+    ocOffset: oc?.offset ?? 0,
+  };
+}
+
+/** Put the anchored row back where it sat. False when neither of its names is on the pane. */
+function restoreViewportAnchor(el: HTMLElement, a: ViewportAnchor | null): boolean {
+  if (!a) {
+    return false;
+  }
+  if (a.unit) {
+    const node = unitElement(el, a.unit);
+    const r = node?.getBoundingClientRect();
+    if (r && r.height > 0) {
+      setChatScrollTop(el, el.scrollTop + (r.top - el.getBoundingClientRect().top - a.unitOffset));
+      return true;
+    }
+  }
+  return a.ocId
+    ? restoreScrollAnchor(el, { id: a.ocId, part: a.ocPart, offset: a.ocOffset })
+    : false;
+}
+
+/** Where the viewed tab is being left, read off the pane (or the row still being looked for). */
+function viewedViewportMemory(): ViewportMemory {
+  if (pendingViewport && viewportSearchActive()) {
+    return { follow: false, anchor: pendingViewport.anchor };
+  }
+  const el = $("messages");
+  return viewportMemory(chatFollow, chatFollow || !el ? null : captureViewportAnchor(el));
+}
+
+/** ui-state choice `chat:scroll:<tabId>`; following is "" and therefore absent (ui-persistence.md). */
+function persistViewport(tabId: string, m: ViewportMemory): void {
+  setChoice(viewportChoiceId(tabId), encodeViewportMemory(m), "");
+}
+
+function persistedViewport(tabId: string): ViewportMemory {
+  return decodeViewportMemory(getChoice(viewportChoiceId(tabId), ""));
+}
+
+let viewportPersistTimer: ReturnType<typeof setTimeout> | null = null;
+/** Persist the viewed tab's memory once the owner stops moving it (a reload restores it). */
+function scheduleViewportPersist(): void {
+  if (viewportPersistTimer !== null) {
+    clearTimeout(viewportPersistTimer);
+  }
+  viewportPersistTimer = setTimeout(() => {
+    viewportPersistTimer = null;
+    if (activeTabId) {
+      persistViewport(activeTabId, viewedViewportMemory());
+    }
+  }, 500);
+}
+
+/** A tab comes on screen: its own latch ('tab-enter'), and its row to look for when it was reading. */
+function enterViewport(tabId: string, m: ViewportMemory): void {
+  chatFollow = nextFollowState(
+    { follow: chatFollow },
+    { type: "tab-enter", remembered: m.follow },
+  ).follow;
+  pendingViewport =
+    !m.follow && m.anchor ? { tabId, anchor: m.anchor, since: Date.now(), pages: 0 } : null;
+  heldViewport = null;
+}
+
+/**
+ * Position a pane just repainted while a remembered row is being looked for. True when it handled
+ * the pane: the row restored (search over), or the latest row shown while the search goes on.
+ */
+function settlePendingViewport(el: HTMLElement): boolean {
+  const p = pendingViewport;
+  if (!p) {
+    return false;
+  }
+  if (p.tabId !== activeTabId) {
+    pendingViewport = null;
+    return false;
+  }
+  if (restoreViewportAnchor(el, p.anchor)) {
+    pendingViewport = null;
+    heldViewport = {
+      tabId: p.tabId,
+      anchor: p.anchor,
+      until: performance.now() + VIEWPORT_HOLD_MS,
+    };
+    return true;
+  }
+  setChatScrollTop(el, el.scrollHeight);
+  return true;
+}
+
+/** The owner moved the pane himself: whatever was being restored or held is his to move now. */
+function releaseViewport(): void {
+  pendingViewport = null;
+  heldViewport = null;
+}
+
+/** The remembered row is out of reach: show the latest row and follow it ('anchor-lost'). */
+function abandonPendingViewport(): void {
+  releaseViewport();
+  chatFollow = nextFollowState({ follow: chatFollow }, { type: "anchor-lost" }).follow;
+  const el = $("messages");
+  if (el) {
+    setChatScrollTop(el, el.scrollHeight);
+  }
+  scheduleViewportPersist();
+}
+
+let viewportSearchRunning = false;
+/**
+ * After a merge: the remembered row is still missing (a reload reads only the last 100 rows), so
+ * page older rows in until a paint finds it (settlePendingViewport inside updateChat), within
+ * chat-viewport.ts pendingRestoreStep's page and time budget. A busy session waits for the next
+ * merge; a read refused or failed ends this pass the same way.
+ */
+async function continuePendingViewport(): Promise<void> {
+  if (viewportSearchRunning) {
+    return;
+  }
+  viewportSearchRunning = true;
+  try {
+    for (;;) {
+      const p = pendingViewport;
+      if (!p || !viewportSearchActive() || !sessionKey) {
+        return;
+      }
+      const w = tabWindowOf(tabStates.get(p.tabId), sessionKey);
+      const step = pendingRestoreStep({
+        pagesTried: p.pages,
+        ageMs: Date.now() - p.since,
+        olderAvailable: buildOlderRequest(sessionKey, w) !== null && pageHoldsServerRows(messages),
+        busy: transcriptWriterLive() || viewedSessionBusy(),
+      });
+      if (step === "wait") {
+        return;
+      }
+      if (step === "give-up") {
+        abandonPendingViewport();
+        return;
+      }
+      p.pages++;
+      if ((await loadOlderPage()) === null) {
+        return;
+      }
+    }
+  } finally {
+    viewportSearchRunning = false;
+  }
+}
+
+/** The owner opened or closed a fold: a gesture, re-derived from where the pane now stands. */
+function noteUserToggle(el: HTMLElement): void {
+  releaseViewport();
+  chatFollow = nextFollowState(
+    { follow: chatFollow },
+    { type: "user-toggle", distanceFromBottom: distanceFromBottom(el) },
+    BOTTOM_EPS,
+  ).follow;
+  scheduleViewportPersist();
+}
+
+/** A jump to an older point (EEG prompt, timeline): follow off BEFORE the scroll starts. */
+function noteUserNavigate(): void {
+  releaseViewport();
+  chatFollow = nextFollowState({ follow: chatFollow }, { type: "user-navigate" }).follow;
+  scheduleViewportPersist();
+}
+
+/**
+ * Images still loading when their row was painted, with the height they had then; their load is
+ * late growth. Measured, not assumed zero: a loading image with no dimensions lays out its alt text
+ * (≈14 px in Chrome), and assuming zero over-shifted a reading view by that much per image above
+ * it (8 images, 112 px, in the e2e run that caught it).
+ */
+const loadingChatImages = new WeakMap<HTMLImageElement, number>();
+
+/**
+ * A row just put back on screen (a tab coming back, a reload), HELD in place for a few seconds while
+ * its own images and frames, and those above it, finish loading: late growth and reading-mode paints
+ * restore THIS anchor instead of measuring a new one. Without it, a remembered row whose image had
+ * not loaded yet sat wholly above the pane, the next measurement named the row below it, and the
+ * view slid down by the image (the e2e reload check caught it). Any owner action ends the hold.
+ */
+let heldViewport: { tabId: string; anchor: ViewportAnchor; until: number } | null = null;
+const VIEWPORT_HOLD_MS = 4_000;
+
+function heldAnchor(): ViewportAnchor | null {
+  const h = heldViewport;
+  return h && h.tabId === activeTabId && performance.now() < h.until ? h.anchor : null;
+}
+
+/** The top-level child of `el` (a keyed unit's node) that contains `node`. */
+function chatRowOf(el: HTMLElement, node: Element): Element {
+  let row = node;
+  while (row.parentElement && row.parentElement !== el) {
+    row = row.parentElement;
+  }
+  return row;
+}
+
+/** Late growth of `elem` by `growth` px (an image that loaded, a frame that reported its height). */
+function applyLateGrowth(el: HTMLElement, elem: Element, growth: number): void {
+  const following = chatFollow || viewportSearchActive();
+  if (!following && restoreViewportAnchor(el, heldAnchor())) {
+    return;
+  }
+  const row = chatRowOf(el, elem).getBoundingClientRect();
+  const adj = lateGrowthAdjustment({
+    follow: following,
+    unitTop: row.top,
+    unitBottom: row.bottom,
+    paneTop: el.getBoundingClientRect().top,
+    growth,
+  });
+  if (adj.kind === "pin") {
+    setChatScrollTop(el, el.scrollHeight);
+  } else if (adj.kind === "shift") {
+    setChatScrollTop(el, el.scrollTop + adj.by);
+  }
+}
+
+if (typeof window !== "undefined") {
+  // The last word before a reload or a close: write the viewed tab's memory and push the mirror,
+  // which ui-state's own pagehide flush (registered earlier) has already run past.
+  window.addEventListener("pagehide", () => {
+    if (activeTabId) {
+      persistViewport(activeTabId, viewedViewportMemory());
+      flushPendingUiStateMirror();
+    }
+  });
+}
+
+function bindChatFollowListener(el: HTMLElement): void {
+  const holder = el as unknown as { __followBound?: boolean };
+  if (holder.__followBound) {
+    return;
+  }
+  holder.__followBound = true;
+  // FORK 2026-10-02 — the PANE resizing (the composer autosizing as he types, the history or
+  // attach strip appearing) leaves a followed view short of the last line until the next paint.
+  // Following, or showing the latest while a remembered row is looked for: pin again. Reading: a
+  // pane that changes size at its bottom edge moves nothing he is reading.
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(() => {
+      if (chatFollow || viewportSearchActive()) {
+        setChatScrollTop(el, el.scrollHeight);
+      }
+    }).observe(el);
+  }
+  // FORK 2026-10-02 — a markdown image carries no dimensions, so it lays out at zero height and
+  // grows when it loads, after the pin: the AcmeVision tab's screenshots left the view short of
+  // the bottom on every switch. `load` does not bubble; capture catches it.
+  el.addEventListener(
+    "load",
+    (ev) => {
+      const img = ev.target;
+      if (!(img instanceof HTMLImageElement)) {
+        return;
+      }
+      const before = loadingChatImages.get(img);
+      loadingChatImages.delete(img);
+      if (chatFollow || viewportSearchActive()) {
+        setChatScrollTop(el, el.scrollHeight);
+      } else if (before !== undefined) {
+        applyLateGrowth(el, img, img.getBoundingClientRect().height - before);
+      }
+    },
+    true,
+  );
+  el.addEventListener(
+    "scroll",
+    () => {
+      if (isProgrammaticEcho(el.scrollTop, lastProgrammatic, performance.now())) {
+        // 'programmatic-scroll' in scroll-follow.ts terms: our own write, not a gesture — the
+        // latch must not move, so the no-op transition is skipped rather than computed. One write,
+        // one echo: the record is consumed.
+        lastProgrammatic = null;
+        return;
+      }
+      if (viewportSearchActive()) {
+        // Showing the latest while a remembered row is looked for: an event that lands at the
+        // bottom is a clamp (content shrank), not a decision. A gesture away from it ends the
+        // search, and he reads from where he went.
+        if (distanceFromBottom(el) <= BOTTOM_EPS) {
+          return;
+        }
+      }
+      releaseViewport();
+      scheduleViewportPersist();
+      chatFollow = nextFollowState(
+        { follow: chatFollow },
+        {
+          type: "user-scroll",
+          distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+          byGesture: true,
+        },
+        BOTTOM_EPS,
+      ).follow;
+      // FORK 2026-09-24 (R32 residual) — a gesture that leaves the owner off the bottom lifts the
+      // pinned trim, so a hole fill it was holding back resumes here (fillHoleIfOwed), not at the
+      // next loadChat. A no-op with no plan; asked first, so its page takes loadOlderPage's one
+      // in-flight slot ahead of the scroll-to-top page below.
+      if (!chatFollow) {
+        void fillHoleIfOwed();
+      }
+      // FORK 2026-09-23 (plan task 8) — a gesture that reaches the top pages older rows in.
+      if (el.scrollTop <= OLDER_PAGE_TRIGGER_PX) {
+        pageOlderRows();
+      }
+    },
+    { passive: true },
+  );
+  // A pane too short to scroll never fires `scroll`; an upward wheel at the top still asks.
+  el.addEventListener(
+    "wheel",
+    (ev) => {
+      if (ev.deltaY < 0 && el.scrollTop <= OLDER_PAGE_TRIGGER_PX) {
+        pageOlderRows();
+      }
+    },
+    { passive: true },
+  );
+}
+
+/**
+ * ` data-fold-key="…"` plus ` open` when that fold is currently open.
+ *
+ * An empty key yields NO attribute and no persistence — a message without a stable
+ * `_uid` degrades to today's behaviour rather than colliding with another row. That
+ * is deliberate: an ordinal key is what the 2026-08-05 fixes removed, because it
+ * hands one row's open state to a different row as soon as messages shift above it.
+ */
+function foldAttrs(key: string): string {
+  return key ? ` data-fold-key="${esc(key)}"${openFolds.has(key) ? " open" : ""}` : "";
+}
 
 function subagentLabelFor(runId: string, sk: string): string {
   const info = activeRuns.get(runId);
@@ -3204,7 +5650,7 @@ function handleSubagentChatEvent(p: {
       rememberTerminated(runId);
       saveActiveRuns();
       // `sending` tracks the VIEWED tab only (never the global map size).
-      sending = viewedSessionBusy();
+      setSending(viewedSessionBusy());
       updateBtn();
     }
     updateChat();
@@ -3229,6 +5675,45 @@ function scopedActiveRuns(): Array<[string, ActiveRunInfo]> {
 /** Is the tab the user is viewing busy right now? Independent of other tabs'
  *  runs — the multi-tab "sending forever" bug was the global `activeRuns.size`
  *  check staying non-zero because a DIFFERENT tab still had a run. */
+/**
+ * Is anything actually writing this tab's transcript right now? Thin binding over
+ * run-state.ts's `transcriptWriterIsLive`, which owns the rule and its tests.
+ *
+ * FORK 2026-09-04 — replaces the raw `streamRunId !== null` / `streamMsgUid !== null` checks that
+ * vetoed loadChat's merge. Those are CURSORS; a cursor whose run died is not a writer, and treating
+ * it as one froze the tab in the past forever — the "as if I went back in time and the prompt never
+ * happened" report. Both cursors are covered by this one question, because if nothing is emitting
+ * then neither the cursor nor the bubble it points at has anyone writing to it.
+ */
+function transcriptWriterLive(): boolean {
+  return transcriptWriterIsLive({
+    lastDeltaAt,
+    streamRun: streamRunId === null ? undefined : activeRuns.get(streamRunId),
+    now: Date.now(),
+  });
+}
+
+/**
+ * Is anything writing THIS session's transcript right now — for any session, not only the viewed
+ * one? FORK 2026-10-01 (finding 11): `viewedSessionBusy()` could only answer about the tab on
+ * screen, so the EEG's anatomy rebuild had no way to ask whether the session it was about to
+ * `store.clear()` was itself mid-turn. Same predicate, same freshness rule; the reference key is
+ * now an argument.
+ */
+function sessionIsBusy(sk: string): boolean {
+  if (!sk) {
+    return false;
+  }
+  return sessionHasFreshClientRun({
+    runs: activeRuns.values(),
+    refKey: sk,
+    matches: (runKey, refKey) =>
+      sessionKeyMatches(runKey, refKey) ||
+      subagentBelongsToViewedTab(runKey, refKey, subagentAttributionDeps),
+    now: Date.now(),
+  });
+}
+
 function viewedSessionBusy(): boolean {
   // FORK 2026-08-26 — route through the SHARED freshness predicate instead of walking the raw
   // map. A dropped terminator used to be PERMANENT here: one orphaned entry and this returned
@@ -3244,14 +5729,7 @@ function viewedSessionBusy(): boolean {
   // under their own flat keys and admitted into activeRuns by the `:subagent:` arm of the
   // lifecycle gate. Dropping that arm would make a tab whose only live work is a subagent read
   // IDLE mid-turn — a new bug of exactly the shape this change exists to remove.
-  return sessionHasFreshClientRun({
-    runs: activeRuns.values(),
-    refKey: sessionKey,
-    matches: (runKey, refKey) =>
-      sessionKeyMatches(runKey, refKey) ||
-      subagentBelongsToViewedTab(runKey, refKey, subagentAttributionDeps),
-    now: Date.now(),
-  });
+  return sessionIsBusy(sessionKey);
 }
 
 /**
@@ -3330,8 +5808,10 @@ function sendWouldDefer(): boolean {
         matches: sessionKeyMatches,
         now: Date.now(),
       }),
-      streamRunId,
-      sending,
+      // A cursor pointing at a dead run is not a reason to park the architect's next prompt —
+      // the same bound loadChat now applies, for the same reason.
+      streamRunId: transcriptWriterLive() ? streamRunId : null,
+      sending: sendingNow(),
     });
   } catch (err) {
     console.error(
@@ -3349,7 +5829,22 @@ function viewedSessionPending(): boolean {
   // disagree with its own tab title, which is the desync class this whole area keeps producing.
   // `sending` remains first because it is set on paths that predate the map (a delta arriving with
   // no phase:start), so dropping it would narrow the pill.
-  return (sending || sessionPending(sessionKey)) && !viewedSessionBusy();
+  //
+  // The local is named `sending` ON PURPOSE, and it deliberately shadows the module-level latch of
+  // the same name: THIS is the composed pre-model term every pending surface asks about, and the
+  // raw latch must never be read directly here — it is reachable only through sendingNow(), which
+  // bounds it by age (the 2026-09-04 stuck-tab fix). The shadow makes the wrong read unspellable
+  // inside this function rather than merely discouraged.
+  const sending = sendingNow() || sessionPending(sessionKey);
+  // FORK 2026-05-16 — THE GATE, spelled out at the decision site instead of folded into one
+  // boolean expression, because it is the term refactors keep dropping (it went missing once
+  // already when this predicate was extracted). Without `!viewedSessionBusy()` the pending pill
+  // answers GLOBAL sending state and stays lit forever whenever ANOTHER tab has a run in flight.
+  // Guarded by bible panels.md verify: single source of truth for "session busy".
+  if (sending && !viewedSessionBusy()) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -3488,7 +5983,16 @@ function recordPhaseTiming(entry: PhaseEntry, runId = ""): void {
     // 2026-08-15, so this row already survived a RECONNECT. It did not survive a page reload:
     // the message list is stored nowhere, `loadChat` refills it from SERVER history, and the
     // server never had these rows. See client-rows.ts.
-    const storedId = recordClientRow(sessionKey, created, turnAnchorOf(messages, created));
+    // FORK 2026-09-08 — the WHOLE anchor (prompt text + time + ordinal), not the ordinal alone. A
+    // bridge tab's transcript is re-imported and truncated under this row every ~20 s, and an
+    // ordinal counted against the old list put every old block under the NEWEST prompt on restore —
+    // seven "Turn timing" blocks stacked under "You can do the 11 in parallel", read as parallelism.
+    // The anchor rides ON the row (`stampTurnAnchorOn`), so every path that later hands this row to
+    // `reinsertByTurnAnchor` with only `{ m, turn }` — the reconnect preserve loop, the reload
+    // restore, a reconcile module that copies either — resolves it against the list it is given.
+    const anchor = describeTurnAnchor(messages, created);
+    stampTurnAnchorOn(created, anchor);
+    const storedId = recordClientRow(sessionKey, created, anchor);
     if (storedId) {
       // Stamp the LIVE object too, so the re-injection on the next load recognises this row as
       // already present rather than adding a second copy of it.
@@ -3527,6 +6031,55 @@ function dropOpenPhaseEntry(label: string): void {
   const last = entries[entries.length - 1];
   if (last && !last.done && last.label === label) {
     group._phaseEntries = entries.slice(0, -1);
+  }
+}
+
+/**
+ * FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — the terminal-side
+ * closer for timing blocks.
+ *
+ * Closes every open (`done:false`) entry of every phase-timing block belonging to `targetKey`,
+ * BOTH in the live `messages` list (when that session is on screen) and in the persisted
+ * client-rows store. The persisted copy is what re-hydrated a phantom "running" block after a
+ * hard reload: the turn was aborted at 12:00:40 and /clear-ed at 12:01, the gateway reported
+ * activeRunIds=[] and the sessions row run.live=false, yet the tab still pulsed a ticking
+ * "Turn timing" block — its `done:false` entries were on disk and nothing ever closed them.
+ * `updateClientRow` never deletes (the store's contract: nothing leaves but eviction) — entries
+ * are marked done in place, so no measurement is erased.
+ */
+function closePhaseTimingForSession(targetKey: string, closedBy: string): void {
+  if (!targetKey) {
+    return;
+  }
+  const now = Date.now();
+  if (sessionKeyMatches(targetKey) || targetKey === sessionKey) {
+    for (const entry of messages) {
+      const row = entry as Record<string, unknown>;
+      if (!row._isPhaseTiming || !Array.isArray(row._phaseEntries)) {
+        continue;
+      }
+      const closed = closeOpenPhaseEntries(row._phaseEntries as PhaseEntry[], now, closedBy);
+      if (closed.changed) {
+        row._phaseEntries = closed.entries;
+        const id = row._clientRowId;
+        if (typeof id === "string" && id) {
+          updateClientRow(targetKey, id, row);
+        }
+      }
+    }
+  }
+  // The persisted copies, whether or not the session is on screen — this is the lane a
+  // background session's phantom lives in, and the one a reload re-hydrates from.
+  for (const stored of readClientRows(targetKey)) {
+    const row = stored.row;
+    if (!row || !row._isPhaseTiming || !Array.isArray(row._phaseEntries)) {
+      continue;
+    }
+    const closed = closeOpenPhaseEntries(row._phaseEntries as PhaseEntry[], now, closedBy);
+    if (closed.changed) {
+      row._phaseEntries = closed.entries;
+      updateClientRow(targetKey, stored.id, row);
+    }
   }
 }
 
@@ -3822,13 +6375,43 @@ function renderPhaseEntry(e: PhaseEntry, nowMs: number, tidPrefix: string): stri
  * folded N times or not at all; as one it folds like a tool call does, which is what was asked for.
  */
 function renderPhaseGroup(msg: Record<string, unknown>): string {
-  const entries = phaseEntriesOf(msg);
+  let entries = phaseEntriesOf(msg);
   if (entries.length === 0) {
     return "";
   }
   const now = Date.now();
   // A STAGE is running — drives the pulsing chrome, and nothing else.
-  const live = phaseGroupIsLive(entries);
+  // FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — an open entry is no
+  // longer trusted on its own say-so. These blocks are PERSISTED and re-injected on reload
+  // (client-rows.ts), and until today nothing closed open entries on final/error/aborted, Stop,
+  // /clear or /new — so a phantom block pulsed forever behind a dead session (gateway
+  // activeRunIds=[], row run.live=false, pill data-state="server"). A block with open entries
+  // counts as live ONLY while this browser holds live run evidence for the viewed session (the
+  // ONE resolver, sessionHasActiveRuns) or while a client send/pre-model window is open for THIS
+  // block. Otherwise it is a stale restore: close its entries once, PERSIST the close, and render
+  // it finished — so it stops re-hydrating as live on every subsequent reload.
+  const hasOpenEntries = phaseGroupIsLive(entries);
+  const clientWindowLive =
+    phaseGroupMsg === msg &&
+    ((preparingSince !== null && sendingLatchIsLive(preparingSince, now)) ||
+      (pendingSince !== null && sendingLatchIsLive(pendingSince, now)));
+  let live = hasOpenEntries;
+  if (
+    hasOpenEntries &&
+    !clientWindowLive &&
+    !(sessionKey && sessionHasActiveRuns(sessionKey).live)
+  ) {
+    const closed = closeOpenPhaseEntries(entries, now, "stale-restore");
+    if (closed.changed) {
+      entries = closed.entries;
+      msg._phaseEntries = closed.entries;
+      const staleId = msg._clientRowId;
+      if (typeof staleId === "string" && staleId) {
+        updateClientRow(sessionKey, staleId, msg);
+      }
+    }
+    live = false;
+  }
   // FORK 2026-08-24 — "the TASK is still running", which is a different and broader question, and
   // the one automatic disclosure must ask.
   //
@@ -3842,7 +6425,15 @@ function renderPhaseGroup(msg: Record<string, unknown>): string {
   // is precisely when `closePreModelWindow` clears `preparingSince`. Identity-checked against the
   // block being rendered so a finished block further up the transcript is not re-opened by the
   // NEXT turn's window.
-  const taskRunning = live || (preparingSince !== null && phaseGroupMsg === msg);
+  // FORK 2026-09-04 — freshness-bounded, for the same reason the pill's latch is: a turn that died
+  // with no proof at all (no model, no delta, no terminal event — a killed worker, a lost
+  // lifecycle:end) left `preparingSince` set, and this block then rendered "running" behind a pill
+  // counting up forever. The 2026-09-03 fix added the terminal-event proof; this covers the turn
+  // that produces NO event to prove anything with.
+  // FORK 2026-09-21 — `live` above is now evidence-gated, and the pre-model clause is the
+  // `clientWindowLive` computed beside it (same clauses, plus the "sending" window that precedes
+  // `preparingSince`).
+  const taskRunning = live || clientWindowLive;
   // SPAN, not the sum: "preparing context" is a client window that CONTAINS the gateway stages,
   // so adding the entries up reports roughly twice the wall time actually spent.
   const span = phaseGroupSpanMs(entries, now);
@@ -4153,6 +6744,93 @@ const TAB_TITLE_INTERVAL = 5;
 const AUTO_NAME_ICON = "🏷️";
 let tabContextMenuEl: HTMLElement | null = null;
 
+// FORK 2026-09-23 (the architect: "set conversation slave") — the chain list is read FRESH from the
+// ui-state choice every time (it is tiny), so boot hydration from the durable file and a second
+// window's edits are picked up without a separate sync path. Chains whose tab is not open are
+// hidden, not deleted: a tab restored later gets its chain back. closeTab() is what unlinks.
+let chainOverlay: ChainOverlay | null = null;
+
+/** FORK 2026-09-25 — the little chain between a master row and its slave row in the sessions
+ *  panel: eyelet on top (master), two links, collar at the bottom (slave), as on the tab bar.
+ *  Drawn in currentColor; the pair sets it to the chain's metal. */
+const SESSION_CHAIN_SVG =
+  '<svg viewBox="0 0 10 26" width="10" height="26" focusable="false">' +
+  '<circle cx="5" cy="3.2" r="2.3" fill="none" stroke="currentColor" stroke-width="1.4"/>' +
+  '<rect x="2.7" y="6" width="4.6" height="7.4" rx="2.3" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+  '<line x1="5" y1="11.6" x2="5" y2="17.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>' +
+  '<rect x="2.7" y="15.4" width="4.6" height="6.4" rx="2.3" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+  '<rect x="1.4" y="22.2" width="7.2" height="3.2" rx="1" fill="currentColor"/>' +
+  "</svg>";
+
+function loadTabChains(): TabChain[] {
+  return parseChains(getChoice(LOOP_CHAINS_CHOICE, LOOP_CHAINS_DEFAULT));
+}
+
+function saveTabChains(chains: TabChain[]): void {
+  setChoice(LOOP_CHAINS_CHOICE, serializeChains(chains), LOOP_CHAINS_DEFAULT);
+  chainOverlay?.wake();
+}
+
+// FORK 2026-09-25 (the architect: "when I close a tab linked by a master-slave chain, both tabs should
+// close at once … open one from the sessions panel, both should open … side by side").
+// A chained pair is one object: it closes, reopens, sorts and lists together. The chain now
+// outlives a close (with both SESSION keys stored), so the pair can find itself again.
+
+/** Chains with each end's session key refreshed from the open tabs. Not persisted. */
+function liveTabChains(): TabChain[] {
+  return withChainKeys(loadTabChains(), (id) => tabs.find((t) => t.id === id)?.sessionKey);
+}
+
+/** Persist the open ends' session keys: on link, and just before a paired close. */
+function snapshotChainKeys(): void {
+  saveTabChains(liveTabChains());
+}
+
+/** Keep chained pairs adjacent in the tab bar, master immediately before slave. The anchor's
+ *  partner comes to it; without one the master jumps ahead of the slave. Main never moves.
+ *  Returns whether the order changed (caller saves + renders). */
+function applyChainAdjacency(anchorId?: string | null): boolean {
+  const next = adjacentChainOrder(tabs, loadTabChains(), anchorId, (id) => id === "tab-main");
+  if (next.every((t, i) => t.id === tabs[i]?.id)) return false;
+  tabs = next;
+  return true;
+}
+
+/** Bottom-centre of a tab's title, clamped into the visible tab bar. While the tab is being
+ *  dragged the chain follows the ghost under the pointer, not the parked original. */
+function tabChainAnchor(tabId: string): TabAnchor | null {
+  const bar = $("tab-bar-scroll");
+  if (!bar) return null;
+  const dragging = tabDrag?.tabId === tabId && tabDrag.passedThreshold;
+  const el = dragging
+    ? tabDrag!.ghost
+    : (bar.querySelector(`[data-tab-id="${CSS.escape(tabId)}"]`) as HTMLElement | null);
+  if (!el) return null;
+  const tab = el.getBoundingClientRect();
+  if (!tab.width) return null;
+  const title =
+    (el.querySelector(".tab-title") as HTMLElement | null)?.getBoundingClientRect() ?? tab;
+  const barRect = bar.getBoundingClientRect();
+  const x = dragging
+    ? title.left + title.width / 2
+    : Math.min(Math.max(title.left + title.width / 2, barRect.left + 8), barRect.right - 8);
+  return { x, y: title.bottom, tab };
+}
+
+function beginChainPick(masterId: string, x: number, y: number): void {
+  if (!chainOverlay) return;
+  const color = CHAIN_COLORS[nextChainColor(loadTabChains(), masterId) % CHAIN_COLORS.length];
+  document.body.classList.add("tab-chain-picking");
+  chainOverlay.beginPick(masterId, color, { x, y });
+  renderTabs();
+}
+
+function endChainPick(): void {
+  document.body.classList.remove("tab-chain-picking");
+  chainOverlay?.endPick();
+  renderTabs();
+}
+
 function saveActiveTabId(): void {
   // FORK 2026-08-02 (the architect): routed through the unified ui-state store ("" = default =
   // no entry). The empty-check keeps the old semantics — a blank id never clears the
@@ -4190,10 +6868,9 @@ function saveTabs() {
     // tinker:* continuation.
     // FORK 2026-06-25: NEVER persist titleGenerating — it is a transient in-flight/shimmer
     // flag; persisting it true strands a tab as "generating" forever (see titleInFlight above).
-    localStorage.setItem(
-      TAB_STORAGE_KEY,
-      JSON.stringify(tabs.map((t) => ({ ...t, titleGenerating: undefined }))),
-    );
+    // FORK 2026-09-21 — through writeTabList so closed-tab tombstones filter every write: a
+    // second window still holding a tab closed here cannot write it back.
+    writeTabList(tabs.map((t) => ({ ...t, titleGenerating: undefined })) as TabRecord[]);
     // FORK 2026-08-16 — write-through to the durable file. localStorage alone does not
     // survive a browser exit on this profile (clear-on-exit), which is why a restart used
     // to come back with a lone "🏠 Main". Debounced and coalescing, so the bursts of
@@ -4280,6 +6957,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   openai: "#6b7280",
   // FORK 2026-07-30 (the architect): Copilot = Windows blue, distinct from OpenAI gray/green.
   "github-copilot": "#00A4EF",
+  copilot: "#00A4EF", // M365 Copilot — same Microsoft blue as the ribbon's base
   ollama: "#ca8a04",
   meta: "#0668E1",
   mistral: "#f97316",
@@ -4311,12 +6989,17 @@ const PROVIDER_ICONS: Record<string, string> = {
   // show the Anthropic asterisk so the model panel + thinking indicator
   // read as "Opus (Anthropic)" instead of an anonymous grey dot.
   "claude-code": ANTHROPIC_ICON_SVG,
-  google: `<svg width="14" height="14" viewBox="0 0 48 48"><path d="M43.6 20.5H42V20H24v8h11.3C33.6 33.4 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z" fill="#FFC107"/><path d="M6.3 14.7l6.6 4.8C14.5 15.9 18.9 13 24 13c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" fill="#FF3D00"/><path d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.3c-2 1.5-4.5 2.3-7.3 2.3-5.2 0-9.6-3.5-11.2-8.2l-6.5 5C9.5 39.6 16.2 44 24 44z" fill="#4CAF50"/><path d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4 5.7l6.2 5.3C37 39.4 44 34 44 24c0-1.2-.1-2.3-.4-3.5z" fill="#1976D2"/></svg>`,
+  google: GOOGLE_G_LOGO_SVG,
   openai: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22.28 9.37a5.88 5.88 0 0 0-.51-4.86 5.97 5.97 0 0 0-6.43-2.83A5.9 5.9 0 0 0 10.87 0a5.97 5.97 0 0 0-5.69 4.13 5.88 5.88 0 0 0-3.93 2.85 5.97 5.97 0 0 0 .74 6.99 5.88 5.88 0 0 0 .51 4.86 5.97 5.97 0 0 0 6.43 2.83A5.9 5.9 0 0 0 13.4 24a5.97 5.97 0 0 0 5.69-4.13 5.88 5.88 0 0 0 3.93-2.85 5.97 5.97 0 0 0-.74-6.99zM13.4 22.3a4.42 4.42 0 0 1-2.84-1.03l.14-.08 4.72-2.73a.77.77 0 0 0 .39-.67v-6.66l2 1.15a.07.07 0 0 1 .04.06v5.52a4.46 4.46 0 0 1-4.46 4.44zM3.48 18.2a4.42 4.42 0 0 1-.53-2.97l.14.08 4.72 2.73a.77.77 0 0 0 .77 0l5.76-3.33v2.31a.07.07 0 0 1-.03.06l-4.77 2.76a4.46 4.46 0 0 1-6.06-1.64zM2.2 7.87A4.42 4.42 0 0 1 4.52 5.9v5.62a.77.77 0 0 0 .39.67l5.76 3.33-2 1.15a.07.07 0 0 1-.07 0L3.83 13.9A4.46 4.46 0 0 1 2.2 7.87zm17.33 4.03l-5.76-3.33 2-1.15a.07.07 0 0 1 .07 0l4.77 2.76a4.46 4.46 0 0 1-.69 8.05v-5.66a.77.77 0 0 0-.39-.67zM21.5 9.7l-.14-.08-4.72-2.73a.77.77 0 0 0-.77 0L10.1 10.2V7.9a.07.07 0 0 1 .03-.06l4.77-2.76a4.46 4.46 0 0 1 6.6 4.62zM8.93 13.34l-2-1.15a.07.07 0 0 1-.04-.06V6.61a4.46 4.46 0 0 1 7.3-3.42l-.14.08-4.72 2.73a.77.77 0 0 0-.39.67zm1.08-2.34L12 9.77l1.99 1.15v2.3L12 14.36l-1.99-1.15z" fill="#10a37f"/></svg>`,
   // FORK 2026-08-04 (the architect: "Copilot still has the blue logo, change it for its
   // mostly-used colorful one"). Was the 2023 blue/purple ribbon PNG; now the
   // current multi-colour Copilot mark as SVG — crisp at 14px, no retina twin.
   "github-copilot": `<img src="${BASE}copilot-logo.svg" width="14" height="14" alt="Copilot" style="display:block"/>`,
+  // FORK 2026-09-23 (the architect: "the icon you used is too generic, come up with one that
+  // looks more like the image people have of it"). M365 Copilot's provider id is plain
+  // `copilot`, which was in no icon table, so Think Deeper drew the neutral router
+  // glyph. It gets the same multi-colour Copilot ribbon everyone recognises.
+  copilot: `<img src="${BASE}copilot-logo.svg" width="14" height="14" alt="Microsoft 365 Copilot" style="display:block"/>`,
   ollama: `<svg width="14" height="14" viewBox="0 0 24 24"><text x="3" y="17" font-size="14" font-weight="bold" fill="#ca8a04">O</text></svg>`,
   meta: `<svg width="14" height="14" viewBox="0 0 24 24"><path d="M4 12c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6zm8 0c0-3 1.5-6 4-6s4 3 4 6-1.5 6-4 6-4-3-4-6z" stroke="#0668E1" stroke-width="2" fill="none"/></svg>`,
   mistral: `<svg width="14" height="14" viewBox="0 0 24 24"><rect x="2" y="3" width="5" height="5" fill="#f97316"/><rect x="10" y="3" width="5" height="5" fill="#f97316"/><rect x="17" y="3" width="5" height="5" fill="#f97316"/><rect x="2" y="10" width="5" height="5" fill="#f97316"/><rect x="10" y="10" width="5" height="5" fill="#f97316"/><rect x="2" y="17" width="5" height="5" fill="#f97316"/><rect x="17" y="17" width="5" height="5" fill="#f97316"/></svg>`,
@@ -4432,15 +7115,20 @@ function clearPersistedRetryWarnings(sk: string) {
 // (quota / rate-limit / overload / transient unavailable) does NOT dead-end on a
 // red bubble: it schedules a backed-off retry (RETRY_LADDER_MS), shows an orange
 // warning with a live countdown + hover "stop retrying" link, and re-issues the
-// last user turn via a fresh chat.send (new idempotencyKey — the original would
-// be deduped). The waits exceed the 900s gateway turn-timeout, so the retry must
-// live CLIENT-side. The existing in-turn server-side overload-retry (pre-surface,
-// `overload-retry` lifecycle bubbles) is unchanged — this engages only once the
-// error is SURFACED as state==="error". State is keyed by sessionKey so switching
-// tabs preserves the countdown.
+// last user turn as a NEW prompt under a fresh idempotencyKey (the original would
+// be deduped), kept in the durable outbox like a typed one (prompt-queue.md U5,
+// 2026-09-24; see retryLastTurn). The waits exceed the 900s gateway turn-timeout,
+// so the retry must live CLIENT-side. The existing in-turn server-side overload-retry
+// (pre-surface, `overload-retry` lifecycle bubbles) is unchanged — this engages only
+// once the error is SURFACED as state==="error". State is keyed by sessionKey so
+// switching tabs preserves the countdown.
 type RetryEntry = {
   attempt: number;
   lastUserText: string;
+  // FORK 2026-09-24 (prompt-queue.md U5) — the key of the prompt this track re-sends: the one the
+  // owner typed, named when the track is created (scheduleRetry). Every fire's outbox entry links to
+  // it by `retryOf`. Absent when that prompt carried no key this page can read.
+  retryOf?: string;
   nextRetryAt: number;
   kind: RetryKind | null;
   cancelled: boolean;
@@ -4450,8 +7138,14 @@ type RetryEntry = {
 };
 const retryState = new Map<string, RetryEntry>();
 
-// Pull the most recent real (non-temp) user-message text from a messages array.
-function lastUserTextFor(msgs: unknown[]): string {
+/**
+ * The most recent real (non-temp) user turn in a messages array: its text, and the key that names
+ * that prompt. FORK 2026-09-24 (prompt-queue.md U5): the key is what a ladder fire's `retryOf` links
+ * to. A ladder fire's own bubble answers with its `_retryOf` first, so a track re-armed on it still
+ * links to the prompt the owner typed; otherwise the bubble's client id, else the key the gateway
+ * served on the transcript row.
+ */
+function lastUserTurnFor(msgs: unknown[]): { text: string; key?: string } {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i] as any;
     if ((m.role ?? "").toLowerCase() !== "user") continue;
@@ -4464,9 +7158,19 @@ function lastUserTextFor(msgs: unknown[]): string {
       : typeof m.content === "string"
         ? m.content
         : "";
-    if (text.trim()) return text.trim();
+    if (text.trim()) {
+      const key = [m._retryOf, m._clientMsgId, m.idempotencyKey].find(
+        (k: unknown): k is string => typeof k === "string" && k.length > 0,
+      );
+      return key ? { text: text.trim(), key } : { text: text.trim() };
+    }
   }
-  return "";
+  return { text: "" };
+}
+
+// Pull the most recent real (non-temp) user-message text from a messages array.
+function lastUserTextFor(msgs: unknown[]): string {
+  return lastUserTurnFor(msgs).text;
 }
 
 // --- FORK 2026-08-04: auto-retry is PER-SESSION, not per-VIEW -------------------
@@ -4482,12 +7186,105 @@ function retryTargetIsViewed(sk: string): boolean {
   return !!sk && (sk === sessionKey || sessionKeyMatches(sk));
 }
 
+/**
+ * FORK 2026-10-01 (bug-log `[chat-divergence]` cause 3) — an outbox entry wearing the same shape as
+ * a prompt bubble. Its `id` IS the bubble's `_clientMsgId` AND the gateway `idempotencyKey`
+ * (outbox.ts), so one set of rows answers both questions the ladder now asks: "did we send this
+ * run?" and "which prompt does it re-send?". A fire that failed to persist a bubble is still found
+ * this way, and a fire whose bubble was trimmed from an idle tab is too.
+ */
+function outboxPromptRows(entries: readonly OutboxEntry[]): Record<string, unknown>[] {
+  return entries.map((e) => ({
+    role: "user",
+    _clientMsgId: e.id,
+    content: e.text,
+    ...(e.retryOf ? { _retryOf: e.retryOf } : {}),
+  }));
+}
+
+/**
+ * Every page that can name a prompt THIS client sent, for ANY session it hosts: the viewed
+ * transcript, each background tab's saved copy, the deferred queued sends, and the durable outbox.
+ *
+ * Deliberately NOT scoped to the viewed session. The ladder fires for background tabs too (FORK
+ * 2026-08-04), so scoping this would make a background tab's own run read as foreign and kill the
+ * very ladder that fork exists to keep climbing.
+ */
+function retryPromptPagesAll(): unknown[][] {
+  const pages: unknown[][] = [messages, pendingQueuedSends];
+  for (const st of tabStates.values()) {
+    if (st?.messages) {
+      pages.push(st.messages);
+    }
+  }
+  try {
+    pages.push(outboxPromptRows(readOutbox(outboxStore)));
+  } catch {
+    /* storage unavailable — the pages above still answer for anything on screen */
+  }
+  return pages;
+}
+
+/**
+ * The pages of ONE hosted session: the viewed transcript or that tab's saved copy, plus the queued
+ * sends and outbox entries filed under it. Used for the prompt a fire RE-SENDS, where reading
+ * another chat's rows is the hazard `lastUserTurnForSession` has guarded since 2026-08-04 — a
+ * prompt pulled from the wrong page would be sent into this one.
+ */
+function retryPromptPagesFor(sk: string): unknown[][] {
+  const pages: unknown[][] = [];
+  if (retryTargetIsViewed(sk)) {
+    pages.push(messages);
+  } else {
+    const tab = tabs.find((t) => t.sessionKey && sessionKeyMatches(sk, t.sessionKey));
+    const saved = tab ? tabStates.get(tab.id) : undefined;
+    if (saved) {
+      pages.push(saved.messages);
+    }
+  }
+  pages.push(queuedForSession(pendingQueuedSends, sk, sessionKeyMatches));
+  try {
+    pages.push(outboxPromptRows(outboxForSession(readOutbox(outboxStore), sk, sessionKeyMatches)));
+  } catch {
+    /* storage unavailable */
+  }
+  return pages;
+}
+
+/**
+ * "Did THIS page send the run `runId`?" — the predicate the retry ladder is now gated on.
+ *
+ * `chat.send` uses the prompt's `idempotencyKey` AS the run id (src/gateway/server-methods/chat.ts:
+ * `const clientRunId = p.idempotencyKey`), so this is an exact id match against the keys the page
+ * holds: a user bubble's `_clientMsgId`, a transcript row's served `idempotencyKey`, a deferred
+ * queued send, an outbox entry, or one of the ladder's own fires (each writes both a bubble and an
+ * entry under its new key). A runId-SHAPE rule would have looked green and covered only the
+ * `announce:` prefix that happened to be in front of us on 2026-09-26.
+ *
+ * A FOLLOW-UP run is the one exception to "run id = prompt key": the gateway mints it under a fresh
+ * UUID and links it, on its `followup` stream (G3), to the backlogged prompt keys it answers
+ * (`followupPromptLinks`). Those keys are handed over too, so a backlogged prompt's run is own by
+ * that link; without it, its rate limit would arm no ladder, and its `final` could not end a ladder
+ * whose fire it carried.
+ *
+ * RESIDUAL, named: a prompt whose row has been trimmed from an idle background tab AND already
+ * retired from the outbox by transcript proof reads foreign. A failure arriving that late is one
+ * the ladder should not act on anyway, so the gap closes in the safe direction.
+ */
+function isOwnRunId(runId: string): boolean {
+  return pageSentPromptKey(runId, retryPromptPagesAll(), followupPromptLinks.get(runId));
+}
+
 /** Ambient lookups for the shared retry-lifecycle rule; see retry-lifecycle.ts. */
 function retryLifecycleDeps(): RetryLifecycleDeps {
   return {
     viewedKey: sessionKey,
     tabKeys: tabs.map((t) => t.sessionKey),
     keyMatches: (evtKey, refKey) => sessionKeyMatches(evtKey, refKey),
+    // FORK 2026-10-01 — REQUIRED in RetryLifecycleDeps, not optional. An absent predicate is
+    // indistinguishable at runtime from one that always says yes, and "yes" is the behaviour that
+    // re-sent the owner's prompt three times for runs this page never sent.
+    isOwnRun: isOwnRunId,
   };
 }
 
@@ -4497,10 +7294,15 @@ function retryLifecycleDeps(): RetryLifecycleDeps {
  * generateTabTitle() reads). Reading the global `messages` for a non-viewed session
  * would capture ANOTHER chat's prompt and re-send it into this one.
  */
-function lastUserTextForSession(sk: string): string {
-  if (retryTargetIsViewed(sk)) return lastUserTextFor(messages);
+function lastUserTurnForSession(sk: string): { text: string; key?: string } {
+  if (retryTargetIsViewed(sk)) return lastUserTurnFor(messages);
   const tab = tabs.find((t) => t.sessionKey && sessionKeyMatches(sk, t.sessionKey));
-  return tab ? lastUserTextFor(tabStates.get(tab.id)?.messages ?? []) : "";
+  return tab ? lastUserTurnFor(tabStates.get(tab.id)?.messages ?? []) : { text: "" };
+}
+
+/** The text half of lastUserTurnForSession. */
+function lastUserTextForSession(sk: string): string {
+  return lastUserTurnForSession(sk).text;
 }
 
 // Schedule (or advance) the retry for a session after a surfaced recoverable
@@ -4512,10 +7314,27 @@ function scheduleRetry(
   kind: RetryKind | null,
   lastUserText: string,
   retryAfterSec?: number,
+  // FORK 2026-10-01 (bug-log `[chat-divergence]` cause 3) — the key of the prompt this track
+  // re-sends, resolved from the run that FAILED (advanceRetryLifecycle). Passing it in beats
+  // re-deriving it here: "the last user turn" is the wrong answer whenever the transcript has
+  // moved on since the failed run was sent, which is exactly the 2026-09-26 incident. Omitted
+  // when the failed run names no prompt this page holds — then the old derivation stands.
+  retryOf?: string,
 ) {
   let st = retryState.get(sk);
   if (!st) {
-    st = { attempt: 0, lastUserText, nextRetryAt: 0, kind, cancelled: false, firing: false };
+    // FORK 2026-09-24 (prompt-queue.md U5) — name the prompt this track re-sends NOW, while it is
+    // still the last user turn: every fire's outbox entry links to it by `retryOf`.
+    const original = retryOf ?? lastUserTurnForSession(sk).key;
+    st = {
+      attempt: 0,
+      lastUserText,
+      ...(original ? { retryOf: original } : {}),
+      nextRetryAt: 0,
+      kind,
+      cancelled: false,
+      firing: false,
+    };
     retryState.set(sk, st);
   }
   if (st.cancelled) return;
@@ -4574,18 +7393,55 @@ function scheduleRetry(
   if (retryTargetIsViewed(sk)) updateChat();
 }
 
-// Fire the pending retry for a session: re-issue the captured last-user turn via
-// the SAME chat.send path send() uses, but with a FRESH idempotencyKey (reusing
-// the original would be deduped and silently dropped). Increments the attempt so
-// the next surfaced error advances the ladder.
+// Fire the pending retry for a session. Increments the attempt so the next surfaced
+// error advances the ladder.
+//
+// FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md §7 step U5 (contradiction C8). A fire
+// is a NEW prompt, protected exactly like a typed one. It used to go straight to `chat.send` with
+// the RAW text and no outbox entry, so a fire that met a closed socket existed only in `retryState`
+// (page memory): a reload during the disconnect (every vite rebuild is one) lost it outright, and
+// no transcript row could ever be matched to it. Now, in send()'s order:
+//   1. SYNCHRONOUSLY, before the first yield, `enqueueLadderRetry` writes the outbox entry and the
+//      journal row under a FRESH key (the original's would be absorbed by the gateway dedupe, which
+//      only echoes the failed run), linked by `retryOf` to the prompt the owner typed (§2:
+//      "RETRYING → SENDING: ladder fires — a NEW prompt linked by retryOf").
+//   2. The fire is drawn as its own user bubble: one identity, outbox id = bubble id = gateway key
+//      (PQ-1). That is not optional. The 5 s outbox backstop draws a bubble for every entry that is
+//      not on screen, and an ACKED entry drawn that way reads LOST: a false "not in history" under
+//      a turn that is running. The transcript holds one user row per fire anyway, so the page now
+//      shows live what a reload would show (PQ-11).
+//   3. `resendOutboxEntry` puts it on the wire, the ONE outbox send path. It injects the
+//      amygdala/fractal preamble (the raw text used to go out bare) and applies the session's
+//      effort/model pins, read by the entry's own sessionKey (FORK 2026-08-28: never the viewed
+//      session's, because the ladder fires for background tabs too).
+// A TRANSPORT failure no longer climbs the ladder. The fire is UNSENT now, and UNSENT belongs to
+// the outbox (PQ-3): its 20 s tick asks the server first, then replays the SAME entry under the same
+// new key, after a reload too. Rescheduling here as well would put a second copy of the prompt on
+// the wire next to that replay. The track stays `firing`, so the 1 s tick cannot fire it again, and
+// the replayed turn's own terminal moves it (advanceRetryLifecycle: success cancels it, a
+// recoverable error schedules the next step). The one exception is storage that refused the copy:
+// nothing would ever replay that fire, so the ladder keeps its old back-off.
+// KNOWN LIMIT: once fired, the prompt belongs to the outbox. "stop retrying", `/clear` and a new
+// prompt end the LADDER, not a fire that is already UNSENT, which is still delivered when the socket
+// returns. PQ-9 lets only a keyed proof or the owner's Dismiss retire an entry; the fire's bubble
+// offers Dismiss once it reads LOST (U4).
 async function retryLastTurn(sk: string) {
   const st = retryState.get(sk);
   if (!st || st.cancelled || st.firing) return;
   st.firing = true;
-  // Prefer the live last-user text when this session is the viewed one; else use
-  // the text captured at schedule time (the session may be in a background tab).
+  // FORK 2026-10-01 (bug-log `[chat-divergence]` cause 3) — re-send the prompt this TRACK NAMES,
+  // not whatever bubble is newest. `st.retryOf` is that prompt's key, resolved from the run that
+  // failed when the track was armed, so a fire stays pinned to its own prompt even after the
+  // transcript has moved on. The live-last-user override below is what actually put a 75-minute-old
+  // prompt back on the wire three times on 2026-09-26, and it is now only the fallback.
   let text = st.lastUserText;
-  if (sk === sessionKey || sessionKeyMatches(sk)) {
+  const named = st.retryOf ? retryPromptForRun(st.retryOf, retryPromptPagesFor(sk)) : null;
+  if (named?.text) {
+    text = named.text;
+  } else if (retryTargetIsViewed(sk)) {
+    // No addressable prompt (a track armed before this fork, or a row the page no longer holds):
+    // keep today's choice — the live last-user text when this session is the viewed one, else the
+    // text captured at schedule time (the session may be in a background tab).
     const live = lastUserTextFor(messages);
     if (live) text = live;
   }
@@ -4594,34 +7450,99 @@ async function retryLastTurn(sk: string) {
     return;
   }
   st.attempt++;
-  // FORK 2026-08-28: a retry must carry the SAME pins the original turn carried. This was
-  // the only one of the three chat.send call sites that omitted them, so an auto-retried
-  // turn arrived pin-less and the gateway resolved it against whatever durable override the
-  // session happened to hold — the architect's current selection silently replaced, on a
-  // turn he never re-issued. Keyed by `sk`, NEVER the module-level `sessionKey`: the ladder
-  // fires for BACKGROUND tabs too, so reading the viewed session's pins would apply one
-  // session's model to another session's turn. Same property names and same order as send()
-  // and resendOutboxEntry — three call sites, one shape. Reads sit OUTSIDE the try on
-  // purpose: Map.get cannot throw, and the catch below must keep meaning "RPC failure".
-  const effortPin = effortPinBySession.get(sk);
-  const modelPin = modelPinBySession.get(sk);
-  try {
-    await req("chat.send", {
-      sessionKey: sk,
-      message: text,
-      idempotencyKey: uuid(),
-      ...(effortPin ? { thinking: effortPin } : {}),
-      ...(modelPin ? { model: modelPin } : {}),
-    });
-  } catch {
-    // RPC failure issuing the retry: keep backing off rather than stalling -- but NOT
-    // when the track was cancelled while this send was in flight (a `/clear` or a
-    // manual stop landing inside the firing window). FORK 2026-08-04: `scheduleRetry`
-    // re-creates a DELETED entry from scratch, so without this guard the cancel would
-    // be silently undone and the ladder would resurrect itself -- which would make the
-    // `/clear` fix below non-airtight.
-    if (!st.cancelled) scheduleRetry(sk, st.kind, text);
+  const fired = enqueueLadderRetry(outboxStore, {
+    idempotencyKey: uuid(),
+    sessionKey: sk,
+    text,
+    ts: Date.now(),
+    ...(st.retryOf ? { retryOf: st.retryOf } : {}),
+    // A proof read may ask by cursor only for the page on screen (outboxSendCursor reads it).
+    ...(retryTargetIsViewed(sk) ? outboxSendCursor(activeTabId, sk) : {}),
+  });
+  if (!fired) {
+    // Unreachable with a fresh uuid and non-empty text. A fire that cannot be keyed is not sent.
+    cancelRetry(sk, false);
+    return;
   }
+  if (fired.persisted) {
+    drawLadderRetryBubble(sk, fired.entry);
+  } else {
+    console.warn(
+      "[outbox] could not persist a retry-ladder fire (storage full?), sending it unprotected",
+    );
+  }
+  const sent = await resendOutboxEntry(fired.entry);
+  if (sent) return;
+  if (fired.persisted) {
+    // A rejected RPC is recorded by resendOutboxEntry; a closed socket returns before it tries, so
+    // record it here as well. Either way the bubble reads UNSENT and the outbox owns the re-send.
+    notePromptFactsById(fired.entry.id, { transport: "rejected" });
+    if (retryTargetIsViewed(sk)) updateChat();
+    return;
+  }
+  // Neither on disk nor on the wire: keep backing off, but NOT when the track was cancelled while
+  // this send was in flight (a `/clear` or a manual stop landing inside the firing window). FORK
+  // 2026-08-04: `scheduleRetry` re-creates a DELETED entry from scratch, so without this guard the
+  // cancel would be silently undone and the ladder would resurrect itself.
+  if (!st.cancelled) scheduleRetry(sk, st.kind, text);
+}
+
+/**
+ * FORK 2026-09-24 — prompt-queue.md U5. Put a ladder fire on screen as its own user bubble, in the
+ * transcript of the session it re-sends into: the viewed page, or that tab's saved page. The ladder
+ * fires for background tabs too, and writing the global `messages` for one would land the bubble in
+ * another chat. The bubble carries the fire's facts like any prompt send() draws: born "in-flight",
+ * then recorded "acked" or "rejected" by resendOutboxEntry. It also carries `_retryOf`, so a track
+ * re-armed on this bubble still links to the prompt the owner typed (lastUserTurnFor).
+ */
+function drawLadderRetryBubble(sk: string, entry: OutboxEntry): void {
+  const bubble: Record<string, unknown> = {
+    role: "user",
+    _clientMsgId: entry.id,
+    content: [{ type: "text", text: entry.text }],
+    _promptStartedAt: entry.ts,
+    ...(entry.retryOf ? { _retryOf: entry.retryOf } : {}),
+    _promptState: { transport: "in-flight" },
+  };
+  if (retryTargetIsViewed(sk)) {
+    pushUserMsgDeduped(bubble);
+    updateChat();
+    return;
+  }
+  const tab = tabs.find((t) => t.sessionKey && sessionKeyMatches(sk, t.sessionKey));
+  const saved = tab ? tabStates.get(tab.id) : undefined;
+  const known = saved?.messages.some(
+    (m) => (m as Record<string, unknown> | null)?._clientMsgId === entry.id,
+  );
+  if (saved && !known) {
+    saved.messages.push(bubble);
+  }
+}
+
+/**
+ * FORK 2026-09-24 — prompt-queue.md §7 step U5, the render half (M-C maps onto §6.1's RETRYING
+ * row). The orange `retry n/6` countdown IS the RETRYING state's one indicator: that row puts
+ * NOTHING on the prompt bubble (its badge is "—") and names this bubble, under the failed answer, as
+ * the state's surface, with Stop retrying as its action (PQ-12). It is rendered THROUGH that row: the
+ * stop link is drawn because the row lists "stop-retrying", and `data-prompt-state` names the state
+ * the way every prompt badge does (msg-order.ts `promptBubbleMarks`), so a probe can find it. The
+ * markup, the copy and the 1 s countdown hook (`data-retry-warning` → `.retry-countdown`, see
+ * driveRetryCountdowns) are unchanged. Both renderMsg paths call this; each used to carry its own
+ * copy of the template.
+ */
+function renderRetryWarningBubble(msg: Record<string, unknown>): string {
+  const ind = promptIndicator("RETRYING");
+  const rsk = String(msg._retrySessionKey ?? "");
+  const rst = retryState.get(rsk);
+  const remainMs =
+    rst && !rst.cancelled
+      ? Math.max(0, rst.nextRetryAt - Date.now())
+      : Number(msg._retryDelayMs ?? 0);
+  const rAtt = Number(msg._retryAttempt ?? 0);
+  const stop = ind.actions.includes("stop-retrying")
+    ? ` <a class="retry-stop-link" data-retry-stop="${esc(rsk)}">stop retrying</a>`
+    : "";
+  return `<div class="msg-overload-bubble retrying" data-retry-warning="${esc(rsk)}" data-prompt-state="${ind.state}">⚠️ ${esc(labelFor((msg._retryKind ?? null) as RetryKind | null))} — retry ${rAtt + 1}/${RETRY_LADDER_MS.length}, retrying in <span class="retry-countdown">${esc(formatWait(remainMs))}</span>…${stop}</div>`;
 }
 
 // Cancel the retry track for a session (hover-stop, manual abort, or a new user
@@ -4674,23 +7595,43 @@ function advanceRetryLifecycle(p: RetryLifecycleEvent | undefined): void {
   // body is "API Error: 529 Overloaded…" is a FAILURE wearing a success's state word; judged
   // on `state` alone it cancelled the ladder, which is why that 529 dead-ended with no orange
   // bubble and no clock. Done here, once, rather than at each of the three call sites.
+  // FORK 2026-09-29 (U9): lift the TYPED verdict too. `finalText` is the 2026-08-24 text heuristic;
+  // `outcome` is the gateway's own classification of the same question, and it decides the `final`
+  // branch when present. Lifted here, once, so all three call sites carry it.
   const withText: RetryLifecycleEvent | undefined = p
     ? {
         ...p,
         finalText: assistantTextOfPayloadMessage((p as { message?: unknown }).message),
+        finalOutcome: (p as { message?: { outcome?: unknown } }).message?.outcome,
       }
     : p;
   const action = retryLifecycleAction(withText, retryLifecycleDeps());
   if (action.kind === "schedule") {
+    // FORK 2026-09-29 (U9): `onlyIfIdle` is set by the outcome-derived final path. scheduleRetry is
+    // NOT idempotent — each call pushes a NEW orange countdown bubble and resets the clock — and a
+    // recoverable failure now arrives TWICE (the surfaced error, then the backstop final). The
+    // error armed the track; the final must not draw a second bubble over it (review focus 3).
+    if (action.onlyIfIdle && retryState.has(action.sessionKey)) {
+      return;
+    }
     // Nothing to re-send -- a tab whose transcript this page has never loaded has no
     // stored messages yet. Do NOT mint a countdown bubble we could never retire: the
     // ladder would cancel itself on its first fire (retryLastTurn bails on empty text)
     // and leave a persisted "retrying in 3s…" that no `final` ever clears — a fresh
     // instance of the very immortal-bubble defect this fork removes. An entry that
     // already exists captured its text at schedule time, so it may keep climbing.
-    const text = lastUserTextForSession(action.sessionKey);
+    // FORK 2026-10-01 (bug-log `[chat-divergence]` cause 3) — arm the track on the prompt of the
+    // run that FAILED, not on the last user bubble on screen. The failed run's id IS its prompt's
+    // key (`chat.send` uses the idempotencyKey as the run id), so the prompt is addressable;
+    // `retryPromptForRun` follows `_retryOf` back to the one the owner typed, so a fire of a fire
+    // still links to the original rather than chaining the ladder onto its own output.
+    const named = retryPromptForRun(action.runId, retryPromptPagesFor(action.sessionKey));
+    // Fall back to today's choice ONLY when the failed run cannot be mapped to a prompt — an event
+    // with no runId, a G3 follow-up run (own by its link, but its id is no prompt key), or a page
+    // that no longer holds that row.
+    const text = named?.text || lastUserTextForSession(action.sessionKey);
     if (!text && !retryState.has(action.sessionKey)) return;
-    scheduleRetry(action.sessionKey, action.retryKind, text, action.retryAfterSec);
+    scheduleRetry(action.sessionKey, action.retryKind, text, action.retryAfterSec, named?.key);
   } else if (action.kind === "cancel") {
     // A successful turn ends the ladder AND retires its countdown bubbles: leaving
     // them persisted is exactly what made the fake "retrying in 7m..." immortal.
@@ -4907,21 +7848,13 @@ const MODEL_SECTION_DEFAULT_COLLAPSED: Record<string, boolean> = {
 // end-of-turn counter feeding the turn markers. Keyed by the event's FULL
 // session key so tab switches repaint the right session's paper.
 const eegStores = new Map<string, EegTraceStore>();
-// FORK 2026-06-25 (the architect): ephemeral utility sessions (`temp:title-suggest` et al.)
-// are internal housekeeping — a sonnet call to NAME a tab, not cognitive work. They
-// were leaking into the EEG "all" overlay as dim, thin, near-white sonnet threads
-// bouncing auto↔low, which "does not make sense at all". Never plot them.
-function isEphemeralEegSession(sk: unknown): boolean {
-  return typeof sk === "string" && sk.startsWith("temp:");
-}
+// FORK 2026-10-01 (the architect: "the EEG has to stay specific for each tab"): the ephemeral-session
+// filter (`temp:title-suggest` et al.) went with the all-scope overlay it existed to keep off the
+// paper. A viewed tab is never a `temp:` session, so per-tab rendering cannot reach them at all.
 const eegTurnCounters = new Map<string, number>();
 // FORK 2026-06-22 (the architect): true while the in-flight turn's blue boundary was already
 // drawn at SEND time — so the lifecycle end-handler skips adding a duplicate line.
 const eegBoundaryAtSend = new Map<string, boolean>();
-// FORK 2026-06-13 (eeg): billed INPUT tokens accumulated per runId across the
-// run's rounds (round-start carries inputTokensEstimate; effort-final carries
-// output). Feeds segment length (area ∝ token cost, bible §5.8h).
-const eegInputByRun = new Map<string, number>();
 // FORK 2026-06-13 (eeg): persist the trace to localStorage so a HARD REFRESH (which
 // wipes the in-memory store) restores the session's activity instead of erasing it
 // (the architect 2026-06-13). Keyed per session; capped so storage stays bounded.
@@ -4935,11 +7868,14 @@ function loadEegStoreFromStorage(sk: string, store: EegTraceStore): void {
     }
     const snap = JSON.parse(raw) as { samples?: EegSample[]; ends?: EegTurnEnd[] };
     if (Array.isArray(snap.samples)) {
-      // FORK 2026-06-23 (the architect): drop any persisted subagent BRANCH samples on load too, so an
-      // OLD snapshot (written before branches stopped being persisted) can't restore a stale
-      // "banana" arch. Branches are live-only; the main call-line is what persists.
+      // FORK 2026-06-23 (the architect): drop any persisted BRANCH samples on load too, so an OLD
+      // snapshot (written before branches stopped being persisted) can't restore a stale "banana"
+      // arch. Branches are live-only; the main call-line is what persists.
+      // FORK 2026-10-01 (finding 8): tool strands are branches by the same argument — live
+      // activity, not durable history — and they are the ONE class that cannot stamp its own end
+      // when the tab is not being viewed, so a persisted tool was an immortal ghost.
       store.backfill(
-        snap.samples.filter((s) => !s.subagent),
+        snap.samples.filter((s) => !s.subagent && !s.tool),
         Array.isArray(snap.ends) ? snap.ends : [],
       );
     }
@@ -4953,13 +7889,16 @@ function saveEegStore(sk: string): void {
     localStorage.setItem(
       EEG_STORAGE_PREFIX + sk,
       JSON.stringify({
-        // FORK 2026-06-23 (the architect "weird max→high banana that lingers"): do NOT persist
-        // subagent BRANCH samples. They are LIVE activity (a fan-out in progress), not durable
-        // history — persisting them froze an old sub-call into a stale max→high arch ("banana")
-        // that was restored on every reload long after the fan-out finished. The main call-line
-        // (history) still persists and also rebuilds from anatomy; live branches re-render in
-        // real time from the effort feed and simply don't survive a reload.
-        samples: snap.samples.filter((s) => !s.subagent).slice(-EEG_PERSIST_CAP),
+        // FORK 2026-06-23 (the architect "weird max→high banana that lingers"): do NOT persist BRANCH
+        // samples. They are LIVE activity (a fan-out in progress), not durable history —
+        // persisting them froze an old sub-call into a stale max→high arch ("banana") that was
+        // restored on every reload long after the fan-out finished. The main call-line (history)
+        // still persists and also rebuilds from anatomy; live branches re-render in real time from
+        // the effort feed and simply don't survive a reload.
+        // FORK 2026-10-01 (finding 8): tool strands are branches on the same reasoning, and the
+        // stated reason bites harder for them — a tool's end stamp is only written while its tab
+        // is viewed, so an un-ended tool persisted across reloads forever.
+        samples: snap.samples.filter((s) => !s.subagent && !s.tool).slice(-EEG_PERSIST_CAP),
         ends: snap.ends.slice(-EEG_PERSIST_CAP),
       }),
     );
@@ -5091,9 +8030,6 @@ let eegResizeBound = false;
 // FORK 2026-06-13 (eeg): vertical SCALE for the seismograph length axis, driven
 // by the secondary(right)-button wheel. 1 = native token→px scale.
 let eegZoom = 1;
-// FORK 2026-06-19 (bible §5.8h): EEG "all" scope — overlay every OTHER session's
-// trace, drawn faint (dim), on the SAME time axis as the viewed (solid) session.
-let eegScope: "session" | "all" = "session";
 // FORK 2026-06-19: close dead subagent branches + clear their "thinking" ghost.
 // A 30× fan-out that finished can leave EEG samples with no endedAt (their end
 // event never reached the FE) and stale activeRuns entries → "thinking forever" +
@@ -5130,25 +8066,37 @@ function sweepDeadEegBranches(): void {
     store.closeStaleRunning(isLive, now);
   }
 }
+// FORK 2026-10-01 (finding 9): is the EEG fold shut? Collapsed state is a CSS class on the
+// .model-group, and nothing on the paint path consulted it — `repaintViewedSessionSurfaces` ->
+// `renderEegPanel()` -> `fillEegPaper()` ran on every effort frame whether or not anyone could see
+// the result. Missing node reads as OPEN deliberately: if this markup ever moves, the failure
+// should be a wasted repaint, not a seismograph that silently stops drawing.
+function eegSectionCollapsed(): boolean {
+  const group = document.querySelector('#models-panel > .model-group[data-section="eeg"]');
+  return !!group && !group.classList.contains("open");
+}
 function fillEegPaper(): void {
+  // The stale-branch sweep stays OUTSIDE the collapsed check. It is a cheap map walk, and it
+  // stamps a dead branch's end at the moment it is noticed — deferring it until the fold opens
+  // would stamp an hour of ghosts at opening time instead of when they actually went quiet.
   sweepDeadEegBranches();
+  // FORK 2026-10-01: the THALAMUS card reads the same samples, so it moves with the trace.
+  paintThalamusTurn();
   const paper = document.getElementById("eeg-paper");
   if (!paper || !sessionKey) {
+    return;
+  }
+  // Building the SVG is the expensive half (the review measured 1.4s per repaint on a long
+  // session), so it is the half that waits for someone to be looking. The paper is rebuilt from
+  // the store on open, so nothing accumulates and nothing is lost.
+  if (eegSectionCollapsed()) {
     return;
   }
   const w = Math.max(120, Math.floor(paper.clientWidth) || 280);
   // preserve the scroll position proportionally across a re-render/zoom
   const prevH = paper.scrollHeight || 1;
   const ratio = paper.scrollTop / prevH;
-  const overlay =
-    eegScope === "all"
-      ? [...eegStores].flatMap(([sk, store]) =>
-          sk === sessionKey || isEphemeralEegSession(sk)
-            ? []
-            : store.taggedSamples({ sessionKey: sk, dim: true }),
-        )
-      : undefined;
-  paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w, zoom: eegZoom, overlay });
+  paper.innerHTML = getEegStore(sessionKey).renderSvg({ width: w, zoom: eegZoom });
   paper.scrollTop = ratio * (paper.scrollHeight || 1);
 }
 
@@ -5165,8 +8113,7 @@ function fillEegPaper(): void {
 // repaint. Relocate the EEG markup into that generated string (it LOOKS tidier, since the
 // other model-groups live there) and the bound node is destroyed and recreated on every
 // repaint while eegPanelBound stays `true` — wheel-zoom and marker-click die permanently,
-// with no error in the console. #eeg-scope-toggle is bound by id ONCE at boot and has the
-// exact same fragility. Bind-once latch + re-rendered host = silent dead controls.
+// with no error in the console. Bind-once latch + re-rendered host = silent dead controls.
 let eegPanelBound = false;
 function renderEegPanel(): void {
   const body = document.getElementById("eeg-panel-body");
@@ -5176,7 +8123,6 @@ function renderEegPanel(): void {
   if (!body.querySelector("#eeg-paper")) {
     body.innerHTML = '<div class="eeg-paper" id="eeg-paper"></div>';
   }
-  syncEegScopeChrome();
   fillEegPaper();
   bindEegPanelOnce();
 }
@@ -5214,8 +8160,10 @@ function bindEegPanelOnce(): void {
       const idx = Number.parseInt(idxAttr, 10);
       if (!Number.isNaN(idx)) {
         const userBubbles = document.querySelectorAll<HTMLElement>("#messages .msg.user");
-        if (userBubbles[idx]) {
-          return userBubbles[idx];
+        // R36: the index counts from the transcript's start; the page starts later.
+        const onPage = idx - viewedUserRowOffset();
+        if (onPage >= 0 && userBubbles[onPage]) {
+          return userBubbles[onPage];
         }
       }
     }
@@ -5249,6 +8197,9 @@ function bindEegPanelOnce(): void {
     if (!target) {
       return;
     }
+    // FORK 2026-10-02 — a jump to an older prompt is reading: follow off first, or the next
+    // streaming delta pins the bottom and cancels the smooth scroll mid-flight.
+    noteUserNavigate();
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     target.classList.add("eeg-focus");
     setTimeout(() => target.classList.remove("eeg-focus"), 2500);
@@ -5260,32 +8211,17 @@ function bindEegPanelOnce(): void {
       node.classList.remove("eeg-hl");
     }
   };
-  // FORK 2026-06-22 (the architect): a styled hover overlay showing the prompt text (the native
-  // SVG <title> is slow + unstyleable). One lazily-created floating div, positioned next
-  // to the cursor, fed from the boundary's data-eeg-prompt-text.
-  let eegOverlay: HTMLElement | null = null;
-  const showEegOverlay = (text: string, x: number, y: number): void => {
-    if (!eegOverlay) {
-      eegOverlay = document.createElement("div");
-      eegOverlay.className = "eeg-prompt-overlay";
-      document.body.appendChild(eegOverlay);
-    }
-    eegOverlay.textContent = text;
-    eegOverlay.style.display = "block";
-    // clamp to the viewport so a long prompt near the right/bottom edge stays readable
-    const pad = 14;
-    const ow = eegOverlay.offsetWidth;
-    const oh = eegOverlay.offsetHeight;
-    let left = x + pad;
-    let top = y + pad;
-    if (left + ow > window.innerWidth - 8) left = x - ow - pad;
-    if (top + oh > window.innerHeight - 8) top = y - oh - pad;
-    eegOverlay.style.left = `${Math.max(8, left)}px`;
-    eegOverlay.style.top = `${Math.max(8, top)}px`;
-  };
-  const hideEegOverlay = (): void => {
-    if (eegOverlay) eegOverlay.style.display = "none";
-  };
+  // FORK 2026-09-06 (the architect) — the instant cursor-following overlay is GONE.
+  //
+  // The prompt boundary had its hover coded twice, by two paths that did not know about
+  // each other: this styled div (t=0, yellow-bordered, added 2026-06-22 because "the native
+  // SVG <title> is slow + unstyleable") and the native <title> the same elements still carry
+  // (t≈1-2s). Both fired on every hover, so one prompt produced two tooltips. the architect picked the
+  // native one — the delay is a feature here, since the boundary rules span the full width and
+  // an instant tip fires constantly while the cursor is merely crossing the graph.
+  //
+  // The <title> elements stay exactly where they are (eeg-trace.ts). Only the eager duplicate
+  // is removed. The eeg-hl highlight below is NOT part of this and is deliberately kept.
   body.addEventListener("mouseover", (e) => {
     const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-eeg-prompt-index]");
     if (!hit) {
@@ -5303,30 +8239,10 @@ function bindEegPanelOnce(): void {
     for (const node of Array.from(body.querySelectorAll(sel))) {
       node.classList.add("eeg-hl");
     }
-    const txt = hit.getAttribute("data-eeg-prompt-text");
-    if (txt) {
-      showEegOverlay(txt, (e as MouseEvent).clientX, (e as MouseEvent).clientY);
-    }
-  });
-  body.addEventListener("mousemove", (e) => {
-    if (!eegOverlay || eegOverlay.style.display === "none") {
-      return;
-    }
-    const hit = (e.target as HTMLElement).closest<HTMLElement>("[data-eeg-prompt-text]");
-    if (hit) {
-      showEegOverlay(
-        hit.getAttribute("data-eeg-prompt-text") || "",
-        (e as MouseEvent).clientX,
-        (e as MouseEvent).clientY,
-      );
-    } else {
-      hideEegOverlay();
-    }
   });
   body.addEventListener("mouseout", (e) => {
     if ((e.target as HTMLElement).closest<HTMLElement>("[data-eeg-prompt-index]")) {
       clearEegHl();
-      hideEegOverlay();
     }
   });
   window.addEventListener("resize", () => fillEegPaper());
@@ -5335,26 +8251,6 @@ function bindEegPanelOnce(): void {
       saveEegStore(sk);
     }
   });
-}
-function syncEegScopeChrome(): void {
-  const toggle = document.getElementById("eeg-scope-toggle");
-  if (!toggle) {
-    return;
-  }
-  toggle
-    .querySelector(".ct-switch-track")
-    ?.classList.toggle("ct-switch-track--on", eegScope === "all");
-  toggle.querySelectorAll(".ct-switch-label").forEach((b) => {
-    b.classList.toggle("ct-switch-label--active", (b as HTMLElement).dataset.eegScope === eegScope);
-  });
-}
-function setEegScope(next: "session" | "all"): void {
-  if (next !== "session" && next !== "all") {
-    return;
-  }
-  eegScope = next;
-  syncEegScopeChrome();
-  fillEegPaper();
 }
 const ACTIVE_RUNS_STORAGE_KEY = "tinker-activeRuns";
 // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — drafts are now
@@ -5551,7 +8447,7 @@ function scheduleUnconfirmedPrune() {
         // FORK 2026-05-16: sending tracks the VIEWED tab, not the global map.
         // (Was `if (activeRuns.size === 0)` which stayed true whenever any
         // OTHER tab still had a run — the multi-tab "sending forever" bug.)
-        sending = viewedSessionBusy();
+        setSending(viewedSessionBusy());
         updateBudgetPanel();
         updatePrefrontalTree();
         updateChat();
@@ -5575,7 +8471,7 @@ function scheduleUnconfirmedPrune() {
       }
       if (changed) {
         saveActiveRuns();
-        sending = viewedSessionBusy(); // FORK 2026-05-16: per-viewed-tab, not global map size
+        setSending(viewedSessionBusy()); // FORK 2026-05-16: per-viewed-tab, not global map size
         updateBudgetPanel();
         updatePrefrontalTree();
         updateChat();
@@ -5630,8 +8526,12 @@ function panelProviderSegment(model?: string | null, provider?: string | null): 
  * is irreducible, not ignored: it narrows the moment any provider is known.
  *
  * This predicate is a strict SUBSET of the bare-tail comparison it replaces, so it can only
- * ever remove a light, never add one. Do not grow a second convention next to it — three
- * surfaces (`.model-live`, `.model-recent`, the auth-key split) must answer the same question.
+ * ever remove a light, never add one. Do not grow a second convention next to it.
+ *
+ * FORK 2026-10-02: `.model-live` and `.model-recent` no longer come through here. Both read the
+ * maps keyed by `modelCountKey` through run-state's `catalogKeyIn`, because the recent pin is now
+ * RECORDED from the live count (model-recent-use.ts) and must turn recent through the key that lit
+ * it live. This predicate now governs the auth-key split alone.
  */
 function modelMatchesCatalogRow(
   runModel: string | null | undefined,
@@ -5647,20 +8547,77 @@ function modelMatchesCatalogRow(
   return !runSegment || !rowSegment || runSegment === rowSegment;
 }
 
-// FORK 2026-06-14 (bug #1): the model of the most recent live run, captured WHILE
-// live in updateBudgetPanel, so the collapsed MODELS section keeps showing the
-// last model that computed AFTER it finishes. Module-scoped; only a newer live
-// run overwrites it.
-// FORK 2026-08-04: the PROVIDER is now captured in lockstep. `.model-recent` outlives its run
-// by design, and base.css hides every non-lit `.model-row` inside a collapsed group — so with
-// both model sections default-collapsed, a falsely-recent twin in MORE MODELS was in practice
-// the ONLY row on screen. A pin that outlives its run must carry the whole identity.
-let lastComputedModel: string | null = null;
-let lastComputedProvider: string | null = null;
+// FORK 2026-06-14 (bug #1): the collapsed MODELS section keeps showing the last model that
+// computed AFTER it finishes.
+// FORK 2026-08-04: a pin that outlives its run must carry the whole identity (provider too) —
+// base.css hides every non-lit `.model-row` in a collapsed group, so a falsely-recent twin was in
+// practice the ONLY row on screen. The ledger is keyed by the provider-qualified count key.
+// FORK 2026-10-02 (the architect: "the ones recently used ... should have a way longer sticky time"): the
+// pin was ONE model from the viewed tab, so a second model starting anywhere unpinned the first
+// within seconds. It is now every model seen live in ANY session over the last 30 min (the same
+// global scope as the count badge), plus the newest one at any age. Persisted, so a page reload or
+// a frontend rebuild does not wipe it. See model-recent-use.ts.
+const RECENT_MODEL_USE_STORAGE_KEY = "tinker-model-recent-use";
+/** Persist at most this often while models keep running; a NEW model or session saves at once. */
+const RECENT_MODEL_USE_SAVE_EVERY_MS = 15_000;
+const recentModelUse: RecentModelLedger = (() => {
+  let raw: string | null = null;
+  try {
+    raw = localStorage.getItem(RECENT_MODEL_USE_STORAGE_KEY);
+  } catch {}
+  const ledger = parseRecentModels(raw);
+  pruneRecentModels(ledger, Date.now());
+  return ledger;
+})();
+let recentModelUseSavedAt = 0;
+
+/** Stamp what is live now into the ledger; called from updateBudgetPanel on every paint. */
+function noteLiveModels(live: Map<string, string[]>, now: number): void {
+  const grew = recordLiveModels(recentModelUse, live, now);
+  pruneRecentModels(recentModelUse, now);
+  if (!grew && (live.size === 0 || now - recentModelUseSavedAt < RECENT_MODEL_USE_SAVE_EVERY_MS)) {
+    return;
+  }
+  recentModelUseSavedAt = now;
+  try {
+    localStorage.setItem(RECENT_MODEL_USE_STORAGE_KEY, serializeRecentModels(recentModelUse));
+  } catch {}
+}
+
 function rowIsRecentModel(modelId: string): boolean {
-  return (
-    !!lastComputedModel && modelMatchesCatalogRow(lastComputedModel, lastComputedProvider, modelId)
-  );
+  return recentUseForRow(recentModelUse, modelId, Date.now()) !== undefined;
+}
+
+/**
+ * A session as the owner would name it in a model row's hover: the title of the tab that holds it;
+ * for a subagent, the tab that spawned it; otherwise the label the SESSIONS panel shows.
+ */
+function sessionNameForHint(key: string): string {
+  const tabFor = (k: string) =>
+    tabs.find((t) => t.sessionKey && sessionKeyMatches(k, t.sessionKey));
+  const tab = tabFor(key);
+  if (tab) {
+    return tab.title;
+  }
+  if (key.includes(":subagent:")) {
+    const owner = subagentOwnerTab.get(key);
+    const ownerTab = owner ? tabFor(owner) : undefined;
+    return ownerTab
+      ? `${ownerTab.title} › subagent`
+      : `subagent ${(key.split(":subagent:")[1] ?? "").slice(0, 8)}`;
+  }
+  const row = (sessions as Array<{ key?: unknown }>).find(
+    (s) => typeof s?.key === "string" && sessionKeyMatches(s.key, key),
+  ) as SessionLabelSource | undefined;
+  const { group, shortLabel } = classifySession(key);
+  const label = sessionRowLabel(row ?? { key }, shortLabel);
+  if (group === "cron") {
+    return `cron · ${label}`;
+  }
+  if (group === "whatsapp") {
+    return `WhatsApp · ${label}`;
+  }
+  return label;
 }
 
 function getAuthKeyCounts(forModel?: string): Map<string, number> {
@@ -5673,8 +8630,7 @@ function getAuthKeyCounts(forModel?: string): Map<string, number> {
     // FORK 2026-08-04: the tail ALONE let a run leak onto its cross-provider twin. With no
     // authProfileId on the event the count is keyed under `forModel`, so a bare-tail match
     // wrote the phantom straight into the TWIN's bucket, where the count chain in
-    // renderAuthKeyRows then resurrected it. Same qualifier as `rowIsRecentModel` — the
-    // client lane and the recent pin must not disagree about what "this model" means.
+    // renderAuthKeyRows then resurrected it. Provider-qualified, like the count it splits.
     if (forModel && !modelMatchesCatalogRow(info.model, info.provider, forModel)) {
       continue;
     }
@@ -5752,16 +8708,17 @@ function lastEndedAtFor(key: string): number | undefined {
 
 /** Every surface's entry point into the resolver, so none of them re-derives the inputs.
  *  `sessions` is the server lane, `activeRuns` the client lane, `sessionKeyMatches` the one
- *  membership predicate. */
-function liveModelCounts(): Map<string, number> {
-  return liveRunCountsByModel({
+ *  membership predicate. Returns the sessions behind each live count; a row's count is its
+ *  list's length (FORK 2026-10-02, so the hover can name them). */
+function liveModelSessions(): Map<string, string[]> {
+  return liveRunSessionsByModel({
     rows: Array.isArray(sessions)
       ? ((sessions as SessionRowForLiveness[]).map((r) => forLiveness(r)) as Parameters<
-          typeof liveRunCountsByModel
+          typeof liveRunSessionsByModel
         >[0]["rows"])
       : [],
     // FORK 2026-08-16 — same widened client lane as sessionHasActiveRuns, so the models-panel
-    // count cannot disagree with the tab it is counting. `liveRunCountsByModel` de-duplicates
+    // count cannot disagree with the tab it is counting. `liveRunSessionsByModel` de-duplicates
     // against the rows it has already seen, so a background run that also has a row is not
     // double-counted.
     runs: clientRunEvidence(),
@@ -5773,6 +8730,16 @@ function liveModelCounts(): Map<string, number> {
 }
 
 let modelConfigData: unknown = null;
+// FORK 2026-10-02 (the architect, Thalamus full deploy): the picks are SUGGESTIONS, one per dial stop (smart · default · budget), each a
+// model and an effort. Served by prefrontal.thalamusDefaults, set from the model picker's right-click menu (a model) and from
+// the effort row's (an effort). panels/thalamus-roles.ts holds the pure parts.
+let thalamusSuggestions: RoleSuggestions = {};
+function thalamusTiersOf(modelId: string): RoleTier[] {
+  return rolesOfModel(thalamusSuggestions, modelId);
+}
+function setThalamusSuggestions(reply: unknown): void {
+  thalamusSuggestions = suggestionsFromReply(reply);
+}
 
 // FORK 2026-04-20: Build the Prefrontal dashboard state (tree + recipe +
 // trail) and push it to the panel controller. Tree source of truth is the
@@ -6181,9 +9148,64 @@ function pickUniqueTabIcon(preferred: string | null, summary: string, exceptTabI
 }
 
 // ─── Gateway ───
-function uuid() {
-  return crypto.randomUUID();
+function uuid(): string {
+  // FORK 2026-09-04 — `crypto.randomUUID` exists ONLY in a secure context. Served over plain http
+  // this page is secure as `localhost` and NOT secure over a LAN or Tailscale address, where the
+  // call throws `TypeError: crypto.randomUUID is not a function`. That throw lands in send() six
+  // lines BEFORE enqueueOutbox — ahead of every durable copy — while the keydown handler has
+  // already blanked the composer. The page looks perfectly healthy and silently eats every prompt.
+  //
+  // The id only has to be unique, not cryptographically strong, so degrade instead of throwing.
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* fall through to the manual construction below */
+  }
+  const b = new Uint8Array(16);
+  try {
+    crypto.getRandomValues(b);
+  } catch {
+    for (let i = 0; i < 16; i += 1) {
+      b[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
+
+/**
+ * Hand back every prompt this browser has ever recorded — the last-resort recovery surface.
+ *
+ * FORK 2026-09-04. `appendJournal` has written every prompt to `tinker-prompt-journal` since it was
+ * added, and `readJournal` had NO caller anywhere in the app: the store designed as the final copy
+ * was write-only, so recovering four lost prompts meant reading Chrome's LevelDB off disk with a
+ * third-party library. That is not a recovery path, it is a forensics exercise.
+ *
+ * Deliberately a console affordance rather than a panel: it must keep working when the UI is the
+ * thing that is broken. `tinkerRecoverPrompts()` in devtools prints every prompt with its session
+ * and timestamp; pass a session key to filter.
+ */
+function recoverPrompts(
+  sessionKey?: string,
+): Array<{ ts: string; sessionKey: string; text: string }> {
+  const rows = readJournal(outboxStore)
+    .filter((e) => !sessionKey || sessionKeyMatches(e.sessionKey, sessionKey))
+    .map((e) => ({
+      ts: new Date(e.ts).toLocaleString(),
+      sessionKey: e.sessionKey,
+      text: e.text,
+    }));
+  console.log(`[recover] ${rows.length} prompt(s) in the journal`);
+  for (const r of rows) {
+    console.log(`\n--- ${r.ts}  ${r.sessionKey}\n${r.text}`);
+  }
+  return rows;
+}
+(window as unknown as Record<string, unknown>).tinkerRecoverPrompts = recoverPrompts;
 
 // FORK 2026-08-25 (the architect: "it seems to not want to connect" after a hard refresh —
 // again fixed only by closing and reopening the browser; the same signature as the
@@ -6304,7 +9326,7 @@ function gwConnect() {
     // value req() rejects with when sending while closed, so callers already handle it.
     for (const p of pending.values()) p.reject("disconnected");
     pending.clear();
-    sending = false;
+    setSending(false);
     // Discarded WITHOUT a row: the window did not finish, it was cut off. A duration for a
     // stage that never completed would read as a measurement of that stage, which it is not.
     preparingSince = null;
@@ -6313,6 +9335,7 @@ function gwConnect() {
     turnPhaseTrail = [];
     streamMsgUid = null;
     lastDeltaLen = 0;
+    lastDeltaText = "";
     lastDeltaAt = 0;
     streamRunId = null;
     // FORK: Preserve activeRuns during graceful restart (state set by shutdown handler).
@@ -6450,9 +9473,60 @@ function amygdalaDetailHtml(d: AmygdalaLiveDecision): string {
       : `<div style="margin-top:6px;font-size:9px;color:var(--muted);line-height:1.5">Rule-based observe layer — no neural score. The ONNX gate (10 nets &rarr; a prudence score judged against the <b>0.90</b> block threshold and <b>0.30</b> disagreement-flag threshold) runs for native OpenClaw tool calls; cc-bridge / Claude-Code tools are screened here by destructive-pattern heuristics instead.</div>`;
   return `<div style="border-top:1px solid rgba(255,255,255,0.09);margin-top:3px;padding:7px 9px;background:rgba(0,0,0,0.4)"><div style="font-size:10px;color:${col};font-weight:600;margin-bottom:4px">${verb} &middot; ${escapeHtml(d.tool ?? "?")}</div>${row("target", escapeHtml(d.target ?? "&mdash;"))}${row("decision", `${escapeHtml(d.decision ?? "allow")}${d.enforced ? " (enforced)" : d.blocked ? " (observe-only)" : ""}`)}${row("mode", isOnnx ? "onnx (neural gate)" : "rules (heuristic)")}${d.reason ? row("reason", escapeHtml(d.reason)) : ""}${net}</div>`;
 }
+// J11 digital amygdala (design doc §9): every hook below is inert until the gateway answers `amygdala2.status`, so
+// the v3.1 panel and the chat stay exactly as they were on a gateway without the plugin.
+const amyUi = createAmygdalaUi({
+  req,
+  tabKey: () => sessionKey,
+  repaintChat: () => updateChat(true),
+  repaintPanel: () => renderAmygdalaPanel(),
+  setComposerText: (text) => {
+    const ta = document.getElementById("chat-textarea") as HTMLTextAreaElement | null;
+    if (!ta) return;
+    ta.value = text;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    ta.focus();
+  },
+  openPanel: () => document.getElementById("amygdala-panel")?.classList.remove("collapsed"),
+  notify: (m) => showToast(m, true),
+  // FORK 2026-10-02 (the architect, Thalamus full deploy): "Rewind and retry with <model>" draws the model the way the picker does.
+  modelLabel: (id) => shortModelLabel(id),
+  // The retry names the vendor's logo, the mark the models panel and the smart x cost chart draw (the architect: "shown along its logo").
+  modelChip: (id) => modelIcon(id, providerOf(id)),
+  pinnedModel: () => (sessionKey ? modelPinBySession.get(sessionKey) : undefined),
+  sendOneTurn: (text, model) => sendWithModelForOneTurn(text, model),
+});
+document.addEventListener("click", (ev) => {
+  const el = (ev.target as HTMLElement | null)?.closest("[data-amy-act]");
+  if (el) void amyUi.handleClick(el);
+});
+// THALAMUS v4 panel (phase G): asks `thalamus.panel`; an unknown-method answer leaves the routing card exactly as it was.
+const thalamusV4Ui = createThalamusV4Ui({ req, repaint: () => updateBudgetPanel() });
+// A `toggle` does not bubble, so it is caught in the capture phase to remember which expanders the reader has open.
+document.addEventListener(
+  "toggle",
+  (ev) => {
+    const el = ev.target as HTMLDetailsElement | null;
+    const key = el?.dataset?.t4;
+    if (key && el) {
+      thalamusV4Ui.onToggle(key, el.open);
+      // Flip the row's mark now, rather than at the next repaint.
+      const caret = el.querySelector(":scope > summary > .t4-caret");
+      if (caret) caret.textContent = el.open ? "▾" : "▸";
+    }
+  },
+  true,
+);
 function renderAmygdalaPanel(): void {
+  const dotHost = document.getElementById("amy-dot-host");
+  if (dotHost) dotHost.innerHTML = amyUi.dotHtml();
   const body = document.getElementById("amygdala-body");
   if (!body) return;
+  const amyBody = amyUi.panelBodyHtml();
+  if (amyBody) {
+    body.innerHTML = amyBody;
+    return;
+  }
   const list = budgetScope === "all" ? amygdalaAll : amygdalaLive;
   const count = document.getElementById("amygdala-count");
   if (count) count.textContent = list.length ? String(list.length) : "";
@@ -6501,9 +9575,15 @@ function onFrame(f: unknown) {
         scopes: ["operator.admin"],
         caps: ["tool-events"],
         auth: { token: TOKEN },
+        // Name the human in the chair so the LLM ledger records who drove each call. The seat
+        // cookie is scoped to /tinker and never reaches the root WebSocket.
+        ...(sessionStorage.getItem(SEAT_ID_STORAGE_KEY)
+          ? { seatId: sessionStorage.getItem(SEAT_ID_STORAGE_KEY) }
+          : {}),
       })
-        .then((hello: unknown) => {
+        .then(async (hello: unknown) => {
           connected = true;
+          thalamusV4Ui.reset();
           // The handshake landed — stop THIS dial's abort timer, and no other. `ws` is provably
           // the dial that answered: `req()` sends on the module-level socket and rejects unless it
           // is OPEN, and `gwConnect` refuses to re-dial while a socket is CONNECTING or OPEN, so
@@ -6520,12 +9600,24 @@ function onFrame(f: unknown) {
             /* older gateway, or refused: fall back to the client lane alone */
           });
           void fetchAmygdalaAll(); // seed persisted Amygdala feed on connect
+          void amyUi.onConnected().then(() => renderAmygdalaPanel());
           // FORK 2026-08-16 — the gateway is back, so replay anything it never provably received.
           // This is the exact moment the reported bug used to bite: a restart drops the socket,
           // every in-flight chat.send is rejected, and the prompt died there. Now the reconnect
           // that follows the rebuild is what delivers it. Deferred past this handler so the tab
           // restore below has run and the replayed turn lands in a fully initialised client.
           setTimeout(() => void flushOutbox("reconnect"), 1500);
+          // FORK 2026-09-16 (the architect: "I just restarted the computer and Jarvis does not have the
+          // tabs open the same way they were when I turned it off"). The boot-time
+          // `await hydrateUiState()` at the top of this module runs ONCE; when it failed (gateway
+          // mid-restart, cold-machine timeout) the page ran for hours mirroring NOTHING, and the
+          // next cold start restored the file from before that failure. A `hello` that just
+          // landed proves the gateway is up, so retry HERE, before loadTabs() below reads the
+          // cache. Awaited only on the rare failed path: when the boot hydrate succeeded this is
+          // a synchronous no-op and the handler keeps its pre-2026-09-16 timing exactly.
+          if (uiStateHydrateOutcome() !== "ok") {
+            await rehydrateUiState();
+          }
           const defs = hello?.snapshot?.sessionDefaults;
           if (defs?.mainSessionKey) {
             sessionKey = defs.mainSessionKey;
@@ -6570,7 +9662,13 @@ function onFrame(f: unknown) {
           const mainTab = restoredMain ?? defaultMainTab;
           // FORK 2026-09-01: keep Main where the stored list put it so a drag-reorder
           // of tab-main survives reconnect. First load (no stored Main) still prepends.
-          tabs = restoreTabsWithMain(restored, mainTab);
+          // FORK 2026-09-25: chained pairs come back adjacent, master first.
+          tabs = adjacentChainOrder(
+            restoreTabsWithMain(restored, mainTab),
+            loadTabChains(),
+            null,
+            (id) => id === "tab-main",
+          );
           persistSessionPanelOrder();
           const others = tabs.filter((t) => t.id !== "tab-main");
           // FORK: Initialize TabState for main and all restored tabs.
@@ -6601,6 +9699,11 @@ function onFrame(f: unknown) {
             const st = tabStates.get(t.id);
             if (st) {
               st.draft = loadDraftFor(t.id);
+              // FORK 2026-10-02 — and where each tab was left (chat-viewport.ts), once per page
+              // load: a reconnect keeps the live memory, a fresh page has only ui-state's copy.
+              if (!viewportsHydrated) {
+                st.viewport = persistedViewport(t.id);
+              }
             }
           }
           // Restore previous active tab if it still exists, otherwise default to main.
@@ -6609,6 +9712,13 @@ function onFrame(f: unknown) {
           const prevTabExists = tabs.some((t) => t.id === prevActiveTabId);
           activeTabId = prevTabExists ? prevActiveTabId : "tab-main";
           saveActiveTabId();
+          // FORK 2026-10-02 — the viewed tab of a fresh page comes back the way it was left. No
+          // loadTabState runs for it at boot, so its memory is entered here, before the first
+          // loadChat paints (and trims by) the latch.
+          if (!viewportsHydrated) {
+            viewportsHydrated = true;
+            enterViewport(activeTabId, tabStates.get(activeTabId)?.viewport ?? FOLLOWING);
+          }
           // FORK 2026-06-06 (bug: unsent draft lost on hard refresh) — load the
           // ACTIVE tab's persisted draft into the composer so the textarea shows
           // the saved unsent text after a hard refresh (background tabs keep
@@ -6623,7 +9733,11 @@ function onFrame(f: unknown) {
           }
           // Restore the session key from the active tab
           const activeTab = tabs.find((t) => t.id === activeTabId);
-          if (activeTab?.isAttached && activeTab.sessionKey) {
+          // FORK 2026-09-16 — a DETACHED active tab used to fail this check and leave the global
+          // `sessionKey` on main's key, so the tab rendered main's transcript after a reload (the
+          // 2026-07-28 tab-detach-latch symptom, one gate over). The viewed key is the tab's key
+          // whether or not its session is in the current list; attachment gates sending only.
+          if (activeTab?.sessionKey) {
             sessionKey = activeTab.sessionKey;
           }
           renderTabs();
@@ -6677,7 +9791,8 @@ function onFrame(f: unknown) {
           // of the foreground tab the user is actually waiting for. Still fire-and-forget.
           void (async () => {
             const toHydrate = others.filter(
-              (t) => t.isAttached && t.sessionKey && t.id !== activeTabId,
+              // FORK 2026-09-16 — detached tabs are prefetched too (see hydrateTab).
+              (t) => t.sessionKey && t.id !== activeTabId,
             );
             for (const t of toHydrate) {
               try {
@@ -6799,6 +9914,14 @@ function scheduleUiSnapshotDump(messagesEl: HTMLElement): void {
         ...(snapTab?.sessionKey ? { sessionKey: snapTab.sessionKey } : {}),
         ...(snapTab?.id ? { tabId: snapTab.id } : {}),
         url: location.href,
+        // FORK 2026-09-08 — which bundle produced these bytes (`<short-sha>@<iso>`, see
+        // vite.config.ts). A first-class field, not folded into clientMeta: it is the one value a
+        // reader needs before deciding whether the rest of the artefact is worth reading. The
+        // handler persists it as `build` in both sidecars; null means an unbundled client.
+        build: uiBuild(),
+        // FORK 2026-09-08 — what the last history reconcile did to this page (paper model), so a
+        // snapshot reader can tell "written once" from "gap-filled" without the browser console.
+        clientMeta: { historyReconcile: lastHistoryReconcile },
         viewport: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
         computedStyles: {
           lastUserBubble: computed(lastUser),
@@ -6928,118 +10051,230 @@ function startHealthPoll() {
   }, 60_000);
 }
 
-/**
- * Find the first sentence-ending position in `text` starting search from `from`.
- * A sentence end is a '.' followed by whitespace, newline, or end-of-string.
- * Returns the index of the '.', or -1 if none found.
- */
-function findSentenceEnd(text: string, from: number): number {
-  for (let i = from; i < text.length; i++) {
-    if (text[i] === ".") {
-      const next = text[i + 1];
-      // '.' at end of string, or followed by space/newline = sentence boundary
-      if (next === undefined || next === " " || next === "\n" || next === "\r") {
-        return i;
-      }
-    }
+// ─── ONE WRITER PER RUN (FORK 2026-09-23) ────────────────────────────────────────────────────
+// The architect: "most of the time, the messages show repeated … if I refresh the page, the duplicate goes
+// away … sometimes I see a thinking bubble up high being filled up with text". The defect and the
+// rule are written up in live-continuation.ts. In short: text and thinking stream as CUMULATIVE
+// buffers, chat.history serves the rows of a run that is still running, and a page that had
+// history mid-run then received the live stream wrote the whole run a second time from offset 0.
+// Every write of a run's text or thinking now goes through a cursor that continues after what the
+// page already shows of that run, and thinking is segmented like text so it lands in sequence.
+//
+// This replaces `mergeSentenceContinuations` (and the >5 s pause split it existed to repair): at
+// turn end it moved text from one finished bubble into another and spliced bubbles out of the page.
+// Bubbles now follow the boundaries the stream itself reports — a tool call, a text-block break,
+// a switch between thinking and text — and nothing is moved after it is written.
+
+/** A real prompt: a user row with text of its own, not a tool_result carrier or an injected
+ *  envelope. The same test updateChat's run boundary applies. */
+function isPromptRow(m: unknown): boolean {
+  const r = m as Record<string, unknown> | null;
+  if (!r || String(r.role ?? "").toLowerCase() !== "user") {
+    return false;
   }
-  return -1;
+  // FORK 2026-09-24 (prompt-queue.md U2) — a prompt only this browser holds (being sent, unsent,
+  // lost) is not a turn boundary: no run has started from it, and the outbox's re-drawn copy must
+  // never cut a run's own rows out of its turn. live-continuation.ts `runTurnStart` made that
+  // exclusion itself by reading `_undelivered`, a flag U2 retired, so it now lives here, in the one
+  // predicate every runTurnStart call in this file passes.
+  if (isBrowserOnlyPrompt(r)) {
+    return false;
+  }
+  // FORK 2026-09-24 (prompt-queue.md U4) — nor is a prompt the gateway reports BEHIND the running
+  // turn, or folded INTO it (STEERED): neither has a run of its own yet. Before U4 the outbox's
+  // re-drawn copy of such a prompt was LOST, so the check above excluded it. U4 re-draws it in the
+  // phase the gateway's snapshot names, so the exclusion names those phases too. Otherwise the
+  // re-drawn copy would cut the running turn's own rows out of its turn again.
+  const promptState = promptStateOf(r);
+  if (promptState === "BEHIND" || promptState === "STEERED") {
+    return false;
+  }
+  const c = Array.isArray(r.content) ? (r.content as Array<{ type?: unknown }>) : [];
+  if (c.length > 0 && !c.some((b) => b?.type !== "tool_result")) {
+    return false;
+  }
+  return extractUserText(r) !== null;
+}
+
+function resetReasoningCursors(): void {
+  reasoningCursors.clear();
+}
+
+/** A text delta, a tool call or a block break came next in this run: the next thought opens a new
+ *  bubble below it instead of growing one further up. */
+function closeReasoningSegment(runId: unknown): void {
+  if (typeof runId !== "string" || !runId) {
+    return;
+  }
+  const cur = reasoningCursors.get(runId);
+  if (cur) {
+    reasoningCursors.set(runId, closeSegment(cur));
+  }
+}
+
+function firstTextBlock(m: Record<string, unknown> | undefined): { text?: string } | undefined {
+  const c = m?.content;
+  return Array.isArray(c)
+    ? (c as Array<{ type?: unknown; text?: string }>).find((b) => b?.type === "text")
+    : undefined;
 }
 
 /**
- * After streaming completes, merge sentence continuations back into
- * their predecessor bubbles. If a text bubble starts with a lowercase
- * letter (or mid-sentence punctuation), the text up to the first
- * sentence-ending '.' is appended to the previous assistant text bubble.
- * The remainder (after the '.') stays in the current bubble. If nothing
- * remains, the bubble is removed entirely.
+ * FORK 2026-10-01 (TINKER_UI_DESIGN_BIBLE/bug-log.md [chat-divergence], cause 4) — record the turn
+ * an agent event's run says it took over. A cc-bridge run that takes a turn a gateway restart froze
+ * names it on its lifecycle start, its text-block breaks and its effort events (stream.ts
+ * `resumesRunId` / `resumesTurnStartedAt`), so a page that reconnected after the start still learns
+ * it from a later event. Called for EVERY session, above every gate. An event that names no turn
+ * records nothing; the first one that does also anchors what the page already wrote of that run.
  */
-function mergeSentenceContinuations(msgs: unknown[]): void {
-  // Only operate on _temporary messages from the current run.
-  // Find the range of temporary messages (they're always at the tail).
-  let tempStart = -1;
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    if (msgs[i]._temporary) {
-      tempStart = i;
-    } else if (tempStart >= 0) {
-      break;
-    } // walked past the temp block
-  }
-  if (tempStart < 0) {
+function noteResumedTurn(p: unknown): void {
+  const rec = p as { runId?: unknown; data?: unknown } | null | undefined;
+  const runId = typeof rec?.runId === "string" ? rec.runId : "";
+  if (!runId) {
     return;
   }
+  const resumed = resumedTurnOf(rec?.data);
+  if (resumed === null) {
+    return;
+  }
+  const first = !resumedTurns.has(runId);
+  resumedTurns.set(runId, resumed);
+  // One entry per run a restart resumed: bounded like terminatedRuns, never a growing ledger.
+  if (resumedTurns.size > 64) {
+    resumedTurns.delete(resumedTurns.keys().next().value as string);
+  }
+  if (first) {
+    stampResumedRun(runId);
+  }
+}
 
-  for (let i = tempStart + 1; i < msgs.length; i++) {
-    const m = msgs[i];
-    if (!m._temporary) {
+/**
+ * The page learned which turn a run took over after it had already written some of that run (it
+ * reconnected mid-run and missed the start): give those live rows the anchor too. The watched window
+ * is per run (the earliest anchor of its rows), so this only ever moves an anchor EARLIER, to the one
+ * every later bubble of the run gets from runWatchedFrom: a row with no anchor takes it, a row whose
+ * anchor is later is lowered to it, an earlier one is kept. Only that run's live rows are touched,
+ * and only on the page on screen, the one the live writer writes.
+ */
+function stampResumedRun(runId: string): void {
+  let from: number | undefined;
+  for (const entry of messages) {
+    const m = entry as Record<string, unknown>;
+    if (m._runId !== runId && m._reasoningRunId !== runId) {
       continue;
     }
-    if ((m.role ?? "").toLowerCase() !== "assistant") {
+    if (!isLiveClientRow(m)) {
       continue;
     }
-    const content = Array.isArray(m.content) ? m.content : [];
-    const textBlock = content.find((b: unknown) => b.type === "text" && (b.text ?? "").trim());
-    if (!textBlock) {
-      continue;
-    }
-
-    const text = textBlock.text as string;
-
-    // Find the previous temporary assistant text bubble
-    // FORK 2026-08-25 — it must belong to the SAME RUN. Interrupting a turn with
-    // a second prompt puts two runs' live bubbles side by side (the queued
-    // prompt is held out of messages[] until the turn ends), and without this
-    // guard the merge below ate one run's narration into the other's and
-    // spliced the bubble away. See sentence-continuation.ts.
-    let prevTextBlock: unknown = null;
-    for (let k = i - 1; k >= tempStart; k--) {
-      const prev = msgs[k];
-      if (!prev._temporary) {
-        continue;
-      }
-      if ((prev.role ?? "").toLowerCase() !== "assistant") {
-        continue;
-      }
-      const pc = Array.isArray(prev.content) ? prev.content : [];
-      const pt = pc.find((b: unknown) => b.type === "text" && (b.text ?? "").trim());
-      if (pt) {
-        if (sameRun(prev._runId, m._runId)) {
-          prevTextBlock = pt;
-        }
-        break;
+    if (from === undefined) {
+      from = runWatchedFrom(runId);
+      if (from === undefined) {
+        return;
       }
     }
-    if (!prevTextBlock) {
-      continue;
-    }
-
-    // FORK 2026-08-25 — the fragment test now reads the PREDECESSOR, not just the
-    // first character of the fragment. A bubble opening with a digit ("488 species
-    // researched — …") is a sentence, not a tail, and merging it DELETED it.
-    if (!isSentenceContinuation((prevTextBlock as { text: string }).text, text)) {
-      continue;
-    }
-
-    // Find sentence boundary in the current text
-    const dotIdx = findSentenceEnd(text, 0);
-    if (dotIdx >= 0) {
-      // Merge up to and including the period
-      prevTextBlock.text += text.slice(0, dotIdx + 1);
-      const remainder = text.slice(dotIdx + 1);
-      if (remainder.trim()) {
-        textBlock.text = remainder;
-      } else {
-        // Nothing left — remove this message
-        msgs.splice(i, 1);
-        i--;
-      }
-    } else {
-      // No period found — merge the entire fragment
-      prevTextBlock.text += text;
-      msgs.splice(i, 1);
-      i--;
+    const had = m._watchedFrom;
+    if (typeof had !== "number" || !Number.isFinite(had) || had > from) {
+      m._watchedFrom = from;
     }
   }
+}
+
+/** Index of the prompt that opened this run's turn on the page (runTurnStart). A run that took over
+ *  a frozen turn starts at that turn's own prompt (live-continuation.ts resumedTurnStart): its
+ *  replay re-sends that turn from the first byte. Every other run exactly as before. */
+function runTurnStartOf(runId: string): number {
+  return resumedTurnStart(
+    messages,
+    runTurnStart(messages, runId, isPromptRow),
+    resumedTurns.get(runId),
+    isPromptRow,
+    historyRowTime,
+  );
+}
+
+/** When this run's turn began on the page — stamped on its first live bubble as `_watchedFrom`,
+ *  so a later history gap-fill knows the page covers the run from its prompt on (the cumulative
+ *  buffers carry the whole run), not just from the first live bubble (history-reconcile.ts). A run
+ *  that took over a frozen turn is covered from that turn (live-continuation.ts
+ *  resumedRunWatchedFrom); every other run exactly as before. */
+function runWatchedFrom(runId: string): number | undefined {
+  const at = runTurnStartOf(runId);
+  const own = at < 0 ? undefined : (historyRowTime(messages[at]) ?? undefined);
+  return resumedRunWatchedFrom(messages, own, resumedTurns.get(runId), historyRowTime);
+}
+
+/** `_watchedFrom` for a bubble the turn-end handler writes, ONLY for a run that took over a frozen
+ *  turn: its final body re-sends that turn as well. Every other run's turn-end bubble keeps its own
+ *  instant, exactly as before (widening it could hide rows its body never showed). */
+function resumedRunStamp(runId: unknown): { _watchedFrom?: number } {
+  if (typeof runId !== "string" || !resumedTurns.has(runId)) {
+    return {};
+  }
+  const from = runWatchedFrom(runId);
+  return from === undefined ? {} : { _watchedFrom: from };
+}
+
+/** Whose bubbles count as this run's when reading what the page already shows of it: its own and,
+ *  for a run that took over a frozen turn, that turn's (live-continuation.ts RunScope). FORK
+ *  2026-10-03 (review round 1): unscoped, a second promptless run whose body repeated the first
+ *  run's answer credited that bubble as its own and wrote nothing. */
+function runScopeOf(runId: string): RunScope {
+  const resumed = resumedTurns.get(runId);
+  // A history row stamped before the run started is not its text; known only for a run whose start
+  // this page saw (a run that took over a frozen turn re-sends it from that turn's start). The window
+  // slack absorbs the gap between the gateway's and this browser's clocks.
+  const startedAt = resumed ? resumed.startedAt : runStartedAt.get(runId);
+  return {
+    runId,
+    ...(resumed?.runId ? { alsoRunId: resumed.runId } : {}),
+    ...(startedAt !== undefined
+      ? { notBefore: startedAt - WATCHED_WINDOW_SLACK_MS, timeOf: historyRowTime }
+      : {}),
+  };
+}
+
+/**
+ * Where one stream of a run starts writing on this page when it has no cursor. If the page's last
+ * row is this run's own open live segment (a cursor reset under a live stream), reopen it and keep
+ * growing it. Otherwise continue after whatever the page already shows of the run — nothing on a
+ * page that never saw it, the history rows' extent on a page that joined mid-run.
+ */
+function anchorRunCursor(
+  runId: string,
+  stream: "text" | "reasoning",
+  buffer: string,
+): SegmentCursor {
+  stampOrder(messages);
+  const last = messages[messages.length - 1] as Record<string, unknown> | undefined;
+  const lastShown = firstTextBlock(last)?.text;
+  if (
+    last &&
+    last._temporary === true &&
+    last._runId === runId &&
+    (last._isReasoning === true) === (stream === "reasoning") &&
+    typeof last._uid === "string" &&
+    typeof lastShown === "string"
+  ) {
+    const seg = typeof last._segmentStart === "number" ? last._segmentStart : 0;
+    if (buffer.startsWith(lastShown, seg)) {
+      return { uid: last._uid, start: seg, seen: buffer.slice(0, seg + lastShown.length) };
+    }
+  }
+  const turn = runTurnStartOf(runId);
+  const at = shownPrefixEnd(buffer, runShownTexts(messages, turn, stream, runScopeOf(runId)));
+  return { uid: null, start: at, seen: buffer.slice(0, at) };
+}
+
+/** The part of a whole-body final this run has not already put on the page. On a page that
+ *  watched the run from its start this is the whole body; on one that joined mid-run (history rows
+ *  already show the beginning) it is only the rest. */
+function unshownRunText(runId: unknown, text: string): string {
+  if (typeof runId !== "string" || !runId || !text) {
+    return text;
+  }
+  const turn = runTurnStartOf(runId);
+  const at = shownPrefixEnd(text, runShownTexts(messages, turn, "text", runScopeOf(runId)));
+  return at > 0 ? text.slice(at) : text;
 }
 
 // FORK 2026-05-14: bump lastEventAt for any activeRun touched by this WS
@@ -7081,6 +10316,14 @@ function bumpActiveRunActivity(payload: { runId?: unknown; sessionKey?: unknown 
 }
 
 function onEvent(evt: unknown) {
+  const amyEvent = (evt as { event?: unknown } | null)?.event;
+  if (
+    typeof amyEvent === "string" &&
+    (amyEvent.startsWith("amygdala2.") || amyEvent === "thalamus.refusal")
+  ) {
+    amyUi.onEvent(amyEvent, (evt as { payload?: unknown }).payload);
+    return;
+  }
   if (evt.event === "chat") {
     const p = evt.payload;
     // FORK 2026-08-26 — HOISTED from the viewed-session gate below, which is where these two used
@@ -7091,6 +10334,34 @@ function onEvent(evt: unknown) {
     // chatEventIsSubagentOfView returns false on any non-string.
     const isViewedMain = p.sessionKey === sessionKey || sessionKeyMatches(p.sessionKey);
     const isViewedSubagent = !isViewedMain && chatEventIsSubagentOfView(p.sessionKey);
+    // B5 — the CALL TIMELINE records every session's text growth and turn ends (a background tab
+    // keeps its store), so this sits ABOVE the viewed-session gate below.
+    feedCallTimelineChatEvent(p);
+    // prompt-queue.md U4 (PQ-6, PQ-7) — the terminal of a prompt's OWN run records its end on
+    // that prompt (final → ANSWERED, aborted → CANCELLED), for every session, above the gate.
+    // Keyed, so it ends no other prompt. See notePromptTerminal.
+    notePromptTerminal(p);
+    // FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md step U3 (PQ-7 "terminals are keyed",
+    // contradiction C2). WHICH terminal is this? Decided ONCE, here, above every session-scoped
+    // effect below, because each of those effects assumes a terminal means "this session's turn is
+    // over":
+    //   • a `final` carrying a `steered` / `backlogged` disposition (gateway G2) is the early final of
+    //     a prompt the gateway folded into, or put behind, a turn that is STILL RUNNING. It names one
+    //     prompt and ends no run, so it must not stamp `sessionEndedAt` (which vetoes the server's
+    //     run.live), close the host's pre-model window or timing block, drop the session's
+    //     background runs, advance its retry ladder, refresh its history, or release any other
+    //     deferred prompt. Before U3 it did all of that. It is handled on its own and RETURNS;
+    //   • a linked follow-up run's terminal (gateway G3) is a real run ending, so every session
+    //     effect below stands, and only the queue release narrows to that run's prompt keys;
+    //   • anything else is today's session-wide terminal, unchanged (the old-gateway rule, §6.3).
+    const terminalScope = chatTerminalScope(p, followupPromptLinks);
+    if (terminalScope?.kind === "prompt") {
+      onPromptDispositionFinal(p, terminalScope, isViewedMain);
+      return;
+    }
+    if (terminalScope) {
+      endPromptsKeyedToRun(p, terminalScope);
+    }
     // FORK 2026-07-29 — record "this session finished" for EVERY session, deliberately ABOVE the
     // viewed-session gate below. This is the freshest evidence a client ever gets that a turn is
     // over, and gating it would reproduce the original blindness one level down: a stale snapshot
@@ -7108,6 +10379,12 @@ function onEvent(evt: unknown) {
       clearPreModelFor(p.sessionKey);
       if (p.state === "final" || p.state === "error" || p.state === "aborted") {
         sessionEndedAt.set(p.sessionKey, Date.now());
+        // FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — a terminal chat
+        // event is the freshest end-of-turn evidence this browser gets, and NOTHING used to close
+        // a timing block's open entries on it. An entry left `done:false` is persisted
+        // (client-rows.ts) and re-hydrates as a pulsing, ticking "Turn timing" block after every
+        // reload. Recorded for ANY session, above the viewed gate, like the stamp above.
+        closePhaseTimingForSession(p.sessionKey, p.state);
         // FORK 2026-08-16 — the second, independent removal path for a background run. Its own
         // `lifecycle:end` is the precise signal, but that is exactly the event this codebase has
         // repeatedly been observed to drop (the "STUCK-ON IN TWO CLICKS" note on
@@ -7160,8 +10437,8 @@ function onEvent(evt: unknown) {
           // would also BLANK the pre-model window of a tab whose own prompt was accepted seconds
           // ago and has no model call open yet — a 21-36s window on every turn (turn-latency.md).
           // The sessionPending guard is what keeps that window intact.
-          if (sending && !viewedSessionBusy() && !sessionPending(sessionKey)) {
-            sending = false;
+          if (sendingNow() && !viewedSessionBusy() && !sessionPending(sessionKey)) {
+            setSending(false);
             updateBtn();
           }
           repaintActivitySurfaces();
@@ -7206,12 +10483,26 @@ function onEvent(evt: unknown) {
       // under it — otherwise they stay "queued" forever (the old global queue was only ever drained
       // by the viewed session's own final). We do NOT splice into the live transcript here (that is
       // a different tab); loadChat re-fetches the authoritative server history when that tab opens.
+      //
+      // FORK 2026-09-16 (the architect: "when I switch from one tab to another … I have to wait around
+      // 5 seconds and the new answer appears") — "when that tab opens" was the whole story, and it
+      // is the delay he sees. Every delta and final for a background session is dropped right
+      // here, so the tab's cached transcript is frozen at the moment he left it; the switch paints
+      // that stale snapshot instantly and then waits on the un-awaited chat.history (live median
+      // 2.8 s, p90 5.9 s — see loadChat) before the finished answer shows. So the turn end is now
+      // ALSO the trigger to refresh that tab's cache in the background, while nobody is looking:
+      // by the time he clicks, the answer is already in the tab. Still no splice into `messages`
+      // — the cache is written by the same hydrateTab that fills it at boot.
       if (p.state === "final" || p.state === "error" || p.state === "aborted") {
+        refreshBackgroundTabsFor(p.sessionKey);
+        // U3 — `terminalScope` (decided at the top of this handler) says WHICH of the session's
+        // entries this terminal releases: all of them, or a linked follow-up run's keys only.
         const settled = settleQueuedSession(
           pendingQueuedSends,
           p.sessionKey,
           false,
           sessionKeyMatches,
+          terminalScope ?? undefined,
         );
         if (settled.remaining.length !== pendingQueuedSends.length) {
           pendingQueuedSends = settled.remaining;
@@ -7270,7 +10561,7 @@ function onEvent(evt: unknown) {
           closePreModelWindow();
         }
         activeRuns.set(p.runId, runInfo);
-        sending = true;
+        setSending(true);
         saveActiveRuns();
         startThinkingTick();
         updatePrefrontalTree();
@@ -7298,71 +10589,174 @@ function onEvent(evt: unknown) {
           }
         }
       }
-      // FORK: Un-queue any queued user messages — LLM absorbed them via steer
-      for (const m of messages) {
-        if (m._queued) {
-          delete m._queued;
-        }
-      }
       const deltaText = p.message?.content?.[0]?.text ?? "";
-      // FORK 2026-05-25 (task-mpkw1a0b-9jsfy "Response rendering"):
-      // diagnostic for the duplicate-sentence bug. deltaText is the
-      // SERVER-CUMULATIVE text for the current run, NOT a per-delta
-      // increment. Logging its length and tail lets us see whether the
-      // duplicate exists at the bytes the server sent (tail.includes
-      // a chunk that's also earlier in deltaText), or whether the
-      // duplication appears only after client-side slicing into
-      // multiple bubbles. Tag "[duprep-ui]" for grep, throttle to one
-      // log per ~500ms to avoid spam.
-      if (
-        deltaText &&
-        (typeof (window as Record<string, unknown>).__duprepLastLogAt !== "number" ||
-          Date.now() - ((window as Record<string, unknown>).__duprepLastLogAt as number) > 500)
-      ) {
-        (window as Record<string, unknown>).__duprepLastLogAt = Date.now();
-        const flat = deltaText.replace(/\n/g, "↵");
-        const tail = flat.length > 80 ? flat.slice(-80) : flat;
-        // eslint-disable-next-line no-console
-        console.log(
-          `[duprep-ui] deltaText runId=${p.runId ?? "?"} cumulative.len=${deltaText.length} bubbles=${messages.filter((m: unknown) => (m as Record<string, unknown>)._temporary).length} tail=${JSON.stringify(tail)}`,
-        );
-      }
       if (deltaText) {
-        // FORK 2026-05-09 (Feature C, revised): detect >5s gap between deltas
-        // and split the streaming bubble. The bubble keeps `_temporary` so
-        // tail-recover can re-slice its content from the server-authoritative
-        // text using its own `_segmentStart` cursor — no global frozenTextEnd,
-        // no clobbering between concurrent freezes (tool + gap).
         const nowDelta = Date.now();
-        const gapMs = lastDeltaAt > 0 ? nowDelta - lastDeltaAt : 0;
-        const gapCandidate = msgByUid(streamMsgUid);
-        const currentBubbleHasContent =
-          !!gapCandidate?._temporary &&
-          (() => {
-            const tb = (gapCandidate.content as Array<{ type: string; text?: string }>)?.find?.(
-              (b) => b.type === "text",
-            );
-            return typeof tb?.text === "string" && tb.text.length > 0;
-          })();
-        if (gapMs > 5000 && currentBubbleHasContent && gapCandidate) {
-          // Stamp the gap-bubble's end time and drop the cursor so the next delta opens a new
-          // bubble. Bubble stays _temporary; the tail-recover at final time re-slices its content
-          // from the authoritative finalText using its `_segmentStart`.
-          gapCandidate._bubbleEndedAt = lastDeltaAt;
-          streamMsgUid = null;
+        const deltaRunId = typeof p.runId === "string" ? p.runId : "";
+        // Text is the next thing in this run's sequence: a thought after it opens below it.
+        closeReasoningSegment(deltaRunId);
+        // FORK 2026-09-23 — ONE WRITER PER RUN. No cursor means this page has not written this
+        // run's text since its last reset: a tab opened, switched to, reloaded or history-merged
+        // while the run was going. `deltaText` is the run's CUMULATIVE text, and that page may
+        // already show the start of it as history rows — writing it from offset 0 drew the run a
+        // second time, the duplicate a refresh made disappear. Continue after what the page shows
+        // (live-continuation.ts). A page that never saw the run anchors at 0, exactly as before.
+        if (deltaRunId && streamMsgUid === null && lastDeltaLen === 0) {
+          const cur = anchorRunCursor(deltaRunId, "text", deltaText);
+          streamMsgUid = cur.uid;
+          lastDeltaLen = cur.seen.length;
+          lastDeltaText = cur.seen;
+          if (cur.seen.length > 0) {
+            dupProv("delta:continue", {
+              runId: deltaRunId,
+              shown: cur.seen.length,
+              bufferLen: deltaText.length,
+              reopened: cur.uid !== null,
+            });
+          }
         }
         // Capture cumulative offset BEFORE updating lastDeltaLen so the new
         // bubble (if we create one) records where it begins.
         const segmentStart = lastDeltaLen;
+        const prevDeltaText = lastDeltaText;
         lastDeltaLen = deltaText.length;
+        lastDeltaText = deltaText;
         lastDeltaAt = nowDelta;
         // FORK 2026-08-05 — MONOTONE WRITE. `deltaText` is server-CUMULATIVE, so a bubble's slice of
         // it can only ever GROW. When the new slice does NOT extend what is already on screen, the
         // provider buffer was RESET (a fallback/retry restarted the stream) — overwriting would
         // delete text the user has already read. Drop the cursor and open a NEW bubble instead:
         // "carta a terra va a la guerra", the card that touched the table stays played.
-        const target = msgByUid(streamMsgUid);
-        let appended = false;
+        // FORK 2026-09-06 (duprep III — THE LIVE-STREAM DUPLICATE). the architect: "Jarvis just handed me
+        // a duplicated answer again. If I refresh it goes away" — history holds ONE copy, so the
+        // second exists only in the live DOM.
+        //
+        // The gateway has flagged a re-based cumulative buffer with `replace: true` since
+        // 2026-08-05 (src/gateway/server-chat.ts:838-849) and its comment states the contract:
+        // clients that keep slicing at stale offsets "slice new text at stale offsets and the
+        // answer appears twice". This client had ZERO references to the field, so it fell through
+        // to the monotone guard below, saw a slice that did not extend the screen, and pushed a
+        // SECOND bubble holding the whole re-based buffer. Exactly the duplicate.
+        //
+        // We do NOT follow the comment's literal "re-render from this text": the projector also
+        // re-bases by CAP, where the buffer has lost its head, so re-rendering would delete text
+        // already read — the harm stream-reslice.ts's monotone law exists to prevent. Instead we
+        // RE-ANCHOR: move each bubble's `_segmentStart` into the new coordinate space and let it
+        // GROW in place. Nothing on screen is removed.
+        //
+        // Returns false whenever it cannot find its footing, and the untouched block below then
+        // runs exactly as before — the failure mode is "no change", never a garbled stream.
+        const reanchorRun = (buffer: string, trigger: "flag" | "reset"): boolean => {
+          const rid = typeof p.runId === "string" ? p.runId : "";
+          if (!rid) {
+            return false; // unscoped delta: never guess which run owns the screen
+          }
+          const live = runTextBubbles(messages as Record<string, unknown>[], rid).filter(
+            (m) => m._temporary === true && !m._isReasoning,
+          );
+          if (live.length === 0) {
+            return false;
+          }
+          const textBlockOf = (m: Record<string, unknown>) =>
+            (m.content as Array<{ type: string; text?: string }> | undefined)?.find(
+              (b) => b.type === "text",
+            );
+          const shown = live.map((m) => {
+            const b = textBlockOf(m);
+            return typeof b?.text === "string" ? b.text : "";
+          });
+          const { starts, parks, scan } = rebaseAnchors(shown, buffer);
+          const isCap = isCapRebase(prevDeltaText, buffer);
+
+          let firstAnchored = -1;
+          let cursorAnchored = false;
+          for (let i = 0; i < live.length; i++) {
+            const at = starts[i];
+            // Anchored → its true new offset. Unanchored → the running forward cursor, which is
+            // never past a later bubble's anchor (stream-reslice.ts derives bubble i's END from
+            // bubble i+1's segStart, so parking past it would collapse the preceding envelope).
+            live[i]._segmentStart = at ?? parks[i];
+            if (at === null) {
+              continue;
+            }
+            if (firstAnchored < 0) {
+              firstAnchored = i;
+            }
+            if (live[i]._uid === streamMsgUid) {
+              cursorAnchored = true;
+            }
+          }
+
+          // A NEW HEAD the buffer carries above what is on screen (a retry preamble). Today's code
+          // shows it by pushing the whole buffer — head AND a second copy of the body. Absorb it
+          // into the bubble it precedes instead. Skipped on a CAP, where a leading span is dropped
+          // history rather than new content.
+          if (!isCap && firstAnchored >= 0 && (starts[firstAnchored] as number) > 0) {
+            const m = live[firstAnchored];
+            const blk = textBlockOf(m);
+            const nextStart = starts.slice(firstAnchored + 1).find((x) => x !== null);
+            if (blk) {
+              blk.text = buffer.slice(0, (nextStart as number | undefined) ?? buffer.length);
+              m._lastWriteAt = nowDelta;
+            }
+            m._segmentStart = 0;
+          }
+
+          const anchored = cursorAnchored ? msgByUid(streamMsgUid) : undefined;
+          if (anchored) {
+            // PURE GROWTH: buffer.slice(off) startsWith the bubble's text by construction of
+            // indexOf, and `end` is the next anchored start so growth cannot swallow a region a
+            // later bubble owns.
+            const off = (anchored._segmentStart as number | undefined) ?? 0;
+            const idx = live.indexOf(anchored as Record<string, unknown>);
+            const nextStart = idx >= 0 ? starts.slice(idx + 1).find((x) => x !== null) : undefined;
+            const blk = textBlockOf(anchored as Record<string, unknown>);
+            if (blk) {
+              blk.text = buffer.slice(off, (nextStart as number | undefined) ?? buffer.length);
+              (anchored as Record<string, unknown>)._lastWriteAt = nowDelta;
+            }
+          } else {
+            // No cursor, or its bubble was superseded. Open a new bubble at `scan` so it can only
+            // carry what nothing on screen already shows.
+            streamMsgUid = null;
+            const rest = buffer.slice(scan);
+            if (rest) {
+              streamMsgUid = pushAndUid({
+                role: "assistant",
+                content: [{ type: "text", text: rest }],
+                _temporary: true,
+                _bubbleStartedAt: nowDelta,
+                _lastWriteAt: nowDelta,
+                _segmentStart: scan,
+                _runId: rid,
+              });
+            }
+          }
+          // Instrumentation, not behaviour. Without this neither of us can tell whether a
+          // duplicate means "the re-anchor never fired" (a fourth mechanism) or "it fired and got
+          // it wrong" — which is the difference between two very different next investigations.
+          // dupProv logs no message text, only counts and offsets.
+          dupProv("delta:rebase", {
+            trigger,
+            runId: rid,
+            bufferLen: buffer.length,
+            bubbles: live.length,
+            anchored: starts.filter((x) => x !== null).length,
+            scan,
+            cursorAnchored,
+            head: firstAnchored >= 0 ? (starts[firstAnchored] as number) : -1,
+            isCap,
+          });
+          return true;
+        };
+
+        const rebased =
+          (p as Record<string, unknown>).replace === true && reanchorRun(deltaText, "flag");
+        // Seeding `appended` from the re-anchor lets both branches below skip themselves without
+        // re-indenting the hot path: `target` is undefined so the monotone write is skipped, and
+        // `!appended` is false so no second bubble is pushed.
+        const target = rebased ? undefined : msgByUid(streamMsgUid);
+        let appended = rebased;
         let bufferReset = false;
         if (target && target._temporary === true) {
           const blocks = target.content as Array<{ type: string; text?: string }> | undefined;
@@ -7375,6 +10769,9 @@ function onEvent(evt: unknown) {
             const cur = typeof textBlock.text === "string" ? textBlock.text : "";
             if (segmentText.startsWith(cur)) {
               textBlock.text = segmentText;
+              // FORK 2026-10-03: until when this bubble showed the stream (history-reconcile.ts
+              // `watchedToOf`), so a gap-fill knows the served copy of a long answer is this one.
+              target._lastWriteAt = nowDelta;
               appended = true;
             } else {
               bufferReset = true;
@@ -7382,20 +10779,52 @@ function onEvent(evt: unknown) {
           }
         }
         if (!appended) {
+          // FORK 2026-09-06 (duprep III, SECOND CALL SITE — the server flag is LOSSY).
+          //
+          // src/gateway/server-chat.ts:864-865 clears the pending re-base BEFORE broadcasting:
+          //     pendingDeltaReplace.delete(clientRunId);
+          //     broadcast("chat", payload, { dropIfSlow: true });
+          // so when that delta is dropped as slow — measured: 3 drops in a 10-minute window on
+          // 2026-09-06 — the notice is gone for good and no later delta re-raises it. the architect saw a
+          // duplicate at 21:45 on a tab that WAS running the flag-driven fix, which is how this
+          // gap was proven rather than assumed.
+          //
+          // `bufferReset` is the client's own detection of the very same condition: the prefix
+          // test at the monotone guard above is the one the server runs at server-chat.ts:525.
+          // Route it into the same re-anchor instead of pushing a second bubble. reanchorRun
+          // returns false when it cannot find its footing, so the push below still runs and the
+          // behaviour degrades to exactly what it was.
+          //
+          // The ordering bug itself still wants fixing server-side (clear the pending flag only
+          // once the broadcast actually went out); that needs a gateway rebuild, this does not.
+          if (bufferReset && reanchorRun(deltaText, "reset")) {
+            updateChat();
+            return;
+          }
           streamMsgUid = null;
           // A new bubble's `_segmentStart` is the cumulative offset captured before this delta
           // updated lastDeltaLen — where the previous bubble ended in the cumulative stream. On a
           // RESET the cumulative stream itself restarted, so the whole of it is new content and the
           // segment begins at 0 (a stale, larger offset would slice an EMPTY bubble).
           const start = bufferReset ? 0 : segmentStart;
-          streamMsgUid = pushAndUid({
-            role: "assistant",
-            content: [{ type: "text", text: deltaText.slice(start) }],
-            _temporary: true,
-            _bubbleStartedAt: nowDelta,
-            _segmentStart: start,
-            _runId: p.runId,
-          });
+          if (deltaText.slice(start).trim()) {
+            const watchedFrom = deltaRunId ? runWatchedFrom(deltaRunId) : undefined;
+            streamMsgUid = pushAndUid({
+              role: "assistant",
+              content: [{ type: "text", text: deltaText.slice(start) }],
+              _temporary: true,
+              _bubbleStartedAt: nowDelta,
+              _lastWriteAt: nowDelta,
+              _segmentStart: start,
+              _runId: p.runId,
+              ...(watchedFrom !== undefined ? { _watchedFrom: watchedFrom } : {}),
+            });
+          } else {
+            // Nothing the page does not already show (or only whitespace): open no empty bubble,
+            // and leave the cursor where the unshown text begins so the next delta starts there.
+            lastDeltaLen = start;
+            lastDeltaText = deltaText.slice(0, start);
+          }
         }
       }
       updateChat();
@@ -7407,12 +10836,6 @@ function onEvent(evt: unknown) {
       // bubble, so a prompt queued during the turn was spliced in AHEAD of the turn's own final
       // bubbles (exactly the "green bubble jumps above some response bubbles" report). Flushing last
       // guarantees the queued prompt lands at the true END of the transcript (server history order).
-      // Defensive: clear any _queued styling that slipped into messages[] directly.
-      for (const m of messages) {
-        if (m._queued) {
-          delete m._queued;
-        }
-      }
       // FORK 2026-06-11 — the live reasoning bubble for this run used to be DELETED on turn end so
       // the final answer would not double-render the thinking.
       // FORK 2026-08-05 (the architect: "carta a terra va a la guerra") — text that reached the screen is
@@ -7443,13 +10866,6 @@ function onEvent(evt: unknown) {
         return streamRunId === p.runId;
       };
       if (p.state !== "error") {
-        // ─── Continuation merge ───
-        // Before promoting, merge sentence fragments: if an assistant text
-        // bubble starts with lowercase (mid-sentence continuation after a
-        // tool call), move text up to the first '.' into the previous
-        // assistant text bubble and keep the remainder in the current one.
-        mergeSentenceContinuations(messages);
-
         // FORK 2026-05-09 (revised tail-recover): with per-bubble `_segmentStart`,
         // each temp text bubble knows where its slice begins in the cumulative
         // server text. Re-slice each bubble's content from finalText using
@@ -7507,57 +10923,48 @@ function onEvent(evt: unknown) {
             .map((b: unknown) => b.text ?? "")
             .join("");
 
-          // Collect all temp text bubbles in order, with their segment starts AND their current
-          // text. FORK 2026-08-05: hold the bubble OBJECTS, not their array indices — an index is
-          // only valid until the next mutation, and the promotion loop below runs after this list
-          // is built.
-          const tempTextBubbles: {
-            msg: Record<string, unknown>;
-            text: string;
-            segStart: number;
-          }[] = [];
-          for (const entry of messages) {
-            const m = entry as Record<string, unknown>;
-            if (
-              // On a superseding final there are no temps left to promote — the bubbles to
-              // reconcile against are the ones the FIRST final already promoted for this run.
-              (hadTemps ? ownsTempMsg(m) : m._runId === p.runId) &&
-              m.role === "assistant" &&
-              Array.isArray(m.content) &&
-              (m.content as Array<{ type: string }>).some((b) => b.type === "text")
-            ) {
-              const blk = (m.content as Array<{ type: string; text?: string }>).find(
-                (b) => b.type === "text",
-              );
-              tempTextBubbles.push({
-                msg: m,
-                text: typeof blk?.text === "string" ? blk.text : "",
-                segStart: (m._segmentStart as number | undefined) ?? 0,
-              });
-            }
-          }
+          // The run's TEXT bubbles in render order, held as OBJECTS (FORK 2026-08-05: an index is
+          // only valid until the next mutation). On a superseding final there are no temps left,
+          // so these are the bubbles the FIRST final promoted. FORK 2026-10-03: selected by the
+          // module's one predicate for both finals, which never takes a reasoning bubble — its
+          // `_segmentStart` is a THINKING-buffer offset, and reslicing the final's text at it
+          // pushed the answer again from a mid-word point (final-supersede.ts, the note above
+          // `isReasoningBubble`). The inline `m._runId === p.runId` this replaces took them all.
+          const tempTextBubbles = finalTextBubbles(
+            messages as Record<string, unknown>[],
+            typeof p.runId === "string" ? p.runId : "",
+            hadTemps,
+            ownsTempMsg,
+          );
 
           if (tempTextBubbles.length === 0) {
             // No temp text bubbles — push the authoritative text as a single
             // new bubble (e.g. response is tool-only with no streamed text).
-            if (finalText.trim()) {
+            // FORK 2026-09-23 — only what the page does not already show of this run: on a page
+            // that joined mid-run, history rows carry the run's beginning (live-continuation.ts).
+            const unshown = unshownRunText(p.runId, finalText);
+            if (unshown.trim()) {
               dupProv("final:tool-only-push", {
                 ...dupProvBody({
                   role: "assistant",
-                  content: [{ type: "text", text: finalText }],
+                  content: [{ type: "text", text: unshown }],
                   _runId: p.runId,
                 }),
                 supersedes,
                 hadTemps,
+                shownLen: finalText.length - unshown.length,
               });
               messages.push({
                 role: "assistant",
-                content: [{ type: "text", text: finalText }],
+                content: [{ type: "text", text: unshown }],
                 _bubbleEndedAt: bubbleEndedAt,
                 // FORK 2026-08-16: stamp the run so a SUPERSEDING final (the gateway sends two —
                 // see the note at `priorRunBubbles`) can reconcile against this bubble instead of
                 // pushing the same answer again.
                 _runId: p.runId,
+                // FORK 2026-10-01 (bug-log [chat-divergence], cause 4): a run that took over a
+                // frozen turn is covered from that turn, like its streamed bubbles.
+                ...resumedRunStamp(p.runId),
               });
             }
           } else {
@@ -7572,17 +10979,30 @@ function onEvent(evt: unknown) {
             // kept character for character — and hands back the part of finalText that no kept
             // bubble shows as `appendTail`, which is PUSHED as a new bubble. Divergence becomes an
             // APPEND, never an overwrite. See stream-reslice.ts.
-            const resliced = resliceSegments(
-              tempTextBubbles.map((b) => ({ text: b.text, segStart: b.segStart })),
-              finalText,
-            );
+            //
+            // FORK 2026-08-30 — WHICH TAIL RULE, and why the answer depends on WHICH final this is.
+            // The stream's own rule (`resliceSegments`' appendTail) credits the longest single
+            // bubble that is a PREFIX of the body: right for the temps path, where the bubbles are
+            // slices of this very string. On a SUPERSEDING final they are not: #1 is the streamed
+            // buffer and #2 is `deliveredReplies.map(t => t.trim()).join("\n\n")`, so the bodies
+            // differ in exactly the whitespace those strict prefix tests key on, and the whole answer
+            // came back — the architect's "the last two answers, twice", with `chat.history` holding
+            // one copy. A superseding final asks instead whether this rebuild adds anything THIS RUN
+            // has not shown, whitespace-insensitively (`supersedingAppendTail`). Scoped to one run,
+            // so not the whole-session `dedupeAssistantAnswers()` deleted 2026-08-05, and a body the
+            // run never showed (the post-tool answer that lives only in #2) still appends whole.
+            // Both rules live in `planFinalWrite`, beside the selection, so they cannot drift apart.
+            const plan = planFinalWrite(tempTextBubbles, finalText, supersedes);
             for (let i = 0; i < tempTextBubbles.length; i++) {
-              const m = tempTextBubbles[i].msg;
-              const segText = resliced.texts[i] ?? tempTextBubbles[i].text;
+              const m = tempTextBubbles[i];
+              const segText = plan.texts[i] ?? bubbleText(m);
               const blocks = m.content as Array<{ type: string; text?: string }>;
               for (const b of blocks) {
                 if (b.type === "text") {
-                  b.text = segText;
+                  if (b.text !== segText) {
+                    b.text = segText;
+                    m._lastWriteAt = bubbleEndedAt;
+                  }
                   break;
                 }
               }
@@ -7591,23 +11011,7 @@ function onEvent(evt: unknown) {
                 m._bubbleEndedAt = bubbleEndedAt;
               }
             }
-            // FORK 2026-08-30 — WHICH TAIL RULE, and why the answer depends on WHICH final this is.
-            // `resliced.appendTail` answers "what did the STREAM not show?", crediting the longest
-            // single bubble that is a PREFIX of the body. Correct for the temps path, where the
-            // bubbles are slices of this very string. On a SUPERSEDING final they are not: #1 is the
-            // streamed buffer and #2 is `deliveredReplies.map(t => t.trim()).join("\n\n")`, so the two
-            // bodies differ in exactly the whitespace those strict prefix tests key on. A leading
-            // newline on the stream, or parts streamed "\n"-joined and rebuilt "\n\n"-joined, dropped
-            // the credit to zero (or to bubble #0) and the whole answer was appended a second time —
-            // the architect's "the last two answers, twice", with `chat.history` holding one copy.
-            // `supersedingAppendTail` asks the question that final actually poses — "does this
-            // rebuild add anything THIS RUN has not already shown?" — against every bubble the run
-            // owns, whitespace-insensitively. Scoped to one runId's own bubbles, so it is not the
-            // whole-session `dedupeAssistantAnswers()` scan that was deleted 2026-08-05, and a body
-            // the run never showed (the post-tool answer that lives only in #2) still appends whole.
-            const appendTail = supersedes
-              ? supersedingAppendTail(resliced.texts, finalText)
-              : resliced.appendTail;
+            const appendTail = plan.appendTail;
             if (appendTail) {
               // The append is the SANCTIONED way new content reaches the screen, so a duplicate
               // riding in here shows up as `equivAnyRun > 0`: the tail rule credited nothing and
@@ -7623,13 +11027,14 @@ function onEvent(evt: unknown) {
                 hadTemps,
                 tailLen: appendTail.length,
                 finalLen: finalText.length,
-                shownBubbles: resliced.texts.length,
+                shownBubbles: plan.texts.length,
               });
               messages.push({
                 role: "assistant",
                 content: [{ type: "text", text: appendTail }],
                 _bubbleEndedAt: bubbleEndedAt,
                 _runId: p.runId,
+                ...resumedRunStamp(p.runId),
               });
             }
           }
@@ -7658,13 +11063,35 @@ function onEvent(evt: unknown) {
           // FORK 2026-08-16: a FIRST final with no temps (nothing streamed) still pushes whole —
           // but stamp the run, so the second final the gateway always sends reconciles against
           // this bubble via the `supersedes` path above instead of duplicating the answer.
-          pushAssistantMsgDeduped(
-            {
-              ...(p.message as Record<string, unknown>),
-              ...(typeof p.runId === "string" && p.runId ? { _runId: p.runId } : {}),
-            },
-            "final:no-temps-whole",
-          );
+          // FORK 2026-09-23 — "whole" means the whole of what this PAGE has not shown of the run.
+          // A page that joined mid-run already shows the run's beginning as history rows, and
+          // pushing the full body under them was the duplicate. The final body is text-only
+          // (server-chat.ts emitChatFinal / chat.ts broadcastChatFinal), so the remainder is
+          // written as one text block; a page that watched the run from its start is unchanged.
+          const msg = p.message as Record<string, unknown>;
+          const finalBlocks = Array.isArray(msg.content)
+            ? (msg.content as Array<{ type?: unknown; text?: unknown }>)
+            : [];
+          const body =
+            typeof msg.content === "string"
+              ? msg.content
+              : finalBlocks.length > 0 && finalBlocks.every((b) => b?.type === "text")
+                ? finalBlocks.map((b) => (typeof b.text === "string" ? b.text : "")).join("")
+                : "";
+          const unshown = body ? unshownRunText(p.runId, body) : "";
+          // FORK 2026-10-01: plus, for a run that took over a frozen turn only, that turn's anchor.
+          const runStamp =
+            typeof p.runId === "string" && p.runId
+              ? { _runId: p.runId, ...resumedRunStamp(p.runId) }
+              : {};
+          if (!body || unshown === body) {
+            pushAssistantMsgDeduped({ ...msg, ...runStamp }, "final:no-temps-whole");
+          } else if (unshown.trim()) {
+            pushAssistantMsgDeduped(
+              { ...msg, content: [{ type: "text", text: unshown }], ...runStamp },
+              "final:no-temps-rest",
+            );
+          }
         }
       } else {
         // FORK 2026-08-05 (the architect: "carta a terra va a la guerra") — was
@@ -7720,10 +11147,16 @@ function onEvent(evt: unknown) {
           // half-reconciled transcript).
           advanceRetryLifecycle(p);
         } else {
+          // FORK 2026-09-29 (U9): stamp the run this bubble reports on. The backstop `final` that
+          // follows now carries the gateway's typed outcome for the SAME failure and is pushed as
+          // its own row, so without a way to identify this one the user sees the failure twice. A
+          // dedicated `_errRunId` rather than `_runId`: the latter enrols a message in the
+          // final-reslice / unshown-text machinery, which would rewrite this bubble's body.
           const errMsg = {
             role: "assistant",
             content: [{ type: "text", text: cleanText }],
             _isError: true,
+            ...(typeof p.runId === "string" && p.runId ? { _errRunId: p.runId } : {}),
           };
           messages.push(errMsg);
           persistErrorMsg(sessionKey, errMsg);
@@ -7731,6 +11164,23 @@ function onEvent(evt: unknown) {
       }
       if (p.state === "final") {
         clearPersistedErrors(sessionKey);
+        // FORK 2026-09-29 (U9) — EXACTLY ONE bubble per failure (review focus 3). When this final
+        // carries a typed outcome it IS the failure's row: already pushed above, and in server
+        // history after a reload. The bubble the `state:"error"` branch minted for the same run a
+        // moment ago is therefore a duplicate — one red error shown twice. `clearPersistedErrors`
+        // above already dropped the localStorage copy; this drops the on-screen one, preferring the
+        // typed row because it survives the reload and carries the kind, the retryAfter and the raw
+        // detail. The exhausted "gave up after N retries" bubble is exempt: it reports the LADDER's
+        // end, not this turn's failure.
+        if (isTurnOutcome((p.message as { outcome?: unknown } | undefined)?.outcome)) {
+          const finalRunId = typeof p.runId === "string" ? p.runId : "";
+          if (finalRunId) {
+            messages = messages.filter((m) => {
+              const r = m as Record<string, unknown>;
+              return !(r._isError === true && r._errRunId === finalRunId && !r._isExhausted);
+            });
+          }
+        }
         // FORK 2026-06-24 (recoverable-retry): a successful turn ends any pending
         // auto-retry for this session. The warning bubbles already in the on-screen
         // `messages` array stay put (this turn's own history); only the PERSISTED
@@ -7773,13 +11223,16 @@ function onEvent(evt: unknown) {
       // END of the transcript (matching the server history order a hard refresh shows) and can never
       // sort above the turn's own continuation/answer bubbles. Flush ONLY the prompts queued under the
       // session whose turn just ended (= the viewed session here, past the viewed-session guard);
-      // other tabs' queued prompts stay put.
+      // other tabs' queued prompts stay put. FORK 2026-09-24 (U3): and of those, only the ones this
+      // terminal names: a linked follow-up run releases its own prompt keys, never its neighbours'
+      // (a disposition final never gets this far; see the top of this handler).
       if (pendingQueuedSends.length > 0) {
         const settled = settleQueuedSession(
           pendingQueuedSends,
           p.sessionKey,
           true,
           sessionKeyMatches,
+          terminalScope ?? undefined,
         );
         for (const qm of settled.commit) {
           pushUserMsgDeduped(qm as Record<string, unknown>);
@@ -7823,11 +11276,12 @@ function onEvent(evt: unknown) {
         // FORK 2026-06-14 (bug #3): mark finalized so a late/stale delta can't
         // resurrect this run as a provider-less ghost thinking indicator.
         rememberTerminated(finalRunId);
+        reasoningCursors.delete(finalRunId);
       }
       // sending reflects the VIEWED tab only — never the global map size, so a
       // different tab's live run can't pin this tab on "sending" forever.
-      sending = viewedSessionBusy();
-      // FORK 2026-09-03 (the architect: "the acmeclaw tab is preparing context forever").
+      setSending(viewedSessionBusy());
+      // FORK 2026-09-03 (the architect: "the work tab is preparing context forever").
       //
       // THE VIEWED LANE'S MISSING TERMINATOR — the exact shape of the 2026-08-26 bug twenty
       // lines up, one variable over. `preparingSince` was closed by two proofs only, and BOTH
@@ -7869,7 +11323,7 @@ function onEvent(evt: unknown) {
       updateBtn();
       // FORK 2026-08-05: a chat.history reload that arrived mid-turn was DEFERRED rather than
       // allowed to demolish the live transcript (see loadChat). The turn is over — re-arm it.
-      if (pendingHistoryReload && !viewedSessionBusy() && streamRunId === null) {
+      if (pendingHistoryReload && !viewedSessionBusy() && !transcriptWriterLive()) {
         pendingHistoryReload = false;
         void loadChat();
       }
@@ -7892,6 +11346,27 @@ function onEvent(evt: unknown) {
   //
   // Nothing here decides liveness — run-state.ts remains the ONE PREDICATE. This only keeps the data
   // that predicate reads current, and then repaints through the ONE TRIGGER like every other surface.
+  // FORK 2026-09-29 (lifecycles.md L4b) — `chat.notice`: a display-only row for one session, today
+  // only the restart notice (gateway/restart-notice.ts). Not a `chat` final on purpose: a final ends
+  // the session's turn here (ended-at stamp, queue release, retry ladder) and a notice ends nothing.
+  // The viewed tab writes it on the page now; chat.history serves the same row under the same
+  // identity, so the next gap-fill knows it. A tab not on screen gets it from its next history read.
+  if (evt.event === "chat.notice") {
+    const p = (evt.payload ?? {}) as { sessionKey?: unknown; message?: unknown };
+    const viewed =
+      typeof p.sessionKey === "string" &&
+      (p.sessionKey === sessionKey || sessionKeyMatches(p.sessionKey));
+    if (viewed && p.message && typeof p.message === "object") {
+      const id = historyRowIdentity(p.message);
+      if (!pageHoldsServerRows(messages)) {
+        // A blank page takes the whole history as its first page (history-paging.ts): read it.
+        void loadChat();
+      } else if (id !== null && !messages.some((m) => historyRowIdentity(m) === id)) {
+        messages.push(p.message);
+        updateChat();
+      }
+    }
+  }
   if (evt.event === "sessions.changed") {
     const changed = extractChangedRow((evt.payload ?? evt.data) as Record<string, unknown>);
     if (changed) {
@@ -7900,6 +11375,9 @@ function onEvent(evt: unknown) {
         key: changed.key,
         row: changed.row,
         matches: (candidate, ref) => sessionKeyMatches(candidate, ref),
+        // A whole row replaces the G5 `pendingPrompts` report, present or absent: there its absence
+        // means nothing is pending (session-rows-live.ts mergeChangedRow).
+        whole: changed.whole,
       });
       sessions = merged.rows;
       // `sessionsFetchedAt` is deliberately NOT bumped — see session-rows-live.ts. It means "when
@@ -7912,6 +11390,10 @@ function onEvent(evt: unknown) {
         // is also what must keep the first-paint snapshot warm.
         scheduleSessionsSnapshot();
       }
+      // B3 — the CONTEXT WINDOW panel's THIS SESSION counts are the viewed row's (A7). Outside the
+      // `changed` test on purpose: that is a LIVENESS signature (run, status, model), blind to the
+      // counter fields, so a push that moved only a count would never repaint them.
+      repaintCacheCountersIfRowMoved();
     }
   }
   // FORK: Auth profile reload event — refresh models panel + notify re-auth flows
@@ -7933,11 +11415,33 @@ function onEvent(evt: unknown) {
   if (evt.event === "agent") {
     const p = evt.payload;
     bumpActiveRunActivity(p ?? {});
+    // FORK 2026-09-24 (context-window-panel.md §6.2 B4) — a run or a model call changes its
+    // session's transcript, so the gateway's last "nothing to evict / compact" answer for that
+    // session no longer holds (buttonState rule 5). Every session, not only the viewed one, or a
+    // background tab's buttons would stay off after it grew. The size check keeps this hot path free.
+    if (cacheActNothingToDo.size > 0 && (p?.stream === "cache" || p?.stream === "lifecycle")) {
+      deleteCacheEntries(cacheActNothingToDo, p.sessionKey);
+    }
     // FORK 2026-06-25 (bug: two tabs bled messages) — capture this subagent's owning
     // tab from its parentRunId while the parent run is still active, so the chat/EEG
     // attribution (chatEventIsSubagentOfView) can route it to the ONE tab that spawned
     // it instead of every tab sharing the agent root.
     recordSubagentOwner((p as any)?.sessionKey, (p as any)?.data?.parentRunId);
+    // B5 — the CALL TIMELINE hears every stream HERE, above the per-stream early returns below.
+    // An observer only: it never returns from this handler and never touches run state.
+    feedCallTimelineAgentEvent(p);
+    // FORK 2026-10-01 (bug-log [chat-divergence], cause 4) — the frozen turn this event's run took
+    // over, if it names one (noteResumedTurn). An observer only, like the line above: never returns.
+    noteResumedTurn(p);
+    // FORK 2026-09-24 — prompt-queue.md step U3, consuming gateway step G3: a follow-up run names
+    // the prompt keys it answers on its own `followup` stream (not lifecycle; see FOLLOWUP_STREAM).
+    // Read for EVERY session, above every viewed gate, like the chat terminals it keys. It returns
+    // because nothing below knows this stream, and the unknown-stream fallback at the bottom of this
+    // handler must not turn a later phase of it into a system bubble.
+    if (p?.stream === FOLLOWUP_STREAM) {
+      onFollowupRunStart(p);
+      return;
+    }
     // ─── Live Tool Events ───
     // Capture tool-use/tool-result events and inject them as visible messages.
     // FORK (2026-04-21): use sessionKeyMatches so a server-canonicalized key
@@ -7948,6 +11452,15 @@ function onEvent(evt: unknown) {
     if (p?.stream === "tool" && sessionKeyMatches(p.sessionKey)) {
       const d = p.data ?? {};
       if (d.phase === "start" && d.name && d.toolCallId) {
+        // FORK 2026-09-29 (U10, plan D4): the gateway attributes every tool call once
+        // (src/fork/usage-attribution.ts) and ships the marks on the tool START event. Stamp them
+        // on the turn's own user message — the same anchor §5.8N uses, never a synthetic messages[]
+        // entry — so the one chip row draws them immediately; after a reload the identical marks
+        // arrive again as `__openclaw.usage` on the same row. This branch is already inside
+        // `sessionKeyMatches(p.sessionKey)` (D4: live usage reaches only the tab that sent the
+        // prompt) and already ends in `updateChat()`, which §5.8X limits to the one bubble whose
+        // HTML actually changed — no extra repaint is needed and none is wanted.
+        stampUsageOnCurrentTurn(d.usage);
         // Update active run phase to "tool"
         for (const info of activeRuns.values()) {
           if (!info.sessionKey || sessionKeyMatches(info.sessionKey)) {
@@ -7961,6 +11474,8 @@ function onEvent(evt: unknown) {
         // is needed. The next text delta will open a new bubble whose
         // `_segmentStart` captures the cumulative offset where it begins.
         streamMsgUid = null;
+        // Same for thinking: a thought after this tool call opens a new bubble below the tool row.
+        closeReasoningSegment(p.runId);
         // Add tool_use as a temporary message. FORK (2026-04-24): cc-bridge
         // attaches a `purpose` string to the event carrying the LLM's
         // purpose narration that preceded the tool call. Stash it on the
@@ -8022,6 +11537,7 @@ function onEvent(evt: unknown) {
         // that used to mask a real problem (empty stdout vs. not-yet-arrived
         // vs. dropped-in-transit). Empty string is honest; renderMsg hides
         // the stdout block when content is empty.
+        closeReasoningSegment(p.runId);
         const resultContent =
           typeof d.result === "string"
             ? d.result
@@ -8052,41 +11568,73 @@ function onEvent(evt: unknown) {
         updateChat();
       }
     }
-    // FORK 2026-06-11 — STREAM:"thinking" consumer (cc-bridge reasoning deltas).
-    // d.text is the CUMULATIVE reasoning text for this run, so OVERWRITE the
-    // bubble's text on every event (never append). Render as a type:"text"
-    // block tagged _isReasoning — renderMsg's content-block loop has NO
-    // thinking-block arm, so type:"thinking" would render EMPTY. The bubble is
-    // _temporary (discarded on turn end) and is force-excluded from the
-    // thinkingSet classifier via its _isReasoning flag.
+    // FORK 2026-06-11 — STREAM:"thinking" consumer (cc-bridge reasoning deltas). Rendered as a
+    // type:"text" block tagged _isReasoning — renderMsg's content-block loop has NO thinking-block
+    // arm, so type:"thinking" would render EMPTY — and force-excluded from the thinkingSet
+    // classifier via that flag.
+    //
+    // FORK 2026-09-23 (the architect: "sometimes I see a thinking bubble up high being filled up with text,
+    // instead of appearing at the bottom like it should") — `d.text` is the CUMULATIVE reasoning of
+    // the whole run, and this used to keep ONE bubble per run: created at the run's first thought
+    // and grown in place for the rest of the run while text and tool rows were appended below it.
+    // Thinking is now segmented exactly like text (live-continuation.ts): a text delta, a tool call
+    // or a block break closes the open segment, and the next thought opens a new bubble at the
+    // bottom holding only what came after. A page that joined the run mid-way continues after the
+    // thinking it already shows instead of repeating all of it.
     if (p?.stream === "thinking" && sessionKeyMatches(p.sessionKey)) {
       const d = p.data ?? {};
       const text = typeof d.text === "string" ? d.text : "";
-      if (!text) return;
-      const reasoningBubble = (messages as Record<string, unknown>[]).find(
-        (m) => m._reasoningRunId === p.runId && m._isReasoning,
+      const runId = typeof p.runId === "string" ? p.runId : "";
+      if (!text || !runId) return;
+      const cur = reasoningCursors.get(runId) ?? anchorRunCursor(runId, "reasoning", text);
+      const open = cur.uid !== null ? msgByUid(cur.uid) : undefined;
+      const openBlock = open ? firstTextBlock(open) : undefined;
+      const write = nextSegmentWrite(
+        cur,
+        text,
+        typeof openBlock?.text === "string" ? openBlock.text : null,
       );
-      if (!reasoningBubble) {
-        messages.push({
+      let openedUid: string | null = null;
+      if (write.kind === "grow" && openBlock) {
+        openBlock.text = write.text;
+        // FORK 2026-10-03: a thought that streamed for longer than the gap-fill slack is covered
+        // until its last write once the final freezes it (history-reconcile.ts `watchedToOf`).
+        if (open) {
+          open._lastWriteAt = Date.now();
+        }
+      } else if (write.kind === "open") {
+        const watchedFrom = runWatchedFrom(runId);
+        openedUid = pushAndUid({
           role: "assistant",
-          content: [{ type: "text", text }],
+          content: [{ type: "text", text: write.text }],
           _isReasoning: true,
-          _reasoningRunId: p.runId,
+          _reasoningRunId: runId,
           // FORK 2026-08-05: also stamp the ordinary `_runId`. `ownsTempMsg` reads THAT name, and
           // with only `_reasoningRunId` present it fell through to `streamRunId === p.runId`, so
           // the NEXT run's terminal event claimed this bubble as one of its own temps.
-          _runId: p.runId,
+          _runId: runId,
           _temporary: true,
-        } as any);
-      } else {
-        const blk = (reasoningBubble.content as any[]).find((b) => b.type === "text");
-        // MONOTONE: `d.text` is the CUMULATIVE reasoning text, so it may only GROW. A shorter or
-        // divergent value means the buffer restarted; never erase what is already on screen.
-        if (blk && (typeof blk.text !== "string" || text.startsWith(blk.text))) {
-          blk.text = text;
+          _lastWriteAt: Date.now(),
+          _segmentStart: write.start,
+          ...(watchedFrom !== undefined ? { _watchedFrom: watchedFrom } : {}),
+        });
+        // The thought is now the newest thing in the run: text after it opens below it.
+        if (streamRunId === runId) {
+          streamMsgUid = null;
         }
       }
-      updateChat();
+      reasoningCursors.set(runId, advanceCursor(cur, write, text, openedUid));
+      if (write.kind !== "none") {
+        updateChat();
+      }
+      return;
+    }
+    // FORK 2026-10-01 — STREAM:"thalamus": the gateway's pick and reasons for a tab's turn, and any mid-turn
+    // takeover (src/infra/thalamus-turn-telemetry.ts). Recorded for EVERY tab, so a tab switch shows that tab's turn.
+    if (p?.stream === "thalamus") {
+      if (typeof p.sessionKey === "string" && p.sessionKey) {
+        noteThalamusTurnEvent(p.sessionKey, (p.data ?? {}) as Record<string, unknown>, Date.now());
+      }
       return;
     }
     // FORK 2026-06-11 (tinkerui-effort) — STREAM:"effort" consumer. The gateway
@@ -8158,9 +11706,16 @@ function onEvent(evt: unknown) {
           label: r.task,
           parentRunId: typeof d.parentRunId === "string" ? d.parentRunId : undefined,
           thinkingChars: r.thinkingChars,
-          // tokens drive segment LENGTH; area = width·length ∝ cost (bible §5.8h). output from
-          // the effort-final event; input accumulated from round-start events.
-          inputTokens: eegInputByRun.get(p.runId),
+          // tokens drive segment LENGTH; area = width·length ∝ cost (bible §5.8h). Output comes
+          // from the effort-final event. Input has NO producer: it was summed from the per-round
+          // lifecycle pair, which never fired (F9), and B6 (2026-09-24) deleted that consumer
+          // rather than re-feed it from `stream:"call"`. A call's prompt is mostly cache reads,
+          // which eegWeightedTokens would price as fresh input. Pricing cached input is the EEG's
+          // decision to make, not a side effect of a telemetry swap.
+          // FORK 2026-10-01 (finding 12): the figure DOES exist in this UI already — the call
+          // timeline's CallFrame carries a per-call `input`/`cacheRead`/`cacheWrite`
+          // (panels/call-timeline.ts). That is where the input term should come from when the
+          // pricing question above is answered. Left unwired on purpose.
           outputTokens: r.outputTokens,
           startedAt: r.startedAt,
           // FORK 2026-06-19: stamp endedAt on the FINAL effort event so the subagent
@@ -8174,42 +11729,13 @@ function onEvent(evt: unknown) {
       updateBudgetPanel();
       return;
     }
-    // FORK 2026-06-19 (bible §5.8h): EEG "all" scope — ALSO record OTHER sessions'
-    // effort events into their OWN store (dimmed) so the seismograph overlays
-    // concurrent activity. EEG-only: never touches activeRuns or other panels.
-    if (
-      p?.stream === "effort" &&
-      eegScope === "all" &&
-      !isEphemeralEegSession(p.sessionKey) &&
-      !sessionKeyMatches(p.sessionKey) &&
-      !chatEventIsSubagentOfView(p.sessionKey)
-    ) {
-      const d = p.data ?? {};
-      const evtSk = typeof p.sessionKey === "string" ? p.sessionKey : "";
-      if (evtSk) {
-        try {
-          getEegStore(evtSk).record({
-            runId: p.runId,
-            model: typeof d.model === "string" ? d.model : "",
-            provider:
-              typeof d.provider === "string"
-                ? d.provider
-                : providerOf(typeof d.model === "string" ? d.model : ""),
-            chosenLevel: typeof d.thinkLevel === "string" ? d.thinkLevel : "",
-            subagent: String(p.sessionKey || "").includes(":subagent:"),
-            label: typeof d.task === "string" ? d.task : undefined,
-            parentRunId: typeof d.parentRunId === "string" ? d.parentRunId : undefined,
-            thinkingChars: typeof d.thinkingChars === "number" ? d.thinkingChars : undefined,
-            outputTokens: typeof d.output_tokens === "number" ? d.output_tokens : undefined,
-            startedAt: Date.now(),
-            endedAt: d.phase === "final" ? Date.now() : undefined,
-          });
-          fillEegPaper();
-        } catch {
-          /* eeg overlay must never break the consumer */
-        }
-      }
-    }
+    // FORK 2026-10-01 (the architect: "the toggle switch needs to go, and the EEG has to stay specific for
+    // each tab") — the OTHER-SESSION capture that fed the all-scope overlay is gone, and with it
+    // three defects it could not be separated from: it recorded only WHILE the switch sat on All,
+    // with no backfill, so the ledger depended on the toggle's history rather than on what
+    // happened; it stamped `startedAt: Date.now()`, the moment the frame reached this browser,
+    // rather than the run's real start; and one run seen from two tabs landed in two stores and
+    // billed the paper twice. Nothing else consumed it.
     // FORK 2026-07-25 (the architect) — STREAM:"cache" consumer (💾 CONTEXT CACHE panel).
     // PLACEMENT IS LOAD-BEARING: this MUST stay above the lifecycle chain. The
     // `p.data?.model`-gated lifecycle branch further down hijacks and mutates ACTIVE
@@ -8245,10 +11771,9 @@ function onEvent(evt: unknown) {
         cs.maxWindow = ctxTokens;
         cs.windowSource = "session";
       }
-      // FORK 2026-08-29 — THIS SESSION's turn counter. The cache stream fires once per model
-      // call, which is the unit that actually costs money and the one the other counters are
-      // compared against, so that is what "turns" counts here.
-      sessionStatsFor(p.sessionKey).turns += 1;
+      // FORK 2026-09-25 (B3) — no counter ticks here any more. `turns` += 1 per cache event
+      // counted a call on the embedded pipe and a whole turn on cc-bridge (F7); turns and calls
+      // are the call store's totals now (sessionCounters).
       renderCachePanel();
       // Flash off THIS event's numbers, not the accumulated state. A big cacheWrite is
       // an expensive prefix rewrite (the thing worth noticing); a plain cacheRead is
@@ -8262,51 +11787,63 @@ function onEvent(evt: unknown) {
       }
       return;
     }
-    // FORK 2026-08-28 (the architect) — STREAM:"compaction" consumer (the CONTEXT WINDOW panel's pulse).
+    // FORK 2026-09-24 (context-window-panel.md §6.2 B4; F11) — the PULSE half of the compaction
+    // consumer, for EVERY session, ahead of the viewed-session gate below. A compaction that
+    // starts on a background tab must be pulsing when the architect switches to it (the claude
+    // CLI's own run 2–3.6 min), and its `end` must clear it even when it lands while another tab
+    // is viewed: under the old viewed-only gate that `end` was dropped and the tab-global counter
+    // kept whichever tab was open pulsing until reload. Events for other sessions stop here —
+    // nothing below applies to them, and falling through would expose them to the lifecycle chain.
+    if (p?.stream === "compaction") {
+      noteCompactionPhase(p.sessionKey, p.data);
+      // B3 (2026-09-25) — the COUNTERS half runs for every session too: a drop on a background tab
+      // feeds that session's own counters and re-reads the row, ready for when it is viewed.
+      noteCompactionCounters(p);
+      if (!sessionKeyMatches(p.sessionKey)) {
+        return;
+      }
+    }
+    // FORK 2026-08-28 (the architect) — STREAM:"compaction" consumer, the VIEWED session's half
+    // (the pulse is noteCompactionPhase and the counting noteCompactionCounters, directly above).
     //
-    // The gateway has emitted this stream since long before the panel existed
-    // (embedded-agent-subscribe.handlers.compaction.ts emits {phase:"start"} / {phase:"end"} and
-    // emitAgentEvent stamps it with the run's session key) — nothing in the UI consumed it, so an
-    // AUTOMATIC compaction was completely invisible: the rail simply froze for however long pi
-    // took, then the numbers jumped. This is the "or automatically" half of the architect's ask.
+    // The gateway emitted this stream long before the panel existed, but nothing in the UI consumed
+    // it, so an AUTOMATIC compaction was completely invisible: the rail simply froze for however
+    // long pi took, then the numbers jumped. This is the "or automatically" half of the architect's
+    // ask.
+    //
+    // THE PAYLOAD IS THE A1 CONTRACT, not the `{phase}` pair this consumer was first written
+    // against. Since 2026-09-24 every executor emits through one owner,
+    // src/infra/compaction-telemetry.ts, and emitAgentEvent stamps the session key:
+    //   start  {phase, trigger, lane, provenance, tokensBefore?}
+    //   end    the same, plus completed, willRetry?, tokensAfter?, tokensDropped?, durationMs?
+    // A count the executor does not know is OMITTED, never sent as 0, so an absent figure means
+    // UNKNOWN. The halves above read it: the pulse through compactionPulseStep (phase, trigger),
+    // the counters through compactionDrop (phase, completed, trigger, provenance, tokensDropped,
+    // and tokensBefore / tokensAfter only when the provenance is "exact").
+    //
+    // FORK 2026-09-25 (B3) — this block no longer counts. It used to add a compaction and bank
+    // tokensBefore − tokensAfter on every completed `end`: a second count of every manual press
+    // (its RPC reply counted it too), and on the engram COMPACT path, whose tokensBefore is a
+    // store-wide running total, a saving 61× too large. What is left is the repaint an `end`
+    // owes THIS CALL's `evicted` and THIS SESSION.
     //
     // PLACEMENT IS LOAD-BEARING for exactly the same reason as the "cache" consumer directly
     // above: the `p.data?.model`-gated lifecycle branch further down hijacks and mutates ACTIVE
     // RUN state for ANY lifecycle event carrying a model field, so a compaction event that fell
     // through to it would corrupt the running turn. Own branch + early return, gated on
-    // sessionKey so a background tab's compaction cannot pulse the viewed one.
+    // sessionKey so a background tab's compaction cannot repaint the viewed one.
     if (p?.stream === "compaction" && sessionKeyMatches(p.sessionKey)) {
-      const d = (p.data ?? {}) as {
-        phase?: unknown;
-        completed?: unknown;
-        tokensBefore?: unknown;
-        tokensAfter?: unknown;
-      };
-      const phase = d.phase;
-      if (phase === "start") {
-        setCacheBusy(true);
-      } else if (phase === "end") {
-        // FORK 2026-08-29 — bank the win. The gateway now forwards pi's context size either
-        // side of the compaction (handlers.compaction.ts); the difference is the context this
-        // session will no longer resend on every subsequent call, which is the number that
-        // makes a compaction legible as a saving rather than as an unexplained pause.
-        // Only a COMPLETED compaction counts: a retry emits `end` too, and counting that would
-        // book the same saving twice.
-        if (d.completed) {
-          const st = sessionStatsFor(p.sessionKey);
-          st.compactions += 1;
-          const before = typeof d.tokensBefore === "number" ? d.tokensBefore : undefined;
-          const after = typeof d.tokensAfter === "number" ? d.tokensAfter : undefined;
-          if (before !== undefined && after !== undefined && before > after) {
-            const saved = before - after;
-            st.evictedTokens += saved;
-            cacheStateFor(p.sessionKey).lastEvictedTokens = saved;
-          }
-          renderCachePanel();
+      if ((p.data as { phase?: unknown } | undefined)?.phase === "end") {
+        renderCachePanel();
+        // FORK 2026-09-25 (context-window-panel.md §6.1 A6) — the claude-code lane's RESULT TOAST.
+        // A COMPACT press there is a `/compact` turn, so no RPC reply comes back to toast from: the
+        // CLI's own `end` (A3, exact figures from compact_boundary) is the result. It toasts for a
+        // typed `/compact` and the CLI's automatic compactions alike; other executors' ends are
+        // not its business (cliCompactionToast answers null).
+        const cliToast = cliCompactionToast(p.data);
+        if (cliToast) {
+          showToast(cliToast.text, cliToast.isError);
         }
-        // An `end` whose `start` we never saw (the compaction began before this tab attached)
-        // is absorbed by the clamp inside setCacheBusy — it can only ever floor at 0.
-        setCacheBusy(false);
       }
       return;
     }
@@ -8517,6 +12054,7 @@ function onEvent(evt: unknown) {
       sessionKeyMatches(p.sessionKey)
     ) {
       streamMsgUid = null;
+      closeReasoningSegment(p.runId);
       return;
     }
     // FORK 2026-06-11 — cc-bridge turn-incomplete phase event (sibling hook to
@@ -8558,17 +12096,19 @@ function onEvent(evt: unknown) {
       }
       return;
     }
-    // Instant context anatomy bar — enriches existing round bars or creates new ones for legacy events
+    // Context anatomy → ctx-timeline: one column per (run, round), the anatomy DB row's own key.
     if (p?.stream === "lifecycle" && p.data?.phase === "context-anatomy") {
       const anatomy = p.data.anatomy as unknown;
+      // The row's run, from the envelope. Hoisted (FORK 2026-09-25): the cache panel below keys the
+      // row by the same run as the ctx-timeline, and it fills even before the timeline has mounted.
+      const anatomyRunId = typeof p.runId === "string" && p.runId ? p.runId : undefined;
       if (anatomy && timelineCtrl) {
-        if (anatomy.roundNumber) {
-          // Round-level anatomy: enrich existing round bar with full segment data
-          timelineCtrl.pushEvent(anatomy, p.runId);
-        } else {
-          // Legacy turn-level anatomy (fallback for non-round-aware sessions)
-          timelineCtrl.pushEvent(anatomy);
-        }
+        // FORK 2026-09-24 (B6) — ALWAYS with its runId. Round 0 (every row today, pre-call and
+        // post-turn alike) used to go in without one, so a second row for the same run painted a
+        // second bar live while the DB upserts the two into one row, and the turn's column could
+        // not join its run's call columns (the `call` consumer groups them by run). pushEvent
+        // merges by (runId, roundNumber) and keeps a pre-call composition, as the DB does.
+        timelineCtrl.pushEvent(anatomy as AnatomyEvent, anatomyRunId);
       }
       // FORK 2026-07-25 (the architect) — 💾 CONTEXT CACHE composition feed. The anatomy is the
       // only event carrying BOTH the composition breakdown and the model's DECLARED
@@ -8590,8 +12130,27 @@ function onEvent(evt: unknown) {
           (typeof anatomy.sessionKey === "string" && anatomy.sessionKey) ||
           undefined;
         const as = cacheStateFor(aKey);
-        if (anatomy.contextSent) {
+        // FORK 2026-09-25 — the owner's context-bar complaint, second half. This took every row's
+        // composition, last write wins, so live the bar swapped to the POST-turn composition at
+        // turn end while a reload (the DB row) showed the pre-call one. Now a pre-call composition
+        // survives a post-turn row of the same (run, round), the rule the ctx-timeline's pushEvent
+        // and the DB upsert already follow (context-cache.ts keepsPreCallComposition). The row's
+        // other fields below still land, as pushEvent overlays them.
+        const anatomyRound = (anatomy as { roundNumber?: unknown }).roundNumber;
+        const anatomyKey = {
+          runId: anatomyRunId,
+          roundNumber: typeof anatomyRound === "number" ? anatomyRound : undefined,
+          snapshot: compositionSnapshotOf(anatomy),
+        };
+        if (anatomy.contextSent && !keepsPreCallComposition(as, anatomyKey)) {
           as.contextSent = anatomy.contextSent;
+          // B2, host half (P1 / P5): WHEN this composition was measured travels with it, from the
+          // SAME row, every time, so a post-turn row can never inherit an older pre-call badge, nor
+          // the reverse. A row that does not say leaves the field unset: no badge, never a guess.
+          as.compositionSnapshot = compositionSnapshotOf(anatomy);
+          // …and so does its key, which the next row of the same run is matched against.
+          as.compositionRunId = anatomyKey.runId;
+          as.compositionRound = anatomyKey.roundNumber;
         }
         if (typeof anatomy.model === "string" && anatomy.model) {
           as.model = anatomy.model;
@@ -8632,55 +12191,13 @@ function onEvent(evt: unknown) {
       }
     }
 
-    // Round-start: push a new bar to the timeline immediately
-    if (p?.stream === "lifecycle" && p.data?.phase === "round-start") {
-      if (
-        p.data.sessionKey &&
-        p.data.sessionKey !== sessionKey &&
-        !p.data.sessionKey.includes(":subagent:")
-      ) {
-        return;
-      }
-      // FORK 2026-06-13 (eeg): accumulate billed input tokens per runId so the
-      // seismograph segment length tracks token count; area ∝ cost (bible §5.8h).
-      if (typeof p.runId === "string" && typeof p.data.inputTokensEstimate === "number") {
-        eegInputByRun.set(p.runId, (eegInputByRun.get(p.runId) ?? 0) + p.data.inputTokensEstimate);
-      }
-      if (timelineCtrl) {
-        const roundEvent: unknown = {
-          turn: p.data.turnNumber,
-          roundNumber: p.data.roundNumber,
-          model: p.data.model,
-          provider: p.data.provider,
-          timestampMs: p.data.timestampMs ?? Date.now(),
-          contextSent: { totalTokens: p.data.inputTokensEstimate ?? 0 },
-          contextWindow: { maxTokens: 200000, usedTokens: p.data.inputTokensEstimate ?? 0 },
-        };
-        timelineCtrl.pushEvent(roundEvent, p.runId);
-      }
-    }
+    // FORK 2026-09-24 (B6, context-window-panel.md §6.2) — the per-round lifecycle consumers that
+    // stood here are gone. Their producers (emitRoundStart / emitRoundComplete, attempt-hooks.ts)
+    // never had a caller (F9), so the ctx-timeline's per-call bars never appeared. Per-call columns
+    // now come from the ONE `stream:"call"` consumer: feedCallTimelineAgentEvent parses the frame,
+    // the call timeline records it, and feedContextTimelineCall draws the column from that record.
 
-    // Round-complete: update the bar with response data
-    if (p?.stream === "lifecycle" && p.data?.phase === "round-complete") {
-      if (
-        p.data.sessionKey &&
-        p.data.sessionKey !== sessionKey &&
-        !p.data.sessionKey.includes(":subagent:")
-      ) {
-        return;
-      }
-      if (timelineCtrl) {
-        timelineCtrl.pushRoundComplete(p.runId, {
-          roundNumber: p.data.roundNumber,
-          outputTokens: p.data.outputTokens,
-          durationMs: p.data.durationMs,
-          stopReason: p.data.stopReason,
-          toolCallsRequested: p.data.toolCallsRequested,
-        });
-      }
-    }
-
-    // Tool execution events: attach to the round's detail
+    // Tool execution events: attach to the run's latest column (since B6, the call that asked)
     if (
       p?.stream === "lifecycle" &&
       (p.data?.phase === "tool-exec-start" || p.data?.phase === "tool-exec-complete")
@@ -9014,7 +12531,19 @@ function onEvent(evt: unknown) {
         // active for this turn, and the producer (prefrontal/index.ts) now ships the recipe's title
         // and the absolute path of its recipe.md alongside. Stamp both on the turn's own user
         // message so renderMsg can draw the one-line reminder under that prompt.
-        if (kind === "matched" || kind === "merged") {
+        // FORK 2026-09-29 (U10): this stamp had NO session guard. A `matched`/`merged` event from
+        // ANOTHER tab's run walked `messages` — which holds the VIEWED session — and stamped its
+        // recipe onto the prompt on screen, so the wrong chip appeared under the wrong prompt. A
+        // chip is a claim about one specific turn; an unattributed one is a lie. Guard it with the
+        // predicate every other consumer in this file uses.
+        // Tolerant of a MISSING key on purpose: src/fork/prefrontal-state-rpc.ts emits
+        // `...(sessionKey ? { sessionKey } : {})`, so a CLI-emitted trail event can legitimately
+        // carry none, and a strict test would silently stop drawing the chip for it. A key that is
+        // present and belongs to another tab is the bug; an absent key is today's behaviour.
+        if (
+          (kind === "matched" || kind === "merged") &&
+          (!p.sessionKey || sessionKeyMatches(p.sessionKey))
+        ) {
           const rTitle = d.payload?.recipeTitle;
           const rPath = d.payload?.recipePath;
           if (typeof rTitle === "string" && rTitle && typeof rPath === "string" && rPath) {
@@ -9151,8 +12680,8 @@ function onEvent(evt: unknown) {
               // Clears only — same reasoning as the chat terminator above. A background run
               // ending can never legitimately make the VIEWED tab busy, and the pre-model guard
               // stops it blanking a pill this tab opened seconds ago.
-              if (sending && !viewedSessionBusy() && !sessionPending(sessionKey)) {
-                sending = false;
+              if (sendingNow() && !viewedSessionBusy() && !sessionPending(sessionKey)) {
+                setSending(false);
                 updateBtn();
               }
               repaintActivitySurfaces();
@@ -9201,6 +12730,17 @@ function onEvent(evt: unknown) {
         // FORK 2026-06-14 (bug #3): a genuine phase:start re-activates this runId
         // (fallback models can reuse one) — clear any prior "terminated" mark.
         terminatedRuns.delete(p.runId);
+        // FORK 2026-10-03: the run's start, first event wins (a fallback reuses the runId).
+        if (typeof p.runId === "string" && p.runId && !runStartedAt.has(p.runId)) {
+          const at = (p.data as { startedAt?: unknown }).startedAt;
+          runStartedAt.set(
+            p.runId,
+            typeof at === "number" && Number.isFinite(at) ? at : Date.now(),
+          );
+          if (runStartedAt.size > 64) {
+            runStartedAt.delete(runStartedAt.keys().next().value as string);
+          }
+        }
         // FORK 2026-08-16 — THE canonical end of "preparing context": this event is the first
         // one that names a model. Gated on the viewed session because `preparingSince` is a
         // property of the viewed tab (like `sending`), so a background run starting must not
@@ -9243,7 +12783,7 @@ function onEvent(evt: unknown) {
           }
         }
         // Re-assert sending in case a chat error event cleared it during fallback
-        sending = true;
+        setSending(true);
         saveActiveRuns();
         updateBudgetPanel();
         updateSessionsPanel();
@@ -9267,7 +12807,12 @@ function onEvent(evt: unknown) {
                   }
                   const turnEvents = events.filter((ev: unknown) => ev.turn === tn);
                   for (const ev of turnEvents) {
-                    timelineCtrl!.pushEvent(ev);
+                    // FORK 2026-09-25 — WITH the row's own runId, as the live context-anatomy
+                    // consumer pushes it (B6). Without one, pushEvent could not merge this row into
+                    // the (run, round) bar the live event already drew, so the same call got a
+                    // second bar outside its run's call columns. The ROW's id, never this run's:
+                    // `turn === tn` also matches a retried run's row for the same turn.
+                    timelineCtrl!.pushEvent(ev as AnatomyEvent, anatomyRowRunId(ev));
                   }
                 })
                 .catch(() => {});
@@ -9341,20 +12886,47 @@ function onEvent(evt: unknown) {
               !targetTab.titleLocked &&
               !!targetTab.sessionKey &&
               targetTab.title === fortuneForKey(targetTab.sessionKey);
-            if (tabTurns === 1 || tabTurns % TAB_TITLE_INTERVAL === 0 || wearsDefaultName) {
+            // FORK 2026-09-15 — u7-tab-naming: the ORIGIN of the current name decides. A manual
+            // name is never touched here; an auto name is only re-asked on the interval (and
+            // generateTabTitle keeps it unless the subject shifted); a fortune is named ASAP.
+            const kind = resolveTitleKind(targetTab, AUTO_NAME_ICON);
+            const action = turnEndTitleAction({
+              kind,
+              tabTurns,
+              wearsDefaultName,
+              interval: TAB_TITLE_INTERVAL,
+            });
+            if (action) {
               console.log(
                 "[tabs] triggering title generation for turn",
                 tabTurns,
                 "tab",
                 targetTab.id,
+                "kind",
+                kind,
+                "action",
+                action,
               );
-              generateTabTitle(targetTab);
+              generateTabTitle(targetTab, { reason: action });
+            } else if (kind === "manual") {
+              console.log("[tabs] title untouched — manual name", targetTab.id, "turn", tabTurns);
             }
           }
         }
         // Update usage bars from Anthropic rate limit response headers
+        if (p.data.rateLimit && !budgetUsageData?.claude) {
+          bpWarn(
+            "rateLimit headers arrived but budgetUsageData.claude is missing — live bars cannot update",
+            {
+              hasUsage: !!budgetUsageData,
+              usageShape: budgetUsageShape(budgetUsageData),
+              rateLimit: p.data.rateLimit,
+            },
+          );
+        }
         if (p.data.rateLimit && budgetUsageData?.claude) {
           const rl = p.data.rateLimit as { h5: number; d7: number; d7Sonnet?: number };
+          bpDebug("rateLimit headers", rl);
           if (!budgetUsageData.claude.limits) {
             budgetUsageData.claude.limits = {} as unknown;
           }
@@ -9381,8 +12953,8 @@ function onEvent(evt: unknown) {
           saveActiveRuns();
           rememberTerminated(endRunId);
           // FORK 2026-05-16: sending tracks the viewed tab, not the global map.
-          sending = viewedSessionBusy();
-          if (!sending) {
+          setSending(viewedSessionBusy());
+          if (!sendingNow()) {
             // Hide recipe banner when the viewed session is idle
             activeRecipeStep = null;
             document.getElementById("recipe-banner")?.classList.add("hidden");
@@ -9444,7 +13016,7 @@ function onEvent(evt: unknown) {
                     (m: any) => (m.role || "").toLowerCase() === "user" && !m._temporary,
                   );
                   if (userMsgs.length > 0) {
-                    promptIndex = userMsgs.length - 1;
+                    promptIndex = viewedUserRowOffset() + userMsgs.length - 1;
                     const pt = (msgText(userMsgs[userMsgs.length - 1]) || "").trim();
                     promptText = pt.length > 280 ? `${pt.slice(0, 280)}…` : pt;
                   }
@@ -9511,7 +13083,9 @@ function onEvent(evt: unknown) {
                   }
                 }
                 for (const ev of turnEvents) {
-                  timelineCtrl!.pushEvent(ev);
+                  // FORK 2026-09-25 — with the row's own runId, like the run-start poll above
+                  // (same defect: a row pushed without one drew a second bar beside the live one).
+                  timelineCtrl!.pushEvent(ev as AnatomyEvent, anatomyRowRunId(ev));
                 }
               })
               .catch(() => {});
@@ -9520,9 +13094,10 @@ function onEvent(evt: unknown) {
       }
     }
     // FORK 2026-06-11 — generic fallback for UNKNOWN streams (e.g. future
-    // server-tool/lifecycle channels). Known streams are handled above; for any
-    // other stream, surface a thin one-line system bubble on a terminal phase so
-    // novel events are visible instead of silently dropped. Does not touch the
+    // server-tool/lifecycle channels). Known streams are handled above or are never
+    // drawn here; for any other stream, surface a thin one-line system bubble on a
+    // terminal phase (end/error) or a frame with no phase, so novel events are
+    // visible instead of silently dropped. Does not touch the
     // tool/lifecycle/assistant/thinking paths. (server-tool web_search/web_fetch
     // need no edit — existing friendly labels already cover them.)
     const KNOWN_STREAMS = new Set([
@@ -9536,6 +13111,13 @@ function onEvent(evt: unknown) {
       // through to the unknown-stream fallback below and spams a raw system bubble into
       // the chat transcript.
       "cache",
+      // FORK 2026-10-01 (bug-log.md [chat-divergence] cause 5): streams the chat must not
+      // paint raw. Without these entries their end frames fell through to the fallback below,
+      // and one exec on the embedded runner drew up to three raw rows beside its own tool row.
+      "call", // read at the top of this handler by feedCallTimelineAgentEvent (call timeline)
+      "item", // a tool call's lifecycle; on the embedded runner the `tool` events draw its row
+      "command_output", // an exec/bash call's output, beside that same tool row
+      "patch", // an apply_patch call's file summary, beside that same tool row
     ]);
     if (
       p?.stream &&
@@ -9583,13 +13165,52 @@ function findTabByMatch(tabsByKey: Map<string, Tab>, sessionKey: string): Tab | 
 
 // ─── API ───
 async function loadSessions(opts?: { loadChat?: boolean; forceChat?: boolean }) {
-  const res = await req("sessions.list", {}).catch(() => ({ sessions: [] }));
-  sessions = res.sessions ?? [];
-  // Stamp the snapshot so a row can never outrank newer client-side evidence (see run-state.ts).
-  sessionsFetchedAt = Date.now();
-  // Remember it so the NEXT page load can paint this rail on its first frame
-  // instead of sitting on "Loading..." for a second. See paintRightRailFromSnapshots.
-  scheduleSessionsSnapshot();
+  let railOperatorId = "";
+  try {
+    railOperatorId = sessionStorage.getItem(OPERATOR_ID_STORAGE_KEY) ?? "";
+  } catch {
+    railOperatorId = "";
+  }
+  let includeHive = false;
+  try {
+    includeHive = sessionStorage.getItem("tinker.includeHive") === "1";
+  } catch {
+    includeHive = false;
+  }
+  // FORK 2026-09-12 — see sessions-list-params.ts. Filters at their default are
+  // OMITTED (a bundle newer than the running gateway must stay valid against the
+  // gateway's older `additionalProperties:false` schema), and a failed call keeps
+  // the rows we already have instead of painting "the server has no sessions".
+  const askedAt = Date.now();
+  const outcome = await req(
+    "sessions.list",
+    buildSessionsListParams({
+      includeHive,
+      operatorId: railOperatorId,
+    }),
+  ).then(
+    (res: { sessions?: unknown[] }) => ({ ok: true as const, sessions: res?.sessions }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+  const settled = settleSessionsFetch(sessions, outcome);
+  if (settled.fetched) {
+    sessions = settled.sessions;
+    // Stamp the snapshot so a row can never outrank newer client-side evidence (see run-state.ts).
+    sessionsFetchedAt = Date.now();
+    sessionsListAskedAt = askedAt;
+    // Remember it so the NEXT page load can paint this rail on its first frame
+    // instead of sitting on "Loading..." for a second. See paintRightRailFromSnapshots.
+    scheduleSessionsSnapshot();
+    // B3 — the CONTEXT WINDOW panel's THIS SESSION counts are the viewed row's (A7).
+    repaintCacheCountersIfRowMoved();
+  } else {
+    // The rest of this function (title sync, panel paint, chat load) runs on the
+    // list we already had; nothing below may treat a failure as "no sessions".
+    console.error(
+      `[sessions] sessions.list failed — keeping ${sessions.length} cached row(s), snapshot untouched`,
+      outcome.ok ? "response carried no sessions[]" : outcome.error,
+    );
+  }
   // FORK 2026-05-24 (fourth pass) — bug task-mpjhzu3j-ma9ts: tab.title
   // sync only. The server's `listSessionsFromStore` lazy-mint (now
   // restored, drawing from the shared FORTUNE_COOKIES pool) is the
@@ -9640,6 +13261,10 @@ async function loadSessions(opts?: { loadChat?: boolean; forceChat?: boolean }) 
     if (sess.cookiePhraseUserSet) {
       tab.title = serverPhrase;
       tab.titleLocked = true;
+      // FORK 2026-09-15 — u7-tab-naming: the server does not record WHO named it. Keep the
+      // tab's own kind if it has one; otherwise resolve from shape (conservative: manual
+      // unless it wears the auto icon) — the user can always hit Auto-name to resume refreshes.
+      if (!tab.titleKind) tab.titleKind = resolveTitleKind(tab, AUTO_NAME_ICON);
       tabTitlesChanged = true;
       continue;
     }
@@ -9653,6 +13278,7 @@ async function loadSessions(opts?: { loadChat?: boolean; forceChat?: boolean }) 
     const tabNeedsSync = !tab.title || looksLikeLegacy2WordPhrase(tab.title) || isStaleFortune;
     if (tabNeedsSync && tab.title !== serverPhrase) {
       tab.title = serverPhrase;
+      tab.titleKind = "fortune";
       tabTitlesChanged = true;
     }
   }
@@ -9709,7 +13335,17 @@ async function loadSessions(opts?: { loadChat?: boolean; forceChat?: boolean }) 
         }
         // THE LATCH RELEASE: the session exists, so this tab is usable again. Without this a
         // single transient miss stranded the tab forever.
+        // FORK 2026-09-16 — and a tab coming BACK gets its transcript read if it has none: the
+        // boot prefetch ran once and, before today, skipped detached tabs, so a re-attach on a
+        // later list left the tab attached AND blank until it was switched away from and back.
+        const reattached = !tab.isAttached;
         tab.isAttached = true;
+        if (reattached && tab.id !== activeTabId) {
+          const cached = tabStates.get(tab.id);
+          if (!cached || cached.messages.length === 0) {
+            void hydrateTab(tab);
+          }
+        }
       } else if (sessionListIsTrustworthy && tab.isAttached) {
         // Session genuinely absent from a non-empty list — keep the sessionKey for
         // timeline/treemap lookups, only mark unattached so new messages can't be sent.
@@ -9956,13 +13592,17 @@ function renderHistoryStrip(): void {
  * invariant is therefore fully intact (a `null` still means "keep whatever is on screen"), but a
  * `null` now also leaves a VISIBLE state behind, which is the half that was missing.
  *
- * `maxAttempts` bounds the RETRY, never the data: `limit` stays 1000 and nothing here trims,
- * throttles or defers a payload. The FOREGROUND path (loadChat) passes no bound at all — it
- * retries until it wins or is superseded, which is precisely what "self-heals when the gateway
- * comes back" requires.
+ * `maxAttempts` bounds the RETRY, never the data: nothing here trims, throttles or defers a
+ * payload. The FOREGROUND path (loadChat) passes no bound at all — it retries until it wins or is
+ * superseded, which is precisely what "self-heals when the gateway comes back" requires.
+ *
+ * FORK 2026-09-23 (chat.history rehaul, plan task 8) — the caller hands the request (a cursor
+ * tail from history-paging.ts `tailRequestForPage`) instead of this hard-coding `limit: 1000`;
+ * the generation token and the backoff ladder are unchanged.
  */
 async function fetchChatHistoryResilient(
   sk: string,
+  request: Record<string, unknown>,
   opts?: { maxAttempts?: number },
 ): Promise<{ messages?: unknown[] } | null> {
   if (!sk) {
@@ -9974,10 +13614,7 @@ async function fetchChatHistoryResilient(
   let failures = 0;
   for (;;) {
     try {
-      const res = await req<{ messages?: unknown[] } | null>("chat.history", {
-        sessionKey: sk,
-        limit: 1000,
-      });
+      const res = await req<{ messages?: unknown[] } | null>("chat.history", request);
       if (historyFetchGen.get(sk) !== gen) {
         return null;
       }
@@ -10003,6 +13640,176 @@ async function fetchChatHistoryResilient(
       }
     }
   }
+}
+
+/** The tab's TabState, created (and registered) when it has none yet. */
+function tabStateFor(tabId: string): TabState {
+  let st = tabStates.get(tabId);
+  if (!st) {
+    st = freshTabState();
+    tabStates.set(tabId, st);
+  }
+  return st;
+}
+
+/**
+ * FORK 2026-09-23 (plan task 8) — a gateway that REJECTS a cursor read (non-transport failure) is
+ * one that predates cursors (its params schema is `additionalProperties: false`), e.g. after a
+ * rollback. Drop the window so the next read — the strip's retry, a switch, a reconnect — is
+ * legacy-shaped again instead of failing the same way forever.
+ *
+ * FORK 2026-09-24 (ruling R33) — and hand back the ONE legacy-shaped read to issue in its place
+ * right now (history-paging.ts legacyReadAfterRejectedCursor), as flushOutbox already did for its
+ * proof read; null when none is owed.
+ */
+function forgetWindowAfterFailedCursorRead(
+  st: TabState,
+  key: string,
+  request: Record<string, unknown>,
+  page: readonly unknown[],
+): { request: Record<string, unknown>; base: HistoryWindow } | null {
+  const retry = legacyReadAfterRejectedCursor(
+    request,
+    historyLoadState.get(key)?.kind === "failed",
+    page,
+  );
+  if (retry !== null) {
+    setTabWindow(st, key, emptyWindow());
+  }
+  return retry;
+}
+
+/**
+ * Fold a merged tail reply's cursor into the tab's window (R7: no cursor ⇒ window unchanged), and
+ * record on the page rows it carried the seq they hold under its epoch — the positions an older
+ * page is written above and a trim cuts at. A re-initialised window claims only what the page holds
+ * (history-paging.ts foldTailReply, fix round 1 C1).
+ */
+function foldTailReplyInto(
+  st: TabState,
+  key: string,
+  base: HistoryWindow,
+  reply: unknown,
+  page: readonly unknown[],
+): void {
+  const into = windowToFold(base, tabWindowOf(st, key));
+  const folded = foldTailReply(into, reply, page);
+  setTabWindow(st, key, folded);
+  // R36: the fold may have moved the count of rows before the page (the viewed tab's global
+  // counter is set by loadChat, which saveCurrentTabState copies over this).
+  st.currentTurnNumber = turnNumberOf(page, folded);
+  // R32: a fold that moved the window's lower edge above rows the page still shows owes a fill.
+  st.holeFill = holeFillAfterFold(page, into, folded) ?? st.holeFill;
+}
+
+/**
+ * FORK 2026-09-23 (plan task 8, ruling R12) — bound the VIEWED tab's memory after a merge: past
+ * WINDOW_MAX_ROWS rows, drop the rows whose seq is below lastSeq − WINDOW_MAX_ROWS — but only while
+ * the owner is pinned to the latest row (`chatFollow`), never under the history he is reading. Only
+ * rows that hold a seq under the window's epoch go, so scrolling up pages every one of them back in
+ * (history-paging.ts planTrim). Runs inside loadChat's merge, i.e. behind its one-writer gate.
+ *
+ * FORK 2026-09-23 (fix round 3, ruling R28.2) — and never while the tab's session has ANY live run,
+ * by the same answers the UI already gives: the tab strip's `tabsRunningNow()` (server run set,
+ * client and background runs, the pre-model window), the live writer, and the viewed-session busy
+ * check. loadChat's gate does not cover that on its own: a FORCED merge skips the busy check. A run
+ * that is still live can yet be joined, and the page's first live bubble then stamps `_watchedFrom`
+ * at the run's prompt — widening the watched window backward over rows a trim would already have
+ * dropped, which older pages then skip as watched, until a reload.
+ */
+function trimViewedPageIfPinned(st: TabState, key: string): void {
+  if (tabsRunningNow().has(activeTabId) || transcriptWriterLive() || viewedSessionBusy()) {
+    return;
+  }
+  const w = tabWindowOf(st, key);
+  const cutoff = viewedTrimCutoff(messages, w, chatFollow);
+  const plan = cutoff === null ? null : planTrim(messages, w, cutoff);
+  if (plan === null) {
+    return;
+  }
+  removeRowsInPlace(messages, plan.remove);
+  setTabWindow(st, key, plan.window);
+  // FORK 2026-09-24 (R32 residual) — rows of an older epoch stay (R12) and sit above what was just
+  // dropped: that gap is owed a fill, which waits while he is pinned and runs once he scrolls up.
+  st.holeFill = holeFillAfterTrim(st.holeFill, messages, plan.remove, plan.window);
+}
+
+/**
+ * Settle the client-side fields of rows just written from history, exactly once per write:
+ * the injection split (FORK 2026-05-09) and `_promptStartedAt` from the server timestamp
+ * (Feature A). Shared by the background merge and the older-page write.
+ */
+function settleHistoryRowFields(rows: readonly unknown[]): void {
+  for (const m of rows) {
+    reconstructInjectionFields(m as Record<string, unknown>);
+    const rec = m as Record<string, unknown>;
+    if (rec.role === "user" && !rec._promptStartedAt) {
+      const t2 = rec.createdAtMs ?? rec.timestamp;
+      if (typeof t2 === "number") {
+        rec._promptStartedAt = t2;
+      } else if (typeof t2 === "string") {
+        const parsed = Date.parse(t2 as string);
+        if (!isNaN(parsed)) {
+          rec._promptStartedAt = parsed;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * FORK 2026-10-02 — write `incoming` around the rows of a page that holds no server rows yet (live
+ * bubbles, client notes), by time, in place (history-paging.ts planHistoryAroundLooseRows). Returns
+ * how many rows were written; their render shape is settled once, as on any first write.
+ */
+function writeHistoryAroundLooseRows(page: unknown[], incoming: unknown[]): number {
+  const plan = planHistoryAroundLooseRows(page, incoming, DEFAULT_HISTORY_RECONCILE_DEPS);
+  const written = applyOlderPage(page, plan);
+  if (written.length > 0) {
+    normalizeHistoryRenderBlocks(written);
+  }
+  return written.length;
+}
+
+/**
+ * Write a chat.history payload into a BACKGROUND tab's saved page.
+ *
+ * FORK 2026-09-08 — the background tab's cached page is paper too (see loadChat's viewed-tab
+ * path): written once when blank, gap-filled by identity otherwise, never replaced.
+ * FORK 2026-09-23 (chat.history rehaul, plan task 8) — shared by loadChat's switched-away branch
+ * and hydrateTab. hydrateTab used to REPLACE the saved page with the payload, which only ever
+ * worked because every payload was the whole 1000-row tail; a cursor delta carries just the new
+ * rows, and replacing a page with it would erase everything before them.
+ */
+function mergeHistoryIntoSavedPage(ts: TabState, key: string, incoming: unknown[]): void {
+  // FORK 2026-10-02 — a saved page holding only live bubbles and notes (a busy session's tab after a
+  // reload) gets its history written AROUND them, not in their place: the fresh write below threw
+  // away the bubble its run was still writing. See history-paging.ts planHistoryAroundLooseRows.
+  if (ts.messages.length > 0 && !pageHoldsServerRows(ts.messages)) {
+    const written = writeHistoryAroundLooseRows(ts.messages, incoming);
+    if (written > 0) {
+      settleHistoryRowFields(ts.messages);
+      ts.currentTurnNumber = turnNumberOf(ts.messages, tabWindowOf(ts, key));
+    }
+    return;
+  }
+  const bg = reconcileHistoryIntoPage(ts.messages, incoming, DEFAULT_HISTORY_RECONCILE_DEPS);
+  if (bg.mode === "fresh") {
+    ts.messages = incoming;
+    normalizeHistoryRenderBlocks(ts.messages);
+    // The page was just written from history — possibly mid-run — so a saved cursor would point at
+    // bubbles that are gone. The next delta after a switch re-anchors on this page instead.
+    forgetSavedTextCursor(ts);
+  } else if (bg.added.length > 0) {
+    normalizeHistoryRenderBlocks(bg.added);
+    for (const row of bg.added) {
+      ts.messages.push(row);
+    }
+    forgetSavedTextCursor(ts);
+  }
+  // FORK 2026-05-09: reconstruct injection fields for background-tab history.
+  settleHistoryRowFields(ts.messages);
+  ts.currentTurnNumber = turnNumberOf(ts.messages, tabWindowOf(ts, key));
 }
 
 /**
@@ -10043,35 +13850,46 @@ async function loadChat(opts?: { force?: boolean }) {
   // it leaves a visible degraded strip up while it does.
   // `keyAtStart` rather than the live `sessionKey` global: everything below already reconciles
   // against `keyAtStart`, and this fetch is now designed to outlive a tab switch.
-  const res = await fetchChatHistoryResilient(keyAtStart);
+  // FORK 2026-09-23 (chat.history rehaul, plan task 8) — ask only for the rows after what this tab's
+  // page already holds (a seq-cursor tail), not the last 1000 every time. `base` is the window the
+  // reply folds into; the page is the one being continued. See history-paging.ts.
+  const tabAtStart = activeTabId;
+  const stAtStart = tabAtStart ? tabStateFor(tabAtStart) : freshTabState();
+  let { request, base } = tailRequestForPage(
+    keyAtStart,
+    tabWindowOf(stAtStart, keyAtStart),
+    messages,
+  );
+  let res = await fetchChatHistoryResilient(keyAtStart, request);
   if (res === null) {
-    return;
+    const retry = forgetWindowAfterFailedCursorRead(stAtStart, keyAtStart, request, messages);
+    if (retry === null) {
+      return;
+    }
+    ({ request, base } = retry);
+    res = await fetchChatHistoryResilient(keyAtStart, request);
+    if (res === null) {
+      return;
+    }
   }
   // FORK: If user switched tabs while loading, write to that tab's state, not globals
   if (!sessionKeyMatches(keyAtStart)) {
-    const targetTab = tabs.find((t) => sessionKeyMatches(keyAtStart, t.sessionKey ?? ""));
+    const targetTab =
+      tabs.find((t) => t.id === tabAtStart && sessionKeyMatches(keyAtStart, t.sessionKey ?? "")) ??
+      tabs.find((t) => sessionKeyMatches(keyAtStart, t.sessionKey ?? ""));
     if (targetTab) {
       const ts = tabStates.get(targetTab.id) ?? freshTabState();
-      ts.messages = res.messages ?? [];
-      normalizeHistoryRenderBlocks(ts.messages);
-      // FORK 2026-05-09: reconstruct injection fields for background-tab history.
-      // Also pull _promptStartedAt from server-side timestamp fields (Feature A).
-      for (const m of ts.messages) {
-        reconstructInjectionFields(m as Record<string, unknown>);
-        const rec = m as Record<string, unknown>;
-        if (rec.role === "user" && !rec._promptStartedAt) {
-          const ts2 = rec.createdAtMs ?? rec.timestamp;
-          if (typeof ts2 === "number") {
-            rec._promptStartedAt = ts2;
-          } else if (typeof ts2 === "string") {
-            const parsed2 = Date.parse(ts2 as string);
-            if (!isNaN(parsed2)) {
-              rec._promptStartedAt = parsed2;
-            }
-          }
+      // The window moves only for the tab the request was built from: its page is the one a delta
+      // continues. Any other tab on the same key is gap-filled by identity and keeps its window.
+      const ownRead = targetTab.id === tabAtStart;
+      if (replyFitsPage(request, res, ts.messages)) {
+        mergeHistoryIntoSavedPage(ts, keyAtStart, (res.messages ?? []) as unknown[]);
+        if (ownRead) {
+          foldTailReplyInto(ts, keyAtStart, base, res, ts.messages);
         }
+      } else if (ownRead) {
+        setTabWindow(ts, keyAtStart, emptyWindow());
       }
-      ts.currentTurnNumber = ts.messages.filter((m: unknown) => m.role === "user").length;
       tabStates.set(targetTab.id, ts);
     }
     return;
@@ -10104,11 +13922,56 @@ async function loadChat(opts?: { force?: boolean }) {
   // run it still lists is one whose narrator is gone, and treating that as "a live writer to protect"
   // is what wedged the tab.
   const forced = opts?.force === true;
+  // FORK 2026-09-04 — freshness-bounded. `streamRunId !== null` and `streamMsgUid !== null` were
+  // raw nullability checks cleared only by a terminal event, so a run that died without one vetoed
+  // every future merge on this tab — including forced ones. The transcript then froze at its last
+  // snapshot and a prompt sent afterwards never appeared, though the gateway had accepted it and
+  // the answer was on disk. See transcriptWriterIsLive: a cursor is not a writer.
   const liveWriter = forced
-    ? streamRunId !== null || streamMsgUid !== null || viewedSessionHasRestartingRun()
-    : streamRunId !== null || viewedSessionBusy();
+    ? transcriptWriterLive() || viewedSessionHasRestartingRun()
+    : transcriptWriterLive() || viewedSessionBusy();
   if (liveWriter) {
+    // The fetched rows are dropped, so the window must not move: the released reload asks again
+    // from the same seq and gets them (plan task 8).
     pendingHistoryReload = true;
+    // FORK 2026-10-02 (the architect: "When switching from Acmevision to its slave, parallel worker, the
+    // chat history does not load at all") — UNLESS the page holds no history at all: then the
+    // deferral never ended for a session that runs turn after turn (the parallel worker), and the
+    // tab showed only what streamed in since the last reload. The history is written AROUND the
+    // live rows by time (history-paging.ts planHistoryAroundLooseRows): nothing on the page moves,
+    // the live bubble and its cursor are untouched, and the run's own rows are skipped as watched.
+    // The full merge is still owed (the flag above) and runs when the session is quiet.
+    // FORK 2026-10-03 (reverted the same day) — a page that ALREADY holds history is NOT written
+    // here. Writing it by time (6a5fff8871b) drew copies the page then showed twice, measured by a
+    // replay of captured frames (fix/chat-live-dup review): the prompt's claude-cli import row is
+    // stamped at the turn start, outside the ±15 s the page's own prompt covers, so it was drawn
+    // again; the run's text came back from offset 0; an answer read between its import row and its
+    // final was drawn twice. The turns a tab missed while away come back from fillResetGap instead.
+    if (
+      !pageHoldsServerRows(messages) &&
+      replyFitsPage(request, res, messages) &&
+      writeHistoryAroundLooseRows(messages, (res.messages ?? []) as unknown[]) > 0
+    ) {
+      settleHistoryRowFields(messages);
+      if (tabAtStart && activeTabId === tabAtStart) {
+        foldTailReplyInto(tabStateFor(tabAtStart), keyAtStart, base, res, messages);
+      }
+      currentTurnNumber = turnNumberOf(
+        messages,
+        tabWindowOf(activeTabId ? tabStates.get(activeTabId) : undefined, keyAtStart),
+      );
+      updateChat();
+      updateResponseMap();
+    }
+    return;
+  }
+  // FORK 2026-09-23 (plan task 8) — a delta continues the page it was asked for. If that page was
+  // blanked during the await (/clear, a delete, a re-attach), writing the delta would show its last
+  // few rows as the whole transcript; drop it and let the next read be a legacy-shaped tail.
+  if (!replyFitsPage(request, res, messages)) {
+    if (tabAtStart && activeTabId === tabAtStart) {
+      setTabWindow(tabStateFor(tabAtStart), keyAtStart, emptyWindow());
+    }
     return;
   }
   // FORK 2026-08-28 — AND THE DEBT IS DISCHARGED HERE, by the call that actually performs the merge.
@@ -10119,96 +13982,98 @@ async function loadChat(opts?: { force?: boolean }) {
   // "user switched tabs during the await" case already returned above, so this line is only reached
   // when the fetched transcript IS the viewed session's.
   pendingHistoryReload = false;
+  // Every cursor is dropped here, text and thinking alike: the page may be about to gain rows, and
+  // the next write of any run re-anchors on the page as it then stands (live-continuation.ts), so
+  // a run whose start the merge just wrote is continued, not written again.
   streamMsgUid = null;
   lastDeltaLen = 0;
+  lastDeltaText = "";
   lastDeltaAt = 0;
+  resetReasoningCursors();
   const incoming = (res.messages ?? []) as unknown[];
-  const incomingText = new Set(
-    (incoming as Record<string, unknown>[])
-      .map((m) => assistantMsgText(m))
-      .filter((t) => t.length > 0),
-  );
   // FORK 2026-08-16 — settle the durable outbox against what the server actually has. This is the
   // only place delivery can be PROVEN for a prompt whose chat.send never returned an answer (the
   // socket died mid-flight, or the page reloaded before the promise settled): if the transcript
-  // contains it, it was delivered and its client-side copy must NOT be preserved next to the
-  // server's own — that would show the prompt twice. Anything absent stays in the outbox.
+  // contains it, it was delivered and its client-side copy stops advertising itself as undelivered.
   const deliveredIds = reconcileOutboxAgainst(keyAtStart, incoming);
-  const preserved: AnchoredMsg[] = [];
-  for (const m of messages) {
-    if (!isClientOnlyBubble(m)) {
-      continue;
+  for (const m of messages as Record<string, unknown>[]) {
+    if (typeof m._clientMsgId === "string" && deliveredIds.has(m._clientMsgId)) {
+      // prompt-queue.md U2 — the keyed transcript row is recorded as a FACT on the bubble; its
+      // derived state leaves the browser-only lane, so it draws nothing and is not client-only.
+      notePromptFacts(m, PROVEN_PROMPT_FACTS);
     }
-    const rec = m as Record<string, unknown>;
-    if (
-      rec._undelivered &&
-      typeof rec._clientMsgId === "string" &&
-      deliveredIds.has(rec._clientMsgId)
-    ) {
-      continue;
-    }
-    // A bubble the SERVER also has is not client-only in practice (a frozen thinking block that
-    // history replays, a subagent answer folded into the transcript); preserving it too would
-    // double it on every reconnect, forever.
-    const t = assistantMsgText(m as Record<string, unknown>);
-    if (t.length > 0 && incomingText.has(t)) {
-      continue;
-    }
-    // FORK 2026-09-02 — STRIP THE STREAMING MARKS AS THE BUBBLE CROSSES THE RELOAD. This loop only
-    // runs once `liveWriter` has been ruled out above, so nothing is streaming and a surviving
-    // `_temporary` is stale by definition. Carrying it across was the ROOT of the reasoning group
-    // that never collapsed: `_isReasoning` is in CLIENT_ONLY_FLAGS and `_temporary` is not, so a
-    // live reasoning bubble came through `messages = incoming` intact — while the very same
-    // assignment destroyed the `_runId` that `ownsTempMsg` and the frozen-reasoning loop match on.
-    // The flag then had no owner left in the session and pinned its whole run to `isStreaming`.
-    // Freeze it exactly the way turn-end does (drop `_temporary`, keep `_isReasoning`), so the text
-    // stays on screen and only its PRESENTATION is settled — the 2026-08-05 law, unchanged.
-    if (rec._temporary) {
-      delete rec._temporary;
-      rec._reasoningFrozen = true;
-    }
-    preserved.push({ m, turn: turnAnchorOf(messages, m) });
   }
-  // FORK 2026-08-30 — THE HYPOTHESIS, MADE MEASURABLE. `_runId` is a client-only stamp that lives
-  // on no server row and is not in msg-order's CLIENT_ONLY_FLAGS, so this assignment destroys every
-  // one of them. That is harmless between turns and fatal BETWEEN THE TWO FINALS OF ONE RUN: the
-  // second final then finds no bubbles for its run, skips the supersede rule entirely, and is
-  // handed to the whole-body guard that cannot match a multi-bubble turn. If the next reproduction
-  // shows a `history:replace` line with `droppedRunStamps > 0` sitting between two `final:decision`
-  // lines carrying the SAME runId, that is the bug, named — and it explains why the long-lived tab
-  // duplicates while a freshly cloned one (which never had stamps to lose) does not.
-  const droppedStamps = (messages as Record<string, unknown>[]).filter(
-    (m) => typeof m._runId === "string" && m._runId,
-  );
-  dupProv("history:replace", {
-    droppedRunStamps: droppedStamps.length,
-    droppedRunIds: Array.from(new Set(droppedStamps.map((m) => m._runId as string))).slice(0, 4),
-    outgoing: messages.length,
+  // FORK 2026-09-08 (the architect: "a plain 'use it as paper, write it and never go back' … any funky
+  // dedup algorithm or similar should be gone") — THE PAGE IS PAPER.
+  //
+  // This used to be `messages = incoming`: throw the page away and rebuild it from server history
+  // on every reconnect, tab switch and turn end, then patch what that destroyed — a "preserve" loop
+  // for client-only bubbles keyed on text, reinsertByTurnAnchor to put the survivors back, a
+  // whole-array re-normalisation, and dedup guards at three more sites. That rewrite is what
+  // manufactured the months-long "double answers" (verified 2026-09-08 on the real payload): a
+  // server thinking row was normalised into a client-flagged copy, the next rewrite took the copy
+  // for something the server lacked, preserved it, and normalised the fresh server row into another
+  // copy. +1 per merge, forever. No guard could see it because every guard compared text, and the
+  // copies were thinking blocks.
+  //
+  // Now: a blank page is written ONCE from history; a page with content is GAP-FILLED by identity
+  // (transcript id / import id), with rows the client watched being written skipped by their time
+  // window and rows older than the page skipped outright. Nothing is replaced, moved, re-normalised
+  // or compared for similarity. The rule and its tests live in history-reconcile.ts.
+  const reconciled = reconcileHistoryIntoPage(messages, incoming, DEFAULT_HISTORY_RECONCILE_DEPS);
+  const wroteFreshPage = reconciled.mode === "fresh";
+  dupProv("history:reconcile", {
+    mode: reconciled.mode,
+    page: messages.length,
     incoming: incoming.length,
-    preserved: preserved.length,
+    added: reconciled.added.length,
+    skippedKnown: reconciled.skippedKnown,
+    skippedWatched: reconciled.skippedWatched,
+    skippedBehind: reconciled.skippedBehind,
+    skippedUnplaceable: reconciled.skippedUnplaceable,
     streamRunId,
     pendingHistoryReload,
   });
-  messages = incoming;
-  if (preserved.length > 0) {
-    reinsertByTurnAnchor(messages, preserved);
+  lastHistoryReconcile = {
+    mode: reconciled.mode,
+    added: reconciled.added.length,
+    skippedWatched: reconciled.skippedWatched,
+  };
+  if (wroteFreshPage) {
+    messages = incoming;
+    // FORK 2026-08-23 — put back every client-only row this browser has ever written for this
+    // session: after a reload there is no memory, and the server has no copy of a measurement it
+    // never stored. Idempotent by `_clientRowId`. Only meaningful on a fresh page — a page with
+    // content still holds its own rows, because nothing below ever removes one.
+    const restorable = missingClientRows(keyAtStart, messages);
+    if (restorable.length > 0) {
+      reinsertByTurnAnchor(
+        messages,
+        restorable.map((r) => ({ m: r.row, turn: r.turn })),
+      );
+    }
+    // Rendering shape is settled ONCE, as the row is first written to the page — never again.
+    normalizeHistoryRenderBlocks(messages);
+  } else if (reconciled.added.length > 0) {
+    // A genuine gap: turns that happened while this client was not listening. Appended in the
+    // order learned about, which is the only order paper has. Settled once, like any new row.
+    normalizeHistoryRenderBlocks(reconciled.added);
+    for (const row of reconciled.added) {
+      messages.push(row);
+    }
+  }
+  // The rows are on the page now, so the window may say so (plan task 8). Only for the tab the read
+  // was built from — another tab on the same key was gap-filled but its page is not the one a
+  // delta continues.
+  if (tabAtStart && activeTabId === tabAtStart) {
+    foldTailReplyInto(tabStateFor(tabAtStart), keyAtStart, base, res, messages);
+    trimViewedPageIfPinned(tabStateFor(tabAtStart), keyAtStart);
   }
   // FORK 2026-08-16 — a prompt lost while the PAGE was closed has no bubble to preserve: the only
   // record of it is the outbox on disk. Put it back on screen, or the recovery would be invisible —
-  // and an invisible recovery is indistinguishable from the bug being reported.
+  // and an invisible recovery is indistinguishable from the bug being reported. Idempotent by
+  // `_clientMsgId`, so on a page that already shows the bubble this adds nothing.
   reinjectOutboxBubbles(keyAtStart);
-  // FORK 2026-08-23 — put back every client-only row this browser has ever written for this
-  // session. The loop above preserves what is IN MEMORY; after a reload there is no memory, and
-  // the server has no copy of a measurement it never stored. Idempotent by `_clientRowId`, so
-  // the reconnect case (rows already preserved above) adds nothing.
-  const restorable = missingClientRows(keyAtStart, messages);
-  if (restorable.length > 0) {
-    reinsertByTurnAnchor(
-      messages,
-      restorable.map((r) => ({ m: r.row, turn: r.turn })),
-    );
-  }
-  normalizeHistoryRenderBlocks(messages);
   // FORK 2026-08-11 — server history carries no runId for answer bubbles, so the
   // fractal anchor has to be re-derived from the plugin's ledger. Fire-and-forget:
   // it repaints itself when it lands, and a failure must never block the transcript.
@@ -10233,37 +14098,425 @@ async function loadChat(opts?: { force?: boolean }) {
       }
     }
   }
-  // Sync turn counter from loaded history
-  const userMsgCount = messages.filter((m: unknown) => m.role === "user").length;
-  currentTurnNumber = userMsgCount;
+  // Sync turn counter from loaded history — from the transcript's start, not the page's (R36).
+  currentTurnNumber = turnNumberOf(
+    messages,
+    tabWindowOf(activeTabId ? tabStates.get(activeTabId) : undefined, keyAtStart),
+  );
   // Restore persisted error messages (survive refresh)
-  const storedErrors = loadPersistedErrors(sessionKey);
-  if (storedErrors.length) {
-    // FORK 2026-08-05 — was `messages.splice(lastAssistantIdx, 0, ...storedErrors)`. A CLIENT-side
-    // note carries no position in server history, so inserting it before the LAST assistant message
-    // moved a turn-3 warning above turn-30's answer on EVERY reload, forever — and `⏹ Stopped.` is
-    // never retired, so it re-spliced for the life of the session. Append: the note is being written
-    // to the screen NOW, and the tail is the only position that cannot push it above something the
-    // user has already read.
-    // The live client-only bubbles are now PRESERVED across the reload (above), so push only the
-    // persisted copies the merged list does not already show, or every reconnect would double them.
-    const onScreenNotes = new Set(
-      (messages as Record<string, unknown>[])
-        .filter((m) => m._isError || m._isWarning || m._isOverloadRetry)
-        .map((m) => assistantMsgText(m)),
-    );
+  // FORK 2026-08-05 — was `messages.splice(lastAssistantIdx, 0, ...storedErrors)`. A CLIENT-side
+  // note carries no position in server history, so inserting it before the LAST assistant message
+  // moved a turn-3 warning above turn-30's answer on EVERY reload, forever. Append: the note is
+  // being written to the screen NOW, and the tail is the only position that cannot push it above
+  // something the user has already read.
+  // FORK 2026-09-08 — only on a FRESH page. A page with content still holds every note it ever
+  // showed (nothing above removes a row any more), so the text-keyed "already on screen" check that
+  // used to sit here is gone with the rest of the dedup machinery.
+  if (wroteFreshPage) {
+    const storedErrors = loadPersistedErrors(sessionKey);
     for (const se of storedErrors as Record<string, unknown>[]) {
-      if (!onScreenNotes.has(assistantMsgText(se))) {
-        messages.push(se);
-      }
+      messages.push(se);
     }
   }
   updateChat();
   scrollChat();
   updateResponseMap();
+  // FORK 2026-10-02 — then, with loadOlderPage's one in-flight slot free again, keep looking for a
+  // remembered row this merge did not bring (a reload reads only the last 100 rows).
+  void fillHoleIfOwed().then(() => continuePendingViewport());
 
   // Tab titles are persisted in localStorage — no regeneration on load.
   // Title generation happens in send() on first prompt and every N prompts.
+}
+
+/**
+ * FORK 2026-09-23 (chat.history rehaul, plan task 8) — page OLDER rows in when the owner scrolls
+ * to the top of the chat. The tab's window asks `beforeSeq` its first row; the reply is written
+ * ABOVE the page by identity (history-paging.ts planOlderPage — known rows are anchors, never
+ * re-added or moved) and the scroll position is anchored, so what he was reading stays put.
+ *
+ * A no-op while the window has no epoch (the gateway before its restart, ruling R7) or has reached
+ * the transcript's start. Same one-writer gate as loadChat, checked before the read and again
+ * before the write: nothing is written while a run is live on this tab — the next scroll gesture
+ * simply asks again. A reply to a stale window (the tab switched, a reset, a trim or a tail read
+ * moved it) is dropped, never written. The outbox is NOT reconciled against an older page: its
+ * text proof is only valid near the transcript's tail.
+ */
+let olderPageInFlightFor: string | null = null;
+/** Per session key: when its last older-page read failed (ruling R33 backoff). */
+const olderPageFailedAt = new Map<string, number>();
+/**
+ * The written page's outcome, or null when nothing was asked or the reply was not applied. `fill`:
+ * this page is a hole fill's (fillHoleIfOwed) — it also asks back, in the same read, the rows a
+ * pinned trim took while the plan waited (history-paging.ts holeFillRequest).
+ */
+async function loadOlderPage(fill?: HoleFill): Promise<OlderReplyOutcome | null> {
+  const tabId = activeTabId;
+  const key = sessionKey;
+  if (
+    !tabId ||
+    !key ||
+    olderPageInFlightFor === tabId ||
+    olderPageBackedOff(olderPageFailedAt.get(key), Date.now())
+  ) {
+    return null;
+  }
+  const w = tabWindowOf(tabStates.get(tabId), key);
+  const request = fill ? holeFillRequest(key, w, fill) : buildOlderRequest(key, w);
+  // A page with no server rows was blanked while its window lingered: nothing above it to page.
+  if (
+    request === null ||
+    !pageHoldsServerRows(messages) ||
+    transcriptWriterLive() ||
+    viewedSessionBusy()
+  ) {
+    return null;
+  }
+  olderPageInFlightFor = tabId;
+  let res: unknown;
+  try {
+    res = await req("chat.history", request);
+    olderPageFailedAt.delete(key);
+  } catch {
+    // Nothing written; the next gesture asks again once the backoff is over (R33).
+    olderPageFailedAt.set(key, Date.now());
+    return null;
+  } finally {
+    olderPageInFlightFor = null;
+  }
+  const st = tabStates.get(tabId);
+  const now = tabWindowOf(st, key);
+  if (
+    !st ||
+    activeTabId !== tabId ||
+    sessionKey !== key ||
+    now.epoch !== w.epoch ||
+    now.firstSeq !== w.firstSeq ||
+    transcriptWriterLive() ||
+    viewedSessionBusy()
+  ) {
+    return null;
+  }
+  // Planned by identity, with the watched-run skip the tail merge applies (history-paging.ts
+  // applyOlderReply → planOlderPage), written above the page, stamped, window widened backward.
+  const outcome = applyOlderReply(messages, now, res);
+  if (outcome.kind === "none") {
+    return outcome;
+  }
+  if (outcome.kind === "reset") {
+    // The window's epoch is gone (a rewrite, a branch switch, a restart): the reply is a TAIL, not
+    // an older page. Drop the window; loadChat merges a fresh tail by identity and re-seeds it.
+    setTabWindow(st, key, outcome.window);
+    void loadChat();
+    return outcome;
+  }
+  const written = outcome.written;
+  normalizeHistoryRenderBlocks(written);
+  settleHistoryRowFields(written);
+  setTabWindow(st, key, outcome.window);
+  if (written.length === 0) {
+    return outcome;
+  }
+  currentTurnNumber = turnNumberOf(messages, outcome.window);
+  // Measured BEFORE the repaint. Anchored on the first server row the owner can see, because rows
+  // paged back into a HOLE land below it, where "grow scrollTop by the added height" would push his
+  // view down (fix round 1, I1). The height delta is only the fallback when no such row is found.
+  const el = $("messages");
+  const anchor = el ? captureScrollAnchor(el) : null;
+  const oldHeight = el ? el.scrollHeight : 0;
+  const oldTop = el ? el.scrollTop : 0;
+  // FORK 2026-10-02 — updateChat now places the pane itself: a remembered row being looked for
+  // (the page just brought it back), the bottom while following (a hole fill used to restore its
+  // anchor even then, leaving the latest row off screen after a reconnect), or the first visible
+  // row kept in place. Only a pixel-positioned paint still needs this page's own correction.
+  if (updateChat(true) === "pixel" && el && !restoreScrollAnchor(el, anchor)) {
+    setChatScrollTop(el, oldTop + (el.scrollHeight - oldHeight));
+  }
+  updateResponseMap();
+  return outcome;
+}
+
+/** The tab's paging into its session's reset archives; the start for another session's key. */
+function resetPagingOf(st: TabState | undefined, key: string): ResetPaging {
+  return st && st.resetPagingKey !== null && sessionKeyMatches(key, st.resetPagingKey)
+    ? st.resetPaging
+    : RESET_PAGING_START;
+}
+
+let resetArchiveInFlightFor: string | null = null;
+/** Per session key: when its last reset-archive read failed (the older-page R33 backoff, reused). */
+const resetArchiveFailedAt = new Map<string, number>();
+
+/**
+ * FORK 2026-10-02 (the architect: "The parallel worker's chat history seems to not be loading") — page the
+ * next RESET ARCHIVE in above the page: the session's transcript before its most recent reset not
+ * yet shown (history-paging.ts resetArchiveRequest / planResetArchivePage), under a divider. Asked
+ * once the live transcript has no older page left (pageOlderRows). Archives are older than every
+ * row a live run writes, so no live-writer gate applies; one read in flight, the R33 backoff after a
+ * failure (a gateway that predates archives rejects the param). The scroll stays where he reads:
+ * updateChat keeps the first row on screen in place.
+ */
+async function loadResetArchivePage(): Promise<boolean> {
+  const tabId = activeTabId;
+  const key = sessionKey;
+  const st = tabId ? tabStates.get(tabId) : undefined;
+  if (!tabId || !key || !st || resetArchiveInFlightFor === tabId) {
+    return false;
+  }
+  const paging = resetPagingOf(st, key);
+  // FORK 2026-10-03 — the oldest server row on the page: an archive only adds what is older.
+  const request = resetArchiveRequest(key, paging, oldestServerRowTs(messages));
+  // FORK 2026-10-02 — no "the page holds server rows" gate (loadOlderPage's): right after a reset
+  // the live transcript is EMPTY, and that is exactly when the archives are all there is.
+  if (request === null || olderPageBackedOff(resetArchiveFailedAt.get(key), Date.now())) {
+    return false;
+  }
+  resetArchiveInFlightFor = tabId;
+  const pane = $("messages");
+  pane?.classList.add("archive-loading");
+  let res: unknown;
+  try {
+    // An archive's first read merges its claude-cli transcripts: measured 10-60 s on the loaded box.
+    res = await req("chat.history", request, { timeoutMs: RESET_ARCHIVE_TIMEOUT_MS });
+    resetArchiveFailedAt.delete(key);
+  } catch {
+    resetArchiveFailedAt.set(key, Date.now());
+    return false;
+  } finally {
+    resetArchiveInFlightFor = null;
+    pane?.classList.remove("archive-loading");
+  }
+  if (activeTabId !== tabId || sessionKey !== key || resetPagingOf(st, key) !== paging) {
+    return false; // the tab, its session or its paging moved during the read
+  }
+  const meta = archiveOf(res);
+  const rows = ((res as { messages?: unknown[] } | null)?.messages ?? []) as unknown[];
+  const floorUsed = typeof request.archiveFloor === "number" ? request.archiveFloor : null;
+  st.resetPaging =
+    meta === null
+      ? { ...paging, done: true, current: null, offset: 0, floor: null }
+      : nextResetPaging(paging, meta, rows.length, floorUsed);
+  st.resetPagingKey = key;
+  if (meta === null || meta.resetAt === null) {
+    return false;
+  }
+  const written = applyResetArchivePage(
+    messages,
+    planResetArchivePage(messages, rows, meta.resetAt, DEFAULT_HISTORY_RECONCILE_DEPS, meta.kind),
+  );
+  if (written.length > 0) {
+    normalizeHistoryRenderBlocks(written);
+    settleHistoryRowFields(written);
+  }
+  updateChat(true);
+  updateResponseMap();
+  // Still at the top (a short page, or an archive of a few rows): keep going, as a scroll would.
+  const el = $("messages");
+  if (el && el.scrollTop <= OLDER_PAGE_TRIGGER_PX) {
+    void loadResetArchivePage();
+  }
+  return true;
+}
+
+/** An archive read may merge a day of claude-cli turns on a loaded gateway. */
+const RESET_ARCHIVE_TIMEOUT_MS = 180_000;
+
+let resetGapInFlightFor: string | null = null;
+/** Reads one gap fill may make: the worker resets every turn, so a day away is ~10 archives. */
+const RESET_GAP_MAX_READS = 60;
+
+/**
+ * FORK 2026-10-03 (the architect, 4th report: "In the 'Parallel worker' tab I still cannot see its full
+ * history ... make sure the bug that deleted it is fixed") — a tab in the background never receives
+ * its session's live turns, and the worker's session is reset before every turn, so each turn that
+ * ran while he watched another tab went straight into an archive. Coming back, the page held the
+ * turns it had watched and the one running now; the ones between were in archives NEWER than rows
+ * it kept, and scrolling up pages only what is older than everything: they never came back, and
+ * read as deleted. Entering a tab now reads its archives newest first and writes each where it falls
+ * in time (history-paging.ts planResetArchivePage), within the span the page already holds
+ * (inResetGap), until one adds nothing the page lacks (resetGapStep). Without a floor, so the
+ * gateway serves reset archives only, whole. The scroll stays where he reads (updateChat).
+ */
+async function fillResetGap(): Promise<void> {
+  const tabId = activeTabId;
+  const key = sessionKey;
+  if (!tabId || !key || resetGapInFlightFor === tabId) {
+    return;
+  }
+  const oldest = oldestServerRowTs(messages);
+  if (oldest === null) {
+    return; // a page with no history has no gap: scrolling up pages it in
+  }
+  resetGapInFlightFor = tabId;
+  try {
+    let paging: ResetPaging = RESET_PAGING_START;
+    for (let reads = 0; reads < RESET_GAP_MAX_READS; reads++) {
+      const request = resetArchiveRequest(key, paging);
+      if (request === null) {
+        return;
+      }
+      let res: unknown;
+      try {
+        res = await req("chat.history", request, { timeoutMs: RESET_ARCHIVE_TIMEOUT_MS });
+      } catch {
+        return; // a gateway before archive paging, or a failed read: scrolling up still pages
+      }
+      if (activeTabId !== tabId || sessionKey !== key) {
+        return;
+      }
+      const meta = archiveOf(res);
+      if (meta === null || !inResetGap(meta, oldest)) {
+        return;
+      }
+      const rows = ((res as { messages?: unknown[] } | null)?.messages ?? []) as unknown[];
+      const plan = planResetArchivePage(
+        messages,
+        rows,
+        meta.resetAt as number,
+        DEFAULT_HISTORY_RECONCILE_DEPS,
+        meta.kind,
+      );
+      const written = applyResetArchivePage(messages, plan);
+      // Every write onto a page is recorded, so a copy can be traced to the write that drew it.
+      dupProv("history:reset-gap", {
+        sessionKey: key,
+        resetAt: meta.resetAt,
+        kind: meta.kind ?? "reset",
+        incoming: rows.length,
+        added: written.length,
+        skippedKnown: plan.skippedKnown,
+        skippedWatched: plan.skippedWatched,
+        skippedUnplaceable: plan.skippedUnplaceable,
+        divider: plan.divider !== null,
+      });
+      if (written.length > 0) {
+        normalizeHistoryRenderBlocks(written);
+        settleHistoryRowFields(written);
+      }
+      if (written.length > 0 || plan.divider !== null) {
+        updateChat(true);
+        updateResponseMap();
+      }
+      if (resetGapStep(meta, written.length) === "stop") {
+        return;
+      }
+      paging = nextResetPaging(paging, meta, rows.length);
+    }
+  } finally {
+    resetGapInFlightFor = null;
+  }
+}
+
+/**
+ * FORK 2026-10-03 — the divider's words, by what the archive above it was: a reset of the session,
+ * a transcript the tab left (Main's `/new`), or an earlier copy (a repair backup or a compaction
+ * checkpoint). The date shows when it is not today: these reach back weeks.
+ */
+function resetDividerLabel(resetAt: unknown, kind: unknown): string {
+  let at = "";
+  if (typeof resetAt === "number" && Number.isFinite(resetAt)) {
+    const d = new Date(resetAt);
+    const today = new Date().toDateString() === d.toDateString();
+    const day = `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}`;
+    at = today ? formatHHMMSS(resetAt) : `${day} ${formatHHMMSS(resetAt)}`;
+  }
+  if (kind === "earlier") {
+    return `↺ Earlier session${at ? `, last active ${at}` : ""} · the turns above ran in it`;
+  }
+  if (kind === "copy") {
+    return `↺ Older turns, from a saved copy of the transcript${at ? ` (${at})` : ""}`;
+  }
+  return `↺ Session reset${at ? ` at ${at}` : ""} · the turns above ran before it`;
+}
+
+/**
+ * A gesture reached the top: the live transcript's next older page while it has one, then the
+ * session's reset archives, newest first.
+ */
+function pageOlderRows(): void {
+  const st = activeTabId ? tabStates.get(activeTabId) : undefined;
+  if (sessionKey && buildOlderRequest(sessionKey, tabWindowOf(st, sessionKey)) === null) {
+    void loadResetArchivePage();
+  } else {
+    void loadOlderPage();
+  }
+}
+
+/**
+ * FORK 2026-09-24 (final whole-branch review item 3, ruling R32) — fill the hole a fold left in the
+ * VIEWED tab's page (history-paging.ts holeFillAfterFold) without waiting for a scroll to the top:
+ * older pages from the window's lower edge, one at a time through loadOlderPage (its in-flight slot
+ * and its live-writer gates, so nothing is written under a live run), until the hole closes or
+ * HOLE_FILL_MAX_PAGES are spent. A gated or failed page keeps the plan for the next loadChat; a
+ * background tab's plan waits until the tab is viewed. Rows land in the hole by the older page's
+ * identity/time slotting, with the scroll anchored, exactly as a scroll-to-top page would.
+ *
+ * FORK 2026-09-24 (R32 residual) — while the owner is pinned and the viewed trim would drop every
+ * row a fill page brings back (holeFillWaitsForTrim), the plan WAITS: kept, not discarded —
+ * discarding it stranded a restart's cross-epoch hole under the older epoch's untrimmable rows. It
+ * resumes on his first gesture off the bottom (bindChatFollowListener) or the next loadChat after
+ * it; its pages ask back the rows the trim took meanwhile (holeFillRequest), still at most
+ * HOLE_FILL_MAX_PAGES reads, one in flight, behind loadOlderPage's gates and R33 backoff.
+ */
+async function fillHoleIfOwed(): Promise<void> {
+  const tabId = activeTabId;
+  const key = sessionKey;
+  const st = tabId ? tabStates.get(tabId) : undefined;
+  while (st?.holeFill && activeTabId === tabId && sessionKey === key && key) {
+    const w = tabWindowOf(st, key);
+    if (!holeFillStillOwed(st.holeFill, messages, w)) {
+      st.holeFill = null;
+      return;
+    }
+    if (holeFillWaitsForTrim(w, viewedTrimCutoff(messages, w, chatFollow))) {
+      return; // kept for the gesture that unpins the tab
+    }
+    const plan = st.holeFill;
+    const outcome = await loadOlderPage(plan);
+    if (outcome === null) {
+      return;
+    }
+    // A fold (or a trim lowering its floor) during the read may have replaced the plan; the new
+    // one is not charged for this page.
+    if (st.holeFill === plan) {
+      st.holeFill = nextHoleFill(plan, outcome);
+    }
+  }
+}
+
+type ScrollAnchor = { id: string; part: string; offset: number };
+
+/** The first server row (`data-oc-id`, see ocIdAttrs) visible in the pane, and where it sits. */
+function captureScrollAnchor(el: HTMLElement): ScrollAnchor | null {
+  const top = el.getBoundingClientRect().top;
+  for (const node of el.querySelectorAll<HTMLElement>("[data-oc-id]")) {
+    const r = node.getBoundingClientRect();
+    if (r.height > 0 && r.bottom > top && rowShown(node)) {
+      return {
+        id: node.dataset.ocId ?? "",
+        part: node.dataset.ocPart ?? "",
+        offset: r.top - top,
+      };
+    }
+  }
+  return null;
+}
+
+/** Scroll so the anchored row sits where it was. False when it is not in the repainted pane. */
+function restoreScrollAnchor(el: HTMLElement, a: ScrollAnchor | null): boolean {
+  if (!a || !a.id) {
+    return false;
+  }
+  const sel = `[data-oc-id="${CSS.escape(a.id)}"][data-oc-part="${CSS.escape(a.part)}"]`;
+  const node = el.querySelector<HTMLElement>(sel);
+  // A row folded away (inside a closed fold) cannot hold a position. It does not always measure
+  // zero (a closed <details> body still reports a box in Chromium 147), hence rowShown too.
+  if (!node || node.getBoundingClientRect().height <= 0 || !rowShown(node)) {
+    return false;
+  }
+  const now = node.getBoundingClientRect().top - el.getBoundingClientRect().top;
+  setChatScrollTop(el, el.scrollTop + (now - a.offset));
+  return true;
 }
 
 // ─── FORK 2026-08-28: the EEG backfill is no longer a passenger of the chat load (R1) ─────────
@@ -10288,7 +14541,15 @@ function backfillEegFromAnatomy(eegSk: string): void {
   if (!eegSk) {
     return;
   }
-  if (sessionKeyMatches(eegSk) && (viewedSessionBusy() || streamRunId !== null)) {
+  // FORK 2026-10-01 (finding 11): gate on the TARGET session's own liveness, not the viewed one.
+  // This function fires from loadChat on every tab switch and every ws reconnect, for other keys
+  // too, and it ends in `store.clear()`. The old guard only covered the session on screen, so a
+  // BACKGROUND tab that was mid-turn got its live samples and all its tool samples wiped and
+  // replaced with pointlike anatomy rows. The comment below already stated the intent — "a
+  // reconnect during a stream would wipe samples the effort feed is still writing" — the guard
+  // just did not reach the non-viewed case. `streamRunId` stays scoped to the viewed tab: it is
+  // that tab's own cursor and means nothing about anyone else's.
+  if (sessionIsBusy(eegSk) || (sessionKeyMatches(eegSk) && streamRunId !== null)) {
     return;
   }
   if (eegBackfillInFlight.has(eegSk)) {
@@ -10615,6 +14876,95 @@ function backfillEegFromAnatomy(eegSk: string): void {
   }
 }
 
+// FORK 2026-09-16 (the architect: "responses are not sent to the UI until I select the tab") — the
+// turn-end refresh for tabs he is NOT looking at. onEvent drops every chat delta/final for a
+// background session on purpose (a bubble must never land in the wrong chat), which left the
+// tab's cached transcript frozen until the on-switch chat.history returned — the ~5 s he waits
+// after clicking. A `final`/`error`/`aborted` for a background session now re-reads that tab's
+// history into ITS OWN TabState right away, so the answer is on screen the instant he switches.
+// One in-flight refresh per tab: a burst of finals (retries, subagent fan-in) costs one read.
+const backgroundRefreshInFlight = new Set<string>();
+function refreshBackgroundTabsFor(eventKey: unknown): void {
+  if (typeof eventKey !== "string" || !eventKey) {
+    return;
+  }
+  for (const tab of tabs) {
+    if (!tab.sessionKey || tab.id === activeTabId) {
+      continue;
+    }
+    if (!sessionKeyMatches(eventKey, tab.sessionKey)) {
+      continue;
+    }
+    if (backgroundRefreshInFlight.has(tab.id)) {
+      continue;
+    }
+    backgroundRefreshInFlight.add(tab.id);
+    void hydrateTab(tab, { force: true })
+      .catch(() => {
+        /* hydrateTab already fails soft; a background refresh must never surface */
+      })
+      .finally(() => {
+        backgroundRefreshInFlight.delete(tab.id);
+      });
+  }
+}
+
+/**
+ * FORK 2026-09-23 (chat.history rehaul, plan task 8, ruling R12) — bound the memory of tabs the
+ * owner is not looking at. Every 60 s, a background tab unviewed for BG_UNLOAD_MS with no live run
+ * (ruling R28.2: the tab strip's `tabsRunningNow()`, plus the tab's own stream cursor and send
+ * latch — the client run map alone missed server-side, background and pre-model runs)
+ * keeps only its newest BG_STUB_ROWS rows that hold a seq (history-paging.ts stubTrimCutoff /
+ * planTrim). Trimmed from memory is not deleted from the page: the window records hasMoreBefore,
+ * and scrolling up after switching back pages the rows in again. Rows with no seq under the
+ * window's epoch (client notes, live bubbles, imports, older epochs) are never dropped.
+ */
+function trimIdleBackgroundTabs(): void {
+  const now = Date.now();
+  // The tab strip's own "is this tab running" answer, taken once per tick (ruling R28.2).
+  const running = tabsRunningNow();
+  for (const tab of tabs) {
+    if (!tab.sessionKey || tab.id === activeTabId || backgroundRefreshInFlight.has(tab.id)) {
+      continue;
+    }
+    const st = tabStates.get(tab.id);
+    if (!st || st.messages.length <= BG_STUB_ROWS) {
+      continue;
+    }
+    const liveRun = running.has(tab.id) || st.streamRunId !== null || st.sending;
+    if (!backgroundTrimDue(now, st.lastViewedAt, liveRun)) {
+      continue;
+    }
+    // FORK 2026-10-02 — a tab left READING keeps its page: the stub would cut the very row it is
+    // to come back to (chat-viewport.ts backgroundStubAllowed; the viewed trim's own R12 rule).
+    if (!backgroundStubAllowed(st.viewport)) {
+      continue;
+    }
+    // FORK 2026-10-02 — reset-archive rows paged in from above go with the stub; scrolling to the
+    // top pages them in again from the newest reset (history-paging.ts applyResetArchivePage).
+    const archived = new Set(
+      st.messages.filter(
+        (m) => (m as { _resetArchiveAt?: unknown } | null)?._resetArchiveAt !== undefined,
+      ),
+    );
+    if (archived.size > 0) {
+      removeRowsInPlace(st.messages, archived);
+      st.resetPaging = RESET_PAGING_START;
+    }
+    const w = tabWindowOf(st, tab.sessionKey);
+    const cutoff = stubTrimCutoff(st.messages, w);
+    // R26: the stub also drops claude-cli imports above its first kept row.
+    const plan =
+      cutoff === null ? null : planTrim(st.messages, w, cutoff, { seqlessServerRows: true });
+    if (plan === null) {
+      continue;
+    }
+    removeRowsInPlace(st.messages, plan.remove);
+    setTabWindow(st, tab.sessionKey, plan.window);
+  }
+}
+setInterval(trimIdleBackgroundTabs, 60_000);
+
 // FORK 2026-06-04 — bug task-mppceqsu-24yex (Tab context loads only on switching tabs).
 // Proactively hydrate a background/restored tab's transcript so its content is present
 // BEFORE the user switches to it. Previously every non-active tab was born empty
@@ -10623,14 +14973,28 @@ function backfillEegFromAnatomy(eegSk: string): void {
 // straight into the tab's own TabState — never the active/global `messages` — mirroring
 // loadChat's background-tab write path (lines ~3380-3404). The on-switch loadChat()
 // remains the freshness refresh; this just removes the empty-until-clicked gap.
-async function hydrateTab(tab: Tab): Promise<void> {
-  if (!tab.sessionKey || !tab.isAttached || tab.id === activeTabId) {
+//
+// FORK 2026-09-16 (the architect: "sometimes I switch to a tab and it is just empty … sometimes it never
+// gets restored") — the `!tab.isAttached` guard is GONE. "Attached" means the session is in the
+// current sessions.list; it was meant to gate SENDING (no session to send to). But it also gated
+// every read of the transcript: this prefetch, and the on-switch loadChat(). A tab whose session
+// dropped out of the list — soft-deleted from another page (three of his 14 tabs carried a
+// `deletedAt` stamp; the transcript file was intact and chat.history served 440 KB for it), or
+// simply missing from a list served while the store was warming — therefore never asked for its
+// history at all, and stayed blank until a hard refresh, or forever. chat.history is a READ and
+// the gateway answers it for a detached session, so reading no longer waits on attachment.
+async function hydrateTab(tab: Tab, opts?: { force?: boolean }): Promise<void> {
+  if (!tab.sessionKey || tab.id === activeTabId) {
     return;
   }
   const ts = tabStates.get(tab.id) ?? freshTabState();
   // Already has content — skip so we never clobber a tab the user already populated;
-  // on-switch loadChat() will refresh it for staleness.
-  if (ts.messages.length > 0) {
+  // on-switch loadChat() will refresh it for staleness. `force` is the turn-end refresh
+  // (refreshBackgroundTabsFor): the content is there but known stale, so re-read it.
+  // FORK 2026-10-02 — "content" means HISTORY. A busy session's tab gets its live bubbles before
+  // this serial prefetch reaches it (one read took 24 s on a loaded gateway), and `length > 0` then
+  // skipped it for good: the parallel-worker tab showed only what streamed in after a reload.
+  if (pageHoldsServerRows(ts.messages) && !opts?.force) {
     return;
   }
   // FORK 2026-07-28 — same fix as loadChat: a failed hydrate must not write an empty transcript
@@ -10638,39 +15002,42 @@ async function hydrateTab(tab: Tab): Promise<void> {
   // because the cache is what a later switch renders from.
   // FORK 2026-08-28 (R3) — the note above still holds (a failed hydrate must never cache an empty
   // transcript); what it lacked was a SECOND TRY, so one dropped frame left a background tab blank
-  // until the user clicked it. `maxAttempts` bounds the RETRY, never the payload: `limit` is still
-  // 1000 and nothing is trimmed or throttled. It is bounded here — unlike the foreground path,
+  // until the user clicked it. `maxAttempts` bounds the RETRY, never the payload: nothing is
+  // trimmed or throttled. It is bounded here — unlike the foreground path,
   // which retries until it wins — because nobody is looking at a background prefetch and the
   // on-switch `loadChat()` is its real refresh path; an unbounded ladder per hidden tab would keep
   // N tabs asking a dead gateway with no one to see the answer.
-  const res = await fetchChatHistoryResilient(tab.sessionKey, { maxAttempts: 4 });
+  // FORK 2026-09-23 (plan task 8) — the same seq-cursor tail as loadChat: a turn-end refresh of a
+  // background tab asks for the few rows its page lacks, not the last 1000 again.
+  const key = tab.sessionKey;
+  let { request, base } = tailRequestForPage(key, tabWindowOf(ts, key), ts.messages);
+  let res = await fetchChatHistoryResilient(key, request, { maxAttempts: 4 });
   if (res === null) {
-    return;
+    const retry = forgetWindowAfterFailedCursorRead(ts, key, request, ts.messages);
+    if (retry === null) {
+      return;
+    }
+    ({ request, base } = retry);
+    res = await fetchChatHistoryResilient(key, request, { maxAttempts: 4 });
+    if (res === null) {
+      return;
+    }
   }
   // The user may have switched INTO this tab mid-fetch — if it's now active, let
   // loadChat() own the write (it sets globals + renders); don't double-write here.
-  if (tab.id === activeTabId) {
+  if (tab.id === activeTabId || !tab.sessionKey || !sessionKeyMatches(key, tab.sessionKey)) {
     return;
   }
   const target = tabStates.get(tab.id) ?? ts;
-  target.messages = res.messages ?? [];
-  normalizeHistoryRenderBlocks(target.messages);
-  for (const m of target.messages) {
-    reconstructInjectionFields(m as Record<string, unknown>);
-    const rec = m as Record<string, unknown>;
-    if (rec.role === "user" && !rec._promptStartedAt) {
-      const t2 = rec.createdAtMs ?? rec.timestamp;
-      if (typeof t2 === "number") {
-        rec._promptStartedAt = t2;
-      } else if (typeof t2 === "string") {
-        const parsed = Date.parse(t2 as string);
-        if (!isNaN(parsed)) {
-          rec._promptStartedAt = parsed;
-        }
-      }
-    }
+  if (!replyFitsPage(request, res, target.messages)) {
+    setTabWindow(target, key, emptyWindow());
+    tabStates.set(tab.id, target);
+    return;
   }
-  target.currentTurnNumber = target.messages.filter((m: unknown) => m.role === "user").length;
+  // Paper, like every other history write: a forced refresh gap-fills the saved page by identity
+  // instead of replacing it (see mergeHistoryIntoSavedPage).
+  mergeHistoryIntoSavedPage(target, key, (res.messages ?? []) as unknown[]);
+  foldTailReplyInto(target, key, base, res, target.messages);
   tabStates.set(tab.id, target);
 }
 
@@ -10704,10 +15071,19 @@ async function spawnTitleViaBridge(
   }
 }
 
-async function generateTabTitle(tab: Tab) {
+// FORK 2026-09-15 — u7-tab-naming: `reason` says WHY we are here. "menu" is the user's explicit
+// right-click Auto-name (always a fresh name; moves a manual tab to auto). "refresh" is the
+// periodic re-ask of an auto name: only the prompts since the last naming are shown, the model is
+// anchored on the current title, and an unchanged answer is a no-op. "first"/"retry" name a
+// fortune-cookie placeholder.
+type TitleReason = "first" | "retry" | "refresh" | "menu";
+
+async function generateTabTitle(tab: Tab, opts: { reason?: TitleReason } = {}) {
   if (!tab.sessionKey || tab.id === "tab-main") {
     return;
   }
+  const reason: TitleReason = opts.reason ?? "menu";
+  const isRefresh = reason === "refresh";
 
   // FORK: Use tabStates for non-active tabs so title gen works for background tabs too
   const tabMessages =
@@ -10725,17 +15101,25 @@ async function generateTabTitle(tab: Tab) {
       : String(m.content);
     return t.trim();
   };
-  const userPrompts: string[] = [];
-  for (let i = tabMessages.length - 1; i >= 0; i--) {
-    const m = tabMessages[i];
-    const role = (m?.role || "").toLowerCase();
+  // All user prompts with text, oldest → newest. `allUserCount` is the tab's user-turn count
+  // (the same count the turn-end trigger uses), recorded as `titledAtTurn` when a name lands.
+  const allUserTexts: string[] = [];
+  for (const m of tabMessages) {
+    if ((m?.role || "").toLowerCase() !== "user") continue;
     const text = msgText(m);
-    if (!text) continue;
-    if (role === "user") {
-      // Newest prompt gets the lion's share of the budget.
-      userPrompts.unshift(text.slice(0, userPrompts.length === 0 ? 600 : 200));
-      if (userPrompts.length >= TAB_TITLE_INTERVAL) break;
-    }
+    if (text) allUserTexts.push(text);
+  }
+  const allUserCount = allUserTexts.length;
+  // FORK 2026-09-15 — u7-tab-naming: on a refresh, judge the shift on what was said SINCE the
+  // current name was chosen. If nothing new is recorded (e.g. the count was lost), fall back to
+  // the usual recent window rather than skipping — the anchor instruction still guards the name.
+  const since = isRefresh ? (tab.titledAtTurn ?? 0) : 0;
+  const window = since > 0 && since < allUserCount ? allUserTexts.slice(since) : allUserTexts;
+  const userPrompts: string[] = [];
+  for (let i = window.length - 1; i >= 0; i--) {
+    // Newest prompt gets the lion's share of the budget.
+    userPrompts.unshift(window[i].slice(0, userPrompts.length === 0 ? 600 : 200));
+    if (userPrompts.length >= TAB_TITLE_INTERVAL) break;
   }
 
   if (userPrompts.length === 0) {
@@ -10787,6 +15171,8 @@ async function generateTabTitle(tab: Tab) {
       siblingTitles.length
         ? `The title MUST NOT overlap or duplicate these existing tab names: ${siblingTitles.join("; ")}. Make it clearly distinct — name what is unique here; do not reuse their words or settle for a generic shared theme.`
         : "",
+      // FORK 2026-09-15 — u7-tab-naming: an auto refresh is anchored on the current name.
+      isRefresh ? refreshAnchorInstruction(tab.title) : "",
       `Reply with ONLY the tab title text (max 48 chars, no quotes, no preamble, no explanation): one emoji relevant to the topic, then a space, then 2-4 words. No trailing punctuation. Examples: 🔧 Auth token refresh — 📊 Q3 revenue model — 🐛 Flaky CI retries.`,
       ``,
       `My recent messages (oldest to newest):`,
@@ -10832,8 +15218,15 @@ async function generateTabTitle(tab: Tab) {
         title = collapseDoubled(title);
       }
 
-      console.log("[tabs] bridge title response:", JSON.stringify(raw));
-      if (title && title.length > 0 && title.length <= 48) {
+      console.log("[tabs] bridge title response:", JSON.stringify(raw), "reason", reason);
+      // FORK 2026-09-15 — u7-tab-naming: on a refresh the model returns the current name when the
+      // subject has not shifted. Same words (emoji/case/punctuation ignored) ⇒ keep everything as
+      // is — no re-render, no persist, no icon churn. Only a genuinely new subject lands below.
+      if (isRefresh && sameSubject(tab.title, title)) {
+        console.log("[tabs] title kept — subject unchanged:", tab.title);
+        tab.titledAtTurn = allUserCount;
+        saveTabs();
+      } else if (title && title.length > 0 && title.length <= 48) {
         // FORK 2026-06-06 \u2014 u2-tab-naming: KEEP a relevant leading emoji.
         // 1) split off any leading emoji the LLM returned (per the prompt) from the word part.
         const preferred = leadingEmoji(title);
@@ -10848,6 +15241,11 @@ async function generateTabTitle(tab: Tab) {
         // 3) lock the title so loadSessions() won't clobber it with the server fortune-cookie phrase;
         //    persists via saveTabs() so it survives hard refresh AND gateway restart.
         tab.titleLocked = true;
+        // FORK 2026-09-15 — u7-tab-naming: this name came from the model. Record it so the
+        // turn-end trigger refreshes it on the interval (and never treats it as manual), and
+        // remember at which user turn it landed so the next refresh judges only newer prompts.
+        tab.titleKind = "auto";
+        tab.titledAtTurn = allUserCount;
         console.log("[tabs] title updated to:", tab.title);
         renderTabs();
         saveTabs();
@@ -10942,7 +15340,6 @@ function pushUserMsgDeduped(m: Record<string, unknown>): void {
 // renders forever. These helpers give assistant answers the same exactly-once
 // guarantee, keyed on visible text since the streamed p.message and the server
 // copy share no client id.
-const ASSISTANT_DEDUP_MIN_LEN = 40;
 
 function assistantMsgText(m: Record<string, unknown>): string {
   const content = m.content;
@@ -10973,6 +15370,14 @@ function assistantMsgText(m: Record<string, unknown>): string {
 //
 // NO MESSAGE TEXT IS LOGGED — only `fingerprintText`'s irreversible hash and a length, so a
 // duplicate shows up as two lines sharing `fp` and the transcript stays off the console.
+/** What the last history reconcile did to the viewed page — reported in the UI snapshot meta so a
+ *  reader can tell a page that was written once from one that was gap-filled, without the console. */
+let lastHistoryReconcile: {
+  mode: "fresh" | "gapfill";
+  added: number;
+  skippedWatched: number;
+} | null = null;
+
 function dupProv(source: string, info: Record<string, unknown>): void {
   try {
     // eslint-disable-next-line no-console
@@ -10982,48 +15387,24 @@ function dupProv(source: string, info: Record<string, unknown>): void {
   }
 }
 
-/** The provenance of ONE candidate assistant body, measured against what is on screen right now. */
+/** What a push site reports: the run, the size — never the text, never a similarity measure. */
 function dupProvBody(m: Record<string, unknown>): Record<string, unknown> {
-  const text = assistantMsgText(m);
   const runId = typeof m._runId === "string" ? m._runId : "";
-  const onScreen = (messages as Record<string, unknown>[])
-    .filter((x) => x.role === "assistant")
-    .map((x) => assistantMsgText(x));
-  const sameRun = runId
-    ? (messages as Record<string, unknown>[])
-        .filter((x) => x.role === "assistant" && x._runId === runId)
-        .map((x) => assistantMsgText(x))
-    : [];
   return {
     runId,
-    fp: fingerprintText(text),
-    len: text.length,
-    // The two numbers that separate "a legitimate repeat answer" from "this run said it twice".
-    equivAnyRun: sameTextCount(onScreen, text),
-    equivSameRun: sameTextCount(sameRun, text),
+    len: assistantMsgText(m).length,
     runBubbles: runId ? runTextBubbles(messages as Record<string, unknown>[], runId).length : 0,
     total: messages.length,
   };
 }
 
-// FORK 2026-08-30 — `source` is REQUIRED. This function has several callers and the duplicate fires
-// on one of them; without the caller's name in the line, the next reproduction produces the same
-// ambiguity that made the last patch a guess (AGENTS.md, "Debugging discipline").
+// FORK 2026-09-08 (the architect: "any funky dedup algorithm or similar should be gone") — the 2026-06-22
+// text-equality refusal that lived here is DELETED. A final that reaches this function is written
+// to the page, once, as it arrived; it is not compared against anything already on the page. The
+// duplicates this guard was built against were never produced here — they were manufactured by
+// `messages = incoming` in loadChat, which is gone (history-reconcile.ts). `source` stays so the
+// console still says which path wrote a bubble.
 function pushAssistantMsgDeduped(m: Record<string, unknown>, source: string): void {
-  if (m.role === "assistant") {
-    const text = assistantMsgText(m);
-    if (
-      text.length >= ASSISTANT_DEDUP_MIN_LEN &&
-      messages.some((x) => x.role === "assistant" && assistantMsgText(x) === text)
-    ) {
-      dupProv(`${source}:refused`, dupProvBody(m));
-      return;
-    }
-  }
-  // THE SUSPECT LINE. A body reaching here is being ADDED whole; when the same run already shows
-  // parts of it in separate bubbles, the guard above could not see that (it compares against ONE
-  // bubble) and this push is the visible duplicate. `equivAnyRun: 0` with `runBubbles > 0` on a
-  // multi-part answer is exactly that shape.
   dupProv(`${source}:pushed`, dupProvBody(m));
   messages.push(m);
 }
@@ -11057,6 +15438,9 @@ function pushAssistantMsgDeduped(m: Record<string, unknown>, source: string): vo
 const outboxStore: OutboxStore = {
   getItem: (k) => localStorage.getItem(k),
   setItem: (k, v) => localStorage.setItem(k, v),
+  // FORK 2026-09-24 (logging.md §4.5, §9 step 7) — every transition outbox.ts writes becomes one
+  // `ui.outbox.state` row; the entry's age is measured here, at the transition.
+  onTransition: (t) => recordUiEvent(outboxStateEvent(t, Date.now())),
 };
 
 /** A transcript timestamp in whatever shape it arrived (ms number, seconds, or ISO string) as ms,
@@ -11113,14 +15497,210 @@ function restoreComposerText(text: string): void {
   }
 }
 
-/** Retire an outbox entry and clear the "not delivered" mark from its bubble. Delivery is PROVEN
- *  here — either chat.send resolved, or the prompt was found in the server transcript. */
+/**
+ * Retire an outbox entry because the SERVER TRANSCRIPT proves the prompt was delivered, and record
+ * that proof on every bubble that draws it (PROVEN_PROMPT_FACTS: ACCEPTED, which draws no badge).
+ * The only caller is the transcript reconcile, reconcileOutboxAgainst, with the entries outbox.ts
+ * `reconcileWithHistory` proved: a served row keyed to the entry's id or naming it as superseded,
+ * or, for a legacy entry that expects no key, the text match.
+ *
+ * A resolved `chat.send` is NOT that proof and never reaches here (prompt-queue.md C6): ACK IS NOT
+ * DURABILITY (2026-08-24). An ack records `transport: "acked"` on the bubble and PARKS the entry
+ * with `markAcked`; it stays in the outbox until a transcript row retires it, or the owner's
+ * Dismiss (dismissLostPrompt, step U4) does (PQ-9).
+ */
 function markPromptDelivered(id: string): void {
   removeFromOutbox(outboxStore, id);
-  for (const m of messages as Record<string, unknown>[]) {
-    if (m._clientMsgId === id && m._undelivered) {
-      delete m._undelivered;
+  notePromptFactsById(id, PROVEN_PROMPT_FACTS);
+}
+
+/**
+ * FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md step U2. Record a fact about ONE prompt
+ * on every bubble that draws it: the viewed page, the deferred trailing queue, and each background
+ * tab's saved page. Only FACTS are written; the one state is derived from them at render
+ * (msg-order.ts `promptBubbleMarks` → prompt-state.ts), so no path can leave a stale badge behind
+ * by updating one flag and forgetting another. A bubble with no facts (a history row) is untouched.
+ */
+function notePromptFactsById(
+  id: string,
+  patch: Readonly<Partial<PromptStateInputs>>,
+  // Leave a bubble alone when this says its facts already settle the question (notePromptTerminal:
+  // the first terminal of a prompt's own run stands). Absent: record on every bubble.
+  skip?: (facts: PromptStateInputs) => boolean,
+): void {
+  const pages = promptBubblePages();
+  // FORK 2026-09-24 (logging.md §4.5) — the prompt's state change is recorded HERE, where the fact
+  // lands, and not only at the next paint: a background tab's page is not painted until it is
+  // shown. One observation per call, of the first bubble that draws the prompt (the viewed page
+  // first), so two copies holding different older facts cannot record a flip-flop between them.
+  // A bubble `skip` leaves alone still counts as that first copy: its state is what is drawn.
+  let observed: unknown = null;
+  for (const page of pages) {
+    for (const m of page) {
+      if ((m as Record<string, unknown> | null)?._clientMsgId === id) {
+        if (observed === null) {
+          observed = m;
+        }
+        const facts = promptFactsOf(m);
+        if (skip !== undefined && facts !== null && skip(facts)) {
+          continue;
+        }
+        notePromptFacts(m, patch);
+      }
     }
+  }
+  if (observed !== null) {
+    observePromptState(observed, promptStateOf(observed));
+  }
+}
+
+/**
+ * Every page a prompt's bubbles can be on: the viewed page, the deferred trailing queue, and each
+ * background tab's saved page. notePromptFactsById records on all of them; notePromptTerminal reads
+ * them before it stamps the outbox.
+ */
+function promptBubblePages(): unknown[][] {
+  const pages: unknown[][] = [messages, pendingQueuedSends];
+  for (const st of tabStates.values()) {
+    if (st.messages !== messages) {
+      pages.push(st.messages);
+    }
+  }
+  return pages;
+}
+
+/**
+ * FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md step U3 (PQ-7 "terminals are keyed",
+ * PQ-8 "disposition is reported, not guessed"; contradiction C2).
+ *
+ * The early `final` of a prompt the gateway STEERED into the running turn or BACKLOGGED behind it
+ * (gateway G2's `disposition`). It names ONE prompt, whose key is its runId (PQ-1), and it ends no
+ * run, so it touches only what that prompt owns:
+ *   1. its FACTS: the disposition. prompt-state.ts derives STEERED from it ("added to the current
+ *      turn", in place) or BEHIND ("waiting for the current turn", dimmed, trailing), rendered only
+ *      through msg-order.ts `promptBubbleMarks` like every other prompt state (U2). A steered key is
+ *      also recorded against its session, so the host turn's terminal can end it;
+ *   2. its PLACEMENT: a steered prompt is committed in place now (it IS part of the running turn,
+ *      so that turn's later bubbles belong under it). A backlogged one stays trailing until the
+ *      follow-up run linked to it starts (`onFollowupRunStart`);
+ *   3. the provisional run send() seeds under this key for a pinned model. No run with this runId
+ *      will start, so it is retired BY KEY, as the session terminal this replaces used to retire it.
+ * Everything a SESSION terminal does is deliberately not done (the caller returns before it): the
+ * host turn is still running.
+ */
+function onPromptDispositionFinal(
+  p: { sessionKey?: unknown },
+  scope: Extract<TerminalScope, { kind: "prompt" }>,
+  isViewed: boolean,
+): void {
+  const key = scope.key;
+  const evtSession = typeof p.sessionKey === "string" ? p.sessionKey : undefined;
+  if (key) {
+    notePromptFactsById(key, { disposition: scope.disposition });
+    if (scope.disposition === "steered") {
+      addSessionPromptKey(steeredPromptKeys, evtSession, key);
+    }
+  }
+  const settled = settleQueuedSession(
+    pendingQueuedSends,
+    evtSession,
+    isViewed,
+    sessionKeyMatches,
+    scope,
+  );
+  for (const qm of settled.commit) {
+    pushUserMsgDeduped(qm as Record<string, unknown>);
+  }
+  pendingQueuedSends = settled.remaining;
+  let runsChanged = false;
+  if (key) {
+    const pend = pendingRunDeletes.get(key);
+    if (pend) {
+      clearTimeout(pend);
+      pendingRunDeletes.delete(key);
+    }
+    if (activeRuns.delete(key)) {
+      saveActiveRuns();
+      runsChanged = true;
+    }
+    rememberTerminated(key);
+  }
+  if (isViewed) {
+    updateChat();
+    updateBtn();
+  }
+  if (runsChanged) {
+    repaintActivitySurfaces();
+  }
+}
+
+/**
+ * FORK 2026-09-24 — prompt-queue.md step U3. A RUN's terminal (session-wide or linked, never a
+ * disposition final, which ends no run) ends the prompts KEYED to that run, as facts
+ * (`terminalPromptFacts`: final → answered, error → failed, aborted → cancelled):
+ *   - every prompt the gateway folded into this session's running turn (§2 STEERED → ANSWERED,
+ *     "host turn R ends"), so "added to the current turn" never outlives the turn (PQ-5);
+ *   - for a follow-up run gateway G3 linked, exactly its prompt keys.
+ * Placement is not touched here; settleQueuedSession owns it. Against an old gateway both sets are
+ * empty and nothing is recorded, so every prompt's facts stay exactly what they were before U3.
+ */
+function endPromptsKeyedToRun(
+  p: { state?: unknown; sessionKey?: unknown },
+  scope: TerminalScope,
+): void {
+  const facts = terminalPromptFacts(p.state);
+  if (!facts) {
+    return;
+  }
+  const evtSession = typeof p.sessionKey === "string" ? p.sessionKey : undefined;
+  for (const key of takeSessionPromptKeys(steeredPromptKeys, evtSession, sessionKeyMatches)) {
+    notePromptFactsById(key, facts);
+  }
+  if (scope.kind === "linked") {
+    for (const key of scope.keys) {
+      notePromptFactsById(key, facts);
+    }
+  }
+}
+
+/**
+ * FORK 2026-09-24 — prompt-queue.md step U3, consuming gateway step G3 (contradiction C3). A
+ * follow-up run names the prompt keys it answers BEFORE preflight and the model
+ * (followup-runner.ts), on its own `followup` stream. Everything here is keyed to those prompts:
+ *   1. the LINK, so that run's terminal releases exactly these keys (`chatTerminalScope`);
+ *   2. the FACTS, `FOLLOWUP_STARTED_FACTS`: §2 BEHIND → PREPARING, so "waiting for the current
+ *      turn" clears now, and a live holder, so a prompt re-drawn LOST after a reload stops saying so;
+ *   3. the PLACEMENT: a prompt still trailing is committed here, because this run's answer is about
+ *      to stream and must land UNDER its prompt. Waiting for the run's terminal would leave the
+ *      prompt trailing below its own answer and then commit it there.
+ * An old gateway sends no such event, so none of this runs against one.
+ */
+function onFollowupRunStart(p: {
+  stream?: unknown;
+  runId?: unknown;
+  sessionKey?: unknown;
+  data?: unknown;
+}): void {
+  const link = followupRunLink(p);
+  const evtSession = typeof p.sessionKey === "string" ? p.sessionKey : undefined;
+  if (!link || !evtSession) {
+    return;
+  }
+  rememberFollowupLink(followupPromptLinks, link.runId, link.keys);
+  for (const key of link.keys) {
+    notePromptFactsById(key, FOLLOWUP_STARTED_FACTS);
+  }
+  const isViewed = evtSession === sessionKey || sessionKeyMatches(evtSession);
+  const settled = settleQueuedSession(pendingQueuedSends, evtSession, isViewed, sessionKeyMatches, {
+    kind: "linked",
+    keys: link.keys,
+  });
+  for (const qm of settled.commit) {
+    pushUserMsgDeduped(qm as Record<string, unknown>);
+  }
+  pendingQueuedSends = settled.remaining;
+  if (isViewed) {
+    updateChat();
   }
 }
 
@@ -11172,7 +15752,7 @@ function settleAlreadyCompletedSend(runId: string, forSessionKey: string): void 
     pendingSince = null;
     turnPhase = null;
     turnPhaseTrail = [];
-    sending = viewedSessionBusy();
+    setSending(viewedSessionBusy());
     // The answer EXISTS on the server. Nothing else is going to fetch it — that is the whole bug.
     void loadChat({ force: true });
     updateBtn();
@@ -11191,6 +15771,10 @@ function settleAlreadyCompletedSend(runId: string, forSessionKey: string): void 
  *
  * The injected prompt is rebuilt from the RAW text, so a replay carries a current amygdala/fractal
  * preamble rather than a stale one persisted hours ago.
+ *
+ * FORK 2026-09-24 (prompt-queue.md U5) — it is also the FIRST send of a retry-ladder fire
+ * (`retryLastTurn`). That entry's own key is fresh, minted by the fire and never the failed
+ * prompt's, so "original" here means the entry's own id, which every later replay of it reuses.
  */
 async function resendOutboxEntry(entry: OutboxEntry): Promise<boolean> {
   if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -11199,7 +15783,10 @@ async function resendOutboxEntry(entry: OutboxEntry): Promise<boolean> {
   markAttempted(outboxStore, entry.id, Date.now());
   try {
     const injected = await buildInjectedPrompt(entry.text);
-    const effortPin = effortPinBySession.get(entry.sessionKey);
+    // FORK 2026-10-01: on Auto Thalamus sets the effort (the EFFORT row is the bias dial), so no pin rides along.
+    const effortPin = isModelPinnedFor(entry.sessionKey)
+      ? effortPinBySession.get(entry.sessionKey)
+      : undefined;
     const modelPin = modelPinBySession.get(entry.sessionKey);
     const ack = (await req("chat.send", {
       sessionKey: entry.sessionKey,
@@ -11208,7 +15795,28 @@ async function resendOutboxEntry(entry: OutboxEntry): Promise<boolean> {
       ...(effortPin ? { thinking: effortPin } : {}),
       ...(modelPin ? { model: modelPin } : {}),
     })) as { status?: unknown } | null | undefined;
-    markPromptDelivered(entry.id);
+    // FORK 2026-09-04 (the architect: "there is a bug that makes it delete it somehow").
+    //
+    // THIS LINE USED TO BE `markPromptDelivered(entry.id)` — an unconditional removeFromOutbox on a
+    // bare ack. It is the exact anti-pattern the send path removed on 2026-08-24 under the heading
+    // "ACK IS NOT DURABILITY", left standing in the replay path, where it is strictly worse: a
+    // replay reuses the ORIGINAL idempotencyKey by design, so the ack it draws is the gateway's
+    // DEDUPE CACHE echoing a run that already finished. The comment below has always said exactly
+    // that, three lines under a call that treated the same ack as proof of persistence.
+    //
+    // The loss sequence, observed four times on 2026-09-04: gateway accepts the turn but never
+    // persists the user row -> reconcile can never prove it -> replayed after the 15s grace ->
+    // dedupe echoes {status:"ok"} -> entry deleted. The prompt then existed nowhere: not in the
+    // transcript, not in the outbox, and the draft had been cleared on the original send.
+    //
+    // An ack proves the gateway HOLDS this id, which is reason enough to stop re-sending — and no
+    // reason at all to destroy the last copy. So park it instead. Only reconcileWithHistory, which
+    // reads the actual transcript, may retire an entry.
+    markAcked(outboxStore, entry.id, Date.now());
+    // FORK 2026-09-24 (prompt-queue.md U2) — and the bubble records the same fact: the gateway holds
+    // it now, so it is ACCEPTED and no longer browser-only. Before U2 a replayed prompt kept its
+    // amber badge until a transcript proof arrived, after the ack had already said otherwise.
+    notePromptFactsById(entry.id, { transport: "acked" });
     // FORK 2026-08-28 — READ THE ACK. THIS is the call site where it matters: a replay reuses the
     // ORIGINAL idempotencyKey by design, so it is the one that lands on the gateway's dedupe cache
     // and comes back `{ status: "ok" }` — an ack for a run that already finished and already
@@ -11222,6 +15830,10 @@ async function resendOutboxEntry(entry: OutboxEntry): Promise<boolean> {
   } catch (e) {
     // Still unproven — it stays in the outbox and will be retried on the next connect/tick.
     console.debug("[outbox] replay failed, prompt kept", entry.id, e);
+    // FORK 2026-09-24 (prompt-queue.md U2) — record the attempt markAttempted just counted, so the
+    // bubble reads UNSENT while replays remain and LOST once the outbox cap is reached: the page
+    // stops promising a retry that `dueForReplay` will never make (contradiction C7, badge half).
+    notePromptFactsById(entry.id, { transport: "rejected", attempts: entry.attempts + 1 });
     return false;
   }
 }
@@ -11239,6 +15851,40 @@ async function resendOutboxEntry(entry: OutboxEntry): Promise<boolean> {
  * history is never re-fetched on reconnect.
  */
 let outboxFlushInFlight = false;
+
+/**
+ * FORK 2026-09-23 (plan task 8) — the cursor window of the first tab on `key` (an empty one when no
+ * tab holds that session): what an outbox proof read may ask `afterSeq` under.
+ */
+function cursorWindowForSessionKey(key: string): HistoryWindow {
+  for (const tab of tabs) {
+    if (tab.sessionKey && sessionKeyMatches(key, tab.sessionKey)) {
+      return tabWindowOf(tabStates.get(tab.id), tab.sessionKey);
+    }
+  }
+  return emptyWindow();
+}
+
+/**
+ * FORK 2026-09-23 (plan task 8) — the send-time cursor an outbox entry records: the viewed tab's
+ * last seq and its epoch, only when the tab has a cursor window over a page that holds server rows
+ * (otherwise the window describes nothing on screen and the entry keeps the tail proof). Runs in
+ * the PROTECTED part of send(), before any await, so it must never throw.
+ */
+function outboxSendCursor(
+  tabId: string,
+  key: string,
+): { sentAfterSeq?: number; sentEpoch?: string } {
+  try {
+    const w = pageHoldsServerRows(messages)
+      ? tabWindowOf(tabStates.get(tabId), key)
+      : emptyWindow();
+    return w.epoch !== null ? { sentAfterSeq: w.lastSeq, sentEpoch: w.epoch } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function flushOutbox(reason: string): Promise<void> {
   if (outboxFlushInFlight || !ws || ws.readyState !== WebSocket.OPEN) {
     return;
@@ -11249,17 +15895,53 @@ async function flushOutbox(reason: string): Promise<void> {
   }
   outboxFlushInFlight = true;
   try {
-    const sessions = Array.from(new Set(pending.map((e) => e.sessionKey)));
+    // FORK 2026-09-23 — gateway event-loop saturation fix. This used to fetch chat.history for
+    // EVERY session holding ANY outbox entry, so an acked/unprovable entry kept its session's
+    // whole transcript re-read every 20s tick forever. Narrowed to sessions that actually need
+    // proof right now: due for replay, or their proof has gone stale (outboxSessionsNeedingProof,
+    // outbox.ts). limit is also cut from 1000 to 200 — text proof only matches near the tail
+    // (PREFIX_MATCH_TAIL).
+    // FORK 2026-09-23 (chat.history rehaul, plan task 8) — and keyed proof is now by CURSOR: when
+    // every entry of the session recorded the tab's seq + epoch at send time, the read asks for the
+    // rows after the oldest of them (outboxProofRequest), so a proof row pushed out of the tail is
+    // still found. A `reset` reply (that epoch is gone) or a rejected cursor read (an old gateway)
+    // is retried once as the tail read above.
+    const sessions = outboxSessionsNeedingProof(pending, Date.now());
     for (const key of sessions) {
-      const res = (await req("chat.history", { sessionKey: key, limit: 1000 }).catch(
-        () => null,
-      )) as { messages?: unknown[] } | null;
-      if (!res) {
+      const mine = outboxForSession(readOutbox(outboxStore), key, sessionKeyMatches);
+      const request = outboxProofRequest(key, mine, cursorWindowForSessionKey(key));
+      const res = (await req("chat.history", request).catch(() => null)) as {
+        messages?: unknown[];
+      } | null;
+      // FORK 2026-09-24 (task 8 ledger M2) — a `reset` reply is itself a tail window (the last
+      // OUTBOX_CURSOR_PROOF_LIMIT rows): it is evidence, reconciled here first. A second tail read
+      // is made only when the cursor read failed, or proof is still missing after the reset rows.
+      let checked = false;
+      if (res && isCursorRequest(request) && cursorOf(res)?.reset === true) {
+        reconcileOutboxAgainst(key, res.messages ?? []);
+        checked = true;
+      }
+      const stillPending = outboxForSession(readOutbox(outboxStore), key, sessionKeyMatches);
+      if (outboxNeedsTailProofRead(request, res, stillPending.length)) {
+        const tail = (await req("chat.history", outboxTailProofRequest(key, stillPending)).catch(
+          () => null,
+        )) as { messages?: unknown[] } | null;
+        if (tail) {
+          reconcileOutboxAgainst(key, tail.messages ?? []);
+          checked = true;
+        }
+      } else if (res && !checked) {
+        reconcileOutboxAgainst(key, res.messages ?? []);
+        checked = true;
+      }
+      if (!checked) {
         // No answer means no evidence. Skip this session rather than replay blind — a duplicate
-        // turn is a worse outcome than a prompt that waits for the next tick.
+        // turn is a worse outcome than a prompt that waits for the next tick. lastProofCheckAt is
+        // deliberately left unstamped here, so a failed fetch is retried on the very next tick
+        // rather than going quiet for PROOF_RECHECK_MS.
         continue;
       }
-      reconcileOutboxAgainst(key, res.messages ?? []);
+      markProofChecked(outboxStore, key, Date.now());
       const due = dueForReplay(
         outboxForSession(readOutbox(outboxStore), key, sessionKeyMatches),
         Date.now(),
@@ -11292,10 +15974,25 @@ function reconcileOutboxAgainst(sessionKeyForHistory: string, incoming: unknown[
   if (mine.length === 0) {
     return new Set();
   }
+  // FORK 2026-09-08 — IDENTITY, NEVER TEXT. The primary proof is a served user row whose
+  // `idempotencyKey` equals the entry id. chat.history serves it as of today; before that the key
+  // was accepted on chat.send and never written, so that branch had never once fired and the text
+  // prefix over the tail-8 decided everything — blind to a real prompt pushed out of the tail by
+  // tool_result rows, which was then re-armed on every reconnect and answered twice.
+  //
+  // EVERY role=user row goes in, unfiltered by content. A tool_result-only row carries no key and
+  // no text, so it cannot match anything — but dropping it would shift the legacy tail window, and
+  // content filtering is exactly the heuristic the text path must not grow. Position and age are
+  // irrelevant to a keyed match (reconcileWithHistory); an entry stamped `keyedProofExpected` is
+  // proven by a keyed row and by nothing else (outbox.ts, historyMatchesEntry).
   const historyUsers = (incoming as Record<string, unknown>[])
     .filter((m) => String(m.role ?? "").toLowerCase() === "user")
     .map((m) => ({
-      idempotencyKey: m.idempotencyKey,
+      idempotencyKey: typeof m.idempotencyKey === "string" ? m.idempotencyKey : undefined,
+      // FORK 2026-09-23 — orphaned send keys the gateway lists on the row that followed them.
+      supersededIdempotencyKeys: Array.isArray(m.supersededIdempotencyKeys)
+        ? m.supersededIdempotencyKeys
+        : undefined,
       text: assistantMsgText(m),
       // FORK 2026-08-16 (2nd pass) — the transcript timestamp is what stops an OLD identical turn
       // from confirming (and thereby deleting) a freshly typed prompt. Without it the text match
@@ -11304,20 +16001,26 @@ function reconcileOutboxAgainst(sessionKeyForHistory: string, incoming: unknown[
     }));
   const { delivered } = reconcileWithHistory(mine, historyUsers);
   for (const d of delivered) {
-    // Retires the entry AND clears the amber mark from its bubble — a prompt proven to be in the
-    // transcript must stop advertising itself as undelivered, on every path that discovers it.
+    // Retires the entry AND records the transcript's proof on its bubble (a FACT since step U2, so
+    // it re-derives ACCEPTED and draws nothing) — a prompt proven to be in the transcript must stop
+    // advertising itself as undelivered, on every path that discovers it.
     markPromptDelivered(d.id);
   }
   return new Set(delivered.map((d) => d.id));
 }
 
 /**
- * Put every still-unconfirmed prompt for this session back on screen, as an "undelivered" user
- * bubble. Without this a prompt that was lost while the page was closed would be recoverable but
- * invisible — and an invisible recovery is indistinguishable from the bug.
+ * Put every still-unconfirmed prompt for this session back on screen, as a user bubble whose facts
+ * (msg-order.ts `outboxPromptFacts`, then the gateway's evidence through `promptHolderFacts`, U4)
+ * derive UNSENT, LOST, or the phase the gateway reports. Without this a prompt that was lost while
+ * the page was closed would be recoverable but invisible — and an invisible recovery is
+ * indistinguishable from the bug. An entry whose own run answered it (`answeredAt`) is not put
+ * back: outbox.ts `outboxEntriesNeedingBubble` leaves it out (FORK 2026-10-01).
  */
 function reinjectOutboxBubbles(sessionKeyForTab: string): void {
   const mine = outboxForSession(readOutbox(outboxStore), sessionKeyForTab, sessionKeyMatches);
+  // U4 — the stranded verdict for this session's entries, one input of promptHolderFacts below.
+  const stranded = strandedPromptIds(mine, sessionKeyForTab);
   // FORK 2026-08-28 — A DEFERRED PROMPT IS ON SCREEN, JUST NOT IN messages[].
   //
   // This used to skip an entry only when `messages.some(m => m._clientMsgId === entry.id)`. But a
@@ -11337,10 +16040,19 @@ function reinjectOutboxBubbles(sessionKeyForTab: string): void {
   // ack is not durability, and it is retired only by `reconcileOutboxAgainst` proving the turn in
   // chat.history. Two gateway restarts on 2026-08-24 destroyed prompts through precisely the
   // "it's on screen, so it's safe to drop" shortcut.
+  //
+  // FORK 2026-10-03 — a SERVED row carrying the entry's key is that prompt on screen too
+  // (history-reconcile.ts historyPromptKey). After a reload under a live run the served prompt can
+  // be on the page before anything has proven the entry, and this loop never counted it: the
+  // bubble came back beside it, two prompts until the next reload.
   const onScreen = new Set<string>();
   for (const m of messages as Array<Record<string, unknown>>) {
     if (typeof m._clientMsgId === "string") {
       onScreen.add(m._clientMsgId);
+    }
+    const servedKey = historyPromptKey(m);
+    if (servedKey !== null) {
+      onScreen.add(servedKey);
     }
   }
   for (const q of pendingQueuedSends) {
@@ -11349,17 +16061,640 @@ function reinjectOutboxBubbles(sessionKeyForTab: string): void {
     }
   }
   for (const entry of outboxEntriesNeedingBubble(mine, onScreen)) {
-    messages.push({
+    // FORK 2026-09-23 (the architect: "lingering messages in the ui that chase me, never actually engage").
+    // Two lies fixed here, the entry itself untouched:
+    //   • PLACE — the bubble was pushed at the END on every loadChat, so a prompt typed at 10:09
+    //     re-appeared under every later reply: it chased. It now sits at its own time, in RENDER
+    //     order (msg-order.ts `placeByTime`).
+    //     CORRECTED 2026-10-01 — the 2026-09-23 version of this spliced the messages ARRAY, and
+    //     this page draws `renderOrder(messages)`, so "its own time" held only on a page whose rows
+    //     had not been numbered yet. On every reload after the first paint `stampOrder` handed the
+    //     newcomer the next `_seq` and it chased again, from the bottom: bug-log.md
+    //     `[chat-divergence]` cause 2, 13 of 13 order inversions in a 206-snapshot census.
+    //   • CLAIM — an ACKED entry is parked (dueForReplay) and is never re-sent, yet it wore "will
+    //     retry". The live send path already stops warning on ack (see markAcked in send); the
+    //     reload path now agrees, with a badge that says what is actually known.
+    const bubble = {
       role: "user",
       _clientMsgId: entry.id,
       content: [{ type: "text", text: entry.text }],
       _promptStartedAt: entry.ts,
-      _undelivered: true,
-    });
+      timestamp: entry.ts,
+      // FORK 2026-09-24 (prompt-queue.md U2) — the bubble's facts come from the entry, through ONE
+      // pure mapping: unacked is UNSENT while replays remain and LOST once they are exhausted; acked
+      // and unproven is LOST (§3.2: the outbox's two honest states).
+      // FORK 2026-09-24 (U4, PQ-11) — then the gateway's evidence about the key, through the SAME
+      // derivation the activity clock runs (derivePendingPromptFacts), so a reload draws what the
+      // tick would: a key the `pendingPrompts` snapshot names BEHIND is drawn BEHIND, not LOST. That
+      // closes the known limit U2 left in outboxPromptFacts. With no verdict, U2's facts stand.
+      _promptState: {
+        ...outboxPromptFacts(entry),
+        ...promptHolderFacts(entry.id, entry, stranded),
+      },
+      // FORK 2026-09-24 (prompt-queue.md U5) — a retry-ladder fire keeps its link to the prompt it
+      // re-sends across a reload, so a ladder re-armed on this page still links to that original.
+      ...(entry.retryOf ? { _retryOf: entry.retryOf } : {}),
+    };
+    // FORK 2026-10-01 — bug-log.md `[chat-divergence]` cause 2, proposed fix (3). PLACED IN RENDER
+    // ORDER, by the one pure helper that owns that rule. What this replaces:
+    //     const at = messages.findIndex((m) => (toMillis(m.timestamp) ?? 0) > entry.ts);
+    //     at < 0 ? messages.push(bubble) : messages.splice(at, 0, bubble);
+    // It moved the bubble in the ARRAY only. The page draws `renderOrder(messages)` and `stampOrder`
+    // gives an unstamped row the NEXT `_seq`, so the copy was drawn at the BOTTOM, under the answers
+    // the prompt predates — reports ed93657b, 33ab89ad and abd81ba2 show it 8 to 24 places below its
+    // served twin. `placeByTime` reads the anchor in render order and writes the row above it through
+    // `insertRenderedAt`, so the number and the array index agree.
+    //
+    // THE CLOCK IS UNCHANGED, on purpose: still `timestamp` through `toMillis` (which also rescales a
+    // seconds stamp), so a page nothing has numbered yet draws EXACTLY what it drew before and the
+    // one variable in this change is array order vs render order. Widening it to history-reconcile's
+    // `historyRowTime` was tried and REJECTED: that falls back to `_arrivedAt`, which `stampOrder`
+    // writes as `Date.now()` on every row it numbers, so a client note with no time of its own would
+    // read as page-load time, outrank this prompt and pull the copy above rows that really precede
+    // it — the same inversion mirrored, and that reader is cause 8 of the same bug-log entry.
+    // KNOWN LIMIT, inherited and not introduced here: a client-written bubble carrying no
+    // `timestamp` can never be an anchor, so a copy is drawn under it. Widening the reader is its own
+    // change with its own test, after cause 8 is re-measured.
+    placeByTime(messages, bubble, entry.ts, (m) =>
+      toMillis((m as Record<string, unknown>).timestamp),
+    );
   }
 }
 
-async function send(text: string, reuseClientMsgId?: string) {
+// ─── Pending prompts: LOST, and the owner's two actions (prompt-queue.md §7 step U4) ──────────
+//
+// FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md §7 step U4 (PQ-5, PQ-9, PQ-11, PQ-12;
+// gaps C4 and C7). Three parts, each on a producer that already exists:
+//   1. DERIVE, on THE ONE CLOCK (activityTick → derivePendingPromptFacts). Every prompt bubble of the
+//      viewed session gets the gateway's evidence recorded as FACTS: the phase its session row's
+//      `pendingPrompts` snapshot (G5) names for its key, or LOST when the evidence says no gateway
+//      holder has it. The rule is prompt-state.ts `gatewayHolderFacts`; this file only gathers its
+//      inputs. A DISPLAY derivation (done-signals.md R2a): it writes `_promptState` facts and
+//      nothing else. No run is cleared, no queue is settled, nothing is re-sent.
+//   2. RESEND, an explicit click: the text goes out as a NEW prompt under a NEW key, through send().
+//   3. DISMISS, an explicit click: the journaled retirement (outbox.ts `dismissOutboxEntry`).
+// MECHANISM: code, not prompt. The want is consistency (a prompt reads the same on every tick and
+// after every reload), and each part hangs on a structural producer: the one clock, the one outbox,
+// the one render slot, the one delegated click handler. Nothing here benefits from plasticity.
+
+/** The prompt's session row from the last `sessions.list`, as prompt-state.ts reads it; null when
+ *  the list has no row for that session, or no live list has landed yet (a first-paint snapshot
+ *  from storage is not one): then there is no gateway fact to weigh. */
+function promptSnapshotFor(promptSession: string): PendingPromptSnapshot | null {
+  if (sessionsListAskedAt <= 0 || !Array.isArray(sessions)) {
+    return null;
+  }
+  for (const s of sessions as Array<Record<string, unknown> | null | undefined>) {
+    if (!s || typeof s.key !== "string") {
+      continue;
+    }
+    if (s.key !== promptSession && !sessionKeyMatches(s.key, promptSession)) {
+      continue;
+    }
+    const run = s.run as { live?: unknown } | null | undefined;
+    return {
+      // When the last WHOLE list was ASKED for, not when it arrived: sessions.list takes seconds,
+      // so a reply that lands after a prompt's ack can hold a row built before it
+      // (sessionsListAskedAt). A `sessions.changed` push merges one row without moving this
+      // (session-rows-live.ts), so a pushed row is read as no newer than the last request: that
+      // can only delay LOST, never invent it.
+      at: sessionsListAskedAt,
+      pendingPrompts: s.pendingPrompts,
+      runLive: run?.live === true,
+      ...(typeof s.updatedAt === "number" ? { updatedAt: s.updatedAt } : {}),
+    };
+  }
+  return null;
+}
+
+/**
+ * The ids among these outbox entries that queued-sends.ts `strandedQueuedEntries` calls STRANDED for
+ * `viewedKey`: typed more than QUEUED_STRANDED_MS ago, with no fresh client run and no open
+ * pre-model window left for them to wait on. §7 names it as U4's fallback evidence, and since
+ * 2026-09-25 that is all it is: prompt-state.ts `gatewayHolderFacts` weighs it only for a row
+ * with no `pendingPrompts` report (a row that carries one needs `promptClientIdle` instead). Each
+ * entry is handed over as the queue entry it would have been: its session as `_queuedSession`, its
+ * typed time as `ts`, the two fields that function reads.
+ */
+function strandedPromptIds(entries: readonly OutboxEntry[], viewedKey: string): Set<string> {
+  if (!viewedKey || entries.length === 0) {
+    return new Set();
+  }
+  const candidates = entries.map((e) => ({
+    _clientMsgId: e.id,
+    _queuedSession: e.sessionKey,
+    ts: e.ts,
+  }));
+  const stranded = strandedQueuedEntries(
+    candidates,
+    viewedKey,
+    sessionKeyMatches,
+    Date.now(),
+    viewedSessionBusy() || viewedSessionPending(),
+  );
+  return new Set(stranded.map((c) => String(c._clientMsgId)));
+}
+
+/** Has a follow-up run gateway G3 linked to this prompt key started (U3's `followupPromptLinks`)?
+ *  The map is capped at FOLLOWUP_LINKS_MAX runs, so the scan is bounded. */
+function promptFollowupStarted(id: string): boolean {
+  for (const keys of followupPromptLinks.values()) {
+    if (keys.includes(id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The gateway's evidence about ONE prompt, as the facts prompt-state.ts `gatewayHolderFacts` proves
+ *  from it. `entry` is the prompt's outbox entry, or null when it has none. `followupStarted` joins
+ *  U3's evidence to U4's: without it, the next tick would read an older snapshot and pull a prompt
+ *  whose follow-up run already started back from PREPARING to BEHIND. */
+function promptHolderFacts(
+  id: string,
+  entry: OutboxEntry | null,
+  strandedIds: ReadonlySet<string>,
+): GatewayHolderFacts {
+  return gatewayHolderFacts({
+    key: id,
+    outbox: entry,
+    snapshot: entry === null ? null : promptSnapshotFor(entry.sessionKey),
+    stranded: strandedIds.has(id),
+    clientIdle: entry !== null && promptClientIdle(entry.sessionKey),
+    followupStarted: promptFollowupStarted(id),
+  });
+}
+
+/**
+ * The page's own liveness evidence about a prompt's session, as prompt-state.ts
+ * `gatewayHolderFacts` reads `clientIdle`: it is the viewed session, and this page holds no fresh
+ * client run and no open pre-model window for it. The boolean strandedPromptIds hands
+ * `strandedQueuedEntries`, without the age bound. Any other session is not known to be idle.
+ */
+function promptClientIdle(promptSession: string): boolean {
+  return sessionKeyMatches(promptSession) && !(viewedSessionBusy() || viewedSessionPending());
+}
+
+/**
+ * Part 1, on THE ONE CLOCK (activityTick). Records the gateway's evidence on every prompt bubble of
+ * the viewed session: the viewed page, and its deferred trailing bubbles. Only FACTS are written
+ * (msg-order.ts `notePromptFacts`); the one state is still derived at render. The chat is repainted
+ * only when a derived state changed, never on every tick: updateChat rewrites the whole list. A
+ * background tab's page is derived on the first tick after it is shown.
+ *
+ * Never throws: the same tick fires the retry ladder, and a derivation must not cost a retry.
+ */
+function derivePendingPromptFacts(): void {
+  try {
+    const viewed = sessionKey;
+    if (!viewed) {
+      return;
+    }
+    const entries = readOutbox(outboxStore);
+    const byId = new Map<string, OutboxEntry>();
+    for (const e of entries) {
+      byId.set(e.id, e);
+    }
+    const stranded = strandedPromptIds(
+      outboxForSession(entries, viewed, sessionKeyMatches),
+      viewed,
+    );
+    const pages: unknown[][] = [
+      messages,
+      queuedForSession(pendingQueuedSends, viewed, sessionKeyMatches),
+    ];
+    let changed = false;
+    for (const page of pages) {
+      for (const m of page) {
+        const id = (m as Record<string, unknown> | null)?._clientMsgId;
+        if (typeof id !== "string") {
+          continue;
+        }
+        const facts = promptFactsOf(m);
+        if (facts === null) {
+          continue;
+        }
+        const next = promptHolderFacts(id, byId.get(id) ?? null, stranded);
+        const holderUnchanged =
+          next.noGatewayHolder === undefined ||
+          (facts.noGatewayHolder === true) === next.noGatewayHolder;
+        if (facts.pending === next.pending && holderUnchanged) {
+          continue;
+        }
+        const before = promptStateOf(m);
+        notePromptFacts(m, next);
+        changed = changed || promptStateOf(m) !== before;
+      }
+    }
+    if (changed) {
+      updateChat(true);
+    }
+  } catch (err) {
+    console.debug("[prompt-state] U4 derivation skipped this tick", err);
+  }
+}
+
+/**
+ * Part 2 — RESEND a LOST prompt, on the owner's explicit click (PQ-12).
+ *
+ * The text goes out as a NEW prompt: send() mints a fresh clientMsgId, which becomes the new outbox
+ * id, the new bubble id AND the new gateway idempotencyKey (PQ-1). The LOST prompt's key is NEVER
+ * sent again: the gateway already acked it, and its dedupe cache would only echo the finished run
+ * (65ba434b5c9). That is why this does not call `resendOutboxEntry`, the automatic replay, which
+ * reuses `entry.id` on purpose and only for an UNACKED entry. send() links the new entry to this one
+ * (`retryOf`), and retires this one through the journaled Dismiss only once the new one is on disk.
+ */
+function resendLostPrompt(id: string): void {
+  const entry = readOutbox(outboxStore).find((e) => e.id === id);
+  if (!entry || !entry.text.trim()) {
+    // Proven or retired since the control was drawn: repaint, and the control goes with its state.
+    updateChat(true);
+    return;
+  }
+  if (!sessionKeyMatches(entry.sessionKey)) {
+    // send() addresses the VIEWED session, and a prompt is re-sent into the session it was typed in.
+    console.warn("[outbox] resend skipped: the prompt belongs to another session", id);
+    return;
+  }
+  void send(entry.text, undefined, id);
+}
+
+/**
+ * Part 3 — DISMISS a LOST prompt, on the owner's explicit click. The ONE non-proof retirement of an
+ * outbox entry (PQ-9), recorded in the prompt journal, whose row stays (outbox.ts
+ * `dismissOutboxEntry`). No confirmation dialog: a window.confirm freezes every stream handler, and
+ * nothing is destroyed, because the journal keeps the text.
+ */
+function dismissLostPrompt(id: string): void {
+  if (!dismissOutboxEntry(outboxStore, id, Date.now())) {
+    // No such entry (proven meanwhile), or the journal could not record the dismissal. Either way
+    // nothing was retired, and the repaint shows the prompt as it now stands.
+    console.warn("[outbox] dismiss not recorded; the prompt is kept", id);
+    updateChat(true);
+    return;
+  }
+  dropPromptBubbles(id);
+  updateChat(true);
+}
+
+/**
+ * Part 4 — the 🐛 on a LOST prompt (FORK 2026-09-26, the architect: "my prompt already went through, and
+ * yet I see another prompt with the same text ... 'not in history' ... add a bug icon button, which
+ * should log that this particular prompt feature did not work correctly").
+ *
+ * Gathers everything the LOST verdict was derived from, re-reads the session's history the way
+ * flushOutbox would (and as a plain tail), and posts one report to the prod-ui server, which adds
+ * the gateway journal and transcript lines for the key and writes it under
+ * ~/.openclaw/data/bug-reports/. It retires nothing: Resend and Dismiss stay the owner's call.
+ * The last report stays on `window.__lastPromptBugReport` even when the write fails.
+ */
+const promptBugInFlight = new Set<string>();
+
+function bugErrText(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err) {
+    return String((err as { message: unknown }).message);
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return "unknown error";
+  }
+}
+
+/** The served rows as the proof reads them (reconcileOutboxAgainst), roles included. */
+function bugHistoryRows(incoming: unknown[]): BugHistoryInputRow[] {
+  return (incoming as Record<string, unknown>[]).map((m) => ({
+    role: String(m.role ?? ""),
+    idempotencyKey: typeof m.idempotencyKey === "string" ? m.idempotencyKey : undefined,
+    supersededIdempotencyKeys: Array.isArray(m.supersededIdempotencyKeys)
+      ? m.supersededIdempotencyKeys
+      : undefined,
+    text: assistantMsgText(m),
+    ts: typeof m.createdAtMs === "number" ? m.createdAtMs : toMillis(m.timestamp),
+    seq: typeof m.seq === "number" ? m.seq : undefined,
+  }));
+}
+
+async function bugHistoryRead(request: unknown): Promise<BugHistoryRead> {
+  try {
+    const res = (await req("chat.history", request)) as { messages?: unknown[] } | null;
+    return { request, rows: bugHistoryRows(res?.messages ?? []) };
+  } catch (err) {
+    return { request, rows: null, error: bugErrText(err) };
+  }
+}
+
+async function reportPromptBug(id: string, bubbleEl: Element | null): Promise<void> {
+  if (promptBugInFlight.has(id)) {
+    return;
+  }
+  promptBugInFlight.add(id);
+  const reportedAt = Date.now();
+  let report: Record<string, unknown> | null = null;
+  try {
+    const entries = readOutbox(outboxStore);
+    const entry = entries.find((e) => e.id === id) ?? null;
+    const promptSession = entry?.sessionKey ?? sessionKey;
+    const want = entry ? normalizeForMatch(entry.text) : "";
+
+    const pages: Array<[string, unknown[]]> = [
+      ["viewed", messages],
+      ["queued", pendingQueuedSends],
+    ];
+    for (const [tabId, st] of tabStates) {
+      if (st.messages !== messages) pages.push([`tab:${tabId}`, st.messages]);
+    }
+    const bubbles: unknown[] = [];
+    const bubbleStates: unknown[] = [];
+    for (const [page, list] of pages) {
+      list.forEach((m, index) => {
+        const rec = m as Record<string, unknown> | null;
+        if (!rec || bubbles.length >= 12) return;
+        const sameKey = rec._clientMsgId === id;
+        const sameText =
+          want.length > 0 &&
+          String(rec.role ?? "") === "user" &&
+          normalizeForMatch(assistantMsgText(rec)).includes(want);
+        if (sameKey || sameText) {
+          bubbles.push({ page, index, sameKey, sameText, message: m });
+          bubbleStates.push({ page, index, state: promptStateOf(m), facts: promptFactsOf(m) });
+        }
+      });
+    }
+
+    const dom: string[] = [];
+    if (bubbleEl) dom.push(bubbleEl.outerHTML);
+    const head = want.slice(0, 80);
+    if (head) {
+      for (const el of document.querySelectorAll("#messages .msg.user")) {
+        if (
+          el !== bubbleEl &&
+          dom.length < 6 &&
+          normalizeForMatch(el.textContent ?? "").includes(head)
+        ) {
+          dom.push(el.outerHTML);
+        }
+      }
+    }
+
+    const viewed = sessionKey;
+    const strandedIds = strandedPromptIds(
+      outboxForSession(entries, viewed, sessionKeyMatches),
+      viewed,
+    );
+    const derivation = {
+      holderFacts: promptHolderFacts(id, entry, strandedIds),
+      snapshot: entry ? promptSnapshotFor(entry.sessionKey) : null,
+      stranded: strandedIds.has(id),
+      clientIdle: entry ? promptClientIdle(entry.sessionKey) : null,
+      followupStarted: promptFollowupStarted(id),
+      bubbleStates,
+      sessionOutbox: outboxForSession(entries, promptSession, sessionKeyMatches).map((e) => ({
+        id: e.id,
+        ts: e.ts,
+        attempts: e.attempts,
+        ackedAt: e.ackedAt,
+        cancelledAt: e.cancelledAt,
+        keyedProofExpected: e.keyedProofExpected,
+        lastProofCheckAt: e.lastProofCheckAt,
+        sentAfterSeq: e.sentAfterSeq,
+        sentEpoch: e.sentEpoch,
+      })),
+      outboxSize: entries.length,
+    };
+
+    const proofRequest = entry
+      ? outboxProofRequest(promptSession, [entry], cursorWindowForSessionKey(promptSession))
+      : { sessionKey: promptSession, limit: 200 };
+    const tailRequest = entry
+      ? outboxTailProofRequest(promptSession, [entry])
+      : { sessionKey: promptSession, limit: 200 };
+    const [proofRead, tailRead] = await Promise.all([
+      bugHistoryRead(proofRequest),
+      bugHistoryRead(tailRequest),
+    ]);
+
+    report = buildPromptBugReport({
+      promptId: id,
+      reportedAt,
+      entry,
+      journal: readJournal(outboxStore).filter(
+        (j) => j.id === id || j.retryOf === id || j.resentAs === id,
+      ),
+      bubbles,
+      derivation,
+      proofRead,
+      tailRead,
+      dom,
+      page: {
+        href: location.href,
+        userAgent: navigator.userAgent,
+        online: navigator.onLine,
+        visibility: document.visibilityState,
+        bundle: [...document.scripts]
+          .map((sc) => sc.getAttribute("src"))
+          .filter((src) => src && src.includes("assets/")),
+        viewedSessionKey: viewed,
+        promptSessionIsViewed: entry ? sessionKeyMatches(entry.sessionKey) : null,
+        socketReadyState: ws?.readyState ?? null,
+        viewedSessionBusy: viewedSessionBusy(),
+        viewedSessionPending: viewedSessionPending(),
+        uiEvents: uiEventIngest.stats(),
+        tabCount: tabStates.size,
+        viewedPageLength: messages.length,
+      },
+    });
+    (window as unknown as Record<string, unknown>).__lastPromptBugReport = report;
+
+    const resp = await fetch("/api/bug-report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Tinker-Action": "bug-report" },
+      body: JSON.stringify(report),
+    });
+    const out = (await resp.json().catch(() => ({}))) as { path?: string; error?: string };
+    if (!resp.ok || !out.path) {
+      throw new Error(out.error || `HTTP ${resp.status}`);
+    }
+    console.info("[prompt-bug] report written", out.path, report);
+    showToast(`🐛 Bug logged: ${out.path}`, false, 10_000);
+  } catch (err) {
+    console.error("[prompt-bug] report failed", err, report);
+    showToast(
+      `🐛 Bug report failed: ${bugErrText(err)} (devtools console has full error; window.__lastPromptBugReport holds it)`,
+      true,
+      10_000,
+    );
+  } finally {
+    promptBugInFlight.delete(id);
+  }
+}
+
+/**
+ * Take a retired prompt's bubbles off every page: viewed, deferred and background. Called only after
+ * the owner retired its outbox entry, and it removes only a bubble that only this browser holds
+ * (msg-order.ts `isBrowserOnlyPrompt`, which LOST is). A transcript row is never touched: this is the
+ * owner's own delete, not an automatic one. Spliced in place, so every holder of a page keeps it.
+ */
+function dropPromptBubbles(id: string): void {
+  const pages: unknown[][] = [messages, pendingQueuedSends];
+  for (const st of tabStates.values()) {
+    if (st.messages !== messages) {
+      pages.push(st.messages);
+    }
+  }
+  for (const page of pages) {
+    for (let i = page.length - 1; i >= 0; i--) {
+      const m = page[i];
+      if ((m as Record<string, unknown> | null)?._clientMsgId === id && isBrowserOnlyPrompt(m)) {
+        page.splice(i, 1);
+      }
+    }
+  }
+}
+
+/**
+ * FORK 2026-09-24 — prompt-queue.md §2 and §7 step U4 (PQ-6 "exactly one terminal per prompt",
+ * PQ-7 "terminals are keyed").
+ *
+ * chat.send runs a prompt under its own idempotencyKey (chat.ts: `clientRunId = p.idempotencyKey`),
+ * so a `final` whose runId is a prompt's key is THAT prompt's terminal: §2's RUNNING → ANSWERED. It
+ * is recorded as a fact on the bubbles that draw that one prompt, and on nothing else.
+ *
+ * U4 needs it because LOST and ANSWERED are two different terminals of one prompt, and the
+ * transcript cannot always tell them apart: a session's FIRST prompt is never keyed in the
+ * transcript (bug-log.md 2026-09-23, appendPromptKeyMarkerForChatSend), so its outbox entry is never
+ * proven. Without this fact the derivation would call that answered prompt LOST. ANSWERED draws
+ * nothing on the bubble, exactly like the ACCEPTED it replaces.
+ *
+ * A `final` carrying a `disposition` (G2: steered, backlogged, dropped) is NOT an answer: the
+ * gateway only placed the prompt, and reading that report is step U3. An old gateway sends that
+ * early `final` with no field, so there a steered or backlogged prompt reads ANSWERED: no badge, and
+ * never LOST, which is the safe direction. An `error` is not recorded: it is not terminal while a
+ * fallback model can still carry the run.
+ *
+ * FORK 2026-09-25 — an `aborted` whose runId is the prompt's key records CANCELLED: §6.1's grey
+ * "stopped · not answered", with no action. Before, only the prompts KEYED to the aborted run were
+ * told (endPromptsKeyedToRun), never the prompt whose own run a stop ended, so one that left no
+ * transcript row derived LOST, with a Resend of the prompt the owner had just stopped. The rule is
+ * pure (queued-sends.ts `ownRunTerminal`), and the FIRST own-run terminal stands
+ * (`ownRunTerminalRecorded`): a stop that lands after the run's `final` must not rewrite ANSWERED
+ * as CANCELLED.
+ *
+ * FORK 2026-09-25 — the stop is also stamped on the prompt's outbox entry (outbox.ts
+ * `markCancelled`), so it survives a reload: msg-order.ts `outboxPromptFacts` re-draws the entry
+ * CANCELLED instead of LOST with a Resend of the prompt the owner had just stopped (PQ-11). The
+ * first-terminal rule holds on disk too: no stamp when a bubble of the prompt already recorded its
+ * run's `final`. A key the outbox does not hold (proven, dismissed) is a no-op.
+ *
+ * FORK 2026-10-01 — the answer is stamped on the entry too (outbox.ts `markAnswered`), for the
+ * reason the stop is (bug-log.md [chat-divergence], cause 1, client half). A fresh history merge
+ * throws the answered bubble away, and an entry nothing proves (a session's first prompt is never
+ * keyed in the transcript) was then re-drawn LOST beside its served row on every load, with a
+ * Resend that would re-run the answered prompt, and its session re-read every PROOF_RECHECK_MS. An
+ * answered entry now gets no bubble and no proof read (outbox.ts `outboxEntriesNeedingBubble`,
+ * `outboxSessionsNeedingProof`) and never derives LOST (prompt-state.ts `gatewayHolderFacts`), yet
+ * still retires only on keyed proof or Dismiss (PQ-9). A `final` whose message is a failure
+ * outcome (outcome-bubble.ts `outcomeOf`: a typed `outcome`, or one derived from `stopReason`)
+ * answered nothing, so it is not stamped. The first own-run outcome stands on disk as well: an
+ * entry already stopped is never stamped answered, and an answered one is never stamped stopped.
+ */
+function notePromptTerminal(p: unknown): void {
+  const own = ownRunTerminal(
+    p as { state?: unknown; runId?: unknown; disposition?: unknown } | null | undefined,
+  );
+  if (own === null) {
+    return;
+  }
+  const stopAfterAnswer =
+    own.facts.cancelled === true &&
+    promptBubblePages().some((page) =>
+      page.some(
+        (m) =>
+          (m as Record<string, unknown> | null)?._clientMsgId === own.key &&
+          promptFactsOf(m)?.answered === true,
+      ),
+    );
+  notePromptFactsById(own.key, own.facts, ownRunTerminalRecorded);
+  if (own.facts.cancelled === true && !stopAfterAnswer) {
+    markCancelled(outboxStore, own.key, Date.now());
+  }
+  if (own.facts.answered === true && outcomeOf((p as { message?: unknown }).message) === null) {
+    markAnswered(outboxStore, own.key, Date.now());
+  }
+}
+
+// `resendOf` (FORK 2026-09-24, prompt-queue.md U4): the key of a LOST prompt this call re-sends on
+// the owner's click (resendLostPrompt). The text still goes out under a FRESH key.
+// `keepDraft` (FORK 2026-09-25, context-window-panel.md §6.1 A6): the text was not typed (the
+// COMPACT button's `/compact`), so the composer's draft is not this send's to clear or restore.
+// FORK 2026-09-29 (u14) — owner intent is asserted at the composer (Enter / send button), the
+// only two call sites that go through `sendFromComposer`. It is a fact of the CALL SITE, not
+// something the callee can reconstruct from its other flags: send("/new") (the NEW button) matches
+// every "no-retry, no-resend, no-keepDraft" shape and yet is not the owner parking at the leading
+// edge. Carried as a ONE-SHOT flag rather than a 5th positional parameter because send()'s
+// signature ending in `keepDraft = false` is pinned by panels/context-buttons.test.ts. send()
+// consumes it as its FIRST statement — before any await — so on a single thread it cannot leak to
+// any other caller: nothing can run between the raise here and the consume there.
+let composerSendArmed = false;
+// FORK 2026-10-02 (the architect, Thalamus full deploy) — "Rewind and retry with <model>": the model for ONE send. A one-shot flag, like
+// composerSendArmed, consumed by the chat.send that carries it (matched on the tab's key). chat.send turns `model` into an
+// inline `/model` directive and the gateway PERSISTS it on the session, so a tab on Auto would stay on the retry model
+// without anyone choosing it (the 2026-09-08 failure). `autoOnNextSend` makes that tab's NEXT send carry model:"auto", which
+// clears the stored pin inside that turn. It is not `autoAssertedSessions`: that set retires itself at the first repaint
+// that sees a row with no override, which is before the retry's override has landed on the row (measured in the page check).
+// A hand-picked tab needs nothing: its own pin rides on its next send and replaces the retry model.
+let oneTurnModel: { key: string; model: string } | null = null;
+// It lives in localStorage too: a reload before the next send would otherwise lose it, and the tab would stay on the retry model
+// with nobody having chosen it. One key, read at start, written on every add and delete.
+const AUTO_ON_NEXT_SEND_KEY = "tinker-auto-on-next-send";
+const autoOnNextSend = new Set<string>();
+try {
+  const saved: unknown = JSON.parse(localStorage.getItem(AUTO_ON_NEXT_SEND_KEY) || "[]");
+  if (Array.isArray(saved)) {
+    for (const k of saved) {
+      if (typeof k === "string") {
+        autoOnNextSend.add(k);
+      }
+    }
+  }
+} catch (err) {
+  console.error("[auto-on-next-send] could not read the saved set", err);
+}
+function saveAutoOnNextSend(): void {
+  try {
+    localStorage.setItem(AUTO_ON_NEXT_SEND_KEY, JSON.stringify([...autoOnNextSend]));
+  } catch (err) {
+    console.error("[auto-on-next-send] could not save the set", err);
+  }
+}
+async function sendWithModelForOneTurn(text: string, model: string): Promise<void> {
+  const key = sessionKey;
+  if (!key || !text.trim()) {
+    return;
+  }
+  const wasAuto = !modelPinBySession.has(key);
+  oneTurnModel = { key, model };
+  try {
+    await send(text);
+  } finally {
+    oneTurnModel = null;
+    if (wasAuto) {
+      autoOnNextSend.add(key);
+      saveAutoOnNextSend();
+    }
+  }
+}
+function sendFromComposer(text: string) {
+  composerSendArmed = true;
+  return send(text);
+}
+
+async function send(text: string, reuseClientMsgId?: string, resendOf?: string, keepDraft = false) {
+  // u14: consume the composer's one-shot owner-intent flag (see sendFromComposer) — FIRST, always.
+  const fromComposer = composerSendArmed;
+  composerSendArmed = false;
   if (!text.trim()) {
     return;
   }
@@ -11394,7 +16729,7 @@ async function send(text: string, reuseClientMsgId?: string) {
     streamRunId = null;
     lastDeltaLen = 0;
     lastDeltaAt = 0;
-    sending = false;
+    setSending(false);
     currentTurnNumber = 0;
     expandedTools = new Set();
 
@@ -11474,6 +16809,39 @@ async function send(text: string, reuseClientMsgId?: string) {
       clearPersistedErrors(oldSessionKey);
     }
 
+    // FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — /clear declared
+    // this session finished, so every client lane that could keep painting it as running must
+    // close with it: activeRuns + backgroundRuns (the Stop pill's client lane), the pre-model
+    // windows, and the PERSISTED phase-timing rows. The rows are closed in place, not deleted —
+    // the client-rows store deletes nothing but eviction — otherwise a wiped tab's block
+    // re-hydrates as "running" on the next reload (observed: aborted 12:00:40, /clear-ed 12:01,
+    // still pulsing after a hard reload).
+    if (oldSessionKey) {
+      // Deleting the current entry while iterating a Map is safe in JS — no snapshot needed.
+      for (const [runId, info] of activeRuns) {
+        if (info.sessionKey && sessionKeyMatches(info.sessionKey, oldSessionKey)) {
+          activeRuns.delete(runId);
+          rememberTerminated(runId);
+        }
+      }
+      saveActiveRuns();
+      dropBackgroundRunsForSession(backgroundRuns, oldSessionKey, sessionKeyMatches);
+      clearPreModelFor(oldSessionKey);
+      sessionEndedAt.set(oldSessionKey, Date.now());
+      closePhaseTimingForSession(oldSessionKey, "cleared");
+    }
+    preparingSince = null;
+    pendingSince = null;
+    {
+      const st = tabStates.get(activeTabId);
+      if (st) {
+        st.preparingSince = null;
+        st.pendingSince = null;
+      }
+    }
+    resetPhaseGroup();
+    repaintActivitySurfaces();
+
     // Server-side cascade. Fire-and-forget; failures are non-fatal — worst
     // case the next chat.send auto-creates a fresh entry on the new key.
     if (oldSessionKey) {
@@ -11537,9 +16905,23 @@ async function send(text: string, reuseClientMsgId?: string) {
     return;
   }
 
+  // Freeze BOTH halves of the destination before the first await. buildInjectedPrompt below can
+  // yield long enough for the user to switch tabs; reading the module globals again after that
+  // sent NeuroCoin's saved outbox entry to Goku and then painted the bubble there too.
+  const sendTarget = captureSendTarget(activeTabId, sessionKey);
+  if (!sendTarget) {
+    restoreComposerText(text);
+    return;
+  }
+  const sentTabId = sendTarget.tabId;
+  const sentSessionKey = sendTarget.sessionKey;
+  const isFirstMessage = messages.length === 0;
+  const targetIsActive = () =>
+    sendTargetIsActive(sendTarget, activeTabId, sessionKey, sessionKeyMatches);
+
   // FORK 2026-06-24 (recoverable-retry): a new user message means the user took
   // over — cancel any pending auto-retry for this session before we send.
-  retryState.delete(sessionKey);
+  retryState.delete(sentSessionKey);
 
   // FORK 2026-08-16 — PERSIST BEFORE ANYTHING THAT CAN FAIL. This is the whole fix, and it is an
   // ORDERING fix: every line below this one is either an await or depends on one, and until the
@@ -11557,11 +16939,22 @@ async function send(text: string, reuseClientMsgId?: string) {
   // net, and this origin accumulates months of drafts/tab state/EEG stores. When the prompt could
   // not be protected we keep the composer draft instead of clearing it on success (below), so the
   // text still survives even though the outbox cannot.
+  //
+  // FORK 2026-09-08 — `enqueueOutbox` stamps this entry `keyedProofExpected: true`: the gateway now
+  // serves `idempotencyKey` back on the user row it persists, so the ONLY thing that can ever retire
+  // this entry is a chat.history row carrying `clientMsgId` as its key. Text can no longer confirm
+  // it (outbox.ts, historyMatchesEntry) — the text tail was blind to real prompts sitting behind
+  // tool_result rows and re-sent them until they were answered twice.
+  // FORK 2026-09-23 (plan task 8) — plus the tab's seq cursor at this moment, so the proof read can
+  // ask for the rows after the send instead of the tail (outbox.ts outboxProofRequest).
   const promptProtected = enqueueOutbox(outboxStore, {
     id: clientMsgId,
-    sessionKey,
+    sessionKey: sentSessionKey,
     text,
     ts: typedAt,
+    ...outboxSendCursor(sentTabId, sentSessionKey),
+    // FORK 2026-09-24 (U4) — an explicit Resend links the NEW prompt to the LOST one it replaces.
+    ...(resendOf ? { retryOf: resendOf } : {}),
   });
   if (!promptProtected) {
     console.warn("[outbox] could not persist prompt (storage full?) — keeping the composer draft");
@@ -11570,9 +16963,31 @@ async function send(text: string, reuseClientMsgId?: string) {
   // removes entries, every removal is a judgement, and the first version of that judgement deleted
   // prompts outright. The journal is append-only: whatever the send path concludes, the text is
   // still on disk. See outbox.ts.
-  appendJournal(outboxStore, { id: clientMsgId, sessionKey, text, ts: typedAt });
+  appendJournal(outboxStore, {
+    id: clientMsgId,
+    sessionKey: sentSessionKey,
+    text,
+    ts: typedAt,
+    ...(resendOf ? { retryOf: resendOf } : {}),
+  });
+  // FORK 2026-09-24 — prompt-queue.md §7 step U4 (PQ-9, PQ-12). An explicit Resend of a LOST prompt
+  // (resendLostPrompt) is a brand-new prompt: `clientMsgId` is a fresh uuid, so the gateway gets a
+  // NEW idempotencyKey and the LOST prompt's acked key is never sent again. Both the new entry and
+  // its journal row carry `retryOf`, the link. Only now that the new copy is on disk does the old
+  // entry retire, through the owner's journaled Dismiss, and its LOST bubble leave the page. If the
+  // new copy could not be protected (storage full), the old entry stays: it is then the only
+  // durable copy of the text.
+  if (resendOf) {
+    if (
+      promptProtected &&
+      dismissOutboxEntry(outboxStore, resendOf, typedAt, { resentAs: clientMsgId })
+    ) {
+      dropPromptBubbles(resendOf);
+    } else {
+      console.warn("[outbox] resent as a new prompt; the original stays in the outbox", resendOf);
+    }
+  }
 
-  const isFirstMessage = messages.length === 0;
   // FORK: Mark message as queued only if THIS session has an active run
   // FORK 2026-08-26 — the SAME shared predicate viewedSessionBusy() now uses. This value feeds
   // shouldQueue(), so ONE orphaned activeRuns entry silently queued every prompt typed into that
@@ -11589,13 +17004,13 @@ async function send(text: string, reuseClientMsgId?: string) {
   // blanked the composer. Neither drawn nor delivered.
   const isQueued = sendWouldDefer();
   if (!isQueued) {
-    sending = true;
+    setSending(true);
     // Opens the "sending" window — the pill's first state, closed when chat.send resolves.
     pendingSince = Date.now();
     // FORK 2026-08-17 — the same window, recorded against the SESSION rather than the viewed tab,
     // so switching away does not take the glow with it. `sending` above is this tab's copy; this
     // map is the one every OTHER tab can read.
-    openPreModelWindow(preModelSince, sessionKey, Date.now());
+    openPreModelWindow(preModelSince, sentSessionKey, Date.now());
     // FORK 2026-08-15 — `sending` is half of the activity state (see viewedSessionPending), so
     // the surfaces that display it must be repainted HERE, not left to the next 5s liveness
     // tick. Measured before this call existed: chat lit at t+2s, tab and row still dark at
@@ -11604,6 +17019,12 @@ async function send(text: string, reuseClientMsgId?: string) {
     repaintActivitySurfaces();
   }
   currentTurnNumber++;
+  // These are properties of the source tab. Reset them while that tab is still synchronously
+  // active; if the user switches during prompt injection, switchToTab saves the correct snapshot.
+  preparingSince = null;
+  turnPhase = null;
+  turnPhaseTrail = [];
+  resetPhaseGroup();
   // FORK 2026-04-18: Show the USER'S TEXT in the bubble, but stash the full
   // injected prompt (with amygdala/fractal instructions) on the message so
   // the renderer can offer a click-to-expand view. `_fullPrompt` holds the
@@ -11645,12 +17066,19 @@ async function send(text: string, reuseClientMsgId?: string) {
     // FORK 2026-06-08: tag the queued bubble with the session it was queued under so it renders
     // ONLY in its own tab and can be settled when THAT session's turn ends (not just when the
     // session happens to be the one on screen). Fixes "stuck queued" + "queued in every tab".
-    ...(isQueued ? { _queued: true, _queuedSession: sessionKey } : {}),
-    // FORK 2026-08-16 — undelivered until the gateway says otherwise. This flag is what stops
-    // `messages = incoming` in loadChat from deleting the bubble (it is in msg-order's
-    // CLIENT_ONLY_FLAGS, so the existing merge PRESERVES it), and it is cleared the instant
-    // chat.send resolves — so a delivered prompt is never preserved alongside the server's copy.
-    _undelivered: true,
+    ...(isQueued ? { _queuedSession: sentSessionKey } : {}),
+    // FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md step U2 (PQ-2). The bubble's ONE
+    // pending-prompt field. It holds FACTS (prompt-state.ts `PromptStateInputs`), never a state
+    // name: the render derives the one §2 state from them (msg-order.ts `promptBubbleMarks`). It
+    // replaced a flag triple. The deferral flag is now `deferred`, a PLACEMENT fact only (PQ-8): it
+    // never changes which state a prompt is in, so a deferred prompt whose chat.send is rejected
+    // reads UNSENT, never "queued" (contradiction C1). The two outbox flags are now `transport`.
+    // The first transport is "in-flight": chat.send is issued synchronously below, before any
+    // await. Until it is "acked" the bubble is BROWSER-ONLY (msg-order.ts `isBrowserOnlyPrompt`,
+    // which took the old flag's place in isClientOnlyBubble): nothing but this browser holds it.
+    // The ack, a rejection, each replay and a transcript proof record their facts through
+    // `notePromptFacts`; nothing else writes this field.
+    _promptState: { transport: "in-flight", deferred: isQueued },
   };
   if (isQueued) {
     // FORK 2026-06-04 — bug task-mpwfiot2: hold the queued bubble OUT of messages[] (see the
@@ -11658,14 +17086,41 @@ async function send(text: string, reuseClientMsgId?: string) {
     // into messages[] when the in-flight turn ends, so the running turn's later bubbles can
     // never jump above it.
     pendingQueuedSends.push(outgoingUserMsg);
-  } else {
+  } else if (targetIsActive()) {
     pushUserMsgDeduped(outgoingUserMsg);
+  } else {
+    // The await above completed after the user left the source tab. Write into that tab's saved
+    // state, never the globals that now belong to the newly selected tab.
+    const targetState = tabStates.get(sentTabId) ?? freshTabState();
+    if (!targetState.messages.some((m: any) => m?._clientMsgId === clientMsgId)) {
+      targetState.messages.push(outgoingUserMsg);
+    }
+    tabStates.set(sentTabId, targetState);
   }
-  updateChat();
-  if (!isQueued) {
-    updateBtn();
+  if (targetIsActive()) {
+    // FORK 2026-09-29 (the architect: "After sending a prompt, the chat should scroll down so one can
+    // see the prompt introduced in the chat and the chat scrolls with the response after
+    // that.") — the owner's own composer send re-arms the follow latch: §5.20's one exception,
+    // and only for `fromComposer` calls, so ladder retries, explicit Resend, COMPACT and
+    // send("/new") still leave a scrolled-up viewport alone. Placed BEFORE updateChat(), whose
+    // wasAtBottom snapshot then pins the pane to the new user bubble; scrollChat()'s rAF
+    // re-pins after layout, and the stream keeps following through the same latch until a real
+    // upward gesture (the listener's 'user-scroll') turns it off. Known coupling, accepted
+    // deliberately: chatFollow also gates viewed-page trimming and hole-fill holds (see the
+    // scroll-follow.ts header) — re-arming here is coherent because a send parks the owner at
+    // the latest row, exactly like the re-arming gesture the latch was built around.
+    if (fromComposer) {
+      chatFollow = nextFollowState({ follow: chatFollow }, { type: "owner-send" }).follow;
+      // FORK 2026-10-02 — and a remembered row still being looked for is no longer wanted.
+      releaseViewport();
+      scheduleViewportPersist();
+    }
+    updateChat();
+    if (!isQueued) {
+      updateBtn();
+    }
+    scrollChat();
   }
-  scrollChat();
 
   // FORK 2026-06-22 (the architect): draw the blue prompt-boundary line the INSTANT the prompt
   // is sent — not at turn end — so every turn is visibly delimited while it still runs.
@@ -11674,30 +17129,37 @@ async function send(text: string, reuseClientMsgId?: string) {
   // still delimited by the end-handler path (eegBoundaryAtSend flag dedupes the two).
   if (!isQueued) {
     try {
-      if (sessionKey && !sessionKey.includes(":subagent:")) {
-        const userMsgs = messages.filter(
+      if (sentSessionKey && !sentSessionKey.includes(":subagent:")) {
+        const targetMessages = targetIsActive()
+          ? messages
+          : (tabStates.get(sentTabId)?.messages ?? []);
+        const userMsgs = targetMessages.filter(
           (m: any) => (m.role || "").toLowerCase() === "user" && !m._temporary,
         );
         let promptIndex: number | undefined;
         let promptText: string | undefined;
         if (userMsgs.length > 0) {
-          promptIndex = userMsgs.length - 1;
+          // R36: counted from the transcript's start, not from the page.
+          promptIndex =
+            userRowOffset(targetMessages, tabWindowOf(tabStates.get(sentTabId), sentSessionKey)) +
+            userMsgs.length -
+            1;
           // `text` is send()'s own argument (the prompt being sent) — msgText lives in
           // another scope and would throw here, silently killing the boundary (the bug).
           const pt = (text || "").trim();
           promptText = pt.length > 280 ? `${pt.slice(0, 280)}…` : pt;
         }
-        const turn = (eegTurnCounters.get(sessionKey) ?? 0) + 1;
-        eegTurnCounters.set(sessionKey, turn);
-        getEegStore(sessionKey).turnEnd({
+        const turn = (eegTurnCounters.get(sentSessionKey) ?? 0) + 1;
+        eegTurnCounters.set(sentSessionKey, turn);
+        getEegStore(sentSessionKey).turnEnd({
           turn,
           runId: clientMsgId,
           endedAt: Date.now(),
           promptIndex,
           promptText,
         });
-        eegBoundaryAtSend.set(sessionKey, true); // tell the end-handler not to add a 2nd boundary
-        saveEegStore(sessionKey);
+        eegBoundaryAtSend.set(sentSessionKey, true); // tell the end-handler not to add a 2nd boundary
+        saveEegStore(sentSessionKey);
         fillEegPaper();
       }
     } catch {
@@ -11715,15 +17177,24 @@ async function send(text: string, reuseClientMsgId?: string) {
   // FORK 2026-06-07 — the saved draft is dropped ONLY on a CONFIRMED send. A failed send (e.g. the
   // gateway is down / restarting) MUST keep the draft and put the text back in the composer, so a
   // failed "enter" can never lose what you typed.
-  const draftTabId = activeTabId;
+  const draftTabId = sentTabId;
   let sendOk = false;
   // FORK 2026-06-14 (bible §5.84-C): re-apply the session's effort pin every turn via
   // the webchat-safe `thinking` param. The gateway injects it as a `/think <level>`
   // command into BodyForCommands (chat.ts:2161) — the displayed Body stays clean — and
   // it resolves into params.thinkLevel for this turn. Auto (no pin) sends nothing, so
   // the skill keeps control of the budget.
-  const effortPin = effortPinBySession.get(sessionKey);
-  const modelPin = modelPinBySession.get(sessionKey);
+  // FORK 2026-10-01: on Auto Thalamus sets the effort (the EFFORT row is the bias dial), so no pin rides along.
+  const oneTurn = oneTurnModel?.key === sentSessionKey ? oneTurnModel.model : undefined;
+  if (oneTurn) {
+    oneTurnModel = null;
+  }
+  // The retry's model has its own effort scale: the tab's pin was set for another model, so none rides along.
+  const effortPin =
+    isModelPinnedFor(sentSessionKey) && !oneTurn
+      ? effortPinBySession.get(sentSessionKey)
+      : undefined;
+  const modelPin = oneTurn ?? modelPinBySession.get(sentSessionKey);
   // FORK 2026-07-24 (the architect): seed activeRuns with the PINNED model the moment we
   // send, keyed by the same clientMsgId that becomes the gateway runId. Without
   // this the thinking indicator keeps showing a stale prior main run (e.g. Sol)
@@ -11736,7 +17207,7 @@ async function send(text: string, reuseClientMsgId?: string) {
       provider: providerOf(modelPin),
       startedAt: Date.now(),
       lastEventAt: Date.now(),
-      sessionKey,
+      sessionKey: sentSessionKey,
       phase: "thinking",
     });
     saveActiveRuns();
@@ -11744,24 +17215,29 @@ async function send(text: string, reuseClientMsgId?: string) {
     updateBudgetPanel();
     updateChat();
   }
-  // Fresh turn: not "preparing" until the gateway has actually accepted the message, and
-  // no phase yet — the previous turn's last phase must never bleed into this one's pill.
-  preparingSince = null;
-  turnPhase = null;
-  turnPhaseTrail = [];
-  // FORK 2026-08-24 — and a new turn gets its OWN timing block. Without this the first stage of
-  // turn N+1 would extend turn N's block, which is on screen far above and already folded.
-  resetPhaseGroup();
-  // FORK 2026-08-28 — the session this turn was ADDRESSED TO, captured before the await. The
-  // handler below settles per-session state, and the module-level `sessionKey` can have moved to
-  // another tab by the time chat.send answers.
-  const sentSessionKey = sessionKey;
+  // FORK 2026-09-08 (the architect, on the work tab: "I have Auto model selected, and I see a Sol thinking
+  // indicator ... Sol has reached a token limit") — AUTO RIDES THE SEND. Pressing Auto fires a
+  // fire-and-forget sessions.patch{model:null} (above, in the picker handler) and this send used to
+  // carry nothing. When that patch was slow — 82-147 s on 2026-09-08, the 12 MB sessions.json
+  // behind one lock — the gateway still held the `/model openai-codex/gpt-5.6-sol` pin from the
+  // morning, took it as an explicit choice, skipped the quota veto and THALAMUS, and ran the
+  // exhausted Sol with an empty ladder while this picker read Auto. Now, while an Auto press is
+  // still unconfirmed (`autoAssertedSessions`), the send carries `model: "auto"`: the gateway
+  // clears the stored pin INSIDE this turn and routes as Auto (auto-reply/reply/
+  // model-directive-auto.ts). A confirmed Auto (row with no override) sends nothing, as before,
+  // and a displayed server pin the user never cleared is left alone — the reset follows the PRESS,
+  // never the absence of a client pin.
+  const autoReset =
+    !modelPin && (autoAssertedSessions.has(sentSessionKey) || autoOnNextSend.has(sentSessionKey));
+  if (autoOnNextSend.delete(sentSessionKey)) {
+    saveAutoOnNextSend();
+  }
   await req("chat.send", {
-    sessionKey,
+    sessionKey: sentSessionKey,
     message: messageForGateway,
     idempotencyKey: clientMsgId,
     ...(effortPin ? { thinking: effortPin } : {}),
-    ...(modelPin ? { model: modelPin } : {}),
+    ...(modelPin ? { model: modelPin } : autoReset ? { model: "auto" } : {}),
   })
     .then((ack: unknown) => {
       sendOk = true;
@@ -11781,12 +17257,19 @@ async function send(text: string, reuseClientMsgId?: string) {
       // If the gateway died before persisting, the turn is absent from history and the entry is
       // replayed with its ORIGINAL idempotencyKey, so a replay cannot double-run an accepted turn.
       //
-      // The `_undelivered` mark IS cleared here: the ack is good enough to stop warning the user,
-      // it is only not good enough to destroy the last copy. Cleared against `outgoingUserMsg`
-      // directly rather than by id lookup: on the retryProvider path the bubble deliberately keeps
-      // its ORIGINAL `_clientMsgId` while the gateway gets a fresh idempotencyKey, so the two ids
-      // differ and a lookup would miss.
-      delete outgoingUserMsg._undelivered;
+      // The ack IS recorded here, as the bubble's transport fact (prompt-queue.md U2: "acked"
+      // derives ACCEPTED, which draws no badge and is no longer browser-only): the ack is good
+      // enough to stop warning the user, it is only not good enough to destroy the last copy.
+      // Recorded against `outgoingUserMsg` directly rather than by id lookup: on the retryProvider
+      // path the bubble deliberately keeps its ORIGINAL `_clientMsgId` while the gateway gets a
+      // fresh idempotencyKey, so the two ids differ and a lookup would miss.
+      notePromptFacts(outgoingUserMsg, { transport: "acked" });
+      // FORK 2026-09-04 — park the entry against the 20s replay tick for the same reason the replay
+      // path now parks it: the gateway holds this idempotencyKey, so re-sending draws a dedupe echo
+      // and nothing else. This is the UPSTREAM half of the fix — it stops the replay that used to
+      // end in a deletion from ever being attempted. The entry itself STAYS until history proves
+      // it. Reconnects leave the park intact so an acknowledged turn cannot execute again.
+      markAcked(outboxStore, clientMsgId, Date.now());
       // FORK 2026-08-13 — chat.send has RETURNED: the message is on the gateway and a
       // runId exists. Everything after this point is the gateway assembling the prompt
       // (engram retrieval, total-recall pack, prompt build) before it can name a model.
@@ -11798,12 +17281,15 @@ async function send(text: string, reuseClientMsgId?: string) {
       // "preparing context" begins. Both get a row; together they account for the whole wait
       // between pressing send and a model being named — which is the span the architect is
       // trying to see, and the span the gateway currently narrates 11ms of.
-      if (pendingSince !== null) {
+      if (targetIsActive() && pendingSince !== null) {
         recordPhaseTiming({
           ...finishedPhase("sending", Date.now() - pendingSince, "client"),
           startedAt: pendingSince,
         });
         pendingSince = null;
+      } else if (!targetIsActive()) {
+        const targetState = tabStates.get(sentTabId);
+        if (targetState) targetState.pendingSince = null;
       }
       // FORK 2026-08-28 — READ THE ACK BEFORE OPENING A STREAM WAIT. A CONTRACT CHECK, not a fix
       // for a case this call site can hit today: `clientMsgId` is a FRESH uuid on every send(), so
@@ -11815,32 +17301,64 @@ async function send(text: string, reuseClientMsgId?: string) {
       // `status: "in_flight"` deliberately falls through and keeps waiting: a controller exists, so
       // that run IS live, and its events are broadcast session-scoped via `sendToSession`.
       if ((ack as { status?: unknown } | null | undefined)?.status === "ok") {
+        if (!targetIsActive()) {
+          const targetState = tabStates.get(sentTabId);
+          if (targetState) {
+            targetState.sending = false;
+            targetState.sendingSince = null;
+            targetState.preparingSince = null;
+            targetState.pendingSince = null;
+          }
+        }
         settleAlreadyCompletedSend(clientMsgId, sentSessionKey);
         return;
       }
-      preparingSince = Date.now();
-      // Cleared on OPEN, not on close: a window that never reached a model (disconnect, failed
-      // send) must not donate its stages to the next turn's breakdown.
-      preparingStages = [];
-      updateChat();
+      if (targetIsActive()) {
+        preparingSince = Date.now();
+        // Cleared on OPEN, not on close: a window that never reached a model (disconnect, failed
+        // send) must not donate its stages to the next turn's breakdown.
+        preparingStages = [];
+        updateChat();
+      } else {
+        const targetState = tabStates.get(sentTabId);
+        if (targetState) targetState.preparingSince = Date.now();
+      }
     })
     .catch((e) => {
       console.error(e);
       // FORK 2026-08-16 — the send did NOT land (the commonest cause is exactly the reported one:
       // `req` rejects "disconnected" because the gateway is mid-restart, or the gateway's own close
-      // handler rejected everything in flight). `outgoingUserMsg._undelivered` therefore STAYS set
-      // and the outbox entry stays on disk, so the bubble survives the loadChat that the reconnect
+      // handler rejected everything in flight). The bubble therefore records transport "rejected"
+      // (prompt-queue.md U2: UNSENT, amber dashed `not sent · retrying`, browser-only) and the
+      // outbox entry stays on disk, so the bubble survives the loadChat that the reconnect
       // triggers and the prompt is replayed the moment the socket is back. Before this, the only
       // handling was the console.error above — invisible to the user, and the bubble was deleted by
       // the next history merge, which is why the prompt seemed to have never existed.
-      updateChat();
-      sending = false;
-      // Same reasoning as the disconnect path: a send that failed did not finish "preparing",
-      // so it leaves no timing row.
-      preparingSince = null;
-      pendingSince = null;
-      turnPhase = null;
-      turnPhaseTrail = [];
+      // Guarded on `sendOk`: this catch also runs when the `.then` above THROWS after the ack was
+      // recorded, and a thrown render must not turn an accepted prompt back into an unsent one. No
+      // attempt count is recorded: the first send is not an outbox attempt (markAttempted counts
+      // replays only), and each replay records its own (resendOutboxEntry).
+      if (!sendOk) {
+        notePromptFacts(outgoingUserMsg, { transport: "rejected" });
+      }
+      if (targetIsActive()) {
+        updateChat();
+        setSending(false);
+        // Same reasoning as the disconnect path: a send that failed did not finish "preparing",
+        // so it leaves no timing row.
+        preparingSince = null;
+        pendingSince = null;
+        turnPhase = null;
+        turnPhaseTrail = [];
+      } else {
+        const targetState = tabStates.get(sentTabId);
+        if (targetState) {
+          targetState.sending = false;
+          targetState.sendingSince = null;
+          targetState.preparingSince = null;
+          targetState.pendingSince = null;
+        }
+      }
       // FORK 2026-07-28 — the provisional pin-seeded run above was NEVER removed on failure. With
       // no successful send there is no lifecycle:start and no chat.final, so nothing else could
       // ever delete it: the session row shimmered forever and the composer stayed stuck on
@@ -11854,9 +17372,13 @@ async function send(text: string, reuseClientMsgId?: string) {
         updateSessionsPanel();
         updateChat();
       }
-      updateBtn();
+      if (targetIsActive()) updateBtn();
     });
-  if (draftTabId) {
+  // FORK 2026-09-24 (U4) — a Resend did not come from the composer, so it must not touch the
+  // composer's draft: clearing it on success would wipe whatever the owner is typing right now.
+  // FORK 2026-09-25 (A6) — nor did the COMPACT button's `/compact` (`keepDraft`), and on a failed
+  // send the restore below would overwrite that draft with "/compact".
+  if (draftTabId && !resendOf && !keepDraft) {
     if (sendOk && promptProtected) {
       // Confirmed AND the outbox holds a copy → safe to drop the saved draft (clearDraftFor
       // archives it into the ring first).
@@ -12019,7 +17541,27 @@ async function abort() {
     }
   }
   saveActiveRuns();
-  sending = viewedSessionBusy();
+  // FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — Stop must clear
+  // EVERY client lane that can light a pill for this session, not just `activeRuns`. The phantom
+  // pill (data-state="server") lit from resolveSessionRunState's client lane, which is activeRuns
+  // PLUS backgroundRuns (clientRunEvidence) — and abort() never dropped backgroundRuns nor the
+  // pre-model windows, so a Stop click cleared one lane and the pill re-lit from the other. Also
+  // close the session's timing block(s): persisted `done:false` entries are the third phantom
+  // lane, re-hydrated from localStorage on every reload.
+  dropBackgroundRunsForSession(backgroundRuns, sessionKey, sessionKeyMatches);
+  clearPreModelFor(sessionKey);
+  preparingSince = null;
+  pendingSince = null;
+  {
+    const st = tabStates.get(activeTabId);
+    if (st) {
+      st.preparingSince = null;
+      st.pendingSince = null;
+    }
+  }
+  closePhaseTimingForSession(sessionKey, "aborted");
+  repaintActivitySurfaces();
+  setSending(viewedSessionBusy());
   updateChat();
   updateBtn();
   // FORK 2026-08-06: refresh the session snapshot so the run-set verdict catches up with the
@@ -12028,124 +17570,200 @@ async function abort() {
 }
 
 async function loadBudget() {
-  const today = new Date().toISOString().slice(0, 10);
-  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
-  // FORK 2026-08-15 (the architect: "the token panel is not showing").
-  //
-  // These six still leave together — this is not a serialization — but they are now AWAITED
-  // separately, because `Promise.all` made the panel's paint wait for its slowest sibling.
-  //
-  // Measured on the live gateway, 2026-08-15:
-  //   config.models      8,919ms   <- the ONLY thing updateBudgetPanel needs to render
-  //   budget.status      1,403ms
-  //   budget.usage      11,890ms
-  //   prefrontal.status  1,454ms
-  //   prefrontal.routes  1,368ms
-  //   sessions.usage    >60,000ms  <- times out, every time
-  //
-  // `updateBudgetPanel` returns the "Loading config..." placeholder while `modelConfigData`
-  // is null, and that field was assigned only after the whole batch settled. So the panel sat
-  // blank for ~65s on every load (measured: filled at t+65s, sessions panel at t+5s) waiting
-  // on data it does not read. Long enough that it reads as "not showing" — nobody waits.
-  //
-  // Each promise already had its own `.catch(() => null)`, so they were never actually
-  // interdependent; only the `await Promise.all` coupled them.
-  const pStatus = req("budget.status", {}).catch(() => null);
-  const pModels = req("config.models", {}).catch(() => null);
-  const pUsage = req("budget.usage", {}).catch(() => null);
-  const pSessionsUsage = req(
-    "sessions.usage",
-    { startDate: weekAgo, endDate: today },
-    { timeoutMs: SESSIONS_USAGE_TIMEOUT_MS },
-  ).catch(() => null);
-  // FORK 2026-07-25 (the architect): the fan-out cap the routing card quotes. Optional —
-  // an older gateway (or a disabled prefrontal plugin) just leaves the numbers off.
-  const pPrefrontal = req("prefrontal.status", {}).catch(() => null);
-  // ...and the routing calls ORCA made, for the ORCA card's FAN-OUT section.
-  const pRoutes = req("prefrontal.routes", {}).catch(() => null);
+  try {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      bpWarn("loadBudget skipped — websocket not open", { readyState: ws?.readyState ?? "no-ws" });
+      return;
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+    // FORK 2026-08-15 (the architect: "the token panel is not showing").
+    //
+    // These six still leave together — this is not a serialization — but they are now AWAITED
+    // separately, because `Promise.all` made the panel's paint wait for its slowest sibling.
+    //
+    // Measured on the live gateway, 2026-08-15:
+    //   config.models      8,919ms   <- the ONLY thing updateBudgetPanel needs to render
+    //   budget.status      1,403ms
+    //   budget.usage      11,890ms
+    //   prefrontal.status  1,454ms
+    //   prefrontal.routes  1,368ms
+    //   sessions.usage    >60,000ms  <- times out, every time
+    //
+    // `updateBudgetPanel` returns the "Loading config..." placeholder while `modelConfigData`
+    // is null, and that field was assigned only after the whole batch settled. So the panel sat
+    // blank for ~65s on every load (measured: filled at t+65s, sessions panel at t+5s) waiting
+    // on data it does not read. Long enough that it reads as "not showing" — nobody waits.
+    //
+    // Each promise already had its own `.catch(() => null)`, so they were never actually
+    // interdependent; only the `await Promise.all` coupled them.
+    // FORK 2026-09-09: each `.catch` used to return null AND swallow the error. The panel
+    // still degrades the same way (one dead RPC does not blank its siblings), but the
+    // console now names WHICH call died and WHY — that is the whole point of this fork.
+    const loadStartedAt = Date.now();
+    BP_DEBUG_STATE.loadCount += 1;
+    // sessions.usage historically times out every poll (2026-08-15); prefrontal is optional.
+    // Those stay WARN so they cannot drown the three RPCs the bars actually need.
+    const bpCritical = new Set(["budget.usage", "budget.status", "config.models"]);
+    const bpRpc = <T>(method: string, p: Promise<T>): Promise<T | null> =>
+      p.then(
+        (value) => {
+          bpDebug(`rpc ${method} ok`, { ms: Date.now() - loadStartedAt });
+          return value;
+        },
+        (err) => {
+          const payload = { ms: Date.now() - loadStartedAt, error: bpErrMsg(err), raw: err };
+          if (bpCritical.has(method)) {
+            bpFail(`rpc ${method} FAILED`, payload);
+          } else {
+            bpWarn(`rpc ${method} failed (optional)`, payload);
+          }
+          return null;
+        },
+      );
+    const pStatus = bpRpc("budget.status", req("budget.status", {}));
+    const pModels = bpRpc("config.models", req("config.models", {}));
+    const pUsage = bpRpc("budget.usage", req("budget.usage", {}));
+    syncOrcaBiasFromGateway();
+    const pSessionsUsage = bpRpc(
+      "sessions.usage",
+      req(
+        "sessions.usage",
+        { startDate: weekAgo, endDate: today },
+        { timeoutMs: SESSIONS_USAGE_TIMEOUT_MS },
+      ),
+    );
+    // FORK 2026-07-25 (the architect): the fan-out cap the routing card quotes. Optional —
+    // an older gateway (or a disabled prefrontal plugin) just leaves the numbers off.
+    const pPrefrontal = bpRpc("prefrontal.status", req("prefrontal.status", {}));
+    // ...and the routing calls ORCA made, for the ORCA card's FAN-OUT section.
+    const pRoutes = bpRpc("prefrontal.routes", req("prefrontal.routes", {}));
+    // Thalamus tier defaults (optional — an older gateway leaves the picker without them).
+    void bpRpc("prefrontal.thalamusDefaults", req("prefrontal.thalamusDefaults", {})).then((r) => {
+      if (r && typeof r === "object") {
+        setThalamusSuggestions(r);
+        updateBudgetPanel();
+      }
+    });
 
-  // FIRST PAINT — the instant the catalog lands, not when the batch does. Everything below
-  // repaints again with the fuller picture; this only removes the blank minute.
-  // Rendering with `budgetUsageData` still null is already a supported state (that is exactly
-  // what happens whenever `budget.usage` fails), so the early paint shows the model rows with
-  // usage numbers absent rather than nothing at all.
-  void pModels.then((mc) => {
+    // FIRST PAINT — the instant the catalog lands, not when the batch does. Everything below
+    // repaints again with the fuller picture; this only removes the blank minute.
+    // Rendering with `budgetUsageData` still null is already a supported state (that is exactly
+    // what happens whenever `budget.usage` fails), so the early paint shows the model rows with
+    // usage numbers absent rather than nothing at all.
+    void pModels.then((mc) => {
+      if (mc) {
+        modelConfigData = mc;
+        // Same trick one step earlier than this first paint: remember the catalog so
+        // the NEXT load renders the model rows before the socket is even open.
+        writePanelSnapshot(MODEL_CONFIG_SNAPSHOT_KEY, mc);
+        updateBudgetPanel();
+      } else {
+        bpWarn("config.models returned empty — first paint skipped, panel stays on last catalog");
+      }
+    });
+
+    const [s, mc, bu, su, pf, pr] = await Promise.all([
+      pStatus,
+      pModels,
+      pUsage,
+      pSessionsUsage,
+      pPrefrontal,
+      pRoutes,
+    ]);
+    _budgetData = { budget: null, status: s };
+    if (pf) {
+      const p = pf as {
+        concurrencyCap?: number;
+        cores?: number;
+        policyPath?: string;
+      };
+      orchestrationCaps = {
+        concurrencyCap: typeof p.concurrencyCap === "number" ? p.concurrencyCap : undefined,
+        cores: typeof p.cores === "number" && p.cores > 0 ? p.cores : undefined,
+        policyPath: typeof p.policyPath === "string" ? p.policyPath : undefined,
+      };
+    }
+    const prRoutes = (pr as { routes?: unknown[] } | null)?.routes;
+    // A row with no model is unrenderable — drop it rather than print an empty job line.
+    orcaRoutes = Array.isArray(prRoutes)
+      ? (prRoutes as typeof orcaRoutes).filter((r) => typeof r?.model === "string" && r.model)
+      : [];
     if (mc) {
       modelConfigData = mc;
-      // Same trick one step earlier than this first paint: remember the catalog so
-      // the NEXT load renders the model rows before the socket is even open.
-      writePanelSnapshot(MODEL_CONFIG_SNAPSHOT_KEY, mc);
-      updateBudgetPanel();
     }
-  });
-
-  const [s, mc, bu, su, pf, pr] = await Promise.all([
-    pStatus,
-    pModels,
-    pUsage,
-    pSessionsUsage,
-    pPrefrontal,
-    pRoutes,
-  ]);
-  _budgetData = { budget: null, status: s };
-  if (pf) {
-    const p = pf as {
-      concurrencyCap?: number;
-      cores?: number;
-      policyPath?: string;
-    };
-    orchestrationCaps = {
-      concurrencyCap: typeof p.concurrencyCap === "number" ? p.concurrencyCap : undefined,
-      cores: typeof p.cores === "number" && p.cores > 0 ? p.cores : undefined,
-      policyPath: typeof p.policyPath === "string" ? p.policyPath : undefined,
-    };
-  }
-  const prRoutes = (pr as { routes?: unknown[] } | null)?.routes;
-  // A row with no model is unrenderable — drop it rather than print an empty job line.
-  orcaRoutes = Array.isArray(prRoutes)
-    ? (prRoutes as typeof orcaRoutes).filter((r) => typeof r?.model === "string" && r.model)
-    : [];
-  if (mc) {
-    modelConfigData = mc;
-  }
-  // FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
-  // This was an unconditional `budgetUsageData = bu`, while the line above it already
-  // guards `mc`. `pUsage` ends in `.catch(() => null)`, so ONE failed or hung `budget.usage`
-  // overwrote a good snapshot with null — and null is not "one provider is quiet", it is the
-  // top gate of getModelUsage(), which returns null for EVERY model. Result: all the
-  // orange-green usage bars disappear together, while the model rows keep rendering off
-  // their localStorage snapshot, so the panel looks half-loaded rather than disconnected.
-  // Same guard as `mc` now: a failed poll keeps the last good numbers instead of erasing
-  // them. Stale bars are honest and readable (their hover carries the fetch instant); no
-  // bars at all reads as "this model has no quota", which is a different and false claim.
-  if (bu) {
-    budgetUsageData = bu;
-  }
-  // FORK 2026-07-09: aggregate per-model token totals (7d) for the MODELS rows.
-  // The per-call split lives in usage.modelUsage[] — the session-level `model`
-  // field is null for ~half the sessions (see bug-log usage-tab-model-attribution).
-  if (su?.sessions) {
-    const all: Record<string, number> = {};
-    const bySession: Record<string, Record<string, number>> = {};
-    for (const sess of su.sessions as unknown[]) {
-      const sk = sess.key ?? sess.sessionKey ?? "";
-      for (const mu of sess.usage?.modelUsage ?? []) {
-        if (!mu?.model) {
-          continue;
+    // FORK 2026-09-03 (the architect: "the token budget panel is not loading correctly").
+    // This was an unconditional `budgetUsageData = bu`, while the line above it already
+    // guards `mc`. `pUsage` ends in `.catch(() => null)`, so ONE failed or hung `budget.usage`
+    // overwrote a good snapshot with null — and null is not "one provider is quiet", it is the
+    // top gate of getModelUsage(), which returns null for EVERY model. Result: all the
+    // orange-green usage bars disappear together, while the model rows keep rendering off
+    // their localStorage snapshot, so the panel looks half-loaded rather than disconnected.
+    // Same guard as `mc` now: a failed poll keeps the last good numbers instead of erasing
+    // them. Stale bars are honest and readable (their hover carries the fetch instant); no
+    // bars at all reads as "this model has no quota", which is a different and false claim.
+    if (bu) {
+      budgetUsageData = bu;
+    } else {
+      // Keep the last good snapshot (the 2026-09-03 guard). Log that we DID keep it,
+      // so a vanished-bar report can tell "RPC failed and we held last numbers" from
+      // "RPC failed and we had nothing to hold".
+      bpFail("budget.usage empty — keeping previous snapshot", {
+        hadPrevious: !!budgetUsageData,
+        previousShape: budgetUsageShape(budgetUsageData),
+      });
+    }
+    // FORK 2026-07-09: aggregate per-model token totals (7d) for the MODELS rows.
+    // The per-call split lives in usage.modelUsage[] — the session-level `model`
+    // field is null for ~half the sessions (see bug-log usage-tab-model-attribution).
+    if (su?.sessions) {
+      const all: Record<string, number> = {};
+      const bySession: Record<string, Record<string, number>> = {};
+      for (const sess of su.sessions as unknown[]) {
+        const sk = sess.key ?? sess.sessionKey ?? "";
+        for (const mu of sess.usage?.modelUsage ?? []) {
+          if (!mu?.model) {
+            continue;
+          }
+          const tok = mu.totals?.totalTokens ?? 0;
+          if (!tok) {
+            continue;
+          }
+          const id = `${mu.provider ?? "unknown"}/${mu.model}`;
+          all[id] = (all[id] ?? 0) + tok;
+          (bySession[sk] ??= {})[id] = (bySession[sk][id] ?? 0) + tok;
         }
-        const tok = mu.totals?.totalTokens ?? 0;
-        if (!tok) {
-          continue;
-        }
-        const id = `${mu.provider ?? "unknown"}/${mu.model}`;
-        all[id] = (all[id] ?? 0) + tok;
-        (bySession[sk] ??= {})[id] = (bySession[sk][id] ?? 0) + tok;
       }
+      modelTokensAll = all;
+      modelTokensBySession = bySession;
+    } else if (su == null) {
+      bpWarn("sessions.usage empty — token totals stay at last known values", {
+        hadPrevious: Object.keys(modelTokensAll).length > 0,
+      });
     }
-    modelTokensAll = all;
-    modelTokensBySession = bySession;
+    const loadSummary = {
+      ms: Date.now() - loadStartedAt,
+      catalog: !!mc,
+      catalogModels:
+        mc && typeof mc === "object" && "models" in mc
+          ? Object.keys((mc as { models?: object }).models ?? {}).length
+          : 0,
+      usage: budgetUsageShape(bu),
+      keptPreviousUsage: !bu && !!budgetUsageData,
+      status: !!s,
+      sessionsUsage: !!su?.sessions,
+      prefrontal: !!pf,
+      routes: orcaRoutes.length,
+    };
+    BP_DEBUG_STATE.lastLoad = loadSummary;
+    bpDebug("loadBudget settled", loadSummary);
+    if (!mc && !modelConfigData) {
+      bpFail("loadBudget settled with NO catalog — panel will show Loading config...", loadSummary);
+    }
+    updateBudgetPanel();
+  } catch (err) {
+    bpFail("loadBudget THREW", { error: bpErrMsg(err), raw: err });
   }
-  updateBudgetPanel();
 }
 
 // ─── Render Helpers ───
@@ -12248,13 +17866,14 @@ if (typeof window !== "undefined" && !(window as any).__tinkerHtmlFrameResizeWir
       if (f.contentWindow === ev.source) {
         // Re-pin to the bottom if we were there: the height change below grows
         // scrollHeight, which would otherwise leave the view stranded mid-scroll.
+        // FORK 2026-10-02 — and while READING, a frame above the viewport that grows pushed the
+        // text he was reading down by exactly its growth (lazy frames load as he scrolls up):
+        // compensate by that much (chat-viewport.ts lateGrowthAdjustment).
         const msgs = document.getElementById("messages");
-        const wasAtBottom = msgs
-          ? msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80
-          : false;
+        const before = f.getBoundingClientRect().height;
         f.style.height = Math.min(Math.max(d.h, 40), 2000) + "px";
-        if (wasAtBottom && msgs) {
-          msgs.scrollTop = msgs.scrollHeight;
+        if (msgs) {
+          applyLateGrowth(msgs, f, f.getBoundingClientRect().height - before);
         }
         break;
       }
@@ -12386,7 +18005,32 @@ function mergeFsLinkClass(attrs: string | undefined, extra = ""): string {
   return `${a} class="${classes}"`;
 }
 
+/**
+ * FORK 2026-09-15 (the architect: "all mention of Jarvis should be a variable") — the purple voice line is
+ * `**<agent name>:** *…*`. refreshAgentNameHeader overwrites this with the CONFIGURED identity, so
+ * Goku's `**GOKU:**` paints purple exactly like Jarvis's line. The default only covers first paint.
+ */
+let voiceSpeakerName = "Jarvis";
+
+/**
+ * FORK 2026-09-23 (plan task 9) — markdown by text, memoized. updateChat rebuilds every row's HTML
+ * on every repaint to find the rows that changed (chat-render.ts reuses the rest); a settled
+ * bubble's text is the same on every delta, so its render is looked up, and only the live bubble's
+ * new text is rendered. renderMarkdown is pure in (text, voiceSpeakerName); the memo is dropped
+ * whenever the speaker name changes. 4M characters bounds it (text.length + html.length per entry).
+ */
+const mdMemo = memoizeText(renderMarkdown, 4_000_000);
+let mdMemoVoice = voiceSpeakerName;
+
 function md(text: string): string {
+  if (mdMemoVoice !== voiceSpeakerName) {
+    mdMemo.clear();
+    mdMemoVoice = voiceSpeakerName;
+  }
+  return mdMemo(text);
+}
+
+function renderMarkdown(text: string): string {
   // FORK 2026-06-24: pull ```html-render blocks out BEFORE markdown render so
   // their raw HTML survives untouched, then swap in the sandboxed iframe after.
   const htmlFrames: string[] = [];
@@ -12412,10 +18056,46 @@ function md(text: string): string {
     });
   }
 
-  // Jarvis voice styling
+  // Voice-line styling: `**<agent name>:** *spoken text*` (name = voiceSpeakerName)
+  // The capture must tolerate a soft newline: with breaks:true a `\n` inside the
+  // italics becomes <br>, and the old `.*?` (where `.` never matches `\n`) dropped
+  // the match entirely — a COMPLETE, well-formed line that still rendered grey.
+  // Bounded so it can never run past its own </em> or out of the block.
+  const voiceName = voiceSpeakerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   h = h.replace(
-    /<strong>Jarvis:<\/strong>\s*<em>(.*?)<\/em>/gi,
-    '<strong>Jarvis:</strong> <span class="jarvis-voice">$1</span>',
+    new RegExp(
+      String.raw`<strong>(${voiceName}):<\/strong>\s*<em>((?:(?!<\/em>|<\/p>)[\s\S])*)<\/em>`,
+      "gi",
+    ),
+    '<strong>$1:</strong> <span class="jarvis-voice">$2</span>',
+  );
+  // FORK 2026-09-06 (the architect: "sometimes the Jarvis text does not get rendered in
+  // purple, as it's designed"). The rule above needs markdown-it to have emitted
+  // an <em>, and there are two MEASURED cases where it never does:
+  //
+  //   (a) MID-STREAM. The closing `*` has not arrived yet, so `**Jarvis:** *Torrent
+  //       scout is built` renders as <strong>Jarvis:</strong> followed by a LITERAL
+  //       asterisk. The identity line therefore sits grey for the whole first
+  //       sentence of every turn and only flips when the closing asterisk lands —
+  //       and stays grey forever if the turn aborts before that.
+  //   (b) A closing `*` wedged against a word character, e.g.
+  //       `*...is this pid still 437545?*PID unchanged` — CommonMark declines to
+  //       close emphasis there (the delimiter is both left- and right-flanking), so
+  //       markdown-it emits the asterisks literally and the line never goes purple.
+  //
+  // Anchored on the exact <strong>Jarvis:</strong> opener that the rule above just
+  // failed to consume, so it cannot repaint ordinary prose that merely mentions the
+  // name, and it can never fire on a line the <em> rule already handled.
+  // Inline tags must pass THROUGH the capture: mid-stream the partial line often
+  // already contains <code> or <strong>, and a `[^*<]*` class stopped dead at the
+  // first tag, painting only the leading fragment. Stop at a literal `*`, at a
+  // <br> (end of the identity line) or at </p> (end of the block) — never beyond.
+  h = h.replace(
+    new RegExp(
+      String.raw`<strong>(${voiceName}):<\/strong>(\s*)\*((?:[^*<]|<(?!br\b|\/p>)[^>]*>)*)\*?`,
+      "gi",
+    ),
+    '<strong>$1:</strong>$2<span class="jarvis-voice">$3</span>',
   );
   // FORK 2026-06-10 (amygdala retirement): the pink "🧠 AMYGDALA:" inline-nudge
   // styling was removed. The per-turn amygdala section is retired — any residual
@@ -12439,7 +18119,7 @@ function md(text: string): string {
   // so over-matching here cannot open anything outside the allowed roots.
   // Trailing punctuation guard: don't swallow a path-final '.' or '-'.
   // FORK 2026-07-08: spaces + unicode letters/digits now supported so that
-  // real paths like "/home/user/HOME Village/Llicència projecte/file.md"
+  // real paths like "/home/user/HOME Hillside/Llicència projecte/file.md"
   // linkify. \p{L}/\p{N} (requires /u flag) cover accented chars (\w is
   // ASCII-only). Spaces are allowed inside the path BUT not when followed
   // by '-' or whitespace — that pattern signals a shell flag (" --flag",
@@ -12895,6 +18575,13 @@ changed? Name only axes with real signal. Silence on the rest.
    exist, caught only because the owner asked "done?" and the paths were finally listed. If a
    reflection names a path, that path must have appeared in a write result this turn. When in
    doubt, \`ls\` your own claims — it costs nothing.
+   **A claimed write that is not on disk is a lie, not a lag (2026-09-05).** On 2026-09-04 a
+   reflection claimed to write \`feedback_patch_the_named_thread_never_the_newest_draft.md\` — the
+   file does not exist. On 2026-09-05 a reflection claimed it appended a \`@lid\` section to the
+   WhatsApp schema note — mtime still 2026-08-31. A third reflection the same afternoon prescribed
+   \`stat\` the path before claiming the write; that prescription was never installed, so the class
+   recurred the next day. After any write you will name in this block, \`stat\` the path (mtime must
+   be this turn). If the stat does not match, the claim does not ship.
 
 3. **Observation beats stored claims.** When something directly observed this turn contradicts a
    written note, doc, or config comment — an availability claim, a version, a "this doesn't work" —
@@ -12902,15 +18589,24 @@ changed? Name only axes with real signal. Silence on the rest.
    and the evidence. "Maybe it's temporary" is handled by dating the entry, not by waiting for
    permission. Corollary: a stored **negative** ("as of DATE, zero replies / none found / nobody
    answered") is expired on read — re-query the live source before repeating it.
+   **Model identity is an observation too.** If \`session_status\`, a configured default, a thinking
+   indicator and the assistant's actual provider disagree, keep that contradiction in the answer.
+   A status card is not proof of which model executed this call: verify the run's provider log or
+   transcript model snapshot before naming it. Do not reassure away the mismatch or replace an
+   observed identity with the configured model. (2026-10-04: Grok executed while status said Opus.)
 
 4. **Act, don't describe.** A lesson reaches disk this turn or it didn't happen. "Should", "would",
    "worth considering", "candidate for later" are bugs — either do it now or write a bookmark that
    spells out exactly HOW, and say which you did.
 
-5. **Reversibility gates boldness.** Reversible (files, memory, docs, recipes, notes): act freely,
-   tell the user after. Irreversible or external (sending, deleting, publishing, restarting
-   services, spending) — and this reflection system's own prompts and wiring: propose the exact
-   change instead of applying it.
+5. **Reversibility gates boldness.** Reversible (files, memory, docs, recipes, notes, code on a
+   branch, a merge into \`develop\`): act freely, tell the user after. A restart or rebuild through
+   the \`gateway-restart\` or \`tinker-rebuild\` skill counts as reversible: the owner authorized both
+   (2026-09-29, 2026-09-30), and they hold every live turn and continue it. Irreversible or
+   external (sending, deleting data, publishing, spending, restarting any other way) — and this
+   reflection system's own wiring, or any loosening of its own prompt: propose the exact change
+   instead of applying it. Adding a rule to this prompt or making one stricter is allowed: see
+   "Last check" at the end (owner, 2026-10-03).
 
 6. **Recurrence escalates.** The second sighting of a failure class is not a new incident; it is
    one unsolved systemic gap wearing a new mask. Stop patching the instance — change whatever
@@ -12921,27 +18617,45 @@ changed? Name only axes with real signal. Silence on the rest.
    A "fix X" ask targets X **at the layer it actually breaks** — editing an adjacent or cosmetic
    surface and reporting motion is the failure the owner names as "I didn't ask you to touch that,
    I asked you to fix the thing."
+   **Intent over the letter (2026-09-16; exception 2026-09-21).** The owner named it: "you did what made sense more than
+   literally what I asked you two." A MAC-address ask became a cookie because the intent was
+   "remember this machine," not "store a MAC." When the letter of the ask and the purpose of the
+   ask disagree, serve the purpose and say so in one line. The letter is a clue, not a contract.
+   **Exception:** if he then says the change was a mistake, "do what I say", or "I didn't ask you
+   to touch that" — the letter wins. Do not keep serving a purpose he has just withdrawn.
 
 7. **Green is what the OWNER can observe.** No "fixed" / "wired" / "works" claim survives without
    re-running the failing operation and watching it come back green. A build that compiles, a file
    that saves, a test that passes — none of these is the change appearing where he is looking.
    Climb only as far as the claim requires, but never claim above where you climbed:
 
-   | claim about…                                | valid green                                                     |
-   | ------------------------------------------- | --------------------------------------------------------------- |
-   | text / wiring / a value being present       | find the string in the SERVED output                            |
-   | how something LOOKS (colour, logo, spacing) | a render you actually LOOK at — screenshot or drive the browser |
-   | a control that appears only after an action | DRIVE the interaction first, then look in THAT state            |
-   | code you edited but did not deploy          | say **written, not running** — source ≠ built ≠ restarted       |
+   | claim about…                                | valid green                                                      |
+   | ------------------------------------------- | ---------------------------------------------------------------- |
+   | text / wiring / a value being present       | find the string in the SERVED output                             |
+   | how something LOOKS (colour, logo, spacing) | a render you actually LOOK at — screenshot or drive the browser  |
+   | a motion / blink / pulse / animation        | the same LOOK — a screenshot or a driven UI. Sound is not green  |
+   | a control that appears only after an action | DRIVE the interaction first, then look in THAT state             |
+   | code you edited but did not deploy          | say **written, not running** — source ≠ built ≠ restarted        |
+   | a file / document he should open            | a clickable path or a media attachment — naming it is not a link |
 
    Each row was bought with a repeat failure: source-edited-but-stale-dist recurred three times on
    2026-07-30; **presence is not appearance** — a correct hex colour sat in the served DOM and
    rendered as nothing, three corrections in one session on 2026-08-04; **default state is not the
    state** — a control behind an expander was "verified" twice in fourteen minutes on 2026-08-11
    without ever expanding, and the owner's own words (_"once I expand"_) named the missing setup
-   both times. When the owner's report contains a precondition, that precondition IS the test
-   setup. If you cannot render it, say the appearance is UNVERIFIED rather than upgrading a string
-   match into a claim about what he will see.
+   both times; **blinking is a picture, not a sound** — 2026-09-06, after a tray-icon "blink"
+   shipped as audio (_"when I said blinking I meant a visual animation, no sound"_). When the
+   owner's report contains a precondition, that precondition IS the test setup. If you cannot
+   render it, say the appearance is UNVERIFIED rather than upgrading a string match into a claim
+   about what he will see.
+
+   **The delivered reply is the artifact too (2026-10-04).** When a chart or image is owed
+   inline, check the actual reply text against the channel's rendering procedure. A screenshot
+   of a separately hosted page cannot satisfy this check. In Tinker, an \`[embed ref=...]\`
+   alone fails the inline-diagram contract even when its referenced file exists. Worked instance:
+   the architect, "You failed to show me the gantt chart" — SV2's chart existed and was inspected,
+   but the reply substituted an embed reference for the required chart block or markdown image.
+   Rules 7 and 15 must flag that gap before delivery; inspect the reply, not only its source image.
 
 8. **No filler.** A turn with nothing worth keeping gets one line. A manufactured reflection costs
    more than it earns: it buries the real ones. An honest "clean" is a valid, informative result.
@@ -13001,11 +18715,10 @@ changed? Name only axes with real signal. Silence on the rest.
     cc-bridge — which has no index-keyed state at all. A named commit in a memory file is a
     hypothesis, not a diagnosis.
 
-    Solving it is bounded by rule 5. Diagnosing, building, and writing the fix down are reversible
-    and belong here. **Restarting the gateway or rebuilding a bundle the live session is loading
-    from is not** — it can kill the very turn carrying the answer, which is the same harm the
-    owner just reported. Name the exact command, say plainly that it is one step and whose call it
-    is, and stop there.
+    Solving it is bounded by rule 5. Diagnosing, fixing, building and deploying are all in reach:
+    since 2026-09-30 a restart through \`gateway-restart\` (or \`tinker-rebuild full\`) holds every live
+    turn at its next model call and continues it afterwards, so it no longer kills the turn carrying
+    the answer. Use those skills, and never restart the gateway any other way from a live chat.
 
     **When the owner says he did not see an answer — and then "try again" — the FIRST
     tokens of this turn are the answer, not more diagnosis.** _Added 2026-08-28, after two
@@ -13023,7 +18736,114 @@ changed? Name only axes with real signal. Silence on the rest.
       \`explanation\` behind \`<details>\` collapse (\`openAttr\` only when \`fatal\`). Extra
       info that tells the user what is happening belongs in the collapsed view; tech
       kv/raw stays behind the expand. Source fix is in \`renderEnvelope\` in \`app.ts\`.
-      Do not rebuild the live bundle unasked (rule 5) — say **written, not running**.
+      Rebuild it with \`tinker-rebuild frontend\` and look at the result; until then say **written, not running**.
+
+12. **A write to shared data is not finished until you have LOOKED at what reads it.**
+    _Added 2026-09-05, at the owner's instruction, after he opened the model picker and found two
+    models in it._ Overnight the model-rank-refresh cron scraped Artificial Analysis, which had
+    rebased its Intelligence Index — every score fell ~15-25%. The cron wrote the new numbers into
+    config correctly, even noted the rescale in a code comment, and moved on. The gate downstream
+    was the literal number \`53\`, so SMART MODELS went from 23 entries to 2 and the model selector
+    went with it. Every check in the pipeline was green. Nothing was deleted. The owner found it.
+
+    The blind spot is structural, so the rule is mechanical: **when a turn changes VALUES that a
+    surface reads, count what that surface now shows and compare with what it showed before.** Not
+    "did the write succeed" — writes succeed all the time — but "how many rows, chips, options,
+    dots does the reader render now". A count that moved by an order of magnitude is the finding,
+    whichever direction it moved. Where the count is cheap to get (an RPC, a \`grep -c\`, a
+    \`querySelectorAll\` in the live page), get it; where it is not, say the surface is UNVERIFIED
+    rather than assuming the write implies the view.
+
+    The generalisation that makes this worth its space: **a threshold denominated in someone
+    else's units is a hostage to their rescaling.** Any absolute cut against a vendor score, a
+    price, a token count or a benchmark index will one day mean something different without
+    anybody editing it. Prefer an ordinal or relative cut; where an absolute one is unavoidable,
+    the pipeline that refreshes the input owes it a population check that fails closed.
+
+13. **A correction is a defect report against the procedure that made the decision.**
+    _Added 2026-09-29, at the owner's instruction._ The trigger is the owner's prompt, not the
+    turn's work: it corrects how an earlier turn behaved, openly ("you should have", "why did you",
+    "that's wrong", "again") or as a checking question ("did you finish?", "did you remember to X?",
+    "did you forget Y?"). A checking question IS a correction: he asks because he expects the step
+    was skipped, and when the honest answer is "partly", he was right. On that trigger this
+    reflection owes four moves, in order, before anything else:
+    1. **Name the wrong decision** in one line: what was done or skipped, and in which turn.
+    2. **Find the recipe or skill that governed it**, the one the turn followed or should have,
+       from the inventory, never from memory. Then read the step behind the decision: often the
+       procedure told the agent to do the wrong thing, and the agent obeyed.
+    3. **Change that step** this turn, add a dated Failures Overcome entry in the owner's words,
+       and commit it if the file lives in a repo. A local script, a one-project check or a memory
+       file may come too, but none of them counts as the fix: they load for one task, the recipe
+       loads for every run of it. "Fix the column" (rule 6) means the procedure's column.
+       Then replay the changed step on the artifact that escaped and watch it flag it: a fix
+       that would pass the same artifact again is not a fix. (2026-10-03: the first figure fix
+       fired only on a paper with no figure, and the paper that escaped had one D2 drawing.
+       Running the step's own count on it, 1 figure across 13 sections, showed the hole.)
+    4. **Report the recipe path, the step changed and the commit**, marked \`(this reflection)\`. If
+       nothing governs the task, create the recipe (RECIPE, below) or write "no recipe" with the
+       inventory command that proved it.
+
+    Worked instance: "did you finish? did you remember to clear out the improvement notes?"
+    (2026-09-29). The reflection added a status test to one paper's \`layout_report.py\` and
+    stopped. The governing recipe's close-out step still said "say in the stub's header whether
+    that version was scored", which was the very line the owner wanted gone, so the next paper
+    would have repeated it. The owner had to point that out.
+
+14. **Self-repair: a defect in reach is fixed, not reported.** _Added 2026-09-30, at the owner's
+    instruction._ When this turn or this reflection surfaced a defect (an error in a log, a failed
+    check, a status that says one thing while the system does another, a trap written down) and the
+    fix is in reach, the reflection repairs it now, in this order: reproduce it, find the root cause,
+    fix it on a branch with a test that fails before and passes after, merge into \`develop\`, put it
+    live with \`tinker-rebuild\` when it has to run, and check it on the running system (rule 7).
+    "Still open", "I'll raise it", "waits for your go" and "your call" are for what is really the
+    owner's: sending, publishing, spending, loosening a moral gate, and a judgement he kept for
+    himself (a question's wording, a threshold, a design choice). A fix that every session will run
+    (a hook, a shared script) is still a commit that can be reverted: do it, test it harder, say so.
+    If the repair is too big for one turn, start it (branch, failing test, first commit) and name
+    exactly what is left. Never leave it as a sentence.
+
+    **"Keep going" after an open defect is the go.** When the owner answers a turn that left a
+    defect open with "keep going", "continue" or the like, that repair is the first job of the next
+    turn and of its reflection, ahead of re-checking what already works.
+
+    Worked instance: 2026-09-30 06:42, after "Keep going". The reflection found the amygdala status
+    saying "Shadow: watching" while its runtime had failed to start, named the function to fix
+    (\`buildStatus\`), and wrote "I'll raise it once the restart confirms the runtime starts". The
+    owner: "Fractal should have understood that there is something that should be repaired here, it
+    should have analyzed the bug and fixed it, like a self-repair mechanism." It was fixed in the
+    next turn, \`185a9593b8e\`.
+
+15. **Expected against delivered: find the gap before the owner does.** _Added 2026-10-03, at the
+    owner's instruction._ Rule 13 fires after he points out a miss. This one fires on every turn
+    that produced something for him (a document, a build, a fix, a message), with no correction
+    needed. Before anything else, the reflection holds what the turn was supposed to deliver
+    against what it actually delivered:
+    1. **List what was expected:** the owner's ask, plus every step and "Done when" line of the
+       recipe or skill that governed the task. Read the file; never list it from memory. If no
+       recipe governs it, use his words and the house conventions the turn touched.
+    2. **Check each item against the artifact, not against the turn's own account of it.** Open the
+       file, grep the PDF, count the figures, run the test, load the page. "The turn said it did X"
+       is not evidence that X is there.
+    3. **A gap is a defect, and it is found here, not by the owner.** Close it in the deliverable if
+       it is in reach (rule 14). Then find why it happened: was the step missing from the recipe,
+       worded so it could not fire, or there and skipped? Fix the cause at that layer (rule 13,
+       moves 2 to 4), with a dated Failures Overcome entry.
+    4. **Report it as this reflection's finding:** the gap, the cause, the fix and its commit.
+
+    The turn also admits gaps of its own, and they count the same: every hedge in the reply ("not
+    confirmed", "unverified", "I did not find"), every workaround it took (a hook or a tool refused a
+    legitimate action and the turn went around it), and every warning the runtime put in its context.
+    For each, write what is known, what is assumed and what is not known, then fix it under rule 14.
+    (2026-10-03, a second chat asked the same question: its turn wrote "written, not confirmed
+    running", went around a guard hook that misread a \`cd\`, and passed a bootstrap truncation warning,
+    and its reflection followed up none of them.)
+
+    Worked instance: 2026-10-03, the AcmeVision temporal-network paper. Compile-paper's figure
+    step sends a paper's diagrams to Napkin, and the 62-page PDF went out with one D2 drawing. That
+    turn's reflection wrote up pandoc and grep troubles and never held the PDF against the recipe.
+    The owner had to say "you forgot to inject in it napkin diagrams as our recipe calls for", and
+    then asked: "Did the Fractal turn detect that there was a gap between what was expected and
+    the reality ... and researched to find the bug and fix it?" It had not.
 
 ## The census — one instance is a sample, not an incident
 
@@ -13071,12 +18891,51 @@ engine can actually match). If the turn produced a generalizable lesson about HO
 task, install it into the governing recipe NOW as a step, a constraint, or a Failures-Overcome
 entry. A lesson parked as a "memory candidate" is the deferral this check exists to kill. Recipes
 are the compound interest of agent intelligence.
+**Named host is a catalog lookup, not a search fallback (2026-09-03; SharePoint 2026-09-23).** If the prompt names a
+site, a host, a format, or says a skill already exists — YouTube, Gmail, Amazon, Copilot, SharePoint, a torrent, the programming wiki, a URL — the
+inventory check is not optional. **If the prompt already contains the skill name, that is the scan — run it.** The owner had to say "Did you forget we have a youtube skill?" on
+2026-04-23 and again on 2026-09-03, then shout \`sharepoint-download\` four times on 2026-09-23 the morning after it was wired. That is the same gap. A miss here is a skipped
+scan, not a missing tool.
 
 **PREEMPT — have you done this twice?** Then encode the trigger so it fires without being asked:
 _"When [trigger], do [action]"_ for reversible actions, _"When [trigger], PROPOSE [action]"_ for
 irreversible ones. The test: could a future session, reading only the stored rules, do this
 automatically? Too vague won't fire; too specific won't generalise. Never auto-encode anything that
 deletes, sends, publishes, restarts, or spends.
+
+**UNATTENDED — did anything scheduled fail while nobody was watching?** _Added 2026-09-05._ A
+failing cron is the highest-value thing to reflect on and the least likely to get a reflection,
+because a turn that dies mid-run produces no \`agent_end\` to reflect from. So an interactive turn
+inherits the duty. Two commands, cheap enough to run whenever a turn touches automation, config,
+models or a published surface — and mandatory when the owner reports something broken that he did
+not break:
+
+\`\`\`
+python3 -c "import json;s=json.load(open('$HOME/.openclaw/cron/jobs-state.json'));d=s.get('jobs',s);
+print([(k,v['state'].get('lastRunStatus'),v['state'].get('lastErrorReason'),(v['state'].get('lastError') or '')[:70]) for k,v in d.items() if v.get('state',{}).get('lastRunStatus')=='error'])"
+ls -t ~/.openclaw/cron/reports/$(date +%F)/ 2>/dev/null
+\`\`\`
+
+A job whose last run errored, or whose Layer-1 report for today is simply MISSING, has failed
+silently — and its partial work is usually still sitting uncommitted in a working tree. Read the
+error's \`lastErrorReason\` before theorising. \`timeout\` means the run was cut, and
+\`FallbackSummaryError: All models failed (1)\` means the job had a ONE-ENTRY chain — a
+single-supply outage killed it, and the ladder is the fix, not the model.
+
+\`auth\` is the one that will fool you, so it gets its own rule. **Before declaring a credential
+dead, find its WRITER and read the file the writer actually targets.** On 2026-09-05 I found an
+xAI JWT twelve days expired in \`~/.openclaw/agents/main/auth-profiles.json\`, and told the owner to
+go re-authenticate. Wrong: the live profile is \`agents/main/\`**\`agent/\`**\`auth-profiles.json\`, one
+path segment away, refreshed automatically — \`grok-oauth.mjs\` names that path in its own header,
+and one \`grep -rl\` for the filename would have found it. The dead file had a plausible name, a
+decodable JWT, and an expiry that fitted the symptom perfectly. A stale artifact beside a live one
+is the most convincing wrong answer there is, because everything about it checks out except who
+maintains it. The real cause was duller and cheaper to fix: a ~30-minute turn started with 16
+minutes of token left and outlived it, because the refresher only fires under a 20-minute margin
+and nothing refreshes mid-turn.
+
+Fixing the job's inputs, ladders and refresh timing is reversible and belongs here; asking the
+owner to re-authenticate is a claim about HIS time, so it must survive the writer check first.
 
 **SELF-HEAL — is the machinery itself intact?** Only when the turn touched it or symptoms suggest
 breakage; blanket probing every turn is its own failure mode. Four layers: is this reflection lane
@@ -13093,7 +18952,29 @@ First line: \`🌿 FRACTAL:\` (or \`🌿 FRACTAL ACTION:\` per rule 1) followed 
 UI collapses the section on this prefix. Then at most ~6 further lines of plain prose: the zoom (as
 deep as it truly goes), the census if one was owed, the touched surfaces with **who wrote each**,
 and the durable artifacts written, each named with its path. No numbered liturgy, no empty sections,
-no restating what the turn already showed the user.`;
+no restating what the turn already showed the user.
+
+## Last check — Fractal improves itself
+
+_Added 2026-10-03, at the owner's instruction: "You could put this guard also at the end of Fractal,
+so it improves itself."_ Run it last, on every turn whose prompt from the owner is a correction
+(rule 13's trigger, checking questions included).
+
+Ask one question: **could the reflection on the turn he is correcting have caught this itself**,
+from what it could see then (the recipe, the artifact, the log)? If not, say so in one line and
+stop. If yes, the miss is a defect in this prompt and gets the same repair as any other (rule 14):
+
+1. Name the rule that should have fired, or the one that is missing.
+2. Add it or sharpen it in \`extensions/tinkerclaw-fractal-reflection/fractal-prompt.md\` in
+   \`~/src/tinkerclaw\`, with a dated worked instance in the owner's words. Run
+   \`node scripts/sync-fractal-prompt.mjs\`, then \`node scripts/check-fractal-prompt-sync.mjs\`;
+   commit both files on a branch, merge into \`develop\`, and put it live with
+   \`tinker-rebuild frontend\`.
+3. Report the rule and the commit, marked \`(this reflection)\`.
+
+This is the one place where the reflection edits its own prompt. It may add a rule or make one
+stricter. Loosening a rule, deleting one or switching a check off stays the owner's call: propose
+the exact change instead.`;
 
 async function buildInjectedPrompt(userText: string): Promise<string> {
   const trimmed = userText.trim();
@@ -13125,6 +19006,17 @@ async function buildInjectedPrompt(userText: string): Promise<string> {
       "`~/src/tinkerclaw/extensions/tinkerclaw-cc-bridge/prompts/briefing-default.md` (the bundled day-0 fallback). " +
       "Edit the workspace file (or seed one with `openclaw briefing init`) if you want to change the briefing format — `git pull` will keep refreshing the bundled fallback without touching your workspace override."
     );
+  }
+
+  // FORK 2026-09-25 (context-window-panel.md §6.1 A6) — `/compact` goes out BARE, typed in the
+  // composer or pressed (the COMPACT button on the claude-code lane sends it through send()). A
+  // slash command must start the line, and whatever follows `/compact` is read as the compaction's
+  // own instructions, by the claude CLI and by the gateway's extractCompactInstructions alike, so
+  // the FRACTAL doctrine appended below would have become the summary's brief. Every lane. TRIMMED:
+  // the composer hands send() its raw value, and a leading space would make it a prompt, not a
+  // command, to the CLI (measured: only a line that STARTS with `/compact` compacts).
+  if (isCompactCommand(userText)) {
+    return trimmed;
   }
 
   // FORK 2026-06-07: amygdala per-turn section removed (served no purpose — the
@@ -13313,7 +19205,11 @@ function formatHHMMSS(ms: number): string {
 // session as a user-role prompt (Jarvis sees it as input) but renders as a LEFT amber
 // "Overseer" bubble, so it reads as the Overseer's own voice on the assistant side.
 const OVERSEER_MARKER = "⟦OVERSEER⟧";
-const AGENT_MARKER = "⟦AGENT⟧";
+// FORK 2026-09-23 (the architect, on the conversation-loop skill: the driving agent's turns "should show in blue
+// with your tab name as title"). `⟦AGENT⟧` still matches bare; `⟦AGENT:<label>⟧` carries the NAME
+// of the tab doing the driving, so the human reading the target tab can see WHICH agent is
+// steering it, not merely that some agent is. Same blue bubble — only the badge text changes.
+const AGENT_MARKER_RE = /^⟦AGENT(?::([^⟧]{1,60}))?⟧/;
 const OVERSEER_COLOR = "#d97706";
 
 // FORK 2026-08-28 (the architect: "Every time we use a broca recipe, I would like to see a
@@ -13328,60 +19224,122 @@ const OVERSEER_COLOR = "#d97706";
 // The link uses the standard `.fs-link` → config.openExternalFile convention, pointed at the
 // recipe's own recipe.md — the same "link to the actual md, no summaries" move the owner asked for
 // on the ORCA card and the fractal prompt.
-function renderRecipeNotice(title: string, path: string): string {
-  const safeTitle = escapeHtml(title);
-  const safePath = escapeHtml(path);
-  return (
-    `<div class="msg-recipe-notice">` +
-    `<span class="msg-recipe-notice-icon">🍳</span>` +
-    `<span class="msg-recipe-notice-text">Using recipe <strong>${safeTitle}</strong></span>` +
-    `<code class="fs-link msg-recipe-notice-link" data-path="${safePath}" ` +
-    `title="Open ${safePath}">recipe.md ↗</code>` +
-    `</div>`
-  );
-}
-
+// FORK 2026-09-29 (U10): the markup moved to usage-chips.ts so ONE renderer draws every chip and a
+// repaint is byte-identical whatever fed it (§5.8X reuses a unit by HTML equality). This wrapper
+// keeps its name and signature because the injected-skill-body fold (§5.8O) still draws a LONE chip
+// in place of a body it must not paint — two call sites, both in renderMsg.
+// `renderRecipeNotice` is GONE: its only caller was the second recipe draw inside renderMsg, which
+// is now one mark in the union row below.
 function renderSkillNotice(name: string, path: string): string {
-  const safeName = escapeHtml(name);
-  const safePath = escapeHtml(path);
-  return (
-    `<div class="msg-skill-notice">` +
-    `<span class="msg-skill-notice-icon">🔧</span>` +
-    `<span class="msg-skill-notice-text">Using skill <strong>${safeName}</strong></span>` +
-    `<code class="fs-link msg-skill-notice-link" data-path="${safePath}" ` +
-    `title="Open ${safePath}">SKILL.md ↗</code>` +
-    `</div>`
-  );
+  return renderUsageChip(skillMark({ name, path }, "skill-tool"));
 }
 
-/** Skills used in the run that follows a user prompt. Structural: a `read` of …/skills/<name>/SKILL.md. */
+/** First text of a row, whichever content shape it uses — enough for a first-line test. */
+function rowFirstText(m: unknown): string {
+  const c = (m as { content?: unknown })?.content;
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    const t = c.find((b) => (b as { type?: string })?.type === "text");
+    const s = (t as { text?: unknown })?.text;
+    if (typeof s === "string") return s;
+  }
+  return "";
+}
+
+/**
+ * The ONE chip row under a prompt — recipe (§5.8N), skill (§5.8O) and plugin (new 2026-09-29).
+ *
+ * Name and signature unchanged because `chat-units.ts` appends it to the user row's own unit
+ * (`deps.skillNoticesHtmlAfter`), which is exactly where all three chips belong. It is now the
+ * union of three sources, de-duplicated on kind+name by `collectUsage`, so no chip ever draws twice:
+ *
+ *   1. `__openclaw.usage` — the gateway's typed marks on the served user message (history);
+ *   2. `_usage` — the same marks stamped live off `stream:"tool"` start events (plan D4);
+ *   3. the UI's own legacy producers, for rows served before the gateway restart (review focus 4):
+ *      the `_recipeTitle`/`_recipePath` stamp, and `skillNoticeFromTool` over the tool_use blocks of
+ *      the run this prompt opened — a `read` of …/skills/<n>/SKILL.md AND the `Skill` tool, whose
+ *      path now survives because the tool RESULT is read in the same pass (a pure tool_result row is
+ *      not a run boundary, chat-units.ts, so the "Base directory for this skill:" line is reachable
+ *      here; it was not, which is why the call site had to draw its own chip).
+ *
+ * Review focus 2: the UI's skill tell stays structural and narrow — a `read` whose path argument
+ * ENDS in `skills/<n>/SKILL.md`. An `ls ~/.claude/skills` or a `grep -r … skills/` produces nothing
+ * here. The exec/D1 widening lives gateway-side in usage-attribution.ts, gated on the token being
+ * inside ONE skill directory.
+ */
 function skillNoticesHtmlAfter(
   view: unknown[],
   userIdx: number,
   isBoundary: (m: unknown) => boolean,
 ): string {
-  const out: string[] = [];
-  const seen = new Set<string>();
+  const row = view[userIdx] as
+    | {
+        __openclaw?: { usage?: unknown };
+        _usage?: unknown;
+        _recipeTitle?: unknown;
+        _recipePath?: unknown;
+      }
+    | undefined;
+
+  const legacy: UsageMark[] = [];
+  const rTitle = row?._recipeTitle;
+  const rPath = row?._recipePath;
+  if (typeof rTitle === "string" && rTitle) {
+    legacy.push(
+      recipeMark({
+        title: rTitle,
+        ...(typeof rPath === "string" && rPath ? { path: rPath } : {}),
+      }),
+    );
+  }
+
+  // Pass 1: the run's tool results, by tool_use id (a result can sit in a later row than its call).
+  // `end` is the boundary that closed the run, or the end of the view.
+  const results = new Map<string, unknown>();
+  let end = view.length;
   for (let j = userIdx + 1; j < view.length; j++) {
-    if (isBoundary(view[j])) break;
-    const c = Array.isArray((view[j] as { content?: unknown }).content)
-      ? (view[j] as { content: unknown[] }).content
-      : [];
+    if (isBoundary(view[j])) {
+      end = j;
+      break;
+    }
+    const c = (view[j] as { content?: unknown }).content;
+    if (!Array.isArray(c)) continue;
     for (const b of c) {
-      const blk = b as { type?: string; name?: string; input?: unknown };
-      if (blk?.type !== "tool_use") continue;
-      const n = skillNoticeFromTool(blk.name, blk.input);
-      if (!n || seen.has(n.path)) continue;
-      seen.add(n.path);
-      out.push(renderSkillNotice(n.name, n.path));
+      const blk = b as { type?: string; tool_use_id?: string; content?: unknown };
+      if (blk?.type === "tool_result" && blk.tool_use_id) {
+        results.set(blk.tool_use_id, blk.content);
+      }
     }
   }
-  return out.join("");
+  // Pass 2: the tool calls themselves.
+  for (let j = userIdx + 1; j < end; j++) {
+    const c = (view[j] as { content?: unknown }).content;
+    if (!Array.isArray(c)) continue;
+    for (const b of c) {
+      const blk = b as { type?: string; name?: string; input?: unknown; id?: string };
+      if (blk?.type !== "tool_use") continue;
+      const n = skillNoticeFromTool(blk.name, blk.input, results.get(blk.id ?? ""));
+      if (n) legacy.push(skillMark(n, n.source === "skill" ? "skill-tool" : "read"));
+    }
+  }
+
+  const marks = collectUsage(row?.__openclaw?.usage, row?._usage, legacy);
+  if (marks.length === 0) return "";
+
+  // Cross-ROW de-dup. When the boundary that closed this run is the harness's injected skill BODY,
+  // that row draws the chip itself, in the place the body would have been painted (§5.8O's fold,
+  // which must stay intact). Leaving the same skill in this row too is what made one `Skill` call
+  // paint two chips.
+  const folded = end < view.length ? skillNoticeFromInjectedBody(rowFirstText(view[end])) : null;
+  return renderUsageChips(
+    folded ? marks.filter((m) => !(m.kind === "skill" && m.name === folded.name)) : marks,
+  );
 }
 
 function renderUserBubbleWithPromptToggle(
   userText: string,
   msg: {
+    _uid?: string;
     _fullPrompt?: string;
     _briefingPath?: string;
     _promptStartedAt?: number;
@@ -13390,17 +19348,24 @@ function renderUserBubbleWithPromptToggle(
     _injectedLabel?: string;
     _recipePath?: string;
   },
-  queuedClass: string,
-  queuedBadge: string,
+  // FORK 2026-09-24 (prompt-queue.md U2) — the two slots msg-order.ts `promptBubbleMarks` fills
+  // from the bubble's one derived state: a class suffix and the badge HTML ("" and "" for none).
+  promptClass: string,
+  promptBadge: string,
   idx: number,
 ): string {
   if (userText.startsWith(OVERSEER_MARKER)) {
     const body = userText.slice(OVERSEER_MARKER.length).trim();
     return `<div class="msg user msg-agent" data-msg-idx="${idx}"><span class="msg-agent-badge">🔭 Overseer</span>${md(body)}</div>`;
   }
-  if (userText.startsWith(AGENT_MARKER)) {
-    const body = userText.slice(AGENT_MARKER.length).trim();
-    return `<div class="msg user msg-agent" data-msg-idx="${idx}"><span class="msg-agent-badge">🤖 Agent</span>${md(body)}</div>`;
+  const agentMark = AGENT_MARKER_RE.exec(userText);
+  if (agentMark) {
+    const body = userText.slice(agentMark[0].length).trim();
+    const label = (agentMark[1] ?? "").trim() || "Agent";
+    // A Tinker tab name is its cookie phrase, which already opens with an emoji ("📿 Loop"):
+    // prefixing 🤖 there would read as two icons, so the robot is only added when there is none.
+    const badge = /^\p{Extended_Pictographic}/u.test(label) ? label : `🤖 ${label}`;
+    return `<div class="msg user msg-agent" data-msg-idx="${idx}"><span class="msg-agent-badge">${escapeHtml(badge)}</span>${md(body)}</div>`;
   }
   // FORK 2026-08-24 (the architect: the post-restart wake-up "should be clearly identified as coming
   // from an automated system and be encased in blue"). The gateway's restart-recovery injects its
@@ -13411,22 +19376,65 @@ function renderUserBubbleWithPromptToggle(
   // stays (the model must still read it as input) and only the RENDERING changes.
   // The protocol body is folded away: the headline is what a human needs, the numbered steps are
   // addressed to the model.
+  // FORK 2026-09-23 (the architect: "an injection of the ethical rules as if it was my prompt …
+  // long 'quasi prompts'") — the same treatment for every other user-role row the SYSTEM wrote: the
+  // moral code a resumed Claude session receives, a compaction summary, the fractal triage brief, a
+  // cron reminder, the reply-mode frame, a task notification. See injected-context.ts.
+  // FORK 2026-10-02 — every fold on a prompt bubble is KEYED (foldAttrs). They carried no key, and
+  // the prompt's unit re-renders while its reply streams (the usage and skill chips land in it, the
+  // state badge changes), so a fold opened there shut again on the next tool call.
+  const promptFold = (prefix: string): string => foldAttrs(msg._uid ? `${prefix}:${msg._uid}` : "");
+  const injected = detectInjectedContext(userText);
+  if (injected) {
+    return (
+      `<div class="msg user msg-system-auto msg-injected-${injected.kind}" data-msg-idx="${idx}">` +
+      `<span class="msg-system-auto-badge">${escapeHtml(injected.label)}</span>` +
+      `<div class="msg-system-auto-headline">${escapeHtml(injected.headline)}</div>` +
+      `<details class="msg-system-auto-detail"${promptFold("n")}>` +
+      `<summary>show what was sent to the model</summary>` +
+      `<div class="msg-system-auto-body">${md(injected.body)}</div>` +
+      `</details>` +
+      `</div>`
+    );
+  }
+  // FORK 2026-10-03 — the badge names who put it in the chat (the architect: "with the identity of the agent"), and a
+  // Thalamus advice block that rode in front of it folds into its own line instead of hiding the notice.
+  const adviceFold = (advice: string | undefined): string =>
+    advice
+      ? `<details class="msg-system-auto-detail"${promptFold("a")}>` +
+        `<summary>enhancement advice Thalamus sent with it</summary>` +
+        `<div class="msg-system-auto-body">${md(advice)}</div>` +
+        `</details>`
+      : "";
   const notice = detectSystemNotice(userText);
   if (notice) {
-    const label =
-      notice.kind === "restart-resume"
-        ? "⚙️ Automated system message · gateway restart"
-        : "⚙️ Automated system message";
     return (
       `<div class="msg user msg-system-auto" data-msg-idx="${idx}">` +
-      `<span class="msg-system-auto-badge">${label}</span>` +
+      `<span class="msg-system-auto-badge">⚙️ Automated message from ${escapeHtml(notice.who)}</span>` +
       `<div class="msg-system-auto-headline">${md(notice.headline)}</div>` +
       (notice.detail
-        ? `<details class="msg-system-auto-detail">` +
+        ? `<details class="msg-system-auto-detail"${promptFold("n")}>` +
           `<summary>what the system told the model to do</summary>` +
           `<div class="msg-system-auto-body">${md(notice.detail)}</div>` +
           `</details>`
         : "") +
+      adviceFold(notice.advice) +
+      `</div>`
+    );
+  }
+  const agentMsg = detectAgentMessage(userText);
+  if (agentMsg) {
+    return (
+      `<div class="msg user msg-system-auto" data-msg-idx="${idx}">` +
+      `<span class="msg-system-auto-badge">🤖 Message from the agent ${escapeHtml(agentMsg.who)}</span>` +
+      `<div class="msg-system-auto-headline">${md(agentMsg.headline)}</div>` +
+      (agentMsg.detail
+        ? `<details class="msg-system-auto-detail"${promptFold("n")}>` +
+          `<summary>the rest of the message</summary>` +
+          `<div class="msg-system-auto-body">${md(agentMsg.detail)}</div>` +
+          `</details>`
+        : "") +
+      adviceFold(agentMsg.advice) +
       `</div>`
     );
   }
@@ -13443,21 +19451,21 @@ function renderUserBubbleWithPromptToggle(
       : "";
 
   if (!msg._fullPrompt || typeof msg._fullPrompt !== "string") {
-    return `<div class="msg user${queuedClass}" data-msg-idx="${idx}"${tsAttr}>${md(userText)}${queuedBadge}</div>`;
+    return `<div class="msg user${promptClass}" data-msg-idx="${idx}"${tsAttr}>${md(userText)}${promptBadge}</div>`;
   }
   const full = msg._fullPrompt;
   if (msg._briefingPath) {
     const safePath = escapeHtml(msg._briefingPath);
     return (
-      `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
+      `<div class="msg user${promptClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
       `${md(userText)}` +
-      `<details class="user-prompt-toggle briefing-toggle">` +
+      `<details class="user-prompt-toggle briefing-toggle"${promptFold("p")}>` +
       `<summary class="user-prompt-summary briefing-summary">` +
       `⚡ Executing <code class="fs-link" data-path="${safePath}" title="Click to open in system viewer">${safePath}</code>` +
       `</summary>` +
       `<div class="user-prompt-full">${md(full)}</div>` +
       `</details>` +
-      `${queuedBadge}` +
+      `${promptBadge}` +
       `</div>`
     );
   }
@@ -13480,11 +19488,11 @@ function renderUserBubbleWithPromptToggle(
     // `.fs-link` convention → config.openExternalFile → system viewer.
     const fractalPath = escapeHtml(FRACTAL_PROMPT_PATH);
     return (
-      `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
+      `<div class="msg user${promptClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
       `${md(userText)}` +
       `<code class="fs-link user-prompt-link" data-path="${fractalPath}" ` +
       `title="Open ${fractalPath}">🌿 fractal prompt ↗</code>` +
-      `${queuedBadge}` +
+      `${promptBadge}` +
       `</div>`
     );
   }
@@ -13492,22 +19500,22 @@ function renderUserBubbleWithPromptToggle(
   if (kind === "recipe" && recipePath) {
     const safe = escapeHtml(recipePath);
     return (
-      `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
+      `<div class="msg user${promptClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
       `${md(userText)}` +
       `<code class="fs-link user-prompt-link" data-path="${safe}" ` +
       `title="Open ${safe}">🍳 recipe ↗</code>` +
-      `${queuedBadge}` +
+      `${promptBadge}` +
       `</div>`
     );
   }
   return (
-    `<div class="msg user${queuedClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
+    `<div class="msg user${promptClass} msg-user-with-prompt" data-msg-idx="${idx}"${tsAttr}>` +
     `${md(userText)}` +
-    `<details class="user-prompt-toggle">` +
+    `<details class="user-prompt-toggle"${promptFold("p")}>` +
     `<summary class="user-prompt-summary">📎 ${label} (appended by the system)</summary>` +
     `<div class="user-prompt-full">${md(full)}</div>` +
     `</details>` +
-    `${queuedBadge}` +
+    `${promptBadge}` +
     `</div>`
   );
 }
@@ -13606,7 +19614,15 @@ function extractEnvelope(text: string): Envelope | null {
   }
   return null;
 }
-function renderEnvelope(env: Envelope): string {
+/**
+ * FORK 2026-10-02 — the keyed-fold attribute for a fold inside one row (foldAttrs), keyed on the
+ * row's stable `_uid` under `prefix`; "" (an unkeyed fold, as before) for a row with no uid.
+ */
+function rowFoldAttrs(msg: unknown, prefix: string): string {
+  const uid = (msg as { _uid?: unknown } | null)?._uid;
+  return foldAttrs(typeof uid === "string" && uid ? `${prefix}:${uid}` : "");
+}
+function renderEnvelope(env: Envelope, techFold = ""): string {
   const variantClass = env.fatal ? "envelope-fatal" : "envelope-recoverable";
   const actions =
     env.suggestedActions && env.suggestedActions.length > 0
@@ -13651,7 +19667,7 @@ function renderEnvelope(env: Envelope): string {
   const raw = env.raw ? `<div class="env-kv">${esc(env.raw)}</div>` : "";
   const tech =
     kv || raw
-      ? `<details class="env-tech"><summary>technical details</summary>${kv}${raw}</details>`
+      ? `<details class="env-tech"${techFold}><summary>technical details</summary>${kv}${raw}</details>`
       : "";
   const explanation = env.explanation
     ? `<div class="env-explanation">${md(env.explanation)}</div>`
@@ -13663,7 +19679,19 @@ function renderEnvelope(env: Envelope): string {
   // clicked. Extra info that tells the user what is happening belongs in the
   // collapsed view. Technical kv/raw stays behind the expand. Fatal errors still
   // render `open` because the user must act.
-  const openAttr = env.fatal ? " open" : "";
+  //
+  // FORK 2026-09-07 — that 2026-08-28 intent never actually shipped. Moving
+  // `${explanation}` out of `.env-body` does NOT make it visible: it is still a
+  // non-`<summary>` child of this `<details>`, and a closed `<details>` hides
+  // EVERY such child. So the explanation stayed one click away for a year of
+  // recoverable warnings, and the architect saw a bare "Rate limited" chip with no reset
+  // time on it — while the envelope already carried "resets 3:10pm Europe/Madrid".
+  // The element is open unconditionally now; `details.env-tech` below is the thing
+  // that stays collapsed, which is what "technical kv/raw stays behind the expand"
+  // always meant. Centering and the amber palette were never the problem —
+  // `.msg-envelope { align-self: center }` and `.envelope-recoverable` already
+  // provide both.
+  const openAttr = " open";
   const body = actions + tech;
   return (
     `<details class="msg msg-envelope ${variantClass}"${openAttr} data-env-id="${esc(env.id)}" data-env-category="${esc(env.category)}">` +
@@ -13684,6 +19712,8 @@ function renderSystemMsg(
   text: string,
   msgKey: string,
   variant: "system" | "inject" = "system",
+  /** Who put it in the chat (the architect 2026-10-03: "with the identity of the agent"); inject variant only. */
+  who?: string,
 ): string {
   const sid = `s${msgKey}`;
   const sysExp = expandedTools.has(sid);
@@ -13715,7 +19745,11 @@ function renderSystemMsg(
   // near-invisible grey `.msg.system`, which read as absent from the transcript.
   const provenanceClass = variant === "inject" ? "msg system-inject" : "msg system";
   const cssClass = isAlert ? "msg system-alert" : provenanceClass;
-  let h = `<div class="${cssClass}" data-tid="${sid}">${sysExp ? "▾" : "▸"} ${preview}</div>`;
+  const whoChip =
+    variant === "inject" && who
+      ? `<span class="inj-who" title="Not typed by you">🤖 ${esc(who)}</span> `
+      : "";
+  let h = `<div class="${cssClass}" data-tid="${sid}">${whoChip}${sysExp ? "▾" : "▸"} ${preview}</div>`;
   if (sysExp) {
     h += `<div class="tool-detail system-expanded">${md(text)}</div>`;
   }
@@ -13781,6 +19815,18 @@ function elapsedChip(msg: unknown, idx: number): string {
   return `<span class="msg-elapsed">${formatElapsed(elapsed)}</span>`;
 }
 
+// FORK 2026-09-08 — every bubble of a SERVER-backed row carries the row's identity
+// (history-reconcile's historyRowIdentity: `oc:<transcript id>` or `ext:<cli uuid>`) and the PART
+// of the row it paints: one row can paint a commentary fold, a thinking bubble and an answer, and
+// those are not copies of each other. scripts/ui-dup-proof.mjs and scripts/snapshot-dup-census.py
+// count by these: the same row+part painted twice is a duplicate whatever its text; two distinct
+// rows with equal text are the transcript repeating itself. A client-written bubble (a live
+// stream, an optimistic prompt) has no identity and gets no attribute.
+function ocIdAttrs(msg: unknown, part: string): string {
+  const id = historyRowIdentity(msg);
+  return id ? ` data-oc-id="${esc(id)}" data-oc-part="${part}"` : "";
+}
+
 function renderMsg(
   msg: unknown,
   idx: number,
@@ -13810,17 +19856,39 @@ function renderMsg(
   const content = Array.isArray(msg.content) ? msg.content : [];
   const resultMap = globalResults ?? new Map();
   const toolNameMap = globalToolNames ?? new Map();
-  // FORK: Queued message styling
-  // FORK 2026-08-16 — the undelivered state reuses these two slots so all FOUR user-bubble render
-  // sites below pick it up from one place. A prompt the gateway has not provably received must LOOK
-  // different from one it has: the reported harm was not only losing the text, it was believing a
-  // lost prompt had been sent and waiting for an answer that was never coming.
-  const queuedClass = msg._queued ? " msg-queued" : msg._undelivered ? " msg-undelivered" : "";
-  const queuedBadge = msg._queued
-    ? `<span class="queued-badge">queued</span>`
-    : msg._undelivered
-      ? `<span class="undelivered-badge" title="Not yet delivered to the gateway — saved on this device and retried automatically until it lands.">not delivered · will retry</span>`
-      : "";
+  // FORK 2026-10-02 — the divider under a reset archive paged in from above (history-paging.ts
+  // resetDividerRow): the turns above it ran in the session before that reset. Same centred bubble
+  // as the restart notice; a run boundary in chat-units.ts, so no Reasoning group swallows it.
+  const divider = msg as {
+    _resetDivider?: unknown;
+    _resetAt?: unknown;
+    _resetKind?: unknown;
+  } | null;
+  if (divider?._resetDivider === true) {
+    return `<div class="msg-overload-bubble msg-restart-notice msg-reset-divider">${esc(resetDividerLabel(divider._resetAt, divider._resetKind))}</div>`;
+  }
+  // FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md step U2 (PQ-2 "one state, one
+  // indicator", PQ-4; contradiction C1). ONE indicator per user bubble, derived from the bubble's
+  // ONE `_promptState` (its facts) through prompt-state.ts's §6.1 table, by msg-order.ts
+  // `promptBubbleMarks`. These two slots used to carry two stacked lanes, a grey deferral word and
+  // an amber outbox badge (2026-08-16: a prompt the gateway has not provably received must LOOK
+  // different from one it has). The grey word won that precedence, so a deferred prompt whose
+  // chat.send was rejected read "queued" although no gateway held it. Now the amber fact is a
+  // STATE (UNSENT or LOST) and the deferral is only a placement, so it cannot be hidden. The slots
+  // still feed all FOUR user-bubble render sites below from one place; a row with no facts (every
+  // history row) gets "" and "".
+  const promptMarks = promptBubbleMarks(msg);
+  // FORK 2026-09-24 (logging.md §4.5, §9 step 7) — `ui.prompt.state`: the paint's one derivation,
+  // handed to the tracker, which records a CHANGE of it and nothing on a repaint.
+  observePaintedPromptState(msg, promptMarks.state);
+  const promptClass = promptMarks.cls;
+  // FORK 2026-09-24 (prompt-queue.md U4, PQ-12) — and the state's actions, in the badge's slot so
+  // all four render sites carry them: Resend and Dismiss on a LOST prompt, from the same §6.1 row
+  // the badge came from (prompt-state.ts `promptActionsHtml`), handled by the delegated #messages
+  // click handler. Every other state draws no control.
+  const promptBadge =
+    promptMarks.badge +
+    promptActionsHtml(promptMarks.state, (msg as Record<string, unknown> | null)?._clientMsgId);
   let h = "";
 
   // FORK: Hide fractal reflection prompts regardless of role (user/assistant/toolResult)
@@ -13842,17 +19910,28 @@ function renderMsg(
       summary?: string;
       tokensBefore?: number;
       tokensAfter?: number;
+      evictedTokens?: number;
     };
     const summary = typeof meta.summary === "string" ? meta.summary : "";
     const before = typeof meta.tokensBefore === "number" ? meta.tokensBefore : undefined;
     const after = typeof meta.tokensAfter === "number" ? meta.tokensAfter : undefined;
+    const evicted = typeof meta.evictedTokens === "number" ? meta.evictedTokens : undefined;
     const fmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${n}`);
+    // FORK 2026-09-07 — `evicted` OUTRANKS a lone `tokensBefore`. An engram-mode (pointer
+    // manifest) compaction writes no `tokensAfter`, so the before→after pair never forms and this
+    // fell through to printing `tokensBefore` by itself — which is not this session's size.
+    // Measured live: a session whose conversation was 175,850 tokens produced
+    // `tokensBefore: 7,855,029` (a store-wide running total), so the banner announced
+    // "7855k tok compacted" for a compaction that freed 128,260. The before→after pair is still
+    // preferred when BOTH exist, because that is a real measurement of this prefix.
     const tokenLabel =
       typeof before === "number" && typeof after === "number"
         ? `${fmt(before)} → ${fmt(after)} tok`
-        : typeof before === "number"
-          ? `${fmt(before)} tok compacted`
-          : "";
+        : typeof evicted === "number"
+          ? `${fmt(evicted)} tok freed`
+          : typeof before === "number"
+            ? `${fmt(before)} tok compacted`
+            : "";
     if (!summary.trim()) {
       // No summary captured — fall back to the minimal divider so old transcripts
       // still render cleanly.
@@ -13872,6 +19951,34 @@ function renderMsg(
       `<div class="msg-compaction-banner-summary">${summaryHtml}</div>` +
       `</div>`
     );
+  }
+  // FORK 2026-09-29 (lifecycles.md L4b) — the restart notice (gateway/restart-notice.ts): one row in
+  // each chat a gateway restart paused — when it paused, when it came back, why, and how it resumed.
+  // The text is the server's. The orange centred bubble is the one the old restart envelope used.
+  if (msg.__openclaw?.kind === "restart-notice") {
+    const text =
+      content
+        .map((b: unknown) => (b as { text?: unknown } | null)?.text)
+        .filter((t: unknown): t is string => typeof t === "string")
+        .join(" ")
+        .trim() || "Gateway restarted";
+    return `<div class="msg-overload-bubble msg-restart-notice" data-msg-idx="${idx}">🔄 ${esc(text)}</div>`;
+  }
+  // FORK 2026-09-29 (U9) — an outcome row with NO renderable content, which is what the gateway's
+  // `empty` verdict is (rule 8: no text, no tool blocks — a turn that returned nothing, or only
+  // thought). Neither chain below can draw it: the string chain requires non-empty string content
+  // and the block chain iterates `content`, so such a message rendered as literally NOTHING and the
+  // turn looked like it never happened. Scoped to exactly that case, so it cannot touch any row
+  // that renders today.
+  if (
+    role === "assistant" &&
+    content.length === 0 &&
+    !(typeof msg.content === "string" && msg.content.trim())
+  ) {
+    const contentlessOutcome = outcomeOf(msg);
+    if (contentlessOutcome) {
+      return h + renderOutcomeBubble(contentlessOutcome, rowFoldAttrs(msg, "o"));
+    }
   }
   let blockIdx = 0;
   let hasNonToolContent = false;
@@ -13912,18 +20019,44 @@ function renderMsg(
           h += renderSystemMsg(sysText, msgKey);
         }
       }
-      const userText = userLines.join("\n").trim();
-      if (userText) {
+      const userTextRaw = userLines.join("\n").trim();
+      // FORK 2026-09-07 (the architect: "a nonesense-bubble as if I was prompting in strange html") — TWO
+      // producer/consumer drifts met at this one branch, and both painted server scaffolding as
+      // something the architect had typed.
+      //
+      // (a) The reflection doctrine is APPENDED to every prompt: `keep going` was stored as a
+      //     22,548-character user turn. The six hide-sites in this file all test for the literal
+      //     `# FRACTAL REFLECTION`, which the injected doctrine has never contained (its heading is
+      //     `# FRACTAL — the slow thinker`). So it painted, angle-bracket placeholders and all —
+      //     `<details>`, `<dir>`, `<slug>`, `<commit>` — which is the "strange html". Cutting at
+      //     the seam rather than hiding the message, because the doctrine is appended to his own
+      //     words and hiding the message would take those with it.
+      // (b) The gateway-restart resume prompt is injected as a role:"user" message and was ALREADY
+      //     meant to land in the orange centered branch below — but the test was
+      //     `startsWith("⚠️ Gateway restarted")` and the real text is
+      //     `[<timestamp>] [System] The gateway restarted and interrupted your previous turn.`
+      //     Never matched, so ~1,400 characters of the agent instructing itself rendered as a user
+      //     prompt. It arrived TWICE in the ClawHub tab within 41s of the 15:38 restart.
+      const userText = stripInjectedFractalDoctrine(userTextRaw);
+      if (!userText && userTextRaw) {
+        // Nothing but scaffolding. Keep the invisible boundary marker — run-boundary detection
+        // downstream keys on it — but paint nothing.
+        h += `<div class="fractal-boundary" style="display:none" data-msg-idx="${idx}"></div>`;
+      } else if (userText) {
         // FORK: Hide fractal reflection prompts (injected via sessions.send)
         // Render as invisible div that preserves run boundary detection
-        if (userText.includes("# FRACTAL REFLECTION")) {
+        if (userTextRaw.includes("# FRACTAL REFLECTION")) {
           h += `<div class="fractal-boundary" style="display:none" data-msg-idx="${idx}"></div>`;
-        } else if (
-          userText.startsWith("⚠️ Gateway restarted") ||
-          userText.startsWith("⚠ Gateway restarted")
-        ) {
+        } else if (isGatewayRestartResume(userText)) {
           // FORK: Gateway restart resume — orange centered bubble (not a user message)
           h += `<div class="msg-overload-bubble">${md(userText)}</div>`;
+        } else if (skillNoticeFromInjectedBody(userText)) {
+          // FORK 2026-09-02: the skill body the harness injects after a `Skill` call is a
+          // user-role turn that starts "Base directory for this skill: <dir>". It is not the
+          // architect's prompt — fold it into the 🔧 chip (icon, outline, link opens SKILL.md)
+          // and never paint the body. §5.8O.
+          const sb = skillNoticeFromInjectedBody(userText)!;
+          h += renderSkillNotice(sb.name, sb.path);
         } else if (SYSTEM_INJECTED_RE.test(userText)) {
           // System-injected messages (runtime context, subagent results) → system style
           // FORK 2026-08-17: pass the "inject" variant so this paints blue, not grey.
@@ -13941,25 +20074,43 @@ function renderMsg(
             userText.replace(AGENT_INJECTED_RE, "").trim() || userText,
             msgKey,
             "inject",
+            agentInjectedName(userText),
           );
         } else {
-          h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
+          h += renderUserBubbleWithPromptToggle(userText, msg, promptClass, promptBadge, idx);
           // FORK 2026-08-28: the recipe reminder rides directly under the prompt that matched it.
-          const rTitle = (msg as { _recipeTitle?: unknown })._recipeTitle;
-          const rPath = (msg as { _recipePath?: unknown })._recipePath;
-          if (typeof rTitle === "string" && rTitle && typeof rPath === "string" && rPath) {
-            h += renderRecipeNotice(rTitle, rPath);
-          }
+          // FORK 2026-09-29 (U10): it is no longer drawn HERE. `_recipeTitle`/`_recipePath` are one
+          // mark in the single chip row `skillNoticesHtmlAfter` appends to this same unit
+          // (chat-units.ts), so recipe, skill and plugin share one de-duplicated row in one place.
+          // §5.8N's placement — directly under the prompt that matched — is unchanged; drawing it
+          // in both places would paint the recipe chip twice.
         }
       }
     } else if (role === "assistant") {
+      // FORK 2026-09-29 (U9) — the TYPED outcome, ahead of every text guesser on this path.
+      // `outcomeOf` returns the gateway's own verdict, or derives one from stopReason/errorMessage
+      // for a row served before that build; null for an ordinary answer, which then renders exactly
+      // as it does today (the envelope parse and `classifyErrorBubble` below stay as the fallback
+      // for untyped rows — review focus 4). A real partial answer is drawn FIRST, as a normal answer
+      // bubble, with the outcome under it: a turn that answered and THEN failed keeps its answer.
+      // Like the envelope and error-bubble early returns just below, this abandons the rest of the
+      // message's blocks — the pre-existing trait of this chain, not a new one.
+      const rowOutcome = outcomeOf(msg);
+      if (rowOutcome) {
+        const rowAnswer = answerTextOf(text, rowOutcome);
+        if (rowAnswer) {
+          h += `<div class="msg assistant"${ocIdAttrs(msg, "main")}>${md(rowAnswer)}${elapsedChip(msg, idx)}</div>`;
+        }
+        h += renderOutcomeBubble(rowOutcome, rowFoldAttrs(msg, "o"));
+        return h;
+      }
       // FORK 2026-04-17: ErrorEnvelope detection ahead of everything else.
       // Any assistant text prefixed with __ERR_ENV__:{json} gets rendered as a
       // rich envelope bubble (red or orange per Design Bible §11.12) instead
       // of going through the generic error/warning branches below.
       const envelope = extractEnvelope(text);
       if (envelope) {
-        h += renderEnvelope(envelope);
+        h += renderEnvelope(envelope, rowFoldAttrs(msg, "e"));
         return h;
       }
       // FORK 2026-04-18: Amygdala/Answer/Fractal 3-section detection.
@@ -13977,7 +20128,7 @@ function renderMsg(
       // reintroduce the format "blinking" class which depended on neighbouring stream state).
       {
         const sectioned = splitSectionedReply(text);
-        if (sectioned && (sectioned.answer || sectioned.fractal)) {
+        if (sectioned && (sectioned.answer || sectioned.deeper || sectioned.fractal)) {
           // FORK 2026-08-11 (the architect) — thread the fractal anchor through. This branch
           // returns early, so it never reached the fractalAnchorAttr code below; every
           // sectioned reply was therefore untagged, orphaning the dock and blocking the
@@ -13990,6 +20141,16 @@ function renderMsg(
             (msg as any)._fractalParentRunId
               ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
               : "",
+            // FORK 2026-09-06 — the SAME early-return trap the 2026-08-11 anchor fix hit:
+            // this branch returns before the fractal/Commentary sites below, so every
+            // sectioned reply rendered its folds unkeyed and they snapped shut on each
+            // streaming delta. Measured: 738 rendered fractal-details, 0 keyed.
+            foldAttrs,
+            String((msg as any)?._uid ?? ""),
+            // FORK 2026-10-03 — and the same trap once more: the row's history identity, which
+            // every other branch writes, so a served sectioned answer no longer reads as a
+            // client-written bubble to the census and ui-dup-proof.
+            (part: string) => ocIdAttrs(msg, part),
           );
           return h;
         }
@@ -14004,15 +20165,10 @@ function renderMsg(
       // live countdown span + hover-revealed "stop retrying" link (CSS sibling
       // unit). Rendered from the structured fields so the 1s tick can rewrite only
       // the countdown; falls back to the persisted delay when no live state.
+      // FORK 2026-09-24 (prompt-queue.md U5): drawn through §6.1's RETRYING row, by the one
+      // renderer both paths share.
       if (msg._isRetryWarning) {
-        const rsk = String((msg as any)._retrySessionKey ?? "");
-        const rst = retryState.get(rsk);
-        const remainMs =
-          rst && !rst.cancelled
-            ? Math.max(0, rst.nextRetryAt - Date.now())
-            : Number((msg as any)._retryDelayMs ?? 0);
-        const rAtt = Number((msg as any)._retryAttempt ?? 0);
-        h += `<div class="msg-overload-bubble retrying" data-retry-warning="${esc(rsk)}">⚠️ ${esc(labelFor((msg as any)._retryKind ?? null))} — retry ${rAtt + 1}/${RETRY_LADDER_MS.length}, retrying in <span class="retry-countdown">${esc(formatWait(remainMs))}</span>… <a class="retry-stop-link" data-retry-stop="${esc(rsk)}">stop retrying</a></div>`;
+        h += renderRetryWarningBubble(msg as Record<string, unknown>);
         return h;
       }
       // FORK 2026-08-15 — per-phase timing row. One slim line per FINISHED pre-model stage,
@@ -14072,7 +20228,7 @@ function renderMsg(
         // FORK 2026-08-05: emit the message's stable `_uid` so updateChat can restore the user's
         // open/closed state by IDENTITY. It used to be restored by ordinal position among the
         // rendered <details>, so any bubble added above transferred "open" to a different fractal.
-        h += `<details class="fractal-details" data-fractal-uid="${esc(String((msg as any)?._uid ?? ""))}"${openAttr}><summary class="fractal-summary">🌿 <span class="fractal-summary-kind">Fractal Response</span> <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}">${md(text)}${retryBtn}</div></details>`;
+        h += `<details class="fractal-details" data-fractal-uid="${esc(String((msg as any)?._uid ?? ""))}"${openAttr}${foldAttrs((msg as any)?._uid ? `f:${String((msg as any)._uid)}` : "")}><summary class="fractal-summary">🌿 <span class="fractal-summary-kind">Fractal Response</span> <span class="fractal-summary-text">${esc(preview)}</span></summary><div class="msg assistant${errorClass}${fractalClass}"${ocIdAttrs(msg, "fractal")}>${md(text)}${retryBtn}</div></details>`;
       } else {
         // FORK 2026-05-29: colored subagent sub-bubble. When a message is tagged
         // with a subagent origin (_subagentId), render it with that subagent's
@@ -14094,7 +20250,7 @@ function renderMsg(
           const saOpen = expandedSubagents.has(saId) ? " open" : "";
           const liveDot = saLive ? `<span class="msg-subagent-live" title="streaming"></span>` : "";
           const badge = `<span class="msg-subagent-badge" style="background:${c}">${esc(saLabel)}</span>`;
-          h += `<details class="msg-subagent-details${saLive ? " is-live" : ""}" data-subagent-id="${esc(saId)}"${saOpen} style="--subagent-color:${c}"><summary class="msg-subagent-summary">${badge}${liveDot}</summary><div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}">${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div></details>`;
+          h += `<details class="msg-subagent-details${saLive ? " is-live" : ""}" data-subagent-id="${esc(saId)}"${saOpen} style="--subagent-color:${c}"><summary class="msg-subagent-summary">${badge}${liveDot}</summary><div class="msg assistant msg-subagent${errorClass}${isThinking ? " msg-thinking" : ""}"${ocIdAttrs(msg, "subagent")}>${thinkingPrefix}${md(text)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div></details>`;
         } else {
           // FORK 2026-05-09 (Feature B): append elapsed chip inside assistant bubble.
           // FORK 2026-06-10: peel leading narration off the plain final-answer path
@@ -14114,7 +20270,8 @@ function renderMsg(
           if (!isThinking && !hasStructuredReasoning) {
             const sln = splitReasoningFromAnswer(text);
             if (sln.reasoning) {
-              commentaryHtml = `<details class="reasoning-group narration-details"><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"><span class="thinking-label">Commentary:</span> ${md(sln.reasoning)}</div></div></details>`;
+              const ndKey = String((msg as Record<string, unknown>)?._uid ?? "");
+              commentaryHtml = `<details class="reasoning-group narration-details"${foldAttrs(ndKey ? `c:${ndKey}` : "")}><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"${ocIdAttrs(msg, "commentary")}><span class="thinking-label">Commentary:</span> ${md(sln.reasoning)}</div></div></details>`;
               answerText = sln.answer;
             }
           }
@@ -14122,18 +20279,19 @@ function renderMsg(
           // runId in the DOM — when the stream:"fractal" consumer tags this
           // message with _fractalParentRunId (the data-subagent-id precedent),
           // emit it as data-fractal-parent-run so the dock-anchor lookup can
-          // find the element across innerHTML rebuilds.
+          // find the element across re-renders (a unit whose HTML changed is re-parsed into new
+          // nodes — keyed rendering, plan task 9).
           const fractalAnchorAttr = (msg as any)._fractalParentRunId
             ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
             : "";
           // FORK 2026-06-13 (eeg): twin of the fractal anchor — emit the _eegTurn
           // stamp as data-eeg-turn so EEG marker clicks can find the bubble
-          // across innerHTML rebuilds (bible §5.8h q7).
+          // across re-renders of its unit (bible §5.8h q7).
           const eegTurnAttr =
             (msg as any)._eegTurn != null
               ? ` data-eeg-turn="${esc(String((msg as any)._eegTurn))}"`
               : "";
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}${ocIdAttrs(msg, "main")}>${thinkingPrefix}${md(answerText)}${retryBtn}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       }
     } else {
@@ -14193,6 +20351,11 @@ function renderMsg(
             userText.startsWith("⚠ Gateway restarted")
           ) {
             h += `<div class="msg-overload-bubble">${md(userText)}</div>`;
+          } else if (skillNoticeFromInjectedBody(userText)) {
+            // FORK 2026-09-02: twin of the string-content path — the injected skill body
+            // (array-content user turn on the tinker-bridge run) folds into the 🔧 chip. §5.8O.
+            const sb = skillNoticeFromInjectedBody(userText)!;
+            h += renderSkillNotice(sb.name, sb.path);
             // System-injected messages (runtime context, subagent results) → system style
           } else if (SYSTEM_INJECTED_RE.test(userText)) {
             // FORK 2026-08-17: "inject" variant → blue bubble (twin of the string-content path).
@@ -14208,16 +20371,31 @@ function renderMsg(
               userText.replace(AGENT_INJECTED_RE, "").trim() || userText,
               msgKey,
               "inject",
+              agentInjectedName(userText),
             );
           } else {
-            h += renderUserBubbleWithPromptToggle(userText, msg, queuedClass, queuedBadge, idx);
+            h += renderUserBubbleWithPromptToggle(userText, msg, promptClass, promptBadge, idx);
           }
         }
       } else if (role === "assistant") {
+        // FORK 2026-09-29 (U9) — twin of the string-content path: the typed outcome first, one
+        // shared rule for both chains. THIS is the path a live provider error actually takes (the
+        // gateway sends `content: [{type:"text"}]`, never a bare string), which is exactly how the
+        // 2026-08-24 529-as-an-answer drift happened — see error-bubble.ts. The early return also
+        // makes the bubble at-most-once for a multi-text-block message.
+        const rowOutcome2 = outcomeOf(msg);
+        if (rowOutcome2) {
+          const rowAnswer2 = answerTextOf(text, rowOutcome2);
+          if (rowAnswer2) {
+            h += `<div class="msg assistant"${ocIdAttrs(msg, "main")}>${md(rowAnswer2)}${elapsedChip(msg, idx)}</div>`;
+          }
+          h += renderOutcomeBubble(rowOutcome2, rowFoldAttrs(msg, "o"));
+          return h;
+        }
         // FORK 2026-04-17: same ErrorEnvelope detection as above.
         const envelope2 = extractEnvelope(text);
         if (envelope2) {
-          h += renderEnvelope(envelope2);
+          h += renderEnvelope(envelope2, rowFoldAttrs(msg, "e"));
           return h;
         }
         // FORK 2026-04-18: Amygdala/Answer/Fractal 3-section detection (twin path).
@@ -14236,6 +20414,14 @@ function renderMsg(
               (msg as any)._fractalParentRunId
                 ? ` data-fractal-parent-run="${esc(String((msg as any)._fractalParentRunId))}"`
                 : "",
+              // FORK 2026-09-06 — the SAME early-return trap the 2026-08-11 anchor fix hit:
+              // this branch returns before the fractal/Commentary sites below, so every
+              // sectioned reply rendered its folds unkeyed and they snapped shut on each
+              // streaming delta. Measured: 738 rendered fractal-details, 0 keyed.
+              foldAttrs,
+              String((msg as any)?._uid ?? ""),
+              // FORK 2026-10-03 — the row's history identity (twin of the string-content path).
+              (part: string) => ocIdAttrs(msg, part),
             );
             return h;
           }
@@ -14247,7 +20433,7 @@ function renderMsg(
         if ((msg as any)._isReasoning) {
           const rtext = (content.find((b: any) => b.type === "text")?.text ?? "").toString();
           if (!rtext.trim()) return h;
-          h += `<div class="msg assistant msg-thinking"><span class="thinking-label">Thinking:</span> ${md(rtext)}</div>`;
+          h += `<div class="msg assistant msg-thinking"${ocIdAttrs(msg, "thinking")}><span class="thinking-label">Thinking:</span> ${md(rtext)}</div>`;
           return h;
         }
         const errorClass = msg._isError ? " msg-error" : "";
@@ -14258,15 +20444,9 @@ function renderMsg(
         const thinkingPrefix = isThinking ? `<span class="thinking-label">Thinking:</span> ` : "";
         // FORK 2026-06-24 (recoverable-retry): twin of the string-content path —
         // orange retry warning with live countdown span + hover stop link.
+        // FORK 2026-09-24 (prompt-queue.md U5): the same renderer, through §6.1's RETRYING row.
         if (msg._isRetryWarning) {
-          const rsk = String((msg as any)._retrySessionKey ?? "");
-          const rst = retryState.get(rsk);
-          const remainMs =
-            rst && !rst.cancelled
-              ? Math.max(0, rst.nextRetryAt - Date.now())
-              : Number((msg as any)._retryDelayMs ?? 0);
-          const rAtt = Number((msg as any)._retryAttempt ?? 0);
-          h += `<div class="msg-overload-bubble retrying" data-retry-warning="${esc(rsk)}">⚠️ ${esc(labelFor((msg as any)._retryKind ?? null))} — retry ${rAtt + 1}/${RETRY_LADDER_MS.length}, retrying in <span class="retry-countdown">${esc(formatWait(remainMs))}</span>… <a class="retry-stop-link" data-retry-stop="${esc(rsk)}">stop retrying</a></div>`;
+          h += renderRetryWarningBubble(msg as Record<string, unknown>);
           return h;
         }
         // FORK: Overload retry + warning messages — orange centered bubble
@@ -14308,7 +20488,7 @@ function renderMsg(
           );
           const openAttr2 = hasAction2 ? " open" : "";
           // FORK 2026-08-05: twin of the anchor above — identity, not ordinal position.
-          h += `<details class="fractal-details" data-fractal-uid="${esc(String((msg as any)?._uid ?? ""))}"${openAttr2}><summary class="fractal-summary">🌿 <span class="fractal-summary-kind">Fractal Response</span> <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}">${md(text)}${retryBtn}</div></details>`;
+          h += `<details class="fractal-details" data-fractal-uid="${esc(String((msg as any)?._uid ?? ""))}"${openAttr2}${foldAttrs((msg as any)?._uid ? `f:${String((msg as any)._uid)}` : "")}><summary class="fractal-summary">🌿 <span class="fractal-summary-kind">Fractal Response</span> <span class="fractal-summary-text">${esc(preview2)}</span></summary><div class="msg assistant${errorClass}${fractalClass2}"${ocIdAttrs(msg, "fractal")}>${md(text)}${retryBtn}</div></details>`;
         } else {
           // FORK: Add recipe step tag below assistant messages when a recipe is active
           const stepTag =
@@ -14333,7 +20513,8 @@ function renderMsg(
           if (!isThinking && !hasStructuredReasoning) {
             const sln = splitReasoningFromAnswer(text);
             if (sln.reasoning) {
-              commentaryHtml = `<details class="reasoning-group narration-details"><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"><span class="thinking-label">Commentary:</span> ${md(sln.reasoning)}</div></div></details>`;
+              const ndKey = String((msg as Record<string, unknown>)?._uid ?? "");
+              commentaryHtml = `<details class="reasoning-group narration-details"${foldAttrs(ndKey ? `c:${ndKey}` : "")}><summary class="reasoning-header">▸ Commentary</summary><div class="reasoning-content"><div class="msg assistant msg-thinking"${ocIdAttrs(msg, "commentary")}><span class="thinking-label">Commentary:</span> ${md(sln.reasoning)}</div></div></details>`;
               answerText = sln.answer;
             }
           }
@@ -14344,23 +20525,38 @@ function renderMsg(
             : "";
           // FORK 2026-06-13 (eeg): twin of the fractal anchor — emit the _eegTurn
           // stamp as data-eeg-turn so EEG marker clicks can find the bubble
-          // across innerHTML rebuilds (bible §5.8h q7).
+          // across re-renders of its unit (bible §5.8h q7).
           const eegTurnAttr =
             (msg as any)._eegTurn != null
               ? ` data-eeg-turn="${esc(String((msg as any)._eegTurn))}"`
               : "";
-          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}>${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
+          h += `${commentaryHtml}<div class="msg assistant${errorClass}${isThinking ? " msg-thinking" : ""}"${fractalAnchorAttr}${eegTurnAttr}${ocIdAttrs(msg, "main")}>${thinkingPrefix}${md(answerText)}${retryBtn}${stepTag}${elapsedChip(msg, idx)}${(msg as any)._turnIncomplete ? `<span class="msg-incomplete-badge" title="This turn did not finish cleanly (${esc(String((msg as any)._turnIncomplete))})">⚠ incomplete</span>` : ""}</div>`;
         }
       } else {
         h += renderSystemMsg(text, msgKey);
       }
     } else if (block.type === "tool_use") {
       const a = block.input ?? {};
+      // Look up result from global map (tool_result may be in a different message)
+      const paired = resultMap.get(block.id ?? "");
+      // FORK 2026-09-02 (the architect: "this mention should be outlined, start with the
+      // characteristic icon, and clicking it should open the .md — not show the recipe itself").
+      // A `Skill` tool call IS the skill notice: render the chip in place of the generic tool
+      // row, with the path read off the tool result's "Base directory for this skill:" line, and
+      // never dump the skill body inline — the link opens the file.
+      // FORK 2026-09-29 (U10): the CHIP moved. It is now one mark in the single row under the
+      // prompt (`skillNoticesHtmlAfter`, which reads the same tool result for the path) or the
+      // injected-body fold below — drawing it here as well is what made one `Skill` call paint two
+      // chips. The SUPPRESSION stays: without it the call falls through to `toolSummary` and the
+      // raw row, with the skill body in its arguments, comes back.
+      const skillChip = skillNoticeFromTool(block.name, a, paired?.content);
+      if (skillChip && skillChip.source === "skill") {
+        blockIdx++;
+        continue;
+      }
       const mechanicalSummary = toolSummary(block.name, a);
       const tid = `t${msgKey}-${block.id ?? block.name}-${blockIdx++}`;
       const exp = expandedTools.has(tid);
-      // Look up result from global map (tool_result may be in a different message)
-      const paired = resultMap.get(block.id ?? "");
       const statusIcon = paired ? (paired.isError ? "✗" : "✓") : "⋯";
       const statusCls = paired ? (paired.isError ? "err" : "ok") : "run";
       // FORK (2026-04-21): if the LLM wrote a purpose sentence right before
@@ -14500,8 +20696,8 @@ function renderThinkingIndicator(): string {
         list.reduce((a, b) => (recency(a[1]) >= recency(b[1]) ? a : b));
       const mains = viewed.filter(([, i]) => !isSub(i));
       const [primaryRunId, primary] = mains.length > 0 ? pickNewest(mains) : pickNewest(viewed);
-      // shortModelLabel carries the nicknames (Grok/Sol/Terra/Luna/3.1P);
-      // modelName alone leaves "grok-4.5" / "gpt-5.6-sol" raw.
+      // The row's name comes from detailedModelLabel (see below), not the picker's
+      // shortModelLabel, whose compact form cannot tell two Opus versions apart.
       // FORK 2026-07-29 — an activeRuns entry is created with model:"" and only filled when a
       // lifecycle event carries d.model, so the rich row could show a bare "working" for the first
       // seconds of every turn. The session row already knows the model; use it before giving up.
@@ -14514,10 +20710,12 @@ function renderThinkingIndicator(): string {
       // FORK 2026-08-06: glow = the model's EEG trace color, resolved centrally.
       const color = resolveEegGlowColor({ model: runModel, provider: runProvider });
       const elapsed = Math.floor((Date.now() - primary.startedAt) / 1000);
+      // FORK 2026-09-24: detailedModelLabel first, so the row says WHICH Opus / which GPT
+      // major (Opus 5.5 vs Opus 4.8, GPT-6 Sol vs GPT-5.6 Sol). Families it has no rule for
+      // take the panel's modelName (glm-5.3-flash), not the picker's compressed GLM5.3.
       const name =
-        (runModel ? shortModelLabel(runModel) : "") ||
-        modelName(runModel) ||
-        (rowModel ? shortModelLabel(rowModel) || modelName(rowModel) : "") ||
+        (runModel ? detailedModelLabel(runModel) || modelName(runModel) : "") ||
+        (rowModel ? detailedModelLabel(rowModel) || modelName(rowModel) : "") ||
         "working";
       const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
       // One small badge for "+N subagents running" — detail is in the RECIPES panel.
@@ -14558,7 +20756,7 @@ function renderThinkingIndicator(): string {
       return `<div class="thinking-indicator" data-state="server"><div class="thinking-run" data-provider="${esc(stateProvider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
   <div class="thinking-dots"><span></span><span></span><span></span></div>
   <span class="thinking-model">${modelIcon(stateModel, stateProvider)} ${esc(
-    (stateModel ? shortModelLabel(stateModel) : "") || modelName(stateModel) || "working",
+    (stateModel ? detailedModelLabel(stateModel) || modelName(stateModel) : "") || "working",
   )}</span>
   <span class="thinking-stop">Stop</span>
 </div></div>`;
@@ -14628,10 +20826,11 @@ function renderThinkingIndicator(): string {
 /**
  * Repaint ONLY the thinking indicator, in place.
  *
- * FORK 2026-08-15. The indicator is emitted inside updateChat()'s innerHTML, so the only way
- * to refresh it used to be to rebuild the entire message list. That is far too heavy for a
- * 5-second clock: it drops text selection, collapses nothing but re-runs every post-render
- * pass (fractal decoration over ~100 replies), and fights the scroll anchor.
+ * FORK 2026-08-15. The indicator is emitted as part of updateChat()'s chat markup (since plan
+ * task 9 as its own keyed unit), so the only way to refresh it used to be a whole updateChat
+ * pass. That is far too heavy for a 5-second clock: it rebuilds every unit's HTML string and
+ * re-runs every post-render pass (fractal decoration over ~100 replies), and fights the scroll
+ * anchor.
  *
  * Safe to swap the node: the Stop affordance is handled by a DELEGATED listener on #messages
  * (see the click handler that does `target.closest(".thinking-stop")`), not by a listener
@@ -14692,6 +20891,11 @@ function getModelUsage(provider: string, modelId: string, keyId?: string): Model
 // tooltip that is OPEN at the moment it re-stamps. Without this the countdown only
 // changed on the next mouseover, which is never while you sit watching an exhausted row.
 let repaintOpenHint: (() => void) | null = null;
+// FORK 2026-10-02 — set by init() beside repaintOpenHint. updateBudgetPanel swaps the whole panel's
+// innerHTML (on change, and every 5s as a backstop), which detaches a hovered row: its hint then sat
+// frozen with the old text, and the model rows' hover (the tabs running a model) changes exactly
+// while runs start and stop. This re-resolves the hint against whatever is under the pointer now.
+let reanchorOpenHint: (() => void) | null = null;
 
 /**
  * Re-stamp every usage hover's `reset:` row against the current clock.
@@ -14961,6 +21165,11 @@ const SYSTEM_INJECTED_RE =
 // carries the same `^\[.*?\]\s*` allowance for exactly this reason.
 const AGENT_INJECTED_RE = /^(?:\[[^\]]*\]\s*)?\[(?:injected|inject)(?::\s*[^\]]*)?\]\s*/i;
 
+/** The name an injector wrote in its marker (`[injected: claude-code]` → "claude-code"); "an agent" without one. */
+function agentInjectedName(text: string): string {
+  return /\[(?:injected|inject):\s*([^\]]+)\]/i.exec(text)?.[1]?.trim() || "an agent";
+}
+
 /** Extract the actual user text from a user message, stripping System: prefixes.
  *  Returns null if the message is entirely system-injected (no real user text). */
 function extractUserText(msg: unknown): string | null {
@@ -15003,10 +21212,77 @@ function extractUserText(msg: unknown): string | null {
 }
 
 // ─── Targeted Updates ───
-function updateChat(skipScroll = false) {
+/** Plan task 9 — how renderChatInto reads a chat unit (chat-units.ts buildChatUnits). */
+const CHAT_UNIT_RENDER: ChatRenderOptions<ChatUnit> = {
+  rowKey: (u) => u.key,
+  rowHtml: (u) => u.html,
+};
+
+// FORK 2026-10-01 (the architect) — the answering model's rail beside each reply (chat-rail.ts). The live
+// run table forgets a run when it ends, but the bubbles it streamed stay on screen, naming no model,
+// until a history reload swaps in stored rows that do. So each run's model is remembered here while
+// it is live, and the rail keeps its colour across the turn's end.
+const railModelByRun = new Map<string, RailModel>();
+const RAIL_MODEL_MEMORY = 400;
+function railRunModel(runId: string): RailModel | undefined {
+  const live = activeRuns.get(runId);
+  if (live?.model && !isTranscriptOnlyModel(live.model)) {
+    const m: RailModel = { model: live.model, provider: live.provider || "" };
+    railModelByRun.delete(runId);
+    railModelByRun.set(runId, m);
+    if (railModelByRun.size > RAIL_MODEL_MEMORY) {
+      const oldest = railModelByRun.keys().next().value;
+      if (oldest !== undefined) {
+        railModelByRun.delete(oldest);
+      }
+    }
+    return m;
+  }
+  return railModelByRun.get(runId);
+}
+/** One run's rail: the model that answered it, in its EEG colour, with its logo and full name. */
+function chatRunRail(
+  rows: readonly unknown[],
+  prev: RailModel | null,
+): { rail: ChatRail; model: RailModel } | null {
+  const model = answeringModel(
+    rows,
+    {
+      runModel: railRunModel,
+      sessionModel: () => {
+        const id = viewedSessionRowModel();
+        return id ? { model: id, provider: viewedSessionRowProvider() ?? "" } : undefined;
+      },
+    },
+    prev,
+  );
+  if (!model) {
+    return null;
+  }
+  return {
+    model,
+    rail: {
+      // The same resolver as the EEG trace and the thinking indicator: one colour per model.
+      color: resolveEegGlowColor({ model: model.model, provider: model.provider }),
+      logoHtml: modelIcon(model.model, model.provider),
+      title: railTitle(model, detailedModelLabel(model.model) || modelName(model.model)),
+    },
+  };
+}
+
+function updateChat(skipScroll = false): ChatPositioning | null {
   const el = $("messages");
   if (!el) {
-    return;
+    return null;
+  }
+  // FORK 2026-09-08 — stamp the container with the bundle that rendered it. `#messages` is exactly
+  // what scheduleUiSnapshotDump mirrors to disk (`outerHTML`), so the mirrored html names its own
+  // build in its first line and a reader can tell a stale tab from a patched one without a screen
+  // share. Re-set on every render on purpose: idempotent, and it survives anything that rebuilds
+  // the element. An unbundled import (null) leaves the attribute off rather than writing "null".
+  const bundleStamp = uiBuild();
+  if (bundleStamp) {
+    el.dataset.uiBuild = bundleStamp;
   }
   // FORK 2026-08-05 (the architect: "messages appear out of chronological order") — THE RENDER ORDER IS NO
   // LONGER THE RAW ARRAY ORDER. `messages` is appended to by ~20 push sites, inserted into
@@ -15017,457 +21293,26 @@ function updateChat(skipScroll = false) {
   // reads `view`; nothing below may read `messages` positionally again.
   stampOrder(messages);
   const view: unknown[] = renderSortedEnabled() ? renderOrder(messages) : messages.slice();
-  let h = "";
-  // Identify intermediate "thinking" assistant messages: in each run
-  // (bounded by user messages), all assistant text messages except the last
-  // are thinking steps. If streaming is active, ALL assistant texts in the
-  // current run are thinking (the live answer is a temporary message).
-  // Tool result user messages are NOT run boundaries — they're mid-run tool responses.
-  const isRunBoundary = (m: unknown) => {
-    // FORK: Fractal reflection responses start a new run
-    // (sessions.send injects them as assistant messages, so they won't have a user boundary)
-    const mc = Array.isArray(m.content) ? m.content : [];
-    const firstText =
-      mc.find((b: unknown) => b.type === "text" && b.text)?.text ??
-      (typeof m.content === "string" ? m.content : "");
-    // FORK 2026-08-15 — shared predicate, so `🌿 FRACTAL ACTION:` (the prefix a reflection that
-    // actually changed something must use) becomes a boundary exactly like the clean `🌿 FRACTAL:`.
-    // Before this the two variants produced two different run shapes and two different bugs.
-    if (isFractalSectionText(firstText as string)) {
-      return true;
-    }
-
-    if ((m.role ?? "").toLowerCase() !== "user") {
-      return false;
-    }
-    const c = Array.isArray(m.content) ? m.content : [];
-    // Pure tool_result messages are part of the run, not boundaries
-    if (c.length > 0 && !c.some((b: unknown) => b.type !== "tool_result")) {
-      return false;
-    }
-    // System-injected user messages (runtime context, subagent results) are not boundaries
-    if (extractUserText(m) === null) {
-      return false;
-    }
-    return true;
-  };
-  const thinkingSet = new Set<number>();
-  {
-    let runStart = 0;
-    for (let i = 0; i <= view.length; i++) {
-      const isUserOrEnd = i === view.length || isRunBoundary(view[i]);
-      if (!isUserOrEnd) {
-        continue;
-      }
-      const assistantTextIndices: number[] = [];
-      for (let j = runStart; j < i; j++) {
-        const m = view[j];
-        if ((m.role ?? "").toLowerCase() !== "assistant") {
-          continue;
-        }
-        const c = Array.isArray(m.content) ? m.content : [];
-        const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
-        const plainText = typeof m.content === "string" && (m.content as string).trim();
-        if (!hasText && !plainText) {
-          continue;
-        }
-        // FORK: Fractal responses are NOT real assistant text — they render as
-        // their own collapsed block. Exclude them so the real answer before
-        // a fractal isn't demoted to "thinking".
-        // FORK 2026-08-15 — the test used to be a literal `startsWith("🌿 FRACTAL:")`, which missed
-        // `🌿 FRACTAL ACTION:` (the prefix the injection mandates whenever the reflection actually
-        // changed something). Shared predicate now, so this and sectioned-reply's splitter cannot
-        // drift. This exclusion is load-bearing for reply-grouping's cutoff: a 🌿 bubble counted as
-        // answer text would push the cutoff past the reflection's own tool calls and demote the
-        // real answer all over again.
-        const firstTextBlock =
-          c.find((b: unknown) => b.type === "text" && b.text)?.text ?? (plainText || "");
-        if (isFractalSectionText(firstTextBlock as string)) {
-          continue;
-        }
-        // FORK: Fractal prompts are hidden entirely — don't count them
-        if ((firstTextBlock as string).includes("# FRACTAL REFLECTION")) {
-          continue;
-        }
-        // FORK: System messages (warnings, errors, retries, prefrontal) must NEVER
-        // collapse into reasoning groups — they are user-facing status updates.
-        // FORK 2026-08-24 — the timing block joins that list. It is an assistant message with
-        // non-empty text, so it counted as an answer bubble here: it inflated `textLen` for the
-        // dominant-answer guard and could be classified as narration, and downstream it made the
-        // run look like it already had an answer. It is chrome about the turn, not the turn.
-        if (
-          m._isWarning ||
-          m._isError ||
-          m._isOverloadRetry ||
-          m._isPrefrontal ||
-          (m as any)._isPhaseTiming ||
-          (m as any)._isReasoning
-        ) {
-          continue;
-        }
-        assistantTextIndices.push(j);
-      }
-      // FORK 2026-06-19 (bug A — STRUCTURAL, replaces position-only slice(0,-1)): an assistant text
-      // bubble is genuine between-tool NARRATION (→ collapse into Reasoning) IFF a tool call/result
-      // occurs LATER in the same run; text with no tool after it is part of the ANSWER and stays
-      // visible. This stops a multi-bubble answer (block-break / >5s gap split / the old 💬 ANSWER-
-      // marked structured reply) from having all-but-the-last bubble hidden whenever the model dropped
-      // the marker — the actual Bug A. With NO tools in the run, nothing collapses (genuine
-      // chain-of-thought already lives in the separate thinking channel). Decision is the pure,
-      // unit-tested narrationIndices(); see reply-grouping.ts + bible §5.8h.
-      // DO NOT re-add an `isCurrentRun`/`streamMsgUid`-style guard here: it makes ALL prior bubbles
-      // flash to final-answer style on each delta and snap back on each tool call (the "blinking chat
-      // text" bug). Removed 2026-03-26 in 69693d3f61, again 2026-05-29. See bible §5.8.
-      const textIdxSet = new Set(assistantTextIndices);
-      const runKinds: RunMsgKind[] = [];
-      for (let j = runStart; j < i; j++) {
-        const c = Array.isArray(view[j].content) ? view[j].content : [];
-        runKinds.push({
-          isAssistantText: textIdxSet.has(j),
-          hasTool: c.some((b: unknown) => b.type === "tool_use" || b.type === "tool_result"),
-          // FORK 2026-08-16 — feeds the dominant-answer guard: the run's largest text bubble is
-          // never collapsed. Measured necessity: a 4,898-char answer was being hidden behind the
-          // reflection's 58-char "Memory written and indexed" receipt. See reply-grouping.ts.
-          textLen: c
-            .filter((b: unknown) => b.type === "text")
-            .reduce((n: number, b: unknown) => n + String(b.text ?? "").trim().length, 0),
-        });
-      }
-      // FORK 2026-08-05 (the architect: "old messages get rewritten") — FREEZE THE CLASSIFICATION. It used
-      // to be recomputed from scratch on EVERY repaint, and `narrationIndices` demotes an assistant
-      // text bubble as soon as a tool appears LATER in the run — so as `lastToolIdx` grew, text the
-      // user was already reading as the ANSWER was retro-demoted into the collapsed group under
-      // their eyes, and a bubble appended to the run later (an `appendTail`, a flushed queued
-      // prompt) could re-shuffle a run that had been settled for an hour. Classify ONCE, at the
-      // first repaint after the run has no `_temporary` members left, stamp `_narration` on every
-      // member, and read the stamp from then on. What was shown as an answer stays an answer.
-      // (The LIVE path below is unchanged on purpose: adding an `isCurrentRun` guard here is the
-      // "blinking chat text" bug, removed twice already — see bible §5.8.)
-      // FORK 2026-08-16 — an earlier cut of this fix looked at the run's BOUNDARY message to decide
-      // whether a 🌿 reflection followed. That could never work: the stamp below is frozen at
-      // main-turn end, when this run is still the LAST one in the view and the reflection has not
-      // been appended yet. narrationIndices now decides from the run alone, with no lookahead.
-      const runMsgs = view.slice(runStart, i) as Record<string, unknown>[];
-      // FORK 2026-09-02 — same staleness question as the `isStreaming` gate below, and it has to be
-      // asked here too or the fix is half a fix: `!some(_temporary)` is this freeze's "the turn has
-      // ended" test, so a stranded temp ALSO blocks classification forever and the run never gets a
-      // `_narration` stamp to read back. "No temps left" and "nothing is streaming" are both valid
-      // proofs that the turn is over; accept either.
-      const runSettled =
-        !runMsgs.some((m) => m._temporary) || !(streamRunId !== null || streamMsgUid !== null);
-      // FORK 2026-09-02 (the architect: "a bunch of thinking messages as final answers … all the tool calls
-      // in one single section … hints towards not having respected the time of arrival") — THE
-      // FREEZE MUST BE ALL-OR-NOTHING PER RUN.
-      //
-      // Both gates used to ask `some(...)`, and that is the bug: ONE stamped message put the whole
-      // run into read-back mode forever, while the read-back below only adds `_narration === true`
-      // to `thinkingSet`. A member that arrived AFTER the stamp carries `undefined`, which is
-      // neither true nor false — so it is never classified, falls through to the answer branch, and
-      // renders as a final answer for the rest of the session. The run is then split by CLASS
-      // rather than by time (all intermediates emitted first, all "answers" after), which is
-      // exactly the destroyed chronology the architect diagnosed from the outside.
-      //
-      // Measured on this session's own transcript, run 68→278 (`agent:main:tinker:mtievarb`):
-      // 210 messages — 86 tool, 63 thinking, 61 text — and the SERVED history is perfectly
-      // interleaved (h T C h T C …). Running the real `narrationIndices` over it returns
-      // **60 narration + exactly 1 answer**, and that one answer is the bubble opening `**Jarvis:**`
-      // and closing with the html summary. The screen showed 61 answers and no narration, so the
-      // data was right, the classifier was right, and only the stamp was wrong.
-      //
-      // So: stamp only when EVERY member can be stamped together, and treat a partially-stamped run
-      // as stale — recompute rather than read half a verdict. This keeps the 2026-08-05 guarantee
-      // (a run that was fully classified is never re-shuffled) while removing the state that made
-      // "classified" and "unclassified" coexist inside one run.
-      const stampedCount = runMsgs.filter((m) => m._narration !== undefined).length;
-      const fullyStamped = runMsgs.length > 0 && stampedCount === runMsgs.length;
-      if (!fullyStamped && runSettled) {
-        const narration = new Set(narrationIndices(runKinds));
-        for (let k = 0; k < runMsgs.length; k++) {
-          runMsgs[k]._narration = narration.has(k);
-        }
-      }
-      // Re-read: the block above may have just completed the stamp. Anything short of a COMPLETE
-      // stamp falls back to classifying this repaint from the run itself, so no member is ever left
-      // unclassified — the failure mode above cannot recur even if a new growth path appears.
-      if (runMsgs.length > 0 && runMsgs.every((m) => m._narration !== undefined)) {
-        for (let k = 0; k < runMsgs.length; k++) {
-          if (runMsgs[k]._narration === true) {
-            thinkingSet.add(runStart + k);
-          }
-        }
-      } else {
-        for (const rel of narrationIndices(runKinds)) {
-          thinkingSet.add(runStart + rel);
-        }
-      }
-      runStart = i + 1;
-    }
-  }
-  // Build a global tool result map: tool_use_id → { content, isError, name }
-  // so tool_use blocks can find their paired results even across messages.
-  const globalResultMap = new Map<string, { content: string; isError: boolean }>();
-  const globalToolNames = new Map<string, { name: string; input: unknown }>();
-  for (const m of view) {
-    const c = Array.isArray(m.content) ? m.content : [];
-    for (const b of c) {
-      if (b.type === "tool_result") {
-        const rt = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
-        globalResultMap.set(b.tool_use_id ?? "", { content: rt, isError: b.is_error === true });
-      }
-      if (b.type === "tool_use") {
-        globalToolNames.set(b.id ?? "", { name: b.name, input: b.input ?? {} });
-      }
-    }
-  }
-  // Render messages grouped by run. In completed runs, intermediate messages
-  // (thinking + tool calls + system) collapse into an expandable reasoning group.
-  {
-    let runStart = 0;
-    for (let i = 0; i <= view.length; i++) {
-      const isUserOrEnd = i === view.length || isRunBoundary(view[i]);
-      if (!isUserOrEnd) {
-        continue;
-      }
-
-      // Collect intermediate (collapsed) vs answer (visible) bubbles in this run.
-      // FORK 2026-06-19 (bug A): the run can now have MULTIPLE answer bubbles — every assistant text
-      // bubble NOT classified as between-tool narration (thinkingSet) is part of the answer and is
-      // rendered visibly, in order. Previously only a single `finalIdx` survived and earlier answer
-      // bubbles were demoted into the collapsed group, which hid real answer content.
-      const runEnd = i; // exclusive
-      const intermediateIndices: number[] = [];
-      const answerIndices: number[] = [];
-
-      for (let j = runStart; j < runEnd; j++) {
-        const m = view[j];
-        if (thinkingSet.has(j)) {
-          intermediateIndices.push(j);
-          continue;
-        }
-        // FORK 2026-07-26 (thinking never collapsed): reasoning bubbles are BY
-        // DEFINITION intermediate. They are force-excluded from thinkingSet (the
-        // narration classifier) to keep them out of the §5.8 flicker path — but
-        // that exclusion left them falling through to the hasText test below, and
-        // normalizeHistoryRenderBlocks rewrites a persisted `thinking` block into a
-        // `text` block, so every reloaded thinking message classified as ANSWER and
-        // rendered as a full visible bubble that no "▸ Reasoning" group ever folded.
-        // Classify here (NOT via thinkingSet) so the flicker guard stays intact.
-        if ((m as any)._isReasoning) {
-          intermediateIndices.push(j);
-          continue;
-        }
-        // FORK 2026-08-24 (the architect: "The timing list should also fold into the reasoning whenever
-        // the turn ends, same as the tool calls and intermediate thinking/reasoning"). The block
-        // is an assistant message with text, so it classified as ANSWER and stayed permanently
-        // expanded in the transcript. Classified HERE rather than via thinkingSet, for the same
-        // reason `_isReasoning` is: thinkingSet feeds the §5.8 flicker guard, and this is not a
-        // narration judgement — a timing block is intermediate by definition.
-        if ((m as any)._isPhaseTiming) {
-          intermediateIndices.push(j);
-          continue;
-        }
-        const role = (m.role ?? "").toLowerCase();
-        if (role === "assistant") {
-          // A tool-only assistant message (no text) is intermediate; a text bubble is answer.
-          const c = Array.isArray(m.content) ? m.content : [];
-          const hasText = c.some((b: unknown) => b.type === "text" && (b.text ?? "").trim());
-          const plainText = typeof m.content === "string" && (m.content as string).trim();
-          if (!hasText && !plainText) {
-            intermediateIndices.push(j);
-          } else {
-            answerIndices.push(j);
-          }
-        } else {
-          // user tool_result messages, system messages — intermediate
-          intermediateIndices.push(j);
-        }
-      }
-
-      // Count tool_use blocks only in intermediates (not the final answer)
-      let toolCount = 0;
-      for (const j of intermediateIndices) {
-        const tc = Array.isArray(view[j].content) ? view[j].content : [];
-        for (const b of tc) {
-          if (b.type === "tool_use") {
-            toolCount++;
-          }
-        }
-      }
-
-      // Determine if this run is still streaming (has temporary messages)
-      // FORK 2026-09-02 (the architect: "a lot of reasoning that did not collapse correctly") — A
-      // `_temporary` FLAG MUST NOT OUTLIVE THE STREAM THAT SET IT. This test used to read the flag
-      // alone, so ONE stale temp pinned a long-settled run to `isStreaming` FOREVER and the flat
-      // branch below rendered every narration bubble as an answer, permanently. Nothing ever
-      // re-collapsed it: the `_narration` freeze is gated on the same flag, so the run could not
-      // even be classified. Measured on this session's own transcript (`agent:main:tinker:mtievarb`,
-      // the run ending in the 3,941-char answer): replaying narrationIndices over the served history
-      // classifies 229 intermediates / 2 answers — a clean collapse — while the rendered DOM shows
-      // ~30 loose `msg assistant` bubbles and NO `reasoning-group`. `isStreaming` is the only gate
-      // between those two facts.
-      //
-      // Two ways a temp gets stranded, both of which end at a runId that will never come back:
-      // `ownsTempMsg` only promotes a temp whose `_runId` matches the FINAL's run, and the frozen-
-      // reasoning loop only clears one whose `_reasoningRunId` matches. A history reload assigns
-      // `messages = incoming` and destroys every `_runId` stamp, while `_isReasoning` IS in
-      // msg-order's CLIENT_ONLY_FLAGS and `_temporary` is NOT — so a live reasoning bubble is
-      // preserved verbatim, `_temporary` and all, and no later run can ever claim it.
-      //
-      // The honest question is not "does this run hold a temp" but "is anything actually streaming
-      // right now". When no run is live, a leftover temp is stale by construction. During a live
-      // turn `streamRunId`/`streamMsgUid` are set, so the live path is bit-for-bit unchanged — this
-      // is NOT the `isCurrentRun` guard that caused the blinking-chat-text bug twice (that one sat
-      // in the narration CLASSIFIER; this one only answers "has the turn ended").
-      const liveStreamActive = streamRunId !== null || streamMsgUid !== null;
-      const hasTemporaries =
-        liveStreamActive && intermediateIndices.some((j) => view[j]._temporary);
-      const isStreaming = hasTemporaries || (i === view.length && streamMsgUid !== null);
-
-      // FORK 2026-08-24 (the architect: "The timings of the fractal pass should show only when expanding
-      // Fractal") — IS THIS RUN THE REFLECTION PASS?
-      //
-      // The reflection is a separate run on the SAME session key, and `isRunBoundary` makes its
-      // 🌿 bubble the boundary that closes this run. So a run whose boundary is a fractal section
-      // IS the reflection, and everything in it — in practice, only its timing block — belongs to
-      // the reflection rather than to the conversation. Before this it rendered as loose rows at
-      // the very bottom of the chat, under the answer, which is the "crawl to the end" report.
-      //
-      // Structural, not a runId join: answer bubbles carry no runId in the DOM (see the fractal
-      // anchor note), so position is the only signal that survives a reload.
-      const boundaryMsg = i < view.length ? (view[i] as Record<string, unknown>) : null;
-      const boundaryContent = Array.isArray(boundaryMsg?.content)
-        ? (boundaryMsg?.content as Array<Record<string, unknown>>)
-        : [];
-      const boundaryText = String(
-        boundaryContent.find((b) => b?.type === "text" && b?.text)?.text ??
-          (typeof boundaryMsg?.content === "string" ? boundaryMsg.content : ""),
-      );
-      const fractalGraftUid =
-        boundaryMsg && isFractalSectionText(boundaryText) ? String(boundaryMsg._uid ?? "") : "";
-      // Renders one message, wrapping a REFLECTION's timing block in a marker the post-render
-      // pass moves into the 🌿 section's body. A wrapper rather than a render-time nesting
-      // because the section is emitted AFTER this run, as its boundary — there is no string to
-      // nest into yet. Same graft discipline as the level-3 expander.
-      const renderRunMsg = (j: number, thinking: boolean, structured = false): string => {
-        const out = renderMsg(view[j], j, thinking, globalResultMap, globalToolNames, structured);
-        const m = view[j] as Record<string, unknown>;
-        if (!m?._isPhaseTiming) {
-          return out;
-        }
-        // Two independent ways to know this block is a reflection's, because the two events
-        // arrive in either order: `_fractalPass` is stamped by runId the moment the lane's text
-        // identifies it (which can be AFTER the block was built, and can put the block in the
-        // main run), and the boundary test catches the case where the 🌿 section is already the
-        // run's terminator. An empty uid means "the next section, wherever it is".
-        if (m._fractalPass === true) {
-          return `<div class="mpg-graft" data-phase-graft-into="${esc(fractalGraftUid)}">${out}</div>`;
-        }
-        return fractalGraftUid
-          ? `<div class="mpg-graft" data-phase-graft-into="${esc(fractalGraftUid)}">${out}</div>`
-          : out;
-      };
-
-      // Render the run
-      if (intermediateIndices.length > 0 && answerIndices.length > 0 && !isStreaming) {
-        // Completed run with intermediates — wrap in collapsible group
-        // FORK 2026-08-05 — the group id used to be the ARRAY ORDINAL of its first intermediate
-        // (`rg-${index}`), so any push, splice or removal RENAMED the group and silently handed the
-        // user's open/closed state to a DIFFERENT group. Key it on the anchor's stable `_uid`.
-        const groupAnchor = view[intermediateIndices[0]] as Record<string, unknown>;
-        const groupId = `rg-${(groupAnchor._uid as string | undefined) ?? intermediateIndices[0]}`;
-        const expanded = expandedTools.has(groupId);
-        // FORK 2026-07-26: count reasoning bubbles too — they are intermediates via
-        // the _isReasoning branch above, not via thinkingSet, so a thinking-only run
-        // used to render a bare, countless "▸ Reasoning" header.
-        const stepCount = intermediateIndices.filter(
-          (j) => thinkingSet.has(j) || (view[j] as any)._isReasoning,
-        ).length;
-        const chevron = expanded ? "▾" : "▸";
-        const stepLabel = stepCount > 0 ? `${stepCount} step${stepCount !== 1 ? "s" : ""}` : "";
-        const toolLabel =
-          toolCount > 0 ? `${toolCount} tool call${toolCount !== 1 ? "s" : ""}` : "";
-        // FORK 2026-08-24 — surface the turn's span ON the collapsed header. Folding the timing
-        // block would otherwise hide the one number the block exists to report, and a header that
-        // reads "Reasoning" with nothing after it (the shape a timing-only run produces) says
-        // less than the rows it replaced.
-        const timingMsg = intermediateIndices
-          .map((j) => view[j] as Record<string, unknown>)
-          .find((m) => m?._isPhaseTiming);
-        const timingLabel = timingMsg
-          ? `⏱ ${phaseDurationText(phaseGroupSpanMs(phaseEntriesOf(timingMsg), Date.now()))}`
-          : "";
-        const parts = [stepLabel, toolLabel, timingLabel].filter(Boolean).join(", ");
-        const summary = parts ? `Reasoning (${parts})` : "Reasoning";
-
-        h += `<div class="reasoning-group">`;
-        h += `<div class="reasoning-header" data-tid="${groupId}">${chevron} ${summary}</div>`;
-        // FORK 2026-08-05 — THE SINGLE MOST IMPORTANT LINE OF THIS FIX. The collapsed branch used to
-        // emit its intermediates ONLY when the group was expanded (`if (expanded)`), so the instant
-        // a turn ended, every narration bubble and every tool row the user had already read was
-        // GENUINELY GONE FROM THE DOCUMENT: Ctrl-F could not find it, a screen reader could not
-        // reach it, "select all + copy" did not copy it. That is a DELETION, not a compaction, and
-        // it is the mechanism behind "others disappear". Emit them ALWAYS and hide the container
-        // with the `hidden` attribute (see `.reasoning-content[hidden]` in base.css) — the change of
-        // APPEARANCE the architect explicitly allowed, with nothing removed from the page.
-        h += `<div class="reasoning-content"${expanded ? "" : " hidden"}>`;
-        for (const j of intermediateIndices) {
-          h += renderRunMsg(j, thinkingSet.has(j));
-        }
-        h += `</div>`;
-        h += `</div>`;
-        // FORK 2026-06-19 (bug A): render EVERY answer bubble (all visible text after the last tool),
-        // in order — not just a single final bubble.
-        // FORK 2026-08-09: this run just emitted a structural "▸ Reasoning" group above, so its
-        // intermediates are already folded and these bubbles are the answer itself. Pass
-        // hasStructuredReasoning=true so the text-heuristic splitter does NOT re-cut them —
-        // compaction happens once, at turn end, over CLASSIFIED steps, never over the reply.
-        for (const j of answerIndices) {
-          h += renderRunMsg(j, false, true);
-        }
-      } else {
-        // Streaming run or no intermediates — render flat
-        for (let j = runStart; j < runEnd; j++) {
-          h += renderRunMsg(j, thinkingSet.has(j));
-        }
-      }
-
-      // Render the user message that ends this run (if not end-of-array)
-      if (i < view.length) {
-        h += renderMsg(view[i], i, false, globalResultMap, globalToolNames);
-        // FORK 2026-09-02: skill chips ride under the prompt that used them, same as the recipe
-        // chip. Producer is a tool_use `read` of …/skills/<name>/SKILL.md in the following run.
-        h += skillNoticesHtmlAfter(view, i, isRunBoundary);
-      }
-      runStart = i + 1;
-    }
-  }
-
-  // FORK 2026-06-07 — bug task-mq3gn32d (Prompt hopping): the running turn's thinking/tool
-  // indicator must render ABOVE the queued bubble. So emit the thinking indicator FIRST, then the
-  // queued-but-not-yet-committed prompts as the very last (bottom-most) bubbles — grayed, pinned to
-  // the bottom in "queuing mode" exactly like Claude Code. The still-streaming turn's
-  // continuation/tool output therefore always appears above the queued prompt, never below it.
-  // Queued prompts are deliberately NOT in messages[] (see send()); they are flushed into
-  // messages[] at turn-final, which splices them into their correct chronological position (in the
-  // middle, within the thinking/tool stream) once the turn that was reading them completes.
-  // FORK 2026-08-15 — the gate here used to be `activeRuns.size > 0 || sending`, which made
-  // the SERVER lane of renderThinkingIndicator() unreachable. That branch exists precisely
-  // for the case where this browser holds NO client run and is not sending — a turn started
-  // from another tab, a cron, WhatsApp, or an orchestrator leg — so the one condition it was
-  // written for was the one condition that skipped the call entirely. (Companion defect to
-  // the missing repaint trigger analysed in docs/2026-08-15-chat-thinking-indicator-missing-
-  // while-tab-glows.md, which found the trigger gap but not this gate.)
-  //
-  // renderThinkingIndicator() already owns the whole decision and returns "" when no branch
-  // applies, so the gate was duplicated — and drifted, as duplicated predicates do.
-  h += renderThinkingIndicator();
-  // FORK 2026-06-08: render ONLY the queued prompts that belong to the tab on screen. The queue is
-  // one global array shared by all tabs; without this filter a prompt queued in one tab showed as a
-  // "queued" bubble in EVERY tab.
-  const visibleQueued = queuedForSession(pendingQueuedSends, sessionKey, sessionKeyMatches);
-  for (let k = 0; k < visibleQueued.length; k++) {
-    h += renderMsg(visibleQueued[k], view.length + k, false, globalResultMap, globalToolNames);
-  }
+  // FORK 2026-09-24 (logging.md §4.5) — a new paint: renderMsg observes each prompt key once in it.
+  beginPromptPaint();
+  // FORK 2026-09-23 (plan task 9) — the run builder lives in chat-units.ts: the same markup, in the
+  // same order, as one keyed unit per row (a finished run's "▸ Reasoning" group is one unit).
+  const units = buildChatUnits(view, {
+    renderMsg,
+    extractUserText,
+    expandedTools,
+    streamRunId,
+    streamMsgUid,
+    esc,
+    phaseSpanText: (m) => phaseDurationText(phaseGroupSpanMs(phaseEntriesOf(m), Date.now())),
+    skillNoticesHtmlAfter,
+    renderThinkingIndicator,
+    queuedRows: () => queuedForSession(pendingQueuedSends, sessionKey, sessionKeyMatches),
+    amygdalaAfterRun: (userMsg, nextUserMsg) => amyUi.afterRun(userMsg, nextUserMsg),
+    amygdalaTail: () => amyUi.tailHtml(),
+    runRail: chatRunRail,
+    openGroupOnForm: openReasoningGroupOnForm,
+  });
   // FORK: Preserve manually-opened fractal <details> across DOM rebuilds.
   // Without this, every streaming update collapses fractals the user expanded.
   // FORK 2026-08-05 — was keyed on the fractal's ORDINAL POSITION among the rendered <details>, so
@@ -15482,10 +21327,26 @@ function updateChat(skipScroll = false) {
   });
 
   // Decide scroll behavior BEFORE replacing DOM content.
-  const threshold = 80;
-  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  bindChatFollowListener(el);
+  const wasAtBottom = chatFollow;
   const prevScrollTop = el.scrollTop;
-  el.innerHTML = h;
+  // FORK 2026-10-02 — READING: keep the first row on screen exactly where it is, not the pixel
+  // offset. A row re-parsed above the viewport at a new height (a turn folding into its Reasoning
+  // group, a prompt gaining its chips, an older or hole-fill page, an outbox bubble slotted by time)
+  // used to slide everything he was reading. Not captured while a remembered row is pending: the
+  // pane may still show the tab that was just left.
+  // A row just put back is held (heldViewport): keep IT, not whatever the not-yet-loaded layout shows.
+  const readingAnchor =
+    !wasAtBottom && !viewportSearchActive() ? (heldAnchor() ?? captureViewportAnchor(el)) : null;
+  // FORK 2026-09-23 (plan task 9) — KEYED, no longer `el.innerHTML = h`. A unit whose HTML is
+  // unchanged keeps its nodes, so a streaming delta re-parses only the live bubble, an append or an
+  // older page parses only its own rows, and every other row keeps its text selection, its open
+  // <details>, its running iframe and its bound listeners. The pane's HTML is exactly what the
+  // assignment produced (chat-render.test.ts proves it frame by frame). `fresh` = the nodes this
+  // pass created: the only ones the per-node listeners below still need.
+  const fresh = renderChatInto(el, units, CHAT_UNIT_RENDER);
+  clearOrphanedViewerOpen(el);
+  amyUi.decorateChat(el);
   // FORK 2026-08-06 (the architect: the progress-bar frame "flashes white" and "fills up
   // from zero for a second" when the chat re-renders): innerHTML rebuilds recreate
   // EVERY <iframe>, and a recreated srcdoc iframe reloads from scratch — white flash
@@ -15511,7 +21372,63 @@ function updateChat(skipScroll = false) {
   // FORK 2026-05-30: capture subagent <details> toggles into expandedSubagents so the
   // open/closed state survives the next per-delta innerHTML rebuild (the `open` attr is
   // rendered from the same set, so first paint is already correct without a restore pass).
-  el.querySelectorAll("details.msg-subagent-details[data-subagent-id]").forEach((det) => {
+  // FORK 2026-09-06 — ONE delegated toggler for every keyed fold, bound once per rebuild on
+  // the container rather than per-node. `toggle` does NOT bubble, so capture is the only way to
+  // delegate it — same idiom already shipping in the cron panel. A per-node binder is O(nodes)
+  // on every streaming delta and structurally misses nodes grafted after the loop runs.
+  if (!(el as unknown as { __foldToggleBound?: boolean }).__foldToggleBound) {
+    (el as unknown as { __foldToggleBound?: boolean }).__foldToggleBound = true;
+    el.addEventListener(
+      "toggle",
+      (ev) => {
+        const det = ev.target;
+        if (!(det instanceof HTMLDetailsElement)) {
+          return;
+        }
+        // FORK 2026-10-02 — the amygdala's sent-back chip renders from its own set, which nothing
+        // wrote, so it snapped shut whenever its turn's unit re-rendered (a new turn arriving).
+        if (det.classList.contains("amy-sentback")) {
+          amyUi.noteSentBackToggle(det.getAttribute("data-turn") ?? "", det.open);
+        }
+        const key = det.getAttribute("data-fold-key");
+        if (!key) {
+          return;
+        }
+        if (det.open) {
+          openFolds.add(key);
+        } else {
+          openFolds.delete(key);
+        }
+      },
+      true,
+    );
+    // FORK 2026-10-02 — a <summary> click is the OWNER's toggle (a `toggle` event is not: restores
+    // and forced-open fractals fire it too). Record which fold he opened, for the Reasoning group
+    // that may fold it at turn end, and treat it as a gesture once it has laid out: the default
+    // action toggles AFTER this listener, so the pane is measured in the next frame.
+    el.addEventListener(
+      "click",
+      (ev) => {
+        const summary = (ev.target as Element | null)?.closest?.("summary");
+        const det = summary?.parentElement;
+        if (!(det instanceof HTMLDetailsElement) || !el.contains(det)) {
+          return;
+        }
+        const foldKey = det.getAttribute("data-fold-key");
+        if (foldKey) {
+          rememberDisclosure(ownerOpenedFolds, `fold:${foldKey}`);
+        }
+        const subId = det.getAttribute("data-subagent-id");
+        if (subId) {
+          rememberDisclosure(ownerOpenedFolds, `sub:${subId}`);
+        }
+        requestAnimationFrame(() => noteUserToggle(el));
+      },
+      true,
+    );
+  }
+  // Per-node listeners go on the nodes this pass created: a reused node already has its one.
+  freshElements(fresh, "details.msg-subagent-details[data-subagent-id]").forEach((det) => {
     det.addEventListener("toggle", () => {
       const sid = det.getAttribute("data-subagent-id");
       if (!sid) {
@@ -15524,12 +21441,7 @@ function updateChat(skipScroll = false) {
       }
     });
   });
-  if (wasAtBottom) {
-    el.scrollTop = el.scrollHeight;
-  } else {
-    el.scrollTop = prevScrollTop;
-  }
-  el.querySelectorAll("[data-tid]").forEach((r) =>
+  freshElements(fresh, "[data-tid]").forEach((r) =>
     r.addEventListener("click", (ev) => {
       // FORK 2026-08-24 — the ⓘ on a timing row lives INSIDE a `[data-tid]` element, so without
       // this the one gesture would both open the explanation and collapse the thing it explains.
@@ -15545,10 +21457,17 @@ function updateChat(skipScroll = false) {
         if (!fp) {
           return;
         }
+        // FORK 2026-09-23 (plan task 9) — "open" means a viewer is actually on the page. A keyed
+        // render keeps this link's row (and its class) but removes a viewer that sat at the top
+        // level, where the old full rebuild removed both; the class alone would make the next
+        // click a dead one.
+        const viewerOpen =
+          fileLink.classList.contains("file-viewer-open") &&
+          el.querySelector(".file-viewer-inline") !== null;
         // Collapse any existing open file viewer
         el.querySelectorAll(".file-viewer-inline").forEach((v) => v.remove());
         // If clicking the same link that was already open, just collapse
-        if (fileLink.classList.contains("file-viewer-open")) {
+        if (viewerOpen) {
           fileLink.classList.remove("file-viewer-open");
           return;
         }
@@ -15603,6 +21522,14 @@ function updateChat(skipScroll = false) {
       } else {
         expandedTools.add(id);
       }
+      // FORK 2026-10-02 — the owner decided this row. A turn-timing row is no longer the automatic
+      // disclosure's to close at turn end (it closed rows he had re-opened by hand), and the
+      // Reasoning group that folds this run opens if this is what he was reading (openGroupOnForm).
+      if (id.startsWith("ph-")) {
+        rememberDisclosure(phaseAutoOpened, id);
+        rememberDisclosure(phaseAutoCollapsed, id);
+      }
+      rememberDisclosure(ownerOpenedFolds, id);
       // Remember the clicked row's position relative to the viewport
       const clickedTop = (r as HTMLElement).getBoundingClientRect().top;
       updateChat(true);
@@ -15611,13 +21538,16 @@ function updateChat(skipScroll = false) {
       const after = el.querySelector(`[data-tid="${id}"]`) as HTMLElement | null;
       if (after) {
         const newTop = after.getBoundingClientRect().top;
-        el.scrollTop += newTop - clickedTop;
+        // FORK 2026-10-02 — through setChatScrollTop: the bare `el.scrollTop +=` left no record,
+        // so its scroll event was misread as a gesture. The toggle IS a gesture, stated once below.
+        setChatScrollTop(el, el.scrollTop + (newTop - clickedTop));
       }
+      noteUserToggle(el);
     }),
   );
   // Stop button uses event delegation (registered once in init) to survive
-  // innerHTML replacements during streaming.
-  el.querySelectorAll(".retry-provider-btn").forEach((btn) =>
+  // re-renders of the indicator's unit during streaming (a changed unit gets new nodes).
+  freshElements(fresh, ".retry-provider-btn").forEach((btn) =>
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const prov = (btn as HTMLElement).getAttribute("data-retry-provider");
@@ -15627,17 +21557,48 @@ function updateChat(skipScroll = false) {
     }),
   );
   // FORK 2026-08-11 (the architect) — graft level 3 onto the 🌿 FRACTAL reply bubble. MUST run
-  // after `el.innerHTML = h` above, because that rebuild destroys any previously grafted
-  // node; the mounted-latch lives on the DOM, so it is rebuilt-and-remounted each pass
-  // rather than leaking. Cheap: one querySelectorAll over already-tagged bubbles.
+  // after the render above: a re-parsed section has lost its mount and gets a new one; the
+  // mounted-latch lives on the DOM node, so a reused section keeps its mount (and whatever the
+  // architect opened in it) instead of mounting twice. Cheap: one querySelectorAll.
   decorateFractalReplyBubbles();
   // Must run AFTER the level-3 graft: both move nodes into the same section body, and the
-  // reading order the architect asked for is verdict → reasoning → timing.
-  graftReflectionTimingBlocks();
+  // reading order the architect asked for is verdict → reasoning → timing. Its moves are recorded
+  // and undone by the next renderChatInto (see chat-render.ts).
+  graftTimingBlocks(el);
+  // FORK 2026-10-02 — placed AFTER every mutation of this paint: the level-3 mount and the timing
+  // graft above both change heights, and a pin taken before them left a followed view short of the
+  // last line on any paint with no rAF re-pin behind it (skipScroll).
+  let positioned: ChatPositioning;
+  if (settlePendingViewport(el)) {
+    positioned = "remembered";
+  } else if (wasAtBottom) {
+    setChatScrollTop(el, el.scrollHeight);
+    positioned = "pinned";
+  } else if (restoreViewportAnchor(el, readingAnchor)) {
+    positioned = "anchored";
+  } else {
+    setChatScrollTop(el, prevScrollTop);
+    positioned = "pixel";
+  }
+  // Images still loading grow after this pin (chat-viewport.ts lateGrowthAdjustment). Measured
+  // here, after positioning, so the layout the pin already forced serves these reads too.
+  freshElements(fresh, "img").forEach((img) => {
+    if (img instanceof HTMLImageElement && !img.complete) {
+      loadingChatImages.set(img, img.getBoundingClientRect().height);
+    }
+  });
   if (!skipScroll) {
     scrollChat();
   }
+  return positioned;
 }
+
+/**
+ * How updateChat placed the pane after its paint (FORK 2026-10-02): a remembered row (or the latest
+ * row while one is looked for), the bottom, the first visible row kept in place, or — when no row
+ * could be named — the previous pixel offset. loadOlderPage corrects only the last.
+ */
+type ChatPositioning = "remembered" | "pinned" | "anchored" | "pixel";
 
 function updateDots() {
   document
@@ -15750,7 +21711,13 @@ function endTabDrag(commit: boolean): void {
   // tab landed back where it started.
   if (commit && drag.passedThreshold) tabDragDidReorder = true;
   if (!commit || !drag.passedThreshold || !indicatorInBar) return;
-  const next = reorderTabs(tabs, drag.tabId, beforeId);
+  // FORK 2026-09-25 (the architect): a chained pair moves as one — the dragged tab's partner follows it.
+  const next = adjacentChainOrder(
+    reorderTabs(tabs, drag.tabId, beforeId),
+    loadTabChains(),
+    drag.tabId,
+    (id) => id === "tab-main",
+  );
   if (next.every((tab, i) => tab.id === tabs[i]?.id)) return;
   tabs = next;
   saveTabs();
@@ -15827,6 +21794,9 @@ function renderTabs() {
     if (tab.titleGenerating) {
       classes.push("tab-renaming");
     }
+    if (chainOverlay?.pickMaster() === tab.id) {
+      classes.push("tab-chain-master-picking");
+    }
 
     const isMain = tab.id === "tab-main";
     const closeBtn = isMain
@@ -15843,6 +21813,8 @@ function renderTabs() {
   checkTabOverflow();
   // FORK 2026-08-06: tab re-renders wipe the longjob dot; re-apply from state.
   applyLongjobSurfaces();
+  // FORK 2026-09-23: a re-render can move either end of a chain (reorder, open, close, rename).
+  chainOverlay?.wake();
 
   const activeEl = container.querySelector(".tab-active") as HTMLElement | null;
   if (activeEl) {
@@ -15883,9 +21855,27 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
     ? `<div class="exec-context-sep"></div>
     <button data-tab-action="delete" class="exec-context-item exec-context-item-warn">🗑 Delete session</button>`
     : "";
+  // FORK 2026-09-23 (the architect): "Set conversation slave" makes THIS tab the master and lets the
+  // next tab click pick the slave. The conversation-loop skill reads the pair (loop-partner.mjs).
+  const chain = chainOf(loadTabChains(), tab.id);
+  const partner = chain
+    ? tabs.find((t) => t.id === (chain.master === tab.id ? chain.slave : chain.master))
+    : undefined;
+  const chainItems = `<div class="exec-context-sep"></div>
+    <button data-tab-action="chain" class="exec-context-item">⛓ Set conversation slave…</button>${
+      chain
+        ? `
+    <button data-tab-action="unchain" class="exec-context-item">🔓 Release chain${
+      partner
+        ? ` (${chain.master === tab.id ? "slave" : "master"}: ${escapeHtml(partner.title)})`
+        : ""
+    }</button>`
+        : ""
+    }`;
   menu.innerHTML = `
     ${renameItems}
     <button data-tab-action="clone" class="exec-context-item">⧉ Clone tab</button>
+    ${chainItems}
     ${deleteItem}
   `;
   menu.style.left = `${Math.min(x, window.innerWidth - 200)}px`;
@@ -15912,11 +21902,17 @@ function openTabContextMenu(tabId: string, x: number, y: number) {
           // FORK 2026-06-24 — P2 shimmer: the renaming pulse is now driven by tab.titleGenerating
           // (set inside generateTabTitle, re-applied by renderTabs on every rebuild), so we no
           // longer toggle the .tab-renaming DOM class imperatively here — just kick off the title.
-          void generateTabTitle(t);
+          // FORK 2026-09-15 — u7-tab-naming: an explicit Auto-name is the ONE way a manual name
+          // becomes an auto name again; it always asks for a fresh title (no anchor).
+          void generateTabTitle(t, { reason: "menu" });
         }
       } else if (action === "delete") {
         const t = tabs.find((tt) => tt.id === tabId);
         if (t?.sessionKey) void deleteSession(t.sessionKey);
+      } else if (action === "chain") {
+        beginChainPick(tabId, x, y);
+      } else if (action === "unchain") {
+        saveTabChains(unlinkTab(loadTabChains(), tabId));
       }
     });
   });
@@ -15962,6 +21958,9 @@ function openTabRename(tabId: string, x: number, y: number) {
         // loadSessions() won't overwrite it with the server fortune-cookie phrase. Persisted via
         // saveTabs() → survives hard refresh AND gateway restart.
         tab.titleLocked = true;
+        // FORK 2026-09-15 — u7-tab-naming: typed by the user ⇒ the auto-titler never touches it
+        // again (until an explicit right-click Auto-name).
+        tab.titleKind = "manual";
         saveTabs();
         // FORK 2026-06-10 — u3-tab-naming: also persist server-side (durable across any
         // restart/browser/device, not just this browser's localStorage).
@@ -16011,9 +22010,73 @@ function checkTabOverflow() {
 // updateBudgetPanel() AND updatePrefrontalTree() (prefrontal froze "thinking" until you
 // toggled scope). Routing ALL of them through here means no indicator can be missed.
 // See bible panels.md §147 (single-source-of-truth) + done-signals.md §3.
+/**
+ * FORK 2026-09-07 — the agent's name, big, above the main context.
+ *
+ * the architect: "I would like the name of the agent to show in the front-end, on top of the main context,
+ * in big letters. It should lookup to the actual name CONFIGURED for the agent."
+ *
+ * So it reads the configured identity rather than any local guess or hardcoded string.
+ * `agent.identity.get` resolves through resolveAssistantIdentity, which walks
+ * `ui.assistant.name` -> `agents[<id>].identity.name` -> the workspace identity file -> the
+ * built-in default. Renaming the agent in config therefore renames this header with no UI change,
+ * which is the entire point: a second deployment of this fork shows ITS OWN name here, not ours.
+ *
+ * Scoped to the VIEWED session (a tab may belong to another agent), and memoised on the session
+ * key so switching tabs does not re-request an identity that cannot have changed.
+ */
+let agentNameHeaderKey: string | null = null;
+function refreshAgentNameHeader(): void {
+  const host = document.getElementById("agent-name-banner");
+  const text = document.getElementById("agent-name-text");
+  if (!host || !text) return;
+  const key = sessionKey || "";
+  if (agentNameHeaderKey === key && text.textContent) return;
+  agentNameHeaderKey = key;
+  // No sessionKey yet (first paint, before a tab is bound) => ask for the DEFAULT agent's
+  // identity, which is what the user is about to talk to anyway.
+  const params = key ? { sessionKey: key } : {};
+  // Wait on the sanctioned handshake edge rather than racing it: at boot this runs before the
+  // socket is up, and a rejected req() here would leave the header permanently blank with the
+  // failure swallowed — the exact shape of the catalogWindowById bug documented above.
+  void whenConnected()
+    .then(() => req("agent.identity.get", params))
+    .then((res) => {
+      const name =
+        typeof (res as { name?: unknown })?.name === "string"
+          ? (res as { name: string }).name.trim()
+          : "";
+      if (!name) {
+        host.hidden = true;
+        return;
+      }
+      voiceSpeakerName = name;
+      let conductor = "";
+      try {
+        conductor = sessionStorage.getItem(CONDUCTOR_STORAGE_KEY) ?? "";
+      } catch {
+        conductor = "";
+      }
+      text.textContent = formatAgentBanner(name, conductor);
+      host.hidden = false;
+    })
+    .catch(() => {
+      // Leave the latch DOWN so the next repaint retries; latching on a failed load is how the
+      // catalog bug above stayed broken for the lifetime of a tab.
+      agentNameHeaderKey = null;
+      // A failed lookup must not paint a WRONG name. Keeping the last good one is the honest
+      // fallback; hiding an already-correct header would be a regression on a transient.
+      if (!text.textContent) host.hidden = true;
+    });
+}
+
 function refreshViewedSessionIndicators() {
   updateChat();
   updateBtn();
+  // FORK 2026-09-07 — the agent NAME is viewed-session-scoped: a tab may belong to a different
+  // agent, and each agent carries its own configured identity. The helper's contract is "every
+  // viewed-session-scoped surface re-derives here", so it belongs as a DIRECT member.
+  refreshAgentNameHeader();
   updateSessionsPanel();
   updateBudgetPanel();
   updatePrefrontalTree();
@@ -16318,12 +22381,18 @@ function initAttachStrip(): void {
   void refreshAttachments("boot");
 }
 
-function switchToTab(tabId: string) {
-  const tab = tabs.find((t) => t.id === tabId);
-  if (!tab || tab.id === activeTabId) {
-    return;
-  }
-
+/**
+ * The STATE-SWAP half of a tab switch: everything that changes WHICH session is viewed.
+ *
+ * Extracted 2026-09-07 for exactly one reason — see switchToTab below. The refresh that MUST
+ * follow this swap was lost twice inside a fifty-line body, so the swap lives here and switchToTab
+ * stays short enough that dropping its final call is visible in a five-line diff. Nothing else
+ * moved: every comment and every statement below is verbatim what switchToTab used to run.
+ *
+ * Callers: switchToTab ONLY. Calling this directly skips the indicator refresh and reintroduces
+ * the stale-panel bug.
+ */
+function applyTabSwitch(tab: Tab) {
   // FORK: Save current tab's full state before switching
   saveCurrentTabState();
 
@@ -16349,13 +22418,16 @@ function switchToTab(tabId: string) {
     // viewedSessionBusy() and `streamRunId` already describe the tab being switched TO — and the
     // loadChat() directly below is then a real re-read of the authoritative transcript rather
     // than a no-op that re-arms the same flag.
-    if (pendingHistoryReload && !viewedSessionBusy() && streamRunId === null) {
+    if (pendingHistoryReload && !viewedSessionBusy() && !transcriptWriterLive()) {
       pendingHistoryReload = false;
     }
-    // Background refresh from server — only if still attached (server has the session)
-    if (tab.isAttached) {
-      loadChat();
-    }
+    // Background refresh from server. FORK 2026-09-16 — no longer gated on `isAttached`:
+    // attachment gates SENDING; chat.history is a read the gateway answers for a detached
+    // (soft-deleted, or list-missed) session too. Gating the read here is what left a detached
+    // tab blank forever — its cache was empty and the only reader refused to run. See hydrateTab.
+    loadChat();
+    // FORK 2026-10-03 — and the turns its session ran (and archived) while it was not on screen.
+    void fillResetGap();
   } else {
     sessionKey = "";
     loadTabState(tab.id); // loads fresh empty state
@@ -16364,12 +22436,35 @@ function switchToTab(tabId: string) {
 
   renderTabs();
   saveTabs();
-  // FORK 2026-05-17 / 2026-06-04: the viewed session changed — re-derive EVERY
-  // viewed-session-scoped indicator (chat spinner, button, sessions glow, MODELS glow,
-  // prefrontal) through the single helper so none can be missed. Prefrontal filters by
-  // the viewed sessionKey under "session" scope and only re-rendered on WS events before
-  // ("thinking no matter which session I select"); the MODELS glow had the same bug
-  // (task-mpkwez3k-ehc9v). See bible panels.md §147.
+}
+
+/**
+ * Switch the viewed tab: swap the state, then re-derive every viewed-session-scoped indicator.
+ *
+ * This function is deliberately five lines long. The rationale that used to sit between the
+ * declaration and the refresh call now lives here, ABOVE it, because the bible guard
+ * (panels.md verify "prefrontal re-renders on user-driven view changes") is a PROXIMITY check:
+ * prose between the declaration and the call spends the window that detects the call going
+ * missing; prose above the declaration is free. Long-form rationale therefore belongs here.
+ *
+ * FORK 2026-05-17 / 2026-06-04: the viewed session changed — re-derive EVERY viewed-session-scoped
+ * indicator (chat spinner, button, sessions glow, MODELS glow, prefrontal) through the single
+ * helper so none can be missed. Prefrontal filters by the viewed sessionKey under "session" scope
+ * and only re-rendered on WS events before ("thinking no matter which session I select"); the
+ * MODELS glow had the same bug (task-mpkwez3k-ehc9v). See bible panels.md §147.
+ */
+function switchToTab(tabId: string) {
+  const tab = tabs.find((t) => t.id === tabId);
+  if (!tab || tab.id === activeTabId) {
+    return;
+  }
+  applyTabSwitch(tab);
+  // STALE-PANEL-ON-SESSION-SWITCH — DO NOT DELETE this call, and do not move it into
+  // applyTabSwitch. Failure class: the viewed session changes and a viewed-session-scoped panel is
+  // not re-derived, so Prefrontal keeps showing the PREVIOUS session thinking no matter which
+  // session you select. Shipped 2026-05-17, shipped again 2026-06-04, and caught a third time on
+  // 2026-09-07 — that time the call was still here but had drifted out of the guard's 1600-char
+  // window, which is the same thing as having no guard. Rationale: header above.
   refreshViewedSessionIndicators();
 }
 
@@ -16392,6 +22487,8 @@ function createTab(): Tab {
     sessionKey,
     title: fortuneForKey(sessionKey),
     isAttached: true,
+    // FORK 2026-09-15 — u7-tab-naming: a cookie is a placeholder; name it at the first prompt.
+    titleKind: "fortune",
   };
   tabs.push(tab);
   tabStates.set(tab.id, freshTabState());
@@ -16403,7 +22500,21 @@ function closeTab(tabId: string) {
   if (tabId === "tab-main") {
     return;
   }
+  // FORK 2026-09-25 (the architect): a chained pair closes as one. The chain is KEPT, with both session
+  // keys, so reopening either session from the panel brings both back. Only "Release chain" (or
+  // deleting a session) unlinks. Main cannot close, so a pair with Main closes only its partner.
+  const chain = chainOf(loadTabChains(), tabId);
+  if (chain) {
+    snapshotChainKeys();
+    const partner = chain.master === tabId ? chain.slave : chain.master;
+    closeSingleTab(tabId);
+    if (partner !== "tab-main" && tabs.some((t) => t.id === partner)) closeSingleTab(partner);
+    return;
+  }
+  closeSingleTab(tabId);
+}
 
+function closeSingleTab(tabId: string) {
   const idx = tabs.findIndex((t) => t.id === tabId);
   if (idx < 0) {
     return;
@@ -16411,6 +22522,13 @@ function closeTab(tabId: string) {
 
   tabs.splice(idx, 1);
   tabStates.delete(tabId);
+  // FORK 2026-10-02 — a closed tab's viewport memory is dead weight in the mirrored file.
+  persistViewport(tabId, FOLLOWING);
+  // FORK 2026-09-21 (the architect: closed/deleted tabs came back on Ctrl+Shift+R) — a close is a
+  // durable tombstone, not just an absence from the list. See panels/ui-state.ts.
+  recordClosedTab(tabId);
+  // FORK 2026-09-25: a close no longer unlinks (see closeTab) — the pair reopens together.
+  if (chainOverlay?.pickMaster() === tabId) endChainPick();
 
   // FORK 2026-06-25 — closing a non-empty tab must NOT evict its session from the
   // SESSIONS panel. The session persists server-side (soft-delete invariant); it only
@@ -16510,6 +22628,10 @@ async function cloneTab(parentTabId: string) {
     // The doubled-icon title is deliberate — lock it so loadSessions() won't overwrite it with the
     // server fortune phrase of the (brand-new) cloned session.
     titleLocked: true,
+    // FORK 2026-09-15 — u7-tab-naming: the clone inherits its parent's origin. A clone of a
+    // hand-named tab stays hands-off; a clone of an auto-named tab keeps refreshing on the
+    // interval; a clone of a cookie tab gets named at its first prompt.
+    titleKind: resolveTitleKind(parent, AUTO_NAME_ICON),
   };
   // Drop the clone immediately to the right of its parent.
   tabs.splice(parentIdx + 1, 0, clone);
@@ -16549,7 +22671,13 @@ function attachSessionToTab(key: string) {
     tab.title = sess.cookiePhrase;
     // FORK 2026-06-10 — u3-tab-naming: a user-set / auto server name is deliberate; lock it so it
     // isn't treated as a replaceable fortune.
-    if ((sess as { cookiePhraseUserSet?: boolean }).cookiePhraseUserSet) tab.titleLocked = true;
+    if ((sess as { cookiePhraseUserSet?: boolean }).cookiePhraseUserSet) {
+      tab.titleLocked = true;
+      // FORK 2026-09-15 — u7-tab-naming: origin unknown server-side ⇒ resolve from shape.
+      tab.titleKind = resolveTitleKind({ titleLocked: true, title: tab.title }, AUTO_NAME_ICON);
+    } else {
+      tab.titleKind = "fortune";
+    }
   } else if (sess?.label) {
     tab.title = sess.label.slice(0, 30);
   }
@@ -16713,7 +22841,7 @@ function modelName(id: string): string {
   const clean = name.replace(/^claude-/, "");
   let short = SHORT_NAMES[name] || SHORT_NAMES[clean] || clean;
   // Anthropic model names: opus-4-6 → opus4.6, sonnet-4-6 → sonnet4.6, haiku-4-5 → haiku4.5
-  short = short.replace(/^(opus|sonnet|haiku)-(\d+)-(\d+).*$/, "$1$2.$3");
+  short = short.replace(/^(opus|sonnet|haiku|fable)-(\d+)-(\d+).*$/, "$1$2.$3");
   // FORK 2026-07-10: single-version anthropic ids (fable-5, sonnet-5) + trim
   // noise suffixes so rows stay compact (the architect: "names should be shortened").
   short = short.replace(/^(opus|sonnet|haiku|fable)-(\d+)$/, "$1$2");
@@ -16731,10 +22859,18 @@ function modelName(id: string): string {
   // variant word is what you actually scan for. So drop "gemini-"/"gpt-" entirely
   // and spell "flash" out again. Net width is a wash; legibility is not.
   short = short.replace(/^gemini-/, "");
-  // Codex codenames ARE the identity (gpt-5.6-sol → sol). Kept as a rule, not a
-  // SHORT_NAMES row, so a 5.7-sol bump needs no edit. Alternation is explicit so
-  // gpt-5.4-mini / gpt-5.3-codex keep their version and never collapse to "mini".
-  short = short.replace(/^gpt-\d[\d.]*-(sol|terra|luna)$/, "$1");
+  // Codex codenames ARE the identity (gpt-5.6-sol → sol, gpt-6-astra → astra).
+  // Kept as a rule, not a SHORT_NAMES row, so a 5.7-sol bump needs no edit.
+  // Alternation is explicit so gpt-5.4-mini / gpt-5.3-codex keep their version
+  // and never collapse to "mini". Astra added 2026-09-09 after the picker chip
+  // rendered "6-astra" and the architect scanned the rail for "Astra" and missed it.
+  // FORK 2026-09-22 (gpt-6-sol/luna shipped): the codename alone is ambiguous once TWO
+  // majors carry it (gpt-5.6-sol AND gpt-6-sol both on the picker); older majors kept
+  // their version and the current one went bare — superseded 09-25 below.
+  // FORK 2026-09-25 (the architect: "I see astra without version, and sol without version also, even
+  // though sol5.6 is there too. Add the versions there"): every codename carries its version
+  // now — sol6 · sol5.6 · astra6 · luna6 — so the current major is never the unlabelled one.
+  short = short.replace(/^gpt-?([\d.]+)-(sol|terra|luna|astra)$/, (_m, v, n) => `${n}${v}`);
   short = short.replace(/^gpt-/, "");
   short = short.replace(/-mini$/, "-mi").replace(/-nano$/, "-nn");
   // FORK 2026-07-31 (the architect: "remove the ·cp suffix, it is redundant given the logo.
@@ -16876,7 +23012,43 @@ export const PANEL_PINNED_SMART = new Set<string>([]);
 // kimi-k3, the gemini flash trio) all landed ABOVE it, so "smart" silently came to
 // mean "most of the catalog" without anyone changing the rule. Expect to re-cut when
 // the list stops being scannable at a glance — that, not the number, is the criterion.
-export const AA_PANEL_MIN = 53;
+//
+// FORK 2026-09-05 (the architect: "in the model picker panel I only have 2 models available
+// now"). The cut is now ORDINAL. This is a root-cause change, not a re-tune.
+//
+// What happened: overnight Artificial Analysis REBASED the Intelligence Index. Every
+// scored model dropped ~15-25% in a single scrape (Fable 5.1 65.65 -> 56.76, Opus 5
+// 63.05 -> 54.05, verified against the live leaderboard the same morning). The refresh
+// cron did its job and wrote the new scores into agents.defaults.models. Nothing was
+// deleted; no model got dumber. But the gate here was an ABSOLUTE number measured in
+// units whose OWNER can re-scale them, so SMART MODELS collapsed from 23 entries to 2 —
+// and the model SELECTOR, which reads this same predicate, collapsed with it.
+//
+// The comment above already named the flaw — "the threshold is absolute while the
+// catalog is not" — but only imagined drift UPWARD as new models arrived. A vendor
+// rescale is the same defect from the other side, and it is the side that EMPTIES the
+// panel instead of filling it. So the number goes away: the cut is stated as a POSITION
+// in the catalog, which no rescale can move. A future AA rebase is now a no-op here.
+//
+// N = 23 because that is exactly what the 53 cut admitted the day BEFORE the rescale.
+// On today's numbers the two sets differ by one swap (deepseek-v4-pro-0813 out,
+// gpt-5.6-luna in), and that swap is a genuine AA re-ordering rather than an artifact
+// of this change. glm-5.2 stays out, which is the boundary the architect named on 2026-08-22.
+//
+// The re-cut criterion is unchanged and now says what it always meant: move N when the
+// list stops being scannable at a glance.
+// The N itself and the ordinal maths live in ./panels/aa-panel-floor.js, which is
+// importable without booting the whole app — app.ts calls init() on import, so anything
+// tested in isolation has to live outside it.
+export function aaPanelMin(modelsMeta: Record<string, ModelIntelligenceMeta> | undefined): number {
+  const scores: number[] = [];
+  for (const id of Object.keys(modelsMeta || {})) {
+    const score = configuredIntelligenceIndex(modelsMeta, id);
+    if (typeof score === "number") scores.push(score);
+  }
+  return aaPanelFloor(scores);
+}
+
 export function modelPassesPanelMin(
   id: string,
   primary: string | null | undefined,
@@ -16884,15 +23056,16 @@ export function modelPassesPanelMin(
 ): boolean {
   if (id === primary) return true;
   if (PANEL_PINNED_SMART.has(id)) return true;
+  const min = aaPanelMin(modelsMeta);
   const score = configuredIntelligenceIndex(modelsMeta, id);
   // Unscored ids only pass if they are in config models (already culled) AND
   // not known-low from the baked AA map. Prefer explicit score when present.
   if (score === undefined) {
     const baked = AA_INTELLIGENCE_INDEX[id];
-    if (typeof baked === "number") return baked >= AA_PANEL_MIN;
+    if (typeof baked === "number") return baked >= min;
     return Boolean(modelsMeta?.[id]);
   }
-  return score >= AA_PANEL_MIN;
+  return score >= min;
 }
 
 // FORK 2026-08-15 (the architect: "copilot/github is not a cost we want, so let's just remove
@@ -16913,10 +23086,12 @@ export function modelIsHiddenFromModelsPanel(id: string): boolean {
 }
 
 const AA_INTELLIGENCE_INDEX: Record<string, number> = {
-  // Re-verified against the live Artificial Analysis leaderboard 2026-09-02 03:54 UTC
-  // (631 rows, 618 scored) and the live OpenRouter catalog in the same pass (http=200,
-  // 420 models, 695,199 bytes). Existing scores did not move. The five marked
-  // "frozen" are still genuinely absent from AA (re-checked, not assumed).
+  // Re-verified against the live Artificial Analysis leaderboard 2026-09-29 03:45 UTC
+  // (679 rows, 670 scored) and the live OpenRouter catalog in the same pass (http=200, 460 models,
+  // 755,201 bytes). Added claude-code/claude-sonnet-5-5 (AA 55.978, Max 20x, Claude Code 2.1.284;
+  // control claude-sonnet-9-9 unrecognized_model). Headlines of already-plotted families unchanged vs 09-28.
+  // Qwen3.8-Flash-Next is still AA-only (39.822, no matching OpenRouter id). Step 5 is still AA-only at 43.73 with no OpenRouter id. The five marked "frozen" are
+  // still genuinely absent from AA (re-checked, not assumed).
   //
   // CORRECTION 2026-09-02 (the architect). This block said "Claude Code 2.1.251 still has no
   // `claude-fable-5.1` id, so the native subscription route is skipped", and Fable 5.1
@@ -16942,7 +23117,7 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   // measured AA index (y) and a live provider id + price (x). Two named gaps this
   // pass, each missing a different half, both left OUT on purpose:
   //
-  //  · Qwen3.8-Flash-Next — AA 55.8140, which would rank it ~22nd, but there is NO
+  //  · Qwen3.8-Flash-Next — AA 39.8223, which would still rank mid-panel, but there is NO
   //    route. The tempting map is `qwen/qwen3.8-flash`, added to OpenRouter
   //    2026-08-26 at $0.150/$0.470. It is a DIFFERENT model: OpenRouter names it
   //    "Qwen3.8 Flash" and AA carries no plain `qwen3-8-flash` row, so pairing them
@@ -16950,7 +23125,7 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   //    suffix, not a decoration. This is the 2026-07-21 dead-slider incident in
   //    miniature — auto-added ids that resolved nowhere killed every non-Anthropic
   //    pin. Re-check when either side publishes the missing half; do NOT guess it.
-  //  · Agnes 2.5 Pro Beta (AA 49.0952) and Motif 3 (AA 47.3602) — scored by AA,
+  //  · Agnes 2.5 Pro Beta (AA 35.2413) and Motif 3 (AA 33.5666) — scored by AA,
   //    reachable through no provider we hold. No x value exists at any price.
   //
   // Also verified-and-skipped: 22 models new to OpenRouter since July carry a live
@@ -16962,124 +23137,173 @@ const AA_INTELLIGENCE_INDEX: Record<string, number> = {
   //
   // Entries marked "frozen" are genuinely ABSENT from AA (verified, not assumed),
   // which is why they keep their last measured value.
-  "claude-code/claude-fable-5-1": 65.6529, // AA #1; Max 20x subscription route (verified on Claude Code 2.1.258)
-  "claude-code/claude-opus-5": 63.0532,
+  "claude-code/claude-opus-5-5": 57.6224, // AA #1 2026-09-23; Max 20x seat (Claude Code 2.1.280; control claude-opus-9-9 unrecognized_model)
+  "claude-code/claude-sonnet-5-5": 56.0001, // AA #2 2026-09-29; Max 20x seat (Claude Code 2.1.284; control claude-sonnet-9-9 unrecognized_model). $2/$10 list, same sticker as Sonnet 5.
+  "claude-code/claude-fable-5-1": 53.3549, // Max 20x subscription route (verified on Claude Code 2.1.258)
+  "claude-code/claude-opus-5": 50.7771,
   // FORK 2026-09-02 (the architect): "there are two Fable models next to each other, just
   // remove the 5.0, the old one, it does not make sense to have it there anymore". Fable 5.0
   // (62.0727) is superseded by Fable 5.1 (65.6529) directly above. Removed from
   // openclaw.json in the same pass — and removed HERE too, because this table is a DOT
   // SOURCE, not just a score lookup: `moreIds` unions its keys with the configured models,
   // so an id left behind keeps rendering after it is gone from config.
-  "codex/gpt-5.6-sol": 60.9299, // legacy alias — correct IDs below
-  "openai/gpt-5.6-sol": 60.9299,
-  "openai-codex/gpt-5.6-sol": 60.9299,
-  "xai/grok-4.6": 60.923,
-  "claude-code/claude-opus-4-8": 57.3304,
-  "codex/gpt-5.6-terra": 56.5756, // legacy alias
-  "openai/gpt-5.6-terra": 56.5756,
-  "openai/gpt-5.5": 56.3067,
-  "openai-codex/gpt-5.5": 56.3067,
-  "github-copilot/gpt-5.5": 56.3067,
-  "xai/grok-4.5": 55.7589,
-  "claude-code/claude-sonnet-5": 55.2612,
-  "claude-code/claude-opus-4-7": 54.9641,
-  "github-copilot/claude-opus-4.7": 54.9641,
-  "openai/gpt-5.4": 53.1231,
-  "github-copilot/gpt-5.4": 53.1231,
-  "codex/gpt-5.6-luna": 52.3181, // legacy alias
-  "openai/gpt-5.6-luna": 52.3181,
-  "google/gemini-3.5-flash": 51.9636,
-  "google/gemini-3.6-flash": 51.5819,
-  "claude-code/claude-sonnet-4-6": 48.3663,
-  "github-copilot/claude-sonnet-4.6": 48.3663,
-  "google/gemini-3.1-pro-preview": 47.7383,
-  "github-copilot/gemini-3.1-pro-preview": 47.7383,
-  "openai/gpt-5.3-codex": 45.5117,
-  "github-copilot/gpt-5.3-codex": 45.5117,
-  "openai/gpt-5.2": 43.3436,
-  "github-copilot/gpt-5.2": 43.3436,
-  "github-copilot/gpt-5.2-codex": 41.2154,
-  "openai/gpt-5.4-mini": 40.9386,
-  "github-copilot/gpt-5.4-mini": 40.9386,
-  "google/gemini-3-pro-preview": 40.6068, // AA slug renamed gemini-3-pro-preview → gemini-3-pro
-  "github-copilot/gemini-3-pro-preview": 40.6068,
-  "openai/gpt-5.4-nano": 39.7139,
-  "github-copilot/claude-opus-4.6": 38.7724,
-  "google/gemini-3-flash-preview": 38.742, // AA slug renamed → gemini-3-flash-reasoning
-  "github-copilot/gemini-3-flash-preview": 38.742,
-  "openai/gpt-5.1": 37.4661,
-  "github-copilot/gpt-5.1": 37.4661,
-  "google/gemini-3.5-flash-lite": 37.4387,
+  "codex/gpt-5.6-sol": 46.9727, // legacy alias — correct IDs below
+  // FORK 2026-09-04 (the architect: "The new gpt 6.0 Astra model just appeared, add it to the
+  // graph and table"). Shipped 2026-09-03. The value is the max rung of the 03:54 AA
+  // scrape in aa-effort-index.ts, NOT a hand transcription: AA's release PAGE rounds to
+  // whole numbers (61/61/60/59/57) while its leaderboard carries 61.2161, and typing
+  // the page's 61 here would have quietly overwritten better data the cron had already
+  // fetched hours earlier. Read the generated table before adding a row to a table it
+  // generates.
+  //
+  // ON THE PICKER as of 2026-09-09. The 05:45 cron left it chart-only because it
+  // probed Codex CLI 0.150.1 ("upgrade required"). OpenClaw talks to
+  // chatgpt.com/backend-api/codex; that path completed gpt-6-astra with text=OK,
+  // control gpt-6-astra-9-9 400s unsupported. Keep the openai/ key as the metered
+  // twin (wallet still empty — never pin openai/gpt-*); the picker stop is openai-codex/.
+  "openai-codex/gpt-6-astra": 52.6737,
+  "openai/gpt-6-astra": 52.6737,
+  // FORK 2026-09-23: GPT-6 Sol + Luna launched 2026-09-22 (AA scored same day; prices
+  // halved vs the 5.6 promo — Sol $2/$10, Luna $0.10/$0.50). Seat id + metered twin, as Astra.
+  // FORK 2026-09-30: GPT-6.1 Sol (AA 51.8333, $2/$10). Seat probe OK, control 400s.
+  "openai-codex/gpt-6.1-sol": 51.8333,
+  "openai/gpt-6.1-sol": 51.8333,
+  // FORK 2026-10-02 (the architect: "update the website with Gemini 4"): Gemini 4 Argon, announced
+  // 2026-09-30, AA 52.5606 (high) — level with GPT-6 Astra, 5 below Opus 5.5. NOT callable:
+  // Google gives it only to its Fairwind cyber-defence testers; no public model id yet.
+  // Plotted from this table as a catalog dot, never added to the picker. Price in
+  // rel-cost-table.ts ($2/$10 intro, $4/$20 after).
+  "google/gemini-4-argon": 52.5606,
+  "openai-codex/gpt-6-sol": 47.6305,
+  "openai/gpt-6-sol": 47.6305,
+  "openai-codex/gpt-6-luna": 38.1245,
+  "openai/gpt-6-luna": 38.1245,
+  "openai/gpt-5.6-sol": 46.9727,
+  "openai-codex/gpt-5.6-sol": 46.9727,
+  "xai/grok-4.7": 46.4466, // SuperGrok seat 2026-09-22; proxy catalog grok-4.7, control grok-4.7-9-9 404s
+  "openrouter/xiaomi/mimo-v2.6-pro": 46.3242, // panel model added 2026-09-22 ($0.435/$0.87 OR, Xiaomi seat, ctx 1.05M)
+  "xai/grok-4.6": 44.3113,
+  "openrouter/meta/muse-spark-1.3": 48.0923, // panel model added 2026-09-03 ($1.25/$4.25 OR, ctx 1M; 18+ attestation still gates live completions)
+  "google/gemini-3.8-flash": 40.9262, // panel model added 2026-09-03 — native google, $0.75/$3.75 promo through 2026-12-31
+  "claude-code/claude-opus-4-8": 41.7899,
+  "codex/gpt-5.6-terra": 42.0829, // legacy alias
+  "openai/gpt-5.6-terra": 42.0829,
+  "openai/gpt-5.5": 38.3556,
+  "openai-codex/gpt-5.5": 38.3556,
+  "github-copilot/gpt-5.5": 38.3556,
+  "xai/grok-4.5": 38.8121,
+  "claude-code/claude-sonnet-5": 38.1639,
+  "claude-code/claude-opus-4-7": 40.6898,
+  "github-copilot/claude-opus-4.7": 40.6898,
+  "openai/gpt-5.4": 38.9756,
+  "github-copilot/gpt-5.4": 38.9756,
+  "codex/gpt-5.6-luna": 37.3244, // legacy alias
+  "openai/gpt-5.6-luna": 37.3244,
+  "google/gemini-3.5-flash": 33.6326,
+  "google/gemini-3.6-flash": 33.9786,
+  "claude-code/claude-sonnet-4-6": 30.0576,
+  "github-copilot/claude-sonnet-4.6": 30.0576,
+  // FORK 2026-09-09: Claude Code 2.1.265 now SERVES claude-opus-4-6 on the Max seat.
+  // Probe (API key unset): weekly-limit, same as known-good claude-opus-5. Control
+  // claude-opus-9-9 is unrecognized_model. Subscription route, not OpenRouter.
+  "claude-code/claude-opus-4-6": 31.9457,
+  "google/gemini-3.1-pro-preview": 29.7186,
+  "github-copilot/gemini-3.1-pro-preview": 29.7186,
+  "openai/gpt-5.3-codex": 32.5028,
+  "github-copilot/gpt-5.3-codex": 32.5028,
+  "openai/gpt-5.2": 30.4482,
+  "github-copilot/gpt-5.2": 30.4482,
+  "github-copilot/gpt-5.2-codex": 28.5017,
+  "openai/gpt-5.4-mini": 24.0682,
+  "github-copilot/gpt-5.4-mini": 24.0682,
+  "google/gemini-3-pro-preview": 27.958, // AA slug renamed gemini-3-pro-preview → gemini-3-pro
+  "github-copilot/gemini-3-pro-preview": 27.958,
+  "openai/gpt-5.4-nano": 20.7197,
+  "github-copilot/claude-opus-4.6": 31.9457,
+  "google/gemini-3-flash-preview": 26.3272, // AA slug renamed → gemini-3-flash-reasoning
+  "github-copilot/gemini-3-flash-preview": 26.3272,
+  "openai/gpt-5.1": 24.7358,
+  "github-copilot/gpt-5.1": 24.7358,
+  "google/gemini-3.5-flash-lite": 22.1685,
   "github-copilot/claude-sonnet-4": 35.9, // AA no longer scores this — value frozen
-  "github-copilot/gpt-5.1-codex": 35.5957,
-  "github-copilot/claude-opus-4.5": 35.573,
-  "github-copilot/gpt-5": 35.3127,
+  "github-copilot/gpt-5.1-codex": 23.6973,
+  "github-copilot/claude-opus-4.5": 29.0955,
+  "github-copilot/gpt-5": 22.9828,
   "openai/gpt-5.4-pro": 34.7, // AA no longer scores this — value frozen
   "openai/gpt-5.2-pro": 34.7, // AA no longer scores this — value frozen
   "github-copilot/gpt-5.1-codex-max": 34.7, // AA no longer scores this — value frozen
-  "github-copilot/gpt-5.1-codex-mini": 31.334,
-  "openai/o3": 31.0956,
-  "claude-code/claude-haiku-4-5": 29.8919, // AA slug claude-4-5-haiku-reasoning
-  "github-copilot/claude-haiku-4.5": 29.8919,
+  "github-copilot/gpt-5.1-codex-mini": 20.3782,
+  "openai/o3": 20.2008,
+  "claude-code/claude-haiku-4-5": 16.8822, // AA slug claude-4-5-haiku-reasoning
+  // ESTIMATE, not AA — the architect 2026-09-23: "assign it an intelligence index, even if it is
+  // just a guess". AA does not score M365 Copilot. Think Deeper ran GPT-5.4 Thinking from
+  // 2026-03-06 (Microsoft Tech Community) and GPT-5.6 since 2026-07-09, most likely Sol
+  // (office-watch.com 2026-07); Microsoft never names the rung. Placed between GPT-5.6
+  // Terra (42.08) and Sol (46.97), shaded low for Microsoft's capped reasoning budget and
+  // its Graph-grounding wrapper. The nightly model-rank-refresh must PRESERVE this pin.
+  "copilot/copilot-think-deeper": 43.0,
+  "github-copilot/claude-haiku-4.5": 16.8822,
   "github-copilot/claude-sonnet-4.5": 29.3, // AA no longer scores this — value frozen
-  "google/gemini-2.5-pro": 25.911,
-  "github-copilot/gemini-2.5-pro": 25.911,
-  "github-copilot/gpt-5-mini": 25.7971,
-  "github-copilot/grok-code-fast-1": 21.9546,
-  "openai/gpt-4.1": 19.6117,
-  "github-copilot/gpt-4.1": 19.6117,
-  "google/gemini-2.5-flash": 14.1888,
-  "google/gemini-2.0-flash": 12.2404,
-  "openai/gpt-4o": 11.1129,
-  "github-copilot/gpt-4o": 11.1129,
+  "google/gemini-2.5-pro": 16.0779,
+  "github-copilot/gemini-2.5-pro": 16.0779,
+  "github-copilot/gpt-5-mini": 20.5992,
+  "github-copilot/grok-code-fast-1": 14.0585,
+  "openai/gpt-4.1": 12.6913,
+  "github-copilot/gpt-4.1": 12.6913,
+  "google/gemini-2.5-flash": 13.106,
+  "google/gemini-2.0-flash": 8.9414,
+  "openai/gpt-4o": 8.4416,
+  "github-copilot/gpt-4o": 8.4416,
 
   // ── Catalog tail: models we do NOT run, kept so the chart can answer the
   //    question it exists for — "is something out there cheaper or smarter
   //    than what we can use?" (the architect 2026-08-15). All reachable via the
   //    configured OpenRouter key; every one has a verified cost row in
   //    EEG_COST_TABLE, so none of them plots at a made-up price.
-  "openrouter/moonshotai/kimi-k3": 59.6995,
-  "openrouter/qwen/qwen3.8-max": 58.0774,
-  "openrouter/qwen/qwen3.8-2.4t-a95b": 57.7043,
-  "openrouter/meta/muse-spark-1.2": 56.7616,
-  "google/gemini-3.7-flash": 56.0301, // panel model — native google provider
-  "openrouter/meta/muse-spark-1.1": 53.199,
-  "openrouter/deepseek/deepseek-v4-pro": 53.1977, // undated slug
-  "openrouter/deepseek/deepseek-v4-pro-0813": 53.1977, // dated alias (panel model)
-  "openrouter/z-ai/glm-5.3": 59.5134,
-  "openrouter/z-ai/glm-5.3-flash": 57.4592, // added 2026-08-27 ($0.075/$0.250 OR, ctx 1.31M)
-  "openrouter/z-ai/glm-5.2": 52.641,
-  "openrouter/qwen/qwen3.8-27b": 52.0247,
-  "openrouter/deepseek/deepseek-v4-flash": 51.7666, // undated slug
-  "openrouter/deepseek/deepseek-v4-flash-0731": 51.7666, // dated alias (panel model)
-  "openrouter/deepseek/deepseek-v4-flash-vision-exp": 51.4736, // panel model added 2026-08-25 ($0.44/$1.32/M, ctx 1M)
-  "openrouter/qwen/qwen3.7-max": 46.7122,
-  "openrouter/minimax/minimax-m3": 45.3969,
-  "openrouter/moonshotai/kimi-k2.6": 45.1382, // panel model added 2026-08-21
+  "openrouter/moonshotai/kimi-k3": 43.5938,
+  "openrouter/qwen/qwen3.8-max-0902": 45.4152, // AA split 0902 off the 0803 snapshot 2026-09-16 (was 40.3049, now a real +5.13)
+  "openrouter/qwen/qwen3.8-2.4t-a95b": 39.8862,
+  "openrouter/meta/muse-spark-1.2": 39.5759,
+  "google/gemini-3.7-flash": 39.6178, // panel model — native google provider
+  "openrouter/meta/muse-spark-1.1": 33.7298,
+  "openrouter/deepseek/deepseek-v4-pro": 35.9968, // undated slug
+  "openrouter/deepseek/deepseek-v4-pro-0813": 35.9968, // dated alias (panel model)
+  "openrouter/deepseek/deepseek-v4.1-flash": 39.4562, // panel model added 2026-09-11 ($0.30/$1.20 OR list, DeepInfra $0.20/$0.60, ctx 1M)
+  "openrouter/z-ai/glm-5.3": 44.7774,
+  "openrouter/z-ai/glm-5.3-flash": 41.8075, // added 2026-08-27 ($0.075/$0.250 OR, ctx 1.31M)
+  "openrouter/z-ai/glm-5.2": 33.7055, // AA re-scored 2026-09-13 (was 38.6393)
+  "openrouter/qwen/qwen3.8-27b": 33.6963,
+  "openrouter/deepseek/deepseek-v4-flash": 34.3305, // undated slug
+  "openrouter/deepseek/deepseek-v4-flash-0731": 34.3305, // dated alias (panel model)
+  "openrouter/deepseek/deepseek-v4-flash-vision-exp": 34.8391, // panel model added 2026-08-25 ($0.44/$1.32/M list, ctx 1M)
+  "openrouter/qwen/qwen3.7-max": 29.4572,
+  "openrouter/minimax/minimax-m3": 29.2203,
+  "openrouter/moonshotai/kimi-k2.6": 26.9792, // AA re-scored 2026-09-15 (was 31.3197)
   // FORK 2026-09-02 (the architect): `openrouter/openai/gpt-5.3-codex` removed — a GPT reached
   // through OpenRouter at metered $1.75/$14.00 while we hold `openai-codex` directly. The
   // sibling `openai/gpt-5.3-codex` above is the DIRECT route and stays. See
   // src/shared/reseller-route-policy.ts for the standing rule.
-  "openrouter/moonshotai/kimi-k2.7-code": 43.0245,
-  "openrouter/xiaomi/mimo-v2.5-pro": 42.8797,
-  "openrouter/thinkingmachines/inkling": 42.2948,
-  "openrouter/tencent/hy3": 42.2135,
-  "openrouter/nex-agi/nex-n2-pro": 41.7432,
-  "openrouter/upstage/solar-pro4": 41.6373,
-  "openrouter/thinkingmachines/inkling-small": 41.1807,
-  "openrouter/qwen/qwen3.6-max-preview": 41.074, // panel model added 2026-08-22
-  "openrouter/z-ai/glm-5.1": 40.9675,
-  "openrouter/z-ai/glm-5": 40.5541,
-  "openrouter/qwen/qwen3.6-plus": 40.4881,
+  "openrouter/moonshotai/kimi-k2.7-code": 25.8121,
+  "openrouter/xiaomi/mimo-v2.5-pro": 25.9869,
+  // mimo-v2.6-pro is on the picker (see above); keep the 2.5-pro chart id as the predecessor.
+  "openrouter/thinkingmachines/inkling": 24.9848,
+  "openrouter/tencent/hy3": 25.2973,
+  "openrouter/nex-agi/nex-n2-pro": 28.1991,
+  "openrouter/upstage/solar-pro4": 28.1541,
+  "openrouter/thinkingmachines/inkling-small": 27.7806,
+  "openrouter/qwen/qwen3.6-max-preview": 28.3749, // panel model added 2026-08-22
+  "openrouter/z-ai/glm-5.1": 26.0586,
+  "openrouter/z-ai/glm-5": 27.9112,
+  "openrouter/qwen/qwen3.6-plus": 27.0099,
 
   // ── 2026-08-30 arrivals (the architect: "update it with the newest models in the
   //    market"). Each one needs BOTH halves or it is not plotted: a measured AA
   //    index for y, and a live OpenRouter id+price for x. Scores are AA's raw
   //    floats read from the leaderboard at 08:53 UTC today; ids, prices and
   //    context windows come from /api/v1/models in the same pass.
-  "openrouter/inclusionai/ling-3.0-flash": 37.8208, // $0.021/$0.063, ctx 262k
-  "openrouter/meituan/longcat-2.0": 33.9693, // $0.300/$1.200, ctx 1.05M
-  "openrouter/nvidia/nemotron-3.5-lightning": 23.6062, // $0.080/$0.200, ctx 262k
+  "openrouter/inclusionai/ling-3.0-flash": 24.9392, // $0.021/$0.063, ctx 262k
+  "openrouter/meituan/longcat-2.0": 19.1123, // $0.300/$1.200, ctx 1.05M
+  "openrouter/nvidia/nemotron-3.5-lightning": 12.8572, // $0.080/$0.200, ctx 262k
 
   // ROUTE TWIN, not a new brain. Anthropic's fast mode is Opus 5 served faster —
   // "identical capabilities ... at 2x pricing" in Anthropic's own words — so it
@@ -17133,454 +23357,483 @@ function compareModelIntelligence(
 }
 
 function updateBudgetPanel() {
+  // FORK 2026-09-09: this paint used to fail closed with no console line. A throw
+  // aborted mid-function and left whatever HTML was last written; an early return
+  // on a missing host or a missing catalog looked identical to a healthy idle
+  // panel. Failures always log; the per-paint census is gated on `__bp`.
+  BP_DEBUG_STATE.paintCount += 1;
+  const paintStartedAt = Date.now();
   const el = $("budget-panel");
   if (!el) {
+    bpFail("updateBudgetPanel: #budget-panel missing from DOM — nowhere to paint");
     return;
   }
   if (!modelConfigData) {
+    bpWarn("updateBudgetPanel: no catalog yet — painting Loading config...");
     el.innerHTML =
       '<div style="padding:20px;color:var(--muted);font-size:11px">Loading config...</div>';
     return;
   }
-  loadEffortPin(sessionKey); // FORK 2026-06-14 (bible §5.84-C): restore the pin before paint
-  loadModelPin(sessionKey); // FORK 2026-06-14 (bible §5.84 Drop 3): restore the model pin before paint
+  try {
+    loadEffortPin(sessionKey); // FORK 2026-06-14 (bible §5.84-C): restore the pin before paint
+    loadModelPin(sessionKey); // FORK 2026-06-14 (bible §5.84 Drop 3): restore the model pin before paint
 
-  const { primary, fallbacks, models, authProfiles, authOrder } = modelConfigData;
-  let html = '<div class="model-list">';
+    const { primary, fallbacks, models, authProfiles, authOrder } = modelConfigData;
+    let html = '<div class="model-list">';
 
-  // FORK 2026-06-14 (bug #1): remember the model of the current live run so the
-  // collapsed MODELS section keeps showing the last model that computed after it
-  // stops. Captured here (scope-filtered) while a run is live; persists when idle.
-  const liveRun = scopedActiveRuns().find(([, i]) => i.model);
-  if (liveRun) {
-    lastComputedModel = liveRun[1].model;
-    // FORK 2026-08-04: remember WHICH PROVIDER computed, not just the tail. Without this half
-    // `lastComputedProvider` stays null, `modelMatchesCatalogRow` degrades to the unqualified
-    // fallback, and the provider-aware predicate above is a no-op. This is what arms it.
-    lastComputedProvider = panelProviderSegment(liveRun[1].model, liveRun[1].provider) ?? null;
-  }
+    // FORK 2026-07-29 (the architect: "Sol is thinking in 3 different tabs, yet its model row does
+    // not show how many llm calls are running in parallel"). The live count is now derived
+    // from the SERVER's session rows, which describe every session — other tabs, crons,
+    // WhatsApp — not just the viewed one. `activeRuns` cannot answer this: its writes are
+    // viewed-gated (see the admission guard in onEvent), so it can only ever see the tab on
+    // screen. Same fix that `sessionHasActiveRuns` got on 2026-07-28.
+    //
+    // Deliberately NOT passed through `scopedActiveRuns()`: the count is always global, while
+    // the session/all toggle keeps governing the token and cost columns only. A concurrency
+    // badge that hides concurrency is worse than no badge.
+    const globalLiveSessions = liveModelSessions();
+    // FORK 2026-06-14 (bug #1) → 2026-10-02: what is live now is also what the collapsed group
+    // keeps pinned after it stops. Recorded from the count's own sessions, so it is global too.
+    const paintNow = Date.now();
+    noteLiveModels(globalLiveSessions, paintNow);
 
-  // FORK 2026-07-29 (the architect: "Sol is thinking in 3 different tabs, yet its model row does
-  // not show how many llm calls are running in parallel"). The live count is now derived
-  // from the SERVER's session rows, which describe every session — other tabs, crons,
-  // WhatsApp — not just the viewed one. `activeRuns` cannot answer this: its writes are
-  // viewed-gated (see the admission guard in onEvent), so it can only ever see the tab on
-  // screen. Same fix that `sessionHasActiveRuns` got on 2026-07-28.
-  //
-  // Deliberately NOT passed through `scopedActiveRuns()`: the count is always global, while
-  // the session/all toggle keeps governing the token and cost columns only. A concurrency
-  // badge that hides concurrency is worse than no badge.
-  const globalLiveCounts = liveModelCounts();
-
-  // Helper: render auth key rows for a model's provider
-  function renderAuthKeyRows(modelId: string, badge: string) {
-    const provider = providerOf(modelId);
-    const name = modelName(modelId);
-    const keys: string[] = authOrder?.[provider] || [];
-    // Client map filtered to THIS model only (provider-aware — see getAuthKeyCounts). It may
-    // only SPLIT the resolver's total across auth profiles: never create one, never exceed it.
-    const counts = getAuthKeyCounts(modelId);
-    // Server truth for "how many runs of this model are live anywhere".
-    // FORK 2026-08-04 — the "client map stays as a floor" this comment used to claim is real,
-    // but it lives INSIDE this number, not outside it: `liveRunCountsByModel` (run-state.ts)
-    // ends with a loop that counts every FRESH activeRuns entry whose session no server row
-    // describes yet, precisely so a just-started run still lights its row. Consulting the
-    // client map AGAIN out here therefore adds no floor — only ghosts.
-    const globalCount = liveCountForModel(globalLiveCounts, modelId);
-    // FORK 2026-08-04 (the architect: the twin row glows) — CLOSE THE `||` CHAIN. `globalCount === 0`
-    // is an ANSWER ("no run of this model is live anywhere"), not "no data", but `||` read it
-    // as absence and fell through to `counts`, where ONE orphaned activeRuns entry resurrected
-    // the phantom — and, matched on the provider-erasing bare tail, resurrected it on the WRONG
-    // provider's row. The 2026-07-29 fork already stated the rule ("`counts` now only splits
-    // that total across auth profiles"); this is the half of it that was never applied.
-    const splitCount = (perKey: number | undefined): number => {
-      if (globalCount <= 0) {
-        return 0;
-      }
-      return typeof perKey === "number" && perKey > 0 ? Math.min(perKey, globalCount) : globalCount;
-    };
-    if (keys.length <= 1) {
-      // Single key or no keys — show one row with model name
-      const keyId = keys[0];
-      const keyLabel = keyId ? authProfiles?.[keyId]?.label || keyId.split(":")[1] || keyId : "";
-      const mode = keyId ? authProfiles?.[keyId]?.mode || "" : "";
-      // Simplify profile labels: cli-gm/oauth-gm → oauth, cli-sv/oauth-sv → oauth-sv, default → api
-      const shortProfileLabel = simplifyProfileLabel(keyLabel, mode);
-      const showSuffix = shortProfileLabel.length > 0;
-      const suffix = showSuffix ? ` \u00b7 ${shortProfileLabel}` : "";
-      // FORK 2026-07-29 — was Math.max(server, clientMap), a THIRD way of combining the lanes that
-      // let one orphaned activeRuns entry pin a model at 1 forever. The resolver already merges
-      // both lanes; `counts` now only splits that total across auth profiles.
-      // FORK 2026-08-04 — there is exactly ONE row on this path, so there is nothing to split:
-      // the resolver's total IS this row's count. The old `|| counts.get(...)` tail could only
-      // ever restate a number the resolver already owned or, when the resolver said 0,
-      // contradict it with a ghost. Deliberately NOT flipped to prefer the per-key count: the
-      // badge is a GLOBAL concurrency figure (see the note above `globalLiveCounts`), and a
-      // concurrency badge that hides concurrency is worse than no badge.
-      const singleKeyCount = splitCount(undefined);
-      html += renderModelRow(
-        modelId,
-        provider,
-        name,
-        badge,
-        suffix,
-        singleKeyCount,
-        providerErrors.get(keyId || modelId),
-        keyId,
-      );
-    } else {
-      // Multiple keys — one compact row per key with model name inline
-      // Lifecycle events may lack authProfileId, so count is stored under modelId.
-      // Fall back to model-level count so all rows glow when the model is active.
-      // FORK 2026-08-04 — that fallback now lives INSIDE splitCount (an absent per-key entry
-      // yields the model total), so the separate `modelCount` variable is gone. One expression,
-      // one rule, and no second `||` for the idle case to leak through.
-      for (let ki = 0; ki < keys.length; ki++) {
-        const keyId = keys[ki];
-        const prof = authProfiles?.[keyId] || {};
-        const rawKeyLabel = prof.label || keyId.split(":")[1] || keyId;
-        const keyLabel = simplifyProfileLabel(rawKeyLabel, prof.mode || "");
-        html += renderAuthKeyRow(
-          keyId,
-          keyLabel,
-          provider,
+    // Helper: render auth key rows for a model's provider
+    function renderAuthKeyRows(modelId: string, badge: string) {
+      const provider = providerOf(modelId);
+      const name = modelName(modelId);
+      const keys: string[] = authOrder?.[provider] || [];
+      // Client map filtered to THIS model only (provider-aware — see getAuthKeyCounts). It may
+      // only SPLIT the resolver's total across auth profiles: never create one, never exceed it.
+      const counts = getAuthKeyCounts(modelId);
+      // Server truth for "how many runs of this model are live anywhere".
+      // FORK 2026-08-04 — the "client map stays as a floor" this comment used to claim is real,
+      // but it lives INSIDE this number, not outside it: `liveRunCountsByModel` (run-state.ts)
+      // ends with a loop that counts every FRESH activeRuns entry whose session no server row
+      // describes yet, precisely so a just-started run still lights its row. Consulting the
+      // client map AGAIN out here therefore adds no floor — only ghosts.
+      const liveSessions = liveSessionsForModel(globalLiveSessions, modelId);
+      const globalCount = liveSessions.length;
+      // FORK 2026-10-02 (the architect: "On mouseover on them, I would like to see the names of the tabs
+      // that are using them"). Live: the sessions behind the badge. Idle but pinned: who ran it.
+      const rowHint = modelRowHint({
+        live: liveSessions,
+        recent: globalCount > 0 ? undefined : recentUseForRow(recentModelUse, modelId, paintNow),
+        nameOf: sessionNameForHint,
+        now: paintNow,
+      });
+      // FORK 2026-08-04 (the architect: the twin row glows) — CLOSE THE `||` CHAIN. `globalCount === 0`
+      // is an ANSWER ("no run of this model is live anywhere"), not "no data", but `||` read it
+      // as absence and fell through to `counts`, where ONE orphaned activeRuns entry resurrected
+      // the phantom — and, matched on the provider-erasing bare tail, resurrected it on the WRONG
+      // provider's row. The 2026-07-29 fork already stated the rule ("`counts` now only splits
+      // that total across auth profiles"); this is the half of it that was never applied.
+      const splitCount = (perKey: number | undefined): number => {
+        if (globalCount <= 0) {
+          return 0;
+        }
+        return typeof perKey === "number" && perKey > 0
+          ? Math.min(perKey, globalCount)
+          : globalCount;
+      };
+      if (keys.length <= 1) {
+        // Single key or no keys — show one row with model name
+        const keyId = keys[0];
+        const keyLabel = keyId ? authProfiles?.[keyId]?.label || keyId.split(":")[1] || keyId : "";
+        const mode = keyId ? authProfiles?.[keyId]?.mode || "" : "";
+        // Simplify profile labels: cli-gm/oauth-gm → oauth, cli-sv/oauth-sv → oauth-sv, default → api
+        const shortProfileLabel = simplifyProfileLabel(keyLabel, mode);
+        const showSuffix = shortProfileLabel.length > 0;
+        const suffix = showSuffix ? ` \u00b7 ${shortProfileLabel}` : "";
+        // FORK 2026-07-29 — was Math.max(server, clientMap), a THIRD way of combining the lanes that
+        // let one orphaned activeRuns entry pin a model at 1 forever. The resolver already merges
+        // both lanes; `counts` now only splits that total across auth profiles.
+        // FORK 2026-08-04 — there is exactly ONE row on this path, so there is nothing to split:
+        // the resolver's total IS this row's count. The old `|| counts.get(...)` tail could only
+        // ever restate a number the resolver already owned or, when the resolver said 0,
+        // contradict it with a ghost. Deliberately NOT flipped to prefer the per-key count: the
+        // badge is a GLOBAL concurrency figure (see the note above `globalLiveSessions`), and a
+        // concurrency badge that hides concurrency is worse than no badge.
+        const singleKeyCount = splitCount(undefined);
+        html += renderModelRow(
           modelId,
+          provider,
           name,
           badge,
-          splitCount(counts.get(keyId)),
-          providerErrors.get(keyId) || providerErrors.get(modelId),
+          suffix,
+          singleKeyCount,
+          providerErrors.get(keyId || modelId),
+          keyId,
+          rowHint,
         );
+      } else {
+        // Multiple keys — one compact row per key with model name inline
+        // Lifecycle events may lack authProfileId, so count is stored under modelId.
+        // Fall back to model-level count so all rows glow when the model is active.
+        // FORK 2026-08-04 — that fallback now lives INSIDE splitCount (an absent per-key entry
+        // yields the model total), so the separate `modelCount` variable is gone. One expression,
+        // one rule, and no second `||` for the idle case to leak through.
+        for (let ki = 0; ki < keys.length; ki++) {
+          const keyId = keys[ki];
+          const prof = authProfiles?.[keyId] || {};
+          const rawKeyLabel = prof.label || keyId.split(":")[1] || keyId;
+          const keyLabel = simplifyProfileLabel(rawKeyLabel, prof.mode || "");
+          html += renderAuthKeyRow(
+            keyId,
+            keyLabel,
+            provider,
+            modelId,
+            name,
+            badge,
+            splitCount(counts.get(keyId)),
+            providerErrors.get(keyId) || providerErrors.get(modelId),
+            rowHint,
+          );
+        }
       }
     }
-  }
 
-  // FORK 2026-06-13 (eeg): ONE unified MODELS list replaces the FALLBACK CHAIN +
-  // CONFIGURED two-section split (bible §5.8h q10). Chain members (primary +
-  // fallbacks, in chain order) sit at the top wearing circled-number badges so
-  // the chain primary stays visible in the list; the remaining configured models
-  // follow, sorted by the existing rank logic. Every row still renders through
-  // renderAuthKeyRows (auth key rows + provider error chips preserved).
-  const chain: string[] = [];
-  if (primary) {
-    chain.push(primary);
-  }
-  if (fallbacks?.length) {
-    chain.push(...fallbacks);
-  }
-  const _badges = ["\u2460", "\u2461", "\u2462", "\u2463", "\u2464", "\u2465", "\u2466", "\u2467"];
-  // FORK 2026-07-10: ONE list ordered purely by rank (smartness). The old
-  // chain-first layout pinned the primary (opus-4.8) above smarter models
-  // (fable, gpt-5.6-sol) \u2014 the architect: "models should be in order of smartness".
-  // Chain membership keeps its circled badge, but position = rank.
-  const chainBadge = new Map<string, string>();
-  for (let i = 0; i < chain.length; i++) {
-    chainBadge.set(chain[i], _badges[i] ?? "");
-  }
-  // FORK 2026-07-30 (the architect: "remove those models that have less than an
-  // intelligence score of 50"). Panel allowlist = AA ≥ 50. Config is already
-  // culled, but config.models can lag a gateway reload — filter here too so the
-  // MODELS list never re-shows the long tail. Chain primary always kept.
-  // FORK 2026-08-04 (the architect: "bump deepseek into the smart models"). deepseek-v4-flash
-  // scores 49.9 — it misses the cut by 0.1, which is inside the AA index's own noise
-  // floor. Pinning by id rather than editing the score keeps the reported number
-  // truthful; a fudged 50.1 would be a lie told to a sort function.
-  const modelsMeta = models as Record<string, ModelIntelligenceMeta> | undefined;
-  // FORK 2026-07-30 (the architect: "a collapsable MORE MODELS ... with the ones we removed
-  // earlier, the ones below 50 smart"). The cut is now a PREDICATE used twice — once
-  // to keep, once to complement — so the two lists can never drift into overlapping
-  // or, worse, silently dropping a model from BOTH.
-  // FORK 2026-08-06 #3: hoisted to module scope (modelPassesPanelMin) — the chart
-  // and the dossier read the same gate, so four readers can't drift.
-  const passesPanelMin = (id: string): boolean => modelPassesPanelMin(id, primary, modelsMeta);
-  // FORK 2026-08-15: Copilot is dropped HERE, at the panel's source list, so it leaves
-  // both SMART MODELS and the MORE MODELS tail in one move. The SMART × COST chart
-  // builds its own array from AA_INTELLIGENCE_INDEX and is untouched — see
-  // modelIsHiddenFromModelsPanel for why the rule deliberately does not live in
-  // modelPassesPanelMin (which the chart and dossier share).
-  const candidateIds = [...new Set([...chain, ...Object.keys(models || {})])].filter(
-    // FORK 2026-09-02 (the architect): the SAME reseller veto the model selector applies, read
-    // from the SAME module constant, so SMART MODELS, the MORE MODELS tail and the selector
-    // agree by construction. Two predicates over one set is exactly how qwen3.8 and deepseek
-    // went missing from one list but not the other, twice, earlier this year.
-    (id) => !modelIsHiddenFromModelsPanel(id) && !isRedundantResellerRoute(id),
-  );
-  const allIds = candidateIds.filter(passesPanelMin);
-  const byPanelOrder = (a: string, b: string): number => {
-    const intelligenceOrder = compareModelIntelligence(a, b, modelsMeta);
-    if (intelligenceOrder !== 0) {
-      return intelligenceOrder;
+    // FORK 2026-06-13 (eeg): ONE unified MODELS list replaces the FALLBACK CHAIN +
+    // CONFIGURED two-section split (bible §5.8h q10). Chain members (primary +
+    // fallbacks, in chain order) sit at the top wearing circled-number badges so
+    // the chain primary stays visible in the list; the remaining configured models
+    // follow, sorted by the existing rank logic. Every row still renders through
+    // renderAuthKeyRows (auth key rows + provider error chips preserved).
+    const chain: string[] = [];
+    if (primary) {
+      chain.push(primary);
     }
-    // FORK 2026-07-30 (the architect): if OpenAI/Claude/Gemini and Copilot both offer the
-    // same base model, list them together — native provider first, Copilot next.
-    const base = (id: string) =>
-      id
-        .replace(/^[^/]+\//, "")
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "");
-    const ba = base(a);
-    const bb = base(b);
-    if (ba === bb) {
-      const ap = a.startsWith("github-copilot/") ? 1 : 0;
-      const bp = b.startsWith("github-copilot/") ? 1 : 0;
-      if (ap !== bp) return ap - bp;
+    if (fallbacks?.length) {
+      chain.push(...fallbacks);
     }
-    return a.localeCompare(b);
-  };
-  allIds.sort(byPanelOrder);
-  // FORK 2026-07-30 (the architect): the sub-50 tail, tucked into its own collapsed group.
-  // The 19 models culled from openclaw.json this morning survive ONLY in the baked
-  // AA map, so that map — not config — is the catalog here; config alone would make
-  // this section render empty, which is the whole reason it exists.
-  //
-  // Gated on providers we can actually reach (configured models + auth order) so the
-  // tail never advertises a model behind a provider that was never set up.
-  const knownProviders = new Set<string>([
-    ...Object.keys(models || {}).map((id) => providerOf(id)),
-    ...Object.keys(authOrder || {}),
-  ]);
-  const shown = new Set(allIds);
-  // The MORE MODELS tail pulls from AA_INTELLIGENCE_INDEX as well as candidateIds, so
-  // filtering candidateIds alone would let Copilot ids back in through the baked map.
-  const moreIds = [...new Set([...candidateIds, ...Object.keys(AA_INTELLIGENCE_INDEX)])]
-    .filter(
-      (id) =>
-        !modelIsHiddenFromModelsPanel(id) &&
-        !shown.has(id) &&
-        !passesPanelMin(id) &&
-        knownProviders.has(providerOf(id)),
-    )
-    .sort(byPanelOrder);
-  if (allIds.length) {
-    const open = !isCollapsed("model:models", MODEL_SECTION_DEFAULT_COLLAPSED["models"]);
-    html += `<div class="model-group${open ? " open" : ""}" data-section="models">`;
-    // FORK 2026-08-06 (the architect): buttons live INSIDE the label — the
-    // collapse-toggle guard above already ignores clicks on <button>, so they can
-    // never fold the group shut by accident.
-    // FORK 2026-08-06 #3 (the architect): the chart button moved UP to the MODELS panel
-    // header (prominent, whole-catalog chart); this one now opens the dossier —
-    // what each smart model is best at, and what it is trained not to answer.
-    html +=
-      '<div class="model-group-label">SMART MODELS ' +
-      '<button class="sd-open-btn" title="Smart models dossier" data-hint="Which model is best at what subject — and what each is trained not to answer">⚖ DOSSIER</button>' +
-      "</div>";
-    html += '<div class="model-group-body">';
-    for (const id of allIds) {
-      renderAuthKeyRows(id, chainBadge.get(id) ?? "");
+    const _badges = [
+      "\u2460",
+      "\u2461",
+      "\u2462",
+      "\u2463",
+      "\u2464",
+      "\u2465",
+      "\u2466",
+      "\u2467",
+    ];
+    // FORK 2026-07-10: ONE list ordered purely by rank (smartness). The old
+    // chain-first layout pinned the primary (opus-4.8) above smarter models
+    // (fable, gpt-5.6-sol) \u2014 the architect: "models should be in order of smartness".
+    // Chain membership keeps its circled badge, but position = rank.
+    const chainBadge = new Map<string, string>();
+    for (let i = 0; i < chain.length; i++) {
+      chainBadge.set(chain[i], _badges[i] ?? "");
     }
-    html += "</div></div>";
-  }
-
-  // FORK 2026-07-30 (the architect): MORE MODELS — the AA < 50 tail, between MODELS and
-  // EFFORT. Same .model-group markup as its neighbours, so the one collapse-toggle
-  // binding below picks it up with no extra wiring. Default-collapsed (stated in
-  // MODEL_SECTION_DEFAULT_COLLAPSED) — the point is that the long tail stays
-  // reachable, not that it comes back into view.
-  if (moreIds.length) {
-    const open = !isCollapsed("model:more-models", MODEL_SECTION_DEFAULT_COLLAPSED["more-models"]);
-    html += `<div class="model-group${open ? " open" : ""}" data-section="more-models">`;
-    html += `<div class="model-group-label">MORE MODELS <span class="model-group-count">${moreIds.length}</span></div>`;
-    html += '<div class="model-group-body">';
-    for (const id of moreIds) {
-      renderAuthKeyRows(id, chainBadge.get(id) ?? "");
-    }
-    html += "</div></div>";
-  }
-
-  // FORK 2026-06-13 (eeg): EEG card (bible §5.8h) — (a) the per-tab 7-stop
-  // thinking slider (§5.8f, UNCHANGED semantics, still the .model-think-slider
-  // token), (b) the model-force slider (writes ONLY { model } — never bundled
-  // with thinkingLevel, §5.8f invariant 1), (c) the seismograph paper for the
-  // ACTIVE session. The paper re-renders on every updateBudgetPanel() call —
-  // effort events and tab switches (refreshViewedSessionIndicators) repaint the
-  // right session's trace because the store is keyed by the viewed sessionKey.
-  {
-    // FORK 2026-08-02 (the architect): section renamed 'eeg' → 'thinking'. This card holds the
-    // thinking + model-force sliders and has done since the seismograph left it; the old
-    // id was a leftover. 'eeg' is now the seismograph group in #models-panel — see the
-    // MODEL_SECTION_DEFAULT_COLLAPSED note (~L2240) for why the persisted-id swap is safe.
-    const open = !isCollapsed("model:thinking", MODEL_SECTION_DEFAULT_COLLAPSED["thinking"]);
-    html += `<div class="model-group${open ? " open" : ""}" data-section="thinking">`;
-    html += '<div class="model-group-label">THINKING</div>';
-    html += '<div class="model-group-body">';
-    html += renderThinkingSlider();
-    html += renderModelForceSlider();
-    html += "</div></div>";
-  }
-
-  // FORK 2026-07-25 (the architect): the routing card — its OWN collapsible group directly under the
-  // model slider, with three very short sections (MODEL / EFFORT / FAN-OUT). A fixed model
-  // or effort is stated flatly; FAN-OUT lists the routing calls made during the turn.
-  //
-  // RENAMED ORCA → THALAMUS, 2026-07-29 (the architect: "the ORCA panel should instead be the
-  // THALAMUS model, which will inform me about the routing strategies").
-  //
-  // The label was the ONLY thing here that said ORCA. Everything this card renders is
-  // allocation, not parallel editing: routingSignals() computes the model in force, its rank
-  // within the routable pool, the effort level and the rate-limit reset window; and
-  // describeRoute() narrates each job's DOMAIN + supplier + critic/panel. There is not one
-  // lease, edit-unit, file or commit in it — those are ORCA's. Even the module is already
-  // called panels/routing-rationale.ts, and the bias control it hosts talks to
-  // `prefrontal.orcaBias`, not to the ORCA plugin.
-  //
-  // The division the two names encode: ORCA decomposes work into edit-units and applies
-  // patches under file leases; THALAMUS decides which supplier serves each unit. `unit`/`task`
-  // is the join key between them — ORCA says WHAT the jobs are, THALAMUS says WHO runs them.
-  // FORK 2026-08-29 (the architect: "move the context window up over thalamus, under thinking").
-  // THALAMUS used to be generated here, as the last group inside #budget-panel — which put it
-  // ABOVE the two static groups (CONTEXT WINDOW, EEG) that are siblings of #budget-panel, and
-  // there is no way to interleave a grandchild with a sibling by ordering alone.
-  //
-  // Rather than move the CONTEXT WINDOW node into this generated block — its whole reason for
-  // being static is that innerHTML here destroys and recreates every node while its bind-once
-  // latches stay true — THALAMUS moved OUT to a static host of its own, directly below the
-  // cache panel. It is the cheapest node to move: a label plus one pure render call, with no
-  // listeners of its own, so nothing can be orphaned by the relocation. The boot fold binding
-  // (~L19608) already selects every direct .model-group child of #models-panel, so it picks up
-  // the new host for free — exactly what its own comment promised the next static subtitle.
-  //
-  // It is still PAINTED from here, on the same triggers as everything else in this panel.
-
-  html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
-  el.innerHTML = html;
-
-  // FORK 2026-08-29 (the architect: "the thalamus panel slider should then become usable") —
-  // ONE signals value per repaint, shared by the routing card's own paint and by the BIAS
-  // dial's gate below (~L16862). Deriving Auto-ness twice is exactly how a card and a dial
-  // painted from the same repaint end up disagreeing about whether THALAMUS is in control.
-  const thalamusBody = document.getElementById("thalamus-panel-body");
-  const thalamusSignals = routingSignals(chain[0]);
-  // FORK 2026-09-03 (the architect): say where this session's BIAS lands on the frontier. The
-  // rungs are every AA-indexed model at its REL_COST_TABLE price (an unpriced id has no
-  // rung — never an invented one), and the pick is thalamusRoute's, at the same biasIdx
-  // routingSignals() just handed the dial.
-  const frontierRungs = Object.keys(AA_INTELLIGENCE_INDEX).flatMap((id) => {
-    const rel = scThalamusRelCost(id);
-    return rel === undefined ? [] : frontierRungsFor(id, AA_INTELLIGENCE_INDEX[id], rel);
-  });
-  const frontierRoute = thalamusRoute({ rungs: frontierRungs, biasIdx: thalamusSignals.biasIdx });
-  if (frontierRoute) {
-    thalamusSignals.frontierPick = {
-      model: modelName(frontierRoute.rung.key),
-      effort: frontierRoute.rung.effort,
-      smart: frontierRoute.rung.smart,
-      cost: frontierRoute.rung.cost,
-      frontierSize: frontierRoute.frontier.length,
+    // FORK 2026-07-30 (the architect: "remove those models that have less than an
+    // intelligence score of 50"). Panel allowlist = AA ≥ 50. Config is already
+    // culled, but config.models can lag a gateway reload — filter here too so the
+    // MODELS list never re-shows the long tail. Chain primary always kept.
+    // FORK 2026-08-04 (the architect: "bump deepseek into the smart models"). deepseek-v4-flash
+    // scores 49.9 — it misses the cut by 0.1, which is inside the AA index's own noise
+    // floor. Pinning by id rather than editing the score keeps the reported number
+    // truthful; a fudged 50.1 would be a lie told to a sort function.
+    const modelsMeta = models as Record<string, ModelIntelligenceMeta> | undefined;
+    // FORK 2026-07-30 (the architect: "a collapsable MORE MODELS ... with the ones we removed
+    // earlier, the ones below 50 smart"). The cut is now a PREDICATE used twice — once
+    // to keep, once to complement — so the two lists can never drift into overlapping
+    // or, worse, silently dropping a model from BOTH.
+    // FORK 2026-08-06 #3: hoisted to module scope (modelPassesPanelMin) — the chart
+    // and the dossier read the same gate, so four readers can't drift.
+    // FORK 2026-08-15: Copilot is dropped HERE, at the panel's source list, so it leaves
+    // both SMART MODELS and the MORE MODELS tail in one move. The SMART × COST chart
+    // builds its own array from AA_INTELLIGENCE_INDEX and is untouched — see
+    // modelIsHiddenFromModelsPanel for why the rule deliberately does not live in
+    // modelPassesPanelMin (which the chart and dossier share).
+    // The picker consumes this exact helper too. Smart/More decide only WHERE an id
+    // appears; they no longer decide WHETHER the picker can select it.
+    const candidateIds = modelCatalogIdsForPickerAndPanel([...chain, ...Object.keys(models || {})]);
+    // FORK 2026-09-25: the PANEL no longer reads the top-23 floor. Once all 47 models were
+    // back in config, the top 23 filled SMART MODELS (the architect: "cramming a lot more back in").
+    // SMART MODELS is now the picker's own set (panelIdsDownToCopilot); the top-23 floor
+    // (modelPassesPanelMin / AA_PANEL_TOP_N) no longer decides this split.
+    const smartSet = new Set(
+      panelIdsDownToCopilot(
+        [...candidateIds].sort((a, b) => compareModelIntelligence(a, b, modelsMeta)),
+      ),
+    );
+    const passesPanelMin = (id: string): boolean => id === primary || smartSet.has(id);
+    const allIds = candidateIds.filter(passesPanelMin);
+    const byPanelOrder = (a: string, b: string): number => {
+      const intelligenceOrder = compareModelIntelligence(a, b, modelsMeta);
+      if (intelligenceOrder !== 0) {
+        return intelligenceOrder;
+      }
+      // FORK 2026-07-30 (the architect): if OpenAI/Claude/Gemini and Copilot both offer the
+      // same base model, list them together — native provider first, Copilot next.
+      const base = (id: string) =>
+        id
+          .replace(/^[^/]+\//, "")
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "");
+      const ba = base(a);
+      const bb = base(b);
+      if (ba === bb) {
+        const ap = a.startsWith("github-copilot/") ? 1 : 0;
+        const bp = b.startsWith("github-copilot/") ? 1 : 0;
+        if (ap !== bp) return ap - bp;
+      }
+      return a.localeCompare(b);
     };
-  }
-  if (thalamusBody) {
-    thalamusBody.innerHTML = renderRoutingRationale(thalamusSignals);
-  }
+    allIds.sort(byPanelOrder);
+    // FORK 2026-07-30 (the architect): the sub-50 tail, tucked into its own collapsed group.
+    // The 19 models culled from openclaw.json this morning survive ONLY in the baked
+    // AA map, so that map — not config — is the catalog here; config alone would make
+    // this section render empty, which is the whole reason it exists.
+    //
+    // Gated on providers we can actually reach (configured models + auth order) so the
+    // tail never advertises a model behind a provider that was never set up.
+    const knownProviders = new Set<string>([
+      ...Object.keys(models || {}).map((id) => providerOf(id)),
+      ...Object.keys(authOrder || {}),
+    ]);
+    const shown = new Set(allIds);
+    // The MORE MODELS tail pulls from AA_INTELLIGENCE_INDEX as well as candidateIds, so
+    // filtering candidateIds alone would let Copilot ids back in through the baked map.
+    // FORK 2026-09-26: the baked map also holds a metered openai/ twin of each configured
+    // openai-codex/ model; withoutRouteTwins keeps those on the chart and off this list.
+    const moreIds = modelCatalogIdsForPickerAndPanel([
+      ...candidateIds,
+      ...withoutRouteTwins(Object.keys(AA_INTELLIGENCE_INDEX), candidateIds),
+    ])
+      .filter((id) => !shown.has(id) && !passesPanelMin(id) && knownProviders.has(providerOf(id)))
+      .sort(byPanelOrder);
+    if (allIds.length) {
+      const open = !isCollapsed("model:models", MODEL_SECTION_DEFAULT_COLLAPSED["models"]);
+      html += `<div class="model-group${open ? " open" : ""}" data-section="models">`;
+      // FORK 2026-08-06 (the architect): buttons live INSIDE the label — the
+      // collapse-toggle guard above already ignores clicks on <button>, so they can
+      // never fold the group shut by accident.
+      // FORK 2026-08-06 #3 (the architect): the chart button moved UP to the MODELS panel
+      // header (prominent, whole-catalog chart); this one now opens the dossier —
+      // what each smart model is best at, and what it is trained not to answer.
+      // FORK 2026-09-04 (the architect): "our smart x cost and dossier buttons will be
+      // reduced to an 'AI analysis' button ... that will open the site at the
+      // right page." The dossier button is gone; the ONE link lives in the Models
+      // panel header. openDossier() itself stays — it is the RENDERER the nightly
+      // export drives through window.__tzOpenDossier.
+      html += '<div class="model-group-label">SMART MODELS</div>';
+      html += '<div class="model-group-body">';
+      for (const id of allIds) {
+        renderAuthKeyRows(id, chainBadge.get(id) ?? "");
+      }
+      html += "</div></div>";
+    }
 
-  // FORK 2026-06-19 (bible §5.8h): the EEG host lives OUTSIDE this panel's innerHTML —
-  // paint it (binds once on the static #eeg-panel-body). It repaints on the same triggers
-  // as the budget panel (effort events, tab switch) via this tail call.
-  // FORK 2026-08-02 (the architect): "outside" now means a sibling .model-group inside
-  // #models-panel, immediately under this #budget-panel div — visually one more subtitle
-  // of the Models panel, structurally NOT part of the `html` built above. That separation
-  // is deliberate and load-bearing: see the eegPanelBound note (~L2424).
-  renderEegPanel();
-
-  // Bind collapse toggles
-  el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
-    label.addEventListener("click", (event) => {
-      // FORK 2026-08-02 (the architect): defensive twin of the right-rail header guard (~L12390).
-      // A group label can HOST live controls — the new EEG label carries the Session/All
-      // .ct-switch — and a click on one of those must not ALSO fold the group shut. No
-      // label rendered here has such a control today, so this costs nothing now and stops
-      // the next control someone drops into a label from causing exactly that bug.
-      const target = event.target as HTMLElement | null;
-      if (!target || target.closest(".ct-switch, button, a, input, select")) {
-        return;
-      }
-      const group = label.parentElement;
-      if (!group) {
-        return;
-      }
-      const section = group.dataset.section;
-      if (!section) {
-        return;
-      }
-      group.classList.toggle("open");
-      // FORK 2026-08-02 (the architect): single write-through to the unified store, stating the
-      // section's default so agreeing with it deletes the entry (absent = default).
-      setCollapsed(
-        "model:" + section,
-        !group.classList.contains("open"),
-        MODEL_SECTION_DEFAULT_COLLAPSED[section] ?? false,
+    // FORK 2026-07-30 (the architect): MORE MODELS — the AA < 50 tail, between MODELS and
+    // EFFORT. Same .model-group markup as its neighbours, so the one collapse-toggle
+    // binding below picks it up with no extra wiring. Default-collapsed (stated in
+    // MODEL_SECTION_DEFAULT_COLLAPSED) — the point is that the long tail stays
+    // reachable, not that it comes back into view.
+    if (moreIds.length) {
+      const open = !isCollapsed(
+        "model:more-models",
+        MODEL_SECTION_DEFAULT_COLLAPSED["more-models"],
       );
-    });
-  });
+      html += `<div class="model-group${open ? " open" : ""}" data-section="more-models">`;
+      html += `<div class="model-group-label">MORE MODELS <span class="model-group-count">${moreIds.length}</span></div>`;
+      html += '<div class="model-group-body">';
+      for (const id of moreIds) {
+        renderAuthKeyRows(id, chainBadge.get(id) ?? "");
+      }
+      html += "</div></div>";
+    }
 
-  // FORK 2026-07-26 (the architect): the ORCA fast↔smart dial. Same two-event pattern as the EFFORT
-  // slider — `input` moves the tick highlight live, `change` (drag RELEASE) persists and
-  // repaints. Repainting on `input` would replace the panel's innerHTML mid-drag and kill
-  // the <input type=range> under the user's finger.
-  //
-  // FORK 2026-08-29 (the architect: "the thalamus panel slider should then become usable") —
-  // two defects, one line apart:
-  // (a) SCOPE — THALAMUS moved to its own static host OUTSIDE #budget-panel (see the note at
-  //     the innerHTML assignment above). `el` is #budget-panel, so `el.querySelectorAll` has
-  //     matched NOTHING since that move: dragging the dial persisted nothing and repainted
-  //     nothing. Query the host that actually contains it — its innerHTML is rebuilt on every
-  //     repaint just above, so this bind must re-run on the same cadence, not once at boot,
-  //     and it never doubles up because the <input> it binds is a brand-new node each time.
-  // (b) GATE — the dial biases THALAMUS's OWN allocation, so it is inert once a model is
-  //     pinned. This guard is the listener's own stated opinion of whether it should act: it
-  //     refuses to persist a bias while the rail says a model is pinned, independently of
-  //     whether the markup happens to render the <input> `disabled` (renderBiasSlider in
-  //     routing-rationale.ts draws off the SAME `modelPinned` fact). Reads
-  //     `thalamusSignals.modelPinned` — the exact value the routing card was just painted
-  //     from above, the SAME predicate the rail's own stop index uses — never a second
-  //     computation the rail and the dial could disagree over.
-  const biasLive = !thalamusSignals.modelPinned;
-  thalamusBody?.querySelectorAll<HTMLInputElement>(".orca-bias-slider").forEach((sl) => {
-    sl.addEventListener("input", (e) => {
-      e.stopPropagation();
-      if (!biasLive) {
-        return;
-      }
-      highlightSliderStop(e, ".orca-bias-row");
-    });
-    sl.addEventListener("change", (e) => {
-      e.stopPropagation();
-      if (!biasLive) {
-        return;
-      }
-      highlightSliderStop(e, ".orca-bias-row");
-      if (sessionKey) {
-        saveOrcaBias(sessionKey, Number(sl.value) || 0);
-        updateBudgetPanel();
-      }
-    });
-  });
+    // FORK 2026-06-13 (eeg): EEG card (bible §5.8h) — (a) the per-tab 7-stop
+    // thinking slider (§5.8f, UNCHANGED semantics, still the .model-think-slider
+    // token), (b) the model-force slider (writes ONLY { model } — never bundled
+    // with thinkingLevel, §5.8f invariant 1), (c) the seismograph paper for the
+    // ACTIVE session. The paper re-renders on every updateBudgetPanel() call —
+    // effort events and tab switches (refreshViewedSessionIndicators) repaint the
+    // right session's trace because the store is keyed by the viewed sessionKey.
+    {
+      // FORK 2026-08-02 (the architect): section renamed 'eeg' → 'thinking'. This card holds the
+      // thinking + model-force sliders and has done since the seismograph left it; the old
+      // id was a leftover. 'eeg' is now the seismograph group in #models-panel — see the
+      // MODEL_SECTION_DEFAULT_COLLAPSED note (~L2240) for why the persisted-id swap is safe.
+      const open = !isCollapsed("model:thinking", MODEL_SECTION_DEFAULT_COLLAPSED["thinking"]);
+      html += `<div class="model-group${open ? " open" : ""}" data-section="thinking">`;
+      html += '<div class="model-group-label">THINKING</div>';
+      html += '<div class="model-group-body">';
+      html += renderThinkingSlider();
+      html += renderModelForceSlider();
+      html += "</div></div>";
+    }
 
-  // FORK 2026-06-13 (eeg): SECONDARY (horizontal/tilt) wheel = vertical SCALE zoom
-  // of the length axis (the architect 2026-06-13). the architect's secondary wheel emits a
-  // HORIZONTAL delta (deltaX) — which was sliding the panel sideways; we capture
-  // that (and Ctrl+wheel as a no-tilt-wheel fallback) for zoom instead. The
-  // VERTICAL wheel (deltaY) still scrolls history normally.
-  const eegPaperEl = el.querySelector<HTMLElement>("#eeg-paper");
-  eegPaperEl?.addEventListener(
-    "wheel",
-    (e) => {
-      const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
-      const delta = e.ctrlKey ? e.deltaY : horizontal ? e.deltaX : 0;
-      if (delta === 0) {
-        return; // vertical wheel → normal history scroll
-      }
-      e.preventDefault();
-      const factor = delta < 0 ? 1.12 : 1 / 1.12;
-      eegZoom = Math.min(20, Math.max(0.03, eegZoom * factor));
-      fillEegPaper();
-    },
-    { passive: false },
-  );
+    // FORK 2026-07-25 (the architect): the routing card — its OWN collapsible group directly under the
+    // model slider, with three very short sections (MODEL / EFFORT / FAN-OUT). A fixed model
+    // or effort is stated flatly; FAN-OUT lists the routing calls made during the turn.
+    //
+    // RENAMED ORCA → THALAMUS, 2026-07-29 (the architect: "the ORCA panel should instead be the
+    // THALAMUS model, which will inform me about the routing strategies").
+    //
+    // The label was the ONLY thing here that said ORCA. Everything this card renders is
+    // allocation, not parallel editing: routingSignals() computes the model in force, its rank
+    // within the routable pool, the effort level and the rate-limit reset window; and
+    // describeRoute() narrates each job's DOMAIN + supplier + critic/panel. There is not one
+    // lease, edit-unit, file or commit in it — those are ORCA's. Even the module is already
+    // called panels/routing-rationale.ts, and the bias control it hosts talks to
+    // `prefrontal.orcaBias`, not to the ORCA plugin.
+    //
+    // The division the two names encode: ORCA decomposes work into edit-units and applies
+    // patches under file leases; THALAMUS decides which supplier serves each unit. `unit`/`task`
+    // is the join key between them — ORCA says WHAT the jobs are, THALAMUS says WHO runs them.
+    // FORK 2026-08-29 (the architect: "move the context window up over thalamus, under thinking").
+    // THALAMUS used to be generated here, as the last group inside #budget-panel — which put it
+    // ABOVE the two static groups (CONTEXT WINDOW, EEG) that are siblings of #budget-panel, and
+    // there is no way to interleave a grandchild with a sibling by ordering alone.
+    //
+    // Rather than move the CONTEXT WINDOW node into this generated block — its whole reason for
+    // being static is that innerHTML here destroys and recreates every node while its bind-once
+    // latches stay true — THALAMUS moved OUT to a static host of its own, directly below the
+    // cache panel. It is the cheapest node to move: a label plus one pure render call, with no
+    // listeners of its own, so nothing can be orphaned by the relocation. The boot fold binding
+    // (~L19608) already selects every direct .model-group child of #models-panel, so it picks up
+    // the new host for free — exactly what its own comment promised the next static subtitle.
+    //
+    // It is still PAINTED from here, on the same triggers as everything else in this panel.
 
-  // FORK 2026-06-19: the EEG marker-click handler moved to bindEegPanelOnce (the EEG
-  // paper lives outside #budget-panel — since 2026-08-02 in its own STATIC .model-group
-  // under #models-panel). The old #eeg-paper-inside-#budget-panel binding here
-  // was DEAD — that element no longer exists, so this never fired (it was the reason
-  // the click "did nothing"). Removed to kill the phantom handler.
+    html += `</div><div class="budget-updated">Updated ${new Date().toLocaleTimeString()}</div>`;
+    el.innerHTML = html;
+    reanchorOpenHint?.();
+
+    // FORK 2026-10-01 (the architect: "the thalamus panel gives too much information right now, let's simplify it all") — the
+    // card is the PRESENT TURN only (panels/thalamus-turn.ts), painted by paintThalamusTurn(), which the EEG's live
+    // repaint also calls. The frontier, supplies, WHY THIS / IF IT FAILS rows and the BIAS dial left the card: the
+    // dial is now the EFFORT row itself while the model picker is on Auto (renderThinkingSlider).
+    thalamusV4Ui.refreshIfDue();
+    paintThalamusTurn();
+
+    // FORK 2026-06-19 (bible §5.8h): the EEG host lives OUTSIDE this panel's innerHTML —
+    // paint it (binds once on the static #eeg-panel-body). It repaints on the same triggers
+    // as the budget panel (effort events, tab switch) via this tail call.
+    // FORK 2026-08-02 (the architect): "outside" now means a sibling .model-group inside
+    // #models-panel, immediately under this #budget-panel div — visually one more subtitle
+    // of the Models panel, structurally NOT part of the `html` built above. That separation
+    // is deliberate and load-bearing: see the eegPanelBound note (~L2424).
+    renderEegPanel();
+
+    // Bind collapse toggles
+    el.querySelectorAll<HTMLElement>(".model-group-label").forEach((label) => {
+      label.addEventListener("click", (event) => {
+        // FORK 2026-08-02 (the architect): defensive twin of the right-rail header guard (~L12390).
+        // A group label can HOST live controls — the new EEG label carries the Session/All
+        // .ct-switch — and a click on one of those must not ALSO fold the group shut. No
+        // label rendered here has such a control today, so this costs nothing now and stops
+        // the next control someone drops into a label from causing exactly that bug.
+        const target = event.target as HTMLElement | null;
+        if (!target || target.closest(".ct-switch, button, a, input, select")) {
+          return;
+        }
+        const group = label.parentElement;
+        if (!group) {
+          return;
+        }
+        const section = group.dataset.section;
+        if (!section) {
+          return;
+        }
+        group.classList.toggle("open");
+        // FORK 2026-08-02 (the architect): single write-through to the unified store, stating the
+        // section's default so agreeing with it deletes the entry (absent = default).
+        setCollapsed(
+          "model:" + section,
+          !group.classList.contains("open"),
+          MODEL_SECTION_DEFAULT_COLLAPSED[section] ?? false,
+        );
+      });
+    });
+
+    // FORK 2026-10-01 (the architect): "The effort slider should turn into the bias slider when the model picker is set to
+    // auto, and should have only 3 settings (fast, balanced and smart)." The dial is drawn by renderThinkingSlider()
+    // inside #budget-panel only while the model is on Auto, so whenever it exists it is live. Same two-event pattern
+    // as before: `input` moves the tick highlight, `change` (drag release) persists and repaints, because repainting
+    // on `input` would rebuild the panel under the user's finger. The delegated EFFORT listeners skip this input
+    // (`.orca-bias-slider`), so moving the dial never re-pins an effort.
+    el.querySelectorAll<HTMLInputElement>(".orca-bias-slider").forEach((sl) => {
+      sl.addEventListener("input", (e) => {
+        e.stopPropagation();
+        highlightSliderStop(e, ".orca-bias-row");
+      });
+      sl.addEventListener("change", (e) => {
+        e.stopPropagation();
+        highlightSliderStop(e, ".orca-bias-row");
+        if (ensureActiveSessionKey()) {
+          saveOrcaBias(sessionKey, BIAS3_STOPS[Number(sl.value) || 0]?.idx ?? BIAS_DEFAULT_IDX);
+          updateBudgetPanel();
+        }
+      });
+    });
+
+    // FORK 2026-06-13 (eeg): SECONDARY (horizontal/tilt) wheel = vertical SCALE zoom
+    // of the length axis (the architect 2026-06-13). the architect's secondary wheel emits a
+    // HORIZONTAL delta (deltaX) — which was sliding the panel sideways; we capture
+    // that (and Ctrl+wheel as a no-tilt-wheel fallback) for zoom instead. The
+    // VERTICAL wheel (deltaY) still scrolls history normally.
+    const eegPaperEl = el.querySelector<HTMLElement>("#eeg-paper");
+    eegPaperEl?.addEventListener(
+      "wheel",
+      (e) => {
+        const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+        const delta = e.ctrlKey ? e.deltaY : horizontal ? e.deltaX : 0;
+        if (delta === 0) {
+          return; // vertical wheel → normal history scroll
+        }
+        e.preventDefault();
+        const factor = delta < 0 ? 1.12 : 1 / 1.12;
+        eegZoom = Math.min(20, Math.max(0.03, eegZoom * factor));
+        fillEegPaper();
+      },
+      { passive: false },
+    );
+
+    // FORK 2026-06-19: the EEG marker-click handler moved to bindEegPanelOnce (the EEG
+    // paper lives outside #budget-panel — since 2026-08-02 in its own STATIC .model-group
+    // under #models-panel). The old #eeg-paper-inside-#budget-panel binding here
+    // was DEAD — that element no longer exists, so this never fired (it was the reason
+    // the click "did nothing"). Removed to kill the phantom handler.
+
+    const paintedRows = el.querySelectorAll(".model-row").length;
+    const paintedBars = el.querySelectorAll(".usage-bars-wrap").length;
+    const paintedEmptyBars = el.querySelectorAll(".usage-bars-col").length - paintedBars;
+    const paintSummary = {
+      ms: Date.now() - paintStartedAt,
+      smart: allIds.length,
+      more: moreIds.length,
+      rows: paintedRows,
+      bars: paintedBars,
+      emptyBarSlots: paintedEmptyBars,
+      hasUsage: !!budgetUsageData,
+      usageShape: budgetUsageShape(budgetUsageData),
+      htmlChars: html.length,
+    };
+    BP_DEBUG_STATE.lastPaint = paintSummary;
+    bpDebug("paint", paintSummary);
+    // The owner's report is "just the graph" — model rows present, usage bars gone.
+    // That is this census: rows > 0 and bars === 0. Always log that, even with debug off.
+    if (paintedRows > 0 && paintedBars === 0) {
+      bpFail(
+        "paint: model rows present, usage bars ABSENT — the 'just the graph' shape",
+        paintSummary,
+      );
+    } else if (paintedRows === 0) {
+      bpFail("paint: zero model rows — SMART MODELS list is empty", paintSummary);
+    }
+  } catch (err) {
+    bpFail("updateBudgetPanel THREW — paint aborted, last HTML left in place", {
+      ms: Date.now() - paintStartedAt,
+      error: bpErrMsg(err),
+      raw: err,
+      hasCatalog: !!modelConfigData,
+      hasUsage: !!budgetUsageData,
+    });
+    // Do not rethrow: a throw here used to take the rest of the turn's UI with it
+    // (EEG, THALAMUS, activity glow) because this function is called from the
+    // shared repaint funnel. Log and leave the last good HTML.
+  }
 }
 
 function shortErrorLabel(reason: string): string {
@@ -17615,12 +23868,12 @@ function shortErrorLabel(reason: string): string {
 
 const authProfileListeners = new Set<(evt: unknown) => void>();
 
-function showToast(msg: string, isError = false): void {
+function showToast(msg: string, isError = false, ms = 3000): void {
   const t = document.createElement("div");
   t.className = `toast${isError ? " toast-error" : ""}`;
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => t.remove(), ms);
 }
 
 async function startOAuthReauthFlow(profileId: string): Promise<void> {
@@ -17783,6 +24036,25 @@ async function openSmartCostChart(): Promise<void> {
   // models meta (family ctx), then the whole reachable AA catalog. All three
   // are LABELLED since #11; the tiers now differ only in where their context
   // window comes from.
+  // FORK 2026-09-04 (the architect: "Openai and codex is the same company, keep the openai
+  // button and remove the other two, consolidating codex into it").
+  //
+  // `codex` and `openai-codex` are ACCESS CHANNELS to OpenAI, the way `claude-code`
+  // is a channel to Anthropic — they are how we reach the model, not who built it.
+  // vendorOfModel() only pattern-matches the Chinese labs, so all three fell through
+  // to `?? provider` and the legend grew three adjacent OpenAI chips at an identical
+  // 60.9 index. That LOOKS like a broken sort and is really a broken key: the row was
+  // correctly ordered the whole time (verified against every dot's `idx`).
+  //
+  // Folding them here rather than at the legend keeps the chip and the DOT COLOUR on
+  // the same key, which is the invariant the legend comment below depends on. It is
+  // free of colour risk in this case: all three channels already resolve to OpenAI's
+  // #10A37F, so the merged chip cannot disagree with any dot it now controls.
+  const SC_CHANNEL_VENDOR = new Map([
+    ["codex", "openai"],
+    ["openai-codex", "openai"],
+  ]);
+  const scVendorKey = (key: string) => SC_CHANNEL_VENDOR.get(key) ?? key;
   const push = (
     id: string,
     name: string,
@@ -17805,7 +24077,7 @@ async function openSmartCostChart(): Promise<void> {
       // `provider` instead would file Kimi, GLM, Qwen, DeepSeek and 7 more —
       // five distinct colours on the chart — under one grey "openrouter" chip,
       // and clicking that chip would light up models that share no identity.
-      vendorKey: vendorOfModel(`${provider} ${id}`) ?? provider,
+      vendorKey: scVendorKey(vendorOfModel(`${provider} ${id}`) ?? provider),
       labeled,
     });
     seen.add(id);
@@ -17895,6 +24167,10 @@ async function openSmartCostChart(): Promise<void> {
     if (!base) continue;
     const supplierCount = Object.keys(row.providers).length;
     if (supplierCount < 2) continue;
+    // A lab-direct-only model (sold by its own lab, absent from OpenRouter) carries no
+    // cheapest route to plot. It has no suppliers either, so the guard above already
+    // skips it — this makes that explicit rather than load-bearing on a coincidence.
+    if (!row.cheapest) continue;
     cnSurveyed.push({ name: base.name, n: supplierCount });
     const addRoute = (label: string, out: number) => {
       const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -17906,8 +24182,11 @@ async function openSmartCostChart(): Promise<void> {
       push(id, base.name, slug, base.index, base.ctx, true, out);
     };
     addRoute(row.cheapest.provider, row.cheapest.out);
-    const lab = row.lab;
-    if (lab && row.providers[lab]) addRoute(lab, row.providers[lab].out);
+    // labHost, not lab: a lab's own endpoint is not always listed under the lab's
+    // display name (ByteDance sells as "Seed"), and looking it up by display name
+    // silently dropped the first-party dot for those models.
+    const labHost = row.labHost;
+    if (labHost && row.providers[labHost]) addRoute(labHost, row.providers[labHost].out);
   }
 
   // FORK 2026-08-24 (the architect): every ROUTE now keeps its own dot at its own price.
@@ -17984,7 +24263,10 @@ async function openSmartCostChart(): Promise<void> {
     )
     .map(([key, g]) => {
       const sample = g.ids[0];
-      const logo = getRoutedLogoSvg(sample, providerOf(sample)); // FORK 2026-09-02: see modelIcon()
+      // FORK 2026-09-04: the GROUP's own mark first, the sample model's only as a
+      // fallback. getRoutedLogoSvg answers "who made this model" — right for a dot,
+      // wrong for a chip standing for a router, which wore its first re-sell's brand.
+      const logo = getVendorKeyLogoSvg(key) ?? getRoutedLogoSvg(sample, providerOf(sample));
       const label = vendorMarkFor(sample)?.label ?? key;
       return (
         `<button class="sc-chip" data-vendor="${esc(key)}" style="--sc-chip:${esc(g.color)}"` +
@@ -18170,6 +24452,10 @@ async function openSmartCostChart(): Promise<void> {
       applyView(svg);
     });
   };
+  // Waypoint "stickiness" (the architect 2026-09-23 #2): a dragged circle snaps onto a plan
+  // triangle within this many SCREEN pixels, converted through the live CTM so the
+  // pull feels the same at every zoom level.
+  const SC_WP_SNAP_PX = 12;
   const wireUtilDrag = (svg: SVGSVGElement) => {
     const toChart = (ev: { clientX: number; clientY: number }) => {
       const ctm = svg.getScreenCTM();
@@ -18179,13 +24465,18 @@ async function openSmartCostChart(): Promise<void> {
       pt.y = ev.clientY;
       return pt.matrixTransform(ctm.inverse());
     };
+    type WpStop = { el: SVGElement; x: number; hud: string };
     let slide: {
       g: SVGGElement;
       homeX: number;
-      listX: number;
-      fullX: number;
+      lo: number;
+      hi: number;
       homeCost: number;
       y: number;
+      /** This rung's row: its triangles (plan + list) and its bridge (.sc-wp-active). */
+      row: SVGElement[];
+      stops: WpStop[];
+      hit: WpStop | null;
     } | null = null;
     const put = (g: SVGGElement, x: number, y: number) => {
       g.setAttribute("transform", `translate(${x}, ${y})`);
@@ -18194,9 +24485,24 @@ async function openSmartCostChart(): Promise<void> {
     const showHud = (g: SVGGElement, util: number, cost: number) => {
       const el = labelOf(g);
       if (!el) return;
+      // UNCLAMPED on purpose: left of our own 100% mark the seat cannot deliver that
+      // price, and "150%" says so; a clamped "100%" would claim it can.
       const pct = Math.round(util * 100);
       const euros = cost >= 10 ? cost.toFixed(0) : cost >= 1 ? cost.toFixed(2) : cost.toFixed(3);
       el.textContent = `${pct}% · €${euros}`;
+    };
+    // On a waypoint the readout names the PLAN and its monthly commitment — "put the
+    // circle on top of it, the model and price per month will show" (the architect).
+    const showPlanHud = (g: SVGGElement, hud: string) => {
+      const el = labelOf(g);
+      if (el) el.textContent = hud;
+    };
+    const setHit = (st: WpStop | null) => {
+      if (!slide || slide.hit === st) return;
+      slide.hit?.el.classList.remove("sc-wp-hit");
+      st?.el.classList.add("sc-wp-hit");
+      slide.g.classList.toggle("sc-util-on-wp", st !== null);
+      slide.hit = st;
     };
     svg.addEventListener("pointerdown", (e) => {
       const g = (e.target as Element | null)?.closest?.(
@@ -18210,13 +24516,37 @@ async function openSmartCostChart(): Promise<void> {
       const homeCost = Number(g.dataset.homeCost);
       const y = Number(g.dataset.homeY);
       const s = scComputeScales(plotted, scaleInput.checked ? "linear" : "log");
+      const fullX = scCostX(scCostAtUtil(homeCost, 1), s);
+      // THE ROW: this rung's plan triangles and its API triangle, addressed by
+      // (model, effort) — the same key the chart stamps on every mark of one rung.
+      const q = `[data-model="${CSS.escape(g.dataset.model ?? "")}"][data-effort="${CSS.escape(g.dataset.effort ?? "")}"]`;
+      // The row = every triangle of this rung (plan marks share .sc-apipos with the list
+      // mark since 2026-09-23 #3, "same size, same behavior") PLUS the rung's dashed
+      // bridge, which lights with them but is not a stop.
+      const row = [...svg.querySelectorAll<SVGElement>(`.sc-apipos${q}, .sc-bridgelayer line${q}`)];
+      const stops: WpStop[] = [];
+      for (const el of row) {
+        el.classList.add("sc-wp-active");
+        if (!el.classList.contains("sc-apipos")) continue;
+        const plan = el.classList.contains("sc-wppos");
+        const x = plan ? Number(el.dataset.wpX) : listX;
+        const hud = plan ? (el.dataset.wpHud ?? "") : "API · no monthly fee";
+        if (Number.isFinite(x)) stops.push({ el, x, hud });
+      }
+      // The range spans every mark on the row, not only our seat's 100%…list span:
+      // a bigger plan can land LEFT of what our own seat can ever reach (OpenAI Pro 20×
+      // sits left of Plus at 100%), and a stop you cannot drag to is not a stop.
+      const xs = [fullX, listX, ...stops.map((st) => st.x)];
       slide = {
         g,
         homeX,
-        listX,
-        fullX: scCostX(scCostAtUtil(homeCost, 1), s),
+        lo: Math.min(...xs),
+        hi: Math.max(...xs),
         homeCost,
         y,
+        row,
+        stops,
+        hit: null,
       };
       g.classList.add("sc-util-sliding");
       g.classList.remove("sc-util-snap");
@@ -18228,16 +24558,32 @@ async function openSmartCostChart(): Promise<void> {
       if (!slide) return;
       const p = toChart(e);
       if (!p) return;
-      const lo = Math.min(slide.fullX, slide.listX);
-      const hi = Math.max(slide.fullX, slide.listX);
-      const x = Math.max(lo, Math.min(hi, p.x));
+      let x = Math.max(slide.lo, Math.min(slide.hi, p.x));
+      // STICKINESS: the nearest mark within SC_WP_SNAP_PX screen pixels captures the
+      // circle; outside every radius it slides freely.
+      const k = Math.abs(svg.getScreenCTM()?.a ?? 1) || 1;
+      const reach = SC_WP_SNAP_PX / k;
+      let best: WpStop | null = null;
+      for (const st of slide.stops) {
+        const d = Math.abs(st.x - x);
+        if (d <= reach && (best === null || d < Math.abs(best.x - x))) best = st;
+      }
+      if (best) x = best.x;
+      setHit(best);
       put(slide.g, x, slide.y);
-      const s = scComputeScales(plotted, scaleInput.checked ? "linear" : "log");
-      showHud(slide.g, scUtilAtCost(slide.homeCost, scCostFromX(x, s)), scCostFromX(x, s));
+      if (best) {
+        showPlanHud(slide.g, best.hud);
+      } else {
+        const s = scComputeScales(plotted, scaleInput.checked ? "linear" : "log");
+        const cost = scCostFromX(x, s);
+        showHud(slide.g, (slide.homeCost * SC_PLAN_UTIL) / cost, cost);
+      }
     });
     const endSlide = (e: PointerEvent) => {
       if (!slide) return;
       const g = slide.g;
+      setHit(null);
+      for (const el of slide.row) el.classList.remove("sc-wp-active");
       put(g, slide.homeX, slide.y);
       g.classList.remove("sc-util-sliding");
       g.classList.add("sc-util-snap");
@@ -18383,25 +24729,51 @@ async function openSmartCostChart(): Promise<void> {
   });
 }
 
+// FORK 2026-09-04 (the architect): "I want the graph in the website to be the last
+// version of the graph and table, and our panels to source from there ... only
+// one copy, no duplicates, no maintenance hell."
+//
+// The panels below are the RENDERER — they need live config, quota and the
+// thalamus module, so they cannot move to a static site. What moved is the
+// ARTIFACT: skills/model-rank-refresh/scripts/publish-ai-analysis.sh exports
+// both panels and republishes them to the page below after every model
+// refresh, so the website carries the only copy anyone reads. The UI keeps a
+// link, not a second rendering of the same thing.
+export const AI_ANALYSIS_URL = "https://thetinkerzone.com/ai-analysis/";
+
+// The export drives the panels through these hooks rather than the buttons,
+// which is why removing the buttons did not break the nightly publish.
+declare global {
+  interface Window {
+    __tzOpenSmartCost?: () => void;
+    __tzOpenDossier?: () => void;
+  }
+}
+window.__tzOpenSmartCost = () => void openSmartCostChart();
+window.__tzOpenDossier = () => void openDossier();
+
 // The MODELS panel rebuilds its innerHTML on every render, so the chart button
 // is bound once at document level instead of per-render.
-document.addEventListener("click", (e) => {
-  const btn = (e.target as HTMLElement | null)?.closest(".sc-open-btn");
-  if (btn) {
-    e.stopPropagation();
-    void openSmartCostChart();
-  }
-});
 
 // FORK 2026-08-06 #3 (the architect): the SMART MODELS dossier — best-at + trained
 // refusals for every smart model, with the US/China common ground called out.
 // Same overlay mechanics as the chart; the rows are the SMART MODELS set
 // computed by the ONE shared predicate (modelPassesPanelMin).
 async function openDossier(): Promise<void> {
-  const cfgData = modelConfigData as {
+  // Same fetch as openSmartCostChart (2026-08-06): the export hook can fire before
+  // the gateway catalog lands, and this panel used to paint only the four reference
+  // rows. A headless publish then refused the page. Fetch our own copy.
+  type SdCfg = {
     primary?: string;
     models?: Record<string, ModelIntelligenceMeta>;
-  } | null;
+  };
+  let cfgData = modelConfigData as SdCfg | null;
+  try {
+    const fresh = (await req("config.models", {})) as SdCfg | null;
+    if (fresh && typeof fresh === "object" && fresh.models) cfgData = fresh;
+  } catch {
+    /* keep the panel's copy */
+  }
   const meta = cfgData?.models;
   const configured = await fetchScProviderModels();
   const names = new Map<string, string>();
@@ -18421,7 +24793,26 @@ async function openDossier(): Promise<void> {
   // NOT extended to the chart's catalog tail on purpose: dossier rows are WRITTEN
   // knowledge (refusal benchmarks, best-at claims), and SC_DOSSIER_RULES has no
   // entry for most of the tail. A blank row is honest; a fabricated one is not.
-  const ids = Object.keys(meta || {});
+  //
+  // FORK 2026-09-04 (the architect: "The new gpt 6.0 Astra model just appeared, add it to the
+  // graph and table"). The graph took it on published price; this list is what gets it
+  // into the TABLE, and it is a LIST rather than a rule on purpose.
+  //
+  // The tempting rule — "every AA-scored id that also has a graded row" — adds 34
+  // models, nearly doubling the dossier with the whole Copilot and Codex re-sell tail,
+  // and it changes the question the panel answers from "what am I running" to "what
+  // exists". That is a different panel, and nobody asked for it.
+  //
+  // Nothing here is fabricated: the index comes from AA_INTELLIGENCE_INDEX via
+  // configuredIntelligenceIndex's own fallback, and every capability and censorship
+  // cell comes from the SAME scraped domain-strength row every other model uses. What
+  // this id lacks is a ROUTE, not knowledge — probed 2026-09-04, both the ChatGPT seat
+  // and our metered key refuse it. It is deliberately absent from openclaw.json so it
+  // never reaches the picker; DELETE THIS ENTRY the day the route lands, because from
+  // then on the normal configured path carries it and this line would double the row.
+  // 2026-09-09: openai-codex/gpt-6-astra is now configured, so the extras list is empty.
+  const SD_UNROUTED_EXTRAS: string[] = [];
+  const ids = [...new Set([...Object.keys(meta || {}), ...SD_UNROUTED_EXTRAS])];
   const rows: DossierRow[] = [];
   for (const id of ids) {
     const index = configuredIntelligenceIndex(meta, id);
@@ -18460,7 +24851,7 @@ async function openDossier(): Promise<void> {
         </div>
         <button class="sc-close" title="Close">✕</button>
       </div>
-      <div class="sd-body">${renderDossierTable(rows, undefined, { biasIdx })}${renderCnProviderMatrix(CN_PROVIDER_PRICES)}</div>
+      <div class="sd-body">${renderDossierTable(rows, undefined, { biasIdx })}${renderCnProviderMatrix(CN_PROVIDER_PRICES, { logoFor: (cnId) => getRoutedLogoSvg(`openrouter/${cnId}`, "openrouter"), indexFor: (cnId) => configuredIntelligenceIndex(meta, `openrouter/${cnId}`) ?? CN_AA_INDEX[cnId] })}</div>
     </div>`;
   document.body.appendChild(overlay);
   const close = () => {
@@ -18479,14 +24870,6 @@ async function openDossier(): Promise<void> {
   attachDossierSort(overlay);
 }
 
-// The SMART MODELS label also rebuilds on every render — document-level binding.
-document.addEventListener("click", (e) => {
-  const btn = (e.target as HTMLElement | null)?.closest(".sd-open-btn");
-  if (btn) {
-    e.stopPropagation();
-    void openDossier();
-  }
-});
 // ─── Model Panel Rows ───
 
 // FORK 2026-07-30 (the architect): column 3 was session token totals — low signal next
@@ -18504,6 +24887,12 @@ function modelIntelligenceIndex(modelId: string): string {
   return `<span class="model-index-col" data-hint="Artificial Analysis Intelligence Index: ${label} (higher = smarter; panel sort key)" style="min-width:28px;text-align:right;font-size:9px;color:var(--accent);font-family:'SF Mono',monospace;font-weight:700">${label}</span>`;
 }
 
+/** A model row's hover: who runs it now, or who ran it lately. Children with their own data-hint
+ *  (index, bars, error badge) keep theirs; the global hint takes the closest one. */
+function rowHintAttr(rowHint: string | undefined): string {
+  return rowHint ? ` data-hint="${esc(rowHint)}"` : "";
+}
+
 function renderModelRow(
   id: string,
   provider: string,
@@ -18513,6 +24902,7 @@ function renderModelRow(
   count: number,
   errorInfo?: { error: string; reason: string },
   keyId?: string,
+  rowHint?: string,
 ): string {
   // FORK 2026-08-06: unified glow — the model's EEG trace color via the central
   // resolver. getModelAccentColor was the vendor-only half of this; resolveEegGlowColor
@@ -18542,7 +24932,7 @@ function renderModelRow(
   // FORK 2026-06-14 (bug #1): keep the last-computed model pinned when idle+collapsed.
   const recentClass = count === 0 && rowIsRecentModel(id) ? " model-recent" : "";
 
-  return `<div class="model-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
+  return `<div class="model-row${liveClass}${recentClass}${errorClass}"${glowStyle}${rowHintAttr(rowHint)}>
     <span class="model-name-col">${modelIcon(id, provider)}<span class="model-name">${nameParts}</span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${modelIntelligenceIndex(id)}
     ${barsHtml}
@@ -18560,6 +24950,7 @@ function renderAuthKeyRow(
   badge: string,
   count: number,
   errorInfo?: { error: string; reason: string },
+  rowHint?: string,
 ): string {
   // FORK 2026-08-06: unified glow — same central resolver as every other surface.
   const color = resolveEegGlowColor({ model: modelId, provider });
@@ -18584,7 +24975,7 @@ function renderAuthKeyRow(
   // FORK 2026-06-14 (bug #1): keep the last-computed model pinned when idle+collapsed.
   const recentClass = count === 0 && rowIsRecentModel(modelId) ? " model-recent" : "";
 
-  return `<div class="model-row auth-key-row${liveClass}${recentClass}${errorClass}"${glowStyle}>
+  return `<div class="model-row auth-key-row${liveClass}${recentClass}${errorClass}"${glowStyle}${rowHintAttr(rowHint)}>
     <span class="model-name-col">${modelIcon(modelId, provider)}<span class="model-name">${esc(name)} <span class="auth-key-label">${esc(label)}</span></span>${badge ? `<span class="model-badge">${badge}</span>` : ""}${errorBadge}</span>
     ${modelIntelligenceIndex(modelId)}
     ${barsHtml}
@@ -18750,7 +25141,11 @@ function allowedEffortLevels(modelId: string | null | undefined): string[] {
   // Anthropic effort.md 2026-08-27: Opus 5 / Fable 5 / Sonnet 5 / Opus 4.8 / 4.7
   // = low→max (no minimal). Sonnet 4.6 / Opus 4.6 = low/medium/high/max (no xhigh).
   if (/claude|opus|sonnet|haiku|fable/.test(lo)) {
-    if (/(?:opus-5|fable-5|sonnet-5|opus-4[.-]8|opus-4[.-]7)(?![.\d])/.test(lo)) {
+    if (
+      /(?:opus-5[.-]5|sonnet-5[.-]5|opus-5|fable-5|sonnet-5|opus-4[.-]8|opus-4[.-]7)(?![.\d])/.test(
+        lo,
+      )
+    ) {
       return ["", "low", "medium", "high", "xhigh", "max"];
     }
     if (/(?:sonnet-4[.-]6|opus-4[.-]6)(?![.\d])/.test(lo)) {
@@ -18758,9 +25153,10 @@ function allowedEffortLevels(modelId: string | null | undefined): string[] {
     }
     return ["", "minimal", "low", "medium", "high"];
   }
-  // xAI docs 2026-08-27: grok-4.6 = low/medium/high/xhigh; grok-4.5 = low/medium/high.
+  // xAI docs 2026-08-27 + grok-4.7 catalog 2026-09-22: 4.7/4.6 = low/medium/high/xhigh;
+  // grok-4.5 = low/medium/high. Probe of grok-4.7 listed reasoning_efforts xhigh/high/medium/low.
   if (/grok|xai/.test(lo)) {
-    if (/grok-4\.6|grok-4-6/.test(lo)) return ["", "low", "medium", "high", "xhigh"];
+    if (/grok-4\.[67]|grok-4-[67]/.test(lo)) return ["", "low", "medium", "high", "xhigh"];
     if (/grok-4\.5|grok-4-5/.test(lo)) return ["", "low", "medium", "high"];
     return ["", "low", "high"];
   }
@@ -18806,13 +25202,23 @@ function activeEffortStops(): { lvl: string; label: string; short: string }[] {
 // EVERY stop is visible (the architect's "every option written in the slider") and each
 // label centers on the SAME x as its seismograph column (eegStopLeftCss → bible
 // §5.8h invariant 2 alignment). The active stop is bolded via .active.
-function renderSliderStops(labels: string[], activeIdx: number): string {
+// FORK 2026-10-02 (the architect, Thalamus full deploy): `roles` puts the dial stop's letter (S · D · B) after a level, and
+// the level's `lvl` rides as data-lvl so the right-click can say which effort it means.
+function renderSliderStops(
+  labels: string[],
+  activeIdx: number,
+  roles?: { lvls: string[]; letters: string[] },
+): string {
   let out = '<div class="model-slider-stops">';
   for (let i = 0; i < labels.length; i++) {
     const cls = i === activeIdx ? "model-slider-stop active" : "model-slider-stop";
+    const letters = roles?.letters[i] ?? "";
     out +=
-      `<span class="${cls}" style="left:${eegStopLeftCss(i, labels.length)}">` +
+      `<span class="${cls}" style="left:${eegStopLeftCss(i, labels.length)}"` +
+      (roles ? ` data-lvl="${esc(roles.lvls[i] ?? "")}"` : "") +
+      ">" +
       esc(labels[i]) +
+      (letters ? `<sup class="model-stop-role">${esc(letters)}</sup>` : "") +
       "</span>";
   }
   out += "</div>";
@@ -19005,11 +25411,20 @@ function shortModelLabel(id: string): string {
   // logo"). The slider draws each stop behind its provider logo — the same reason
   // the Gemini stops already dropped their "Gem" prefix below — so the marker was
   // spending width to repeat what the icon says.
+  // FORK 2026-09-25 (the architect: "Add the versions there"): Opus 5.5 and Opus 5 both sit on the
+  // picker, so Claude families carry their version like every other stop: Opus5.5 · Opus5 ·
+  // Fable5.1 · Sonnet4.6. The minor is 1–2 digits so a date stamp is never read as one.
+  {
+    const claude = lo.match(/(fable|opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?!\d)/);
+    if (claude) {
+      const [, fam, major, minor] = claude;
+      return `${fam.charAt(0).toUpperCase()}${fam.slice(1)}${major}${minor ? `.${minor}` : ""}`;
+    }
+  }
   if (/fable/.test(lo)) {
     return "Fable";
   }
   if (/opus/.test(lo)) {
-    // only one opus on the slider now (4-7 excluded) → no version suffix needed
     return "Opus";
   }
   if (/sonnet/.test(lo)) {
@@ -19029,14 +25444,18 @@ function shortModelLabel(id: string): string {
   // FORK 2026-07-21 (the architect): the gpt-5.6 family ships under nicknames — surface
   // Sol/Luna/Terra directly (the generic gpt rule would collapse all three to
   // "GPT5.6"). Match BEFORE the generic gpt branch below.
-  if (/sol\b/.test(lo) && /gpt-?5/.test(lo)) {
-    return "Sol";
-  }
-  if (/luna\b/.test(lo)) {
-    return "Luna";
-  }
-  if (/terra\b/.test(lo)) {
-    return "Terra";
+  // FORK 2026-07-21 (the architect): the gpt codename families ship under nicknames — surface
+  // Sol/Luna/Terra/Astra directly (the generic gpt rule would collapse them to "GPT5.6").
+  // FORK 2026-09-22: gpt-6-sol + gpt-6-luna launched and the old rule required "gpt-5",
+  // so gpt-6-sol fell through and the picker read "GPT6". Version-agnostic now, and the
+  // older major keeps its version so the two Sols never render identically.
+  {
+    const nick = lo.match(/gpt-?([\d.]+)-(sol|terra|luna|astra)\b/);
+    if (nick) {
+      const [, ver, name] = nick;
+      // 09-25: always versioned (Sol6 · Sol5.6 · Astra6), same rule as modelName.
+      return `${name.charAt(0).toUpperCase()}${name.slice(1)}${ver}`;
+    }
   }
   if (/gpt-?[\d.]+/.test(lo)) {
     const v = (lo.match(/gpt-?([\d.]+)/) || [])[1] || "";
@@ -19046,7 +25465,8 @@ function shortModelLabel(id: string): string {
     return `GPT${v}${k}`;
   }
   if (/grok/.test(lo)) {
-    return "Grok";
+    // 09-25: Grok 4.7 and 4.6 both sit on the picker → Grok4.7 · Grok4.6.
+    return "Grok" + ((lo.match(/grok-?(\d+(?:\.\d+)?)/) || [])[1] || "");
   }
   if (/deepseek/.test(lo)) {
     return "DSeek";
@@ -19092,6 +25512,10 @@ function thinkStopIndexForLevel(level: unknown): number {
 // existing refreshViewedSessionIndicators() -> updateBudgetPanel() path, so it
 // always reflects + follows the active tab.
 function renderThinkingSlider(): string {
+  // FORK 2026-10-01 (the architect): on Auto the EFFORT row IS the Thalamus bias dial (fast · balanced · smart).
+  if (!isModelPinnedFor(sessionKey)) {
+    return renderBiasDialRow();
+  }
   const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
     | { thinkingLevel?: string }
     | undefined;
@@ -19104,6 +25528,7 @@ function renderThinkingSlider(): string {
   // a level the current model can't do (e.g. "max" on a GPT model) falls back to
   // Auto rather than pointing at a stop that doesn't exist.
   const stops = activeEffortStops();
+  const activeModelId = activeModelIdForEffort();
   // FORK 2026-07-26 (the architect: "when I move the effort level it magically hops to high") — read
   // the CLIENT PIN ONLY. Falling back to `active.thinkingLevel` painted the SERVER's stored
   // level, which webchat can never clear (chat.send omits `thinking` when unpinned;
@@ -19128,6 +25553,12 @@ function renderThinkingSlider(): string {
     renderSliderStops(
       stops.map((s) => s.short),
       idx,
+      {
+        lvls: stops.map((s) => s.lvl),
+        letters: stops.map((s) =>
+          s.lvl ? roleLetters(rolesAtEffort(thalamusSuggestions, activeModelId ?? "", s.lvl)) : "",
+        ),
+      },
     ) +
     "</div>"
   );
@@ -19149,48 +25580,6 @@ function modelForceStops(): { id: string | null; label: string }[] {
   if (!cfg) {
     return stops;
   }
-  // FORK 2026-06-13 (eeg) / 2026-07-25: drop older opus gens (keep only opus-5) and
-  // gpt-5.3-codex (the architect: "never makes sense to use it").
-  // FORK 2026-07-30: also drop long-tail Copilot twins (older 5.1/codex/4o) — they
-  // bloat the slider without adding a smartness tier the architect actually pins.
-  // FORK 2026-08-15: the whole `github-copilot/(…)` alternation is DELETED — every arm
-  // of it was prefixed `github-copilot/`, so all of them are now subsumed by
-  // modelIsHiddenFromModelsPanel above. Leaving dead alternatives here is how a regex
-  // becomes a second, silently-diverging eligibility rule. Note it also explains what
-  // the architect saw: this list named SOME Copilot ids (gpt-5.1, gpt-4, opus-4.5/4.6, haiku…)
-  // but not gpt-5.5, gpt-5.6-sol or claude-opus-4.7, so those still reached the slider.
-  // The non-Copilot cuts stay: they are the architect's by-name exclusions on other providers.
-  const EEG_SLIDER_EXCLUDE = /opus-4-[678]|gpt-5\.3/i;
-  const rankOf = (id: string): number => cfg.models?.[id]?.rank ?? 999;
-  // "Above sonnet" = at least as smart as the SMARTEST sonnet (the intelligence
-  // floor). Anything ranked below it (mini/nano/haiku/older) is cut.
-  let sonnetRank = 999;
-  for (const id of Object.keys(cfg.models || {})) {
-    if (/sonnet/i.test(id)) {
-      sonnetRank = Math.min(sonnetRank, rankOf(id));
-    }
-  }
-  // FORK 2026-07-21 (the architect, evening root-cause): ALWAYS surface — Fable (pinned
-  // right), Grok (visible placeholder until the SuperGrok oauth bridge lands), and
-  // gemini-3.1-pro (the ONLY non-Anthropic model that answers today, via the
-  // gemini CLI oauth — live-probed). The 15:49 cut of 3.1P is REVERSED: the
-  // "gemini-3.5-flash-preview" that displaced it was a PHANTOM id (absent from
-  // the provider catalog — every pin died as Unknown model) and was pruned from
-  // agents.defaults.models along with the equally-phantom gpt-5.6 sol/luna/terra
-  // (real at OpenAI but unusable: metered key has no quota, Team oauth grants no
-  // REST-API quota — OpenAI answers only via the native /codex runtime). The
-  // slider must list only models that can actually produce text when pinned.
-  // FORK 2026-07-22: always-show flagships that dip below the sonnet-rank gate.
-  //  · gpt-5.6 trio — LIVE via the `codex` provider (dynamic resolution, ChatGPT
-  //    sub oauth; proven via chat.send → "SOL-UI-OK"). NEVER pin openai/* (metered,
-  //    zero quota) or openai-codex/gpt-5.6* (absent from that catalog) — only codex/*.
-  //  · Gemini: the three current flagships the architect wants — 3.1-pro, 3.5-flash,
-  //    3.6-flash (equal-intelligence to 3.5 but faster/cheaper). The negative
-  //    lookahead drops gemini-3.5-flash-LITE (a weaker/cheaper variant, off-slider).
-  // FORK 2026-07-30 (the architect): keep a few Copilot flagships next to their peers —
-  // gpt-5.5, opus-4.7, sonnet-4.6, gemini-3.1-pro — so the Windows logo shows up.
-  const FORCE_INCLUDE =
-    /fable|grok|gpt-5\.6|gemini-3\.1-pro|gemini-3\.[56]-flash(?!-lite)|github-copilot\/(?:gpt-5\.5|claude-opus-4\.7|claude-sonnet-4\.6|gemini-3\.1-pro)(?:$|\/)/i;
   const baseKey = (id: string): string =>
     id
       .replace(/^[^/]+\//, "")
@@ -19210,58 +25599,22 @@ function modelForceStops(): { id: string | null; label: string }[] {
     }
     return a.localeCompare(b);
   };
-  // FORK 2026-07-30: AA ≥ 50 gate (same as MODELS list). Drop long-tail even if
-  // FORCE_INCLUDE / rank gate would have kept them (e.g. gemini-3.1-pro 46.5).
-  // FORK 2026-08-06 #3: local AA_PANEL_MIN twin deleted — the module constant
-  // (shared with the panel gate, the chart and the dossier) is the one reader.
-  const eligible = Object.keys(cfg.models || {}).filter((id) => {
-    // FORK 2026-08-15 (the architect: "I can still see copilot models in the model selector
-    // panel"). Hiding Copilot from the MODELS panel earlier today filtered only
-    // `candidateIds`/`moreIds` in updateBudgetPanel — the SELECTOR builds its own
-    // `eligible` set from cfg.models and never saw it. Exactly the divergence the
-    // 2026-08-05 comment below describes, committed again by me the same way: I fixed
-    // the list I was looking at instead of the predicate both lists should share.
-    // Reading the SAME module-scope predicate makes selector and panel agree BY
-    // CONSTRUCTION rather than by two rules kept in sync by hand.
-    if (modelIsHiddenFromModelsPanel(id)) return false;
-    // FORK 2026-09-02 (the architect): a reseller route to a vendor we already pay for
-    // directly is never the right pin — it is metered at list price against a subscription
-    // that already covers the same model at the same measured intelligence. Read from the
-    // shared predicate so the gateway and this selector can never disagree.
-    if (isRedundantResellerRoute(id)) return false;
-    if (EEG_SLIDER_EXCLUDE.test(id)) return false;
-    // Same pin the MODELS panel honours, read from the same module constant, so a
-    // model pinned into SMART cannot be missing from the control that selects it.
-    if (PANEL_PINNED_SMART.has(id)) return true;
-    const score = configuredIntelligenceIndex(cfg.models, id);
-    if (typeof score === "number" && score < AA_PANEL_MIN) return false;
-    if (score === undefined) {
-      const baked = AA_INTELLIGENCE_INDEX[id];
-      if (typeof baked === "number" && baked < AA_PANEL_MIN) return false;
-    }
-    // FORK 2026-08-05 (the architect: "the model slider now differs from the smart models
-    // list in that qwen 3.8 is not listed"). The gate WAS
-    // `rankOf(id) <= sonnetRank || FORCE_INCLUDE.test(id)` — a SECOND eligibility
-    // rule for what is conceptually the same set the MODELS panel already computes
-    // with `passesPanelMin` (AA >= 50). Two predicates over one set drift the
-    // moment a model's rank and its score disagree: qwen3.8-max scores 56.5 (5th
-    // smartest, comfortably in SMART MODELS) but carries rank 21 against Sonnet's
-    // 12, so the rank arm rejected it and no FORCE_INCLUDE pattern claimed it.
-    // The AA >= 50 cut above is now the ONLY gate, which makes the selector agree
-    // with the panel BY CONSTRUCTION rather than by two lists being kept in sync
-    // by hand. `rankOf`/`sonnetRank`/`FORCE_INCLUDE` survive only as the sort key
-    // and the explicit EEG_SLIDER_EXCLUDE cuts the architect asked for by name.
-    void sonnetRank;
-    void FORCE_INCLUDE;
-    return true;
-  });
+  // 2026-09-22 (the architect): every configured model must exist in the picker and in one
+  // of the panel's Smart/More groups. Smartness is presentation, not eligibility:
+  // using the Smart floor here hid the entire More group from the picker, while a
+  // leftover opus-4-[678] regex hid Opus 4.8 even though config and the panel had it.
+  // The shared catalog helper above is now the only eligibility gate.
+  const eligible = modelCatalogIdsForPickerAndPanel(Object.keys(cfg.models || {}));
   // FORK 2026-08-05: the CAP of 14 existed because a <input type=range> is a ONE-LINE
   // control — stops beyond ~14 overlapped into unreadable mush. The selector wraps to
   // as many rows as it needs now, so the cap has no reason to exist and silently
   // hiding a model the panel lists would recreate exactly the divergence above.
   // `const` since the Fable splice below was removed (2026-09-02): this array is now only
   // ever mutated in place (push/sort/reverse), never rebound.
-  const keep = [...eligible].sort(byRank);
+  // FORK 2026-09-25: SUPERSEDES the 09-22 "every configured model must exist in the picker".
+  // The picker stops at Copilot (the architect 09-24) while config and MORE MODELS keep the whole
+  // catalog (the architect 09-25) — see panelIdsDownToCopilot. A pinned model still joins below.
+  const keep = panelIdsDownToCopilot([...eligible].sort(byRank));
   // FORK 2026-08-04 (the architect: "only I should be the one moving sliders"). The axis
   // MUST be able to represent the state it is reporting. Every gate above can
   // legitimately drop a model the user has already pinned — CAP=14, the AA>=50
@@ -19428,7 +25781,14 @@ function renderModelForceSlider(): string {
     const usage = s.id === null ? null : getModelUsage(s.id.split("/")[0], s.id, undefined);
     const exhausted = usage?.exhausted === true;
     let exhaustedAttrs = "";
-    let title = s.id === null ? autoStopTitle(active) : `${s.id}\n${modelCostHint(s.id)}`;
+    const tiers = s.id ? thalamusTiersOf(s.id) : [];
+    const tierHint = tiers.length
+      ? `\nThalamus suggestion for the ${tiers.map(roleWord).join(" + ")} stop (right-click to change)`
+      : s.id
+        ? "\nRight-click: suggest this model for a Thalamus dial stop"
+        : "";
+    let title =
+      (s.id === null ? autoStopTitle(active) : `${s.id}\n${modelCostHint(s.id)}`) + tierHint;
     if (exhausted && usage && s.id) {
       const resetAt =
         usage.resetIso ??
@@ -19438,7 +25798,8 @@ function renderModelForceSlider(): string {
         (resetAt ? ` data-reset-at="${esc(resetAt)}"` : "");
       title =
         `${s.id} — token window exhausted (click to try anyway)\n` +
-        `${modelCostHint(s.id)}\n${usage.tooltip}`;
+        `${modelCostHint(s.id)}\n${usage.tooltip}` +
+        tierHint;
     }
     const btnClass = `model-btn${on ? " active" : ""}${exhausted ? " model-btn-exhausted" : ""}`;
     out +=
@@ -19447,6 +25808,7 @@ function renderModelForceSlider(): string {
       ` title="${esc(title)}">` +
       renderModelChip(s.id, i, chipH) +
       `<span class="model-btn-text">${esc(label)}</span>` +
+      (tiers.length ? `<span class="model-btn-tier">${roleLetters(tiers)}</span>` : "") +
       "</button>";
   }
   out += "</div></div>";
@@ -19457,87 +25819,237 @@ function renderModelForceSlider(): string {
 // SAME pin state as the two sliders above (modelPinBySession / effortPinBySession), the
 // SAME quota numbers the budget bars draw, and the orchestration cap the gateway reports.
 // `chainPrimary` is the model Auto resolves to (chain[0] in updateBudgetPanel).
-function routingSignals(chainPrimary: string | undefined): RoutingSignals {
-  const stops = modelForceStops();
-  const active = sessions.find((s: unknown) => (s as { key?: string }).key === sessionKey) as
-    | {
-        model?: string;
-        modelProvider?: string;
-        thinkingLevel?: string;
-        modelOverride?: string;
-        providerOverride?: string;
-      }
-    | undefined;
-  // FORK 2026-08-29: byte-identical derivation to renderModelForceSlider above (see its
-  // comment) — key off the PIN via serverPinOf, never off `active.model`, and retire the
-  // same self-retiring Auto-assert marker. `modelPinned` below is what the BIAS dial's gate
-  // (~L16862) and the routing card's own CSS state class both key off, so if these two blocks
-  // ever diverge the card, the rail and the dial start disagreeing about whether Auto is live.
-  const pinnedModel = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
-  const srv = serverPinOf(active, sessionKey ? autoAssertedSessions.has(sessionKey) : false);
-  if (sessionKey && autoAssertedSessions.has(sessionKey) && !active?.modelOverride) {
-    autoAssertedSessions.delete(sessionKey);
+// FORK 2026-10-01 (the architect) — ONE answer to "is the MODEL picker on Auto for this tab?". The EFFORT row turns into the
+// BIAS dial on Auto, both send paths drop the effort pin on Auto (Thalamus decides the effort there), and the THALAMUS
+// card folds when model AND effort are fixed. Same test the model picker's own stop index makes: a client pin, else
+// the server's override, counts only when it is a real stop of the picker.
+function isModelPinnedFor(key: string | undefined): boolean {
+  if (!key) {
+    return false;
   }
-  const curModel = pinnedModel ?? srv.id;
-  // FORK 2026-08-28 (I4): the SAME crossing as renderModelForceSlider — the server row is
-  // bare and must go through serverModelStopIndex; the client pin keeps the exact `===`.
-  const curIdx = curModel
-    ? pinnedModel
-      ? stops.findIndex((s) => s.id === curModel)
-      : serverModelStopIndex(stops, curModel, srv.provider)
-    : -1;
-  const modelPinned = curIdx > 0;
-  // Resolve to the matched STOP's id, not the raw row value: `shownModel` is ranked against
-  // `poolIds` (catalog ids) below and labelled via modelName(), so handing a bare id through
-  // would report "pinned" with rank -1 — the identical namespace bug one expression later.
-  const shownModel = modelPinned ? (stops[curIdx]?.id ?? curModel) : (chainPrimary ?? "");
-
-  // Rank WITHIN the routable pool (the slider's own set), so "rank 1 of 11" is honest.
-  const cfg = modelConfigData as {
-    models?: Record<string, ModelIntelligenceMeta>;
-  } | null;
-  const poolIds = stops.slice(1).map((s) => s.id as string);
-  const rankIdx = [...poolIds]
-    .sort((a, b) => compareModelIntelligence(a, b, cfg?.models))
-    .indexOf(shownModel);
-
-  const effortPin = sessionKey ? effortPinBySession.get(sessionKey) : undefined;
-  const effortLvl = (effortPin ?? active?.thinkingLevel ?? "") as string;
-
-  const claude = (budgetUsageData as { claude?: { limits?: Record<string, unknown> } } | null)
-    ?.claude;
-  const d7 = claude?.limits?.seven_day as
-    | { utilization?: number; resets_at?: string | null }
+  const stops = modelForceStops();
+  const clientPin = modelPinBySession.get(key);
+  if (clientPin) {
+    return stops.findIndex((s) => s.id === clientPin) > 0;
+  }
+  const row = sessions.find((s: unknown) => (s as { key?: string }).key === key) as
+    | Parameters<typeof serverPinOf>[0]
     | undefined;
-  const resetIso = d7?.resets_at;
-  const resetMs = resetIso ? new Date(resetIso).getTime() : Number.NaN;
+  const srv = serverPinOf(row, autoAssertedSessions.has(key));
+  return srv.id ? serverModelStopIndex(stops, srv.id, srv.provider) > 0 : false;
+}
 
-  return {
-    modelLabel: shownModel ? modelName(shownModel) : "the default chain",
-    modelPinned,
-    effortLabel: effortLvl || "Auto",
-    effortPinned: Boolean(effortPin),
-    util7d: typeof d7?.utilization === "number" ? d7.utilization / 100 : undefined,
-    weeklyResetAt: Number.isFinite(resetMs) ? resetMs : undefined,
-    nowMs: Date.now(),
-    parallelCap: orchestrationCaps.concurrencyCap,
-    cores: orchestrationCaps.cores,
-    modelRank: rankIdx >= 0 ? rankIdx + 1 : undefined,
-    poolSize: poolIds.length || undefined,
-    policyPath: orchestrationCaps.policyPath,
-    biasIdx: sessionKey ? loadOrcaBias(sessionKey) : BIAS_DEFAULT_IDX,
-    // Map raw ids → the same friendly names the sliders and model rows show.
-    routes: orcaRoutes.map((r) => ({
-      unit: r.unit ?? "",
-      task: r.task,
-      mode: r.mode ?? "solo",
-      model: r.model ? modelName(r.model) : "",
-      critic: r.critic ? modelName(r.critic) : undefined,
-      panel: Array.isArray(r.panel) ? r.panel.map((m) => modelName(m)) : undefined,
-      domain: r.domain,
-      why: r.why,
-    })),
-  };
+/** The dial's three settings (the architect 2026-10-01; renamed budget · default · smart 2026-10-02), on the router's own bands: budget 0-2, default 3, smart 4-6
+ *  (src/infra/thalamus-tier-defaults.ts thalamusTierForBias). A stored in-between value shows on its band. */
+const BIAS3_STOPS = [
+  { idx: 0, label: "budget", tier: "budget" },
+  { idx: 3, label: "default", tier: "default" },
+  { idx: 6, label: "smart", tier: "smart" },
+] as const;
+function bias3Index(biasIdx: number): number {
+  return biasIdx <= 2 ? 0 : biasIdx === 3 ? 1 : 2;
+}
+function renderBiasDialRow(): string {
+  const idx = bias3Index(sessionKey ? loadOrcaBias(sessionKey) : BIAS_DEFAULT_IDX);
+  const stop = BIAS3_STOPS[idx];
+  return (
+    '<div class="model-think-slider-row orca-bias-row" title="The model picker is on Auto, so Thalamus chooses the model ' +
+    'and the effort for each turn. This dial says what to favour.">' +
+    '<span class="model-slider-caption">BIAS</span>' +
+    '<input type="range" class="model-think-slider orca-bias-slider" min="0" max="2" step="1" value="' +
+    String(idx) +
+    '" aria-label="Thalamus bias: ' +
+    esc(stop.label) +
+    '">' +
+    renderSliderStops(
+      BIAS3_STOPS.map((b) => b.label),
+      idx,
+    ) +
+    "</div>" +
+    // One line under the dial names what the stop suggests (the architect, 2026-10-02).
+    `<div class="thal-sug-line" title="Right-click a model to suggest it for a stop; right-click an effort level to set its effort">${esc(
+      suggestionLine(thalamusSuggestions, stop.tier, { modelName, effortWord }),
+    )}</div>`
+  );
+}
+
+// FORK 2026-10-01 — the gateway's own decision for each tab's latest Auto turn, and any mid-turn takeover
+// (`stream:"thalamus"`, src/infra/thalamus-turn-telemetry.ts). Kept per session and in localStorage, so a reload or a
+// tab switch shows that tab's last turn instead of an empty card.
+const THAL_TURN_LS_PREFIX = "tinker-thal-turn:";
+const thalamusTurnBySession = new Map<
+  string,
+  { decision?: ThalamusTurnDecision; fallbacks: ThalamusTurnFallback[] }
+>();
+function thalamusTurnFor(
+  key: string,
+): { decision?: ThalamusTurnDecision; fallbacks: ThalamusTurnFallback[] } | undefined {
+  const mem = thalamusTurnBySession.get(key);
+  if (mem) {
+    return mem;
+  }
+  try {
+    const raw = localStorage.getItem(THAL_TURN_LS_PREFIX + key);
+    if (raw) {
+      const parsed = JSON.parse(raw) as {
+        decision?: ThalamusTurnDecision;
+        fallbacks?: ThalamusTurnFallback[];
+      };
+      const v = {
+        decision: parsed.decision,
+        fallbacks: Array.isArray(parsed.fallbacks) ? parsed.fallbacks : [],
+      };
+      thalamusTurnBySession.set(key, v);
+      return v;
+    }
+  } catch {
+    /* a corrupt entry is the same as none */
+  }
+  return undefined;
+}
+const strList = (x: unknown): string[] =>
+  Array.isArray(x) ? x.filter((v): v is string => typeof v === "string") : [];
+function noteThalamusTurnEvent(key: string, d: Record<string, unknown>, now: number): void {
+  const at = typeof d.t === "number" && Math.abs(d.t - now) < 60_000 ? d.t : now;
+  const cur = thalamusTurnFor(key) ?? { fallbacks: [] };
+  let next = cur;
+  if (d.phase === "decision" && typeof d.model === "string" && d.model) {
+    const declined = Array.isArray(d.declined)
+      ? (d.declined as { model?: unknown; detail?: unknown }[])
+          .filter((x) => typeof x?.model === "string")
+          .map((x) => ({
+            model: String(x.model),
+            detail: typeof x.detail === "string" ? x.detail : "",
+          }))
+      : [];
+    const inst = d.instead as { model?: unknown; effort?: unknown } | undefined;
+    const sg = d.suggestion as
+      | { state?: unknown; model?: unknown; effort?: unknown; cause?: unknown; gainPct?: unknown }
+      | undefined;
+    const sug: ThalamusTurnDecision["suggestion"] | undefined =
+      sg && (sg.state === "kept" || sg.state === "moved") && typeof sg.model === "string"
+        ? {
+            state: sg.state,
+            model: sg.model,
+            effort: typeof sg.effort === "string" ? sg.effort : "",
+            ...(typeof sg.cause === "string"
+              ? { cause: sg.cause as NonNullable<ThalamusTurnDecision["suggestion"]>["cause"] }
+              : {}),
+            ...(typeof sg.gainPct === "number" ? { gainPct: sg.gainPct } : {}),
+          }
+        : undefined;
+    const cg = d.cooling as
+      | { from?: { model?: unknown; effort?: unknown }; supply?: unknown; untilMs?: unknown }
+      | undefined;
+    const cool: ThalamusTurnDecision["cooling"] | undefined =
+      cg && typeof cg.from?.model === "string"
+        ? {
+            from: {
+              model: cg.from.model,
+              effort: typeof cg.from.effort === "string" ? cg.from.effort : "",
+            },
+            supply: typeof cg.supply === "string" ? cg.supply : "",
+            ...(typeof cg.untilMs === "number" ? { untilMs: cg.untilMs } : {}),
+          }
+        : undefined;
+    next = {
+      decision: {
+        at,
+        model: d.model,
+        effort: typeof d.effort === "string" ? d.effort : "",
+        tier: typeof d.tier === "string" ? d.tier : "default",
+        why: strList(d.why),
+        ...(inst && typeof inst.model === "string"
+          ? {
+              instead: {
+                model: inst.model,
+                effort: typeof inst.effort === "string" ? inst.effort : "",
+              },
+            }
+          : {}),
+        // FORK 2026-10-02 (Thalamus full deploy): what became of the stop's suggestion, and a cooling supply.
+        ...(sug ? { suggestion: sug } : {}),
+        ...(cool ? { cooling: cool } : {}),
+        declined,
+        domain: typeof d.domain === "string" ? d.domain : "general",
+        subject: typeof d.subject === "string" ? d.subject : "none",
+        mode: typeof d.mode === "string" ? d.mode : "solo",
+        panel: strList(d.panel),
+        ...(typeof d.chair === "string" && d.chair ? { chair: d.chair } : {}),
+      },
+      fallbacks: [],
+    };
+  } else if (d.phase === "fallback" && typeof d.from === "string" && typeof d.to === "string") {
+    next = {
+      ...cur,
+      fallbacks: [
+        ...cur.fallbacks.slice(-7),
+        { at, from: d.from, to: d.to, reason: typeof d.reason === "string" ? d.reason : "unknown" },
+      ],
+    };
+  } else {
+    return;
+  }
+  thalamusTurnBySession.set(key, next);
+  try {
+    localStorage.setItem(THAL_TURN_LS_PREFIX + key, JSON.stringify(next));
+  } catch {
+    /* quota: the in-memory copy still drives the card */
+  }
+  if (key === sessionKey) {
+    paintThalamusTurn();
+  }
+}
+
+function thalTurnColor(model: string, provider: string): string {
+  const p = eegProviderPaint(provider, model);
+  return p.isRainbow ? "linear-gradient(90deg,#4285F4,#EA4335,#FBBC05,#34A853)" : p.stroke;
+}
+
+// FORK 2026-10-01 (the architect: "I want to have a visual real-time feedback of the Thalamus job, and a trace of what it
+// did") — paints ONLY the THALAMUS host: its title, its fold and the present-turn card. It reads the same EEG samples
+// the trace draws, and fillEegPaper() calls it, so the card moves on every live effort frame, not only on a full
+// models-panel repaint. "The thalamus panel should stay minimized if both the model and effort are fixed": then the
+// title says so and the fold is forced shut without touching the reader's saved fold for the Auto case.
+function paintThalamusTurn(): void {
+  const host = document.getElementById("thalamus-panel");
+  const body = document.getElementById("thalamus-panel-body");
+  if (!host || !body || !sessionKey) {
+    return;
+  }
+  const modelPinned = isModelPinnedFor(sessionKey);
+  const idle = modelPinned && Boolean(effortPinBySession.get(sessionKey));
+  host.classList.toggle("is-idle", idle);
+  const label = host.querySelector<HTMLElement>(".model-group-label");
+  const labelHtml = idle
+    ? 'THALAMUS <span class="thal-off">off · model and effort fixed</span>'
+    : "THALAMUS";
+  if (label && label.innerHTML !== labelHtml) {
+    label.innerHTML = labelHtml;
+  }
+  if (idle) {
+    host.classList.remove("open");
+  } else {
+    host.classList.toggle(
+      "open",
+      !isCollapsed("model:thalamus", MODEL_SECTION_DEFAULT_COLLAPSED["thalamus"]),
+    );
+  }
+  const view = buildThalamusTurnView(
+    getEegStore(sessionKey).toSnapshot(),
+    thalamusTurnFor(sessionKey),
+  );
+  const html =
+    renderThalamusTurn(view, { modelName, colorOf: thalTurnColor, idle, modelPinned }) +
+    (idle
+      ? ""
+      : renderThalamusV4(thalamusV4Ui.view(), {
+          nowMs: Date.now(),
+          open: thalamusV4Ui.openKeys(),
+        }));
+  if (body.innerHTML !== html) {
+    body.innerHTML = html;
+  }
 }
 
 function updateSessionsPanel() {
@@ -19611,6 +26123,35 @@ function updateSessionsPanel() {
     );
   }
 
+  // FORK 2026-09-25 (the architect): a chained pair is always listed together, master row on top, slave
+  // row directly below, joined by a small chain in the pair's metal colour (same eyelet →
+  // collar idea as the tab-bar rope).
+  const chainPairs = liveTabChains();
+  const rowKey = (item: { session: unknown; shortLabel: string }) =>
+    (item.session as { key: string }).key;
+  for (const [g, items] of groups) {
+    groups.set(g, pairChainedRows(items, rowKey, chainPairs, sessionKeyMatches));
+  }
+  const chainColorAt = (
+    list: Array<{ session: unknown; shortLabel: string }>,
+    i: number,
+  ): string | null => {
+    const next = list[i + 1];
+    if (!next) return null;
+    const a = rowKey(list[i]);
+    const b = rowKey(next);
+    const c = chainPairs.find(
+      (p) =>
+        p.masterKey &&
+        p.slaveKey &&
+        sessionKeyMatches(a, p.masterKey) &&
+        sessionKeyMatches(b, p.slaveKey),
+    );
+    return c ? chainColor(c) : null;
+  };
+  const chainedPairHtml = (color: string, masterRow: string, slaveRow: string) =>
+    `<div class="session-chain-pair" style="--chain-color:${color}">${masterRow}<span class="session-chain-link" aria-hidden="true" title="master ⛓ slave">${SESSION_CHAIN_SVG}</span>${slaveRow}</div>`;
+
   const totalEntries = [...groups.values()].reduce((n, arr) => n + arr.length, 0);
   if (!totalEntries) {
     el.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:11px">No sessions</div>';
@@ -19634,13 +26175,25 @@ function updateSessionsPanel() {
       // it (no leading rule when nothing is open, no trailing rule when all are).
       let sawOpen = false;
       let sepDone = false;
-      for (const { session: s, shortLabel } of items) {
+      for (let i = 0; i < items.length; i++) {
+        const { session: s, shortLabel } = items[i];
         const isOpen = sessionHasOpenTab((s as { key: string }).key);
         if (isOpen) {
           sawOpen = true;
         } else if (sawOpen && !sepDone) {
           html += '<div class="session-open-sep" aria-hidden="true"></div>';
           sepDone = true;
+        }
+        const color = chainColorAt(items, i);
+        if (color) {
+          const slave = items[i + 1];
+          html += chainedPairHtml(
+            color,
+            renderSessionRow(s, shortLabel),
+            renderSessionRow(slave.session, slave.shortLabel),
+          );
+          i++;
+          continue;
         }
         html += renderSessionRow(s, shortLabel);
       }
@@ -19655,7 +26208,19 @@ function updateSessionsPanel() {
         <span class="session-group-count">${items.length}</span>
       </div>`;
       if (!collapsed) {
-        for (const { session: s, shortLabel } of items) {
+        for (let i = 0; i < items.length; i++) {
+          const { session: s, shortLabel } = items[i];
+          const color = chainColorAt(items, i);
+          if (color) {
+            const slave = items[i + 1];
+            html += chainedPairHtml(
+              color,
+              renderSessionRow(s, shortLabel),
+              renderSessionRow(slave.session, slave.shortLabel),
+            );
+            i++;
+            continue;
+          }
           html += renderSessionRow(s, shortLabel);
         }
       }
@@ -19689,6 +26254,13 @@ function updateSessionsPanel() {
           return;
         }
 
+        // FORK 2026-09-25 (the architect): either end of a chained pair opens BOTH, side by side.
+        const pair = chainOfSession(liveTabChains(), key, sessionKeyMatches);
+        if (pair?.partnerKey) {
+          openChainedPair(key, pair);
+          return;
+        }
+
         const activeTab = tabs.find((t) => t.id === activeTabId);
         if (activeTab && !activeTab.isAttached) {
           attachSessionToTab(key);
@@ -19701,26 +26273,7 @@ function updateSessionsPanel() {
           return;
         }
 
-        const newTab = createTab();
-        newTab.sessionKey = key;
-        newTab.isAttached = true;
-        // FORK 2026-05-24 (fifth pass) — bug task-mpjhzu3j-ma9ts: when
-        // the user clicks a session row in the side panel and we create
-        // a new tab for it, the burned-in cookiePhrase MUST win over
-        // the fresh randomFortune() that createTab() just minted (and
-        // over sess.label, which is usually empty for chat-originated
-        // sessions). Previously this only checked sess.label, so the
-        // fresh random fortune stuck and the user saw a different name
-        // every time they opened a session.
-        const sess = sessions.find((s: unknown) => s.key === key);
-        if (sess?.cookiePhrase) {
-          newTab.title = sess.cookiePhrase;
-          // FORK 2026-06-10 — u3-tab-naming: lock a deliberate (user/auto) server name.
-          if ((sess as { cookiePhraseUserSet?: boolean }).cookiePhraseUserSet)
-            newTab.titleLocked = true;
-        } else if (sess?.label) {
-          newTab.title = sess.label.slice(0, 30);
-        }
+        const newTab = openSessionAsTab(key);
         renderTabs();
         switchToTab(newTab.id);
       }
@@ -19750,6 +26303,115 @@ const GENERIC_WS_CLIENT_LABELS = new Set(["Tinker UI", "webchat-ui", "openclaw-c
 function meaningfulSessionLabel(s: string | undefined): string | undefined {
   if (!s) return undefined;
   return GENERIC_WS_CLIENT_LABELS.has(s) ? undefined : s;
+}
+
+/** The fields of a session row that its NAME depends on. */
+type SessionLabelSource = {
+  key: string;
+  cookiePhrase?: unknown;
+  label?: string;
+  displayName?: string;
+};
+
+/** Main and heartbeat: a fixed friendly name, and no delete button (see renderSessionRow). */
+function protectedSession(key: string): { isProtected: boolean; protectedLabel: string | null } {
+  const keySuffix = key.split(":").pop() ?? "";
+  const isMainSession = key.endsWith(":main") || keySuffix === "main";
+  const isHeartbeatSession = key.endsWith(":heartbeat") || keySuffix === "heartbeat";
+  return {
+    isProtected: isMainSession || isHeartbeatSession,
+    protectedLabel: isMainSession ? "🏠 Main" : isHeartbeatSession ? "❤️ Heartbeat" : null,
+  };
+}
+
+/**
+ * A session's display name. FORK 2026-10-02: lifted out of renderSessionRow so the model rows'
+ * hover names a session exactly as the SESSIONS panel does.
+ *
+ * FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1): priority
+ *   0. protectedLabel — main/heartbeat get a hard-coded friendly name
+ *      (so a stale "webchat:g-agent-main-main" displayName cannot leak through)
+ *   1. tab.title — persisted localStorage (Gemini-titled or "🏠 Main")
+ *   2. s.cookiePhrase — gateway-burned long fortune phrase
+ *   3. meaningfulSessionLabel(s.label) — server-stored explicit label
+ *   4. meaningfulSessionLabel(s.displayName) — server displayName
+ *   5. shortLabel — key-derived fallback
+ */
+function sessionRowLabel(s: SessionLabelSource, shortLabel: string): string {
+  // An unattached tab (sessionKey null) holds no session; passed through, sessionKeyMatches would
+  // fall back to the VIEWED key and hand the viewed session's row that tab's title.
+  const tab = tabs.find((t) => t.sessionKey !== null && sessionKeyMatches(s.key, t.sessionKey));
+  return (
+    protectedSession(s.key).protectedLabel ||
+    tab?.title ||
+    (s.cookiePhrase as string | undefined) ||
+    meaningfulSessionLabel(s.label) ||
+    meaningfulSessionLabel(s.displayName) ||
+    shortLabel
+  );
+}
+
+/** FORK 2026-09-25 — a session opened from the panel as a tab: the existing tab if it is open,
+ *  else a new attached tab titled from the server (extracted from the row-click handler so the
+ *  paired open below uses the same naming rules). */
+function openSessionAsTab(key: string): Tab {
+  const existing = tabs.find((t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey));
+  if (existing) return existing;
+  const newTab = createTab();
+  newTab.sessionKey = key;
+  newTab.isAttached = true;
+  // FORK 2026-05-24 (fifth pass) — bug task-mpjhzu3j-ma9ts: when
+  // the user clicks a session row in the side panel and we create
+  // a new tab for it, the burned-in cookiePhrase MUST win over
+  // the fresh randomFortune() that createTab() just minted (and
+  // over sess.label, which is usually empty for chat-originated
+  // sessions). Previously this only checked sess.label, so the
+  // fresh random fortune stuck and the user saw a different name
+  // every time they opened a session.
+  // FORK 2026-09-25: a chained partner's stored key may be the bare `tinker:<id>` form.
+  const sess =
+    sessions.find((s: unknown) => s.key === key) ??
+    sessions.find((s: unknown) => sessionKeyMatches(s.key, key));
+  if (sess?.cookiePhrase) {
+    newTab.title = sess.cookiePhrase;
+    // FORK 2026-06-10 — u3-tab-naming: lock a deliberate (user/auto) server name.
+    if ((sess as { cookiePhraseUserSet?: boolean }).cookiePhraseUserSet) {
+      newTab.titleLocked = true;
+      // FORK 2026-09-15 — u7-tab-naming: origin unknown server-side ⇒ resolve from shape.
+      newTab.titleKind = resolveTitleKind(
+        { titleLocked: true, title: newTab.title },
+        AUTO_NAME_ICON,
+      );
+    }
+  } else if (sess?.label) {
+    newTab.title = sess.label.slice(0, 30);
+  }
+  return newTab;
+}
+
+/** FORK 2026-09-25 (the architect) — open BOTH ends of a chained pair, side by side, and focus the one
+ *  that was clicked. A detached active tab takes the clicked session, as for a lone row. The
+ *  chain is re-pointed at whatever tab ids the pair now has. */
+function openChainedPair(
+  key: string,
+  hit: { chain: TabChain; role: "master" | "slave"; partnerKey?: string },
+): void {
+  if (!hit.partnerKey) return;
+  const activeTab = tabs.find((t) => t.id === activeTabId);
+  let clicked = tabs.find((t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey));
+  if (!clicked && activeTab && !activeTab.isAttached) {
+    attachSessionToTab(key);
+    clicked = activeTab;
+  }
+  if (!clicked) clicked = openSessionAsTab(key);
+  const partner = openSessionAsTab(hit.partnerKey);
+  const [master, slave] = hit.role === "master" ? [clicked, partner] : [partner, clicked];
+  saveTabChains(rebindChain(loadTabChains(), hit.chain, master.id, slave.id));
+  applyChainAdjacency(clicked.id);
+  saveTabs();
+  renderTabs();
+  switchToTab(clicked.id);
+  updateSessionsPanel();
 }
 
 /** FORK 2026-09-02 — does this session currently have a tab open in the tab bar?
@@ -19807,29 +26469,8 @@ function renderSessionRow(s: unknown, shortLabel: string): string {
   // Hard-special-case both keys: main → "🏠 Main", heartbeat → keep
   // its "❤️ Heartbeat" cookiePhrase (already minted server-side), and
   // OMIT the delete button entirely for either.
-  const keySuffix = s.key.split(":").pop() ?? "";
-  const isMainSession = s.key.endsWith(":main") || keySuffix === "main";
-  const isHeartbeatSession = s.key.endsWith(":heartbeat") || keySuffix === "heartbeat";
-  const isProtected = isMainSession || isHeartbeatSession;
-  const protectedLabel = isMainSession ? "🏠 Main" : isHeartbeatSession ? "❤️ Heartbeat" : null;
-
-  // FORK 2026-05-24 — bug task-mpjhzu3j-ma9ts ("Tabs behavior" part 1):
-  // session-name resolution. Priority:
-  //   0. protectedLabel — main/heartbeat get a hard-coded friendly name
-  //      (so a stale "webchat:g-agent-main-main" displayName cannot leak
-  //      through)
-  //   1. tab.title — persisted localStorage (Gemini-titled or "🏠 Main")
-  //   2. s.cookiePhrase — gateway-burned long fortune phrase
-  //   3. meaningfulSessionLabel(s.label) — server-stored explicit label
-  //   4. meaningfulSessionLabel(s.displayName) — server displayName
-  //   5. shortLabel — key-derived fallback
-  const label =
-    protectedLabel ||
-    tab?.title ||
-    (s.cookiePhrase as string | undefined) ||
-    meaningfulSessionLabel(s.label) ||
-    meaningfulSessionLabel(s.displayName) ||
-    shortLabel;
+  const { isProtected } = protectedSession(s.key);
+  const label = sessionRowLabel(s as SessionLabelSource, shortLabel);
   const tokens = s.totalTokens ? formatNum(s.totalTokens) + " tok" : "";
   const age = s.updatedAt ? timeAgo(s.updatedAt) : "";
   const channel = s.channel ? `<span style="opacity:.5">${esc(s.channel)}</span>` : "";
@@ -19887,10 +26528,10 @@ function scrollChat() {
   requestAnimationFrame(() => {
     const el = $("messages");
     if (el) {
-      const threshold = 80; // px tolerance
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+      // FORK 2026-10-02 — or showing the latest row while a remembered one is looked for.
+      const atBottom = chatFollow || viewportSearchActive();
       if (atBottom) {
-        el.scrollTop = el.scrollHeight;
+        setChatScrollTop(el, el.scrollHeight);
       }
     }
   });
@@ -19931,12 +26572,16 @@ function paintRightRailFromSnapshots(): void {
       const snap = readPanelSnapshot<unknown>(MODEL_CONFIG_SNAPSHOT_KEY, PANEL_SNAPSHOT_MAX_AGE_MS);
       if (snap && snap.data) {
         modelConfigData = snap.data;
+        bpDebug("rail snapshot paint", { ageMs: Date.now() - snap.at });
         updateBudgetPanel();
+      } else {
+        bpWarn("rail snapshot: no model-config cache — panel waits on config.models");
       }
     }
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[rail] model-config snapshot paint failed", err);
+    bpFail("rail model-config snapshot paint failed", { error: bpErrMsg(err), raw: err });
   }
 }
 
@@ -19967,6 +26612,18 @@ function init() {
     </nav>
     <div class="topbar">
       <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=4" alt="T" style="height:76px;width:auto" onmouseenter="this.src='${BASE}icon-neon.png?v=1'" onmouseleave="this.src='${BASE}icon.png?v=4'"><img src="${BASE}icon-neon.png?v=1" style="display:none" aria-hidden="true"></div>
+      <!-- FORK 2026-09-07 (the architect: "the name of the agent ... in the top panel, next to 'the tinker
+           zone' wooden logo ... On top of the tabs, at the height of the top-panel buttons").
+           The topbar grid declares row 1 as "dot controls" — column 1 of that row was an EMPTY
+           cell, which is exactly the slot he describes: right of the absolutely-positioned logo
+           (the 110px padding-left clears it), level with the toolbox, above the tab strip. That
+           cell is now named agentname in base.css. Filled by refreshAgentNameHeader() from the
+           agent.identity.get RPC; ships hidden so a boot with no gateway reserves ZERO width and
+           nothing shifts when the name resolves.
+           (No backticks in this comment - the enclosing innerHTML is a tagged template literal,
+            and an inner backtick terminates it early and crashes the page to black on load.
+            That is exactly what happened on the first attempt at this comment.) -->
+      <div class="agent-name-banner" id="agent-name-banner" hidden><span id="agent-name-text"></span></div>
       <div class="tab-bar" id="tab-bar">
         <button class="tab-nav tab-nav-left" id="tab-nav-left" data-hint="Scroll left">&#9664;</button>
         <div class="tab-bar-scroll" id="tab-bar-scroll"></div>
@@ -19986,6 +26643,11 @@ function init() {
             and crashed the page to black on load.) -->
       <div class="topbar-controls">
         <div class="toolbox">
+          <!-- FORK 2026-09-10 (the architect): the rebuild buttons used to sit here, left of exec-mode.
+               FORK 2026-09-30 (the architect): both moved to the SESSIONS header, next to play: the full
+               rebuild + restart, and beside it the frontend rebuild, the same pill in colour.
+               Both are also the agent skill tinker-rebuild. -->
+
           <!-- FORK 2026-05-12: Exec mode promoted to the leftmost slot — it is
                the primary "mode" toggle in the topbar (per SPEC §0a / §7.1),
                so it sits before the per-feature toggles. -->
@@ -20039,17 +26701,18 @@ function init() {
       <div class="attach-strip" id="attach-strip" hidden></div>
       <div class="chat-input">
         <textarea id="chat-textarea" placeholder="Message..." rows="1"></textarea>
+        <span id="amy-dot-host"></span>
         <button id="action-btn" disabled>Send</button>
       </div>
     </div>
     <div class="right-panels">
       <div class="rpanel" id="sessions-panel">
-        <div class="rpanel-header rpanel-header--toggle" id="sessions-header" title="Collapse / expand sessions"><span class="rpanel-caret">▾</span> 📋 Sessions <span id="sessions-count" class="sessions-count"></span></div>
+        <div class="rpanel-header rpanel-header--toggle" id="sessions-header" title="Collapse / expand sessions"><span class="rpanel-caret">▾</span> 📋 Sessions <span id="sessions-count" class="sessions-count"></span><span class="ft-btns" id="ft-btns" hidden><button type="button" class="ft-btn" id="ft-pause" title="" aria-label="Pause everything" data-hint-wide data-hint="Pause everything"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1.5" y="1" width="2.5" height="8" rx="0.6"/><rect x="6" y="1" width="2.5" height="8" rx="0.6"/></svg></button><button type="button" class="ft-btn" id="ft-play" title="" aria-label="Resume everything" data-hint-wide data-hint="Resume everything"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 1.2v7.6a.5.5 0 0 0 .76.43l6.1-3.8a.5.5 0 0 0 0-.86L2.76.77A.5.5 0 0 0 2 1.2z"/></svg></button><button type="button" class="ft-btn ft-restart" id="ft-restart" title="" aria-label="Rebuild and restart" data-hint-wide data-hint="Rebuild and restart"><svg viewBox="0 0 10 10" aria-hidden="true"><path class="ft-restart-arc" d="M8.3 5.9A3.4 3.4 0 1 1 7.4 2.6"/><path d="M8.9 0.9v2.6H6.3z"/></svg></button><button type="button" class="ft-btn ft-restart ft-restart-fe" id="ft-restart-fe" title="" aria-label="Rebuild the frontend" data-hint-wide data-hint="Rebuild the frontend"><svg viewBox="0 0 10 10" aria-hidden="true"><defs><linearGradient id="ft-fe-grad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff4d6d"/><stop offset="0.35" stop-color="#ffb703"/><stop offset="0.65" stop-color="#38d39f"/><stop offset="1" stop-color="#4d8dff"/></linearGradient></defs><path class="ft-restart-arc" d="M8.3 5.9A3.4 3.4 0 1 1 7.4 2.6" style="stroke:url(#ft-fe-grad)"/><path d="M8.9 0.9v2.6H6.3z" style="fill:url(#ft-fe-grad)"/></svg></button></span></div>
         <div id="sessions-list" class="rpanel-body">Loading...</div>
       </div>
       <div class="rpanel budget-panel-wrapper" id="models-panel">
         <div class="rpanel-header rpanel-header--toggle" title="Collapse / expand models"><span class="rpanel-caret">▾</span> 🕸️ Models ${zoneDoc("slider")}
-          <button class="sc-open-btn sc-head-btn" data-hint="Smartness × cost map — every model, effort curves, per-task toggle">◉ SMART × COST</button>
+          <a class="sc-head-btn ai-analysis-btn" href="${AI_ANALYSIS_URL}" target="_blank" rel="noopener noreferrer" data-hint="Smartness × cost map + the model dossier — published on thetinkerzone.com, regenerated nightly from these panels. The site holds the only copy.">◉ AI ANALYSIS</a>
           <span class="ct-switch" id="budget-scope-toggle">
             <span class="ct-switch-label ct-switch-label--active" data-scope="session">Session</span>
             <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
@@ -20072,10 +26735,9 @@ function init() {
              sits OUTSIDE #budget-panel, even though every other .model-group is generated
              inside it. updateBudgetPanel() assigns el.innerHTML on #budget-panel on
              every repaint, while bindEegPanelOnce() is a bind-ONCE latch (eegPanelBound,
-             ~L2424) on #eeg-panel-body and #eeg-scope-toggle is bound by id ONCE at boot.
-             Fold this block into that generated HTML and the bound nodes are destroyed
-             and recreated on every repaint while the latch stays true: wheel-zoom, marker
-             clicks and the Session/All switch go dead, silently and forever. Static host
+             ~L2424) on #eeg-panel-body. Fold this block into that generated HTML and the
+             bound node is destroyed and recreated on every repaint while the latch stays
+             true: wheel-zoom and marker clicks go dead, silently and forever. Static host
              is the whole reason it works.
 
              The rpanel-body class on the WRAPPER is not decoration: the CSS rule
@@ -20098,15 +26760,23 @@ function init() {
              FORK 2026-08-28 (the architect: "change the name from 'context cache' to 'context
              window'") — the LABEL changed; every identifier deliberately did NOT. The id
              stays "cache-panel" on the WRAPPER because the read/write flash
-             (flashCachePanel), the busy pulse (setCacheBusy) and their CSS rules all target
+             (flashCachePanel), the busy pulse (paintCacheButtons) and their CSS rules all target
              #cache-panel by id, the body is written by id as #cache-panel-body, and the fold
              state is persisted under the key "model:cache" — renaming the section would
              silently re-collapse the panel for anyone who had it open. The .rpanel-body class
              keeps the terminal-green type context the panel markup re-states its own colours
              against (base.css, constraint 2). -->
         <div class="model-group rpanel-body${!isCollapsed("model:cache", MODEL_SECTION_DEFAULT_COLLAPSED["cache"]) ? " open" : ""}" data-section="cache" id="cache-panel">
-          <div class="model-group-label">💾 CONTEXT WINDOW <span id="cache-count" class="model-group-count"></span><span class="cache-actions"><button type="button" class="cache-act" data-cache-act="evict" title="Drop the oldest turns from this session transcript. No model call; the previous transcript is archived as a .bak first.">evict</button><button type="button" class="cache-act" data-cache-act="compact" title="Summarise the conversation into a shorter prefix. Costs a model call.">compact</button></span></div>
-          <div class="model-group-body"><div id="cache-panel-body" style="grid-column:1/-1"></div></div>
+          <div class="model-group-label">💾 CONTEXT WINDOW <span id="cache-count" class="model-group-count"></span><span class="cache-actions"><button type="button" class="cache-act" data-cache-act="evict" title="${escapeHtml(CACHE_ACT_DESCRIPTION.evict)}">evict</button><button type="button" class="cache-act" data-cache-act="compact" title="${escapeHtml(CACHE_ACT_DESCRIPTION.compact)}">compact</button></span></div>
+          <!-- FORK 2026-09-24 (B5, context-window-panel.md §5 and P9) — the CALL TIMELINE's host: a
+               STATIC SIBLING of #cache-panel-body, never inside it. renderCachePanel() rewrites
+               that body's innerHTML on every event, which would destroy a canvas (with its
+               observers, focus and tooltip) within one model call. mountCallTimeline() fills
+               this once; grid-column spans the body's 5-column grid, as the body does. It sits
+               after THIS SESSION rather than between WINDOW and THIS CALL as §5.2 sketches,
+               because those three sections are one innerHTML string owned by
+               context-cache.ts. -->
+          <div class="model-group-body"><div id="cache-panel-body" style="grid-column:1/-1"></div><div id="cache-timeline" style="grid-column:1/-1"></div></div>
         </div>
         <!-- FORK 2026-08-29 (the architect: "move the context window up over thalamus, under thinking").
              THALAMUS was the last group generated INSIDE #budget-panel, which forced it above
@@ -20124,13 +26794,7 @@ function init() {
           <div class="model-group-body"><div id="thalamus-panel-body" style="grid-column:1/-1"></div></div>
         </div>
         <div class="model-group rpanel-body${!isCollapsed("model:eeg", MODEL_SECTION_DEFAULT_COLLAPSED["eeg"]) ? " open" : ""}" data-section="eeg">
-          <div class="model-group-label">📈 EEG ${zoneDoc("eeg")}
-            <span class="ct-switch" id="eeg-scope-toggle">
-              <span class="ct-switch-label ct-switch-label--active" data-eeg-scope="session">Session</span>
-              <span class="ct-switch-track" data-scope-track><span class="ct-switch-thumb"></span></span>
-              <span class="ct-switch-label" data-eeg-scope="all">All</span>
-            </span>
-          </div>
+          <div class="model-group-label">📈 EEG ${zoneDoc("eeg")}</div>
           <div class="model-group-body"><div id="eeg-panel-body" style="grid-column:1/-1"></div></div>
         </div>
       </div>
@@ -20188,6 +26852,7 @@ function init() {
       return;
     }
     hintEl.textContent = text;
+    hintEl.classList.toggle("hint-wide", target.hasAttribute("data-hint-wide"));
     hintEl.style.opacity = "1";
     const rect = target.getBoundingClientRect();
     const pad = 6;
@@ -20228,6 +26893,33 @@ function init() {
   repaintOpenHint = () => {
     if (hintTarget) {
       positionHint(hintTarget);
+    }
+  };
+
+  // Last pointer position, for reanchorOpenHint: a node swapped in under a still pointer gets no
+  // mouseover until the pointer moves.
+  let pointerX = -1;
+  let pointerY = -1;
+  document.addEventListener(
+    "mousemove",
+    (e) => {
+      pointerX = e.clientX;
+      pointerY = e.clientY;
+    },
+    { passive: true },
+  );
+  reanchorOpenHint = () => {
+    if (!hintTarget || hintTarget.isConnected) {
+      return;
+    }
+    const under = pointerX >= 0 ? document.elementFromPoint(pointerX, pointerY) : null;
+    const next = (under as HTMLElement | null)?.closest<HTMLElement>("[data-hint]") ?? null;
+    if (next?.dataset.hint) {
+      hintTarget = next;
+      positionHint(next);
+    } else {
+      hintEl.style.opacity = "0";
+      hintTarget = null;
     }
   };
 
@@ -20302,7 +26994,8 @@ function init() {
       if (ta.value.trim()) {
         // FORK 2026-06-07 — do NOT clear the saved draft here. send() clears it ONLY on a
         // CONFIRMED send (and restores it on failure), so a failed send can't lose the draft.
-        send(ta.value);
+        // The owner's own Enter — re-arms the chat follow latch (u14, sendFromComposer).
+        sendFromComposer(ta.value);
         ta.value = "";
         ta.style.height = "auto";
       }
@@ -20312,7 +27005,8 @@ function init() {
     if (ta.value.trim()) {
       // FORK 2026-06-07 — clearing is owned by send() (clears on confirmed send, restores on
       // failure) so a failed send never loses the draft.
-      send(ta.value);
+      // The owner's own send button — re-arms the chat follow latch (u14, sendFromComposer).
+      sendFromComposer(ta.value);
       ta.value = "";
       ta.style.height = "auto";
       ta.focus();
@@ -20410,6 +27104,126 @@ function init() {
       const idx = Math.max(0, Math.min(stops.length - 1, Number(btn.dataset.modelIdx) || 0));
       return stops[idx] ?? stops[0];
     };
+    // FORK 2026-09-23 (the architect): right-click a model → set it as Thalamus's default for a BIAS
+    // tier. A checked tier clears on click. Auto has no menu — it IS Thalamus.
+    let tierMenuEl: HTMLElement | null = null;
+    const closeTierMenu = () => {
+      tierMenuEl?.remove();
+      tierMenuEl = null;
+    };
+    const armTierMenuDismiss = () => {
+      setTimeout(() => {
+        const off = (ev: Event) => {
+          if (tierMenuEl && !tierMenuEl.contains(ev.target as Node)) {
+            closeTierMenu();
+            document.removeEventListener("mousedown", off);
+          }
+        };
+        document.addEventListener("mousedown", off);
+      }, 0);
+    };
+    budgetPanelEl.addEventListener("contextmenu", (e) => {
+      const stop = readModelStop(e);
+      if (!stop?.id) {
+        return;
+      }
+      e.preventDefault();
+      closeTierMenu();
+      const modelId = stop.id;
+      const menu = document.createElement("div");
+      menu.className = "exec-context-menu thalamus-tier-menu";
+      menu.innerHTML =
+        `<div class="thalamus-tier-menu-head">Thalamus suggestion · ${esc(shortModelLabel(modelId))}</div>` +
+        ROLES.map(({ tier, letter, label, hint }) => {
+          const holder = thalamusSuggestions[tier];
+          const on = holder?.model === modelId;
+          const note =
+            !on && holder
+              ? ` <span class="thalamus-tier-now">now ${esc(shortModelLabel(holder.model))}</span>`
+              : on && holder?.effort
+                ? ` <span class="thalamus-tier-now">${esc(effortWord(holder.effort))}</span>`
+                : "";
+          return `<button class="exec-context-item" data-tier="${tier}" title="${esc(hint)}">${on ? "✓" : "\u2003"} ${letter} ${esc(label)}${note}</button>`;
+        }).join("");
+      menu.style.left = `${Math.min(e.clientX, window.innerWidth - 280)}px`;
+      menu.style.top = `${Math.min(e.clientY, window.innerHeight - 160)}px`;
+      document.body.appendChild(menu);
+      tierMenuEl = menu;
+      menu.addEventListener("click", (ev) => {
+        const item = (ev.target as HTMLElement).closest<HTMLElement>("[data-tier]");
+        if (!item) return;
+        const tier = item.dataset.tier!;
+        const clear = thalamusSuggestions[tier as RoleTier]?.model === modelId;
+        closeTierMenu();
+        req("prefrontal.thalamusDefaults", { tier, model: clear ? null : modelId })
+          .then((r) => {
+            setThalamusSuggestions(r);
+            updateBudgetPanel();
+          })
+          .catch((err) => {
+            console.error("[thalamus-defaults] set failed", err);
+            const msg =
+              err instanceof Error
+                ? err.message
+                : String((err as { message?: unknown })?.message ?? err);
+            window.alert(
+              `Failed to set Thalamus default: ${msg} (devtools console has full error)`,
+            );
+          });
+      });
+      armTierMenuDismiss();
+    });
+    // FORK 2026-10-02 (the architect, Thalamus full deploy): right-click an EFFORT level of a model that already holds a dial
+    // stop → "assign this effort to <stop>". Only on a pinned model's effort row (the dial row has no data-lvl), only for
+    // a model that holds a role, never on Auto.
+    budgetPanelEl.addEventListener("contextmenu", (e) => {
+      const stopEl = (e.target as HTMLElement).closest<HTMLElement>(".model-slider-stop[data-lvl]");
+      const lvl = stopEl?.dataset.lvl ?? "";
+      const modelId = sessionKey ? modelPinBySession.get(sessionKey) : undefined;
+      if (!stopEl || !lvl || !modelId) {
+        return;
+      }
+      const held = rolesOfModel(thalamusSuggestions, modelId);
+      if (held.length === 0) {
+        return;
+      }
+      e.preventDefault();
+      closeTierMenu();
+      const menu = document.createElement("div");
+      menu.className = "exec-context-menu thalamus-tier-menu";
+      menu.innerHTML =
+        `<div class="thalamus-tier-menu-head">${esc(shortModelLabel(modelId))} · ${esc(effortWord(lvl))}</div>` +
+        held
+          .map((tier) => {
+            const on = thalamusSuggestions[tier]?.effort === lvl;
+            return `<button class="exec-context-item" data-tier="${tier}">${on ? "✓" : "\u2003"} assign this effort to ${esc(roleWord(tier))}</button>`;
+          })
+          .join("");
+      menu.style.left = `${Math.min(e.clientX, window.innerWidth - 280)}px`;
+      menu.style.top = `${Math.min(e.clientY, window.innerHeight - 120)}px`;
+      document.body.appendChild(menu);
+      tierMenuEl = menu;
+      menu.addEventListener("click", (ev) => {
+        const item = (ev.target as HTMLElement).closest<HTMLElement>("[data-tier]");
+        if (!item) return;
+        const tier = item.dataset.tier!;
+        closeTierMenu();
+        req("prefrontal.thalamusDefaults", { tier, effort: lvl })
+          .then((r) => {
+            setThalamusSuggestions(r);
+            updateBudgetPanel();
+          })
+          .catch((err) => {
+            console.error("[thalamus-defaults] effort set failed", err);
+            const msg =
+              err instanceof Error
+                ? err.message
+                : String((err as { message?: unknown })?.message ?? err);
+            window.alert(`Failed to set the effort: ${msg} (devtools console has full error)`);
+          });
+      });
+      armTierMenuDismiss();
+    });
     budgetPanelEl.addEventListener("click", (e) => {
       const stop = readModelStop(e);
       if (!stop) {
@@ -20571,14 +27385,13 @@ function init() {
   // .model-group. The generic .model-group-label collapse binding in updateBudgetPanel()
   // (~L10690) is scoped to `el` = #budget-panel and re-attached on every repaint, so it
   // NEVER reaches this label — the group is a static sibling of #budget-panel, not a child
-  // of it. Bind it here ONCE at boot, next to #eeg-scope-toggle (same reason: static node,
-  // bound once), honouring the identical contract: toggle .open, then write through to
-  // "model:eeg" with its default (expanded).
+  // of it. Bind it here ONCE at boot (static node, bound once), honouring the identical
+  // contract: toggle .open, then write through to "model:eeg" with its default (expanded).
   //
   // The .ct-switch/button/a/input/select exclusion is the same one the right-rail header
-  // handler uses (~L12390) and it is REQUIRED here, not defensive: this label HOSTS the
-  // live Session/All switch and the ⓘ zone-doc link, so without it every scope flip would
-  // also fold the seismograph shut under the user's own click.
+  // handler uses (~L12390) and it is REQUIRED here, not defensive: these labels host the ⓘ
+  // zone-doc link and the CONTEXT WINDOW evict/compact buttons, so without it every press
+  // would also fold the panel shut under the user's own click.
   //
   // FORK 2026-08-06 (the architect: cache above the EEG): there are now TWO static groups here, so
   // this binds every direct .model-group child of #models-panel rather than the EEG by name
@@ -20603,28 +27416,13 @@ function init() {
         !group.classList.contains("open"),
         MODEL_SECTION_DEFAULT_COLLAPSED[section] ?? false,
       );
+      // FORK 2026-10-01 (finding 9): fillEegPaper() declines to build the SVG while this fold is
+      // shut, so opening it is what asks for the paint it skipped.
+      if (section === "eeg" && group.classList.contains("open")) {
+        fillEegPaper();
+      }
     });
   }
-
-  // FORK 2026-06-19 (bible §5.8h): the EEG's OWN session/all toggle — its own eegScope
-  // state (separate from budgetScope), uses data-eeg-scope so the loop above ignores it.
-  // "all" overlays other sessions' concurrent traces, faint. Bound by id ONCE: the node is
-  // static markup inside #models-panel (2026-08-02) and is never re-rendered — see the
-  // eegPanelBound note (~L2424) before moving it.
-  $("eeg-scope-toggle")?.addEventListener("click", (e) => {
-    const el = e.target as HTMLElement;
-    const label = el.closest("[data-eeg-scope]") as HTMLElement | null;
-    const track = el.closest("[data-scope-track]") as HTMLElement | null;
-    if (!label && !track) {
-      return;
-    }
-    const next: "session" | "all" = label
-      ? (label.dataset.eegScope as "session" | "all")
-      : eegScope === "session"
-        ? "all"
-        : "session";
-    setEegScope(next);
-  });
 
   // ─── Fractal injection toggle (FORK 2026-04-18; amygdala removed 2026-06-07) ───
   const fraBtn = $("tb-fractal")!;
@@ -20807,6 +27605,440 @@ function init() {
     setFlag("topbar:models", !collapsed, true);
   });
 
+  // FORK 2026-09-10: FE/BE rebuild buttons. Hit tinker-prod-ui on this origin
+  // (/api/rebuild/*), not the gateway. FORK 2026-10-03: a success reloads only the page whose
+  // click started the run, and only when the served bundle differs from the one it runs.
+  function bindRebuildButton(
+    btn: HTMLElement,
+    kind: "fe" | "be",
+    opts: { label?: string; idleLines?: string[] } = {},
+  ): void {
+    // FORK 2026-09-23 (the architect): the hover is the live progress view. It shows the phase,
+    // elapsed time, a stall warning and the log tail, repaints while held open, and a
+    // failure stays red with its reason until the next click.
+    type RebuildSnap = {
+      kind?: string;
+      status?: string;
+      error?: string;
+      log?: string[];
+      phase?: string;
+      startedAt?: number;
+      finishedAt?: number;
+      lastOutputAt?: number;
+      now?: number;
+      by?: string;
+      origin?: string;
+      reason?: string;
+    };
+    const label =
+      opts.label ?? (kind === "fe" ? "Frontend rebuild" : "Backend rebuild + gateway restart");
+    if (opts.idleLines) {
+      btn.setAttribute("data-hint", opts.idleLines.join("\n"));
+      btn.toggleAttribute("data-hint-wide", opts.idleLines.length > 1);
+    }
+    const idleHint = btn.getAttribute("data-hint") || label;
+    // FORK 2026-09-30: who started the run. The agent skill `tinker-rebuild` starts the same job.
+    const startedBy = (d: RebuildSnap) =>
+      d.by === "agent"
+        ? `Started by an agent${d.origin ? ` (chat ${d.origin})` : ""}${d.reason ? `: ${d.reason}` : ""}`
+        : d.by === "page"
+          ? "Started from this page"
+          : "";
+    const STALL_MS = 60_000;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let unreachableSince = 0;
+    // FORK 2026-10-03: true while this page follows a run that its own click started.
+    let startedHere = false;
+    const stopPoll = () => {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+    const hint = (text: string) => {
+      btn.setAttribute("data-hint", text);
+      btn.toggleAttribute("data-hint-wide", text.includes("\n"));
+      repaintOpenHint?.();
+    };
+    const setBusy = (busy: boolean) => {
+      btn.classList.toggle("tb-busy", busy);
+    };
+    const dur = (ms: number) => {
+      const t = Math.max(0, Math.round(ms / 1000));
+      return t < 60 ? `${t}s` : `${Math.floor(t / 60)}m ${String(t % 60).padStart(2, "0")}s`;
+    };
+    const tail = (d: RebuildSnap, n: number) =>
+      (Array.isArray(d.log) ? d.log : [])
+        .filter((l) => l.trim())
+        .slice(-n)
+        .map((l) => (l.length > 110 ? `${l.slice(0, 109)}…` : l))
+        .join("\n");
+    const describe = (d: RebuildSnap): string => {
+      const now = d.now || Date.now();
+      const started = d.startedAt || now;
+      const lines: string[] = [];
+      if (d.status === "running") {
+        lines.push(`⏳ ${label} — ${dur(now - started)} elapsed`);
+        const who = startedBy(d);
+        if (who) lines.push(who);
+        if (d.phase) lines.push(`Now: ${d.phase}`);
+        const quiet = now - (d.lastOutputAt || started);
+        lines.push(
+          quiet >= STALL_MS
+            ? `⚠ No output for ${dur(quiet)} — the step below may be stuck`
+            : `Last output ${dur(quiet)} ago`,
+        );
+        lines.push("", tail(d, 6));
+      } else if (d.status === "error") {
+        const took = (d.finishedAt || now) - started;
+        lines.push(`❌ ${label} FAILED after ${dur(took)} — ${d.error || "unknown error"}`);
+        if (d.phase) lines.push(`Failed in: ${d.phase}`);
+        const fatal = (d.log || []).filter((l) => /FATAL|error|failed/i.test(l)).pop();
+        if (fatal) lines.push(`Cause: ${fatal.slice(0, 200)}`);
+        lines.push("", tail(d, 8), "", "Click to retry.");
+      }
+      return lines.join("\n").trim();
+    };
+    const fail = (text: string) => {
+      stopPoll();
+      startedHere = false;
+      setBusy(false);
+      btn.classList.add("tb-error");
+      hint(text);
+    };
+    const poll = () => {
+      void fetch(`/api/rebuild/${kind}`)
+        .then((r) => r.json())
+        .then((d: RebuildSnap) => {
+          unreachableSince = 0;
+          if (d.status === "running") {
+            setBusy(true);
+            hint(describe(d));
+            return;
+          }
+          if (d.status === "ok") {
+            stopPoll();
+            setBusy(false);
+            btn.classList.add("tb-active");
+            const took = dur((d.finishedAt || Date.now()) - (d.startedAt || Date.now()));
+            // FORK 2026-10-03 — measured 43 page reloads in 48 h. This branch reloaded EVERY open
+            // page the moment any run ended, an agent's run too (checkRunning attaches to those),
+            // mid-reply, and logged nothing. A new build already reaches every open page through
+            // the ui-build push and requestUiReload, which waits for the reply and the composer.
+            // Here only the page whose click started the run reloads, and only onto a new bundle.
+            const mine = startedHere;
+            startedHere = false;
+            const done = `✅ ${label} done in ${took}`;
+            if (mine && OWN_BUNDLE) {
+              hint(`${done} — checking the served build…`);
+              void fetch("/api/ui-build", { cache: "no-store" })
+                .then((r) => (r.ok ? (r.json() as Promise<{ bundle?: string | null }>) : null))
+                .then((b) => {
+                  if (b?.bundle && b.bundle !== OWN_BUNDLE) {
+                    hint(`${done} — reloading`);
+                    reloadPage("rebuild-button", `${label} finished: ${b.bundle}`, "immediate");
+                    return;
+                  }
+                  hint(
+                    b?.bundle
+                      ? `${done} — this page already runs the served build`
+                      : `${done} — could not check the served build; reload by hand if needed`,
+                  );
+                })
+                .catch((err: unknown) => {
+                  console.error(`[rebuild-${kind}] post-build bundle check failed`, err);
+                  hint(`${done} — could not check the served build; reload by hand if needed`);
+                });
+              return;
+            }
+            hint(
+              kind === "fe"
+                ? `${done} — open pages move onto the new build after the reply in flight, never mid-typing`
+                : done,
+            );
+            return;
+          }
+          fail(describe(d) || `❌ ${label} failed`);
+        })
+        .catch((err: unknown) => {
+          console.error(`[rebuild-${kind}] status poll failed`, err);
+          const now = Date.now();
+          unreachableSince ||= now;
+          const gone = now - unreachableSince;
+          if (gone > 90_000) {
+            fail(
+              `❌ Lost contact with the rebuild server (tinker-prod-ui) for ${dur(gone)}.\n` +
+                "Check: systemctl --user status tinker-prod-ui\n(devtools console has full error)",
+            );
+            return;
+          }
+          hint(`⏳ ${label} — rebuild server not answering for ${dur(gone)}, retrying…`);
+        });
+    };
+    const startPoll = () => {
+      stopPoll();
+      pollTimer = setInterval(poll, 1500);
+      poll();
+    };
+    btn.addEventListener("click", () => {
+      if (btn.classList.contains("tb-busy")) return;
+      btn.classList.remove("tb-error", "tb-active");
+      setBusy(true);
+      hint(`⏳ ${label} — starting…`);
+      // The header is the page-caller guard (tinker-prod-ui isPageCaller); `by=page` lets a
+      // click skip the restart-loop guard, which exists for resumed agents, not for the architect's hand.
+      void fetch(`/api/rebuild/${kind}?by=page`, {
+        method: "POST",
+        headers: { "X-Tinker-Action": "rebuild" },
+      })
+        .then(async (r) => {
+          const d = (await r.json().catch(() => ({}))) as RebuildSnap;
+          if (!r.ok && d.status !== "running") {
+            fail(`❌ Could not start the ${label.toLowerCase()}: ${d.error || `HTTP ${r.status}`}`);
+            return;
+          }
+          // FORK 2026-09-30: the OTHER rebuild holds the lock (tinker-prod-ui names it in `kind`).
+          // Following this button's own job would show its last finished run as a fresh success.
+          if (!r.ok && d.kind && d.kind !== kind) {
+            fail(
+              `⏳ Not started: ${d.error || "another rebuild is running"}` +
+                `${d.reason ? ` (${d.reason})` : ""}. Click again when it ends.`,
+            );
+            return;
+          }
+          startedHere = true;
+          startPoll();
+        })
+        .catch((err: unknown) => {
+          console.error(`[rebuild-${kind}] start failed`, err);
+          const msg = err instanceof Error ? err.message : String(err);
+          fail(
+            `❌ Could not start the ${label.toLowerCase()}: ${msg}\n(devtools console has full error)`,
+          );
+        });
+    });
+    // A reload (or a second tab) mid-rebuild picks the running job back up instead of
+    // showing an idle button while the backend is still building. FORK 2026-09-30: and a slow
+    // idle check does the same for a run an AGENT started (skill tinker-rebuild), so the button
+    // spins and its hover narrates. FORK 2026-10-03: following such a run never reloads this page
+    // (startedHere stays false); its new build arrives through the ui-build push instead.
+    const checkRunning = () => {
+      if (pollTimer) return;
+      void fetch(`/api/rebuild/${kind}`)
+        .then((r) => r.json())
+        .then((d: RebuildSnap) => {
+          if (d.status === "running") startPoll();
+        })
+        .catch(() => {
+          // tinker-prod-ui unreachable: the next check tries again; a red hint stays red
+        });
+    };
+    checkRunning();
+    setInterval(checkRunning, 15_000);
+  }
+  // FORK 2026-09-30 (the architect): the frontend rebuild sits right after the gateway restart in the
+  // SESSIONS header, the same pill in colour (it was the palette, then a colourful icon, in the
+  // topbar). Inside the header's collapse toggle, so its click stops there too.
+  const feRestartBtn = $("ft-restart-fe");
+  if (feRestartBtn) {
+    feRestartBtn.addEventListener("click", (event) => event.stopPropagation());
+    bindRebuildButton(feRestartBtn, "fe", {
+      label: "Frontend rebuild",
+      idleLines: [
+        "↻ Rebuild the frontend (skill: tinker-rebuild frontend)",
+        "Builds the Tinker page from this checkout in a few seconds, then every open",
+        "Tinker page reloads onto it by itself (after the reply in flight, never mid-typing).",
+        "The gateway and the chats are not touched.",
+      ],
+    });
+  }
+  // FORK 2026-09-30 (the architect): the full rebuild + restart, next to ▶ in the SESSIONS header (it was
+  // the ⚙️ in the topbar). It sits inside the header's collapse toggle, so its click stops there.
+  const restartBtn = $("ft-restart");
+  if (restartBtn) {
+    restartBtn.addEventListener("click", (event) => event.stopPropagation());
+    bindRebuildButton(restartBtn, "be", {
+      label: "Rebuild + restart",
+      idleLines: [
+        "↻ Rebuild and restart (skill: tinker-rebuild full)",
+        "Builds the committed develop in a clean worktree, with its Tinker page, and checks it.",
+        "A failed build never touches the running gateway.",
+        "Then restarts through the gateway-restart skill: every chat that is thinking is held",
+        "at its next model call and carries on by itself after the restart, with no prompt.",
+        "Each paused chat shows a 🔄 row saying what happened.",
+        "Takes about 3 minutes; this page reloads when it is done, if its Tinker page changed.",
+      ],
+    });
+  }
+
+  // FORK 2026-09-25 (the architect): ⏸ / ▶ next to SESSIONS drive the host's freeze-thaw skill
+  // (~/.openclaw/workspace/skills/freeze-thaw). Both hit tinker-prod-ui on this origin
+  // (/api/freeze-thaw), not the gateway: pause STOPS the gateway, and play has to work while
+  // it is down. The hover is the explanation and follows the state.
+  function bindFreezeThawButtons(): void {
+    const wrap = $("ft-btns");
+    const pauseBtn = $("ft-pause");
+    const playBtn = $("ft-play");
+    if (!wrap || !pauseBtn || !playBtn) return;
+    type FtStatus = {
+      available?: boolean;
+      frozen?: boolean;
+      frozenAt?: string | null;
+      summary?: string | null;
+      lastThaw?: { at?: string | null; summary?: string | null } | null;
+      error?: string;
+    };
+    const hhmm = (iso?: string | null) =>
+      iso
+        ? new Date(iso).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })
+        : "?";
+    const setHint = (btn: HTMLElement, lines: string[]) => {
+      btn.setAttribute("data-hint", lines.filter((l) => l !== "").join("\n"));
+      repaintOpenHint?.();
+    };
+    const paint = (s: FtStatus) => {
+      // FORK 2026-09-30: the restart button (#ft-restart) shares this strip and works without the
+      // freeze-thaw skill (the classic deploy restarts by itself), so only ⏸ / ▶ follow it.
+      wrap.hidden = false;
+      pauseBtn.hidden = !s.available;
+      playBtn.hidden = !s.available;
+      wrap.classList.toggle("ft-frozen", Boolean(s.frozen));
+      for (const b of [pauseBtn, playBtn]) b.classList.remove("ft-busy", "ft-error");
+      if (s.frozen) {
+        setHint(pauseBtn, [
+          `⏸ Already paused since ${hhmm(s.frozenAt)}`,
+          s.summary ? `Frozen: ${s.summary}.` : "",
+          "Press play to resume, or power off: it all resumes after you log in.",
+        ]);
+        setHint(playBtn, [
+          `▶ Resume everything (paused since ${hhmm(s.frozenAt)})`,
+          s.summary ? `Frozen: ${s.summary}.` : "",
+          "Starts the gateway as soon as the internet answers,",
+          "resumes every chat that was mid-thought, wakes the paused terminal Claude",
+          "sessions, and reopens terminals and Chrome if they were closed.",
+          "Takes about a minute. It also runs by itself after you log in.",
+        ]);
+      } else {
+        setHint(pauseBtn, [
+          "⏸ Pause everything (skill: freeze-thaw)",
+          "Freezes every chat that is still thinking (Tinker, WhatsApp, subagents),",
+          "stops the gateway, and pauses the terminal Claude sessions.",
+          "What was live is saved first, so nothing is lost.",
+          "Then power off whenever you like: it all resumes after you log in.",
+          "Or press play to resume right away.",
+          "Pause and power off in one click: the snowflake icon on the desktop.",
+        ]);
+        setHint(playBtn, [
+          "▶ Nothing is paused",
+          "After a pause, or after a reboot, this resumes every chat that was mid-thought.",
+          "It runs by itself after you log in, so you only need it after a pause",
+          "without a reboot.",
+          s.lastThaw?.summary ? `Last resume (${hhmm(s.lastThaw.at)}): ${s.lastThaw.summary}` : "",
+        ]);
+      }
+    };
+    const readStatus = async (): Promise<FtStatus> => (await fetch("/api/freeze-thaw")).json();
+    const refresh = () =>
+      readStatus()
+        .then(paint)
+        .catch((err) => console.error("[freeze-thaw] status failed", err));
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    const act = async (
+      action: "pause" | "play",
+      btn: HTMLElement,
+      busy: string[],
+      wantFrozen: boolean,
+    ) => {
+      btn.classList.remove("ft-error");
+      btn.classList.add("ft-busy");
+      setHint(btn, busy);
+      try {
+        const r = await fetch(`/api/freeze-thaw/${action}`, {
+          method: "POST",
+          headers: { "X-Tinker-Action": "freeze-thaw" },
+        });
+        const d = (await r.json()) as FtStatus;
+        if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+      } catch (err) {
+        console.error(`[freeze-thaw] ${action} failed`, err);
+        const msg =
+          typeof err === "string"
+            ? err
+            : err instanceof Error
+              ? err.message
+              : (() => {
+                  try {
+                    return JSON.stringify(err);
+                  } catch {
+                    return "unknown error";
+                  }
+                })();
+        btn.classList.remove("ft-busy");
+        btn.classList.add("ft-error");
+        setHint(btn, [
+          `${action === "pause" ? "⏸ Pause" : "▶ Resume"} failed: ${msg}`,
+          "(devtools console has full error)",
+        ]);
+        return;
+      }
+      if (pollTimer) clearInterval(pollTimer);
+      const deadline = Date.now() + 10 * 60_000;
+      pollTimer = setInterval(() => {
+        void readStatus()
+          .then((s) => {
+            if (Boolean(s.frozen) !== wantFrozen && Date.now() < deadline) return;
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = null;
+            paint(s);
+          })
+          .catch(() => {
+            // tinker-prod-ui briefly unreachable: keep polling until the deadline
+          });
+      }, 2000);
+    };
+    pauseBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (wrap.classList.contains("ft-frozen") || pauseBtn.classList.contains("ft-busy")) return;
+      const ok = window.confirm(
+        "Pause everything?\n\n" +
+          "Every chat that is still thinking stops (this one too), and the gateway stays down " +
+          "until you press ▶ or reboot.\n\nNothing is lost: it is saved first and resumes where it stopped.",
+      );
+      if (!ok) return;
+      void act(
+        "pause",
+        pauseBtn,
+        [
+          "⏸ Pausing…",
+          "Saving what is live, then stopping the gateway.",
+          "This page loses its connection in a few seconds. That is expected.",
+        ],
+        true,
+      );
+    });
+    playBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (playBtn.classList.contains("ft-busy")) return;
+      void act(
+        "play",
+        playBtn,
+        [
+          "▶ Resuming…",
+          "Waiting for the internet and the gateway, then resuming the chats.",
+          "The page reconnects by itself.",
+        ],
+        false,
+      );
+    });
+    wrap.addEventListener("mouseenter", () => void refresh());
+    void refresh();
+  }
+  bindFreezeThawButtons();
+
   // ─── Exec mode toggle (Control Panel HUD: graphs + calendar + tasks) ───
   // FORK 2026-05-11 (tinkerclaw-control-panel Phase C MVP). The HUD is
   // rendered on demand into the page as a position:absolute aside; styles
@@ -20893,7 +28125,10 @@ function init() {
         <div class="exec-section exec-graphs">
           <div class="exec-section-title">
             <span>📈 Graphs</span>
-            <button class="exec-section-refresh" data-section="graphs" title="Re-poll every graph now">↻</button>
+            <span class="exec-section-actions">
+              <button type="button" class="exec-linkx-toggle" id="exec-linkx-toggle" aria-pressed="false" title="Link every graph's time axis. First press stretches them all to the longest series; then zoom or pan one and the rest follow.">Link time</button>
+              <button class="exec-section-refresh" data-section="graphs" title="Re-poll every graph now">↻</button>
+            </span>
           </div>
           <div class="exec-graphs-body" id="exec-graphs-body">Loading…</div>
         </div>
@@ -21167,6 +28402,22 @@ function init() {
         void refreshExecSection(section);
       });
     });
+    const linkBtn = panel.querySelector<HTMLButtonElement>("#exec-linkx-toggle");
+    if (linkBtn) {
+      const syncLinkBtn = () => {
+        const on = loadLinkX();
+        linkBtn.classList.toggle("on", on);
+        linkBtn.setAttribute("aria-pressed", on ? "true" : "false");
+        linkBtn.textContent = on ? "Linked" : "Link time";
+      };
+      syncLinkBtn();
+      linkBtn.addEventListener("click", () => {
+        const graphsBody = panel.querySelector("#exec-graphs-body") as HTMLElement | null;
+        if (!graphsBody) return;
+        applyLinkX(graphsBody, !loadLinkX());
+        syncLinkBtn();
+      });
+    }
     // Per-row refresh: delegated click on .exec-kpi-row-refresh inside either body.
     const onRowRefresh = (ev: Event) => {
       const target = ev.target as HTMLElement | null;
@@ -22930,6 +30181,9 @@ function init() {
     "graph.moltbook.followers": { icon: "👥", label: "Moltbook followers" },
     "graph.github.traffic.views14d": { icon: "👁", label: "Repo views (cumulative)" },
     "graph.github.traffic.clones14d": { icon: "⬇", label: "Repo clones (cumulative)" },
+    "graph.activity.commits": { icon: "✎", label: "Commits (cumulative)" },
+    "graph.activity.additions": { icon: "+", label: "Lines added (cumulative)" },
+    "graph.activity.deletions": { icon: "−", label: "Lines deleted (cumulative)" },
     "graph.clawhub.installs": { icon: "🧩", label: "ClawHub installs" },
     "kpi.inbound.organic": { icon: "🔗", label: "Organic inbound links" },
     "graph.inbound.ours": { icon: "🔗", label: "Inbound links (ours)" },
@@ -22942,6 +30196,14 @@ function init() {
         const target = id.length > prefix.length ? id.slice(prefix.length + 1) : "";
         return { ...KPI_LABELS[prefix], target };
       }
+    }
+    // FORK 2026-09-09 — ClawHub catalog lines are graph.clawhub.<slug> and
+    // graph.clawhubinstalls.<slug> (plugins: graph.clawhub.plugin-<slug>).
+    // Without this, an unlisted skill renders as "clawhub.tinker-orca" in the
+    // hover tooltip instead of the slug.
+    const clawhubSlug = id.match(/^graph\.clawhub(?:installs)?\.(?:plugin-)?(.+)$/);
+    if (clawhubSlug) {
+      return { icon: "📊", label: clawhubSlug[1], target: clawhubSlug[1] };
     }
     return { icon: "📊", label: id.replace(/^(kpi|graph)\./, ""), target: "" };
   }
@@ -23029,6 +30291,10 @@ function init() {
         // = "stars") so the 0–N star scale isn't crushed by the cumulative
         // views/clones on the github-traffic card.
         stars: "GitHub stars",
+        // FORK 2026-09-10 — the architect's own daily commits / lines (group key =
+        // id segment[1] = "activity"). Own card so the 0–N daily counts aren't
+        // crushed by cumulative views/clones on the github-traffic card.
+        activity: "GitHub activity",
         moltbook: "Moltbook",
         clawhub: "ClawHub views",
         clawhubinstalls: "ClawHub installs",
@@ -23040,6 +30306,7 @@ function init() {
       // Gray suffix shown next to the group title (e.g. GitHub graph → "GitHub TinkerClaw").
       const GROUP_ACCENTS: Record<string, string> = {
         github: "TinkerClaw",
+        activity: "TinkerClaw",
       };
       const groupMeta = (id: string): { key: string; title: string; accent?: string } => {
         const seg = id.split(".")[1] ?? id;
@@ -23071,6 +30338,28 @@ function init() {
         // cumulative counts (0 at repo creation → N), so NOT cumulative-summed.
         // Left axis, its own card (group "stars").
         "graph.stars.tinkerclaw": { color: "#fbbf24", axis: "left", label: "tinkerclaw" },
+        // FORK 2026-09-10 — daily commits (left) vs lines added/deleted (right).
+        // Same trick as traffic views/clones: the store holds per-day deltas, the
+        // renderer running-sums them into a rising line (the architect 2026-09-10: "as the others").
+        "graph.activity.commits": {
+          color: "#8ECAE6",
+          axis: "left",
+          cumulative: true,
+          label: "commits",
+        },
+        "graph.activity.additions": {
+          color: "#64E572",
+          axis: "right",
+          cumulative: true,
+          label: "lines +",
+        },
+        "graph.activity.deletions": {
+          color: "#E76F51",
+          axis: "right",
+          dash: true,
+          cumulative: true,
+          label: "lines −",
+        },
         "graph.github.traffic.clones14d": { color: "#8ECAE6", axis: "left", cumulative: true },
         "graph.github.traffic.views14d": { color: "#F4A261", axis: "right", cumulative: true },
         // FORK 2026-06-14 — Website visits (GA4 daily sessions) shown CUMULATIVE, one
@@ -23195,6 +30484,147 @@ function init() {
         "graph.clawhubinstalls.whatsapp-ultimate": { color: "#5eead4", label: "whatsapp" },
         "graph.clawhubinstalls.wordpress-ultimate": { color: "#d8b4fe", label: "wordpress" },
         "graph.clawhubinstalls.youtube-ultimate": { color: "#fde047", label: "youtube" },
+        // FORK 2026-09-09 — remaining live skills + plugins. Same colour on both
+        // cards. Plugins are namespaced graph.clawhub.plugin-<slug> so they do not
+        // collide with a skill of the same designation (tinker-orca).
+        "graph.clawhub.tinker-orca": { color: "#38bdf8", label: "tinker-orca" },
+        "graph.clawhub.tinker-amazon-shopper": { color: "#fb923c", label: "amazon-shopper" },
+        "graph.clawhub.tinker-linkedin": { color: "#818cf8", label: "tinker-linkedin" },
+        "graph.clawhub.backlink-audit": { color: "#2dd4bf", label: "backlink-audit" },
+        "graph.clawhub.chatgpt-exporter": { color: "#ef4444", label: "chatgpt-exporter (twin)" },
+        "graph.clawhub.linkedin-hack": { color: "#6366f1", label: "linkedin-hack" },
+        "graph.clawhub.visual-tables": { color: "#84cc16", label: "visual-tables" },
+        "graph.clawhub.tinker-backlink-audit": { color: "#14b8a6", label: "tinker-backlink-audit" },
+        "graph.clawhubinstalls.tinker-orca": { color: "#38bdf8", label: "tinker-orca" },
+        "graph.clawhubinstalls.tinker-amazon-shopper": {
+          color: "#fb923c",
+          label: "amazon-shopper",
+        },
+        "graph.clawhubinstalls.tinker-linkedin": { color: "#818cf8", label: "tinker-linkedin" },
+        "graph.clawhubinstalls.backlink-audit": { color: "#2dd4bf", label: "backlink-audit" },
+        "graph.clawhubinstalls.chatgpt-exporter": {
+          color: "#ef4444",
+          label: "chatgpt-exporter (twin)",
+        },
+        "graph.clawhubinstalls.linkedin-hack": { color: "#6366f1", label: "linkedin-hack" },
+        "graph.clawhubinstalls.visual-tables": { color: "#84cc16", label: "visual-tables" },
+        "graph.clawhubinstalls.tinker-backlink-audit": {
+          color: "#14b8a6",
+          label: "tinker-backlink-audit",
+        },
+        "graph.clawhub.plugin-tinker-whatsapp": { color: "#5eead4", label: "plugin · whatsapp" },
+        "graph.clawhub.plugin-tinker-bridge": { color: "#f59e0b", label: "plugin · bridge" },
+        "graph.clawhub.plugin-tinker-prefrontal": {
+          color: "#a78bfa",
+          label: "plugin · prefrontal",
+        },
+        "graph.clawhub.plugin-tinker-grok-bridge": {
+          color: "#22c55e",
+          label: "plugin · grok-bridge",
+        },
+        "graph.clawhub.plugin-tinker-hippocampus": {
+          color: "#eab308",
+          label: "plugin · hippocampus",
+        },
+        "graph.clawhub.plugin-tinker-total-recall": {
+          color: "#06b6d4",
+          label: "plugin · total-recall",
+        },
+        "graph.clawhub.plugin-tinker-task-panel": {
+          color: "#f97316",
+          label: "plugin · task-panel",
+        },
+        "graph.clawhub.plugin-tinker-learned-intuition": {
+          color: "#ec4899",
+          label: "plugin · learned-intuition",
+        },
+        "graph.clawhub.plugin-tinker-identity-persistence": {
+          color: "#8b5cf6",
+          label: "plugin · identity",
+        },
+        "graph.clawhub.plugin-tinker-pulse-panel": {
+          color: "#10b981",
+          label: "plugin · pulse-panel",
+        },
+        "graph.clawhub.plugin-tinker-round-table": {
+          color: "#3b82f6",
+          label: "plugin · round-table",
+        },
+        "graph.clawhub.plugin-tinker-fractal-reflection": {
+          color: "#d946ef",
+          label: "plugin · fractal",
+        },
+        "graph.clawhub.plugin-tinker-computational-humor": {
+          color: "#8ECAE6",
+          label: "plugin · humor",
+        },
+        "graph.clawhub.plugin-tinker-memory-enhancements": {
+          color: "#f472b6",
+          label: "plugin · memory-enh",
+        },
+        "graph.clawhub.plugin-tinker-orca": { color: "#0ea5e9", label: "plugin · orca" },
+        "graph.clawhub.plugin-tinker-budget-panel": { color: "#f43f5e", label: "plugin · budget" },
+        "graph.clawhubinstalls.plugin-tinker-whatsapp": {
+          color: "#5eead4",
+          label: "plugin · whatsapp",
+        },
+        "graph.clawhubinstalls.plugin-tinker-bridge": {
+          color: "#f59e0b",
+          label: "plugin · bridge",
+        },
+        "graph.clawhubinstalls.plugin-tinker-prefrontal": {
+          color: "#a78bfa",
+          label: "plugin · prefrontal",
+        },
+        "graph.clawhubinstalls.plugin-tinker-grok-bridge": {
+          color: "#22c55e",
+          label: "plugin · grok-bridge",
+        },
+        "graph.clawhubinstalls.plugin-tinker-hippocampus": {
+          color: "#eab308",
+          label: "plugin · hippocampus",
+        },
+        "graph.clawhubinstalls.plugin-tinker-total-recall": {
+          color: "#06b6d4",
+          label: "plugin · total-recall",
+        },
+        "graph.clawhubinstalls.plugin-tinker-task-panel": {
+          color: "#f97316",
+          label: "plugin · task-panel",
+        },
+        "graph.clawhubinstalls.plugin-tinker-learned-intuition": {
+          color: "#ec4899",
+          label: "plugin · learned-intuition",
+        },
+        "graph.clawhubinstalls.plugin-tinker-identity-persistence": {
+          color: "#8b5cf6",
+          label: "plugin · identity",
+        },
+        "graph.clawhubinstalls.plugin-tinker-pulse-panel": {
+          color: "#10b981",
+          label: "plugin · pulse-panel",
+        },
+        "graph.clawhubinstalls.plugin-tinker-round-table": {
+          color: "#3b82f6",
+          label: "plugin · round-table",
+        },
+        "graph.clawhubinstalls.plugin-tinker-fractal-reflection": {
+          color: "#d946ef",
+          label: "plugin · fractal",
+        },
+        "graph.clawhubinstalls.plugin-tinker-computational-humor": {
+          color: "#8ECAE6",
+          label: "plugin · humor",
+        },
+        "graph.clawhubinstalls.plugin-tinker-memory-enhancements": {
+          color: "#f472b6",
+          label: "plugin · memory-enh",
+        },
+        "graph.clawhubinstalls.plugin-tinker-orca": { color: "#0ea5e9", label: "plugin · orca" },
+        "graph.clawhubinstalls.plugin-tinker-budget-panel": {
+          color: "#f43f5e",
+          label: "plugin · budget",
+        },
       };
       const presenceGroups = new Map<string, GGroup>();
       for (const { metric, observations } of obsLists) {
@@ -24536,7 +31966,7 @@ function init() {
           { id: "online", label: "💰 Online", position: 1, parent_id: null },
           { id: "family", label: "👨‍👩‍👧 Family", position: 2, parent_id: null },
           { id: "me", label: "🏃 Me", position: 3, parent_id: null },
-          { id: "acme", label: "🏭 ACME", position: 4, parent_id: null },
+          { id: "work", label: "💼 Work", position: 4, parent_id: null },
           { id: "meta", label: "⚙️ Meta", position: 5, parent_id: null },
         ];
       }
@@ -27457,10 +34887,22 @@ function init() {
 
   // ═══════════════ SESSIONS ═══════════════
   async function renderSessionsTab(body: Element, sub: Element) {
-    const res = await req("sessions.list", {
-      includeGlobal: sessIncludeGlobal,
-      includeUnknown: sessIncludeUnknown,
-    }).catch(() => ({ sessions: [] }));
+    let operatorId = "";
+    try {
+      operatorId = sessionStorage.getItem(OPERATOR_ID_STORAGE_KEY) ?? "";
+    } catch {
+      operatorId = "";
+    }
+    // FORK 2026-09-12: filters at their default are omitted (see sessions-list-params.ts).
+    const res = await req(
+      "sessions.list",
+      buildSessionsListParams({
+        includeGlobal: sessIncludeGlobal,
+        includeUnknown: sessIncludeUnknown,
+        includeHive: sessIncludeHive,
+        operatorId,
+      }),
+    ).catch(() => ({ sessions: [] }));
     let list: unknown[] = (res as unknown)?.sessions ?? [];
     const mainKey = (res as unknown)?.mainSessionKey;
 
@@ -27527,6 +34969,9 @@ function init() {
       </label>
       <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">
         <input class="alt-sess-filter" data-field="unknown" type="checkbox" ${sessIncludeUnknown ? "checked" : ""}> Unknown
+      </label>
+      <label style="font-size:10px;color:var(--muted);display:flex;align-items:center;gap:4px">
+        <input class="alt-sess-filter" data-field="hive" type="checkbox" ${sessIncludeHive ? "checked" : ""}> Hive
       </label>
     </div>`;
 
@@ -27602,6 +35047,13 @@ function init() {
           sessIncludeGlobal = (el as HTMLInputElement).checked;
         } else if (field === "unknown") {
           sessIncludeUnknown = (el as HTMLInputElement).checked;
+        } else if (field === "hive") {
+          sessIncludeHive = (el as HTMLInputElement).checked;
+          try {
+            sessionStorage.setItem("tinker.includeHive", sessIncludeHive ? "1" : "0");
+          } catch {
+            /* ignore */
+          }
         }
         renderAltView("sessions");
       };
@@ -27832,6 +35284,7 @@ function init() {
   let sessFilterLimit = 50;
   let sessIncludeGlobal = true;
   let sessIncludeUnknown = true;
+  let sessIncludeHive = false;
   let sessSortBy: "updated" | "tokens" | "key" = "updated";
   let usagePeriod = "7d"; // 1d | 7d | 30d | 90d
 
@@ -28507,6 +35960,7 @@ function init() {
             ${altRow("Active runs", String(activeRuns.size))}
             ${altRow("Stream active", streamRunId ? `Yes (${altEsc(streamRunId.slice(0, 12))})` : "No", streamRunId ? "green" : "")}
             ${altRow("Active tab", activeTab)}
+            ${altRow("Call timeline", altEsc(callTimelineDebugLine()))}
           </div>
           <div class="alt-card" style="max-height:280px;overflow-y:auto"><h3>Status</h3>${altJson(status)}</div>
           <div class="alt-card" style="max-height:280px;overflow-y:auto"><h3>Health</h3>${altJson(health)}</div>
@@ -28788,12 +36242,24 @@ function init() {
     streamMsgUid = null;
     subagentStreamUid.clear();
     lastDeltaLen = 0;
+    lastDeltaText = "";
     lastDeltaAt = 0;
     streamRunId = null;
-    sending = false;
+    setSending(false);
+    // FORK 2026-09-21 (the architect: "the marcus vs purist tab seems to be stuck") — /new is a terminal
+    // signal for the current session, same as /clear: close every client lane that could keep a
+    // phantom "running" pill or a pulsing persisted timing block alive across the rotation
+    // (backgroundRuns, the pre-model windows, and the session's persisted `done:false` phase
+    // entries). abort() below only runs when activeRuns has entries, so this cannot be left to it.
     if (sessionKey) {
+      dropBackgroundRunsForSession(backgroundRuns, sessionKey, sessionKeyMatches);
+      clearPreModelFor(sessionKey);
+      closePhaseTimingForSession(sessionKey, "new");
       clearPersistedErrors(sessionKey);
     }
+    preparingSince = null;
+    pendingSince = null;
+    resetPhaseGroup();
     updateChat();
     updateBtn();
 
@@ -28832,8 +36298,13 @@ function init() {
       // this new key converge automatically — the panel row won't flip
       // phrase when this tab is closed.
       tab.title = fortuneForKey(newKey);
+      // FORK 2026-09-15 — u7-tab-naming: back to a placeholder; the old name's origin is gone.
+      tab.titleKind = "fortune";
+      tab.titledAtTurn = undefined;
       tabStates.set(tab.id, freshTabState());
       loadTabState(tab.id);
+      // FORK 2026-10-02 — a new session starts at its latest row; the old one's row is gone.
+      persistViewport(tab.id, FOLLOWING);
       saveTabs();
       renderTabs();
       updateSessionsPanel();
@@ -29190,7 +36661,8 @@ function init() {
 
     // ── Kit detail modal ──
     // Opens on recipe card click instead of xdg-open.
-    // Uses the /api/kit-content endpoint (Vite dev plugin) or /tinker/api/kit-content (prod).
+    // Kit content is served by the Tinker plugin at /tinker/api/kit-content.
+    // Production :18793 also aliases /api/kit-content to that route.
 
     let activeKitModal: HTMLElement | null = null;
 
@@ -29279,7 +36751,7 @@ function init() {
       let resolvedPath = filePath;
 
       // Fetch kit content
-      const apiUrl = `/api/kit-content?path=${encodeURIComponent(filePath)}`;
+      const apiUrl = `/tinker/api/kit-content?path=${encodeURIComponent(filePath)}`;
       try {
         const resp = await fetch(apiUrl);
         if (!resp.ok) {
@@ -29356,7 +36828,7 @@ function init() {
         saveBtn.disabled = true;
         saveBtn.textContent = "Saving…";
         try {
-          const resp = await fetch("/api/save-file", {
+          const resp = await fetch("/tinker/api/save-file", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ path: resolvedPath, content }),
@@ -29548,6 +37020,8 @@ function init() {
     const scroll = $("tab-bar-scroll")!;
     scroll.addEventListener("pointerdown", (ev) => {
       if (ev.button !== 0) return;
+      // Picking a slave: the click is a choice, not the start of a reorder.
+      if (chainOverlay?.isPicking()) return;
       const tgt = ev.target as HTMLElement;
       if (tgt.closest("[data-tab-close]")) return;
       const tabEl = tgt.closest("[data-tab-id]") as HTMLElement | null;
@@ -29646,6 +37120,60 @@ function init() {
     }
   });
 
+  // FORK 2026-09-23 (the architect: "set conversation slave") — chain overlay + slave pick mode.
+  // The pick click is taken in the CAPTURE phase so it never also switches tabs; any click
+  // that is not on another tab cancels, as do Escape and a right-click.
+  chainOverlay = createChainOverlay({
+    chains: () => {
+      const open = new Set(tabs.map((t) => t.id));
+      return loadTabChains().filter((c) => open.has(c.master) && open.has(c.slave));
+    },
+    anchor: tabChainAnchor,
+  });
+  document.addEventListener(
+    "click",
+    (e) => {
+      const master = chainOverlay?.pickMaster();
+      if (!master) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const slave = (
+        (e.target as HTMLElement).closest?.("#tab-bar-scroll [data-tab-id]") as HTMLElement | null
+      )?.dataset.tabId;
+      if (slave && slave !== master && tabs.some((t) => t.id === slave)) {
+        saveTabChains(linkTabs(loadTabChains(), master, slave));
+        // FORK 2026-09-25 (the architect): on link the master jumps ahead of the slave and stays
+        // attached to it; the keys are stored so the pair can close and reopen as one.
+        snapshotChainKeys();
+        if (applyChainAdjacency()) saveTabs();
+        updateSessionsPanel();
+      }
+      endChainPick();
+    },
+    true,
+  );
+  document.addEventListener(
+    "contextmenu",
+    (e) => {
+      if (!chainOverlay?.pickMaster()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      endChainPick();
+    },
+    true,
+  );
+  document.addEventListener(
+    "pointermove",
+    (e) => {
+      if (chainOverlay?.isPicking() || tabDrag) chainOverlay?.pointer(e.clientX, e.clientY);
+    },
+    { passive: true },
+  );
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && chainOverlay?.isPicking()) endChainPick();
+  });
+  $("tab-bar-scroll")!.addEventListener("scroll", () => chainOverlay?.wake(), { passive: true });
+
   // FORK 2026-06-04 — task-mpzcjw6n-n45zs (Tab name summary): right-click a tab → rename / auto-name.
   $("tab-bar-scroll")!.addEventListener("contextmenu", (e) => {
     const tabEl = (e.target as HTMLElement).closest("[data-tab-id]") as HTMLElement | null;
@@ -29719,6 +37247,23 @@ function init() {
     if (stopRetry) {
       const sk = stopRetry.getAttribute("data-retry-stop");
       if (sk) cancelRetry(sk, true);
+      return;
+    }
+    // FORK 2026-09-24 — prompt-queue.md U4 (PQ-12, "action where the problem is"): Resend and
+    // Dismiss on a LOST prompt, drawn by prompt-state.ts `promptActionsHtml`. Delegated here like
+    // every other bubble control, so the chat's innerHTML rewrites cannot detach them.
+    const promptAction = target.closest("[data-prompt-action]") as HTMLElement | null;
+    if (promptAction) {
+      e.stopPropagation();
+      const promptId = promptAction.getAttribute("data-prompt-id");
+      const action = promptAction.getAttribute("data-prompt-action");
+      if (promptId && action === "resend") {
+        resendLostPrompt(promptId);
+      } else if (promptId && action === "dismiss") {
+        dismissLostPrompt(promptId);
+      } else if (promptId && action === "report-bug") {
+        void reportPromptBug(promptId, promptAction.closest(".msg"));
+      }
       return;
     }
     const stop = target.closest(".thinking-stop");
@@ -29953,6 +37498,10 @@ function init() {
       const start = container.scrollTop;
       const delta = dest - start;
       const duration = 350;
+      // FORK 2026-10-02 — a jump to an older turn is reading (scroll-follow.ts 'user-navigate'),
+      // and every frame of the animation goes through setChatScrollTop, so its scroll events are
+      // known echoes rather than gestures that happen to land somewhere.
+      noteUserNavigate();
       let t0: number | null = null;
       function step(ts: number) {
         if (!t0) {
@@ -29962,7 +37511,7 @@ function init() {
         const progress = Math.min(elapsed / duration, 1);
         // ease-out cubic
         const ease = 1 - Math.pow(1 - progress, 3);
-        container!.scrollTop = start + delta * ease;
+        setChatScrollTop(container!, start + delta * ease);
         if (progress < 1) {
           requestAnimationFrame(step);
         } else {
@@ -30029,6 +37578,11 @@ gwConnect();
 // host node (#attach-strip) is created there, and the delegated Stop/Clear listener has to bind to
 // a node that already exists or the buttons are inert with nothing reporting it.
 initAttachStrip();
+// FORK 2026-09-07 — first paint of the agent name. It lives in a DOM node init() just built, and
+// the function waits on whenConnected() internally, so calling it here is safe before the socket
+// is up. Without this the name only appeared after the first tab SWITCH (it is otherwise reached
+// solely through refreshViewedSessionIndicators), which on a fresh load is never.
+refreshAgentNameHeader();
 setInterval(() => {
   if (connected) {
     loadBudget();

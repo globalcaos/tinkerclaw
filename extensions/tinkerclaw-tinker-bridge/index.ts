@@ -1,5 +1,8 @@
 /**
- * FORK: tinkerclaw-tinker-bridge (ClawHub: "tinker-bridge"; formerly tinker-bridge) — plugin entry.
+ * FORK: tinkerclaw-tinker-bridge (ClawHub: "cc-bridge") — plugin entry.
+ *
+ * Do NOT combine with tinkerclaw-harness-id (see README): harness-id refuses to
+ * load while this plugin is enabled.
  *
  * Registers a new OpenClaw provider `claude-code` that drives the real
  * `claude` CLI as a persistent subprocess pool. Replaces the need for the
@@ -34,19 +37,27 @@ import {
   PROVIDER_ID,
   PROVIDER_LABEL,
 } from "./src/defaults.js";
+import {
+  armAdoptionScan,
+  ensureAdoptionScan,
+  registerBridgeDrainParticipant,
+} from "./src/restart-reattach.js";
 import { createClaudeCodeStreamFn } from "./src/stream.js";
 import { claudeCodeThinkingProfile } from "./src/thinking-budget.js";
+import { getPool } from "./src/worker-pool.js";
+import { resolveBridgeTransport, setBridgeTransport } from "./src/worker-transport.js";
 
 type TinkerBridgeConfig = {
   binary?: string;
   cwd?: string;
   disallowedTools?: string[];
   warmOnBoot?: string[];
+  transport?: "pipe" | "file";
 };
 
 export default definePluginEntry({
   id: "tinkerclaw-tinker-bridge",
-  name: "Tinker Bridge",
+  name: "cc-bridge",
   description: "FORK: drives the real claude CLI as a persistent subprocess provider.",
   register(api: OpenClawPluginApi) {
     const pluginConfig = (api.pluginConfig ?? {}) as TinkerBridgeConfig;
@@ -131,6 +142,20 @@ export default definePluginEntry({
       // ceiling for claude-code. tinker-bridge already budgets these levels
       // (thinkLevelToMaxThinkingTokens). Default is omitted on purpose.
       resolveThinkingProfile: () => claudeCodeThinkingProfile(),
+    });
+
+    // FORK 2026-09-30 (TINKER_UI_DESIGN_BIBLE/lifecycles.md L4b): a gateway restart that cuts no
+    // Claude turn. On the file transport (worker-transport.ts) the restart drain freezes each
+    // worker at an API-call boundary and the next gateway adopts it and resumes the turn
+    // (restart-reattach.ts). Workers a file-transport gateway left are adopted whichever transport
+    // is configured now, so switching back to "pipe" strands nothing.
+    setBridgeTransport(resolveBridgeTransport(pluginConfig.transport));
+    registerBridgeDrainParticipant(getPool);
+    // Runs on first need (boot recovery, the first bridge turn); gateway_start is the backstop for
+    // a boot with nothing to recover and no turn, so idle leftovers are still adopted.
+    armAdoptionScan(getPool);
+    api.on("gateway_start", async () => {
+      await ensureAdoptionScan();
     });
 
     // warmOnBoot is declared in config-schema but deferred: the system prompt

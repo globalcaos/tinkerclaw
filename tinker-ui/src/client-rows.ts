@@ -40,11 +40,22 @@ export type StoredClientRow = {
   id: string;
   /** The message object, exactly as the UI pushed it. */
   row: Record<string, unknown>;
-  /** Turn anchor at capture time, so it can be put back where it belongs, not at the tail. */
+  /** Turn ORDINAL at capture time. Alone it is only the last-resort anchor — see `at`/`prompt`. */
   turn: number;
-  /** Capture time — the eviction order and nothing else. */
+  /**
+   * FORK 2026-09-08 — the rest of the anchor (msg-order.ts `TurnAnchor`): the row's own time and a
+   * bounded prefix of the prompt it sat under. The ordinal alone put every old timing block under the
+   * newest prompt of a bridge tab whose transcript had been re-imported and truncated since.
+   * Optional so rows written before this date still read back; `ts` stands in for `at` on those.
+   */
+  at?: number;
+  prompt?: string;
+  /** Capture time — the eviction order, and the anchor time for rows that predate `at`. */
   ts: number;
 };
+
+/** What `recordClientRow` accepts as the anchor: the described shape, or the legacy bare ordinal. */
+export type ClientRowAnchor = number | { turn: number; at?: number; prompt?: string };
 
 type Store = Record<string, StoredClientRow[]>;
 
@@ -169,7 +180,7 @@ function pruneSessions(store: Store): void {
 export function recordClientRow(
   sessionKey: string,
   row: Record<string, unknown>,
-  turn: number,
+  anchor: ClientRowAnchor,
   now: number = Date.now(),
 ): string | null {
   const key = normalizeSessionKey(sessionKey);
@@ -181,7 +192,31 @@ export function recordClientRow(
   // Monotonic within a session and stable across reloads: the id must survive being written,
   // read back and compared, so it cannot be a random value regenerated on restore.
   const id = `${key}:${now}:${rows.length}`;
-  rows.push({ id, row: { ...row, _clientRowId: id }, turn, ts: now });
+  const turn = typeof anchor === "number" ? anchor : anchor.turn;
+  const at =
+    typeof anchor === "object" && typeof anchor.at === "number" && Number.isFinite(anchor.at)
+      ? anchor.at
+      : undefined;
+  const prompt =
+    typeof anchor === "object" && typeof anchor.prompt === "string" && anchor.prompt.trim()
+      ? anchor.prompt.trim()
+      : undefined;
+  // The anchor is written BOTH as store fields (for readers) and onto the row copy itself (the
+  // `_anchorAt` / `_anchorPrompt` fields msg-order.ts reads), so a caller that restores this row
+  // with nothing but `{ m: row, turn }` still puts it under the right prompt.
+  rows.push({
+    id,
+    row: {
+      ...row,
+      _clientRowId: id,
+      ...(at !== undefined ? { _anchorAt: at } : {}),
+      ...(prompt !== undefined ? { _anchorPrompt: prompt } : {}),
+    },
+    turn,
+    ...(at !== undefined ? { at } : {}),
+    ...(prompt !== undefined ? { prompt } : {}),
+    ts: now,
+  });
   // Oldest-first eviction INSIDE a session. The newest rows are the ones being looked at.
   store[key] = rows.length > MAX_ROWS_PER_SESSION ? rows.slice(-MAX_ROWS_PER_SESSION) : rows;
   pruneSessions(store);
@@ -248,7 +283,17 @@ export function missingClientRows(
       seen.add(id);
     }
   }
-  return readClientRows(sessionKey).filter((r) => !seen.has(r.id));
+  return readClientRows(sessionKey)
+    .filter((r) => !seen.has(r.id))
+    .map((r) => {
+      // FORK 2026-09-08 — a row written before the anchor carried a time has only its capture time
+      // `ts`. Hand that out as the anchor time (on the row, where `reinsertByTurnAnchor` reads it),
+      // so the legacy rows already on disk stop piling under the newest prompt on the next reload.
+      if (typeof r.row._anchorAt === "number" || typeof r.at === "number") {
+        return r;
+      }
+      return { ...r, row: { ...r.row, _anchorAt: r.ts } };
+    });
 }
 
 /** Test seam. Never called in production — nothing in the delivery path may clear this store. */

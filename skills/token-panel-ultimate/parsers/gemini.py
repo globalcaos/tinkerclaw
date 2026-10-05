@@ -13,6 +13,8 @@ from datetime import datetime
 from typing import Optional
 import logging
 
+from secretstore import get_secret
+
 logger = logging.getLogger(__name__)
 
 # Pricing per million tokens (as of 2026)
@@ -48,7 +50,8 @@ class GeminiParser:
     """Parse usage data from Gemini API responses."""
     
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        stored_key, _ = get_secret("gemini")
+        self.api_key = api_key or stored_key
         
     def is_configured(self) -> bool:
         """Check if the parser has required credentials."""

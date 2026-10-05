@@ -4,14 +4,25 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import {
+  buildSessionContext,
+  migrateSessionEntries,
+  parseSessionEntries,
+  type SessionEntry as TranscriptEntry,
+} from "@mariozechner/pi-coding-agent";
 import { resolveStateDir } from "../config/paths.js";
 import { type SessionEntry, loadSessionStore, updateSessionStore } from "../config/sessions.js";
+import { classifyAssistantOutcome } from "../fork/turn-outcome.js";
 import { callGateway } from "../gateway/call.js";
+import { type RestartNoticeHow, takeRestartContext } from "../gateway/restart-notice.js";
 import { readSessionMessages } from "../gateway/session-utils.fs.js";
+import { awaitBridgeReattachScan, bridgeReattachFor } from "../infra/bridge-reattach.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { CommandLane } from "../process/lanes.js";
 import { isAcpSessionKey, isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
+import { planContinuation } from "./embedded-agent-runner/continuation.js";
 import { appendInterruptedRun } from "./interrupted-run-ledger.js";
 import { findDanglingToolCall } from "./interrupted-run-probe.js";
 import { resolveAgentSessionDirs } from "./session-dirs.js";
@@ -20,8 +31,51 @@ import type { SessionLockInspection } from "./session-write-lock.js";
 const log = createSubsystemLogger("main-session-restart-recovery");
 
 const DEFAULT_RECOVERY_DELAY_MS = 5_000;
+/** How long recovery waits for the cc-bridge's adoption scan; past it, bridge chats get a prompt. */
+const BRIDGE_SCAN_WAIT_MS = 20_000;
 const MAX_RECOVERY_RETRIES = 3;
 const RETRY_BACKOFF_MULTIPLIER = 2;
+
+/**
+ * FORK 2026-09-08 — the boot-storm window: at most ONE restart-recovery resume
+ * per session per this many ms, measured from the moment a resume was
+ * dispatched (`SessionEntry.lastResumeAt`).
+ *
+ * Measured (verified 2026-09-08): journal "resumed interrupted main session:
+ * agent:main:tinker:mthk0fck" at 09-01 10:16:41 AND 10:19:25 — 2m44s apart —
+ * two "[System] The gateway restarted…" rows each answered in full: ONE
+ * interruption, TWO different answers. The ClawHub tab got resume rows 41 s
+ * apart on 09-07; systemd logged "Scheduled restart" every 10 s on 09-03 14:12.
+ * Every dispatch carried a fresh `crypto.randomUUID()` idempotencyKey, so
+ * nothing downstream collapsed them, and every boot sweep re-armed the RESUMED
+ * run as if it were a fresh interruption.
+ *
+ * Ten minutes covers a restart storm with room to spare and is longer than any
+ * observed duplicate gap, while a genuine interruption after a quiet gateway is
+ * a NEW incident and still resumes on the next boot. Exported so the tests
+ * retune with it rather than around it.
+ */
+export const RESUME_COOLDOWN_MS = 10 * 60_000;
+
+/**
+ * How long ago restart recovery last dispatched a resume to this entry, or
+ * undefined when it never has (entries written before `lastResumeAt` existed
+ * behave exactly as before). Absolute distance on purpose: a wall-clock step
+ * backwards after a resume must read as "recent", not turn the window into a
+ * permanent mute — the same "permanent evidence" failure class the 2026-07-31
+ * recency gate in `recoverStore` was written to close.
+ */
+function resumeAgeMs(entry: SessionEntry, now: number): number | undefined {
+  const at = entry.lastResumeAt;
+  if (typeof at !== "number" || !Number.isFinite(at)) {
+    return undefined;
+  }
+  return Math.abs(now - at);
+}
+
+function isWithinResumeCooldown(ageMs: number | undefined): boolean {
+  return ageMs !== undefined && ageMs < RESUME_COOLDOWN_MS;
+}
 
 function shouldSkipMainRecovery(entry: SessionEntry, sessionKey: string): boolean {
   if (typeof entry.spawnDepth === "number" && entry.spawnDepth > 0) {
@@ -108,6 +162,13 @@ function getMessageRole(message: unknown): string | undefined {
 function isMeaningfulTailMessage(message: unknown): boolean {
   const role = getMessageRole(message);
   if (!role || role === "system") {
+    return false;
+  }
+  // FORK 2026-09-29 (tinker-ui.md §5.8AB): readSessionMessages serves an `openclaw:prompt-error`
+  // that ended its run as a display-only assistant row (session-utils.fs.ts). It is evidence the
+  // run FAILED, not that it answered, so it must never count as a completed assistant tail.
+  const kind = (message as { __openclaw?: { kind?: unknown } } | null)?.__openclaw?.kind;
+  if (kind === "prompt-error") {
     return false;
   }
   return true;
@@ -200,6 +261,13 @@ function isIdleCompletedTail(messages: unknown[], activeRunStartedAt?: number): 
   if (assistantTurnHasPendingToolUse(lastMeaningful)) {
     return false;
   }
+  // FORK 2026-09-29 (lifecycles.md L4b, tinker-ui.md §5.8AB): an assistant row that classifies as a
+  // failure (an error or restart envelope, an abort, an empty answer) is not a completed turn. The
+  // restart itself can leave one behind, the draining reply's "gateway restarting" envelope, and it
+  // used to settle the interrupted chat as idle.
+  if (classifyAssistantOutcome(lastMeaningful)) {
+    return false;
+  }
   const tailTimestamp = getMessageTimestampMs(lastMeaningful);
   if (
     typeof activeRunStartedAt === "number" &&
@@ -212,19 +280,101 @@ function isIdleCompletedTail(messages: unknown[], activeRunStartedAt?: number): 
   return true;
 }
 
-function buildResumeMessage(): string {
+/**
+ * FORK 2026-09-04 (reported: "an automated system message appears without any
+ * need, that wakes up opus to finally say that there was nothing to do"). The prompt
+ * used to open with "The gateway restarted" unconditionally — including on the
+ * mid-tool path, where no restart need have happened at all. Three consecutive
+ * Opus turns were spent theorizing about a restart the gateway PID proved never
+ * occurred. State the actual cause, and say up front that finding the work
+ * already done is a valid, cheap outcome — it is the outcome we EXPECT whenever
+ * a duplicate slips through.
+ */
+/** When this host booted, in ms since the epoch (from the kernel's uptime). */
+export function hostBootedAtMs(now: number = Date.now(), uptimeS: number = os.uptime()): number {
+  return now - uptimeS * 1000;
+}
+
+/**
+ * FORK 2026-10-01 — a reboot is not a gateway restart. The plain resume said "The gateway
+ * restarted" after a freeze and power-off as well (AcmeVision worker, interrupted 06:35, back
+ * 07:13): the agent wrote that cause into a status file, and its earlier probes and /tmp files
+ * were gone without it knowing why. When the interrupted turn's newest transcript entry is older
+ * than this boot, the machine went down: returns the boot time, else null.
+ */
+export function rebootedAtMs(
+  lastActivityMs: number | undefined,
+  bootedAtMs: number,
+): number | null {
+  return lastActivityMs !== undefined && lastActivityMs < bootedAtMs ? bootedAtMs : null;
+}
+
+function newestTimestampMs(messages: unknown[]): number | undefined {
+  let newest: number | undefined;
+  for (const message of messages) {
+    const t = getMessageTimestampMs(message);
+    if (t !== undefined && (newest === undefined || t > newest)) {
+      newest = t;
+    }
+  }
+  return newest;
+}
+
+/** Local HH:MM, the way the chat shows times. */
+function clockTime(ms: number): string {
+  return new Date(ms).toTimeString().slice(0, 5);
+}
+
+/**
+ * The reboot wording keeps the clause "the gateway restarted and interrupted your previous turn"
+ * verbatim: the Tinker UI recognises the resume notice by it (tinker-ui/src/fractal-prompt-strip.ts,
+ * tinker-ui/src/system-notice.ts).
+ */
+export function buildResumeMessage(
+  dangling?: DanglingToolCall | null,
+  rebootedAt?: number | null,
+): string {
   // FORK 2026-05-30 (the architect directive): the resume must be LEGIBLE. The user
   // wants a brief "here's where I'm picking up" note — which plan step, what's
   // already on disk vs. half-written — so they can see whether the restart
   // cost much work and that resume actually worked, THEN seamless continuation.
+  const lost =
+    rebootedAt == null
+      ? ""
+      : " Every process the turn started is gone; check /tmp before trusting files there.";
+  const cause = dangling
+    ? `[System] Your previous turn stopped while the tool \`${dangling.name ?? "unknown"}\` (${dangling.toolCallId}) was still running, so its result never arrived.` +
+      (rebootedAt == null
+        ? ""
+        : ` The machine was shut down or rebooted meanwhile (it was back at ${clockTime(rebootedAt)}).${lost}`)
+    : rebootedAt == null
+      ? "[System] The gateway restarted and interrupted your previous turn."
+      : `[System] The machine was shut down or rebooted (it was back at ${clockTime(rebootedAt)}), so the gateway restarted and interrupted your previous turn.${lost}`;
   return (
-    "[System] The gateway restarted and interrupted your previous turn. Resume it, and make the resume legible to the user:\n" +
+    `${cause} Resume it, and make the resume legible to the user:\n` +
     '1. ORIENT FIRST — post one short message (1-3 sentences) stating where you are picking up. If you have an active prefrontal plan, call prefrontal.plan.get and name the step you were on plus which artifacts are already complete on disk vs. half-finished; if there is no plan, summarize from the transcript tail what was in flight. Example shape: "Plan was already written; I was interrupted on step 3 — 3 files complete on disk, 1 half-written. Reading them and resuming."\n' +
     "2. RECOVER CONTEXT — read any half-written artifacts (and run `git status`) so you continue from the real on-disk state, not from memory.\n" +
-    "3. CONTINUE as if nothing happened — finish the interrupted work; do NOT redo steps already marked done.\n" +
-    "Keep the orientation brief; its only job is to show the user where you resumed and roughly what the restart cost."
+    "3. CHECK BEFORE REDOING — this message is an instruction to CONTINUE work, so acting on it twice would do the work twice. Verify each artifact the turn owed actually on disk first. If they are all already complete, say so in one line and STOP; never re-run a deploy, a send or a delete on the strength of this message alone.\n" +
+    "4. CONTINUE as if nothing happened — finish whatever is genuinely unfinished; do NOT redo steps already marked done.\n" +
+    "Keep the orientation brief; its only job is to show the user where you resumed and roughly what the interruption cost."
   );
 }
+
+/**
+ * FORK 2026-09-04 — the `agent` RPC does not ack until the turn is actually
+ * under way, and a turn takes minutes; the 10 s call timeout is a bound on the
+ * ACK, not on delivery. When it fires the prompt has already been handed to the
+ * gateway (measured: three forensic dumps, one per "failed" attempt). Treating
+ * that as a failure is what armed the retry that sent the same prompt three
+ * times per boot, so a timeout must read as DISPATCHED — the conservative
+ * direction, since a duplicate resume is an instruction to redo work while a
+ * missed one only costs a turn the user can re-ask for.
+ */
+function isGatewayDispatchTimeout(err: unknown): boolean {
+  return err instanceof Error && /gateway timeout after \d+ms/.test(err.message);
+}
+
+type ResumeVerdict = "resumed" | "dispatched" | "failed";
 
 export async function markSessionFailed(params: {
   storePath: string;
@@ -285,51 +435,99 @@ async function settleIdleSession(params: { storePath: string; sessionKey: string
 }
 
 /**
- * FORK 2026-05-10 — push a visible orange `__ERR_ENV__:` envelope into the
- * given session so the user SEES that the gateway interrupted their turn.
+ * FORK 2026-09-29 (lifecycles.md L4b) — the visible "Gateway restarted" row in each chat recovery
+ * resumes: when it paused, when it came back, why, and how it resumed (gateway/restart-notice.ts).
  *
- * Wording is deliberately uniform: we never tell the user to retry. Per
- * the user's 2026-05-10 directive, every recovered session attempts resume
- * (tinker-bridge resumes via its own session-map → claude-cli --resume; native
- * sessions resume via the `[System] continue from transcript` dispatch).
- * The chip just acknowledges the restart so the user knows why a thinking
- * dot disappeared and that work is being resumed.
+ * It replaces the 2026-05-10 `chat.inject` error envelope. That one was an assistant MESSAGE: it
+ * became the transcript tail, so a promptless `Agent.continue()` refused it, and the next prompt's
+ * model read it. The notice is a display-only custom entry. Wording stays as before: never "retry".
  *
- * This is best-effort: if `chat.inject` fails, recovery still proceeds.
+ * Best-effort: if it fails, recovery still proceeds.
  */
-async function pushRestartWarningEnvelope(params: { sessionKey: string }): Promise<void> {
-  const now = new Date();
-  const localTime = now.toLocaleTimeString("en-GB", { hour12: false });
-  const envelope = {
-    kind: "error",
-    id: `gw-restart-${now.getTime()}`,
-    fatal: false,
-    category: "busy",
-    // FORK 2026-05-30 (the architect directive): the collapsed warning is just
-    // "Gateway restarted" — small, plain, easy to glance past. The restart
-    // time is technical, so it lives in `details` (the expandable kv block),
-    // not the headline. No "retry"/"check the journal" hints: I resume and
-    // inspect logs myself; those are not the user's job.
-    headline: "Gateway restarted",
-    explanation:
-      "Your previous turn was interrupted. I'm resuming it automatically — your chat context is preserved.",
-    icon: "🔄",
-    details: { restarted_at: localTime },
-    timestamp: now.toISOString(),
-  };
+async function postRestartNotice(params: {
+  sessionKey: string;
+  how: RestartNoticeHow;
+}): Promise<void> {
+  const ctx = takeRestartContext();
   try {
     await callGateway({
-      method: "chat.inject",
+      method: "chat.restartNotice",
       params: {
         sessionKey: params.sessionKey,
-        message: `__ERR_ENV__:${JSON.stringify(envelope)}`,
-        label: "system",
+        how: params.how,
+        ...(ctx ? { stoppedAt: ctx.stoppedAt } : {}),
+        ...(ctx?.reason ? { reason: ctx.reason } : {}),
       },
       timeoutMs: 5_000,
     });
-    log.info(`pushed restart-warning envelope to ${params.sessionKey}`);
+    log.info(`posted restart notice (${params.how}) to ${params.sessionKey}`);
   } catch (err) {
-    log.warn(`failed to push restart-warning envelope: ${String(err)}`);
+    log.warn(`failed to post restart notice: ${String(err)}`);
+  }
+}
+
+type ResumePlan = {
+  how: RestartNoticeHow;
+  /** Dispatch the run with no prompt (the resume message rides along only as a fallback). */
+  continueFromTranscript: boolean;
+  /** False when a run already took the turn (the architect's own prompt reached a held worker). */
+  dispatch: boolean;
+};
+
+/**
+ * FORK 2026-09-30 (lifecycles.md L4b) — how this interrupted session comes back:
+ *   - an embedded turn continues from its transcript when the transcript allows it;
+ *   - a cc-bridge turn whose worker the bridge adopted, frozen mid-turn, is REATTACHED: the
+ *     continued run takes the live worker's turn (src/infra/bridge-reattach.ts);
+ *   - anything else gets the resume prompt, as before (a cc-bridge turn lives in its CLI session,
+ *     so without a held worker only a prompt reaches it).
+ */
+function planResume(
+  entry: SessionEntry,
+  sessionKey: string,
+  transcriptPath: string | undefined,
+): ResumePlan {
+  const provider = entry.providerOverride ?? entry.modelProvider;
+  if (provider === "claude-code") {
+    const held = bridgeReattachFor(sessionKey);
+    if (held) {
+      return {
+        how: "reattached",
+        continueFromTranscript: true,
+        dispatch: held.state === "pending",
+      };
+    }
+    return { how: "prompted", continueFromTranscript: false, dispatch: true };
+  }
+  return canContinueFromTranscript(transcriptPath)
+    ? { how: "continued", continueFromTranscript: true, dispatch: true }
+    : { how: "prompted", continueFromTranscript: false, dispatch: true };
+}
+
+/**
+ * FORK 2026-09-29 (lifecycles.md L4b) — can this embedded turn go on from its transcript, with no
+ * prompt? The drain left it at a model-call boundary, so the tail is normally a tool result or the
+ * user's own prompt. Planned against the same context the runner loads (buildSessionContext); the
+ * runner plans again and falls back to the resume message if its answer differs.
+ */
+function canContinueFromTranscript(transcriptPath: string | undefined): boolean {
+  if (!transcriptPath) {
+    return false;
+  }
+  try {
+    // Parsed by hand, never through SessionManager.open: that TRUNCATES a file with no session
+    // header, and this check must not write.
+    const entries = parseSessionEntries(fs.readFileSync(transcriptPath, "utf8"));
+    const header = entries[0] as { type?: unknown; id?: unknown } | undefined;
+    if (header?.type !== "session" || typeof header.id !== "string") {
+      return false;
+    }
+    migrateSessionEntries(entries);
+    const body = entries.filter((e) => e.type !== "session") as TranscriptEntry[];
+    return planContinuation(buildSessionContext(body).messages).ok;
+  } catch (err) {
+    log.warn(`continuation check failed for ${transcriptPath}: ${String(err)}`);
+    return false;
   }
 }
 
@@ -367,43 +565,84 @@ async function readPinnedModel(
 async function resumeMainSession(params: {
   storePath: string;
   sessionKey: string;
-}): Promise<boolean> {
+  dangling?: DanglingToolCall | null;
+  plan?: ResumePlan;
+  /** Boot time when the machine went down during the turn (rebootedAtMs), else null. */
+  rebootedAt?: number | null;
+}): Promise<ResumeVerdict> {
+  let dispatched = false;
+  const plan = params.plan ?? { how: "prompted", continueFromTranscript: false, dispatch: true };
   try {
-    await pushRestartWarningEnvelope({ sessionKey: params.sessionKey });
+    await postRestartNotice({ sessionKey: params.sessionKey, how: plan.how });
     const pinned = await readPinnedModel(params.storePath, params.sessionKey);
     const baseParams = {
-      message: buildResumeMessage(),
+      message: buildResumeMessage(params.dangling, params.rebootedAt),
       sessionKey: params.sessionKey,
       idempotencyKey: crypto.randomUUID(),
       deliver: false,
       lane: CommandLane.Main,
+      ...(plan.continueFromTranscript ? { continueFromTranscript: true } : {}),
     };
     try {
-      await callGateway<{ runId: string }>({
-        method: "agent",
-        params: pinned
-          ? { ...baseParams, provider: pinned.provider, model: pinned.model }
-          : baseParams,
-        timeoutMs: 10_000,
-      });
-      if (pinned) {
-        log.info(`resuming ${params.sessionKey} on its pinned ${pinned.provider}/${pinned.model}`);
+      if (plan.dispatch) {
+        await callGateway<{ runId: string }>({
+          method: "agent",
+          params: pinned
+            ? { ...baseParams, provider: pinned.provider, model: pinned.model }
+            : baseParams,
+          timeoutMs: 10_000,
+        });
+        if (pinned) {
+          log.info(
+            `resuming ${params.sessionKey} on its pinned ${pinned.provider}/${pinned.model}`,
+          );
+        }
+      } else {
+        // The architect's own prompt reached the held worker first and took its turn. Nothing is
+        // sent; the bookkeeping below still settles the session.
+        log.info(
+          `not dispatching a resume to ${params.sessionKey}: a run already took its held turn`,
+        );
       }
     } catch (err) {
-      // `agent` rejects provider/model from a caller without allowModelOverride. Resuming the turn
-      // at all matters more than resuming it on the right model, so never let the override be the
-      // reason recovery fails — retry once without it, loudly.
-      if (!pinned) {
+      // FORK 2026-09-04 — a missed ACK is not a failed delivery; see
+      // `isGatewayDispatchTimeout`. Fall through to the bookkeeping below so the
+      // session is settled exactly as if the ack had arrived, and no retry
+      // re-sends this prompt.
+      if (isGatewayDispatchTimeout(err)) {
+        dispatched = true;
+        log.info(
+          `resume dispatched to ${params.sessionKey} but the gateway did not ack in time; treating as dispatched, not retrying`,
+        );
+      } else if (!pinned) {
+        // `agent` rejects provider/model from a caller without allowModelOverride. Resuming the turn
+        // at all matters more than resuming it on the right model, so never let the override be the
+        // reason recovery fails — retry once without it, loudly.
         throw err;
+      } else {
+        log.warn(
+          `resume with pinned ${pinned.provider}/${pinned.model} failed (${String(err)}); retrying without the model override`,
+        );
+        try {
+          await callGateway<{ runId: string }>({
+            method: "agent",
+            params: baseParams,
+            timeoutMs: 10_000,
+          });
+        } catch (retryErr) {
+          // FORK 2026-09-30 — the same rule as the first call (`isGatewayDispatchTimeout`): a missed
+          // ack is a delivered prompt. Read as a failure it armed the retry pass AND the restart
+          // skill's own fallback, and a live test got its chat resumed twice (01:21:58, 01:22:17,
+          // 01:22:30).
+          if (!isGatewayDispatchTimeout(retryErr)) {
+            throw retryErr;
+          }
+          dispatched = true;
+          log.info(
+            `resume dispatched to ${params.sessionKey} (without the model override) but the gateway did not ack in time; treating as dispatched, not retrying`,
+          );
+        }
       }
-      log.warn(
-        `resume with pinned ${pinned.provider}/${pinned.model} failed (${String(err)}); retrying without the model override`,
-      );
-      await callGateway<{ runId: string }>({
-        method: "agent",
-        params: baseParams,
-        timeoutMs: 10_000,
-      });
     }
     await updateSessionStore(
       params.storePath,
@@ -412,17 +651,40 @@ async function resumeMainSession(params: {
         if (!entry) {
           return;
         }
+        const now = Date.now();
         entry.abortedLastRun = false;
-        entry.updatedAt = Date.now();
+        entry.updatedAt = now;
+        // FORK 2026-09-08 — write-once at the source: the resume prompt is out
+        // the door, stamp WHEN. Reached on the acked path AND on the ack-timeout
+        // path (both deliver); a hard dispatch error throws past this block, so
+        // its legitimate retry is not suppressed. Read against
+        // RESUME_COOLDOWN_MS by `markRunningMainSessionsAsInterrupted` and
+        // `recoverStore` so the next boot can tell "this `running` entry is the
+        // resume we just sent" from "this is a fresh interruption".
+        entry.lastResumeAt = now;
+        // FORK 2026-09-04 — remember WHICH stuck tool call we already fired a
+        // resume for. A dangling `phase:'start'` record is permanent evidence
+        // (nothing ever pairs it retroactively), so without this the same call
+        // forces a fresh resume on every boot for the rest of the session's
+        // life. Measured: one Bash call stuck at 10:25 produced six Opus turns
+        // across two boots. Keyed on the toolCallId, so a genuinely NEW
+        // mid-tool interruption still resumes.
+        if (params.dangling) {
+          entry.restartResumeToolCallId = params.dangling.toolCallId;
+        }
         store[params.sessionKey] = entry;
       },
       { skipMaintenance: true },
     );
-    log.info(`resumed interrupted main session: ${params.sessionKey}`);
-    return true;
+    log.info(
+      dispatched
+        ? `dispatched resume to interrupted main session: ${params.sessionKey}`
+        : `resumed interrupted main session: ${params.sessionKey}`,
+    );
+    return dispatched ? "dispatched" : "resumed";
   } catch (err) {
     log.warn(`failed to resume interrupted main session ${params.sessionKey}: ${String(err)}`);
-    return false;
+    return "failed";
   }
 }
 
@@ -440,6 +702,11 @@ async function resumeMainSession(params: {
  * A session that's `status:"running"` AT BOOT is, by definition, interrupted:
  * normal session lifecycle flips status to `done` or `failed` before the
  * gateway exits cleanly. Anything still `running` was caught mid-turn.
+ *
+ * FORK 2026-09-08 — with ONE exception: a run that recovery itself resumed
+ * less than RESUME_COOLDOWN_MS ago. That entry is `running` because OUR resume
+ * is (or was) under way, not because a new turn was caught; see the guard in
+ * the loop.
  */
 export async function markRunningMainSessionsAsInterrupted(params: {
   sessionsDir: string;
@@ -449,6 +716,7 @@ export async function markRunningMainSessionsAsInterrupted(params: {
   await updateSessionStore(
     storePath,
     (store) => {
+      const now = Date.now();
       for (const [sessionKey, entry] of Object.entries(store)) {
         if (!entry || entry.status !== "running") {
           continue;
@@ -459,6 +727,23 @@ export async function markRunningMainSessionsAsInterrupted(params: {
         }
         if (entry.abortedLastRun) {
           // Already marked — recovery will pick it up.
+          continue;
+        }
+        // FORK 2026-09-08 (measured: ONE interruption, TWO different answers —
+        // see RESUME_COOLDOWN_MS). A `running` entry whose resume we dispatched
+        // inside the window is not a fresh interruption: it is OUR resume's run,
+        // killed by the next boot of a systemd restart storm. Marking it hands
+        // `recoverStore` a second turn to resume, which is exactly how the
+        // duplicate was produced. Leave it alone inside the window; past the
+        // window it is an ordinary interrupted run again and is marked exactly
+        // as before. The stale-lock sweep can still mark it on an unclean boot —
+        // `recoverStore` applies the same window, so that path is held too.
+        const ageMs = resumeAgeMs(entry, now);
+        if (isWithinResumeCooldown(ageMs)) {
+          log.info(
+            `not re-marking ${sessionKey}: its resume was dispatched ${ageMs}ms ago (boot-storm window ${RESUME_COOLDOWN_MS}ms)`,
+          );
+          result.skipped++;
           continue;
         }
         entry.abortedLastRun = true;
@@ -649,6 +934,66 @@ async function recoverStore(params: {
       dangling = null;
     }
 
+    // FORK 2026-09-04 (measured incident: one chat tab looped six Opus
+    // turns on ONE stuck Bash call). The 2026-07-31 recency gate above bounds a
+    // dangling call against `entry.startedAt` — but `startedAt` only advances
+    // when a resumed run actually starts, and a resume whose ack timed out left
+    // it untouched. So the gate held open and the same call forced a resume on
+    // every pass, forever. This is the second, absolute bound: we fire AT MOST
+    // ONE resume per toolCallId, ever. It is keyed on the call rather than on
+    // elapsed time so a genuine mid-tool interruption after a long shutdown is
+    // still recovered, and a genuinely new stuck call still is too — outside
+    // the boot-storm window below (FORK 2026-09-08): inside RESUME_COOLDOWN_MS
+    // of a dispatched resume even a NEW dangling call is that resume's own run
+    // dying in the storm, and it waits for the window like everything else.
+    if (dangling && entry.restartResumeToolCallId === dangling.toolCallId) {
+      log.info(
+        `already fired one resume for dangling tool call ${dangling.toolCallId}; not re-firing: ${sessionKey}`,
+      );
+      dangling = null;
+    }
+
+    // FORK 2026-09-08 — the idle branch now runs BEFORE the mid-tool ledger
+    // write. The two are mutually exclusive (`dangling` vs `!dangling`, and
+    // neither reassigns it), so the order is behaviourally identical — it just
+    // lets the boot-storm window sit between them, where it can hold back a
+    // duplicate resume WITHOUT stranding an idle session and WITHOUT opening a
+    // `detected` ledger row that no `resumed`/`resume-failed` row ever closes.
+    if (!dangling && isIdleCompletedTail(messages, entry.startedAt)) {
+      log.info(`skipping resume; last turn already completed (idle): ${sessionKey}`);
+      await settleIdleSession({ storePath: params.storePath, sessionKey });
+      result.skipped++;
+      continue;
+    }
+
+    // FORK 2026-09-08 (measured: ONE interruption, TWO different answers — see
+    // RESUME_COOLDOWN_MS for the journal evidence). `resumeMainSession` clears
+    // `abortedLastRun` but leaves `status:"running"` (the resumed run really is
+    // in flight), so a restart storm's next boot found the session it had just
+    // resumed, re-armed it, and this loop matched it again. The toolCallId
+    // guard above remembers only the dangling-tool path; the plain "gateway
+    // restarted" path had no memory of ever having resumed, and the stale-lock
+    // sweep re-arms `abortedLastRun` on every unclean boot regardless. This is
+    // the write-once-at-the-source bound: ONE resume per window, recorded
+    // where the dispatch happens (`lastResumeAt`), not a dedup of the prompt
+    // downstream.
+    //
+    // It sits AFTER the idle check on purpose: a resumed turn that finished
+    // before the next boot has nothing to resume and still settles to done;
+    // only a genuinely unfinished turn is held back. `abortedLastRun` is
+    // deliberately left armed — the window DEFERS, it does not settle: the
+    // interruption is real, the first boot after the window resumes it, and if
+    // the user types first `body.ts` consumes the flag as before. Clearing it
+    // here would discard a genuine interruption that outlives the window.
+    const ageMs = resumeAgeMs(entry, Date.now());
+    if (isWithinResumeCooldown(ageMs)) {
+      log.info(
+        `skipping resume; a resume was already dispatched ${ageMs}ms ago (boot-storm window ${RESUME_COOLDOWN_MS}ms): ${sessionKey}`,
+      );
+      result.skipped++;
+      continue;
+    }
+
     if (dangling) {
       log.info(
         `interrupted mid-tool (${dangling.name ?? "unknown"} ${dangling.toolCallId}); forcing resume: ${sessionKey}`,
@@ -660,13 +1005,6 @@ async function recoverStore(params: {
       );
     }
 
-    if (!dangling && isIdleCompletedTail(messages, entry.startedAt)) {
-      log.info(`skipping resume; last turn already completed (idle): ${sessionKey}`);
-      await settleIdleSession({ storePath: params.storePath, sessionKey });
-      result.skipped++;
-      continue;
-    }
-
     const resumeBlockReason = resolveMainSessionResumeBlockReason(messages);
     if (resumeBlockReason) {
       log.info(
@@ -674,10 +1012,14 @@ async function recoverStore(params: {
       );
     }
 
-    const resumed = await resumeMainSession({
+    const verdict = await resumeMainSession({
       storePath: params.storePath,
       sessionKey,
+      dangling,
+      plan: planResume(entry, sessionKey, transcriptPath),
+      rebootedAt: rebootedAtMs(newestTimestampMs(messages), hostBootedAtMs()),
     });
+    const resumed = verdict !== "failed";
     if (dangling) {
       // FORK 2026-07-31 — close the ledger entry opened at detection time so the
       // forced mid-tool resume is auditable end-to-end (detected → resumed /
@@ -712,6 +1054,9 @@ export async function recoverRestartAbortedMainSessions(
   const resumedSessionKeys = params.resumedSessionKeys ?? new Set<string>();
   const stateDir = params.stateDir ?? resolveStateDir(process.env);
   const sessionDirs = await resolveAgentSessionDirs(stateDir);
+  // FORK 2026-09-30 (lifecycles.md L4b): a cc-bridge worker the last gateway froze mid-turn is
+  // adopted by the bridge's gateway_start scan; read its list only once it is complete.
+  await awaitBridgeReattachScan(BRIDGE_SCAN_WAIT_MS);
 
   for (const sessionsDir of sessionDirs) {
     const storeResult = await recoverStore({

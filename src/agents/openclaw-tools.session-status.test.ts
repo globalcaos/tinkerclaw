@@ -809,6 +809,26 @@ describe("session_status tool", () => {
     );
   });
 
+  it("shows the executing model before completion updates persisted identity", async () => {
+    resetSessionStore({
+      main: { sessionId: "in-flight", updatedAt: 10 },
+    });
+    const tool = createSessionStatusTool({
+      agentSessionKey: "main",
+      config: mockConfig as never,
+      modelProvider: "xai",
+      modelId: "grok-4.7",
+    });
+    await tool.execute("call-in-flight", {});
+    expect(buildStatusMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: expect.objectContaining({
+          model: expect.objectContaining({ primary: "xai/grok-4.7" }),
+        }),
+      }),
+    );
+  });
+
   it("uses the runtime session model as the selected card model when no override is set", async () => {
     resetSessionStore({
       main: {

@@ -1,0 +1,31 @@
+{
+  "name": "@globalcaos/tinker-curiosity",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Curiosity sense (J8 purposeful curiosity): learns the principal's passions, digs deeper when they come up, researches and teaches in a ✨ DEEPER bubble, asks one deep question at a time.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "peerDependencies": {
+    "openclaw": ">=2026.4.25"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "install": {
+      "minHostVersion": ">=2026.4.10"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "release": {
+      "publishToClawHub": false,
+      "publishToNpm": false
+    }
+  }
+}

@@ -3,7 +3,7 @@ schema: "kit/1.0"
 slug: "implementation-plan"
 title: "Turn a spec into a plan a stranger could execute in parallel"
 summary: "Write an implementation plan from a spec: a file map, an interfaces block, tasks of 2-5 minutes with complete code and exact verify commands, grouped into edit-units with disjoint writes so the build runs concurrently. Use for 'write a plan', 'break this down', 'plan this feature', 'just a plan, no code yet'."
-version: "2.1.0"
+version: "2.2.0"
 owner: "globalcaos"
 license: "MIT"
 category: "coding"
@@ -126,11 +126,17 @@ two names.
 
 ### 3. Define tasks and edit-units
 
+uses: git-instructions
 model: opus
 thinking: high
-**Done when:** Every task carries its files, steps of 2-5 minutes, complete
+**Done when:** Every task is one hop along the traced path, carries its files, steps of 2-5 minutes, complete
 code, an exact verify command with expected output, a complexity tag and an
 edit-unit id whose `writes` are disjoint from its wave siblings.
+
+Run `git-instructions` first: two-minute test, lineage (short-lived branch vs
+fork), the path from originating surface to user-visible end, hops a human can
+pull and sign off alone. Those hops ARE the edit-units. A unit whose task needs
+the word "and" / "i" / "y" is two units; split it here, not in ORCA.
 
 TDD order inside every task: the failing test comes before the code that
 passes it. No placeholders — "TBD", "add error handling", "similar to task 3"
@@ -139,7 +145,9 @@ non-trivial logic, state, concurrency, parsing or maths; those take
 `wave: isolate` and are proven on their own tests before anything depends on
 them. The rest take `wave: integrate`. Group tasks into edit-units
 `{ id, task, writes, reads, complexity, wave }` with disjoint `writes`; two
-tasks writing one file are one unit, not two.
+tasks writing one file are one unit, not two. `wave` is the hop index along
+the path; ORCA may parallelise units that share a wave and have disjoint writes,
+never hops that sit on the same path.
 
 ### 4. Test tiers per unit
 
@@ -198,9 +206,12 @@ executor makes and appends to the ledger as
 
 ## Constraints
 
-- One task = one action of 2-5 minutes. Bigger means split it.
+- One task = one hop = one action of 2-5 minutes. Bigger means split it. If the
+  description needs "and" / "i" / "y", it is two hops.
 - Complete code in the plan. No placeholders, no "something like this".
-- Tests before implementation, in every task.
+- Tests before implementation, in every task. Tests travel with the hop.
+- Lineage and hops come from `git-instructions`. Do not invent a mixed-concern
+  unit named after the whole feature.
 - Edit-units in the same wave have disjoint `writes`; shared files merge into
   one unit.
 - The plan is a living document — execution updates status and the ledger;
@@ -235,3 +246,4 @@ executor makes and appends to the ledger as
   complicated piece to be proven on its own tests before a wiring task depends
   on it.
 - **v2.1.0 (2026-09-03):** folded in the AI-native SDLC playbook (claude.com/blog/the-ai-native-sdlc-playbook — the source the "INTENT.md" video walks through): Risks and Proof sections, the three plan-mode interrogation questions, and the rule that a departure amends the plan in the same commit.
+- **v2.2.0 (2026-09-10):** House git. Step 3 now `uses: git-instructions` so edit-units are hops along a traced path (one seam a human can pull and sign off), not mixed-concern feature blobs. Lineage is short-lived branch vs fork.

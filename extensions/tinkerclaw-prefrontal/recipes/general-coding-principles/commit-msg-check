@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# House commit gate: one hop per commit, What/Why/Impact in the body.
+# Mechanical check for recipe general-coding-principles (and a house-rules file, if the
+# deployment has one). Written 2026-09-14 after four mixed-concern commits reached the
+# shared main branch.
+#
+# Run by hand on a message file:   bash commit-msg-check <msgfile>
+# Or as a hook in a repo that allows one:
+#   ln -s <tools_dir>/commit-msg-check .git/hooks/commit-msg
+#
+# Tunables (environment):
+#   COMMIT_SUBJECT_MAX   max subject length              (default 72)
+#   COMMIT_TYPES         allowed conventional types, |-separated
+#                        (default feat|fix|docs|refactor|perf|test|chore|build|ci|style|revert|merge)
+#   COMMIT_JOIN_WORDS    words that mean "two hops in one", |-separated, matched as whole
+#                        words, case-insensitive (default "and"; add your team's languages,
+#                        e.g. "and|y|et|und")
+#   COMMIT_GATE_NAME     label printed on rejection      (default "house rules")
+msgfile="$1"
+[ -n "$msgfile" ] && [ -r "$msgfile" ] || { echo "usage: commit-msg-check <msgfile>" >&2; exit 2; }
+max="${COMMIT_SUBJECT_MAX:-72}"
+types="${COMMIT_TYPES:-feat|fix|docs|refactor|perf|test|chore|build|ci|style|revert|merge}"
+joins="${COMMIT_JOIN_WORDS:-and}"
+gate="${COMMIT_GATE_NAME:-house rules}"
+
+# Ignore merges, reverts, fixups, squashes: they are not authored hops.
+head -n1 "$msgfile" | grep -qE '^(Merge|Revert|fixup!|squash!)' && exit 0
+subject=$(grep -v '^#' "$msgfile" | sed -n '1p')
+body=$(grep -v '^#' "$msgfile" | tail -n +2 | grep -v '^[[:space:]]*$' || true)
+fail() { echo "COMMIT REJECTED ($gate): $1" >&2; echo "  -> $2" >&2; exit 1; }
+
+[ -n "$subject" ] || fail "empty subject" "write: type(scope): imperative summary"
+[ ${#subject} -le "$max" ] || fail "subject is ${#subject} chars, max $max" "shorten the subject; detail belongs in the body"
+echo "$subject" | grep -qE "^($types)(\([a-zA-Z0-9._/-]+\))?: .+" \
+  || fail "subject is not conventional" "use type(scope): summary with type one of $types"
+echo "$subject" | grep -qiE "(^| )($joins)( |$)" \
+  && fail "subject needs \"and\": that is several hops in one commit" "split it: one seam crossing per commit, each pullable and reviewable alone"
+[ -n "$body" ] || fail "empty body" "the body must answer WHAT, WHY and IMPACT"
+echo "$body" | grep -qiE '^impact:' \
+  || fail "body has no Impact: line" "add 'Impact: <what else behaves differently, what is safe>'"
+exit 0

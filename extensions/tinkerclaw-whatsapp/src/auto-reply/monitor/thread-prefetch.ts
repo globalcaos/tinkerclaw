@@ -8,12 +8,13 @@
  * context catches the common back-reference pattern at near-zero cost.
  *
  * Read-only query against `~/.openclaw/data/whatsapp-history.db` via the
- * shared `getDb()` singleton in `history/db.ts`. Try/catch wraps everything;
+ * shared `getDbIfExists()` accessor (never creates the DB) in `history/db.ts`. Try/catch wraps everything;
  * any failure (DB locked, missing, schema drift) returns null and the agent
  * falls back to the persona hint alone.
  */
 import type Database from "better-sqlite3";
-import { getDb } from "../../history/db.js";
+import { getDbIfExists } from "../../history/db.js";
+import { resolveChatJidCandidates } from "./chat-jid-match.js";
 
 const RECENT_LIMIT = 6;
 const MAX_LINE_CHARS = 220;
@@ -32,18 +33,19 @@ let stmtCache: { db: Database.Database; stmt: Database.Statement<unknown[], Row>
 
 function getStmt(): Database.Statement<unknown[], Row> | null {
   try {
-    const db = getDb();
+    const db = getDbIfExists();
+    if (!db) {
+      return null;
+    }
     if (stmtCache?.db === db) {
       return stmtCache.stmt;
     }
-    // chat_jid match is loose: callers may pass either the full JID
-    // (`34600000000@s.whatsapp.net`) or the bare E.164 (`+34600000000`).
-    // Substring match catches both — and group JIDs don't share digits with
-    // any DM, so cross-contamination is impossible in practice.
+    // Exact chat_jid match only (see chat-jid-match.ts): a substring match
+    // leaked legacy-group messages into DMs with the group's creator.
     const stmt = db.prepare<unknown[], Row>(
       `SELECT timestamp, from_me, sender_name, sender_pushname, text_content, caption
        FROM messages
-       WHERE (chat_jid = ? OR chat_jid LIKE ?)
+       WHERE chat_jid IN (?, ?)
          AND timestamp < ?
          AND (text_content IS NOT NULL OR caption IS NOT NULL)
        ORDER BY timestamp DESC
@@ -100,12 +102,11 @@ export function prefetchRecentThread(params: {
     : Math.floor(Date.now() / 1000) + 1;
   const ownerLabel = params.ownerLabel ?? "Owner";
 
-  const bareJid = params.chatJid.replace(/^\+/, "").replace(/@.*$/, "");
-  const likePattern = `%${bareJid}%`;
+  const [jidA, jidB] = resolveChatJidCandidates(params.chatJid);
 
   let rows: Row[];
   try {
-    rows = stmt.all(params.chatJid, likePattern, before, RECENT_LIMIT) as Row[];
+    rows = stmt.all(jidA, jidB, before, RECENT_LIMIT) as Row[];
   } catch {
     return null;
   }

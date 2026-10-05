@@ -26,10 +26,12 @@
 // #2 would truncate every tool-using answer, trading a visible duplicate for silent data loss.
 //
 // THE RULE: a second final for a runId SUPERSEDES the first. Reconcile it against what that run
-// already put on screen using the `resliceSegments` law (a bubble may only grow, never be replaced)
-// and append only the part of the new body that no bubble shows. Nothing rendered is ever deleted
-// — "carta a terra va a la guerra", the same law stream-reslice.ts enforces.
+// already put on screen and append only the part of the new body that no bubble shows; since
+// 2026-10-03 it changes no bubble the first final settled (`planFinalWrite`). Nothing rendered is
+// ever deleted — "carta a terra va a la guerra", the same law stream-reslice.ts enforces.
 // ═════════════════════════════════════════════════════════════════════════════════════════
+
+import { resliceSegments } from "./stream-reslice.js";
 
 /** The subset of a chat message this module needs. `_runId` is stamped by app.ts on every bubble a
  *  run puts on screen; it is deliberately NOT in msg-order's CLIENT_ONLY_FLAGS, because an answer
@@ -39,17 +41,43 @@ export type RunBubble = {
   content?: unknown;
   _runId?: unknown;
   _segmentStart?: unknown;
+  _isReasoning?: unknown;
 };
 
-/** True when this message is an assistant bubble carrying visible text for `runId`. */
-export function isRunTextBubble(m: RunBubble, runId: string): boolean {
-  if (!runId || m._runId !== runId || m.role !== "assistant") {
-    return false;
-  }
+// ════════════════ TWO COORDINATE SPACES — WHY A THOUGHT IS NEVER A TEXT BUBBLE ════════════════
+// FORK 2026-10-03 (bug-log [final-mixed-coordinates]; the architect: "still duplicating some
+// messages … if I refresh the page, the duplicate answer goes away"). The thinking writer stamps
+// its bubbles with `_runId` and a text block, like the text writer does, and since 2026-09-23 with
+// a `_segmentStart` too — but that offset counts characters of the run's THINKING buffer (the
+// trimmed cumulative reasoning when the thought opened), while every text bubble's counts
+// characters of the run's TEXT. A final's body is text. Reconciling it against a thought made
+// `resliceSegments` end the narration bubble before the thought at the thought's thinking offset
+// (the narration grew over the head of the answer, inside a folded row), and the tail rule's
+// cursor then stopped there and pushed `final.slice(thinkingOffset)`: a second bubble holding the
+// answer from a mid-word point to its end. Measured on two live tabs (cuts at 1364 and 2508, the
+// thinking lengths), served once, gone on reload. So the predicate below excludes reasoning
+// bubbles, and app.ts selects through `finalTextBubbles` for BOTH finals, never by run stamp alone.
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/** True for a bubble the thinking writer opened: its `_segmentStart` is a THINKING offset. */
+export function isReasoningBubble(m: RunBubble): boolean {
+  return m._isReasoning === true;
+}
+
+function hasTextBlock(m: RunBubble): boolean {
   return (
+    m.role === "assistant" &&
     Array.isArray(m.content) &&
     (m.content as Array<{ type?: unknown }>).some((b) => b?.type === "text")
   );
+}
+
+/** True when this message is an assistant TEXT bubble of `runId` (never a reasoning bubble). */
+export function isRunTextBubble(m: RunBubble, runId: string): boolean {
+  if (!runId || m._runId !== runId || isReasoningBubble(m)) {
+    return false;
+  }
+  return hasTextBlock(m);
 }
 
 /** The bubbles a SUPERSEDING final must reconcile against: everything the first final already
@@ -76,6 +104,52 @@ export function bubbleText(m: RunBubble): string {
 /** The segment start a bubble was sliced at, defaulting to 0. */
 export function bubbleSegStart(m: RunBubble): number {
   return typeof m._segmentStart === "number" ? m._segmentStart : 0;
+}
+
+/**
+ * The bubbles a `final` reconciles its body against, in render order. One selection for both
+ * finals: the first final takes the run's live TEXT temps (`ownsTemp`, which app.ts scopes to the
+ * run), a superseding final the text bubbles the first one promoted. Reasoning bubbles never: their
+ * offsets live in another buffer (see the note above `isReasoningBubble`).
+ */
+export function finalTextBubbles<T extends RunBubble>(
+  messages: readonly T[],
+  runId: string,
+  firstFinal: boolean,
+  ownsTemp: (m: T) => boolean,
+): T[] {
+  return messages.filter((m) =>
+    firstFinal
+      ? !isReasoningBubble(m) && ownsTemp(m) && hasTextBlock(m)
+      : isRunTextBubble(m, runId),
+  );
+}
+
+/**
+ * What a final writes onto the bubbles `finalTextBubbles` chose: each one's text and the part of
+ * the body none of them shows (`appendTail`, "" for none), to push as ONE new bubble.
+ *
+ * A first final reslices its temps (`resliceSegments`: verbatim or grown, never shorter or
+ * different) and appends what the stream did not show. A superseding final changes no bubble: the
+ * first final already settled them against its own body, so anything the second body adds is a
+ * block the stream never carried (a post-tool answer, in 20 of 649 two-final runs measured
+ * 2026-09-23..10-03) and gets its own bubble, as a reload draws it. Growing the last settled bubble
+ * instead glued that answer onto the narration before it (review round 1, 2026-10-03).
+ */
+export function planFinalWrite(
+  bubbles: readonly RunBubble[],
+  finalText: string,
+  supersedes: boolean,
+): { texts: string[]; appendTail: string } {
+  if (supersedes) {
+    const texts = bubbles.map(bubbleText);
+    return { texts, appendTail: supersedingAppendTail(texts, finalText) };
+  }
+  const resliced = resliceSegments(
+    bubbles.map((m) => ({ text: bubbleText(m), segStart: bubbleSegStart(m) })),
+    finalText,
+  );
+  return { texts: resliced.texts, appendTail: resliced.appendTail ?? "" };
 }
 
 // ════════════════ WHY A SUPERSEDING FINAL NEEDS ITS OWN TAIL RULE ════════════════
@@ -113,29 +187,55 @@ export function bubbleSegStart(m: RunBubble): number {
 // post-tool answer that never streamed lives only in #2 — is preserved intact.
 // ═════════════════════════════════════════════════════════════════════════════════
 
+// ════════════════ THE VOICE SPAN — THE DIFFERENCE THAT DOUBLED EVERY ANSWER ════════════════
+// FORK 2026-09-24 (the architect, work tab `agent:main:tinker:mue2cvin`: "every time he
+// answers I see the response double"). Final #2's body went through the gateway's
+// `applyJarvisVoiceMarkup`, which rewrote every `**Jarvis:** x` into `**Jarvis:** <span
+// class="jarvis-voice">x</span>` — trimming `x`, so the whitespace before the NEXT label vanished
+// too. Final #1 is the raw streamed text. Nearly every answer opens with a voice line, so no shown
+// bubble was ever found inside #2, `cursor` stayed 0, and the WHOLE reply was appended again —
+// measured on 8 of 8 real runs of that tab (the replay reproduced every live `[chat-deliver]` length).
+// The gateway no longer writes the span (agent-runner-payloads.ts, same date); this keeps a gateway
+// that still does — or any replayed body — from doubling the answer.
+//
+// Why the comparison now ignores whitespace ENTIRELY rather than collapsing it: the same tab showed
+// both geometries a "tag = one space" rule cannot serve at once. The wrapper's trim() ate the blank
+// line before a label (`x*</span>**Jarvis:**` vs `x*\n\n**Jarvis:**`), and the stream GLUES a
+// pre-tool narration straight onto the post-tool answer with no whitespace at all
+// (`…have run.**Jarvis:** *…`) where the wrapper put `</span>`. Two constructions of one
+// reply agree on their non-whitespace characters and on nothing finer; that is what is compared.
+// ═════════════════════════════════════════════════════════════════════════════════
+const VOICE_SPAN_TAG = /<span\s+class=["']jarvis-voice["']\s*>|<\/span>/iy;
+
+/** Length of a voice-span tag starting at `raw[i]`, or 0. */
+function voiceTagLengthAt(raw: string, i: number): number {
+  if (raw[i] !== "<") {
+    return 0;
+  }
+  VOICE_SPAN_TAG.lastIndex = i;
+  const m = VOICE_SPAN_TAG.exec(raw);
+  return m ? m[0].length : 0;
+}
+
 /**
- * `raw` with every whitespace run collapsed to one space, plus `map[i]` = the raw index that
- * normalised character `i` came from (and `map[norm.length]` = `raw.length`), so a cursor measured
- * in normalised space can be turned back into a slice of the ORIGINAL string. Leading and trailing
- * whitespace runs collapse away entirely: they carry no content and are the whole reason the two
- * finals disagree.
+ * `raw` with every whitespace character and every voice-span tag removed, plus `map[i]` = the raw
+ * index that normalised character `i` came from (and `map[norm.length]` = `raw.length`), so a
+ * cursor measured in normalised space can be turned back into a slice of the ORIGINAL string.
+ * Whitespace carries no content here and is exactly where the two finals disagree — at the edges,
+ * at the joins, and around the voice span (see above).
  */
 function normalizeWithMap(raw: string): { norm: string; map: number[] } {
   const chars: string[] = [];
   const map: number[] = [];
   let i = 0;
   while (i < raw.length) {
+    const tag = voiceTagLengthAt(raw, i);
+    if (tag > 0) {
+      i += tag;
+      continue;
+    }
     if (/\s/.test(raw[i])) {
-      const runStart = i;
-      while (i < raw.length && /\s/.test(raw[i])) {
-        i++;
-      }
-      // Emit a separator only BETWEEN content: a leading run has nothing before it and a trailing
-      // run has nothing after it, and either would make an otherwise-equal pair compare unequal.
-      if (chars.length > 0 && i < raw.length) {
-        chars.push(" ");
-        map.push(runStart);
-      }
+      i++;
       continue;
     }
     chars.push(raw[i]);

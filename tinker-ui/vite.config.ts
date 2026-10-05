@@ -1,5 +1,6 @@
-import { execFile } from "node:child_process";
+import { execFile, execSync } from "node:child_process";
 import fs from "node:fs";
+import type { IncomingMessage } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { defineConfig, type Plugin } from "vite";
@@ -21,7 +22,7 @@ function tinkerDevConfig(): Plugin {
     name: "tinker-dev-config",
     apply: "serve",
     transformIndexHtml(html) {
-      const cfg = JSON.stringify({ token: readGatewayToken() });
+      const cfg = JSON.stringify({});
       return html.replace("</head>", `<script>window.__TINKER_CONFIG=${cfg}</script>\n</head>`);
     },
   };
@@ -227,7 +228,16 @@ function uiStatePlugin(): Plugin {
   // FIXED path. Unlike the kit endpoints there is NO user-supplied path parameter
   // anywhere in this endpoint, so there is deliberately no path-traversal guard here —
   // nothing was forgotten, there is nothing to guard.
-  const stateFile = path.join(os.homedir(), ".openclaw", "data", "tinker-ui-state.json");
+  const seatsRoot = path.join(os.homedir(), ".openclaw", "data", "seats");
+  const seatIdOf = (req: IncomingMessage) => {
+    const raw = req.headers["x-tinker-seat"];
+    const v = Array.isArray(raw) ? raw[0] : raw;
+    if (!v || typeof v !== "string") return null;
+    const id = v.trim();
+    if (!id || id.includes("/") || id.includes("..")) return null;
+    if (!/^[A-Za-z0-9._:-]+$/.test(id)) return null;
+    return id;
+  };
   // Chrome state is tiny (a few hundred bytes). A runaway writer must not fill the disk.
   const maxBody = 256 * 1024;
 
@@ -276,6 +286,25 @@ function uiStatePlugin(): Plugin {
     flags: Record<string, unknown>;
     choices: Record<string, unknown>;
     tabs?: Record<string, unknown>[];
+    closedTabs?: Record<string, number>;
+  };
+
+  // FORK 2026-09-21 — closed-tab tombstones, UNIONED rather than replaced (tab ids are never
+  // reused, so union is always right and is what stops a stale writer resurrecting a closed
+  // tab). Same rule as unionClosedTabs in src/panels/ui-state.ts and scripts/tinker-prod-ui.mjs.
+  const unionClosedTabs = (...maps: unknown[]): Record<string, number> => {
+    const all: Record<string, number> = Object.create(null);
+    for (const map of maps) {
+      if (!isPlainObject(map)) continue;
+      for (const [id, at] of Object.entries(map)) {
+        if (typeof at === "number" && Number.isFinite(at)) all[id] = Math.max(all[id] ?? 0, at);
+      }
+    }
+    return Object.fromEntries(
+      Object.entries(all)
+        .toSorted((a, b) => b[1] - a[1])
+        .slice(0, 500),
+    );
   };
 
   const sanitize = (src: Record<string, unknown>): UiState => {
@@ -289,6 +318,7 @@ function uiStatePlugin(): Plugin {
       // forward value in the merge below. Keeping the property genuinely absent means
       // "absent" survives every hop between disk, this object and the wire.
       ...(tabs === undefined ? {} : { tabs }),
+      ...(isPlainObject(src.closedTabs) ? { closedTabs: unionClosedTabs(src.closedTabs) } : {}),
     };
   };
 
@@ -300,7 +330,9 @@ function uiStatePlugin(): Plugin {
   //   malformed  — the file exists but is not usable JSON; safe to overwrite (self-heal).
   //   unreadable — the file exists and holds real state we FAILED to read (EACCES,
   //                EMFILE…). Overwriting it would destroy it, so POST refuses instead.
-  const readState = (): {
+  const readState = (
+    stateFile: string,
+  ): {
     status: "ok" | "absent" | "malformed" | "unreadable";
     state: ReturnType<typeof sanitize>;
     error?: NodeJS.ErrnoException;
@@ -332,6 +364,19 @@ function uiStatePlugin(): Plugin {
     apply: "serve",
     configureServer(server) {
       server.middlewares.use("/api/ui-state", (req, res) => {
+        const seatId = seatIdOf(req);
+        // FORK 2026-09-10 — a seat-less request lands on the OWNER DESK (the single-operator
+        // file) unless TINKER_REQUIRE_SEAT=1 (hive mode). Same rule as scripts/tinker-prod-ui.mjs
+        // and the plugin's /tinker/api/ui-state; an unconditional 400 here froze the laptop's
+        // desk on 2026-09-10 because nothing assigns a seat until the door lands.
+        if (!seatId && process.env.TINKER_REQUIRE_SEAT === "1") {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "X-Tinker-Seat required" }));
+          return;
+        }
+        const stateFile = seatId
+          ? path.join(seatsRoot, seatId, "tinker-ui-state.json")
+          : path.join(os.homedir(), ".openclaw", "data", "tinker-ui-state.json");
         // GET /api/ui-state
         if (req.method === "GET") {
           // Never 404/500: the client treats any non-200 as "endpoint unavailable, fall
@@ -340,7 +385,7 @@ function uiStatePlugin(): Plugin {
           // empty snapshot. `degraded` is the discriminator the status code cannot
           // carry: it means "the file exists but I could not read it, do NOT overwrite
           // it with what you have in memory".
-          const { status, state } = readState();
+          const { status, state } = readState(stateFile);
           res.writeHead(200, {
             "Content-Type": "application/json; charset=utf-8",
             "Cache-Control": "no-store",
@@ -412,7 +457,10 @@ function uiStatePlugin(): Plugin {
             res.end(JSON.stringify({ error: "tabs must be an array" }));
             return;
           }
-          const current = readState();
+          // FORK 2026-09-24 — the path was missing here (`readState()`), so `readFileSync(undefined)`
+          // threw, the store read as "unreadable", and EVERY dev-server POST was refused with a 500
+          // while the GET (which passes the path) hydrated fine — the dev UI was never durable.
+          const current = readState(stateFile);
           if (current.status === "unreadable") {
             // The store exists and we could not read it. Writing now would atomically
             // replace real state with whatever this tab happens to hold — and the
@@ -460,6 +508,18 @@ function uiStatePlugin(): Plugin {
           if (snapshot.tabs === undefined && current.state.tabs !== undefined) {
             snapshot.tabs = current.state.tabs;
           }
+          const closedTabs = unionClosedTabs(current.state.closedTabs, snapshot.closedTabs);
+          if (Object.keys(closedTabs).length > 0) {
+            snapshot.closedTabs = closedTabs;
+            if (snapshot.tabs !== undefined) {
+              snapshot.tabs = snapshot.tabs.filter(
+                (t) =>
+                  typeof t.id !== "string" ||
+                  t.id === "tab-main" ||
+                  typeof closedTabs[t.id] !== "number",
+              );
+            }
+          }
           // Atomic write: .tmp then rename (same pattern as /api/save-file above). The
           // tmp name carries the pid so a future async rewrite of this handler cannot
           // have two in-flight writes clobber one shared temp file.
@@ -484,11 +544,54 @@ function uiStatePlugin(): Plugin {
   };
 }
 
+// FORK 2026-09-08 — WHICH JS IS THIS TAB RUNNING? The client announced only "Tinker UI webchat
+// v0.3" and the snapshot sidecar (~/.openclaw/data/tinker-ui-snapshot.<slug>.json) carried no
+// build at all, so a fix could not be PROVEN against a real tab: a stale bundle and a freshly
+// patched one produced byte-identical artefacts (measured: a fix landed at 21:50 and a tab was
+// still on the old code at 06:05 the next morning behind the HMR deferral in app.ts — nothing on
+// disk could say which of the two it was running).
+//
+// `__UI_BUILD__` is `<short-sha>@<iso>`, evaluated ONCE when this config file is evaluated — at
+// dev-server START or at `vite build` — and handed to `define`. The dev tab is stamped too, but by
+// a DIFFERENT mechanism (read in node_modules/vite 6.4.1, dist/node/chunks + dist/client/env.mjs):
+// under `build` the `vite:define` transform splices the literal into the bundle; under `serve` that
+// transform returns early for the client and the Vite client shim (`env.mjs`) assigns every user
+// `define` key onto `globalThis` before app.ts evaluates — so `typeof __UI_BUILD__` reads the
+// global there. Either way the value is fixed at server start, never per HMR update.
+//   - The sha names the commit the SERVER started on, not the source it is serving right now:
+//     HMR ships later edits without re-evaluating this file. That is what the timestamp is for —
+//     a stamp older than the commit under test means the server predates it, and two tabs with
+//     the same sha but different timestamps came from different server instances.
+//   - "unknown" when git is unavailable (a tarball, a checkout without .git): provenance
+//     degrades, the build never fails because of it.
+// Consumers: tinker-ui/src/app.ts stamps `#messages[data-ui-build]` (so the mirrored html names
+// its bundle) and sends `build` in the debug.dumpUiSnapshot payload (so the sidecar json does).
+function uiBuildStamp(): string {
+  let sha = "unknown";
+  try {
+    // stderr ignored on purpose: outside a git checkout, "not a git repository" would print on
+    // every dev-server start for no gain.
+    sha =
+      execSync("git rev-parse --short HEAD", {
+        cwd: path.resolve(__dirname, ".."),
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim() || "unknown";
+  } catch {
+    /* no git — see above */
+  }
+  return `${sha}@${new Date().toISOString()}`;
+}
+
 export default defineConfig({
   root: ".",
   base: "/tinker/",
   define: {
     __BUNDLED_DEV__: "false", // Vite 8 requires this build-time constant
+    // JSON.stringify, not the bare value: `define` substitutes SOURCE TEXT, so an unquoted stamp
+    // would splice a bare identifier into app.ts and fail at parse time.
+    __UI_BUILD__: JSON.stringify(uiBuildStamp()),
   },
   plugins: [tinkerDevConfig(), openFilePlugin(), kitContentPlugin(), uiStatePlugin()],
   server: {

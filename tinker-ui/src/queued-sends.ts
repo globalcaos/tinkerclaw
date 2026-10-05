@@ -5,7 +5,10 @@
 //
 // A "queued send" is a user message the UI deliberately held OUT of messages[] because the session
 // had a turn in flight when the user pressed enter (see send() / pendingQueuedSends in app.ts). It
-// renders as a trailing grey "queued" bubble until the in-flight turn ends.
+// renders as a TRAILING bubble until a terminal releases it. Trailing is a placement, not a claim:
+// since prompt-queue.md step U2 its badge comes from prompt-state.ts and nothing draws the word
+// "queued" (deferral is a placement and nothing else, PQ-8). WHICH terminal releases WHICH entry is step U3's rule (PQ-7, "terminals are keyed"):
+// see `chatTerminalScope` and `settleQueuedSession` at the bottom of this file.
 //
 // THE BUG these helpers fix:
 //   pendingQueuedSends was a single GLOBAL array with no per-entry session identity, and its ONLY
@@ -20,6 +23,8 @@
 //   (a) render only the entries belonging to the tab on screen, and
 //   (b) settle a session's entries when THAT session's turn ends, independently of which tab is
 //       currently viewed.
+
+import type { PromptStateInputs } from "./prompt-state.js";
 
 export type QueuedEntry = Record<string, unknown>;
 
@@ -170,6 +175,15 @@ const queuedAtMs = (entry: QueuedEntry): number | undefined => {
  * Read-only and non-mutating: it IDENTIFIES, it does not settle, drain or re-send — that decision
  * belongs to app.ts. The entries come back BY REFERENCE, so a caller can settle them by identity.
  * `now` is injected rather than read from the clock so the bound is testable without a fake timer.
+ *
+ * FORK 2026-09-24 — ITS CALLER (prompt-queue.md §7 step U4; gap C4, which pinned this function as
+ * dead code). app.ts `strandedPromptIds` hands it the viewed session's OUTBOX entries, each as the
+ * queue entry it would have been (`_queuedSession` = its session, `ts` = its typed time), and the
+ * verdict feeds prompt-state.ts `gatewayHolderFacts`: one of the facts that together derive LOST
+ * for a session row with no `pendingPrompts` report (the fallback; since 2026-09-25 a row that
+ * carries one backs LOST without this age bound).
+ * So "the UI must act" means SURFACE, never settle: a stranded prompt reads LOST with Resend and
+ * Dismiss, and nothing is re-sent or dropped until the owner clicks one (PQ-9, PQ-12).
  */
 export function strandedQueuedEntries(
   queue: readonly QueuedEntry[],
@@ -192,8 +206,268 @@ export function strandedQueuedEntries(
   });
 }
 
+// ─── U3 — terminals keyed by prompt ────────────────────────────────────────────────────────────
+//
+// FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 and §7 step U3 (PQ-7 "terminals are
+// keyed"; contradiction C2).
+//
+// THE DEFECT. A prompt typed during a running turn is steered into that turn or backlogged behind
+// it by the gateway, and its own chat.send then finishes WITHOUT starting a run and broadcasts a
+// `final` for the prompt's key at once (chat.ts, the `!agentRunStarted` branch). This module read
+// every terminal as "this SESSION's turn is over", so that early final released every deferred
+// prompt of the session while the host turn was still running. They landed above the host's
+// remaining answer, which is the 2026-06-19 bug C coming back by another door. app.ts also stamped
+// `sessionEndedAt` and closed the host's timing block on it.
+//
+// THE RULE. A terminal ends only what it names:
+//   - a `final` carrying a `steered` / `backlogged` disposition (gateway G2) names ONE prompt by its
+//     key, which is its runId, the bubble's `_clientMsgId` and the gateway idempotencyKey (PQ-1). It
+//     ends no run. STEERED commits that one prompt in place, because it IS part of the running turn
+//     now. BEHIND leaves it trailing. Nothing else moves;
+//   - the terminal of a follow-up run that gateway G3 linked to its prompt keys (its `followup`
+//     start event) releases exactly those keys, and so does that start event itself;
+//   - every other terminal is TODAY'S session-wide one. That is the old-gateway rule (§6.3: an
+//     absent field keeps today's behaviour). It is also the fallback that keeps a BEHIND prompt from
+//     being stranded when its link never arrived (a dropped socket frame): the next unlinked
+//     terminal of its session releases it.
+//
+// KNOWN LIMIT. Two prompts backlogged behind the SAME turn are both released by that turn's
+// terminal, so the second one is drawn above the first one's answer. That is still better than
+// before U3, where both were released mid-turn by their own early finals.
+
+/** §6.3 — the dispositions that make a `final` NOT a terminal: the prompt was PLACED, not answered.
+ *  `dropped` is deliberately absent. agent-runner.ts reports it only for a heartbeat, and chat.send
+ *  never sets `isHeartbeat`, so no Tinker prompt can carry it; a final that did would take today's
+ *  session path rather than a rule nothing exercises. */
+export type PlacementDisposition = "steered" | "backlogged";
+
+/** The agent-event stream gateway step G3 links a follow-up run on (followup-runner.ts). It is not
+ *  `lifecycle`, on purpose: the gateway stamps a model onto every lifecycle event, and this UI reads
+ *  a model-bearing lifecycle event as "the model has started", the opposite of a pre-model link. */
+export const FOLLOWUP_STREAM = "followup";
+
+/** What ONE chat terminal names (see the rule above). */
+export type TerminalScope =
+  /** Today's rule: the session's turn is over, so every entry of the session is released. */
+  | { kind: "session" }
+  /** A disposition `final`. It names one prompt and ends no run. */
+  | { kind: "prompt"; key: string; disposition: PlacementDisposition }
+  /** A linked follow-up run's start or terminal: exactly these prompt keys. */
+  | { kind: "linked"; keys: readonly string[] };
+
+const SESSION_SCOPE: TerminalScope = Object.freeze({ kind: "session" as const });
+
+/** The entry's prompt key: the bubble id send() mints, which is also the gateway idempotencyKey
+ *  and so the runId of that prompt's early `final` (PQ-1). */
+const promptKeyOf = (entry: QueuedEntry): string | undefined =>
+  typeof entry._clientMsgId === "string" && entry._clientMsgId !== ""
+    ? (entry._clientMsgId as string)
+    : undefined;
+
+/**
+ * Classify one `chat` event: null when it is not a terminal (a delta), otherwise the scope it names.
+ * `followupLinks` maps a follow-up runId to the prompt keys it answers (`rememberFollowupLink`).
+ * Only a `final` can carry a placement: an `error` or an `aborted` always ends something.
+ */
+export function chatTerminalScope(
+  event: { state?: unknown; runId?: unknown; disposition?: unknown } | null | undefined,
+  followupLinks: ReadonlyMap<string, readonly string[]>,
+): TerminalScope | null {
+  const state = event?.state;
+  if (state !== "final" && state !== "error" && state !== "aborted") {
+    return null;
+  }
+  const rawRunId = event?.runId;
+  const runId = typeof rawRunId === "string" ? rawRunId : "";
+  const disposition = event?.disposition;
+  if (state === "final" && (disposition === "steered" || disposition === "backlogged")) {
+    // A missing runId names nothing: `key: ""` matches no entry, so it releases nothing. It is
+    // still not a session terminal, because the disposition says the prompt was placed.
+    return { kind: "prompt", key: runId, disposition };
+  }
+  const keys = runId ? followupLinks.get(runId) : undefined;
+  if (keys && keys.length > 0) {
+    return { kind: "linked", keys };
+  }
+  return SESSION_SCOPE;
+}
+
+/**
+ * Gateway G3's link, read off an agent event: `{ stream: "followup", runId, data: { phase: "start",
+ * promptKeys } }` becomes the follow-up run and the prompt keys it answers. null for any other
+ * event. Keys are trimmed the way the gateway trims them, and de-duplicated. An event with no usable
+ * key links nothing: G3 emits none without a key, so it comes from an older or foreign producer.
+ */
+export function followupRunLink(
+  event: { stream?: unknown; runId?: unknown; data?: unknown } | null | undefined,
+): { runId: string; keys: string[] } | null {
+  const runId = event?.runId;
+  if (event?.stream !== FOLLOWUP_STREAM || typeof runId !== "string" || runId === "") {
+    return null;
+  }
+  const data = event.data as { phase?: unknown; promptKeys?: unknown } | null | undefined;
+  if (!data || data.phase !== "start" || !Array.isArray(data.promptKeys)) {
+    return null;
+  }
+  const keys: string[] = [];
+  for (const raw of data.promptKeys as unknown[]) {
+    const key = typeof raw === "string" ? raw.trim() : "";
+    if (key !== "" && !keys.includes(key)) {
+      keys.push(key);
+    }
+  }
+  return keys.length > 0 ? { runId, keys } : null;
+}
+
+/** How many follow-up links are kept. A link is NOT deleted at its run's terminal, because one run
+ *  can emit more than one (an `error` a fallback model survives, then its `final`), and each must
+ *  stay keyed. So this cap is what bounds the map. */
+export const FOLLOWUP_LINKS_MAX = 256;
+
+/** Record a follow-up run's link. A re-announced run moves to the newest slot, and the oldest link
+ *  is evicted past `max` (a Map iterates in insertion order). */
+export function rememberFollowupLink(
+  links: Map<string, readonly string[]>,
+  runId: string,
+  keys: readonly string[],
+  max: number = FOLLOWUP_LINKS_MAX,
+): void {
+  links.delete(runId);
+  links.set(runId, [...keys]);
+  while (links.size > max) {
+    const oldest = links.keys().next();
+    if (oldest.done) {
+      break;
+    }
+    links.delete(oldest.value);
+  }
+}
+
+/** Record a prompt the gateway folded into `session`'s running turn (`steered`). §2: STEERED →
+ *  ANSWERED when "host turn R ends", so that session's next RUN terminal ends it. */
+export function addSessionPromptKey(
+  map: Map<string, string[]>,
+  session: string | undefined,
+  key: string,
+): void {
+  if (!session || !key) {
+    return;
+  }
+  const keys = map.get(session) ?? [];
+  if (!keys.includes(key)) {
+    keys.push(key);
+  }
+  map.set(session, keys);
+}
+
+/** Drain and return every key recorded for `session`. Short and canonical session keys match, like
+ *  every other predicate in this module. */
+export function takeSessionPromptKeys(
+  map: Map<string, string[]>,
+  session: string | undefined,
+  matches: SessionKeyMatcher,
+): string[] {
+  if (!session) {
+    return [];
+  }
+  const taken: string[] = [];
+  for (const [owner, keys] of map) {
+    if (owner === session || matches(owner, session)) {
+      for (const key of keys) {
+        if (!taken.includes(key)) {
+          taken.push(key);
+        }
+      }
+      map.delete(owner);
+    }
+  }
+  return taken;
+}
+
+/**
+ * The ONE fact a run's terminal records on each prompt keyed to that run (one steered into it, or
+ * one of a linked follow-up's keys): final → answered, error → failed, aborted → cancelled. These
+ * are facts, never a state name (msg-order.ts); prompt-state.ts derives the state from them. null
+ * for a non-terminal.
+ */
+export function terminalPromptFacts(state: unknown): Partial<PromptStateInputs> | null {
+  switch (state) {
+    case "final":
+      return { answered: true };
+    case "error":
+      return { failed: true };
+    case "aborted":
+      return { cancelled: true };
+    default:
+      return null;
+  }
+}
+
+/**
+ * FORK 2026-09-25 — prompt-queue.md §2 and §6.1 (PQ-6 "exactly one terminal per prompt", PQ-7
+ * "terminals are keyed"). What a chat terminal proves about the ONE prompt whose OWN run it ends.
+ *
+ * chat.send runs a prompt under its own idempotencyKey (chat.ts: `clientRunId = p.idempotencyKey`),
+ * so a terminal whose runId is a prompt's key ends THAT prompt:
+ *   - `final` with no disposition → answered (§2 RUNNING → ANSWERED);
+ *   - `aborted` → cancelled (§2 → CANCELLED: a stop, and on sessions.delete / sessions.reset the
+ *     `aborted` gateway G1 sends for each backlogged key);
+ *   - `error` → nothing: it is not terminal while a fallback model can still carry the run;
+ *   - a `final` carrying a disposition → nothing: it PLACED the prompt (`chatTerminalScope`, U3).
+ *
+ * THE DEFECT the `aborted` half ends (U3's known limit). `terminalPromptFacts` was recorded only on
+ * the prompts KEYED to a run (steered into it, or a linked follow-up's keys: app.ts
+ * `endPromptsKeyedToRun`), and a stop is a SESSION-scoped terminal that names no keys. So the HOST
+ * prompt, whose own run the stop ended, recorded nothing. One that left no transcript row (stopped
+ * before its user row landed) was then acked, unproven and held by nobody, and U4 derived LOST,
+ * with a Resend that would re-send the prompt the owner had just stopped.
+ *
+ * `key` is the runId. A runId that names no prompt (a follow-up run's own id) matches no bubble, so
+ * the caller's record is a no-op there.
+ */
+export function ownRunTerminal(
+  event: { state?: unknown; runId?: unknown; disposition?: unknown } | null | undefined,
+): { key: string; facts: Partial<PromptStateInputs> } | null {
+  const runId = event?.runId;
+  if (typeof runId !== "string" || runId === "") {
+    return null;
+  }
+  if (event?.state === "aborted") {
+    return { key: runId, facts: { cancelled: true } };
+  }
+  if (event?.state !== "final") {
+    return null;
+  }
+  const disposition = event.disposition;
+  return disposition === undefined || disposition === null
+    ? { key: runId, facts: { answered: true } }
+    : null;
+}
+
+/**
+ * PQ-6 — has this prompt already recorded its own run's terminal? The FIRST one stands. The chat
+ * abort controller lives until chat.send's dispatch returns (prompt-queue.md §4, holder C), which
+ * is after the run's first `final`, so a stop in that window broadcasts `aborted` for a run that
+ * has answered. Recorded, it would turn ANSWERED into "stopped · not answered" (CANCELLED outranks
+ * ANSWERED in prompt-state.ts). `failed` is not counted: an own run never records it.
+ */
+export function ownRunTerminalRecorded(
+  facts: Readonly<Partial<PromptStateInputs>> | null | undefined,
+): boolean {
+  return facts?.answered === true || facts?.cancelled === true;
+}
+
+/** What a linked follow-up run's START proves about each of its prompts: the run that answers it
+ *  has begun (§2 BEHIND → PREPARING, the fact prompt-state.ts reads for "the linked follow-up run
+ *  starts"), and a gateway holder of it demonstrably exists, so it is not LOST. */
+export const FOLLOWUP_STARTED_FACTS: Readonly<Partial<PromptStateInputs>> = Object.freeze({
+  pending: "preparing" as const,
+  noGatewayHolder: false,
+});
+
 export interface SettleResult {
-  /** entries that remain queued (they belong to OTHER sessions). */
+  /** entries that remain queued: other sessions' entries, and this session's entries the terminal
+   *  does not name. */
   remaining: QueuedEntry[];
   /** entries the caller should splice into the live transcript NOW, in order — non-empty ONLY when
    *  the ended session is the one currently viewed. */
@@ -201,11 +475,17 @@ export interface SettleResult {
 }
 
 /**
- * Settle the queue because `endedSession`'s turn has ended.
+ * Settle the queue because a terminal for `endedSession` arrived. `scope` is WHICH of that
+ * session's entries it releases (`chatTerminalScope`). Omitted, it is today's session-wide rule.
  *
  * - Entries that do NOT belong to `endedSession` are left untouched in `remaining`.
- * - Entries that DO belong to `endedSession` are un-queued (the `_queued` / `_queuedSession`
- *   markers are stripped) and then:
+ * - Of the session's entries, the scope picks the ones it releases:
+ *     session → all of them (today's rule, and the whole old-gateway path);
+ *     prompt  → `steered`: only the entry whose key the final names. `backlogged`: none. A BEHIND
+ *               prompt stays trailing until the follow-up run linked to it starts;
+ *     linked  → exactly the entries whose key is in `keys`.
+ *   The rest stay in `remaining`, still deferred.
+ * - A released entry is un-queued (the `_queuedSession` marker is stripped) and then:
  *     - if `isViewed` (the ended session is the tab on screen) → returned in `commit` so the caller
  *       appends them to messages[] in chronological order (they become committed user messages,
  *       exactly as a server refresh would show them); otherwise
@@ -213,28 +493,38 @@ export interface SettleResult {
  *       that tab is next opened — is authoritative and already contains the processed prompt, so
  *       re-inserting it here would duplicate it.
  *
- * Idempotent w.r.t. a session: once its entries are settled they are gone, so a second call (e.g.
- * a later lifecycle event for the same run) is a no-op.
+ * Idempotent: a released entry is gone, so a second terminal of the same scope (the gateway sends
+ * two finals per agent-started run) is a no-op.
  */
 export function settleQueuedSession(
   queue: QueuedEntry[],
   endedSession: string | undefined,
   isViewed: boolean,
   matches: SessionKeyMatcher,
+  scope: TerminalScope = SESSION_SCOPE,
 ): SettleResult {
   if (!endedSession) {
     return { remaining: queue, commit: [] };
   }
+  const releases = (entry: QueuedEntry): boolean => {
+    if (scope.kind === "prompt") {
+      return scope.disposition === "steered" && promptKeyOf(entry) === scope.key;
+    }
+    if (scope.kind === "linked") {
+      const key = promptKeyOf(entry);
+      return key !== undefined && scope.keys.includes(key);
+    }
+    return true;
+  };
   const remaining: QueuedEntry[] = [];
   const commit: QueuedEntry[] = [];
   for (const entry of queue) {
     const qs = sessionOf(entry);
     const belongs = !!qs && (qs === endedSession || matches(qs, endedSession));
-    if (!belongs) {
+    if (!belongs || !releases(entry)) {
       remaining.push(entry);
       continue;
     }
-    delete entry._queued;
     delete entry._queuedSession;
     if (isViewed) {
       commit.push(entry);

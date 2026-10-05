@@ -1,10 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveFailoverReasonFromError } from "../agents/failover-error.js";
+import { resolveRetryAfterSeconds } from "../agents/rate-limit-reset.js";
 import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-reply/heartbeat.js";
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { getRuntimeConfig } from "../config/io.js";
 import { resolveSessionFilePath } from "../config/sessions.js";
+import { classifyAssistantOutcome } from "../fork/turn-outcome.js";
+import {
+  attributeToolUsage,
+  getUsageRegistry,
+  type UsageMark,
+  type UsageRegistry,
+} from "../fork/usage-attribution.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { detectErrorKind, type ErrorKind } from "../infra/errors.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
@@ -21,6 +29,58 @@ import { appendInjectedAssistantMessageToTranscript } from "./server-methods/cha
 import { deriveGatewaySessionLifecycleSnapshot } from "./session-lifecycle-state.js";
 import { loadSessionEntry, resolveSessionModelRef } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
+
+/**
+ * FORK 2026-09-29 (bible tinker-ui.md §5.8AA): usage marks for a live tool START event, from the
+ * same attributor chat.history uses. Undefined when there is nothing to attribute, when a producer
+ * already attached `usage`, or when attribution fails: a chip must never break the tool stream.
+ */
+export function usageMarksForToolStart(
+  data: unknown,
+  registry?: UsageRegistry,
+): UsageMark[] | undefined {
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+  const d = data as Record<string, unknown>;
+  if (d.phase !== "start" || typeof d.name !== "string" || !d.name || Array.isArray(d.usage)) {
+    return undefined;
+  }
+  try {
+    const marks = attributeToolUsage(
+      {
+        name: d.name,
+        args: d.args,
+        ...(typeof d.toolCallId === "string" ? { toolCallId: d.toolCallId } : {}),
+      },
+      registry ?? getUsageRegistry(),
+    );
+    return marks.length > 0 ? marks : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * FORK 2026-09-29 (bible tinker-ui.md §5.8AB): the live `final` message. The lifecycle final is
+ * built here, not by projectChatDisplayMessage, so it must carry the typed outcome itself: without
+ * it a cc-bridge error envelope or an empty stop reaches the live chat as an ordinary answer and
+ * the retry ladder takes it for a success.
+ */
+export function liveFinalMessage(text: string, stopReason?: string): Record<string, unknown> {
+  const message: Record<string, unknown> = {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    timestamp: Date.now(),
+  };
+  // A live abort already has its own "Stopped" notice in the UI (abort()); typing it here would
+  // draw a second one. The persisted row still gets its outcome from the history projection.
+  if (stopReason === "aborted") {
+    return message;
+  }
+  const outcome = classifyAssistantOutcome(stopReason ? { ...message, stopReason } : message);
+  return outcome ? { ...message, outcome } : message;
+}
 
 function resolveHeartbeatAckMaxChars(): number {
   try {
@@ -970,14 +1030,7 @@ export function createAgentEventHandler({
         seq,
         state: "final" as const,
         ...(stopReason && { stopReason }),
-        message:
-          text && !shouldSuppressSilent
-            ? {
-                role: "assistant",
-                content: [{ type: "text", text }],
-                timestamp: Date.now(),
-              }
-            : undefined,
+        message: text && !shouldSuppressSilent ? liveFinalMessage(text, stopReason) : undefined,
       };
       // Suppress webchat broadcast for heartbeat runs when showOk is false
       if (!shouldHideHeartbeatChatOutput(clientRunId, sourceRunId)) {
@@ -992,10 +1045,17 @@ export function createAgentEventHandler({
     // `errorMessage`. `resolveFailoverReasonFromError` unwraps a FailoverError
     // (returns its `.reason`) or classifies the raw error signal — exactly the
     // value the embedded-runner logs as `decision=surface_error reason=...`.
-    // `retryAfter` (provider Retry-After) is not attached to the error object at
-    // this layer, so it is intentionally OMITTED; the frontend backoff ladder
-    // owns the timing. `errorMessage` (human text) is unchanged.
+    // FORK 2026-09-07 — `retryAfter` used to be OMITTED here, on the reasoning that "the frontend
+    // backoff ladder owns the timing". That holds for a 30-second 429 and breaks completely for a
+    // subscription window: measured 2026-09-07 15:00, three tabs hit "You have hit your ChatGPT
+    // usage limit (plus plan). Try again in ~262 min." and the blind ladder (3s/10s/30s/2m/7m/15m)
+    // spent all six attempts inside 25 minutes, then gave up FOUR HOURS early. The provider states
+    // the reset in the error text; not forwarding it was the whole defect.
     const failoverReason = resolveFailoverReasonFromError(error) ?? undefined;
+    const errorText = error ? formatForLog(error) : undefined;
+    const retryAfterSeconds = failoverReason
+      ? resolveRetryAfterSeconds(errorText, Date.now())
+      : undefined;
     // FORK 2026-07-22 (error-partial-preserve): surface the preserved partial
     // on the error broadcast via the standard `message` field (ChatEventSchema
     // is additionalProperties:false, so a new `partialText` field would be
@@ -1007,9 +1067,10 @@ export function createAgentEventHandler({
       sessionKey,
       seq,
       state: "error" as const,
-      errorMessage: error ? formatForLog(error) : undefined,
+      errorMessage: errorText,
       ...(errorKind && { errorKind }),
       ...(failoverReason && { reason: failoverReason }),
+      ...(retryAfterSeconds !== undefined && { retryAfter: retryAfterSeconds }),
       ...(preservedPartialText
         ? {
             message: {
@@ -1108,6 +1169,14 @@ export function createAgentEventHandler({
       if (toolPhase === "start" && isControlUiVisible && sessionKey && !isAborted) {
         flushBufferedChatDeltaIfNeeded(sessionKey, clientRunId, evt.runId, evt.seq);
       }
+      // FORK 2026-09-29 (bible tinker-ui.md §5.8AA): the ONE live usage site for both runners.
+      // The embedded runner and the cc-bridge both emit {phase:"start", name, toolCallId, args},
+      // so attributing here covers the bridge without a plugin-sdk export and keeps a single
+      // attribution site (history uses the same attributeToolUsage in session-utils.fs.ts).
+      const usage = toolPhase === "start" ? usageMarksForToolStart(evt.data) : undefined;
+      const toolWsPayload = usage
+        ? { ...agentPayload, data: { ...agentPayload.data, usage } }
+        : agentPayload;
       // Always broadcast tool events to registered WS recipients with
       // tool-events capability, regardless of verboseLevel. The verbose
       // setting only controls whether tool details are sent as channel
@@ -1125,7 +1194,9 @@ export function createAgentEventHandler({
       if (recipients && recipients.size > 0) {
         broadcastToConnIds(
           "agent",
-          sessionKey ? { ...agentPayload, ...buildSessionEventSnapshot(sessionKey) } : agentPayload,
+          sessionKey
+            ? { ...toolWsPayload, ...buildSessionEventSnapshot(sessionKey) }
+            : toolWsPayload,
           recipients,
         );
       }
@@ -1139,7 +1210,7 @@ export function createAgentEventHandler({
         if (sessionSubscribers.size > 0) {
           broadcastToConnIds(
             "session.tool",
-            { ...agentPayload, ...buildSessionEventSnapshot(sessionKey) },
+            { ...toolWsPayload, ...buildSessionEventSnapshot(sessionKey) },
             sessionSubscribers,
             { dropIfSlow: true },
           );

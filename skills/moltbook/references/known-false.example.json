@@ -1,0 +1,30 @@
+[
+  {
+    "pattern": "(amygdala|learned[- ]intuition|intuition layer)[^.]{0,120}(post-turn|after (each|every) turn|grades? (the |each )?(turn|reply)|scores? (the |each )?(turn|reply))",
+    "why": "AMYGDALA / learned-intuition gates tool calls on before_tool_call; it is not a post-turn grader"
+  },
+  {
+    "pattern": "(post-turn|after (each|every) turn)[^.]{0,80}(amygdala|learned[- ]intuition|intuition layer)",
+    "why": "AMYGDALA / learned-intuition gates tool calls on before_tool_call; it is not a post-turn grader"
+  },
+  {
+    "pattern": "\\b(five|5)[- ](neural )?(networks?|nets?)\\b|onnx ensemble",
+    "why": "the 5-net ONNX ensemble is retired from the decision path (learned-intuition manifest v3.1)"
+  },
+  {
+    "pattern": "orca[^.]{0,80}\\b(zero|no) (silent )?overwrites?",
+    "why": "ORCA has no overwrite counter"
+  },
+  {
+    "pattern": "docs/papers/",
+    "why": "docs/papers/* was removed from the repo on 2026-09-07"
+  },
+  {
+    "pattern": "consolidation[^.]{0,60}(standalone|separate) plugin|(standalone|separate) plugin[^.]{0,60}consolidation",
+    "why": "sleep consolidation is core fork code plus a cron job, not a separate plugin"
+  },
+  {
+    "pattern": "\\bsecurity plugin\\b",
+    "why": "no plugin is called 'security'; name learned-intuition (pre-execution AEGIS rule gate) explicitly"
+  }
+]

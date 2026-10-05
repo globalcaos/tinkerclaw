@@ -1,6 +1,9 @@
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { projectRecentChatDisplayMessages } from "../chat-display-projection.js";
 import { MAX_LIVE_CHAT_BUFFER_CHARS, resolveMergedAssistantText } from "../live-chat-projector.js";
+import { PROMPT_KEY_CUSTOM_TYPE } from "../prompt-key-marker.js";
 import {
   createAgentEventHandler,
   createChatRunState,
@@ -8,7 +11,45 @@ import {
   createToolEventRecipientRegistry,
   isLiveChatBufferReplaced,
 } from "../server-chat.js";
-import { augmentChatHistoryWithCanvasBlocks } from "./chat.js";
+import {
+  appendPromptKeyMarkerForChatSend,
+  augmentChatHistoryWithCanvasBlocks,
+  chatHandlers,
+} from "./chat.js";
+import { createTranscriptFixtureSync } from "./chat.test-helpers.js";
+import type { GatewayRequestContext } from "./types.js";
+
+// FORK 2026-09-08 (durable prompt key): the handler-level guard at the bottom drives the REAL
+// chat.send with only two seams mocked — the session-store lookup (so the transcript is a temp
+// file) and dispatchInboundMessage (which never resolves: the run stays "in progress" until the
+// test wipes process state to simulate the TTL sweep / a restart). Everything up to and including
+// the durable check and the marker write runs verbatim. Both mocks spread the real module and are
+// inert for the projection suites above, which never call loadSessionEntry or dispatch.
+const promptKeyState = vi.hoisted(() => ({ transcriptPath: "", sessionId: "sess-durable" }));
+const dispatchMock = vi.hoisted(() => ({
+  dispatchInboundMessage: vi.fn(() => new Promise<never>(() => {})),
+}));
+
+vi.mock("../session-utils.js", async () => {
+  const original =
+    await vi.importActual<typeof import("../session-utils.js")>("../session-utils.js");
+  return {
+    ...original,
+    loadSessionEntry: () => ({
+      cfg: {},
+      storePath: path.join(path.dirname(promptKeyState.transcriptPath), "sessions.json"),
+      entry: {
+        sessionId: promptKeyState.sessionId,
+        sessionFile: promptKeyState.transcriptPath,
+      },
+      canonicalKey: "main",
+    }),
+  };
+});
+
+vi.mock("../../auto-reply/dispatch.js", () => ({
+  dispatchInboundMessage: dispatchMock.dispatchInboundMessage,
+}));
 
 // FORK 2026-08-05: this file used to guard `dedupeServedAssistantAnswers`, the content-based
 // serve-boundary dedup in chat.ts. THAT FUNCTION IS GONE, and the suite is inverted.
@@ -294,5 +335,228 @@ describe("chat delta events carry the replace flag on a buffer re-base", () => {
     expect(payloads).toHaveLength(2);
     expect(payloads[0]).not.toHaveProperty("replace");
     expect(payloads[1]?.replace).toBe(true);
+  });
+});
+
+// FORK 2026-09-08 (durable prompt key): the gateway's OWN duplication source. The durable outbox
+// replays a prompt it cannot prove was persisted with the ORIGINAL idempotencyKey; once the 5-min
+// dedupe cache is swept, or after a restart, the gateway used to run it AGAIN as a fresh turn (93
+// re-dispatches across 45 sessions, 2026-09-08). Fixed at the source, not at the serve boundary:
+// chat.send writes a marker before dispatch and answers a replay from it. Nothing compares text.
+describe("chat.send durable prompt key (FORK 2026-09-08)", () => {
+  const createContext = () => ({
+    dedupe: new Map<string, { ts: number; ok: boolean; payload?: unknown }>(),
+    chatAbortControllers: new Map<string, unknown>(),
+    addChatRun: vi.fn(),
+    removeChatRun: vi.fn(),
+    registerToolEventRecipient: vi.fn(),
+    logGateway: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+  });
+  type DurableContext = ReturnType<typeof createContext>;
+
+  // The production shape is an ESTABLISHED session — every measured re-dispatch was on one — so
+  // the default fixture already holds one exchange. It matters mechanically, not cosmetically:
+  // pi's SessionManager buffers every append until the loaded entries hold an assistant message
+  // and drops the buffer with the instance (probed 2026-09-08), so a header-only transcript is a
+  // different case, exercised by `cold: true` below. Raw tree entries with fixed ids rather than a
+  // SessionManager write, so the leaf is known ("a0000001") and pi's first-flush quirk (it
+  // re-appends the header of a pre-existing header-only file) never enters the fixture.
+  const WARM_LEAF_ID = "a0000001";
+  const createFixture = (prefix: string, opts?: { cold?: boolean }): string => {
+    const { transcriptPath } = createTranscriptFixtureSync({
+      prefix,
+      sessionId: promptKeyState.sessionId,
+      fileName: `${promptKeyState.sessionId}.jsonl`,
+    });
+    promptKeyState.transcriptPath = transcriptPath;
+    if (!opts?.cold) {
+      const zeroUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 };
+      fs.appendFileSync(
+        transcriptPath,
+        [
+          JSON.stringify({
+            type: "message",
+            id: "u0000001",
+            parentId: null,
+            timestamp: new Date(1).toISOString(),
+            message: { role: "user", content: [{ type: "text", text: "earlier prompt" }] },
+          }),
+          JSON.stringify({
+            type: "message",
+            id: WARM_LEAF_ID,
+            parentId: "u0000001",
+            timestamp: new Date(2).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "earlier answer" }],
+              stopReason: "stop",
+              api: "openai-responses",
+              provider: "openclaw",
+              model: "test",
+              usage: { ...zeroUsage, cost: { ...zeroUsage, total: 0 } },
+            },
+          }),
+        ].join("\n") + "\n",
+        "utf-8",
+      );
+    }
+    return transcriptPath;
+  };
+
+  const send = async (
+    context: DurableContext,
+    respond: ReturnType<typeof vi.fn>,
+    idempotencyKey: string,
+    extra?: Record<string, unknown>,
+  ) =>
+    chatHandlers["chat.send"]({
+      req: {} as never,
+      params: { sessionKey: "main", message: "what is the plan?", idempotencyKey, ...extra },
+      respond: respond as unknown as Parameters<(typeof chatHandlers)["chat.send"]>[0]["respond"],
+      context: context as unknown as GatewayRequestContext,
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+  const markerEntries = (transcriptPath: string) =>
+    fs
+      .readFileSync(transcriptPath, "utf-8")
+      .split(/\r?\n/)
+      .filter((line) => line.trim())
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            type?: string;
+            customType?: string;
+            data?: Record<string, unknown>;
+            parentId?: unknown;
+          },
+      )
+      .filter((entry) => entry.type === "custom" && entry.customType === PROMPT_KEY_CUSTOM_TYPE);
+
+  afterEach(() => {
+    dispatchMock.dispatchInboundMessage.mockClear();
+  });
+
+  it("same idempotencyKey re-sent with the dedupe cache cleared does not start a second run when the transcript holds the marker", async () => {
+    const transcriptPath = createFixture("openclaw-chat-durable-key-");
+    const context = createContext();
+
+    const first = vi.fn();
+    await send(context, first, "key-durable-1");
+    expect(first).toHaveBeenCalledWith(
+      true,
+      { runId: "key-durable-1", status: "started" },
+      undefined,
+      { runId: "key-durable-1" },
+    );
+    expect(dispatchMock.dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    const markers = markerEntries(transcriptPath);
+    expect(markers).toHaveLength(1);
+    expect(markers[0]?.data).toMatchObject({ idempotencyKey: "key-durable-1", sessionKey: "main" });
+    // Written through SessionManager, so it hangs off the current leaf via parentId — never a raw
+    // append. This is what lets the runner chain pi's user row under the marker.
+    expect(markers[0]?.parentId).toBe(WARM_LEAF_ID);
+
+    // The DEDUPE_TTL_MS sweep and a gateway restart both look exactly like this to chat.send.
+    context.dedupe.clear();
+    context.chatAbortControllers.clear();
+
+    const replay = vi.fn();
+    await send(context, replay, "key-durable-1");
+    expect(dispatchMock.dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(context.chatAbortControllers.size).toBe(0);
+    // `payload.status` is the only discriminator the browser sees; "ok" is the completed-run shape
+    // that routes the tab into settleAlreadyCompletedSend instead of waiting for a stream that
+    // ended before it reconnected (tinker-ui/src/app.ts).
+    expect(replay).toHaveBeenCalledTimes(1);
+    expect(replay).toHaveBeenCalledWith(
+      true,
+      { runId: "key-durable-1", status: "ok" },
+      undefined,
+      expect.objectContaining({ cached: true, durable: true }),
+    );
+    // One marker per acceptance — a replay never writes a second one.
+    expect(markerEntries(transcriptPath)).toHaveLength(1);
+    expect(context.logGateway.info).toHaveBeenCalledWith(
+      expect.stringContaining("[chat.send] duplicate key=key-durable-1 kind=durable"),
+    );
+    // The in-memory cache is re-seeded, so the next replay inside the TTL never touches disk.
+    expect(context.dedupe.get("chat:key-durable-1")?.payload).toEqual({
+      runId: "key-durable-1",
+      status: "ok",
+    });
+  });
+
+  it("a genuinely new key against the same transcript still dispatches", async () => {
+    const transcriptPath = createFixture("openclaw-chat-durable-key-new-");
+    const context = createContext();
+    await send(context, vi.fn(), "key-durable-a");
+    await send(context, vi.fn(), "key-durable-b");
+    expect(dispatchMock.dispatchInboundMessage).toHaveBeenCalledTimes(2);
+    expect(markerEntries(transcriptPath).map((entry) => entry.data?.idempotencyKey)).toEqual([
+      "key-durable-a",
+      "key-durable-b",
+    ]);
+  });
+
+  // flows.md F1: the probe path's contract is "no transcript write". A marker there would leave an
+  // immortal duplicate-suppressing entry in a real session for a prompt that never ran.
+  it("writes no marker on the dispatchAgent:false probe path", async () => {
+    const transcriptPath = createFixture("openclaw-chat-durable-key-probe-");
+    const context = createContext();
+    const respond = vi.fn();
+    await send(context, respond, "key-durable-probe", { dispatchAgent: false });
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      { runId: "key-durable-probe", status: "started" },
+      undefined,
+      { runId: "key-durable-probe" },
+    );
+    expect(dispatchMock.dispatchInboundMessage).not.toHaveBeenCalled();
+    expect(markerEntries(transcriptPath)).toHaveLength(0);
+  });
+
+  // THE CONTROL for the honesty property. pi's SessionManager writes nothing to a transcript that
+  // holds no assistant message yet (its _persist buffers, and the buffer dies with the instance —
+  // probed 2026-09-08: open()+appendCustomEntry() on a header-only file left it untouched while
+  // returning normally). The first cut of this fix reported `ok: true` there, which is the mirror
+  // image of the bug: a "proof" that never landed. The helper must say `skipped`, chat.send must
+  // stay silent (same class as a missing transcript), and the replay must fall back to the
+  // pre-fix behaviour — dispatch again — rather than a false "already ran".
+  it("a transcript with no assistant reply yet gets no marker, reports skipped, and the replay still dispatches", async () => {
+    const transcriptPath = createFixture("openclaw-chat-durable-key-cold-", { cold: true });
+    const context = createContext();
+
+    await send(context, vi.fn(), "key-durable-cold");
+    expect(dispatchMock.dispatchInboundMessage).toHaveBeenCalledTimes(1);
+    expect(markerEntries(transcriptPath)).toHaveLength(0);
+    expect(context.logGateway.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("prompt-key marker"),
+    );
+    expect(
+      appendPromptKeyMarkerForChatSend({
+        sessionKey: "main",
+        entry: { sessionId: promptKeyState.sessionId, sessionFile: transcriptPath } as never,
+        agentId: "main",
+        idempotencyKey: "key-durable-cold",
+        ts: Date.now(),
+      }),
+    ).toEqual({ ok: false, skipped: true, reason: "no-assistant-yet" });
+
+    context.dedupe.clear();
+    context.chatAbortControllers.clear();
+    const replay = vi.fn();
+    await send(context, replay, "key-durable-cold");
+    expect(dispatchMock.dispatchInboundMessage).toHaveBeenCalledTimes(2);
+    expect(replay).toHaveBeenCalledWith(
+      true,
+      { runId: "key-durable-cold", status: "started" },
+      undefined,
+      { runId: "key-durable-cold" },
+    );
+    expect(context.logGateway.info).not.toHaveBeenCalledWith(
+      expect.stringContaining("kind=durable"),
+    );
   });
 });

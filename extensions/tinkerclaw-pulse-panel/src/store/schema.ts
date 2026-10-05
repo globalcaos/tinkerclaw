@@ -1,15 +1,31 @@
 /**
- * FORK: tinkerclaw-pulse-panel — schema as a TypeScript constant.
+ * FORK: tinkerclaw-pulse-panel — schema as TypeScript constants.
  *
  * Bundlers (tsdown / esbuild) don't ship .sql assets alongside the dist JS,
  * so the schema lives inline in this module. Mirrors the convention in
  * extensions/tinkerclaw-whatsapp/src/history/db.ts.
  *
+ * OWNERSHIP SPLIT (2026-09-08). This plugin renders metric graphs; it does not
+ * own tasks. The DDL is therefore split in two:
+ *
+ *   PULSE_PANEL_SCHEMA_SQL — the tables this plugin reads and writes. Always
+ *     applied on open.
+ *   TASK_PANEL_SCHEMA_SQL  — the task/briefing/calendar tables owned by the
+ *     sibling `tinkerclaw-task-panel` plugin, which creates and migrates them
+ *     itself. Applied by THIS plugin only when the operator explicitly opts in
+ *     via `manageTaskSchema: true`, because a metrics panel silently rewriting
+ *     another plugin's task rows is a side effect nobody asked for.
+ *
  * Keep schema.sql in sync as the human-readable canonical form; the runtime
- * uses the constant below. CREATE TABLE IF NOT EXISTS makes every statement
+ * uses the constants below. CREATE TABLE IF NOT EXISTS makes every statement
  * idempotent so subsequent boots are no-ops.
  */
-export const CONTROL_PANEL_SCHEMA_SQL = `
+
+/**
+ * Tables owned by the Pulse panel: metric definitions, their observation
+ * series, alert state, and which panels are pinned to which surface.
+ */
+export const PULSE_PANEL_SCHEMA_SQL = `
 ------------------------------------------------------------------------------
 -- METRICS (LIVE + SNAPSHOT)
 ------------------------------------------------------------------------------
@@ -45,6 +61,29 @@ CREATE TABLE IF NOT EXISTS alert_state (
 );
 
 ------------------------------------------------------------------------------
+-- DASHBOARD LAYOUT (which panels are pinned to which surface)
+------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS panel_pin (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  metric_id TEXT NOT NULL REFERENCES metric_definition(id) ON DELETE CASCADE,
+  surface TEXT NOT NULL CHECK (surface IN ('exec_graphs','exec_traffic_light','dev_tab','traffic_strip')),
+  position INTEGER NOT NULL DEFAULT 100,
+  size TEXT NOT NULL DEFAULT 'small' CHECK (size IN ('tiny','small','medium','large')),
+  range TEXT NOT NULL DEFAULT '24h',
+  template_override TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS panel_pin_surface ON panel_pin(surface, position);
+`;
+
+/**
+ * Tables owned by `tinkerclaw-task-panel`. Present here only so an operator who
+ * deliberately runs the Pulse panel WITHOUT the task panel can opt into having
+ * it bootstrap the shared store (`manageTaskSchema: true`). Off by default.
+ */
+export const TASK_PANEL_SCHEMA_SQL = `
+------------------------------------------------------------------------------
 -- BRIEFING PASS (v3.1 — for progress-anchor tracking)
 ------------------------------------------------------------------------------
 
@@ -68,8 +107,7 @@ CREATE TABLE IF NOT EXISTS task (
   context_md TEXT,
   -- v3.3 — 'back_burner' added: a task the user has snoozed indefinitely.
   -- Hidden from default filters; still belongs to its axis; restored by
-  -- setting status back to 'open'. See migrateWidenStatusCheck() in db.ts
-  -- for the migration that retrofits old DBs.
+  -- setting status back to 'open'.
   status TEXT NOT NULL CHECK (status IN ('open','in_progress','resolved','dropped','dismissed','back_burner')),
   source TEXT NOT NULL,
   source_ref TEXT,
@@ -104,11 +142,6 @@ CREATE INDEX IF NOT EXISTS task_back_burner ON task(priority_axis, priority_rank
 
 ------------------------------------------------------------------------------
 -- TASK TAXONOMIES (v3.3 + v3.5 hierarchy)
--- task_axis     : user-managed categories (replaces hardcoded EXEC_AXIS_ORDER);
---                 v3.5 adds parent_id for two-level group → sub-group nesting.
--- task_est_preset : user-managed estimation presets (replaces free numeric input)
--- Both seeded with the prior hardcoded defaults on first migration; see
--- seedTaxonomyDefaults() in db.ts.
 ------------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS task_axis (
@@ -121,10 +154,9 @@ CREATE TABLE IF NOT EXISTS task_axis (
 );
 CREATE INDEX IF NOT EXISTS task_axis_position ON task_axis(position);
 -- task_axis_parent index is created by the addAxisParentIdColumn migration
--- (db.ts), NOT here. Reason: getDb() runs this schema.exec() BEFORE the
--- migration; on existing v3.3 DBs the column does not exist yet, so a
--- CREATE INDEX here would throw "no such column: parent_id" and crash
--- gateway boot. The migration creates the column AND the index in lockstep.
+-- (db.ts), NOT here. Reason: the schema exec runs BEFORE the migration; on
+-- existing v3.3 DBs the column does not exist yet, so a CREATE INDEX here
+-- would throw "no such column: parent_id" and crash gateway boot.
 
 CREATE TABLE IF NOT EXISTS task_est_preset (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -165,20 +197,4 @@ CREATE TABLE IF NOT EXISTS calendar_event_cache (
 );
 CREATE INDEX IF NOT EXISTS calendar_event_date ON calendar_event_cache(date);
 CREATE INDEX IF NOT EXISTS calendar_event_start ON calendar_event_cache(start_ts);
-
-------------------------------------------------------------------------------
--- DASHBOARD LAYOUT (which panels are pinned to which surface)
-------------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS panel_pin (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  metric_id TEXT NOT NULL REFERENCES metric_definition(id) ON DELETE CASCADE,
-  surface TEXT NOT NULL CHECK (surface IN ('exec_graphs','exec_traffic_light','dev_tab','traffic_strip')),
-  position INTEGER NOT NULL DEFAULT 100,
-  size TEXT NOT NULL DEFAULT 'small' CHECK (size IN ('tiny','small','medium','large')),
-  range TEXT NOT NULL DEFAULT '24h',
-  template_override TEXT,
-  created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS panel_pin_surface ON panel_pin(surface, position);
 `;

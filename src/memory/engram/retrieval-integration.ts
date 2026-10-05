@@ -6,10 +6,12 @@
  *   FTS search → task-conditioned scoring → MMR dedup → token-bounded format.
  */
 
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import { estimateTokens } from "./event-store.js";
 import type { EventStore } from "./event-store.js";
 import type { MemoryEvent } from "./event-types.js";
-import { ftsSearch } from "./search-index.js";
+import { ftsSearchOffThread } from "./fts-worker-client.js";
+import { beginFtsScan, ftsSearch, type SearchFilters, type SearchResult } from "./search-index.js";
 import { taskConditionedScore } from "./task-conditioned-scoring.js";
 import { createDefaultTaskState } from "./task-state.js";
 
@@ -24,6 +26,17 @@ const FTS_TOP_N = 50;
 
 /** Section header token cost. */
 const HEADER_TEXT = "## Retrieved Context";
+
+// FORK 2026-09-03 — chunking parameters for `assembleRetrievalPackAsync`.
+//
+// The corpus scan inside `ftsSearch` is the ONLY unbounded per-event loop in this
+// pipeline; every later stage is bounded by FTS_TOP_N (50) candidates. So the scan is the
+// one that has to be cut into slices short enough that the gateway stays responsive.
+
+/** A corpus this small is scanned in one synchronous go — it fits the slice budget anyway. */
+const FTS_SINGLE_SLICE_MAX_EVENTS = 200;
+/** Ceiling for a single synchronous stretch of the scan, in ms (checked per event). */
+const MAX_SYNC_SLICE_MS = 50;
 
 export interface AssembleOptions {
   /** Token budget for the assembled pack. Defaults to DEFAULT_RETRIEVAL_MAX_TOKENS. */
@@ -157,48 +170,27 @@ function formatEvent(event: MemoryEvent): string {
 }
 
 /**
- * Assemble a retrieval pack: a token-bounded, relevance-ranked, deduplicated
- * string of past events ready for system prompt injection.
+ * Stages 2-4: task-conditioned scoring, sort, MMR rerank.
  *
- * Returns an empty string when the store is empty or no FTS matches exist.
- *
- * @param query   - The current user message or turn query.
- * @param eventStore - The ENGRAM event store for this session.
- * @param options - Optional token budget and task context.
+ * Extracted so the synchronous and the yielding assembler share ONE copy of the ranking
+ * rules. A second copy is exactly how the vendored ENGRAM twin drifted for four months
+ * (see src/plugin-sdk/memory-engram.ts).
  */
-export function assembleRetrievalPack(
-  query: string,
-  eventStore: EventStore,
-  options?: AssembleOptions,
-): string {
-  const maxTokens = options?.maxTokens ?? DEFAULT_RETRIEVAL_MAX_TOKENS;
-  const taskId = options?.taskId;
-
-  // Fast-path: nothing to retrieve
-  if (eventStore.count() === 0) {
-    return "";
-  }
-
-  // 1. FTS search — pull candidate events
-  const ftsResults = ftsSearch(eventStore, query, FTS_TOP_N, taskId ? { taskId } : undefined);
-  if (ftsResults.length === 0) {
-    return "";
-  }
-
-  // 2. Task-conditioned scoring — amplify / discount by task context
+function rankCandidates(ftsResults: SearchResult[], taskId: string | undefined): ScoredEvent[] {
+  // Task-conditioned scoring — amplify / discount by task context.
   const taskState = createDefaultTaskState(taskId ?? "default");
   const scored: ScoredEvent[] = ftsResults.map((r) => ({
     event: r.event,
     score: taskConditionedScore(r.event, r.score, taskState),
   }));
-
-  // 3. Sort by score descending before MMR so the greedy first pick is best
+  // Sort by score descending before MMR so the greedy first pick is best.
   scored.sort((a, b) => b.score - a.score);
+  // MMR deduplication — diversity-aware reranking (λ=0.7).
+  return mmrRerank(scored);
+}
 
-  // 4. MMR deduplication — diversity-aware reranking (λ=0.7)
-  const reranked = mmrRerank(scored);
-
-  // 5. Token-bounded assembly
+/** Stage 5: token-bounded assembly. Shared by both assemblers, for the same reason. */
+function formatPack(reranked: ScoredEvent[], maxTokens: number): string {
   const headerTokens = estimateTokens(`${HEADER_TEXT}\n`);
   if (headerTokens >= maxTokens) {
     return "";
@@ -223,4 +215,148 @@ export function assembleRetrievalPack(
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Assemble a retrieval pack: a token-bounded, relevance-ranked, deduplicated
+ * string of past events ready for system prompt injection.
+ *
+ * Returns an empty string when the store is empty or no FTS matches exist.
+ *
+ * SYNCHRONOUS ON PURPOSE — still the right shape for callers that are not on the
+ * gateway's event loop; `PushPackFn` in src/agents/pi-extensions/retrieval-runtime.ts is
+ * typed `=> string`, so making this async would inject `[object Promise]` there. Anything
+ * running INSIDE the gateway must call `assembleRetrievalPackAsync` instead.
+ *
+ * @param query   - The current user message or turn query.
+ * @param eventStore - The ENGRAM event store for this session.
+ * @param options - Optional token budget and task context.
+ */
+export function assembleRetrievalPack(
+  query: string,
+  eventStore: EventStore,
+  options?: AssembleOptions,
+): string {
+  const maxTokens = options?.maxTokens ?? DEFAULT_RETRIEVAL_MAX_TOKENS;
+  const taskId = options?.taskId;
+
+  // Fast-path: nothing to retrieve
+  if (eventStore.count() === 0) {
+    return "";
+  }
+
+  // 1. FTS search — pull candidate events
+  const ftsResults = ftsSearch(eventStore, query, FTS_TOP_N, taskId ? { taskId } : undefined);
+  if (ftsResults.length === 0) {
+    return "";
+  }
+
+  // 2-4. score, sort, MMR.  5. token-bounded assembly.
+  return formatPack(rankCandidates(ftsResults, taskId), maxTokens);
+}
+
+/**
+ * `ftsSearch` in time slices, handing the event loop back between them.
+ *
+ * FORK 2026-09-23 (plan task 14) — it drives the same resumable, trigram-prefiltered scan that
+ * `ftsSearch` runs in one go (`beginFtsScan`), pausing whenever a slice has held the loop for
+ * `maxSliceMs`. It used to call `ftsSearch` on a read-only view per slice of events, halving
+ * or doubling the slice size after measuring the last one. The index now lives per store, so a
+ * view per slice would have built a throwaway index per slice; and a time check per event
+ * bounds a slice directly instead of correcting it one slice late.
+ *
+ * EXACT-EQUIVALENCE CLAIM: pausing only returns control between two events (or two index
+ * appends); the scan visits the same events in the same order either way, and re-verifies the
+ * shared index against its own snapshot when it resumes. So the hits, scores and stable tie
+ * order are those of `ftsSearch`, which is itself pinned to the linear oracle. Pinned by
+ * search-index.prefilter-parity.test.ts, not by this paragraph.
+ *
+ * EXPORTED FOR TESTING (`maxSliceMs` = 0 pauses after every event); production passes nothing.
+ */
+export async function ftsSearchChunked(
+  store: EventStore,
+  query: string,
+  topN: number,
+  filters: SearchFilters | undefined,
+  maxSliceMs: number = MAX_SYNC_SLICE_MS,
+): Promise<SearchResult[]> {
+  if (store.count() <= FTS_SINGLE_SLICE_MAX_EVENTS) {
+    return ftsSearch(store, query, topN, filters);
+  }
+  const scan = beginFtsScan(store, query, filters);
+  if (!scan) {
+    return [];
+  }
+  for (;;) {
+    const deadline = performance.now() + maxSliceMs;
+    if (scan.step(() => performance.now() >= deadline)) {
+      return scan.results(topN);
+    }
+    await yieldToEventLoop();
+  }
+}
+
+/**
+ * The yielding twin of {@link assembleRetrievalPack}: identical output, but it never holds
+ * the event loop for more than ~{@link MAX_SYNC_SLICE_MS}.
+ *
+ * PURPOSE. `assembleRetrievalPack` returns a `string`, so `await`-ing it hands the loop
+ * back exactly never. The gateway's `before_prompt_build` hook did precisely that, and the
+ * journal shows the result: 13-28s in which nothing else logged, no timer fired, and every
+ * connected client was frozen — for ONE session's first turn.
+ *
+ * INVARIANT. `assembleRetrievalPackAsync(q, s, o)` resolves to the same string
+ * `assembleRetrievalPack(q, s, o)` returns, for every input. Pinned by a test rather than
+ * by this sentence (extensions/tinkerclaw-total-recall/index.cold-pack.test.ts).
+ *
+ * FORK 2026-09-23 (plan task 16) — THE FTS NOW RUNS IN A WORKER THREAD when it can, via
+ * `ftsSearchOffThread` (fts-worker-client.ts): the worker reads the store's own file and keeps it
+ * parsed, so no events cross the port, and it answers only for the exact snapshot this thread
+ * holds. Otherwise — the `OPENCLAW_TOTAL_RECALL_FTS_WORKER=0` kill switch, or any worker failure —
+ * the scan runs here in slices, as before. Either way the same `ftsSearch` scoring code runs over
+ * the same events, so the invariant below still holds. Everything after the FTS stays here.
+ *
+ * ALTERNATIVES REJECTED.
+ *   - Make `assembleRetrievalPack` itself async: it has a synchronous caller whose type says
+ *     `=> string` (`PushPackFn`), which would then inject `[object Promise]`.
+ *   - Post the parsed events to a worker: ~70M chars for cc-experience, per search. (The worker
+ *     that shipped reads the file itself instead.)
+ *   - Cap the corpus instead: that changes WHAT is retrieved, invisibly, and the cap has to
+ *     keep shrinking as the store grows.
+ */
+export async function assembleRetrievalPackAsync(
+  query: string,
+  eventStore: EventStore,
+  options?: AssembleOptions,
+): Promise<string> {
+  const maxTokens = options?.maxTokens ?? DEFAULT_RETRIEVAL_MAX_TOKENS;
+  const taskId = options?.taskId;
+
+  // Fast-path: nothing to retrieve
+  const eventCount = eventStore.count();
+  if (eventCount === 0) {
+    return "";
+  }
+
+  // 1. FTS search — the only unbounded per-event loop. In the worker thread when it can answer
+  // for this snapshot (plan task 16); otherwise here, in time slices. A corpus small enough for
+  // one slice is not worth the round trip.
+  const filters = taskId ? { taskId } : undefined;
+  const offThread =
+    eventCount > FTS_SINGLE_SLICE_MAX_EVENTS
+      ? await ftsSearchOffThread(eventStore, query, FTS_TOP_N, filters)
+      : undefined;
+  const ftsResults = offThread ?? (await ftsSearchChunked(eventStore, query, FTS_TOP_N, filters));
+  if (ftsResults.length === 0) {
+    return "";
+  }
+  await yieldToEventLoop();
+
+  // 2-4. Scoring, sort and MMR are all bounded by FTS_TOP_N (50) candidates, so they get a
+  // yield AROUND them rather than inside them.
+  const reranked = rankCandidates(ftsResults, taskId);
+  await yieldToEventLoop();
+
+  // 5. Token-bounded assembly — at most 50 iterations of a 300-char format.
+  return formatPack(reranked, maxTokens);
 }

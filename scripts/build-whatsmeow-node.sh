@@ -50,6 +50,25 @@ if grep -q 'SetStatusMessage(a.ctx, args.Message)' cmd/whatsmeow-node/commands_e
     cmd/whatsmeow-node/commands_extra.go
 fi
 
+# FORK 2026-09-05 — HISTORY REPLAY. Upstream's HistorySync handler emits only
+# the sync type and drops Data.Conversations, so on-demand backfill delivers a
+# notification with no payload and recovered messages are lost. Verified live:
+# 44 ON_DEMAND responses produced 0 persisted rows before this patch, 229 after.
+# Without re-applying it here, every rebuild silently reintroduces the data loss.
+PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/whatsmeow-history-replay.patch"
+if [ -f "$PATCH" ]; then
+  if git apply --check "$PATCH" 2>/dev/null; then
+    git apply "$PATCH"
+    echo "[build] applied history-replay patch"
+  elif grep -q "ParseWebMessage" cmd/whatsmeow-node/events.go; then
+    echo "[build] history-replay already present upstream — skipping patch"
+  else
+    echo "[build] WARNING: history-replay patch did not apply; backfill will silently lose messages" >&2
+  fi
+else
+  echo "[build] WARNING: $PATCH missing; backfill will silently lose messages" >&2
+fi
+
 echo "[build] building"
 GOFLAGS=-mod=mod go build -o "$WORK/whatsmeow-node" ./cmd/whatsmeow-node
 

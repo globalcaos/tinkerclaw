@@ -2,21 +2,21 @@
  * FORK: tinkerclaw-pulse-panel — Google Analytics 4 poller (real traffic).
  *
  * Replaces the `demo.website.visits` stub. Reads daily sessions for a GA4
- * property via the Data API, authenticating as the service account at
- * ~/.config/gcloud/service-account.json (granted Viewer on the property
- * 2026-06-05). No external dep: the SA JWT is signed with node:crypto.
+ * property via the Data API, authenticating as an OPERATOR-SUPPLIED Google
+ * service account granted Viewer on that property. The JSON key file is named
+ * by `plugins.tinkerclaw-pulse-panel.credentials.ga4ServiceAccountFile`; there is no default
+ * path, so with nothing configured this poller is skipped rather than reading
+ * whatever gcloud happens to have left on the machine. No external dep: the SA
+ * JWT is signed with node:crypto and exchanged for an access token at
+ * oauth2.googleapis.com before the report call to analyticsdata.googleapis.com.
  *
- * source string: "ga4.sessions:<propertyId>"  e.g. ga4.sessions:529436250
+ * source string: "ga4.sessions:<propertyId>"
  * Returns today's session count (today..today; partial-day, fine for a daily
  * gauge — dailyLast keeps the last reading of the day).
  */
 import crypto from "node:crypto";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { readCredentialFile } from "./credentials.js";
 import type { PollerFn } from "./index.js";
-
-const SA_PATH = path.join(os.homedir(), ".config", "gcloud", "service-account.json");
 const b64url = (b: Buffer | string) =>
   Buffer.from(b).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
@@ -25,7 +25,7 @@ let tokenCache: { token: string; exp: number } | null = null;
 async function accessToken(): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   if (tokenCache && tokenCache.exp - 60 > now) return tokenCache.token;
-  const sa = JSON.parse(fs.readFileSync(SA_PATH, "utf8")) as {
+  const sa = JSON.parse(readCredentialFile("ga4ServiceAccountFile")) as {
     client_email: string;
     private_key: string;
   };

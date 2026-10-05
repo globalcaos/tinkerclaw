@@ -1,0 +1,144 @@
+{
+  "family": "routing",
+  "questions": [
+    {
+      "id": "route-work-kind",
+      "version": 2,
+      "family": "routing",
+      "seams": ["prompt"],
+      "type": "choice",
+      "criteria": {
+        "code": "writing, changing, debugging or reviewing program code",
+        "frontend": "building or fixing a page, a screen or a user interface",
+        "shell": "running or fixing a computer or server from the command line: Linux, SSH, services, Docker, networking",
+        "agentic": "a job done by using tools over many steps: files, searches, apps, accounts",
+        "research": "researching a question across many sources and reporting what they say, with references",
+        "office": "a professional deliverable for a client or a boss: report, slide deck, proposal, memo, quote",
+        "security": "finding, testing or fixing security weaknesses: vulnerabilities, exploits, hardening",
+        "data": "queries, spreadsheets, tables and other data whose answer can be checked",
+        "ml": "training, fine-tuning or debugging a machine-learning model and its dataset",
+        "cad": "designing a physical part or assembly: CAD, 3D printing, tolerances, drawings",
+        "maths": "mathematics: proofs, derivations, exact calculation",
+        "science": "science questions and analysis",
+        "reason": "logic puzzles and multi-step reasoning with no tools",
+        "write": "writing or rewriting prose in one language",
+        "languages": "translation and writing in languages other than English or Spanish",
+        "psych": "people, emotions, tone, difficult conversations",
+        "instruct": "following a precise set of instructions or a format exactly",
+        "context": "finding or combining facts inside a very long document",
+        "vision": "looking at an image, a screenshot or a video frame",
+        "factual": "looking up or checking a fact",
+        "health": "health and medicine: symptoms, medicines and doses, medicinal plants, when to see a doctor",
+        "world": "general knowledge about the world",
+        "general": "none of the above, or a mix with no clear leader"
+      },
+      "instructions": "Read the request. Which kind of work is it mostly? Pick the one that decides which model would do it best.",
+      "fields": ["request"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Puts the task in one of the map's domains, so the router knows which strength table to read.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Kind of work"
+    },
+    {
+      "id": "route-difficulty",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt"],
+      "type": "score",
+      "criteria": [
+        "a lookup or a one-line answer",
+        "routine work that needs care but no new thinking",
+        "involved work: several parts or some judgment",
+        "hard work: careful reasoning or a design decision",
+        "research-grade work: an open problem or a long investigation"
+      ],
+      "instructions": "How much reasoning does this request need, from a plain lookup to research?",
+      "fields": ["request"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Sets how strong a model the task needs.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Difficulty"
+    },
+    {
+      "id": "route-topic-class",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt"],
+      "type": "choice",
+      "criteria": {
+        "none": "nothing in the request belongs to the classes below",
+        "medical": "health, medicine, doses, symptoms, herbal or clinical advice",
+        "security": "exploits, attack code, malware, vulnerability details, penetration testing",
+        "legal": "contracts, liability, regulation, compliance, legal claims",
+        "sensitive": "politics, weapons, self-harm, or other topics some vendors refuse or answer with an official line"
+      },
+      "instructions": "Does the request touch a class of topic that some AI vendors refuse or answer with a stock line? Pick the class, or none.",
+      "fields": ["request"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Tells the router which vendors to leave out.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Topic class"
+    },
+    {
+      "id": "route-urgency",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt"],
+      "type": "choice",
+      "criteria": {
+        "waiting": "a person is waiting for the answer now",
+        "today": "the answer is needed today but nobody is waiting on it this minute",
+        "whenever": "a background job or a task with no deadline"
+      },
+      "instructions": "How urgent is the request?",
+      "fields": ["request"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Sets what a second of waiting is worth.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Urgency"
+    },
+    {
+      "id": "route-shape",
+      "version": 1,
+      "family": "routing",
+      "seams": ["prompt"],
+      "type": "choice",
+      "criteria": {
+        "answer": "one answer",
+        "parts": "a list of independent parts that could be done at the same time",
+        "chain": "a chain in which each part needs the result of the one before"
+      },
+      "instructions": "What shape does the work have?",
+      "fields": ["request"],
+      "cutoff": {
+        "kind": "none"
+      },
+      "purpose": "Decides whether the work is split into units that run at the same time.",
+      "origin": "THALAMUS v4 (J19 v4.1) paper section 4",
+      "retirement": "Retire if the local rules match this answer's accuracy at the same cost, per the reader test in the paper's section 10 test 1.",
+      "mustCatch": [],
+      "status": "active",
+      "name": "Shape of the work"
+    }
+  ]
+}

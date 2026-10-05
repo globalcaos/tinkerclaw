@@ -1,0 +1,77 @@
+{
+  "94.23.207.177": ["announce.sktorrent.eu", "ipv4announce.sktorrent.eu"],
+  "34.66.57.33": [
+    "bt.poletracker.org",
+    "home.yxgz.club",
+    "leet-tracker.moe",
+    "open.trackerlist.xyz",
+    "tracker.bittor.pw",
+    "tracker.bt-hash.com",
+    "tracker.bz",
+    "tracker.corpscorp.online",
+    "tracker.dmcomic.org",
+    "tracker.sbsub.com"
+  ],
+  "2600:1900:4001:4b5:8000::": [
+    "bt.poletracker.org",
+    "home.yxgz.club",
+    "leet-tracker.moe",
+    "open.trackerlist.xyz",
+    "tracker.bittor.pw",
+    "tracker.bt-hash.com",
+    "tracker.bz",
+    "tracker.corpscorp.online",
+    "tracker.dmcomic.org",
+    "tracker.sbsub.com"
+  ],
+  "34.8.196.142": ["api.ipv4online.uk", "tr.abiir.top"],
+  "34.8.38.57": ["api.ipv4online.uk", "tr.abiir.top"],
+  "188.114.97.5": [
+    "supertracker.cc.cd",
+    "torrentsmd.com",
+    "tr.nyacat.pw",
+    "tracker.gcrenwp.top",
+    "tracker.kuroy.me",
+    "tracker.renfei.net"
+  ],
+  "188.114.96.5": [
+    "supertracker.cc.cd",
+    "torrentsmd.com",
+    "tr.nyacat.pw",
+    "tracker.gcrenwp.top",
+    "tracker.kuroy.me",
+    "tracker.renfei.net"
+  ],
+  "2a06:98c1:3121::5": [
+    "supertracker.cc.cd",
+    "tr.nyacat.pw",
+    "tracker.gcrenwp.top",
+    "tracker.kuroy.me",
+    "tracker.renfei.net"
+  ],
+  "2a06:98c1:3120::5": [
+    "supertracker.cc.cd",
+    "tr.nyacat.pw",
+    "tracker.gcrenwp.top",
+    "tracker.kuroy.me",
+    "tracker.renfei.net"
+  ],
+  "62.210.172.150": ["php-bobcat.wasmer.app", "staticfile-bobcat.wasmer.app"],
+  "2001:bc8:701:70a:d604:e6ff:fedb:1810": ["php-bobcat.wasmer.app", "staticfile-bobcat.wasmer.app"],
+  "211.75.210.221": ["tracker.dler.com", "tracker.dler.org", "tracker2.dler.org"],
+  "211.75.205.188": ["tracker.dler.com", "tracker.dler.org", "tracker2.dler.org"],
+  "211.75.205.187": ["tracker.dler.com", "tracker.dler.org", "tracker2.dler.org"],
+  "93.158.213.92": [
+    "tracker.opentrackr.org",
+    "tracker.publictracker.xyz",
+    "tracker.therarbg.to",
+    "zer0day.ch"
+  ],
+  "43.250.54.126": ["tracker.auctor.tv", "tracker.qu.ax"],
+  "2406:4fc0:1002::137": ["tracker.auctor.tv", "tracker.qu.ax"],
+  "135.125.198.235": ["tracker.ducks.party", "tracker.privateseedbox.xyz"],
+  "2001:41d0:700:5539::d00c:5": ["tracker.ducks.party", "tracker.privateseedbox.xyz"],
+  "185.121.168.96": ["open.demonii.com", "open.demonoid.ch"],
+  "2a06:9f80:a000::96:1": ["open.demonii.com", "open.demonoid.ch"],
+  "212.60.5.203": ["tracker2.itzmx.com", "tracker3.itzmx.com", "tracker4.itzmx.com"]
+}

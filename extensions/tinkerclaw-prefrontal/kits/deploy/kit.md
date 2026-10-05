@@ -24,7 +24,7 @@ parallelism:
     0=Pre-flight, 1=Build, 2=Deploy, 3=Verify, 4=Rollback Plan.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

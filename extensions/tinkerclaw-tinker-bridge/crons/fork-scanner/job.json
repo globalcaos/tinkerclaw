@@ -1,0 +1,22 @@
+{
+  "id": "fork-scanner",
+  "name": "Fork Scanner + Agent-OSS Survey",
+  "description": "Nightly read-only survey of OpenClaw forks and open-source agent projects, recording techniques worth adopting into a local watchlist.",
+  "enabled": true,
+  "schedule": {
+    "kind": "cron",
+    "expr": "15 5 * * *",
+    "tz": "UTC"
+  },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "message": "[Fork Scanner + Agent-OSS Survey] Execute the routine bundled with this job exactly as written; it was passed to you in full. Do the work directly in this isolated cron turn; do NOT spawn another agent. Write the run report the routine requires before finishing. Return only a short delta summary as your final response (max 8 lines).",
+    "thinking": "medium",
+    "fallbacks": ["claude-code/claude-sonnet-5-5"]
+  },
+  "delivery": {
+    "mode": "none"
+  }
+}

@@ -3,28 +3,81 @@
  *
  * Multi-provider budget tracking for Claude, Manus, and Gemini.
  * Wired to real usage data.
+ *
+ * CREDENTIAL POLICY (2026-09-08 audit). This plugin reads exactly two kinds of
+ * thing, and nothing else:
+ *
+ *   1. Credentials YOU supplied to this gateway — the OpenClaw auth-profile
+ *      store, via the plugin SDK's `resolveApiKeyForProfile`, plus explicit
+ *      environment variables / plugin config for the third-party APIs.
+ *   2. Non-secret local usage counters under
+ *      ~/.openclaw/workspace/memory/*-usage.json, which the agent writes.
+ *
+ *   It does NOT read other applications' credential stores. Two such reads were
+ *   removed in this version: the Claude Code CLI's own ~/.claude/.credentials.json
+ *   (used as a token fallback) and gcloud's ~/.config/gcloud/service-account.json
+ *   (used for the Gemini quota query, now operator-supplied via
+ *   `googleServiceAccountFile` / BUDGET_PANEL_GOOGLE_SA_FILE).
+ *
+ *   It also no longer WRITES any credential: the unused `forceRefreshToken`
+ *   helper, which rotated an Anthropic OAuth token and persisted the result back
+ *   into both the auth-profile store and a credential file, was dead code and is
+ *   gone. Nothing in this plugin mutates a credential store.
+ *
+ * RECURRING POLLING: `register()` starts a 10-minute timer that refreshes the
+ * usage snapshot for every configured provider, and primes it once on boot. See
+ * the manifest description for the exact endpoint list.
+ *
+ * OPT-IN EXTRAS (0.1.2): two gateway surfaces that are not budget tracking are
+ * OFF unless plugin config turns them on — `exposeModelConfig` (config.models:
+ * model list plus non-secret auth-profile metadata, read from the gateway's
+ * runtime config snapshot, never from openclaw.json on disk) and
+ * `exposeAnatomyTimeline` (anatomy.recent/before/session: context-timeline
+ * events). With both unset the plugin registers only budget.* methods.
  */
 
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import {
-  resolveApiKeyForProfile,
-  ensureAuthProfileStore,
-  saveAuthProfileStore,
-} from "openclaw/plugin-sdk/agent-runtime";
+import { resolveApiKeyForProfile, ensureAuthProfileStore } from "openclaw/plugin-sdk/agent-runtime";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
-import {
-  resolveCredentialFilePath,
-  writeCredentialFile,
-} from "openclaw/plugin-sdk/fork-auth-admin";
 import { getRateLimitSnapshot } from "openclaw/plugin-sdk/fork-usage-metrics";
 import { setUsageSnapshot } from "openclaw/plugin-sdk/fork-usage-metrics";
 
-/** Anthropic OAuth profile IDs to poll for usage. */
-const USAGE_PROFILES: Record<string, string> = {
-  "cli-sv": "anthropic:cli-sv",
-  "cli-gm": "anthropic:cli-gm",
-};
+/**
+ * Anthropic OAuth profile IDs to poll for usage.
+ *
+ * 2026-09-08: this used to be a hardcoded pair of the fork author's own profile
+ * names. It is now operator-supplied — `anthropicProfiles` in plugin config —
+ * and when that is unset it is DISCOVERED from this gateway's own auth-profile
+ * store (every profile id under the `anthropic:` prefix). Either way the plugin
+ * only ever polls credentials you already gave this gateway.
+ *
+ * Returned as label → profileId; the label is the id without its provider
+ * prefix and is used purely as a display/grouping key.
+ */
+let configuredAnthropicProfiles: string[] | null = null;
+
+export function setAnthropicProfiles(ids: string[] | null): void {
+  configuredAnthropicProfiles = ids;
+}
+
+export function usageProfiles(): Record<string, string> {
+  let ids = configuredAnthropicProfiles;
+  if (!ids || ids.length === 0) {
+    try {
+      const store = ensureAuthProfileStore();
+      ids = Object.keys(store?.profiles ?? {}).filter((id) => id.startsWith("anthropic:"));
+    } catch (e) {
+      console.warn(
+        `[budget-panel] auth-profile store unreadable; Anthropic poll list is empty: ${e}`,
+      );
+      ids = [];
+    }
+  }
+  const out: Record<string, string> = {};
+  for (const id of ids) out[id.replace(/^anthropic:/, "")] = id;
+  return out;
+}
 
 /** Per-profile cache: profile → { data, ts }. null data = rate-limited / failed. */
 const usageCache: Record<string, { data: Record<string, any> | null; ts: number }> = {};
@@ -94,79 +147,9 @@ async function resolveToken(
   }
 }
 
-const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const ANTHROPIC_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-
-/**
- * Force-rotate an OAuth token by calling the Anthropic token endpoint directly.
- * The /api/oauth/usage endpoint has a per-access-token rate limit of ~5 requests.
- * Refreshing gives us a new access token with a fresh rate limit window.
- */
-async function forceRefreshToken(
-  profileId: string,
-  log: (...args: any[]) => void = console.log,
-): Promise<string | null> {
-  try {
-    const store = ensureAuthProfileStore();
-    const cred = store.profiles[profileId] as any;
-    if (!cred || cred.type !== "oauth" || !cred.refresh) {
-      return null;
-    }
-
-    const res = await fetch(ANTHROPIC_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: cred.refresh,
-        client_id: ANTHROPIC_CLIENT_ID,
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      log(`[budget-panel] forceRefresh ${profileId}: HTTP ${res.status} ${body.slice(0, 120)}`);
-      return null;
-    }
-    const data = (await res.json()) as any;
-    const newAccess = data.access_token;
-    const newRefresh = data.refresh_token;
-    if (!newAccess) {
-      return null;
-    }
-
-    // Persist new tokens to auth-profiles store
-    const freshStore = ensureAuthProfileStore();
-    const freshCred = freshStore.profiles[profileId] as any;
-    if (freshCred) {
-      freshCred.access = newAccess;
-      if (newRefresh) {
-        freshCred.refresh = newRefresh;
-      }
-      freshCred.expires = Date.now() + (data.expires_in ?? 3600) * 1000;
-      saveAuthProfileStore(freshStore);
-    }
-
-    // Write back to dedicated credential file so external-cli-sync stays in sync
-    const writeback: Record<string, any> = {
-      access: newAccess,
-      refresh: newRefresh ?? freshCred?.refresh,
-      expires: freshCred?.expires ?? Date.now() + 3600_000,
-    };
-    const credFilePath = resolveCredentialFilePath(profileId);
-    if (credFilePath) {
-      writeCredentialFile(credFilePath, "anthropic", writeback as any);
-    }
-
-    log(`[budget-panel] ${profileId}: token rotated for fresh rate limit window`);
-    return newAccess;
-  } catch (e) {
-    log(`[budget-panel] forceRefreshToken ${profileId}: ${e}`);
-    return null;
-  }
-}
-
-/** Fetch live usage for a single OAuth profile (with cache + token rotation on 429). */
+/** Fetch live usage for a single OAuth profile. Read-only: on 429 we serve cache
+ *  rather than rotating a token, because rotation would mutate the credential the
+ *  agent runner is using. */
 async function fetchProfileUsage(
   label: string,
   log: (...args: any[]) => void = console.log,
@@ -176,7 +159,7 @@ async function fetchProfileUsage(
   if (cached && Date.now() - cached.ts < ttl) {
     return cached.data;
   }
-  const profileId = USAGE_PROFILES[label];
+  const profileId = usageProfiles()[label];
   if (!profileId) {
     return cached?.data ?? null;
   }
@@ -224,86 +207,19 @@ async function fetchProfileUsage(
   return cached?.data ?? null;
 }
 
-/** FORK 2026-07-09: read the Claude Code CLI's OWN credential file as a
- *  token source. This is the token fable actually runs on, and the CLI keeps
- *  it fresh itself — we only READ it (never refresh/rotate; the CLI owns the
- *  rotation, and rotating here would invalidate the CLI's refresh token).
- *  Added because the gateway-side `anthropic:cli-gm` refresh token died
- *  2026-07-08 and every poll fell to the zero-stub while the CLI token sat
- *  on disk, valid, the whole time. */
-function readCliCredentialToken(): string | null {
-  try {
-    const raw = readFileSync(`${process.env.HOME}/.claude/.credentials.json`, "utf-8");
-    const parsed = JSON.parse(raw);
-    const cred = parsed.claudeAiOauth ?? parsed;
-    const token = typeof cred.accessToken === "string" ? cred.accessToken : null;
-    const expiresAt = typeof cred.expiresAt === "number" ? cred.expiresAt : 0;
-    if (!token || (expiresAt && expiresAt <= Date.now())) {
-      return null;
-    }
-    return token;
-  } catch {
-    return null;
-  }
-}
-
-/** Fetch usage via the CLI credential file (cached like the profile fetches). */
-async function fetchCliFileUsage(
-  log: (...args: any[]) => void = console.log,
-): Promise<Record<string, any> | null> {
-  const label = "cli-file";
-  const cached = usageCache[label];
-  const ttl = cached?.data ? CACHE_TTL_MS : CACHE_TTL_FAILED_MS;
-  if (cached && Date.now() - cached.ts < ttl) {
-    return cached.data;
-  }
-  const token = readCliCredentialToken();
-  if (!token) {
-    usageCache[label] = { data: null, ts: Date.now() };
-    return null;
-  }
-  try {
-    const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "oauth-2025-04-20",
-        Accept: "application/json",
-      },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) {
-      log(`[budget-panel] cli-file: HTTP ${res.status} on usage API`);
-      usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
-      return cached?.data ?? null;
-    }
-    const data = (await res.json()) as Record<string, any>;
-    usageCache[label] = { data, ts: Date.now() };
-    return data;
-  } catch (e) {
-    log(`[budget-panel] cli-file: ${e}`);
-    usageCache[label] = { data: cached?.data ?? null, ts: Date.now() };
-    return cached?.data ?? null;
-  }
-}
-
 /** Fetch live usage from all profiles sequentially. */
 async function fetchAllClaudeUsage(
   log: (...args: any[]) => void = console.log,
 ): Promise<Record<string, Record<string, any> | null>> {
   const result: Record<string, Record<string, any> | null> = {};
-  for (const p of Object.keys(USAGE_PROFILES)) {
+  for (const p of Object.keys(usageProfiles())) {
     result[p] = await fetchProfileUsage(p, log);
   }
-  // FORK 2026-07-09: when every configured profile fails (dead refresh tokens),
-  // fall back to the Claude Code CLI's own credential file — the token that is
-  // demonstrably alive because the brain runs on it.
-  if (!Object.values(result).some(Boolean)) {
-    const cliData = await fetchCliFileUsage(log);
-    if (cliData) {
-      result["cli-file"] = cliData;
-    }
-  }
+  // FORK 2026-09-08: the old fallback here read the Claude Code CLI's own
+  // ~/.claude/.credentials.json when every configured profile failed. That is
+  // another application's credential store, so it is gone. When a profile's
+  // refresh token dies the row now degrades to "no data" until the operator
+  // re-authenticates that profile in this gateway — which is the honest signal.
   return result;
 }
 
@@ -602,7 +518,24 @@ async function fetchOpenAICosts(
 /** ─── Gemini Usage via Google Cloud Monitoring ─── */
 import { createSign } from "crypto";
 
-const GOOGLE_SA_PATH = `${process.env.HOME}/.config/gcloud/service-account.json`;
+/**
+ * Google service-account key used for the Gemini quota query.
+ *
+ * 2026-09-08: this used to default to `~/.config/gcloud/service-account.json` —
+ * gcloud's own credential store, which this plugin was never granted. It is now
+ * operator-supplied via `googleServiceAccountFile` in plugin config or the
+ * BUDGET_PANEL_GOOGLE_SA_FILE environment variable. With neither set the Gemini
+ * quota poll is skipped; nothing is guessed.
+ */
+let configuredGoogleSaFile: string | null = null;
+
+export function setGoogleServiceAccountFile(file: string | null): void {
+  configuredGoogleSaFile = file;
+}
+
+export function googleServiceAccountFile(): string | null {
+  return configuredGoogleSaFile || process.env.BUDGET_PANEL_GOOGLE_SA_FILE || null;
+}
 
 interface GeminiUsageResult {
   rpm_used: number; // requests in last minute
@@ -701,11 +634,18 @@ async function fetchGeminiUsage(
     return geminiUsageCache.data;
   }
 
+  const saPath = googleServiceAccountFile();
+  if (!saPath) {
+    log(
+      "[budget-panel] no Google service account configured (googleServiceAccountFile / BUDGET_PANEL_GOOGLE_SA_FILE) — skipping Gemini quota",
+    );
+    return null;
+  }
   let sa: any;
   try {
-    sa = JSON.parse(readFileSync(GOOGLE_SA_PATH, "utf-8"));
+    sa = JSON.parse(readFileSync(saPath, "utf-8"));
   } catch {
-    log("[budget-panel] Google service account not found");
+    log(`[budget-panel] Google service account not readable at ${saPath}`);
     return null;
   }
 
@@ -735,7 +675,9 @@ async function fetchGeminiUsage(
           rpm_limit = rl.rpm ?? 0;
         }
       }
-    } catch {}
+    } catch (e) {
+      log(`[budget-panel] gemini-usage.json unreadable: ${e}`);
+    }
 
     const result: GeminiUsageResult = { rpm_used, rpm_limit, rpd_used, rpd_limit };
     log(`[budget-panel] Gemini: ${rpm_used}/${rpm_limit} RPM, ${rpd_used}/${rpd_limit} RPD`);
@@ -1002,6 +944,36 @@ async function collectExtraUsage(
   return { xai, copilot, gemini, chatgpt, openaiCosts };
 }
 
+/**
+ * Shape the config.models response: model routing plus NON-SECRET auth-profile metadata.
+ * Profiles are reduced to {provider, mode, label}; anything else on a profile entry (for example
+ * a credential file path) is dropped.
+ */
+export function projectModelConfig(cfg: Record<string, unknown>): {
+  primary: string;
+  fallbacks: string[];
+  models: Record<string, any>;
+  authProfiles: Record<string, { provider?: string; mode?: string; label?: string }>;
+  authOrder: Record<string, string[]>;
+} {
+  const agentDefaults = (cfg.agents as any)?.defaults || {};
+  const modelCfg = agentDefaults.model || {};
+  const primary: string = typeof modelCfg === "string" ? modelCfg : modelCfg.primary || "";
+  const fallbacks: string[] = modelCfg.fallbacks || [];
+  const models: Record<string, any> = agentDefaults.models || {};
+  const authCfg = (cfg as any).auth || {};
+  const authProfiles: Record<string, { provider?: string; mode?: string; label?: string }> = {};
+  for (const [id, raw] of Object.entries((authCfg.profiles || {}) as Record<string, any>)) {
+    const out: { provider?: string; mode?: string; label?: string } = {};
+    if (typeof raw?.provider === "string") out.provider = raw.provider;
+    if (typeof raw?.mode === "string") out.mode = raw.mode;
+    if (typeof raw?.label === "string") out.label = raw.label;
+    authProfiles[id] = out;
+  }
+  const authOrder: Record<string, string[]> = authCfg.order || {};
+  return { primary, fallbacks, models, authProfiles, authOrder };
+}
+
 export default function register(api: OpenClawPluginApi) {
   const homeDir = process.env.HOME || "/tmp";
   const workspaceDir =
@@ -1019,14 +991,32 @@ export default function register(api: OpenClawPluginApi) {
   const log = api.log?.info ?? console.log;
   log(`[budget-panel] Using files: ${JSON.stringify(usageFiles)}`);
 
+  // Plugin config is read HERE, before the boot prime below, because the prime
+  // starts fetching immediately and must already know which profiles to poll
+  // and where (if anywhere) the operator's Google key lives.
+  const config = api.config as Record<string, unknown>;
+  // 0.1.2: read the plugin's own config block (plugins.entries.<id>.config) as the loader hands
+  // it over. The old lookup, config.plugins["tinkerclaw-budget-panel"], never matched the real
+  // config shape, so budgets, anthropicProfiles and googleServiceAccountFile were all ignored.
+  const pluginConfig = api.pluginConfig as Record<string, unknown> | undefined;
+
+  const profileIds = pluginConfig?.anthropicProfiles;
+  setAnthropicProfiles(
+    Array.isArray(profileIds) ? profileIds.filter((x): x is string => typeof x === "string") : null,
+  );
+  const saFile = pluginConfig?.googleServiceAccountFile;
+  setGoogleServiceAccountFile(typeof saFile === "string" && saFile ? saFile : null);
+
   // Helper to safely read JSON files
   function readUsageFile(path: string): Record<string, unknown> | null {
     try {
       if (!existsSync(path)) {
+        log(`[budget-panel] usage file missing: ${path}`);
         return null;
       }
       return JSON.parse(readFileSync(path, "utf-8"));
-    } catch {
+    } catch (e) {
+      log(`[budget-panel] usage file unreadable ${path}: ${e}`);
       return null;
     }
   }
@@ -1112,12 +1102,7 @@ export default function register(api: OpenClawPluginApi) {
   const usageSnapshotTimer = setInterval(() => void refreshUsageSnapshot(), 10 * 60_000);
   if (typeof usageSnapshotTimer.unref === "function") usageSnapshotTimer.unref();
 
-  // Load budgets from config
-  const config = api.config as Record<string, unknown>;
-  const pluginConfig = (config.plugins as Record<string, unknown>)?.["tinkerclaw-budget-panel"] as
-    | Record<string, unknown>
-    | undefined;
-
+  // Load budgets from config (config/pluginConfig resolved above, before the prime).
   if (pluginConfig?.claudeBudget) {
     tracker.setProviderBudget("claude", Number(pluginConfig.claudeBudget));
   }
@@ -1155,308 +1140,342 @@ export default function register(api: OpenClawPluginApi) {
 
   // Register gateway method: budget.usage (live API + JSON fallback)
   api.registerGatewayMethod("budget.usage", async ({ params, respond }) => {
-    // Allow callers to bust the usage cache (e.g. after re-auth)
-    const p = (params ?? {}) as Record<string, unknown>;
-    if (p.forceRefresh) {
-      for (const label of Object.keys(USAGE_PROFILES)) {
-        delete usageCache[label];
+    const startedAt = Date.now();
+    try {
+      // Allow callers to bust the usage cache (e.g. after re-auth)
+      const p = (params ?? {}) as Record<string, unknown>;
+      if (p.forceRefresh) {
+        for (const label of Object.keys(usageProfiles())) {
+          delete usageCache[label];
+        }
       }
-      delete usageCache["cli-file"];
-    }
-    const claudeFileData = readUsageFile(usageFiles.claude) as any;
-    const manusData = readUsageFile(usageFiles.manus) as any;
-    // (`geminiData` used to be read here from usageFiles.gemini and was never referenced —
-    //  verified zero uses 2026-08-29 — so the disk read is gone with it.)
+      const claudeFileData = readUsageFile(usageFiles.claude) as any;
+      const manusData = readUsageFile(usageFiles.manus) as any;
+      // (`geminiData` used to be read here from usageFiles.gemini and was never referenced —
+      //  verified zero uses 2026-08-29 — so the disk read is gone with it.)
 
-    // FORK 2026-08-29: the poller owns every fetch now (see refreshUsageSnapshot). This RENDERS
-    // what the snapshot was built from instead of fetching a second, private copy here. That is
-    // the fix for "non-Anthropic quota only exists while a browser is open": both paths read
-    // one poll.
-    //
-    // FORK 2026-09-03 (the architect: "I cannot see the budget graphs") — but it used to `await` that
-    // refresh, which put a live multi-provider network fan-out ON THE RPC'S RESPONSE PATH. The
-    // browser gives every RPC 60s (REQ_TIMEOUT_MS); a refresh routinely takes longer, so
-    // `budget.usage` rejected, `budgetUsageData` stayed null, and every consumer of it — the
-    // per-model quota gauges, util7d, the weekly-reset countdown — rendered empty while the
-    // rest of the panel (fed by the fast `budget.status`) drew fine. Exactly the "graphs are
-    // missing but the panel is there" shape.
-    //
-    // A cached snapshot is ALWAYS the right thing to answer with: the poller refreshes it every
-    // 10 minutes and quota windows move on the hour, so a snapshot minutes old is materially
-    // identical to one fetched now — and it is unconditionally better than the nothing a
-    // timeout returns. So: serve what we have, and keep the refresh warm off the response path.
-    // Only a genuine cold start (no snapshot ever published) waits, and even then under a
-    // deadline well inside the browser's budget, so this handler can no longer hang.
-    //
-    // MERGE NOTE 2026-09-03 — this and SNAPSHOT_REFRESH_TIMEOUT_MS above are complementary, not
-    // redundant: that one bounds the POLL (the shared promise always settles), this one bounds
-    // how long a REQUEST is willing to wait for a poll it does not need. Together the steady
-    // state costs one cache read and the cold start is capped twice over.
-    if (lastRefresh) {
-      // Already collapsed by refreshInFlight when a poll is in progress — never a second fetch.
-      void refreshUsageSnapshot();
-    }
-    const refreshed =
-      lastRefresh ??
-      (await Promise.race([
-        refreshUsageSnapshot(),
-        new Promise<RefreshResult | null>((r) => {
-          // unref: losing this race must not keep the gateway's event loop alive.
-          const t = setTimeout(() => r(null), COLD_START_WAIT_MS);
-          if (typeof t.unref === "function") t.unref();
-        }),
-      ]));
-    const liveProfiles = refreshed?.liveProfiles ?? {};
-    const geminiLive = refreshed?.extras.gemini ?? null;
-    // Fall back to a direct read if the very first poll threw: the file is local and free, and
-    // rendering nothing here would be a regression against the pre-2026-08-29 handler.
-    const chatgptData = refreshed?.extras.chatgpt ?? readChatgptFile();
-
-    function buildClaudeProfile(live: Record<string, any> | null) {
-      if (!live) {
-        return null;
+      // FORK 2026-08-29: the poller owns every fetch now (see refreshUsageSnapshot). This RENDERS
+      // what the snapshot was built from instead of fetching a second, private copy here. That is
+      // the fix for "non-Anthropic quota only exists while a browser is open": both paths read
+      // one poll.
+      //
+      // FORK 2026-09-03 (the architect: "I cannot see the budget graphs") — but it used to `await` that
+      // refresh, which put a live multi-provider network fan-out ON THE RPC'S RESPONSE PATH. The
+      // browser gives every RPC 60s (REQ_TIMEOUT_MS); a refresh routinely takes longer, so
+      // `budget.usage` rejected, `budgetUsageData` stayed null, and every consumer of it — the
+      // per-model quota gauges, util7d, the weekly-reset countdown — rendered empty while the
+      // rest of the panel (fed by the fast `budget.status`) drew fine. Exactly the "graphs are
+      // missing but the panel is there" shape.
+      //
+      // A cached snapshot is ALWAYS the right thing to answer with: the poller refreshes it every
+      // 10 minutes and quota windows move on the hour, so a snapshot minutes old is materially
+      // identical to one fetched now — and it is unconditionally better than the nothing a
+      // timeout returns. So: serve what we have, and keep the refresh warm off the response path.
+      // Only a genuine cold start (no snapshot ever published) waits, and even then under a
+      // deadline well inside the browser's budget, so this handler can no longer hang.
+      //
+      // MERGE NOTE 2026-09-03 — this and SNAPSHOT_REFRESH_TIMEOUT_MS above are complementary, not
+      // redundant: that one bounds the POLL (the shared promise always settles), this one bounds
+      // how long a REQUEST is willing to wait for a poll it does not need. Together the steady
+      // state costs one cache read and the cold start is capped twice over.
+      if (lastRefresh) {
+        // Already collapsed by refreshInFlight when a poll is in progress — never a second fetch.
+        void refreshUsageSnapshot();
       }
-      return {
-        mode: "subscription",
-        plan: "max",
-        fetchedAt: new Date().toISOString(),
-        limits: {
-          five_hour: {
-            utilization: live.five_hour?.utilization ?? 0,
-            resets_at: live.five_hour?.resets_at ?? null,
-          },
-          seven_day: {
-            utilization: live.seven_day?.utilization ?? 0,
-            resets_at: live.seven_day?.resets_at ?? null,
-          },
-          seven_day_sonnet: live.seven_day_sonnet
-            ? {
-                utilization: live.seven_day_sonnet.utilization ?? 0,
-                resets_at: live.seven_day_sonnet.resets_at ?? null,
-              }
-            : undefined,
-        },
-      };
-    }
+      const refreshed =
+        lastRefresh ??
+        (await Promise.race([
+          refreshUsageSnapshot(),
+          new Promise<RefreshResult | null>((r) => {
+            // unref: losing this race must not keep the gateway's event loop alive.
+            const t = setTimeout(() => r(null), COLD_START_WAIT_MS);
+            if (typeof t.unref === "function") t.unref();
+          }),
+        ]));
+      const liveProfiles = refreshed?.liveProfiles ?? {};
+      const geminiLive = refreshed?.extras.gemini ?? null;
+      // Fall back to a direct read if the very first poll threw: the file is local and free, and
+      // rendering nothing here would be a regression against the pre-2026-08-29 handler.
+      const chatgptData = refreshed?.extras.chatgpt ?? readChatgptFile();
 
-    // Per-profile usage (keyed by "cli-sv", "cli-gm")
-    const claudeProfiles: Record<string, any> = {};
-    for (const [profile, data] of Object.entries(liveProfiles)) {
-      const built = buildClaudeProfile(data);
-      if (built) {
-        claudeProfiles[profile] = built;
-      }
-    }
-
-    // Backwards-compatible "claude" key: use first available profile or file fallback
-    const firstLive = Object.values(liveProfiles).find(Boolean);
-    // If file data is older than 7 days, zero out utilization (window has fully rolled over)
-    const STALE_FILE_MS = 7 * 24 * 60 * 60 * 1000;
-    const fileIsStale =
-      claudeFileData?.fetchedAt &&
-      Date.now() - new Date(claudeFileData.fetchedAt).getTime() > STALE_FILE_MS;
-    // FORK 2026-07-09: when the OAuth-usage poll yields nothing (e.g. the
-    // tracking profile's refresh token is dead) fall back to the live rate-limit
-    // snapshot harvested from the brain's OWN Anthropic response headers — a
-    // token-free source that reflects real fable/claude-code traffic. Ranked
-    // above the on-disk file because it is fresher (updated every request).
-    const snap = getRateLimitSnapshot();
-    const snapResult =
-      snap && (snap.h5 > 0 || snap.d7 > 0)
-        ? {
-            mode: "subscription",
-            plan: "max",
-            fetchedAt: new Date(snap.ts).toISOString(),
-            limits: {
-              five_hour: { utilization: snap.h5, resets_at: null },
-              seven_day: { utilization: snap.d7, resets_at: null },
-              ...(snap.d7Sonnet != null
-                ? { seven_day_sonnet: { utilization: snap.d7Sonnet, resets_at: null } }
-                : {}),
+      function buildClaudeProfile(live: Record<string, any> | null) {
+        if (!live) {
+          return null;
+        }
+        return {
+          mode: "subscription",
+          plan: "max",
+          fetchedAt: new Date().toISOString(),
+          limits: {
+            five_hour: {
+              utilization: live.five_hour?.utilization ?? 0,
+              resets_at: live.five_hour?.resets_at ?? null,
             },
-          }
-        : null;
-    const fileResult =
-      claudeFileData && !fileIsStale
-        ? {
-            mode: claudeFileData.mode || "subscription",
-            plan: claudeFileData.plan || "max",
-            rateLimitTier: claudeFileData.rateLimitTier || "unknown",
-            fetchedAt: claudeFileData.fetchedAt,
-            limits: claudeFileData.limits || {
-              five_hour: { utilization: 0, resets_at: null },
-              seven_day: { utilization: 0, resets_at: null },
+            seven_day: {
+              utilization: live.seven_day?.utilization ?? 0,
+              resets_at: live.seven_day?.resets_at ?? null,
             },
-          }
-        : null;
-    const claudeResult = buildClaudeProfile(firstLive) ??
-      snapResult ??
-      fileResult ?? {
-        mode: "subscription",
-        plan: "max",
-        limits: { five_hour: { utilization: 0 }, seven_day: { utilization: 0 } },
-      };
+            seven_day_sonnet: live.seven_day_sonnet
+              ? {
+                  utilization: live.seven_day_sonnet.utilization ?? 0,
+                  resets_at: live.seven_day_sonnet.resets_at ?? null,
+                }
+              : undefined,
+          },
+        };
+      }
 
-    const result: Record<string, unknown> = {
-      claude: claudeResult,
-      claudeProfiles,
-      gemini: geminiLive ?? { rpm_used: 0, rpm_limit: 0, rpd_used: 0, rpd_limit: 0 },
-      manus: (() => {
-        if (!manusData) {
+      // Per-profile usage (keyed by "cli-sv", "cli-gm")
+      const claudeProfiles: Record<string, any> = {};
+      for (const [profile, data] of Object.entries(liveProfiles)) {
+        const built = buildClaudeProfile(data);
+        if (built) {
+          claudeProfiles[profile] = built;
+        }
+      }
+
+      // Backwards-compatible "claude" key: use first available profile or file fallback
+      const firstLive = Object.values(liveProfiles).find(Boolean);
+      // If file data is older than 7 days, zero out utilization (window has fully rolled over)
+      const STALE_FILE_MS = 7 * 24 * 60 * 60 * 1000;
+      const fileIsStale =
+        claudeFileData?.fetchedAt &&
+        Date.now() - new Date(claudeFileData.fetchedAt).getTime() > STALE_FILE_MS;
+      // FORK 2026-07-09: when the OAuth-usage poll yields nothing (e.g. the
+      // tracking profile's refresh token is dead) fall back to the live rate-limit
+      // snapshot harvested from the brain's OWN Anthropic response headers — a
+      // token-free source that reflects real fable/claude-code traffic. Ranked
+      // above the on-disk file because it is fresher (updated every request).
+      const snap = getRateLimitSnapshot();
+      const snapResult =
+        snap && (snap.h5 > 0 || snap.d7 > 0)
+          ? {
+              mode: "subscription",
+              plan: "max",
+              fetchedAt: new Date(snap.ts).toISOString(),
+              limits: {
+                five_hour: { utilization: snap.h5, resets_at: null },
+                seven_day: { utilization: snap.d7, resets_at: null },
+                ...(snap.d7Sonnet != null
+                  ? { seven_day_sonnet: { utilization: snap.d7Sonnet, resets_at: null } }
+                  : {}),
+              },
+            }
+          : null;
+      const fileResult =
+        claudeFileData && !fileIsStale
+          ? {
+              mode: claudeFileData.mode || "subscription",
+              plan: claudeFileData.plan || "max",
+              rateLimitTier: claudeFileData.rateLimitTier || "unknown",
+              fetchedAt: claudeFileData.fetchedAt,
+              limits: claudeFileData.limits || {
+                five_hour: { utilization: 0, resets_at: null },
+                seven_day: { utilization: 0, resets_at: null },
+              },
+            }
+          : null;
+      const claudeResult = buildClaudeProfile(firstLive) ??
+        snapResult ??
+        fileResult ?? {
+          mode: "subscription",
+          plan: "max",
+          limits: { five_hour: { utilization: 0 }, seven_day: { utilization: 0 } },
+        };
+
+      const result: Record<string, unknown> = {
+        claude: claudeResult,
+        claudeProfiles,
+        gemini: geminiLive ?? { rpm_used: 0, rpm_limit: 0, rpd_used: 0, rpd_limit: 0 },
+        manus: (() => {
+          if (!manusData) {
+            return {
+              daily: { used: 0, limit: 300, pct: 0 },
+              monthly: { used: 0, limit: 4000, pct: 0 },
+              addon: 0,
+            };
+          }
+          // Handle manus-usage.json structure (from manus-usage-fetch.py)
+          const daily = manusData.credits?.daily_refresh || {};
+          const monthly = manusData.credits?.breakdown?.monthly || {};
+          // Support both formats: new (daily.used) and legacy (daily.current = remaining)
+          const dailyUsed =
+            daily.used ?? (daily.limit ? daily.limit - (daily.current ?? daily.limit) : 0);
+          const dailyLimit = daily.limit || 300;
+          const monthlyUsed = monthly.used || manusData.credits_used || 0;
+          const monthlyLimit = monthly.limit || manusData.credits_budget || 4000;
+          const addon = manusData.credits?.breakdown?.addon || 0;
           return {
-            daily: { used: 0, limit: 300, pct: 0 },
-            monthly: { used: 0, limit: 4000, pct: 0 },
-            addon: 0,
+            daily: {
+              used: dailyUsed,
+              limit: dailyLimit,
+              pct: dailyLimit ? (dailyUsed / dailyLimit) * 100 : 0,
+            },
+            monthly: {
+              used: monthlyUsed,
+              limit: monthlyLimit,
+              pct: monthlyLimit ? (monthlyUsed / monthlyLimit) * 100 : 0,
+            },
+            addon,
+          };
+        })(),
+      };
+
+      // OpenAI API Costs (via Admin key) — fetched by the poller (collectExtraUsage), read here.
+      // NOT folded into `windows`: this is month-to-date DOLLARS with no cap attached, and a window
+      // needs a denominator. The cap lives per-model in openclaw.json (`monthlyCapUsd`), which this
+      // layer never sees. See the `providers.openai` note in usage-snapshot-store.ts.
+      const openaiCosts = refreshed?.extras.openaiCosts ?? null;
+      if (openaiCosts) {
+        result.openaiCosts = openaiCosts;
+      }
+
+      // xAI quota — the subscription's own ledger, free to read (see fetchXaiQuota).
+      // Fetched by the poller (collectExtraUsage), read here.
+      const xaiQuota = refreshed?.extras.xai ?? null;
+      if (xaiQuota) {
+        result.xai = xaiQuota;
+        log(
+          `[budget-panel] xAI quota: ${xaiQuota.usage_pct.toFixed(0)}% of the ${xaiQuota.period_type || "current"} allowance, resets ${xaiQuota.period_end ?? "?"}`,
+        );
+      }
+
+      // GitHub Copilot Premium + Chat windows (same source as openclaw models status).
+      // Fetched by the poller (collectExtraUsage), read here.
+      const copilotQuota = refreshed?.extras.copilot ?? null;
+      if (copilotQuota) {
+        result.copilot = copilotQuota;
+        log(
+          `[budget-panel] Copilot: Premium ${copilotQuota.premium_used_pct}% · Chat ${copilotQuota.chat_used_pct}% · ${copilotQuota.plan}`,
+        );
+      }
+
+      // ChatGPT / OpenAI
+      result.chatgpt = (() => {
+        if (!chatgptData) {
+          return null;
+        }
+        const models: Record<string, any> = {};
+        for (const [key, val] of Object.entries(chatgptData.models || {}) as [string, any][]) {
+          const rl = val?.rate_limits || {};
+          const limitReq = parseInt(rl.limit_requests) || 0;
+          const remainReq = parseInt(rl.remaining_requests) || 0;
+          const limitTok = parseInt(rl.limit_tokens) || 0;
+          const remainTok = parseInt(rl.remaining_tokens) || 0;
+          models[key] = {
+            status: val?.status || "unknown",
+            utilization_pct: limitReq ? ((limitReq - remainReq) / limitReq) * 100 : 0,
+            requests: { used: limitReq - remainReq, limit: limitReq, remaining: remainReq },
+            tokens: { used: limitTok - remainTok, limit: limitTok, remaining: remainTok },
+            // FORK 2026-07-31 (the architect: "for sol-terra-luna, I am missing the reset
+            // time"). This rebuilds the window rather than spreading it, so every
+            // field not named here was silently dropped — including `resets_at`,
+            // which the source file has carried all along
+            // (memory/chatgpt-usage.json → models.Weekly.resets_at). The panel was
+            // not missing the data; this loop was throwing it away.
+            resets_at: val?.resets_at ?? null,
           };
         }
-        // Handle manus-usage.json structure (from manus-usage-fetch.py)
-        const daily = manusData.credits?.daily_refresh || {};
-        const monthly = manusData.credits?.breakdown?.monthly || {};
-        // Support both formats: new (daily.used) and legacy (daily.current = remaining)
-        const dailyUsed =
-          daily.used ?? (daily.limit ? daily.limit - (daily.current ?? daily.limit) : 0);
-        const dailyLimit = daily.limit || 300;
-        const monthlyUsed = monthly.used || manusData.credits_used || 0;
-        const monthlyLimit = monthly.limit || manusData.credits_budget || 4000;
-        const addon = manusData.credits?.breakdown?.addon || 0;
         return {
-          daily: {
-            used: dailyUsed,
-            limit: dailyLimit,
-            pct: dailyLimit ? (dailyUsed / dailyLimit) * 100 : 0,
-          },
-          monthly: {
-            used: monthlyUsed,
-            limit: monthlyLimit,
-            pct: monthlyLimit ? (monthlyUsed / monthlyLimit) * 100 : 0,
-          },
-          addon,
+          fetchedAt: chatgptData.fetchedAt,
+          api_key_status: chatgptData.api_key_status,
+          models,
+          plus_limits: chatgptData.plus_subscription_limits || {},
         };
-      })(),
-    };
+      })();
 
-    // OpenAI API Costs (via Admin key) — fetched by the poller (collectExtraUsage), read here.
-    // NOT folded into `windows`: this is month-to-date DOLLARS with no cap attached, and a window
-    // needs a denominator. The cap lives per-model in openclaw.json (`monthlyCapUsd`), which this
-    // layer never sees. See the `providers.openai` note in usage-snapshot-store.ts.
-    const openaiCosts = refreshed?.extras.openaiCosts ?? null;
-    if (openaiCosts) {
-      result.openaiCosts = openaiCosts;
-    }
-
-    // xAI quota — the subscription's own ledger, free to read (see fetchXaiQuota).
-    // Fetched by the poller (collectExtraUsage), read here.
-    const xaiQuota = refreshed?.extras.xai ?? null;
-    if (xaiQuota) {
-      result.xai = xaiQuota;
-      log(
-        `[budget-panel] xAI quota: ${xaiQuota.usage_pct.toFixed(0)}% of the ${xaiQuota.period_type || "current"} allowance, resets ${xaiQuota.period_end ?? "?"}`,
-      );
-    }
-
-    // GitHub Copilot Premium + Chat windows (same source as openclaw models status).
-    // Fetched by the poller (collectExtraUsage), read here.
-    const copilotQuota = refreshed?.extras.copilot ?? null;
-    if (copilotQuota) {
-      result.copilot = copilotQuota;
-      log(
-        `[budget-panel] Copilot: Premium ${copilotQuota.premium_used_pct}% · Chat ${copilotQuota.chat_used_pct}% · ${copilotQuota.plan}`,
-      );
-    }
-
-    // ChatGPT / OpenAI
-    result.chatgpt = (() => {
-      if (!chatgptData) {
-        return null;
-      }
-      const models: Record<string, any> = {};
-      for (const [key, val] of Object.entries(chatgptData.models || {}) as [string, any][]) {
-        const rl = val?.rate_limits || {};
-        const limitReq = parseInt(rl.limit_requests) || 0;
-        const remainReq = parseInt(rl.remaining_requests) || 0;
-        const limitTok = parseInt(rl.limit_tokens) || 0;
-        const remainTok = parseInt(rl.remaining_tokens) || 0;
-        models[key] = {
-          status: val?.status || "unknown",
-          utilization_pct: limitReq ? ((limitReq - remainReq) / limitReq) * 100 : 0,
-          requests: { used: limitReq - remainReq, limit: limitReq, remaining: remainReq },
-          tokens: { used: limitTok - remainTok, limit: limitTok, remaining: remainTok },
-          // FORK 2026-07-31 (the architect: "for sol-terra-luna, I am missing the reset
-          // time"). This rebuilds the window rather than spreading it, so every
-          // field not named here was silently dropped — including `resets_at`,
-          // which the source file has carried all along
-          // (memory/chatgpt-usage.json → models.Weekly.resets_at). The panel was
-          // not missing the data; this loop was throwing it away.
-          resets_at: val?.resets_at ?? null,
-        };
-      }
-      return {
-        fetchedAt: chatgptData.fetchedAt,
-        api_key_status: chatgptData.api_key_status,
-        models,
-        plus_limits: chatgptData.plus_subscription_limits || {},
+      const ms = Date.now() - startedAt;
+      const shape = {
+        ms,
+        cold: !lastRefresh,
+        keys: Object.keys(result),
+        claude: !!(result.claude as { limits?: unknown } | undefined)?.limits,
+        claudeProfiles: result.claudeProfiles
+          ? Object.keys(result.claudeProfiles as object).length
+          : 0,
+        gemini: !!(result.gemini as { rpd_limit?: number } | undefined)?.rpd_limit,
+        xai: result.xai != null,
+        copilot: result.copilot != null,
+        chatgpt: result.chatgpt != null,
+        openaiCosts: result.openaiCosts != null,
       };
-    })();
-
-    respond(true, result, undefined);
+      log(`[budget-panel] budget.usage served ${JSON.stringify(shape)}`);
+      if (!shape.claude && !shape.xai && !shape.copilot && !shape.chatgpt && !shape.openaiCosts) {
+        log(`[budget-panel] budget.usage EMPTY of every quota leg — UI bars will vanish`);
+      }
+      respond(true, result, undefined);
+    } catch (e) {
+      log(`[budget-panel] budget.usage THREW after ${Date.now() - startedAt}ms: ${e}`);
+      respond(false, undefined, { code: -32000, message: `budget.usage threw: ${e}` });
+    }
   });
 
   // Register gateway method: budget.status
   api.registerGatewayMethod("budget.status", async ({ respond, client }) => {
-    // Get real token usage from OpenClaw's usage.budget
-    let claudeData = {
-      fiveHourPct: 0,
-      dailyPct: 0,
-      tier: "max_20x",
-      dailyLimit: 6000000,
-      fiveHourLimit: 900000,
-    };
-
+    const startedAt = Date.now();
     try {
-      // Call usage.budget internally
-      const budgetData = await new Promise<any>((resolve, reject) => {
-        const handler = (api as any).gatewayMethods?.get?.("usage.budget");
-        if (!handler) {
-          reject(new Error("usage.budget not found"));
-          return;
-        }
-        handler({
-          respond: (ok: boolean, result: any) => (ok ? resolve(result) : reject(result)),
-          params: {},
-          client,
+      // Get real token usage from OpenClaw's usage.budget
+      let claudeData = {
+        fiveHourPct: 0,
+        dailyPct: 0,
+        tier: "max_20x",
+        dailyLimit: 6000000,
+        fiveHourLimit: 900000,
+      };
+
+      try {
+        // Call usage.budget internally
+        const budgetData = await new Promise<any>((resolve, reject) => {
+          const handler = (api as any).gatewayMethods?.get?.("usage.budget");
+          if (!handler) {
+            reject(new Error("usage.budget not found"));
+            return;
+          }
+          handler({
+            respond: (ok: boolean, result: any) => (ok ? resolve(result) : reject(result)),
+            params: {},
+            client,
+          });
         });
-      });
 
-      const anthropic = budgetData?.tokenSummaries?.find((s: any) => s.provider === "anthropic");
-      if (anthropic?.estimated) {
-        claudeData = {
-          fiveHourPct: anthropic.estimated.fiveHourPercent || 0,
-          dailyPct: anthropic.estimated.dailyPercent || 0,
-          tier: anthropic.estimated.tier || "max_20x",
-          dailyLimit: anthropic.estimated.dailyLimit || 6000000,
-          fiveHourLimit: anthropic.estimated.fiveHourLimit || 900000,
-        };
+        const anthropic = budgetData?.tokenSummaries?.find((s: any) => s.provider === "anthropic");
+        if (anthropic?.estimated) {
+          claudeData = {
+            fiveHourPct: anthropic.estimated.fiveHourPercent || 0,
+            dailyPct: anthropic.estimated.dailyPercent || 0,
+            tier: anthropic.estimated.tier || "max_20x",
+            dailyLimit: anthropic.estimated.dailyLimit || 6000000,
+            fiveHourLimit: anthropic.estimated.fiveHourLimit || 900000,
+          };
+        }
+      } catch (e) {
+        // Fallback to defaults if usage.budget is unavailable
+        log(`[budget-panel] budget.status usage.budget unavailable: ${e}`);
       }
-    } catch {
-      // Fallback to defaults if usage.budget is unavailable
+
+      // Build status with real Claude token data
+      const manus = tracker.getStatus();
+      const providers = [
+        {
+          name: `Claude (${claudeData.tier})`,
+          pct: claudeData.dailyPct,
+          used: `${claudeData.dailyPct.toFixed(1)}% daily`,
+          remaining: `${(100 - claudeData.dailyPct).toFixed(1)}%`,
+          unit: "",
+          budget: claudeData.dailyLimit,
+        },
+        manus.providers.find((p) => p.name === "Manus") || manus.providers[1],
+        manus.providers.find((p) => p.name === "Gemini") || manus.providers[2],
+      ].filter(Boolean);
+
+      log(
+        `[budget-panel] budget.status served ${JSON.stringify({ ms: Date.now() - startedAt, providers: providers.map((p) => p?.name), totalPct: claudeData.dailyPct })}`,
+      );
+      respond(true, { providers, totalPct: claudeData.dailyPct }, undefined);
+    } catch (e) {
+      log(`[budget-panel] budget.status THREW after ${Date.now() - startedAt}ms: ${e}`);
+      respond(false, undefined, { code: -32000, message: `budget.status threw: ${e}` });
     }
-
-    // Build status with real Claude token data
-    const manus = tracker.getStatus();
-    const providers = [
-      {
-        name: `Claude (${claudeData.tier})`,
-        pct: claudeData.dailyPct,
-        used: `${claudeData.dailyPct.toFixed(1)}% daily`,
-        remaining: `${(100 - claudeData.dailyPct).toFixed(1)}%`,
-        unit: "",
-        budget: claudeData.dailyLimit,
-      },
-      manus.providers.find((p) => p.name === "Manus") || manus.providers[1],
-      manus.providers.find((p) => p.name === "Gemini") || manus.providers[2],
-    ].filter(Boolean);
-
-    respond(true, { providers, totalPct: claudeData.dailyPct }, undefined);
   });
 
   // Register gateway method: budget.update (manual updates)
@@ -1482,71 +1501,71 @@ export default function register(api: OpenClawPluginApi) {
     respond(true, status, undefined);
   });
 
-  // Register gateway method: config.models (live model configuration from openclaw.json)
-  api.registerGatewayMethod("config.models", async ({ respond }) => {
-    // FORK 2026-07-30: read openclaw.json from disk each call. The plugin's
-    // `api.config` snapshot can lag file edits (and protected-path patches),
-    // which left the MODELS panel showing the pre-cull 59-row list after AA≥50.
-    let liveConfig: Record<string, unknown> = config;
-    try {
-      const raw = readFileSync(`${homeDir}/.openclaw/openclaw.json`, "utf-8");
-      liveConfig = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      /* fall back to api.config snapshot */
-    }
-    const agentDefaults = (liveConfig.agents as any)?.defaults || {};
-    const modelCfg = agentDefaults.model || {};
-    const primary: string = typeof modelCfg === "string" ? modelCfg : modelCfg.primary || "";
-    const fallbacks: string[] = modelCfg.fallbacks || [];
-    const models: Record<string, any> = agentDefaults.models || {};
-    const authCfg = (liveConfig as any).auth || {};
-    const authProfiles: Record<string, any> = authCfg.profiles || {};
-    const authOrder: Record<string, string[]> = authCfg.order || {};
+  // OPT-IN: config.models (model list for the Tinker UI MODELS panel). Not budget tracking, so it
+  // is only registered when `exposeModelConfig: true`. It reads the gateway's live runtime config
+  // snapshot (api.runtime.config.current()), not ~/.openclaw/openclaw.json, and returns auth
+  // profiles as {provider, mode, label} only — no credential paths, tokens or keys.
+  if (pluginConfig?.exposeModelConfig === true) {
+    api.registerGatewayMethod("config.models", async ({ respond }) => {
+      try {
+        const runtimeCurrent = (api as any).runtime?.config?.current;
+        const liveConfig = (
+          typeof runtimeCurrent === "function" ? runtimeCurrent() : config
+        ) as Record<string, unknown>;
+        respond(true, projectModelConfig(liveConfig), undefined);
+      } catch (e) {
+        log(`[budget-panel] config.models THREW: ${e}`);
+        respond(false, undefined, { code: -32000, message: `config.models threw: ${e}` });
+      }
+    });
+  }
 
-    respond(true, { primary, fallbacks, models, authProfiles, authOrder }, undefined);
-  });
+  // OPT-IN: anatomy.* (context-timeline events for the Tinker UI timeline panel). Not budget
+  // tracking, so only registered when `exposeAnatomyTimeline: true`. Reads the in-process anatomy
+  // DB if another fork component created one; returns at most `limit` events (recent: ≤2000 over
+  // ≤8760 h; before/session: ≤500).
+  if (pluginConfig?.exposeAnatomyTimeline === true) {
+    const getAnatomyDb = () => (globalThis as any).__anatomyDb;
 
-  // FORK: Anatomy timeline WS methods (registered here because budget-panel reliably loads)
-  const getAnatomyDb = () => (globalThis as any).__anatomyDb;
+    api.registerGatewayMethod("anatomy.recent", async ({ params, respond }) => {
+      const db = getAnatomyDb();
+      if (!db) {
+        return respond(true, { count: 0, events: [] }, undefined);
+      }
+      const hours = Math.min(Math.max(params?.hours ?? 8760, 1), 8760);
+      const limit = Math.min(Math.max(params?.limit ?? 50, 1), 2000);
+      const events = db.queryRecentEvents(hours, limit);
+      respond(true, { count: events.length, events }, undefined);
+    });
 
-  api.registerGatewayMethod("anatomy.recent", async ({ params, respond }) => {
-    const db = getAnatomyDb();
-    if (!db) {
-      return respond(true, { count: 0, events: [] }, undefined);
-    }
-    const hours = Math.min(Math.max(params?.hours ?? 8760, 1), 8760);
-    const limit = Math.min(Math.max(params?.limit ?? 50, 1), 2000);
-    const events = db.queryRecentEvents(hours, limit);
-    respond(true, { count: events.length, events }, undefined);
-  });
+    api.registerGatewayMethod("anatomy.before", async ({ params, respond }) => {
+      const db = getAnatomyDb();
+      if (!db) {
+        return respond(true, { count: 0, events: [] }, undefined);
+      }
+      const beforeMs = params?.beforeMs;
+      if (!beforeMs) {
+        return respond(true, { count: 0, events: [] }, undefined);
+      }
+      const limit = Math.min(Math.max(params?.limit ?? 50, 1), 500);
+      const events = db.queryEventsBefore ? db.queryEventsBefore(beforeMs, limit) : [];
+      respond(true, { count: events.length, events }, undefined);
+    });
 
-  api.registerGatewayMethod("anatomy.before", async ({ params, respond }) => {
-    const db = getAnatomyDb();
-    if (!db) {
-      return respond(true, { count: 0, events: [] }, undefined);
-    }
-    const beforeMs = params?.beforeMs;
-    if (!beforeMs) {
-      return respond(true, { count: 0, events: [] }, undefined);
-    }
-    const limit = Math.min(Math.max(params?.limit ?? 50, 1), 500);
-    const events = db.queryEventsBefore ? db.queryEventsBefore(beforeMs, limit) : [];
-    respond(true, { count: events.length, events }, undefined);
-  });
-
-  api.registerGatewayMethod("anatomy.session", async ({ params, respond }) => {
-    const db = getAnatomyDb();
-    if (!db) {
-      return respond(true, { count: 0, events: [] }, undefined);
-    }
-    const sk = params?.sessionKey;
-    if (!sk) {
-      return respond(true, { count: 0, events: [] }, undefined);
-    }
-    const limit = Math.min(Math.max(params?.limit ?? 200, 1), 500);
-    const events = db.querySessionEvents(sk, limit);
-    respond(true, { sessionKey: sk, count: events.length, events }, undefined);
-  });
+    api.registerGatewayMethod("anatomy.session", async ({ params, respond }) => {
+      const db = getAnatomyDb();
+      if (!db) {
+        return respond(true, { count: 0, events: [] }, undefined);
+      }
+      const sk = params?.sessionKey;
+      if (!sk) {
+        return respond(true, { count: 0, events: [] }, undefined);
+      }
+      const limit = Math.min(Math.max(params?.limit ?? 200, 1), 500);
+      const events = db.querySessionEvents(sk, limit);
+      respond(true, { sessionKey: sk, count: events.length, events }, undefined);
+    });
+  }
 
   // Register HTTP route for dashboard
   api.registerHttpRoute({

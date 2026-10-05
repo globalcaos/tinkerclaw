@@ -6,9 +6,11 @@ import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/ag
 import { abortEmbeddedPiRun } from "../../agents/embedded-agent-runner/runs.js";
 import { rewriteTranscriptEntriesInSessionFile } from "../../agents/embedded-agent-runner/transcript-rewrite.js";
 import { resolveFailoverReasonFromError } from "../../agents/failover-error.js";
+import { resolveRetryAfterSeconds } from "../../agents/rate-limit-reset.js";
 import { ensureSandboxWorkspaceForSession } from "../../agents/sandbox/context.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { dispatchInboundMessage } from "../../auto-reply/dispatch.js";
+import type { PromptDisposition } from "../../auto-reply/get-reply-options.types.js";
 import type { ReplyPayload } from "../../auto-reply/reply-payload.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
@@ -20,10 +22,24 @@ import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.j
 import { extractCanvasFromText } from "../../chat/canvas-render.js";
 import { resolveSessionFilePath, updateSessionStore } from "../../config/sessions.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
+// FORK 2026-09-29 (chat-usage-outcome U5 — jarvis-icu
+// docs/superpowers/plans/2026-09-29-chat-usage-chips-and-typed-outcomes.md):
+// ONE classification site, in the gateway. The typed field rides inside
+// `message`, whose schema is open, so the chat event schema is untouched.
+import {
+  classifyAssistantOutcome,
+  classifyErrorText,
+  type TurnOutcome,
+} from "../../fork/turn-outcome.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
 import { getSessionBindingService } from "../../infra/outbound/session-binding-service.js";
+import {
+  createPreparingPromptTracker,
+  PREPARING_PARTICIPANT_ID,
+  registerRestartDrainParticipant,
+} from "../../infra/restart-drain.js";
 import { logLargePayload } from "../../logging/diagnostic-payload.js";
 import {
   appendLocalMediaParentRoots,
@@ -71,14 +87,28 @@ import {
 import {
   isToolHistoryBlockType,
   projectChatDisplayMessage,
-  projectRecentChatDisplayMessages,
+  limitChatDisplayMessages,
+  projectChatDisplayMessages,
   resolveEffectiveChatHistoryMaxChars,
 } from "../chat-display-projection.js";
+import {
+  findArchiveCliSessionIds,
+  listSessionArchives,
+  readArchiveHead,
+  readArchiveToolCallIdSet,
+} from "../chat-history-archive.js";
+import {
+  buildChatHistoryCursor,
+  filterImportsToWindow,
+  planChatHistoryWindow,
+} from "../chat-history-cursor.js";
 import { stripEnvelopeFromMessage } from "../chat-sanitize.js";
+import { resolveClaudeProjectsDir } from "../cli-session-history.claude.js";
 import {
   augmentChatHistoryWithCliSessionImports,
   resolveClaudeCliProvenanceSessionIds,
   resolveClaudeCliSessionFilePath,
+  resolveEarliestLocalTimestamp,
 } from "../cli-session-history.js";
 import { isSuppressedControlReplyText } from "../control-reply-text.js";
 import {
@@ -87,6 +117,11 @@ import {
   createManagedOutgoingImageBlocks,
 } from "../managed-image-attachments.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
+import {
+  buildPromptKeyMarker,
+  findPromptKeyMarker,
+  PROMPT_KEY_CUSTOM_TYPE,
+} from "../prompt-key-marker.js";
 import {
   GATEWAY_CLIENT_CAPS,
   GATEWAY_CLIENT_MODES,
@@ -103,16 +138,28 @@ import {
   validateChatSendParams,
 } from "../protocol/index.js";
 import { CHAT_SEND_SESSION_KEY_MAX_LENGTH } from "../protocol/schema/primitives.js";
+import { deriveReplyRegistryKey, resolveReplyRegistryKeys } from "../reply-registry-key.js";
+import {
+  appendRestartNoticeToTranscript,
+  buildRestartNoticeRow,
+  isRestartNoticeData,
+} from "../restart-notice.js";
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
+import {
+  readTranscriptFileMessages,
+  resolveSessionTranscriptReadPath,
+} from "../session-utils.fs.js";
 import {
   capArrayByJsonBytes,
   loadSessionEntry,
   resolveGatewayModelSupportsImages,
   resolveGatewaySessionThinkingDefault,
   resolveDeletedAgentIdFromSessionKey,
-  readSessionMessages,
+  readSessionMessagesWithCursor,
   resolveSessionModelRef,
+  trackAcceptedChatSend,
 } from "../session-utils.js";
+import { listTinkerBridgeCliSessionIdsForOpenclawSession } from "../tinker-bridge-session-map.js";
 import { formatForLog } from "../ws-log.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import { setGatewayDedupeEntry } from "./agent-wait-dedupe.js";
@@ -127,6 +174,7 @@ import type {
   GatewayRequestContext,
   GatewayRequestHandlerOptions,
   GatewayRequestHandlers,
+  RespondFn,
 } from "./types.js";
 
 export type TranscriptAppendResult = {
@@ -197,6 +245,17 @@ export {
   resolveEffectiveChatHistoryMaxChars,
   sanitizeChatHistoryMessages,
 } from "../chat-display-projection.js";
+import { driverForGatewayClient, noteSessionDriver } from "../../forensic/llm-ledger.js";
+
+// FORK 2026-10-01 (TINKER_UI_DESIGN_BIBLE/lifecycles.md L4b; bug-log.md [chat-divergence] cause 6):
+// the restart drain's `preparing` participant. chat.send tracks every prompt it acks here until the
+// reply pipeline places it (infra/restart-drain.ts createPreparingPromptTracker), so a drain waits
+// for a prompt that is still preparing (media or link understanding, the preflight compaction) and
+// logs by key any it could not wait out. A prompt behind a memory flush is one of those: the drain
+// holds the flush's own model call. Registered when this module loads; the newest instance owns the
+// id.
+const preparingChatSends = createPreparingPromptTracker();
+registerRestartDrainParticipant(PREPARING_PARTICIPANT_ID, preparingChatSends.participant);
 
 export const CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES = 128 * 1024;
 const CHAT_HISTORY_OVERSIZED_PLACEHOLDER = "[chat.history omitted: message too large]";
@@ -1477,6 +1536,139 @@ function transcriptHasIdempotencyKey(transcriptPath: string, idempotencyKey: str
   }
 }
 
+// FORK 2026-09-08 (durable prompt key) — the gateway half of src/gateway/prompt-key-marker.ts.
+//
+// Resolves the transcript exactly the way emitUserTranscriptUpdate in chat.send does: re-read the
+// store entry (a /new, the 8 MB oversized-resume guard or a compaction successor can rotate the
+// sessionId under a live tab) and fall back to the entry the handler loaded on entry.
+function resolveChatSendTranscriptPath(params: {
+  sessionKey: string;
+  entry: ReturnType<typeof loadSessionEntry>["entry"];
+  agentId: string;
+}): string | null {
+  const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(params.sessionKey);
+  const resolvedSessionId = latestEntry?.sessionId ?? params.entry?.sessionId;
+  if (!resolvedSessionId) {
+    return null;
+  }
+  return resolveTranscriptPath({
+    sessionId: resolvedSessionId,
+    storePath: latestStorePath,
+    sessionFile: latestEntry?.sessionFile ?? params.entry?.sessionFile,
+    agentId: params.agentId,
+  });
+}
+
+/**
+ * Has this idempotencyKey already been ACCEPTED on disk? Runs on every chat.send whose key misses
+ * both in-memory guards, so cost is the design constraint: one readFileSync and a whole-file
+ * substring gate; the per-line parse in findPromptKeyMarker only touches lines that contain the
+ * key. Every failure reads as "not found" — the pre-fix behaviour (a fresh turn), never a blocked
+ * send. Exported for chat.dedup.test.ts.
+ */
+export function findDurablePromptKey(params: {
+  sessionKey: string;
+  entry: ReturnType<typeof loadSessionEntry>["entry"];
+  agentId: string;
+  idempotencyKey: string;
+}): { found: boolean; ts?: number } {
+  try {
+    const transcriptPath = resolveChatSendTranscriptPath(params);
+    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+      return { found: false };
+    }
+    const raw = fs.readFileSync(transcriptPath, "utf-8");
+    if (!raw.includes(params.idempotencyKey)) {
+      return { found: false };
+    }
+    return findPromptKeyMarker(raw.split(/\r?\n/), params.idempotencyKey);
+  } catch {
+    return { found: false };
+  }
+}
+
+/**
+ * Mirrors the gate inside pi's `SessionManager._persist` (pi-coding-agent session-manager.js):
+ * an append reaches disk only once the loaded entries hold an ASSISTANT message. Before that pi
+ * buffers the entry, flags the instance unflushed, and the buffer dies with the instance — the
+ * call returns normally and nothing lands. Probed 2026-09-08 against a header-only transcript:
+ * open()+appendCustomEntry() left the file untouched, and a raw appendFileSync was worse (pi's
+ * first flush re-appends every entry, so the marker and the header both land twice).
+ */
+function sessionManagerPersistsAppends(sessionManager: SessionManager): boolean {
+  return sessionManager
+    .getEntries()
+    .some((entry) => entry.type === "message" && entry.message.role === "assistant");
+}
+
+/**
+ * Write the marker — once, BEFORE dispatch, so the proof exists before anything that can crash.
+ * SessionManager rather than a raw append so the entry hangs off the current leaf via parentId
+ * (the rule chat-transcript-inject.ts states): the runner opens the file fresh per attempt
+ * (embedded-agent-runner/run/attempt.ts), finds the marker as the leaf, and chains pi's user row
+ * under it — which is what lets readSessionMessages' getBranch() walk serve the key.
+ *
+ * Two transcripts are skipped, silently and by design, because the prompt is not provable on them
+ * yet and a false "ok" would be the mirror image of this bug (an immortal marker for a prompt the
+ * transcript can never confirm): one that does not exist yet (`no-transcript`), and one with no
+ * assistant reply yet (`no-assistant-yet`, see sessionManagerPersistsAppends). Both are the
+ * pre-fix behaviour — a first-ever prompt on a session was never provable before this change
+ * either — and both end the moment the session's first reply lands. Every measured re-dispatch
+ * (93 across 45 sessions) was on an established session, which is the path that writes.
+ * Exported for chat.dedup.test.ts.
+ */
+export function appendPromptKeyMarkerForChatSend(params: {
+  sessionKey: string;
+  entry: ReturnType<typeof loadSessionEntry>["entry"];
+  agentId: string;
+  idempotencyKey: string;
+  ts: number;
+}): {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: "no-transcript" | "no-assistant-yet";
+  error?: string;
+} {
+  try {
+    const transcriptPath = resolveChatSendTranscriptPath(params);
+    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+      return { ok: false, skipped: true, reason: "no-transcript" };
+    }
+    const sessionManager = SessionManager.open(transcriptPath);
+    if (!sessionManagerPersistsAppends(sessionManager)) {
+      return { ok: false, skipped: true, reason: "no-assistant-yet" };
+    }
+    sessionManager.appendCustomEntry(
+      PROMPT_KEY_CUSTOM_TYPE,
+      buildPromptKeyMarker({
+        idempotencyKey: params.idempotencyKey,
+        sessionKey: params.sessionKey,
+        ts: params.ts,
+      }),
+    );
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: formatErrorMessage(err) };
+  }
+}
+
+/**
+ * One greppable line per echo. `age` is milliseconds since the original acceptance (cache write,
+ * in-flight registration, or the marker's ts); `unknown` only for a marker with no ts.
+ */
+function logChatSendDuplicate(params: {
+  context: GatewayRequestContext;
+  clientRunId: string;
+  sessionKey: string;
+  kind: "cached" | "in_flight" | "durable";
+  ageMs: number | undefined;
+}): void {
+  const age = params.ageMs === undefined ? "unknown" : String(Math.max(0, params.ageMs));
+  params.context.logGateway.info(
+    `[chat.send] duplicate key=${params.clientRunId} kind=${params.kind} age=${age} sessionKey=${params.sessionKey}`,
+  );
+}
+
 function appendAssistantTranscriptMessage(params: {
   message: string;
   label?: string;
@@ -1548,6 +1740,128 @@ export function projectPreRunReplyPayloads(
     .map((entry) => entry.payload);
 }
 
+// FORK 2026-09-29 (chat-usage-outcome U5): split the backstop's delivered final
+// payloads into the ANSWER part and the ERROR part.
+//
+// What this replaces: the backstop joined EVERY final payload's text into one
+// string and flagged the whole thing `isError` as soon as ANY payload carried
+// `isError: true`. The producer (src/agents/embedded-agent-runner/run/payloads.ts
+// ~240) pushes `{ text: errorText, isError: true }` AFTER the assistant text, so
+// a turn that answered normally and then had one tool call fail was served as a
+// single red bubble whose body was the real answer. Census 2026-09-29: 16 real
+// answers painted as errors. It also double-persisted, because the same joined
+// text was handed to persistAgentStartedFallbackReply and written a second time.
+// Exported for tests (chat.outcome.test.ts).
+export function splitFinalPayloadsForDisplay(payloads: ReadonlyArray<ReplyPayload | undefined>): {
+  answerText?: string;
+  errorText?: string;
+} {
+  const join = (wantError: boolean): string | undefined =>
+    payloads
+      .filter((p) => (p?.isError === true) === wantError)
+      .map((p) => (typeof p?.text === "string" ? p.text.trim() : ""))
+      .filter(Boolean)
+      .join("\n\n") || undefined;
+  const answerText = join(false);
+  const errorText = join(true);
+  return {
+    ...(answerText ? { answerText } : {}),
+    ...(errorText ? { errorText } : {}),
+  };
+}
+
+// FORK 2026-09-29 (chat-usage-outcome U5): the typed outcome for a
+// gateway-injected assistant message — "⚠️ Agent failed before reply: …",
+// "⚠️ All models are temporarily rate-limited …", the overload / 402 credits
+// copy, or a "/model" ack followed by the rate-limit line. Without a type the UI
+// renders every one of them as an answer (census: 349 real failures).
+//
+// The text goes through `classifyAssistantOutcome` on a SYNTHETIC assistant
+// message carrying the same `isError` flag the real one will carry, so the
+// first-meaningful-line guard (plan rule 6) and the gateway-wording guard (rule
+// 7) both apply and a real answer that merely mentions a rate limit returns null
+// (review focus 1). Empty text returns early, which is what keeps plan rule 8
+// from labelling a media-only reply "No answer". When the caller already knows
+// the text IS the error but the text is not error-shaped (a bare tool-failure
+// line), `classifyErrorText` types it rather than letting it serve untyped.
+// Exported for tests (chat.outcome.test.ts).
+export function outcomeForInjectedText(
+  text: string,
+  opts?: { isError?: boolean },
+): TurnOutcome | undefined {
+  const trimmed = typeof text === "string" ? text.trim() : "";
+  if (!trimmed) {
+    return undefined;
+  }
+  const isError = opts?.isError === true;
+  const classified = classifyAssistantOutcome({
+    role: "assistant",
+    content: [{ type: "text", text: trimmed, ...(isError ? { isError: true } : {}) }],
+    text: trimmed,
+    stopReason: "stop",
+    ...(isError ? { isError: true } : {}),
+  });
+  if (classified) {
+    return classified;
+  }
+  return isError ? classifyErrorText(trimmed, { source: "injected" }) : undefined;
+}
+
+// FORK 2026-09-29 (chat-usage-outcome U5): the backstop's messages, as data.
+// The answer and the error are TWO messages now:
+//   - `final`         the turn's own final — the answer when there is one, else the error;
+//   - `injectedError` a SECOND message, only when the turn both answered AND failed;
+//   - `persistText`   the ERROR part only. The answer is already persisted by the
+//                     agent runtime; the old join wrote it a second time, flagged.
+// The error message keeps `isError` and gains `outcome`; the answer message gets
+// NEITHER — the client cancels the retry ladder on a clean final (§5.8j), and an
+// outcome there would park a turn that did in fact reply.
+// The silent-reply token is neither persisted nor typed: it was never an error to
+// show, and typing it would redden a reply the UI suppresses.
+// Exported for tests (chat.outcome.test.ts).
+export function buildBackstopFinalMessages(
+  payloads: ReadonlyArray<ReplyPayload | undefined>,
+  opts?: { now?: number },
+): {
+  final?: Record<string, unknown>;
+  injectedError?: Record<string, unknown>;
+  persistText?: string;
+  outcome?: TurnOutcome;
+} {
+  const now = opts?.now ?? Date.now();
+  const { answerText, errorText } = splitFinalPayloadsForDisplay(payloads);
+  const silentError = Boolean(errorText) && isSilentReplyText(errorText, SILENT_REPLY_TOKEN);
+  const reportableError = errorText && !silentError ? errorText : undefined;
+  const outcome = reportableError
+    ? outcomeForInjectedText(reportableError, { isError: true })
+    : undefined;
+  const base = (text: string) => ({
+    role: "assistant",
+    text,
+    timestamp: now,
+    stopReason: "stop",
+    usage: { input: 0, output: 0, totalTokens: 0 },
+  });
+  const errorMessage: Record<string, unknown> | undefined = errorText
+    ? {
+        ...base(errorText),
+        content: [{ type: "text", text: errorText, isError: true }],
+        isError: true,
+        ...(outcome ? { outcome } : {}),
+      }
+    : undefined;
+  const answerMessage: Record<string, unknown> | undefined = answerText
+    ? { ...base(answerText), content: [{ type: "text", text: answerText }] }
+    : undefined;
+  const final = answerMessage ?? errorMessage;
+  return {
+    ...(final ? { final } : {}),
+    ...(answerMessage && errorMessage ? { injectedError: errorMessage } : {}),
+    ...(reportableError ? { persistText: reportableError } : {}),
+    ...(outcome ? { outcome } : {}),
+  };
+}
+
 // FORK 2026-07-22 (chat-error-persist): persist only agent-started ERROR
 // fallback text (e.g. "⚠️ Agent failed before reply: …" after a mid-run agent
 // death) to the session transcript. Successful replies are already persisted
@@ -1556,19 +1870,26 @@ export function projectPreRunReplyPayloads(
 // fire-and-forget WS-broadcast: any tab reload / WS reconnect lost it and the
 // user saw NOTHING. The persisted text block carries `isError: true` so the UI
 // can render the bubble red on reload.
-// Exported for tests (chat.error-persistence.test.ts).
+// FORK 2026-09-29 (chat-usage-outcome U5): the caller now hands us the ERROR
+// text ALONE — never the answer joined onto it — so a reload shows the real
+// answer (its own row, written by the agent runtime) and a SEPARATE typed error
+// row, instead of the answer inside a red bubble.
+// Exported for tests (chat.error-persistence.test.ts, chat.outcome.test.ts).
 export function persistAgentStartedFallbackReply(params: {
   sessionKey: string;
   clientRunId: string;
   agentId?: string;
   fallbackText: string;
   isError?: boolean;
+  /** Pre-computed classification; derived from the text when absent. */
+  outcome?: TurnOutcome;
   logWarn?: (message: string) => void;
 }): TranscriptAppendResult | undefined {
   const trimmed = params.fallbackText.trim();
   if (params.isError !== true || !trimmed || isSilentReplyText(trimmed, SILENT_REPLY_TOKEN)) {
     return undefined;
   }
+  const outcome = params.outcome ?? outcomeForInjectedText(trimmed, { isError: true });
   const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(params.sessionKey);
   const sessionId = latestEntry?.sessionId ?? params.clientRunId;
   const appended = appendAssistantTranscriptMessage({
@@ -1585,8 +1906,20 @@ export function persistAgentStartedFallbackReply(params: {
     params.logWarn?.(
       `webchat agent-started fallback transcript append failed: ${appended.error ?? "unknown error"}`,
     );
+    return appended;
   }
-  return appended;
+  // FORK 2026-09-29 (U5) — DELIBERATE, and stated rather than implied: the
+  // transcript writer (chat-transcript-inject.ts) builds `messageBody` field by
+  // field and has no `outcome` passthrough, and that file is outside this unit's
+  // writes, so the field does NOT reach the JSONL here. The ON-DISK row is typed
+  // at SERVE time instead: its content block carries `isError: true` and its
+  // first meaningful line is error-shaped, which is exactly classify rule 6 in
+  // chat-display-projection.ts (U2). The returned in-memory message IS stamped,
+  // so anything broadcast from it carries the typed field. A follow-up unit on
+  // chat-transcript-inject.ts makes the persisted row self-describing.
+  return appended.message
+    ? { ...appended, ...(outcome ? { message: { ...appended.message, outcome } } : {}) }
+    : appended;
 }
 
 function collectSessionAbortPartials(params: {
@@ -1646,7 +1979,12 @@ function persistAbortedPartials(params: {
   }
 }
 
-function createChatAbortOps(context: GatewayRequestContext): ChatAbortOps {
+/**
+ * The chat-run state an abort needs, lifted off a request context. Exported for sessions.ts, which
+ * hands it to endSessionTurns (session-reset-service.ts) so sessions.delete / sessions.reset end a
+ * session's chat runs with exactly one `aborted` each (prompt-queue.md §6.2 step 4).
+ */
+export function createChatAbortOps(context: GatewayRequestContext): ChatAbortOps {
   return {
     chatAbortControllers: context.chatAbortControllers,
     chatRunBuffers: context.chatRunBuffers,
@@ -1771,15 +2109,27 @@ function settleSessionAfterAbort(params: {
   try {
     const { cfg, storePath, entry, canonicalKey } = loadSessionEntry(params.sessionKey);
     const key = canonicalKey || params.sessionKey;
+    // FORK 2026-09-25 — the reply operation and the follow-up queue are keyed by the key
+    // initSessionState registered the turn under, which can be neither the store key nor the key
+    // the caller sent (reply-registry-key.ts). Both keys first, as before, then the caller's key as
+    // the pipeline derives it, then every registry key the store folds into this session's row, so
+    // a Stop reaches what the row's pendingPrompts shows. `.some` stops at the first runner, as
+    // the old `||` chain did.
+    const replyKeys = [
+      ...new Set([
+        key,
+        params.sessionKey,
+        deriveReplyRegistryKey(cfg, params.sessionKey),
+        ...resolveReplyRegistryKeys(cfg, key),
+      ]),
+    ].filter(Boolean);
     const sessionId =
-      replyRunRegistry.resolveSessionId(key) ??
-      replyRunRegistry.resolveSessionId(params.sessionKey) ??
+      replyKeys.map((replyKey) => replyRunRegistry.resolveSessionId(replyKey)).find(Boolean) ??
       entry?.sessionId;
     const abortedRunner =
-      replyRunRegistry.abort(key) ||
-      (key !== params.sessionKey ? replyRunRegistry.abort(params.sessionKey) : false) ||
+      replyKeys.some((replyKey) => replyRunRegistry.abort(replyKey)) ||
       (sessionId ? abortEmbeddedPiRun(sessionId) : false);
-    const cleared = clearSessionQueues([key, params.sessionKey, sessionId]);
+    const cleared = clearSessionQueues([...replyKeys, sessionId]);
     let stoppedChildren = 0;
     try {
       stoppedChildren = stopSubagentsForRequester({
@@ -1892,6 +2242,10 @@ function broadcastChatFinal(params: {
   runId: string;
   sessionKey: string;
   message?: Record<string, unknown>;
+  // FORK 2026-09-24 (prompt-queue.md §6.3 wire contract, plan step G2): what the gateway did with
+  // this prompt when a turn was already running. Only the early final of the `!agentRunStarted`
+  // branch passes it; every other caller leaves it undefined and the key stays ABSENT.
+  disposition?: PromptDisposition;
 }) {
   const seq = nextChatSeq({ agentRunSeq: params.context.agentRunSeq }, params.runId);
   const payload = {
@@ -1900,6 +2254,9 @@ function broadcastChatFinal(params: {
     seq,
     state: "final" as const,
     message: projectChatDisplayMessage(params.message),
+    // Spread, not `disposition: params.disposition` — the key must be ABSENT rather than explicitly
+    // undefined/null, because absence is exactly what a pre-G2 gateway looks like on the wire.
+    ...(params.disposition ? { disposition: params.disposition } : {}),
   };
   params.context.broadcast("chat", payload);
   params.context.nodeSendToSession(params.sessionKey, "chat", payload);
@@ -1945,13 +2302,21 @@ function broadcastChatError(params: {
   // emitChatFinal error path — surface the failover recoverability class as the
   // machine-readable `reason` derived from the raw error (FailoverError.reason
   // or a classified error signal), so the Tinker auto-retry controller does not
-  // have to text-match `errorMessage`. `retryAfter` (provider Retry-After) is
-  // not attached to the error object at this layer and is intentionally OMITTED.
-  // `errorMessage` (human text) is unchanged.
+  // have to text-match `errorMessage`.
+  //
+  // FORK 2026-09-07 — `retryAfter` used to be OMITTED here too. The client ladder honours it via
+  // `Math.max(step, retryAfterSec * 1000)` but was never given one, so against a 262-minute
+  // ChatGPT window it burned six attempts in 25 minutes and gave up four hours early. The reset is
+  // stated in the provider's own text ("Try again in ~262 min", "resets 3:10pm (Europe/Madrid)");
+  // resolveRetryAfterSeconds recovers it. Gated on a failover reason so a non-recoverable error
+  // cannot park a turn.
   const failoverReason =
     params.error !== undefined
       ? (resolveFailoverReasonFromError(params.error) ?? undefined)
       : undefined;
+  const retryAfterSeconds = failoverReason
+    ? resolveRetryAfterSeconds(params.errorMessage, Date.now())
+    : undefined;
   const payload = {
     runId: params.runId,
     sessionKey: params.sessionKey,
@@ -1959,6 +2324,7 @@ function broadcastChatError(params: {
     state: "error" as const,
     errorMessage: params.errorMessage,
     ...(failoverReason && { reason: failoverReason }),
+    ...(retryAfterSeconds !== undefined && { retryAfter: retryAfterSeconds }),
   };
   params.context.broadcast("chat", payload);
   params.context.nodeSendToSession(params.sessionKey, "chat", payload);
@@ -1986,6 +2352,268 @@ function broadcastChatError(params: {
 // persistence/merge-layer defect and belongs in augmentChatHistoryWithCliSessionImports /
 // cli-session-history.merge.ts, not in a lossy filter at the serve boundary.
 // Contract pinned by chat.dedup.test.ts.
+//
+// 2026-09-08 — RE-MEASURED, AND STILL NO SERVE-TIME GUARD. A census of 3,301 sessions found ZERO
+// duplicate assistant rows on the wire for both live tabs: the server was never the producer. The
+// duplication still being reported was CLIENT-side and is fixed in tinker-ui by the paper-model
+// reconcile (6f83be4f715). The one duplication the gateway DID own — the durable outbox replaying
+// a prompt it could not prove was persisted, run again as a fresh turn — is fixed at its SOURCE by
+// the write-once prompt-key marker (src/gateway/prompt-key-marker.ts), which keys on the
+// idempotencyKey and never on text. No serve-time guard was added, deliberately, per the
+// architect's no-dedup principle. If answers ever look doubled again, the cause is upstream of this
+// boundary; it is not a filter here.
+
+// FORK 2026-09-08 ([duprep-history] drop watch): on 2026-09-06 16:52 local.total for one tab went
+// 326 → 138 between two chat.history calls and nothing said so — the info line prints the current
+// number and the reader has to remember the previous one. Keep the previous one here and WARN on a
+// drop of more than DUPREP_LOCAL_TOTAL_DROP_ROWS rows or DUPREP_LOCAL_TOTAL_DROP_RATIO of the
+// previous total. A /new or a transcript rebind legitimately drops it and rotates the sessionId with
+// it, so both ids go on the line: `cause=session-rebind` is expected, `cause=same-session` is the
+// one to chase. Bounded like sessionTitleFieldsCache; a stale entry costs one small object.
+const DUPREP_LOCAL_TOTAL_DROP_ROWS = 20;
+const DUPREP_LOCAL_TOTAL_DROP_RATIO = 0.2;
+const DUPREP_LOCAL_TOTAL_MAX_TRACKED = 5000;
+const duprepLastLocalTotalBySessionKey = new Map<string, { total: number; sessionId?: string }>();
+
+function noteDuprepLocalTotal(params: {
+  context: GatewayRequestContext;
+  sessionKey: string;
+  sessionId?: string;
+  localTotal: number;
+}): void {
+  const previous = duprepLastLocalTotalBySessionKey.get(params.sessionKey);
+  if (previous) {
+    const drop = previous.total - params.localTotal;
+    if (
+      drop > DUPREP_LOCAL_TOTAL_DROP_ROWS ||
+      drop > previous.total * DUPREP_LOCAL_TOTAL_DROP_RATIO
+    ) {
+      const cause =
+        previous.sessionId && params.sessionId && previous.sessionId !== params.sessionId
+          ? "session-rebind"
+          : "same-session";
+      params.context.logGateway.warn(
+        `[duprep-history] local.total DROPPED sessionKey=${params.sessionKey} prev=${previous.total} now=${params.localTotal} drop=${drop} cause=${cause} prevSessionId=${previous.sessionId ?? "none"} sessionId=${params.sessionId ?? "none"}`,
+      );
+    }
+  }
+  duprepLastLocalTotalBySessionKey.delete(params.sessionKey);
+  duprepLastLocalTotalBySessionKey.set(params.sessionKey, {
+    total: params.localTotal,
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+  });
+  while (duprepLastLocalTotalBySessionKey.size > DUPREP_LOCAL_TOTAL_MAX_TRACKED) {
+    const oldestKey = duprepLastLocalTotalBySessionKey.keys().next().value;
+    if (typeof oldestKey !== "string" || !oldestKey) {
+      break;
+    }
+    duprepLastLocalTotalBySessionKey.delete(oldestKey);
+  }
+}
+
+/**
+ * FORK 2026-10-02 — `chat.history {resetArchiveBefore: T}`: the newest earlier transcript of the tab set
+ * aside before T (chat-history-archive.ts listSessionArchives: its resets, since 2026-10-03 also those
+ * of a transcript it left, and with `archiveFloor` its copies), shaped exactly like the live tail — the same claude-cli
+ * import merge (keyed on the OpenClaw session id the archive was written under, read from its
+ * header, so the tinker-bridge map finds that session's CLI transcript), the same projection, the
+ * same `limit` newest rows and the same byte caps. No cursor: an archive is never continued by seq;
+ * the next older page asks before this one's `resetAt`. Paged by time because a session reset every
+ * turn shifts every index while a page is open. None that old answers no rows and `resetAt: null`.
+ */
+/** How far outside an archive's own session span a CLI transcript's last write may fall. */
+const ARCHIVE_CLI_MATCH_SLACK_MS = 60 * 60_000;
+
+/**
+ * Projected rows of recently served archives, by file state. Archives never change, and a long one
+ * is read in several pages (`archiveOffset`), so its import merge and projection run once.
+ */
+const archiveRowsCache = new Map<string, unknown[]>();
+const ARCHIVE_ROWS_CACHE_MAX = 4;
+
+async function projectedArchiveRows(params: {
+  ref: { path: string; resetAt: number };
+  sessionKey: string;
+  maxChars: number;
+  /** The live entry's claude-cli sessions: the live window serves their rows already. */
+  excludeCliSessionIds: ReadonlySet<string>;
+}): Promise<unknown[]> {
+  let stat: fs.Stats | undefined;
+  try {
+    stat = fs.statSync(params.ref.path);
+  } catch {
+    stat = undefined;
+  }
+  const excluded = [...params.excludeCliSessionIds].toSorted().join(",");
+  const key = `${params.ref.path}|${stat?.size ?? -1}|${stat?.mtimeMs ?? -1}|${params.maxChars}|${excluded}`;
+  const cached = archiveRowsCache.get(key);
+  if (cached) {
+    archiveRowsCache.delete(key);
+    archiveRowsCache.set(key, cached);
+    return cached;
+  }
+  const head = readArchiveHead(params.ref.path);
+  // The legacy loader: an archive is read rarely and must not take a TranscriptIndex slot.
+  const local = readTranscriptFileMessages(params.ref.path, "legacy").messages;
+  // Which claude-cli transcripts the archived turns ran in: EVERY session the tinker-bridge map
+  // bound to the archive's OpenClaw session id (a rebind mid-span adds one; the oldest archive of the
+  // worker spans three). Newer archives carry a header id the map never saw (verified live: the
+  // 14:50 archive); for those the archive's own tool-call ids name the transcripts instead.
+  const mapped = listTinkerBridgeCliSessionIdsForOpenclawSession({
+    openclawSessionId: head.sessionId,
+  });
+  const found =
+    mapped.length > 0
+      ? mapped
+      : await findArchiveCliSessionIds({
+          toolCallIds: readArchiveToolCallIdSet(params.ref.path),
+          fromMs: (head.startedAt ?? params.ref.resetAt) - ARCHIVE_CLI_MATCH_SLACK_MS,
+          toMs: params.ref.resetAt + ARCHIVE_CLI_MATCH_SLACK_MS,
+          projectsDir: resolveClaudeProjectsDir(),
+          memoKey: key,
+        });
+  // FORK 2026-10-03 — a claude-cli session that ran across the reset feeds the live window too.
+  const cliSessionIds = found.filter((id) => !params.excludeCliSessionIds.has(id));
+  const merged = augmentChatHistoryWithCliSessionImports({
+    entry: head.sessionId
+      ? ({ sessionId: head.sessionId } as NonNullable<ReturnType<typeof loadSessionEntry>["entry"]>)
+      : undefined,
+    // Only the archive's own sessions: the live entry's CLI binding belongs to the live session.
+    cliSessionIds,
+    sessionKey: params.sessionKey,
+    localMessages: local,
+    // No flood valve. It caps imports at 3x the local rows to stop a STALE binding flooding a
+    // session, but an archive's CLI transcripts come from the archive itself: they are its turns'
+    // only record. An archive holds just each turn's prompt and answer locally, so the valve cut the
+    // worker's 14:50 archive to 6 of 215 rows (verified live 2026-10-02).
+    floodValveLocalCount: 0,
+  });
+  const rows = projectChatDisplayMessages(merged, { maxChars: params.maxChars });
+  archiveRowsCache.set(key, rows);
+  while (archiveRowsCache.size > ARCHIVE_ROWS_CACHE_MAX) {
+    const oldest = archiveRowsCache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    archiveRowsCache.delete(oldest);
+  }
+  return rows;
+}
+
+/** The rows strictly older than `floor`; a row with no timestamp goes with the row before it. */
+function rowsBeforeFloor(rows: unknown[], floor: number): unknown[] {
+  const out: unknown[] = [];
+  let keep = true;
+  for (const row of rows) {
+    const t = (row as { timestamp?: unknown } | null)?.timestamp;
+    if (typeof t === "number" && Number.isFinite(t)) {
+      keep = t < floor;
+    }
+    if (keep) {
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+/** How long one archive read may spend passing archives the page's floor leaves empty. */
+const ARCHIVE_SKIP_BUDGET_MS = 30_000;
+
+async function respondWithResetArchive(params: {
+  sessionKey: string;
+  resetArchiveBefore: number;
+  archiveOffset?: number;
+  archiveFloor?: number;
+  limit?: number;
+  maxChars?: number;
+  respond: RespondFn;
+}): Promise<void> {
+  const { sessionKey, resetArchiveBefore, archiveFloor, respond } = params;
+  const { cfg, storePath, entry } = loadSessionEntry(sessionKey);
+  const sessionId = entry?.sessionId;
+  const livePath =
+    sessionId && storePath
+      ? resolveSessionTranscriptReadPath(sessionId, storePath, entry?.sessionFile)
+      : null;
+  // FORK 2026-10-03 — every earlier transcript of the tab, not only its live file's resets
+  // (chat-history-archive.ts listSessionArchives). A copy repeats turns a newer transcript holds,
+  // so it is served only to a page that names its floor; without one, resets only, as before.
+  const archives = (
+    livePath ? listSessionArchives({ sessionKey, transcriptPath: livePath }) : []
+  ).filter(
+    (a) => a.resetAt < resetArchiveBefore && (archiveFloor !== undefined || a.kind === "reset"),
+  );
+  const liveCliSessionIds = new Set(resolveClaudeCliProvenanceSessionIds({ entry }));
+  const maxChars = resolveEffectiveChatHistoryMaxChars(cfg, params.maxChars);
+  const offset = params.archiveOffset ?? 0;
+  const started = Date.now();
+  for (let i = 0; i < archives.length; i++) {
+    const ref = archives[i];
+    // `archiveOffset` continues the archive the page is reading: the newest one still listed.
+    const continuing = i === 0 && offset > 0;
+    // FORK 2026-10-03 (4th report on the worker tab) — the floor cuts COPIES only. A reset archive
+    // holds turns no other transcript holds, and a page can lack them although it holds older rows:
+    // a background tab never receives its session's live turns, so the turns that ran while it was
+    // hidden sit in archives NEWER than rows the page kept. Cut by the floor, they were never served.
+    const floor = ref.kind === "reset" ? undefined : archiveFloor;
+    // A transcript that started at or after the floor holds nothing older: no merge needed.
+    const startedAt = readArchiveHead(ref.path).startedAt;
+    const skipUnread =
+      !continuing && floor !== undefined && startedAt !== undefined && startedAt >= floor;
+    let rows = skipUnread
+      ? []
+      : await projectedArchiveRows({
+          ref,
+          sessionKey,
+          maxChars,
+          excludeCliSessionIds: liveCliSessionIds,
+        });
+    if (floor !== undefined) {
+      rows = rowsBeforeFloor(rows, floor);
+    }
+    const last = i === archives.length - 1;
+    if (
+      rows.length === 0 &&
+      !continuing &&
+      !last &&
+      Date.now() - started < ARCHIVE_SKIP_BUDGET_MS
+    ) {
+      continue; // nothing older than what the page shows: the one before it
+    }
+    // A long archive (the worker's first spans a day: ~1,800 rows) is paged from its END:
+    // `archiveOffset` rows of it are already on the page, this reply is the `limit` rows before them.
+    const max = Math.min(1000, typeof params.limit === "number" ? params.limit : 200);
+    const end = Math.max(0, rows.length - (continuing ? offset : 0));
+    const begin = Math.max(0, end - max);
+    const normalized = augmentChatHistoryWithCanvasBlocks(rows.slice(begin, end));
+    const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
+    const replaced = replaceOversizedChatHistoryMessages({
+      messages: normalized,
+      maxSingleMessageBytes: Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes),
+    });
+    const capped = capArrayByJsonBytes(replaced.messages, maxHistoryBytes).items;
+    const bounded = enforceChatHistoryFinalBudget({ messages: capped, maxBytes: maxHistoryBytes });
+    respond(true, {
+      sessionKey,
+      sessionId,
+      messages: bounded.messages,
+      archive: {
+        resetAt: ref.resetAt,
+        olderCount: archives.length - 1 - i,
+        // The byte caps only ever drop a prefix, so whatever they dropped is still before this page.
+        rowsBefore: begin + (end - begin - bounded.messages.length),
+        kind: ref.kind,
+      },
+    });
+    return;
+  }
+  respond(true, {
+    sessionKey,
+    sessionId,
+    messages: [],
+    archive: { resetAt: null, olderCount: 0, rowsBefore: 0 },
+  });
+}
 
 export const chatHandlers: GatewayRequestHandlers = {
   "chat.history": async ({ params, respond, context }) => {
@@ -2000,18 +2628,88 @@ export const chatHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    const { sessionKey, limit, maxChars } = params as {
+    const {
+      sessionKey,
+      limit,
+      maxChars,
+      afterSeq,
+      beforeSeq,
+      epoch: clientEpoch,
+      resetArchiveBefore,
+      archiveOffset,
+      archiveFloor,
+    } = params as {
       sessionKey: string;
       limit?: number;
       maxChars?: number;
+      afterSeq?: number;
+      beforeSeq?: number;
+      epoch?: string;
+      resetArchiveBefore?: number;
+      archiveOffset?: number;
+      archiveFloor?: number;
     };
+    if (afterSeq !== undefined && beforeSeq !== undefined) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "invalid chat.history params: afterSeq and beforeSeq are mutually exclusive",
+        ),
+      );
+      return;
+    }
+    if (resetArchiveBefore !== undefined && (afterSeq !== undefined || beforeSeq !== undefined)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "invalid chat.history params: resetArchiveBefore excludes afterSeq and beforeSeq",
+        ),
+      );
+      return;
+    }
+    if (resetArchiveBefore !== undefined) {
+      await respondWithResetArchive({
+        sessionKey,
+        resetArchiveBefore,
+        archiveOffset,
+        archiveFloor,
+        limit,
+        maxChars,
+        respond,
+      });
+      return;
+    }
     const { cfg, storePath, entry } = loadSessionEntry(sessionKey);
     const sessionId = entry?.sessionId;
     const sessionAgentId = resolveSessionAgentId({ sessionKey, config: cfg });
     const resolvedSessionModel = resolveSessionModelRef(cfg, entry, sessionAgentId);
-    const localMessages =
-      sessionId && storePath ? readSessionMessages(sessionId, storePath, entry?.sessionFile) : [];
-    const rawMessages = augmentChatHistoryWithCliSessionImports({
+    const localRead =
+      sessionId && storePath
+        ? readSessionMessagesWithCursor(sessionId, storePath, entry?.sessionFile)
+        : { epoch: null, messages: [] };
+    const localMessages = localRead.messages;
+    const hardMax = 1000;
+    const defaultLimit = 200;
+    const requested = typeof limit === "number" ? limit : defaultLimit;
+    const max = Math.min(hardMax, requested);
+    // FORK 2026-09-23 (chat.history rehaul, plan task 5): seq cursors. The plan picks the local
+    // rows BEFORE the import merge and the projection, so a delta costs its own rows, not the
+    // transcript's. No cursor params = the "tail" plan = the flow below exactly as before.
+    const windowPlan = planChatHistoryWindow({
+      local: localMessages,
+      serverEpoch: localRead.epoch,
+      request: { afterSeq, beforeSeq, epoch: clientEpoch },
+      limit: max,
+    });
+    const windowLocal = windowPlan.kind === "tail" ? localMessages : windowPlan.local;
+    // FORK 2026-09-24 (R36 residual): the merge is kept before the window filter as well —
+    // buildChatHistoryCursor counts the imported user rows OLDER than the window from it
+    // (cursor.userRowsBefore), so that count costs no second claude-cli read.
+    const mergedMessages = augmentChatHistoryWithCliSessionImports({
       entry,
       // Attribution for the flood-valve warn ONLY (never affects what is served). Without it the
       // valve logs entry.sessionId — a raw UUID that cannot be joined against the [duprep-history]
@@ -2019,8 +2717,17 @@ export const chatHandlers: GatewayRequestHandlers = {
       // together, and they are the only diagnostics for this path.
       sessionKey,
       provider: resolvedSessionModel.provider,
-      localMessages,
+      localMessages: windowLocal,
+      // A slice must get the whole store's merge decisions (the flood valve's size and the
+      // prehistory floor's anchor), not ones measured from the slice.
+      ...(windowPlan.kind === "tail"
+        ? {}
+        : {
+            floodValveLocalCount: localMessages.length,
+            wholeStoreEarliestLocalTs: resolveEarliestLocalTimestamp(localMessages),
+          }),
     });
+    const rawMessages = filterImportsToWindow(mergedMessages, windowPlan);
     // FORK 2026-05-26 (task-mpkw1a0b-9jsfy): chat.history instrumentation
     // for the "user prompt appears twice on hard refresh" bug. Counts the
     // sources merged here so next reproduction tells us which layer
@@ -2056,8 +2763,13 @@ export const chatHandlers: GatewayRequestHandlers = {
       }
       return "";
     };
-    const localUsers = countUser(localMessages);
+    // A cursor slice is counted as served (the merge only saw the slice); the drop watch below
+    // always gets the whole transcript, or every small delta would read as a collapse.
+    const localUsers = countUser(windowLocal);
     const rawUsers = countUser(rawMessages);
+    // FORK 2026-09-08: OUTSIDE the info gate below on purpose — a detector that only samples the
+    // serves where that gate happens to fire cannot see the collapse it exists to catch.
+    noteDuprepLocalTotal({ context, sessionKey, sessionId, localTotal: localMessages.length });
     if (rawUsers > localUsers || rawUsers >= 2) {
       // FORK 2026-08-26 (duprep source diagnostics): name the SOURCE of the import on this
       // SAME line. The counts alone say "the merge added user rows" without saying WHICH
@@ -2093,22 +2805,20 @@ export const chatHandlers: GatewayRequestHandlers = {
         }
       });
       context.logGateway.info(
-        `[duprep-history] sessionKey=${sessionKey} local.total=${localMessages.length} local.user=${localUsers} raw.total=${rawMessages.length} raw.user=${rawUsers} lastLocalUser=${JSON.stringify(lastUserText(localMessages))} lastRawUser=${JSON.stringify(lastUserText(rawMessages))} cliSessionId=${importedCliSessionIds.join(",") || "none"} cliTranscriptBytes=${importedCliTranscriptBytes.join(",") || "none"}`,
+        `[duprep-history] sessionKey=${sessionKey} local.total=${windowLocal.length} local.user=${localUsers} raw.total=${rawMessages.length} raw.user=${rawUsers} lastLocalUser=${JSON.stringify(lastUserText(windowLocal))} lastRawUser=${JSON.stringify(lastUserText(rawMessages))} cliSessionId=${importedCliSessionIds.join(",") || "none"} cliTranscriptBytes=${importedCliTranscriptBytes.join(",") || "none"}${windowPlan.kind === "tail" ? "" : ` window=${windowPlan.kind}`}`,
       );
     }
-    const hardMax = 1000;
-    const defaultLimit = 200;
-    const requested = typeof limit === "number" ? limit : defaultLimit;
-    const max = Math.min(hardMax, requested);
     const effectiveMaxChars = resolveEffectiveChatHistoryMaxChars(cfg, maxChars);
     // FORK 2026-08-05: served VERBATIM — no content-based dedup pass. See the tombstone
     // comment above `chatHandlers` for what was removed and why.
-    const normalized = augmentChatHistoryWithCanvasBlocks(
-      projectRecentChatDisplayMessages(rawMessages, {
-        maxChars: effectiveMaxChars,
-        maxMessages: max,
-      }),
-    );
+    // A cursor slice is already bounded by seq, so `limit` and its local-floor rule
+    // (LOCAL_TAIL_FLOOR) shape only the tail window. The tail is projectRecentChatDisplayMessages
+    // taken apart (it is exactly limit(project(...))) so the cursor can see which rows the limit
+    // cut (ruling R23).
+    const projectedAll = projectChatDisplayMessages(rawMessages, { maxChars: effectiveMaxChars });
+    const projected =
+      windowPlan.kind === "tail" ? limitChatDisplayMessages(projectedAll, max) : projectedAll;
+    const normalized = augmentChatHistoryWithCanvasBlocks(projected);
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();
     const perMessageHardCap = Math.min(CHAT_HISTORY_MAX_SINGLE_MESSAGE_BYTES, maxHistoryBytes);
     const replaced = replaceOversizedChatHistoryMessages({
@@ -2146,6 +2856,18 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
     }
     const verboseLevel = entry?.verboseLevel ?? cfg.agents?.defaults?.verboseDefault;
+    const cursor = buildChatHistoryCursor({
+      plan: windowPlan,
+      epoch: localRead.epoch,
+      local: localMessages,
+      window: projectedAll,
+      // The served rows as they sat in `projected`: the canvas and oversize passes keep length and
+      // order, and the byte caps only ever drop a prefix, so they are its last N rows.
+      served: projected.slice(projected.length - bounded.messages.length),
+      // The merge before the window filter: userRowsBefore counts from it the imported user rows
+      // older than the window (ruling R36), without a second claude-cli read.
+      merged: mergedMessages,
+    });
     respond(true, {
       sessionKey,
       sessionId,
@@ -2153,6 +2875,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       thinkingLevel,
       fastMode: entry?.fastMode,
       verboseLevel,
+      cursor,
     });
   },
   "chat.abort": ({ params, respond, context, client }) => {
@@ -2326,6 +3049,8 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
     const rawSessionKey = p.sessionKey;
     const { cfg, entry, canonicalKey: sessionKey } = loadSessionEntry(rawSessionKey);
+    // FORK 2026-09-17: the human (seat) behind this message drives the calls it causes.
+    noteSessionDriver(sessionKey, driverForGatewayClient(client));
     const deletedAgentId = resolveDeletedAgentIdFromSessionKey(cfg, sessionKey);
     if (deletedAgentId !== null) {
       respond(
@@ -2391,6 +3116,13 @@ export const chatHandlers: GatewayRequestHandlers = {
 
     const cached = context.dedupe.get(`chat:${clientRunId}`);
     if (cached) {
+      logChatSendDuplicate({
+        context,
+        clientRunId,
+        sessionKey,
+        kind: "cached",
+        ageMs: Date.now() - cached.ts,
+      });
       respond(cached.ok, cached.payload, cached.error, {
         cached: true,
       });
@@ -2399,10 +3131,55 @@ export const chatHandlers: GatewayRequestHandlers = {
 
     const activeExisting = context.chatAbortControllers.get(clientRunId);
     if (activeExisting) {
+      logChatSendDuplicate({
+        context,
+        clientRunId,
+        sessionKey,
+        kind: "in_flight",
+        ageMs: Date.now() - activeExisting.startedAtMs,
+      });
       respond(true, { runId: clientRunId, status: "in_flight" as const }, undefined, {
         cached: true,
         runId: clientRunId,
       });
+      return;
+    }
+
+    // FORK 2026-09-08 (durable prompt key): the DURABLE arm of the duplicate check. Both guards
+    // above are process state — `context.dedupe` is swept after DEDUPE_TTL_MS (5 min) and neither
+    // survives a restart — so a replay from the durable outbox older than that was dispatched AGAIN
+    // as a fresh turn: 93 re-dispatches across 45 sessions on 2026-09-08, two answers to one prompt.
+    // The transcript is the only store that outlives both; if it holds our marker for this key the
+    // prompt was accepted before. Answer exactly as the completed-run cache does — `{status:"ok"}`,
+    // the payload written into the dedupe cache below — and start NO run. `payload.status` is the
+    // only discriminator the browser gets (the 4th respond() arg is log-only; see
+    // settleAlreadyCompletedSend in tinker-ui/src/app.ts) and "ok" routes the tab into fetching the
+    // answer that already exists. This response does NOT retire the outbox entry and must not: only
+    // reconcileWithHistory may, off the key readSessionMessages now serves on the user row. Nothing
+    // here compares text. Ordered LAST because it is the only guard that touches disk.
+    const durable = findDurablePromptKey({
+      sessionKey,
+      entry,
+      agentId,
+      idempotencyKey: clientRunId,
+    });
+    if (durable.found) {
+      logChatSendDuplicate({
+        context,
+        clientRunId,
+        sessionKey,
+        kind: "durable",
+        ageMs: durable.ts === undefined ? undefined : Date.now() - durable.ts,
+      });
+      const durablePayload = { runId: clientRunId, status: "ok" as const };
+      // Re-seed the in-memory cache with exactly what the completed run would have left there, so
+      // the next replay inside the TTL is answered from memory instead of another file scan.
+      setGatewayDedupeEntry({
+        dedupe: context.dedupe,
+        key: `chat:${clientRunId}`,
+        entry: { ts: Date.now(), ok: true, payload: durablePayload },
+      });
+      respond(true, durablePayload, undefined, { cached: true, durable: true, runId: clientRunId });
       return;
     }
     const explicitOriginTargetsPlugin = explicitOriginTargetsPluginBinding(
@@ -2467,6 +3244,11 @@ export const chatHandlers: GatewayRequestHandlers = {
       }
     }
 
+    // Holder C's accepted-and-not-yet-placed mark (session-utils.ts trackAcceptedChatSend), and with
+    // it the restart drain's `preparing` entry for the same span (preparingChatSends). Set once the
+    // dispatch is certain to start; every exit below releases both, in any order, any number of
+    // times.
+    let releaseAcceptedChatSend = (): void => {};
     try {
       const activeRunAbort = registerChatAbortController({
         chatAbortControllers: context.chatAbortControllers,
@@ -2501,6 +3283,68 @@ export const chatHandlers: GatewayRequestHandlers = {
       // polluting the user's webchat session. See flows.md F1.
       if (p.dispatchAgent === false) {
         return;
+      }
+      // FORK 2026-09-25 (prompt-queue.md §2 ACCEPTED, §7 G5) — until the reply pipeline places this
+      // prompt, only its controller holds it: get-reply's media / link understanding and
+      // prepared-reply setup run before runReplyAgent creates the reply operation. Mark it, so
+      // sessions.list reports the key PREPARING instead of leaving it out
+      // (session-utils.ts trackAcceptedChatSend). Released on placement (onAgentRunStart,
+      // onPromptDisposition), on abort (abortChatRunById aborts this controller), and when the
+      // dispatch settles or throws. `since` is holder C's own clock, the controller's startedAtMs.
+      // Below the dispatchAgent:false return: that probe dispatches nothing to place.
+      releaseAcceptedChatSend = trackAcceptedChatSend({
+        promptKey: clientRunId,
+        sessionKey,
+        since: now,
+      });
+      // FORK 2026-10-01 (lifecycles.md L4b; bug-log.md [chat-divergence] cause 6): the restart drain
+      // waits for this prompt over the same span. Until the reply pipeline places it, no runner
+      // participant knows it exists: on 2026-09-30 a staged-build restart drained `held=1 ended=0
+      // unfinished=0` while prompt a247f622 sat in a memory-flush compaction, and the stop lost it.
+      // Holder C's exits are the right ones. An embedded run fires onAgentRunStart at its first
+      // agent event, `agent_start`, after its boundary gate is armed, so a drain holds it at its
+      // first model call. A cc-bridge run (claude-code is an embedded provider whose gate the
+      // drain leaves alone) that starts during a drain is frozen by the bridge, on the file
+      // transport, with its prompt in the worker's FIFO. A CLI-backend run fires it just before
+      // it starts, and no participant holds those, as before. A disposition hands the prompt to
+      // another holder (steered, backlogged) or refuses it (dropped); an abort or a settle ends it.
+      const releaseHolderC = releaseAcceptedChatSend;
+      const releasePreparing = preparingChatSends.track({
+        promptKey: clientRunId,
+        sessionKey,
+        since: now,
+        log: context.logGateway,
+      });
+      releaseAcceptedChatSend = () => {
+        releaseHolderC();
+        releasePreparing();
+      };
+      activeRunAbort.controller.signal.addEventListener("abort", releaseAcceptedChatSend, {
+        once: true,
+      });
+      // FORK 2026-09-08 (durable prompt key): record, on disk, that this idempotencyKey was
+      // ACCEPTED — before anything runs. This is the write the 2026-08-16 stamp meant to be: it went
+      // through emitSessionTranscriptUpdate, which only notifies listeners (transcript-events.ts),
+      // so the persisted user row never carried the key and the outbox could never prove delivery.
+      //
+      // POSITION IS DELIBERATE. After the dispatchAgent:false return above (its contract is "no
+      // transcript write"; a marker there would have every bible probe litter a real session), and
+      // after the attachment-failure and !registered exits: a marker for a prompt that never
+      // dispatched is immortal — every replay would echo "ok" while the transcript can never prove
+      // it, a permanently undelivered bubble for a prompt that never ran, the mirror image of this
+      // bug. Still BEFORE dispatch, synchronously, so the marker precedes pi's user row on disk —
+      // attachPromptKeysToUserRows (prompt-key-marker.ts) depends on exactly that order.
+      const marked = appendPromptKeyMarkerForChatSend({
+        sessionKey,
+        entry,
+        agentId,
+        idempotencyKey: clientRunId,
+        ts: now,
+      });
+      if (!marked.ok && !marked.skipped) {
+        context.logGateway.warn(
+          `[chat.send] prompt-key marker not written key=${clientRunId} sessionKey=${sessionKey}: ${marked.error ?? "unknown error"}`,
+        );
       }
       const persistedImagesPromise = persistChatSendImages({
         images: parsedImages,
@@ -2759,7 +3603,26 @@ export const chatHandlers: GatewayRequestHandlers = {
         );
       });
 
+      // FORK 2026-09-24 — D2 (TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.2, PQ-6): ONE tier-1
+      // terminal per runId. abortChatRunById (chat.abort, the maintenance timeout, and
+      // sessions.delete / sessions.reset through endSessionTurns) broadcasts `aborted` for this run
+      // and marks it in chatAbortedRuns, but the dispatch below still settles afterwards, and its
+      // completion used to broadcast a SECOND terminal (`final` or `error`) for the same runId.
+      // Asked at each broadcast, because an abort can land during the awaits before it. Scoped to
+      // THIS run: a mark lives an hour and is keyed by prompt key, so a mark older than this send
+      // belongs to an earlier run under the same key and must not mute this one. The UI's
+      // rememberTerminated de-dupe stays as defence in depth, not as the proof.
+      const runAlreadyTerminated = () =>
+        context.chatAbortedRuns.has(clientRunId) &&
+        (context.chatAbortedRuns.get(clientRunId) ?? 0) >= now;
       let agentRunStarted = false;
+      // FORK 2026-09-24 (prompt-queue.md §7 step G2, principle PQ-8 "DISPOSITION IS REPORTED, NOT
+      // GUESSED"): the last disposition the reply pipeline reported for THIS prompt. Assigned only
+      // from the callback below and read inside the `.then()` closure — the same shape as
+      // `agentRunStarted` above, which is why TypeScript reads it at its declared type rather than
+      // narrowing it. Undefined means nothing was reported: the prompt started its own run, or the
+      // report arrived after the final was built, and the UI keeps today's behaviour either way.
+      let promptDisposition: PromptDisposition | undefined;
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -2771,6 +3634,8 @@ export const chatHandlers: GatewayRequestHandlers = {
           imageOrder: imageOrder.length > 0 ? imageOrder : undefined,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
+            // Placed: the reply operation reports this prompt RUNNING from here.
+            releaseAcceptedChatSend();
             void emitUserTranscriptUpdate();
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
@@ -2790,6 +3655,19 @@ export const chatHandlers: GatewayRequestHandlers = {
             }
           },
           onModelSelected,
+          // FORK 2026-09-24 (prompt-queue.md §6.3 / §7 G2): the ONE place the gateway's own answer
+          // to "what did you do with my prompt?" enters the chat protocol. It can fire twice for one
+          // prompt — "steered" when the running turn accepts the text, then "backlogged" if that
+          // delivery is later lost (the §2 STEERED → BEHIND edge) — and the value standing when the
+          // final is built is the one that ships. The second report comes from a debounce timer
+          // inside the steer buffer and races the transcript/media await chain below, so it may miss
+          // the broadcast; that loss is by design, and the authoritative correction is the follow-up
+          // run's promptKeys (plan step G3), not this field.
+          onPromptDisposition: (disposition) => {
+            promptDisposition = disposition;
+            // Placed: the steer record or the follow-up queue names it now (dropped: nothing does).
+            releaseAcceptedChatSend();
+          },
         },
       })
         .then(async () => {
@@ -2817,11 +3695,13 @@ export const chatHandlers: GatewayRequestHandlers = {
                   ts: Date.now(),
                 },
               });
-              broadcastChatFinal({
-                context,
-                runId: clientRunId,
-                sessionKey,
-              });
+              if (!runAlreadyTerminated()) {
+                broadcastChatFinal({
+                  context,
+                  runId: clientRunId,
+                  sessionKey,
+                });
+              }
             } else {
               // FORK 2026-07-22 (chat-error-persist): include "block" acks too —
               // see projectPreRunReplyPayloads.
@@ -2898,6 +3778,24 @@ export const chatHandlers: GatewayRequestHandlers = {
                 mediaMessage?.transcriptText ||
                 buildTranscriptReplyText(finalPayloads) ||
                 displayReply;
+              // FORK 2026-09-29 (chat-usage-outcome U5): a pre-run failure arrives
+              // here as ordinary reply text — "⚠️ Agent failed before reply: …",
+              // "⚠️ All models are temporarily rate-limited …", the overload / 402
+              // credits copy, or a "/model" ack followed by one of them
+              // ("Model set to X\n\n⚠️ Rate-limited — ready in 5m"). Type it ONCE,
+              // here, and let it ride on `message.outcome`.
+              //
+              // The ERROR payloads' own text is classified, never the joined reply
+              // text: on a turn that both acked/answered AND failed, classifying the
+              // join as an error would type the ANSWER — the very defect the
+              // backstop split above exists to kill. With no flagged payload we fall
+              // back to the unflagged classifier, which only fires on the gateway's
+              // own wording at the first meaningful line, so a bare "/model" ack and
+              // a genuine answer both stay answers.
+              const preRunSplit = splitFinalPayloadsForDisplay(finalPayloads);
+              const preRunOutcome = preRunSplit.errorText
+                ? outcomeForInjectedText(preRunSplit.errorText, { isError: true })
+                : outcomeForInjectedText(transcriptReply || displayReply || "");
               let message: Record<string, unknown> | undefined;
               if (
                 transcriptReply ||
@@ -2925,6 +3823,13 @@ export const chatHandlers: GatewayRequestHandlers = {
                   message = broadcastAssistantContent?.length
                     ? { ...appended.message, content: broadcastAssistantContent }
                     : appended.message;
+                  // FORK 2026-09-29 (U5): attached on the LIVE message explicitly.
+                  // The transcript writer carries no `outcome` field yet (see
+                  // persistAgentStartedFallbackReply), and this path must type the
+                  // event regardless of what reached disk.
+                  if (preRunOutcome && message) {
+                    message = { ...message, outcome: preRunOutcome };
+                  }
                 } else {
                   context.logGateway.warn(
                     `webchat transcript append failed: ${appended.error ?? "unknown error"}`,
@@ -2948,15 +3853,24 @@ export const chatHandlers: GatewayRequestHandlers = {
                     // persisted to the transcript due to the append failure.
                     stopReason: "stop",
                     usage: { input: 0, output: 0, totalTokens: 0 },
+                    // FORK 2026-09-29 (U5): the append failed, so this message exists
+                    // only on the wire — all the more reason for it to carry its type.
+                    ...(preRunOutcome ? { outcome: preRunOutcome } : {}),
                   };
                 }
               }
-              broadcastChatFinal({
-                context,
-                runId: clientRunId,
-                sessionKey,
-                message,
-              });
+              if (!runAlreadyTerminated()) {
+                broadcastChatFinal({
+                  context,
+                  runId: clientRunId,
+                  sessionKey,
+                  message,
+                  // Only THIS final carries it. The /btw final above ends a prompt that did produce
+                  // a reply, and the backstop final in the `else` branch below belongs to a prompt
+                  // whose own agent run started — neither has a queue placement to report.
+                  disposition: promptDisposition,
+                });
+              }
             }
           } else {
             void emitUserTranscriptUpdate();
@@ -2980,54 +3894,59 @@ export const chatHandlers: GatewayRequestHandlers = {
             const finalPayloads = deliveredReplies
               .filter((entry) => entry.kind === "final")
               .map((entry) => entry.payload);
-            const fallbackText =
-              finalPayloads
-                .map((p) => (typeof p?.text === "string" ? p.text.trim() : ""))
-                .filter(Boolean)
-                .join("\n\n") || undefined;
-            // FORK 2026-07-22 (chat-error-persist): optional error flag set by
-            // agent-runner-execution on failure payloads (sibling change —
-            // optional chaining so this compiles standalone). Propagated on the
-            // broadcast message AND the persisted transcript entry so the UI
-            // can render the bubble red, live and after reload.
-            const fallbackIsError = finalPayloads.some((p) => p?.isError === true);
-            const fallbackMessage = fallbackText
-              ? {
-                  role: "assistant",
-                  content: [{ type: "text", text: fallbackText }],
-                  text: fallbackText,
-                  timestamp: Date.now(),
-                  stopReason: "stop",
-                  usage: { input: 0, output: 0, totalTokens: 0 },
-                  ...(fallbackIsError ? { isError: true } : {}),
-                }
-              : undefined;
+            // FORK 2026-07-22 (chat-error-persist): the error flag is set by
+            // agent-runner-execution on failure payloads. It is propagated on the
+            // broadcast message AND the persisted transcript entry so the UI can
+            // render the bubble red, live and after reload.
+            //
+            // FORK 2026-09-29 (chat-usage-outcome U5): the answer and the error are
+            // no longer joined. `fallbackText` used to be the join of EVERY final
+            // payload and the flag was `some(isError)`, so one trailing failure line
+            // turned the real answer that preceded it into a single red bubble (16
+            // answers, census 2026-09-29). buildBackstopFinalMessages returns the
+            // answer as the turn's clean final and the error as its own typed
+            // message, and hands back only the ERROR text to persist — the answer is
+            // already persisted by the agent runtime, and the old join wrote it a
+            // second time, flagged.
+            const backstop = buildBackstopFinalMessages(finalPayloads);
             // FORK 2026-07-22 (chat-error-persist): ALSO persist the backstop
             // ERROR text. A mid-run agent death ("⚠️ Agent failed before
             // reply: …") was broadcast-only here, so any tab reload / WS
-            // reconnect showed NOTHING. Successful replies are already
-            // persisted by the agent runtime; persisting the successful
-            // backstop here creates a duplicate assistant transcript entry.
-            if (
-              fallbackIsError &&
-              fallbackText &&
-              !isSilentReplyText(fallbackText, SILENT_REPLY_TOKEN)
-            ) {
+            // reconnect showed NOTHING.
+            if (backstop.persistText) {
               persistAgentStartedFallbackReply({
                 sessionKey,
                 clientRunId,
                 agentId,
-                fallbackText,
-                isError: fallbackIsError,
+                fallbackText: backstop.persistText,
+                isError: true,
+                ...(backstop.outcome ? { outcome: backstop.outcome } : {}),
                 logWarn: (message) => context.logGateway.warn(message),
               });
             }
-            broadcastChatFinal({
-              context,
-              runId: clientRunId,
-              sessionKey,
-              ...(fallbackMessage ? { message: fallbackMessage } : {}),
-            });
+            if (!runAlreadyTerminated()) {
+              broadcastChatFinal({
+                context,
+                runId: clientRunId,
+                sessionKey,
+                ...(backstop.final ? { message: backstop.final } : {}),
+              });
+              // FORK 2026-09-29 (U5): the turn answered AND failed. The final above
+              // carries the answer, so the error needs its own live message or the
+              // tab sees it only after a reload. It cannot share this runId:
+              // broadcastChatFinal deletes the agentRunSeq entry and the client
+              // de-dupes by runId+state, so a second final on `clientRunId` would be
+              // dropped. Same shape as the chat.inject broadcast below (~3607): a
+              // synthetic runId for a standalone assistant message.
+              if (backstop.injectedError) {
+                broadcastChatFinal({
+                  context,
+                  runId: `inject-err-${clientRunId}`,
+                  sessionKey,
+                  message: backstop.injectedError,
+                });
+              }
+            }
           }
           setGatewayDedupeEntry({
             dedupe: context.dedupe,
@@ -3065,19 +3984,23 @@ export const chatHandlers: GatewayRequestHandlers = {
               error,
             },
           });
-          broadcastChatError({
-            context,
-            runId: clientRunId,
-            sessionKey,
-            errorMessage: String(err),
-            error: err,
-          });
+          if (!runAlreadyTerminated()) {
+            broadcastChatError({
+              context,
+              runId: clientRunId,
+              sessionKey,
+              errorMessage: String(err),
+              error: err,
+            });
+          }
         })
         .finally(() => {
+          releaseAcceptedChatSend();
           activeRunAbort.cleanup();
           context.removeChatRun(clientRunId, clientRunId, sessionKey);
         });
     } catch (err) {
+      releaseAcceptedChatSend();
       context.chatAbortControllers.delete(clientRunId);
       context.removeChatRun(clientRunId, clientRunId, sessionKey);
       const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
@@ -3165,5 +4088,66 @@ export const chatHandlers: GatewayRequestHandlers = {
     context.nodeSendToSession(sessionKey, "chat", chatPayload);
 
     respond(true, { ok: true, messageId: appended.messageId });
+  },
+  // FORK 2026-09-29 (lifecycles.md L4b): the restart notice. A transcript `custom` entry (never a
+  // message: the model does not see it, and it cannot block a promptless `Agent.continue()`),
+  // served by chat.history as a system row and broadcast here so an open tab shows it at once.
+  "chat.restartNotice": async ({ params, respond, context }) => {
+    const p = (params ?? {}) as {
+      sessionKey?: unknown;
+      stoppedAt?: unknown;
+      reason?: unknown;
+      how?: unknown;
+    };
+    const data = {
+      backAt: Date.now(),
+      how: p.how,
+      ...(typeof p.stoppedAt === "number" ? { stoppedAt: p.stoppedAt } : {}),
+      ...(typeof p.reason === "string" && p.reason.trim()
+        ? { reason: p.reason.trim().slice(0, 200) }
+        : {}),
+    };
+    if (typeof p.sessionKey !== "string" || !p.sessionKey || !isRestartNoticeData(data)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "invalid chat.restartNotice params"),
+      );
+      return;
+    }
+    const { cfg, storePath, entry, canonicalKey: sessionKey } = loadSessionEntry(p.sessionKey);
+    const transcriptPath =
+      entry?.sessionId && storePath
+        ? resolveTranscriptPath({
+            sessionId: entry.sessionId,
+            storePath,
+            sessionFile: entry.sessionFile,
+            agentId: resolveSessionAgentId({ sessionKey, config: cfg }),
+          })
+        : undefined;
+    if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "session transcript not found"),
+      );
+      return;
+    }
+    const appended = appendRestartNoticeToTranscript({ transcriptPath, data });
+    if (!appended.ok) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, `failed to write transcript: ${appended.error}`),
+      );
+      return;
+    }
+    // Its own event, not a `chat` final: a final ends the session's turn in every client (the queue
+    // release, the retry ladder, the ended-at stamp), and a notice ends nothing.
+    context.broadcast("chat.notice", {
+      sessionKey,
+      message: buildRestartNoticeRow(data, { id: appended.id }),
+    });
+    respond(true, { ok: true, id: appended.id });
   },
 };

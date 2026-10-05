@@ -1,9 +1,24 @@
+import { existsSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Command } from "commander";
 import { buildGatewayConnectionDetails } from "../gateway/call.js";
 import { isLoopbackHost } from "../gateway/net.js";
 import { readConnectPairingRequiredMessage } from "../gateway/protocol/connect-error-details.js";
 import { formatErrorMessage } from "../infra/errors.js";
+import { resolveEventsDbPath } from "../infra/events/paths.js";
+import {
+  assertReadOnlySelect,
+  EVENTS_QUERY_DEFAULT_ROW_CAP,
+  EVENTS_SQL_DEFAULT_TIME_BUDGET_MS,
+  EVENTS_SQL_MAX_ROW_CAP,
+  EventsQueryError,
+  type EventsQueryResult,
+  guardSavedQueryResult,
+  orderCatalogSilentFirst,
+  resolveSavedQuery,
+  runIsolatedReadOnlySql,
+} from "../infra/events/query.js";
+import { CATALOG_QUERY_NAME, SAVED_QUERIES } from "../infra/events/saved-queries.js";
 import { readConfiguredLogTail } from "../logging/log-tail.js";
 import { parseLogLine } from "../logging/parse-log-line.js";
 import { formatTimestamp, isValidTimeZone } from "../logging/timestamps.js";
@@ -11,6 +26,7 @@ import { normalizeLowercaseStringOrEmpty } from "../shared/string-coerce.js";
 import { formatDocsLink } from "../terminal/links.js";
 import { clearActiveProgressLine } from "../terminal/progress-line.js";
 import { createSafeStreamWriter } from "../terminal/stream-writer.js";
+import { getTerminalTableWidth, renderTable } from "../terminal/table.js";
 import { colorize, isRich, theme } from "../terminal/theme.js";
 import { formatCliCommand } from "./command-format.js";
 import { addGatewayClientOptions, callGatewayFromCli } from "./gateway-rpc.js";
@@ -243,6 +259,357 @@ async function emitGatewayError(
   errorLine(colorize(rich, theme.muted, hint));
 }
 
+// ─── FORK 2026-09-25: the events-database query surface (logging.md §8.2, §9 step 10) ───────
+//
+// `logs query` and `logs catalog` ask the gateway (logs.query / logs.catalog: a saved query BY
+// NAME, run on the events writer thread) unless --local; `logs sql` is LOCAL ONLY and never goes
+// over RPC. Every local read runs in a child process on a read-only connection with a row cap and
+// a time budget that ends in SIGKILL (infra/events/query.ts runIsolatedReadOnlySql).
+
+type EventsQueryPayload = EventsQueryResult & {
+  readonly name?: string;
+  readonly description?: string;
+  readonly params?: Readonly<Record<string, unknown>>;
+};
+
+type LogsEventsCliOptions = {
+  list?: boolean;
+  since?: string;
+  label?: string;
+  limit?: string;
+  budgetMs?: string;
+  silent?: boolean;
+  local?: boolean;
+  db?: string;
+  json?: boolean;
+  plain?: boolean;
+  url?: string;
+  token?: string;
+  timeout?: string;
+  expectFinal?: boolean;
+};
+
+const LOCAL_QUERY_HINT =
+  "Hint: --local reads the events database file directly when the gateway cannot answer.";
+
+function parseCliPositiveInt(value: string | undefined, flag: string, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const parsed = Number(value.trim());
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new EventsQueryError(
+      "invalid",
+      `${flag} must be a positive integer, not ${JSON.stringify(value)}`,
+    );
+  }
+  return parsed;
+}
+
+/** The local file: --db, else paths.ts's resolution — which refuses when off or under a test runner. */
+function resolveLocalEventsDb(dbOption: string | undefined): string {
+  const explicit = dbOption?.trim();
+  let dbPath: string;
+  if (explicit) {
+    dbPath = explicit;
+  } else {
+    const resolution = resolveEventsDbPath(process.env);
+    if (!resolution.enabled) {
+      throw new EventsQueryError(
+        "unavailable",
+        resolution.reason === "disabled"
+          ? "the events database is turned off (OPENCLAW_EVENTS_DB=0); pass --db <file> to read one"
+          : "there is no default events database under a test runner; pass --db <file>",
+      );
+    }
+    dbPath = resolution.dbPath;
+  }
+  if (!existsSync(dbPath)) {
+    throw new EventsQueryError(
+      "unavailable",
+      `no events database at ${dbPath} yet (the gateway's events writer creates it)`,
+    );
+  }
+  return dbPath;
+}
+
+function isEventsQueryPayload(value: unknown): value is EventsQueryPayload {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as { rows?: unknown }).rows) &&
+    Array.isArray((value as { columns?: unknown }).columns)
+  );
+}
+
+/** A saved query against the local file, with the same guards the writer thread applies. */
+async function runSavedQueryLocally(
+  name: string,
+  input: Record<string, unknown>,
+  opts: LogsEventsCliOptions,
+): Promise<EventsQueryPayload> {
+  const resolved = resolveSavedQuery(name, input, {
+    nowMs: Date.now(),
+    limit: parseCliPositiveInt(opts.limit, "--limit", EVENTS_QUERY_DEFAULT_ROW_CAP),
+    maxRowCap: EVENTS_SQL_MAX_ROW_CAP,
+  });
+  const result = await runIsolatedReadOnlySql({
+    dbPath: resolveLocalEventsDb(opts.db),
+    sql: resolved.query.sql,
+    params: resolved.params,
+    rowCap: resolved.rowCap,
+    timeBudgetMs: EVENTS_SQL_DEFAULT_TIME_BUDGET_MS,
+  });
+  return {
+    name: resolved.query.name,
+    description: resolved.query.description,
+    params: resolved.params,
+    ...guardSavedQueryResult(result),
+  };
+}
+
+function printEventsQueryPayload(
+  payload: EventsQueryPayload,
+  opts: LogsEventsCliOptions,
+  columns: readonly string[] = payload.columns,
+): void {
+  const { logLine, errorLine, emitJsonLine } = createLogWriters();
+  if (opts.json) {
+    emitJsonLine({ ...payload });
+    return;
+  }
+  if (payload.rows.length === 0) {
+    logLine("(no rows)");
+  } else {
+    logLine(
+      renderTable({
+        width: getTerminalTableWidth(),
+        ...(opts.plain ? { border: "none" as const } : {}),
+        columns: columns.map((key, index) => ({
+          key,
+          header: key,
+          flex: index === columns.length - 1,
+        })),
+        rows: payload.rows.map((row) =>
+          Object.fromEntries(
+            columns.map((key) => [
+              key,
+              row[key] === null || row[key] === undefined ? "" : String(row[key]),
+            ]),
+          ),
+        ),
+      }).trimEnd(),
+    );
+  }
+  if (payload.truncated === "row_cap") {
+    errorLine(`Stopped at ${payload.rowCount} rows (raise --limit).`);
+  } else if (payload.truncated === "time_budget") {
+    errorLine(`Stopped at the time budget after ${payload.rowCount} rows.`);
+  }
+  if (payload.redactedSessionKeys > 0) {
+    errorLine(
+      `${payload.redactedSessionKeys} cell(s) held a raw session key and were redacted: a producer ` +
+        "is leaking one past the writer (logging.md L4).",
+    );
+  }
+}
+
+function reportEventsQueryError(err: unknown, opts: LogsEventsCliOptions, hint?: string): void {
+  const { errorLine, emitJsonLine } = createLogWriters();
+  const message = err instanceof Error ? err.message : String(err);
+  // A refusal of the request itself (bad SQL, a bad flag) gets no hint: --local would not help.
+  const shownHint = err instanceof EventsQueryError ? undefined : hint;
+  if (opts.json) {
+    emitJsonLine({ type: "error", message, ...(shownHint ? { hint: shownHint } : {}) }, true);
+  } else {
+    const rich = isRich();
+    errorLine(colorize(rich, theme.error, message));
+    if (shownHint) {
+      errorLine(colorize(rich, theme.muted, shownHint));
+    }
+  }
+  process.exitCode = 1;
+}
+
+function printSavedQueryList(opts: LogsEventsCliOptions): void {
+  const { logLine, emitJsonLine } = createLogWriters();
+  if (opts.json) {
+    emitJsonLine({
+      type: "saved-queries",
+      queries: SAVED_QUERIES.map((query) => ({
+        name: query.name,
+        description: query.description,
+        params: query.params,
+        defaultSince: query.defaultSince ?? null,
+        reads: query.reads,
+      })),
+    });
+    return;
+  }
+  logLine(
+    renderTable({
+      width: getTerminalTableWidth(),
+      columns: [
+        { key: "name", header: "Name" },
+        { key: "params", header: "Takes" },
+        { key: "description", header: "Question", flex: true },
+      ],
+      rows: SAVED_QUERIES.map((query) => ({
+        name: query.name,
+        params:
+          query.params.length === 0
+            ? "(fixed window)"
+            : query.params
+                .map((param) => (param === "since" ? `--since (${query.defaultSince})` : "--label"))
+                .join(" "),
+        description: query.description,
+      })),
+    }).trimEnd(),
+  );
+}
+
+function registerLogsEventsCli(logs: Command): void {
+  // `logs query … --json` / `--limit` must reach the subcommand, not the tail's own options of the
+  // same names. The root program enables positional options too (program/build-program.ts).
+  logs.enablePositionalOptions();
+
+  const query = logs
+    .command("query")
+    .description("Run a saved events-database query by name (logging.md §8.1); no name lists them")
+    .argument("[name]", "Saved query name")
+    .option("--list", "List the saved queries", false)
+    .option("--since <duration>", "Window start: 30m, 12h, 7d or 4w (queries that take it)")
+    .option("--label <label>", "Label filter (queries that take it)")
+    .option("--limit <n>", "Max rows", String(EVENTS_QUERY_DEFAULT_ROW_CAP))
+    .option("--local", "Read the events database file instead of asking the gateway", false)
+    .option("--db <path>", "With --local: the events database file (default: the state dir's)")
+    .option("--json", "Emit JSON", false)
+    .option("--plain", "No table borders", false);
+  addGatewayClientOptions(query);
+  query.action(async (name: string | undefined, opts: LogsEventsCliOptions) => {
+    if (opts.list || name === undefined) {
+      printSavedQueryList(opts);
+      return;
+    }
+    const input: Record<string, unknown> = {};
+    if (opts.since !== undefined) {
+      input.since = opts.since;
+    }
+    if (opts.label !== undefined) {
+      input.label = opts.label;
+    }
+    try {
+      const payload: unknown = opts.local
+        ? await runSavedQueryLocally(name, input, opts)
+        : await callGatewayFromCli(
+            "logs.query",
+            opts,
+            {
+              name,
+              ...(Object.keys(input).length > 0 ? { params: input } : {}),
+              limit: parseCliPositiveInt(opts.limit, "--limit", EVENTS_QUERY_DEFAULT_ROW_CAP),
+            },
+            { progress: !opts.json },
+          );
+      if (!isEventsQueryPayload(payload)) {
+        throw new Error("Unexpected logs.query response");
+      }
+      printEventsQueryPayload(payload, opts);
+    } catch (err) {
+      reportEventsQueryError(err, opts, opts.local ? undefined : LOCAL_QUERY_HINT);
+    }
+  });
+
+  logs
+    .command("sql")
+    .description("Run ONE read-only SELECT/WITH on the local events database (never over RPC)")
+    .argument("<sql>", "A single SELECT or WITH statement")
+    .option("--limit <n>", "Max rows", String(EVENTS_QUERY_DEFAULT_ROW_CAP))
+    .option(
+      "--budget-ms <ms>",
+      "Time budget; past it the query is stopped, and killed if one step overruns",
+      String(EVENTS_SQL_DEFAULT_TIME_BUDGET_MS),
+    )
+    .option("--db <path>", "The events database file (default: the state dir's)")
+    .option("--json", "Emit JSON", false)
+    .option("--plain", "No table borders", false)
+    .action(async (sql: string, opts: LogsEventsCliOptions) => {
+      try {
+        // The statement is judged before any file is looked for: a write is refused as a write.
+        assertReadOnlySelect(sql);
+        const result = await runIsolatedReadOnlySql({
+          dbPath: resolveLocalEventsDb(opts.db),
+          sql,
+          rowCap: parseCliPositiveInt(opts.limit, "--limit", EVENTS_QUERY_DEFAULT_ROW_CAP),
+          timeBudgetMs: parseCliPositiveInt(
+            opts.budgetMs,
+            "--budget-ms",
+            EVENTS_SQL_DEFAULT_TIME_BUDGET_MS,
+          ),
+        });
+        printEventsQueryPayload(result, opts);
+      } catch (err) {
+        reportEventsQueryError(err, opts);
+      }
+    });
+
+  const catalog = logs
+    .command("catalog")
+    .description("The event catalog with row counts in the window and last-seen times")
+    .option("--silent", "Declared events with no row in the window first", false)
+    .option("--since <duration>", "Window for the counts (default 7d)")
+    .option("--local", "Read the events database file instead of asking the gateway", false)
+    .option("--db <path>", "With --local: the events database file (default: the state dir's)")
+    .option("--json", "Emit JSON", false)
+    .option("--plain", "No table borders", false);
+  addGatewayClientOptions(catalog);
+  catalog.action(async (opts: LogsEventsCliOptions) => {
+    try {
+      let payload: unknown;
+      if (opts.local) {
+        const local = await runSavedQueryLocally(
+          CATALOG_QUERY_NAME,
+          opts.since === undefined ? {} : { since: opts.since },
+          { ...opts, limit: String(EVENTS_SQL_MAX_ROW_CAP) },
+        );
+        payload = opts.silent ? { ...local, rows: orderCatalogSilentFirst(local.rows) } : local;
+      } else {
+        payload = await callGatewayFromCli(
+          "logs.catalog",
+          opts,
+          {
+            ...(opts.silent ? { silent: true } : {}),
+            ...(opts.since !== undefined ? { since: opts.since } : {}),
+          },
+          { progress: !opts.json },
+        );
+      }
+      if (!isEventsQueryPayload(payload)) {
+        throw new Error("Unexpected logs.catalog response");
+      }
+      if (opts.json) {
+        printEventsQueryPayload(payload, opts);
+        return;
+      }
+      // The text table shows a readable last-seen time; the rows are this call's own copy.
+      for (const row of payload.rows) {
+        row.last_seen =
+          typeof row.last_ts_ms === "number" ? new Date(row.last_ts_ms).toISOString() : null;
+      }
+      printEventsQueryPayload(payload, opts, [
+        "name",
+        "kind",
+        "retention",
+        "paper",
+        "rows_since",
+        "last_seen",
+      ]);
+    } catch (err) {
+      reportEventsQueryError(err, opts, opts.local ? undefined : LOCAL_QUERY_HINT);
+    }
+  });
+}
+
 export function registerLogsCli(program: Command) {
   const logs = program
     .command("logs")
@@ -386,4 +753,6 @@ export function registerLogsCli(program: Command) {
       await delay(interval);
     }
   });
+
+  registerLogsEventsCli(logs);
 }

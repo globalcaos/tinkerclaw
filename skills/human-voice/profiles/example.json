@@ -1,0 +1,48 @@
+{
+  "_about": "A voice profile: one writer's measured habits and their own corrections, used by voicecheck.py --voice when a text goes out IN THAT PERSON'S NAME. This file is a neutral template with made-up values. Copy it OUTSIDE the skill folder (it is personal data), measure the real numbers with the 'voice' brief in references/research/briefs.md, and point HUMAN_VOICE_PROFILE at your copy. Every key is optional: a habit you leave out is not checked.",
+  "name": "the example writer",
+  "notes": "example.md",
+  "habits": {
+    "_about": "Checked in chat and post modes only. 'sev' is LOW/MED/HIGH; keep them LOW or MED unless the writer asked for the rule, because the thread can overrule an average. 'why' is shown as the fix; {name} is replaced by the profile name.",
+    "no_final_stop": {
+      "sev": "LOW",
+      "under_words": 60,
+      "why": "{name} ends chat messages on the last word (example: 9 in 10 of their messages)"
+    },
+    "no_semicolon": {
+      "sev": "MED",
+      "why": "{name} almost never uses a semicolon; split the sentence"
+    },
+    "chat_max_words": {
+      "sev": "MED",
+      "value": 70,
+      "why": "{name}'s chat median is about 12 words; say it in two short lines"
+    },
+    "no_formal_signoff": { "sev": "MED", "why": "{name} does not sign off in chat; just stop" },
+    "no_contractions_en": {
+      "sev": "LOW",
+      "max": 2,
+      "why": "{name} writes 'I am', 'we are' in English"
+    }
+  },
+  "rules": {
+    "_about": "The writer's own corrections, per language, checked in every mode. Add each one the day they make it, with the date in 'fix'. 're' is matched against the lower-cased draft.",
+    "en": [
+      {
+        "re": "\\bkindly\\b",
+        "sev": "HIGH",
+        "fix": "'please'; {name} never writes 'kindly' (their correction, example date 2026-01-15)"
+      }
+    ],
+    "es": [
+      { "re": "\\bun saludo cordial\\b", "sev": "MED", "fix": "'Un abrazo' o nada (ejemplo)" }
+    ],
+    "ca": [
+      {
+        "re": "\\bmoltes gràcies per endavant\\b",
+        "sev": "MED",
+        "fix": "'Gràcies!' i prou (exemple)"
+      }
+    ]
+  }
+}

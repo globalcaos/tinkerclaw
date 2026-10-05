@@ -76,6 +76,10 @@ export async function messageCommand(
       gateway: {
         clientName: GATEWAY_CLIENT_NAMES.CLI,
         mode: GATEWAY_CLIENT_MODES.CLI,
+        // The runner's 10 s default is shorter than a queued WhatsApp group send (2026-10-02:
+        // reported "gateway timeout" while the message WAS delivered), which invites a retry
+        // that double-posts.
+        timeoutMs: 60_000,
       },
     });
 

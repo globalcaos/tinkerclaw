@@ -32,11 +32,9 @@
  * 187×), so "the value is right today" is not evidence the order is right.
  *
  * STILL SPLIT, ON PURPOSE — do not close the drift ticket on this file alone:
- *   1. tinker-ui/src/panels/eeg-trace.ts keeps its own EEG_COST_TABLE for now (a
- *      sibling unit owns that file this wave); a later wave rewires it to
- *      re-export REL_COST_TABLE / DEFAULT_REL_COST / relCostKey / relCostFor from
- *      here. Until then the rows exist in two places — this module creates the
- *      single source, it does not yet collapse the duplicate.
+ *   1. DONE 2026-09-23: tinker-ui/src/panels/eeg-trace.ts's EEG_COST_TABLE is now a
+ *      re-export of REL_COST_TABLE. By then the copy had drifted on 24 rows (it had
+ *      no gpt-6-sol / gpt-6-luna seat row at all, so the chart drew them at 2.58).
  *   2. The ~54-line "Cost model" basis block above that table (eeg-trace.ts:192-245
  *      — the €0.0893 measured Anthropic unit, the Copilot ×0.5571 allowance factor,
  *      why prepaid amortizes and metered does not) is deliberately NOT copied here.
@@ -46,6 +44,163 @@
  *   3. The gateway still reads cfg.agents.defaults.models[key].relCost, present on
  *      0 of 39 entries, so the 1.5× cost veto stays inert until it reads this.
  */
+// ─── SUBSCRIPTION SEATS — MEASURED, ONE METHOD FOR EVERY VENDOR (the architect 2026-09-23) ───
+// "I think the cost of the tokens of the different openai models are not calculated
+// properly." He was right. Until today EVERY prepaid row was `0.0893 × (sticker ÷ $10)`,
+// where 0.0893 was the ANTHROPIC Max 20x unit — so the ChatGPT seat was priced as if it
+// returned exactly as many tokens per euro as Max 20x. Nobody had measured it. And the
+// Anthropic unit itself was measured with an `output + 0.2·input` blend that counts a
+// CACHE READ at 20% of an output token, when the list price of a cache read is 10% of
+// INPUT — i.e. ~2% of output. Cache reads are ~95% of our input, so the blend inflated
+// the seat's list value ~3× and drew every Claude circle ~2.5× too far LEFT.
+//
+// THE METHOD, now identical for both seats (scripts/measure-seat-burn.py re-runs it):
+//   1. Read the seat's own WEEKLY meter (`budget.usage`: Claude `seven_day`, ChatGPT
+//      `Weekly`) and the window it covers (resets_at − 7 days).
+//   2. Sum every turn that seat served inside that window — laptop AND Goku, which
+//      shares both credentials — priced at each model's API LIST rate: input, cache
+//      read = 0.1× input, cache write = 1.25× input (2× for 1-hour TTL), output.
+//   3. list-$ burned ÷ meter % = the list value of ONE FULL WEEK of that seat.
+// Step 2's weighting is the vendor's OWN drain rate, not our guess: OpenAI's Codex
+// credit card prices Sol at 100 / 10 / 500 credits per Mtok input / cached / output —
+// exactly the API ratio (learn.chatgpt.com, read 2026-09-23). Anthropic publishes no
+// drain rate; list cost is the working assumption, and the one ccusage-style tools use.
+//
+// MEASURED 2026-09-23 ~13:00 UTC:
+//   · Claude Max 20x — `seven_day` 59% since 2026-09-17 16:00 UTC; burn $1,594.79
+//     (laptop $1,563.12 + Goku $31.67; ~96% Opus/Fable) → $2,703 of list value / week.
+//   · ChatGPT Plus — `Weekly` 16% since 2026-09-21 10:00 UTC; burn $14.39 (151 Sol +
+//     10 Luna turns, laptop only — Goku drew none) → $89.9 / week.
+// BOTH ARE LOWER BOUNDS ON THE CEILING, so the prices they imply are UPPER bounds:
+// anything else on the same account (claude.ai chats; ChatGPT "Work" agent runs, which
+// share the Codex pool) moved the meter without appearing in our transcripts. The
+// ChatGPT figure also rests on $14 of burn and an integer 16% (±3%).
+//
+// WHAT THE NUMBERS SAY, at 100% of the weekly cap — € of list value per € of fee:
+//   Claude Pro 29× · Max 5x 29× · Team Premium 23× · Max 20x 59×
+//   ChatGPT Plus 19× · Business 16× · Pro 5x 19× · Pro 10x 19× · Pro 25x 19×
+//   (until DevDay 2026-09-29 Pro 200 was 20× → 39×; now no OpenAI tier beats Plus per €)
+// So the ChatGPT circles move RIGHT, not left: the Plus seat returns a third of what the
+// table assumed per euro. Per the SAME measurement Claude also moves right (~2.5×) —
+// the fix is to both bases at once, because mixing a corrected OpenAI rate with the
+// uncorrected Anthropic one would re-create the 2026-08-12 43× inversion.
+//
+// TIER LADDERS are the vendors' published multiples of their base plan (claude.com/
+// pricing and support.claude.com "What is the Max plan", chatgpt.com/codex/pricing,
+// all read 2026-09-23). Anthropic states its multiples PER 5-HOUR SESSION; the weekly
+// cap is only said to exist, so scaling the measured Max 20x week by 5/20 or 1/20 is an
+// assumption, stated here once. Team Premium is "5× a Standard seat" and Standard is
+// only "more than Pro" — taking Standard = Pro makes €125 the DEAREST reading of Team.
+// Fees are the $ stickers read as € (the architect's own landmarks: 20 / 100 / 125 / 200), the
+// same $/€ smear the metered rows already carry; VAT is not in them.
+
+/** Weeks in a month, for turning a weekly quota into a month's worth of fee. */
+export const WEEKS_PER_MONTH = 52 / 12;
+
+/** The utilisation our OWN seats are drawn at (the architect 2026-08-13: "consider an average of
+ *  75% usage"). The chart's plan-tier waypoints are drawn at 100%, by definition. */
+export const PLAN_UTIL = 0.75;
+
+export type SeatVendor = "anthropic" | "openai";
+
+export interface SeatMeasurement {
+  /** The plan we actually hold on this vendor. */
+  plan: string;
+  /** Its nominal monthly fee (the $ sticker read as €). */
+  feeEur: number;
+  /** Its published multiple of the vendor's base plan (Pro / Plus = 1). */
+  quotaMult: number;
+  /** $ of API list value one FULL week of this seat buys — measured, see above. */
+  weeklyListUsd: number;
+}
+
+export const SEAT_MEASURED: Readonly<Record<SeatVendor, SeatMeasurement>> = {
+  anthropic: { plan: "Max 20×", feeEur: 200, quotaMult: 20, weeklyListUsd: 1594.79 / 0.59 },
+  openai: { plan: "Plus", feeEur: 20, quotaMult: 1, weeklyListUsd: 14.39 / 0.16 },
+};
+
+export interface SeatTier {
+  vendor: SeatVendor;
+  /** The waypoint tag: plan name + monthly commitment, as short as it goes. */
+  tag: string;
+  feeEur: number;
+  /** Published multiple of the vendor's base plan. */
+  quotaMult: number;
+  /** One line of provenance for the hover. */
+  note: string;
+}
+
+export const SEAT_TIERS: readonly SeatTier[] = [
+  { vendor: "anthropic", tag: "Pro €20", feeEur: 20, quotaMult: 1, note: "base plan" },
+  {
+    vendor: "anthropic",
+    tag: "Max 5× €100",
+    feeEur: 100,
+    quotaMult: 5,
+    note: "5× Pro per session",
+  },
+  {
+    vendor: "anthropic",
+    tag: "Team €125",
+    feeEur: 125,
+    quotaMult: 5,
+    note: "Team Premium seat, monthly billing; 5× a Standard seat, Standard taken = Pro",
+  },
+  {
+    vendor: "anthropic",
+    tag: "Max 20× €200",
+    feeEur: 200,
+    quotaMult: 20,
+    note: "20× Pro per session — our seat",
+  },
+  { vendor: "openai", tag: "Plus €20", feeEur: 20, quotaMult: 1, note: "base plan — our seat" },
+  {
+    vendor: "openai",
+    tag: "Business €25",
+    feeEur: 25,
+    quotaMult: 1,
+    note: "standard Business seat, monthly; same limits as Plus",
+  },
+  { vendor: "openai", tag: "Pro 5× €100", feeEur: 100, quotaMult: 5, note: "Pro 100: 5× Plus" },
+  // FORK 2026-09-30 (the architect: "now GPT models have different subscriptions, one is a 500€
+  // per month"). DevDay 2026-09-29: Pro 500 launched at 25× Plus, and Pro 200 fell from
+  // 20× to 10× for new subscribers (existing ones keep 20× through 2026-10-29). Sources:
+  // thenextweb.com, engadget.com, nerdschalk.com, read 2026-09-30 (chatgpt.com and
+  // help.openai.com answer 403 to a fetcher). Every personal tier is now exactly 1× Plus's
+  // allowance per €, so they all land on ONE waypoint; only Business is dearer per token.
+  {
+    vendor: "openai",
+    tag: "Pro 10× €200",
+    feeEur: 200,
+    quotaMult: 10,
+    note: "Pro 200: 10× Plus from 2026-10-30 (was 20×; existing subscribers keep 20× through 10-29)",
+  },
+  {
+    vendor: "openai",
+    tag: "Pro 25× €500",
+    feeEur: 500,
+    quotaMult: 25,
+    note: "Pro 500 (DevDay 2026-09-29): 25× Plus, the only tier with Astra Ultrafast in Codex",
+  },
+];
+
+/** € of API list value one € of fee buys on a tier of `vendor`, at utilisation `util`. */
+export function seatValueMultiple(
+  vendor: SeatVendor,
+  tier: { feeEur: number; quotaMult: number },
+  util = 1,
+): number {
+  const m = SEAT_MEASURED[vendor];
+  const weekly = (m.weeklyListUsd / m.quotaMult) * tier.quotaMult;
+  return (weekly * WEEKS_PER_MONTH * util) / tier.feeEur;
+}
+
+/** Effective €/Mtok output on OUR seat of `vendor`, at PLAN_UTIL, for a model whose list
+ *  output price is `listOut` $/Mtok. Every prepaid row below is this, never a literal. */
+export function seatRelCost(vendor: SeatVendor, listOut: number): number {
+  return listOut / seatValueMultiple(vendor, SEAT_MEASURED[vendor], PLAN_UTIL);
+}
+
 export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // ── GitHub Copilot Pro+ — PREPAID at a PUBLISHED allowance ──
   // FORK 2026-08-15 (the architect: "revise the models that have an EEG trace thicker than
@@ -75,6 +230,11 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // baseline is a far deeper discount: Pro+ returns ~1.79x its fee in list value,
   // Anthropic Max 20x returns ~30x — an **18x gap in value-per-euro**. Same tokens,
   // same list price, very different plan.
+  // M365 Copilot Think Deeper — a SEAT ($30/user/month, company tenant), not metered. ESTIMATE
+  // 2026-09-23: amortised like the ChatGPT seat on the GPT-5.6 Sol list it most likely runs
+  // ($20 out short-ctx → 0.0893 × 2). Anchored `^copilot/` so no github-copilot row claims it.
+  // 2026-09-23: follows the MEASURED ChatGPT seat now (was 0.1786 on the borrowed unit).
+  { modelMatch: /^copilot\/copilot-think/i, relCost: seatRelCost("openai", 20) },
   { modelMatch: /github-copilot\/.*fable/i, relCost: 27.86 }, // $50
   { modelMatch: /github-copilot\/.*opus/i, relCost: 13.93 }, // $25
   { modelMatch: /github-copilot\/.*5\.6-sol/i, relCost: 5.57 }, // $10 promo through 2026-09-03 (GitHub docs 2026-08-28; was $30 / 16.71)
@@ -143,10 +303,10 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // FORK 2026-08-18: added with the model itself. No generic /qwen/ row exists, so
   // without this the 27B would have fallen through to EEG_DEFAULT_REL_COST (2.58)
   // and drawn 19% thin — the "dot with no cost row" failure the block above warns of.
-  { modelMatch: /qwen3\.8-27b/i, relCost: 2.55 }, // $0.425/$2.550 — re-checked 2026-08-25 (was 3.0; -15%)
-  { modelMatch: /deepseek-v4-pro-0813/i, relCost: 1.98 }, // $0.660/$1.980 — re-checked 2026-08-29 live endpoints (-41%; DeepSeek direct cheapest, was DeepInfra $1.122/$3.366)
-  { modelMatch: /deepseek.*v4-pro/i, relCost: 1.3993 }, // $0.6997/$1.3993 — re-checked 2026-08-29 live endpoints (undated slug; was 1.74; -20%)
-  { modelMatch: /minimax/i, relCost: 1.2 }, // $0.300/$1.200
+  { modelMatch: /qwen3\.8-27b/i, relCost: 1.49 }, // re-checked 2026-10-02 live endpoints. $0.99/$1.49 Cerebras cheapest (was $1.782, -16%).
+  { modelMatch: /deepseek-v4-pro-0813/i, relCost: 1.98 }, // re-checked 2026-10-03 live endpoints. $0.66/$1.98 StreamLake and DeepSeek cheapest live seats (was $0.396 Baidu, which now charges $3.96; Ionstream lists $1.48 but reports status -2, down, so it is not a buyable price). OR list $0.66/$1.98.
+  { modelMatch: /deepseek.*v4-pro/i, relCost: 0.8376 }, // $0.4188/$0.8376 — re-checked 2026-09-26 live endpoints (StreamLake took cheapest from Baidu $1.6292, −49% out). OR list $0.816/$1.632.
+  { modelMatch: /minimax/i, relCost: 0.96 }, // re-checked 2026-10-01 live endpoints. $0.23/$0.96 CoreWeave cheapest (was OR list $1.20, -20%).
   { modelMatch: /muse-spark/i, relCost: 4.25 }, // $1.250/$4.250
   // PROVIDER-SCOPED ON PURPOSE. The native `google/*` rows further down sit on an
   // AMORTIZED scale (3.5 Flash = 0.0804 for a $9 sticker, i.e. ÷112), left over from
@@ -156,40 +316,42 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // Only the metered OpenRouter route gets the raw number.
   { modelMatch: /openrouter\/.*gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.750/$3.750 OR
   { modelMatch: /openrouter\/.*gemini-3\.7.*flash/i, relCost: 1.875 }, // $0.375/$1.875 OR
-  { modelMatch: /mimo/i, relCost: 0.87 }, // $0.435/$0.870
+  { modelMatch: /mimo.*flash/i, relCost: 0.266 }, // $0.133/$0.266 GMICloud cheapest; added 2026-10-01 (flash fell through to the pro row at 0.87, +227%).
+  { modelMatch: /mimo/i, relCost: 0.8265 }, // re-checked 2026-10-01 live endpoints. pro: $0.4133/$0.8265 GMICloud cheapest (was $0.87, -5%).
   { modelMatch: /inkling-small/i, relCost: 1.2 }, // $0.450/$1.200
   { modelMatch: /inkling/i, relCost: 4.05 }, // $0.950/$4.050
-  { modelMatch: /tencent|hy3/i, relCost: 0.528 }, // $0.132/$0.528
+  { modelMatch: /tencent|hy3/i, relCost: 0.528 }, // $0.132/$0.528 — re-checked 2026-09-19 live endpoints (Tencent took cheapest back; DeepInfra $0.435 is gone). OR list still $0.132/$0.528 (weekday 00-16 UTC window).
   // FORK 2026-08-15 (regex-leak audit): `/nex-n2/i` also claimed `nex-n2-mini`
   // ($0.100), drawing it 10× too thick. Specific row first.
   { modelMatch: /nex-n2-mini/i, relCost: 0.1 }, // $0.025/$0.100
   { modelMatch: /nex-n2/i, relCost: 1.0 }, // nex-n2-pro $0.250/$1.000
   { modelMatch: /solar-pro/i, relCost: 0.12 }, // $0.030/$0.120
-  { modelMatch: /glm-5\.3-flash/i, relCost: 0.25 }, // $0.075/$0.250 — re-checked 2026-08-29 live (Relace, unchanged; was Z.AI)
-  { modelMatch: /glm-5\.3/i, relCost: 3.432 }, // $1.144/$3.432 — re-checked 2026-09-03 live endpoints (−14%; Decart took cheapest from DeepInfra)
-  { modelMatch: /glm-5\.1/i, relCost: 2.856 }, // $0.9086/$2.8556 — re-checked 2026-08-29 live (-28%; Baidu cheapest, was GMICloud $1.260/$3.960)
-  { modelMatch: /glm-5\.2/i, relCost: 1.0296 }, // $0.3276/$1.0296 — re-checked 2026-08-30 live (-8.6%; StreamLake still cheapest)
+  { modelMatch: /glm-5\.3-flash/i, relCost: 0.25 }, // re-checked 2026-10-01 live endpoints. $0.075/$0.25 DeepInfra cheapest (was $0.14, +79%).
+  { modelMatch: /glm-5\.3/i, relCost: 0.4884 }, // re-checked 2026-10-01 live endpoints. $0.1554/$0.4884 Baidu cheapest (was $1.14, -57%). OR list $0.222/$5.28.
+  { modelMatch: /glm-5\.1/i, relCost: 3.036 }, // $0.966/$3.036 — re-checked 2026-09-10 live endpoints (StreamLake still cheapest)
+  { modelMatch: /glm-5\.2/i, relCost: 0.444 }, // re-checked 2026-10-02 live endpoints. $0.141/$0.444 Baidu cheapest (was $0.55, -19%). OR list $1.10/$4.40.
   // FORK 2026-08-15: `/glm-5(?![.\d])/i` blocks a following digit or dot, but NOT a
   // letter or hyphen — so it also claimed `glm-5-turbo` and `glm-5v-turbo`, both
   // $4.000, and drew them at 1.92 (2.1× too thin). Both turbos get their own row.
   { modelMatch: /glm-5v?-turbo/i, relCost: 4.0 }, // $1.200/$4.000
   { modelMatch: /glm-5(?![.\d])/i, relCost: 1.92 }, // $0.600/$1.920
-  { modelMatch: /kimi-k2\.6/i, relCost: 2.228 }, // $0.5292/$2.228 — re-checked 2026-08-29 live (-44%; Baidu cheapest, was StreamLake $0.950/$4.000)
-  { modelMatch: /kimi-k2\.7/i, relCost: 3.4 }, // $0.670/$3.400 — re-checked 2026-08-22 (was 3.5)
+  { modelMatch: /kimi-k2\.6/i, relCost: 1.828 }, // $0.4341/$1.828 — re-checked 2026-09-26 live endpoints (Baidu still cheapest, −4%). OR list still $0.95/$4.00.
+  { modelMatch: /kimi-k2\.7/i, relCost: 3.0 }, // re-checked 2026-10-01 live endpoints. $0.7125/$3.00 StreamLake cheapest (was $3.50, -14%).
   { modelMatch: /qwen3\.6-max-preview/i, relCost: 6.162 }, // $1.027/$6.162 — added 2026-08-22
   { modelMatch: /qwen3\.6-plus/i, relCost: 1.95 }, // $0.325/$1.950
   // RE-CHECKED 2026-08-29 live endpoints: DeepSeek now serves deepseek-v4-flash-vision-exp-20260821
   // at $0.220/$0.660 — confirmed via /api/v1/models/deepseek/deepseek-v4-flash-vision-exp/endpoints.
   // The 2026-08-27 "correction" to $1.32 was wrong; the $0.66 this pass wrote is real.
-  { modelMatch: /deepseek-v4-flash-vision/i, relCost: 0.66 }, // $0.220/$0.660 — re-checked 2026-08-29 live (-50% vs $1.320; new model ID with date suffix)
-  { modelMatch: /deepseek-v4-flash-0731/i, relCost: 0.0899 }, // $0.0449/$0.0899 — re-checked 2026-08-29 live (-25%; Baidu cheapest, was OpenInference $0.060/$0.120)
-  { modelMatch: /deepseek-v4-flash(?!-)/i, relCost: 0.168 }, // $0.0679/$0.168 — re-checked 2026-08-29 live (undated slug, DigitalOcean cheapest; was 0.159)
+  { modelMatch: /deepseek-v4-flash-vision/i, relCost: 0.6468 }, // $0.2156/$0.6468 — re-checked 2026-09-12 live endpoints (DeepInfra cheapest, −2% vs the $0.66 DeepSeek seat of 2026-08-29)
+  { modelMatch: /deepseek-v4\.1-flash/i, relCost: 0.4 }, // re-checked 2026-10-01 live endpoints. $0.08/$0.40 Sail Research cheapest (was $0.39, +3%).
+  { modelMatch: /deepseek-v4-flash-0731/i, relCost: 0.132 }, // $0.044/$0.132 — re-checked 2026-09-26 live endpoints (StreamLake still cheapest, −17% vs $0.1584). OR list halved with it, $0.04/$0.64 → $0.021/$0.32. No time-window overrides.
+  { modelMatch: /deepseek-v4-flash(?!-)/i, relCost: 0.0977 }, // $0.0489/$0.0977 — re-checked 2026-09-25 live endpoints (Baidu still cheapest, +32% out vs $0.0742).
   // FORK 2026-08-23: openrouter/openai/gpt-5.3-codex is metered at $1.75/$14.00.
   // Without this row the generic /gpt-5/i catch-all (0.0893) would underprice it by
   // 157× against the actual metered rate. Must be scoped to the openrouter/ prefix so
   // the github-copilot/gpt-5.3-codex row above keeps its Copilot-adjusted price.
   { modelMatch: /openrouter\/openai\/gpt-5\.3-codex/i, relCost: 14.0 }, // $1.75/$14.00
-  { modelMatch: /kimi/i, relCost: 15 }, // $3/$15, cache read $0.30
+  { modelMatch: /kimi/i, relCost: 11.25 }, // re-checked 2026-10-03 live endpoints. kimi-k3 cheapest seat is Phala $2.25/$11.25 (Relace gone; was $11.20, +0.4%).
   { modelMatch: /qwen3\.8-max/i, relCost: 6.0 }, // $2/$6, cache read $0.25
   { modelMatch: /qwen3\.7-max/i, relCost: 4.425 }, // $1.475/$4.425, cache read $0.295
   { modelMatch: /glm/i, relCost: 3.036 }, // GLM generic fallback (glm-5.1/5.2/5.3 have specific rows above)
@@ -209,6 +371,11 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // rate and understate it by 224x — the same regex-order failure class as the
   // glm-5-turbo and nex-n2-mini leaks above.
   { modelMatch: /claude-opus-5-fast/i, relCost: 50.0 }, // $10.000/$50.000 OR, ctx 1M
+  // A METERED Fable route must never fall through to the native `/fable/i` seat row.
+  // Keyed on the provider prefix, not the dotted `fable-5.1` display name (that
+  // punctuation accident hid a mis-probe once — see the 2026-08 history in git).
+  // Lived only in eeg-trace.ts's duplicate table until the 2026-09-23 collapse.
+  { modelMatch: /openrouter\/.*fable/i, relCost: 50.0 }, // $10.000/$50.000 OR, ctx 1M
   { modelMatch: /nemotron-3\.5-lightning/i, relCost: 0.2 }, // $0.080/$0.200 OR, ctx 262k
   { modelMatch: /ling-3\.0-flash/i, relCost: 0.063 }, // $0.021/$0.063 OR, ctx 262k
   { modelMatch: /longcat-2\.0/i, relCost: 1.2 }, // $0.300/$1.200 OR, ctx 1.05M
@@ -239,10 +406,37 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // €0 until the cap. Dividing a flat fee by usage measures how well a seat is used,
   // not what a model costs — see the OpenAI rows below, where the same arithmetic
   // makes Sol look 48× Opus purely because that seat sits idle.
-  { modelMatch: /fable/i, relCost: 0.4464 },
-  { modelMatch: /opus/i, relCost: 0.2232 },
-  { modelMatch: /sonnet/i, relCost: 0.0893 },
-  { modelMatch: /haiku/i, relCost: 0.0446 },
+  //
+  // ══ 2026-09-23 — SUPERSEDED BY THE MEASURED SEAT MODEL above REL_COST_TABLE. The
+  // 0.0893 unit below the fold is history: it came from the `output + 0.2·input` blend,
+  // which priced cache reads ~10× over list. Every prepaid row is now
+  // `seatRelCost(vendor, list output $)` — Opus 5 draws at 0.569 (was 0.2232).
+  { modelMatch: /fable/i, relCost: seatRelCost("anthropic", 50) },
+  // Opus 5.5 list is $4/$20 (live OpenRouter 2026-09-23), not Opus 5's $5/$25. Must sit ABOVE /opus/i.
+  { modelMatch: /opus-5[.-]5/i, relCost: seatRelCost("anthropic", 20) },
+  { modelMatch: /opus/i, relCost: seatRelCost("anthropic", 25) },
+  { modelMatch: /sonnet/i, relCost: seatRelCost("anthropic", 10) },
+  { modelMatch: /haiku/i, relCost: seatRelCost("anthropic", 5) },
+  // FORK 2026-09-09: GPT-6 Astra is on the ChatGPT seat (openai-codex). The 05:45
+  // cron left it chart-only because it probed Codex CLI 0.150.1 ("upgrade required").
+  // OpenClaw does not use that CLI — it POSTs to chatgpt.com/backend-api/codex.
+  // Re-probed 2026-09-09 08:58: stream completed model=gpt-6-astra text=OK; control
+  // gpt-6-astra-9-9 400s "not supported with a ChatGPT account". Same amortised
+  // convention as Sol: MEASURED_UNIT × (sticker-out / $10) = 0.0893 × 5 = 0.4465.
+  // The $50 list stays as the fallback row and as the SC_API_PRICE triangle.
+  { modelMatch: /openai-codex\/.*gpt-6-astra/i, relCost: seatRelCost("openai", 50) }, // ChatGPT Plus seat, $50 out
+  // FORK 2026-09-23: gpt-6-sol ($2 in / $10 out) and gpt-6-luna ($0.10 / $0.50) launched
+  // 2026-09-22 — OpenAI halved the 5.6 promo prices. Same seat convention, measured seat.
+  // FORK 2026-09-30: gpt-6.1-sol, same $2 in / $10 out (OpenRouter live catalog). Seat probe
+  // on chatgpt.com/backend-api/codex: gpt-6.1-sol → OK; gpt-6.1-sol-9-9 → 400. The gpt-6-sol
+  // rows below do NOT match the dotted 6.1 id, so it needs its own pair.
+  { modelMatch: /openai-codex\/.*gpt-6\.1-sol/i, relCost: seatRelCost("openai", 10) }, // ChatGPT Plus seat, $10 out
+  { modelMatch: /gpt-6\.1-sol/i, relCost: 10.0 }, // metered list fallback — $2 in / $10 out
+  { modelMatch: /openai-codex\/.*gpt-6-sol/i, relCost: seatRelCost("openai", 10) }, // ChatGPT Plus seat, $10 out
+  { modelMatch: /openai-codex\/.*gpt-6-luna/i, relCost: seatRelCost("openai", 0.5) }, // ChatGPT Plus seat, $0.50 out
+  { modelMatch: /gpt-6-astra/i, relCost: 50.0 }, // metered list fallback — $10 in / $50 out
+  { modelMatch: /gpt-6-sol/i, relCost: 10.0 }, // metered list fallback — $2 in / $10 out
+  { modelMatch: /gpt-6-luna/i, relCost: 0.5 }, // metered list fallback — $0.10 in / $0.50 out
   // OpenAI gpt-5.6 trio (ChatGPT Business seat, codex provider) — sticker out ÷ 4.65.
   // FORK 2026-08-12: Terra is $12 out (not $15) and Luna is $1.20 (not $6) per
   // developers.openai.com/api/docs/pricing. Luna being 5× wrong mattered most —
@@ -313,10 +507,15 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // and GitHub quotes $10 through 2026-09-03, while OpenAI's page says the promo
   // runs "at least through 2026-11-21". This row tracks the STANDARD list because
   // that is what the column claims to rank by; the promo is reported, not encoded.
-  { modelMatch: /5\.6-sol/i, relCost: 0.1786 }, // $20 out short-ctx = 0.0893 x (20/10)
-  { modelMatch: /5\.6-terra/i, relCost: 0.1072 }, // $12 out
-  { modelMatch: /5\.6-luna/i, relCost: 0.0107 }, // $1.20 out
-  // Google (€21.99 Google One attributed, the architect 2026-07-22).
+  { modelMatch: /5\.6-sol/i, relCost: seatRelCost("openai", 20) }, // $20 out short-ctx
+  { modelMatch: /5\.6-terra/i, relCost: seatRelCost("openai", 12) }, // $12 out
+  { modelMatch: /5\.6-luna/i, relCost: seatRelCost("openai", 1.2) }, // $1.20 out
+  // Google — METERED API KEY, NO SUBSCRIPTION (the architect 2026-09-23: "I don't even have a
+  // subscription. Weren't they all API call per use?" — yes). The 2026-07-22 Google One
+  // attribution ended with the 2026-08-15 re-base below. Prices re-verified 2026-09-23
+  // against live OpenRouter /api/v1/models: 3.8/3.7/3.6 Flash $0.75/$3.75, 3.5 Flash
+  // $1.50/$9, 3.1 Pro $2/$12. They draw far right of Claude because a metered token is
+  // cash and a prepaid one is not — not because the price is wrong.
   // gemini rows BEFORE \bmini\b so "…e-mini…" never steals a gemini id.
   // 3.6-flash ($7.50 out) is cheaper than 3.5-flash ($9), so it needs its own row.
   // FORK 2026-08-15 — RE-BASED FROM AMORTIZED TO METERED, and this is a correction,
@@ -331,6 +530,10 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   // Prices from ai.google.dev/gemini-api/docs/pricing, output $/Mtok. The 3.8/3.7/3.6
   // rate is promotional through 2026-12-31; re-check it in January.
   // 3.8 BEFORE 3.7 BEFORE 3.6 BEFORE the generic flash row — regex order decides.
+  // FORK 2026-10-02: Gemini 4 Argon (announced 2026-09-30) — $2/$10 introductory, then
+  // $4/$20; Google has published no end date for the intro price, so re-check monthly.
+  // Not callable yet (Fairwind testers only): this row prices its catalog dot on the chart.
+  { modelMatch: /gemini-4.*argon/i, relCost: 10.0 }, // $2/$10 intro → $4/$20
   { modelMatch: /gemini.*pro/i, relCost: 12.0 }, // 3.1 Pro $12 out ≤200k (doubles above)
   { modelMatch: /gemini-3\.8.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
   { modelMatch: /gemini-3\.7.*flash/i, relCost: 3.75 }, // $0.75/$3.75 (promo → 2026-12-31)
@@ -338,14 +541,17 @@ export const REL_COST_TABLE: { modelMatch: RegExp; relCost: number }[] = [
   { modelMatch: /gemini.*flash/i, relCost: 9.0 }, // 3.5 Flash $1.50/$9.00
   // Catch-all for an unrecognised "*-mini": assume the dearer current-generation
   // member (gpt-5.4-mini $4.50, not gpt-5-mini $2) so it is never under-drawn.
-  { modelMatch: /\bmini\b/i, relCost: 0.0402 },
-  { modelMatch: /gpt-5\.5/i, relCost: 0.2679 }, // $30 out
-  { modelMatch: /gpt-5\.4(?!-mini|-nano)/i, relCost: 0.134 }, // $15 out
-  { modelMatch: /gpt-5/i, relCost: 0.0893 }, // $10 out
+  { modelMatch: /\bmini\b/i, relCost: seatRelCost("openai", 4.5) },
+  { modelMatch: /gpt-5\.5/i, relCost: seatRelCost("openai", 30) }, // $30 out
+  { modelMatch: /gpt-5\.4(?!-mini|-nano)/i, relCost: seatRelCost("openai", 15) }, // $15 out
+  { modelMatch: /gpt-5/i, relCost: seatRelCost("openai", 10) }, // $10 out
   // xAI grok-4.5 (SuperGrok) — $6 out BELOW 200k context. Above 200k xAI doubles
   // every rate ($4/$12); relCost is a scalar and cannot say that, so this row
   // UNDERSTATES any run with a long context. See bug-log 2026-08-12 [panels].
-  { modelMatch: /grok|xai/i, relCost: 0.0536 }, // $6 out
+  // BORROWED, NOT MEASURED (2026-09-23): SuperGrok has its own meter but its window was
+  // not measured in the re-base, so it keeps riding the Anthropic seat's value multiple
+  // exactly as it did on the old 0.0893 unit — it moves with that unit, nothing more.
+  { modelMatch: /grok|xai/i, relCost: seatRelCost("anthropic", 6) }, // $6 out
   // FORK 2026-06-25 (the architect scope C): local housekeeping tool calls (grep/read/edit/
   // plain bash) — effectively free, drawn as the thinnest possible gray hairline.
   // FORK 2026-08-04 (the architect, found while rescaling to Luna=1.5px): the anchor was

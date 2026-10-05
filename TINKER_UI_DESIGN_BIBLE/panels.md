@@ -10,13 +10,15 @@ verify:
   - name: single source of truth for "session busy" (FORK 2026-05-16 — chat/sending/sessions/prefrontal must not disagree)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "function runBelongsToViewedSession" in t and "function scopedActiveRuns" in t and "function viewedSessionBusy" in t, "the shared busy/scope helpers were removed — the four panels will silently re-diverge (chat stuck on sending, prefrontal idle, sessions thinking)"; assert re.search(r"budgetScope ===\s*.all.\s*&&\s*latestTreeFromExtension", t, re.S), "buildPrefrontalTree no longer gates the extension-tree shortcut on budgetScope===all — the session/all toggle is being ignored by prefrontal again"; assert "if (sending && !viewedSessionBusy())" in t, "the sending pill no longer checks viewedSessionBusy — it will stick on sending forever whenever another tab has a run"'
   - name: every left-nav tab in app.ts is listed in this panel doc's tab matrix
-    cmd: bash -lc 'cd "$(git rev-parse --show-toplevel)" && tabs_in_code=$(grep -oP "<button class=\"nav-btn[^\"]*\" data-tab=\"\K[a-z-]+" tinker-ui/src/app.ts | sort -u); tabs_in_doc=$(grep -oP "^\| +\`\K[a-z-]+" TINKER_UI_DESIGN_BIBLE/panels.md | sort -u); missing=$(comm -23 <(echo "$tabs_in_code") <(echo "$tabs_in_doc")); test -z "$missing" || (echo "tabs in code but not documented: $missing"; exit 1)'
+    cmd: bash -lc 'cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && tabs_in_code=$(grep -oP "<button class=\"nav-btn[^\"]*\" data-tab=\"\K[a-z-]+" tinker-ui/src/app.ts | sort -u); tabs_in_doc=$(grep -oP "^\| +\`\K[a-z-]+" TINKER_UI_DESIGN_BIBLE/panels.md | sort -u); missing=$(comm -23 <(echo "$tabs_in_code") <(echo "$tabs_in_doc")); test -z "$missing" || (echo "tabs in code but not documented: $missing"; exit 1)'
   - name: exec-panel hide branch exists in switchTab
-    cmd: bash -lc 'cd "$(git rev-parse --show-toplevel)" && grep -q "exec-panel.*display\|hideExecPanel\|execPanel.*hidden\|applyExecPanelVisibility" tinker-ui/src/app.ts || (echo "exec-panel has no hide branch in app.ts — the bug this doc was written to catch is still present"; exit 1)'
+    cmd: bash -lc 'cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -q "exec-panel.*display\|hideExecPanel\|execPanel.*hidden\|applyExecPanelVisibility" tinker-ui/src/app.ts || (echo "exec-panel has no hide branch in app.ts — the bug this doc was written to catch is still present"; exit 1)'
   - name: prefrontal panel is render-always (no conditional return that suppresses it entirely)
-    cmd: bash -lc 'cd "$(git rev-parse --show-toplevel)" && grep -q "renderPlanSection\\|renderInferredPlan\\|prefrontalCtrl.update" tinker-ui/src/app.ts || (echo "prefrontal panel render path is missing"; exit 1)'
+    cmd: bash -lc 'cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -q "renderPlanSection\\|renderInferredPlan\\|prefrontalCtrl.update" tinker-ui/src/app.ts || (echo "prefrontal panel render path is missing"; exit 1)'
   - name: prefrontal re-renders on user-driven view changes (FORK 2026-05-17 — session-switch + scope toggle, not only WS events)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "function setBudgetScope(" in t, "the single budgetScope setter is gone — the Models and Prefrontal scope toggles will re-diverge and one of them stops working"; _s=re.search(r"SCOPE_TOGGLE_IDS\s*=\s*\[(.*?)\]", t, re.S); assert _s and "budget-scope-toggle" in _s.group(1) and "prefrontal-scope-toggle" in _s.group(1) and re.search(r"of\s+SCOPE_TOGGLE_IDS", t), "both scope toggles must bind through the one SCOPE_TOGGLE_IDS -> setBudgetScope path — the prefrontal-scope-toggle was a dead control with no handler (2026-05-17 bug)"; assert re.search(r"function switchToTab\b[\s\S]{0,1600}(updatePrefrontalTree\(\)|refreshViewedSessionIndicators\(\))", t), "switchToTab no longer refreshes prefrontal (directly or via refreshViewedSessionIndicators, which calls updatePrefrontalTree) — it goes stale and shows the prior session thinking no matter which session you select (2026-05-17 / 2026-06-04 bug)"'
+  - name: call-timeline-host-is-a-static-sibling — the CALL TIMELINE's #cache-timeline host is the next sibling of #cache-panel-body inside the CONTEXT WINDOW fold, the body renderer never emits it, and it is mounted once (context-window-panel.md P9 and its 6.4 gate timeline-outside-the-rewritten-body; FORK 2026-09-24, B5). Resolves paths like prompt-queue.md (BIBLE_DIR, else the shared checkout); FAILED as a CONTROL @b181d0a623f^
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'import re; q=chr(34); a=open("tinker-ui/src/app.ts").read(); c=open("tinker-ui/src/panels/context-cache.ts").read(); assert a.count("id="+q+"cache-timeline"+q)==1, "the #cache-timeline host is missing or declared twice in app.ts (panels.md, the CONTEXT WINDOW bullet)"; g=re.search("data-section=.cache. id=.cache-panel.>(.*?)id=.thalamus-panel.", a, re.S); assert g, "the CONTEXT WINDOW fold (data-section cache, id cache-panel) is gone, or no longer sits above THALAMUS inside Models (panels.md)"; assert re.search("<div id=.cache-panel-body.[^>]*></div>[^<]*<div id=.cache-timeline.", g.group(1)), "#cache-timeline is no longer the static NEXT SIBLING of #cache-panel-body in the CONTEXT WINDOW fold. renderCachePanel() rewrites that body on every event, so a canvas inside it dies within one model call (context-window-panel.md P9)"; assert "cache-timeline" not in c, "context-cache.ts, the body renderer, now emits cache-timeline: every innerHTML rewrite would recreate the host (P9)"; assert a.count("mountCallTimeline(host")==1, "the call timeline must be mounted exactly ONCE, by syncCallTimeline: a re-mount throws away its store binding, focus and perf ring"'
 ---
 
 # Tinker UI panel system
@@ -33,12 +35,12 @@ The Tinker UI is a single-page HTML app. The DOM has a small set of named region
 ├──┬─────────────────────────────────┬───────────────────────────────┤
 │  │                                 │ right-panels                  │
 │  │ chat-area                       │   ├─ sessions                 │
-│ L│   (messages, input)             │   ├─ models (+ EEG group)     │
-│ E│                                 │   ├─ prefrontal               │
-│ F│                                 │   ├─ amygdala                 │
-│ T├─────────────────────────────────┤   └─ cache                    │
+│ L│   (messages, input)             │   ├─ models (+ context window,│
+│ E│                                 │   │  thalamus and EEG groups) │
+│ F│                                 │   ├─ prefrontal               │
+│ T├─────────────────────────────────┤   └─ amygdala                 │
 │ N│ ctx-timeline                    │                               │
-│ A│   (compaction/turn anatomy)     │                               │
+│ A│   (turn anatomy + call columns) │                               │
 │ V├─────────────────────────────────┴───────────────────────────────┤
 │  │ bottom-right                                                    │
 │  │   (status, scope chips, version)                                │
@@ -112,8 +114,9 @@ This rule was added to fix the bug "Control Panel wrongly still visible when I c
 - **chat-area XOR alt-view.** Exactly one of these is visible at any time. The transition is `switchTab(tab)`: `tab==="chat"` → chat-area on, alt-view off; otherwise the inverse.
 - **right-panels and bottom-right follow chat-area.** They are children-in-spirit of chat-mode and inherit its visibility. (They are _not_ DOM children — the layout is a CSS grid — but they MUST hide and show together with chat-area.)
 - **exec-panel implies tab=chat.** If the exec-panel is visible, `tab` must be `chat`. The reverse is NOT true (chat + Dev still hides the exec-panel).
-- **Sub-panels inside right-panels are always all-visible together.** When right-panels is on, all of {sessions, models, prefrontal, amygdala, cache} render. Individual sub-panels do not toggle on/off independently — they manage their own internal "empty state" placeholders. Whether an individual sub-panel is _collapsed_ — and how any chrome state survives a reload — is a persistence fact, not a visibility fact; see also: ui-persistence.md.
+- **Sub-panels inside right-panels are always all-visible together.** When right-panels is on, all of {sessions, models, prefrontal, amygdala} render. Individual sub-panels do not toggle on/off independently — they manage their own internal "empty state" placeholders. Whether an individual sub-panel is _collapsed_ — and how any chrome state survives a reload — is a persistence fact, not a visibility fact; see also: ui-persistence.md.
 - **The EEG is NOT one of them.** Until 2026-08-02 the seismograph was its own `.rpanel` (`#eeg-panel`, peer to Models). It is now a `.model-group` (`data-section="eeg"`) inside the **Models** panel, so it has no visibility row of its own — it inherits Models'. Where inside Models it may sit is not a free choice: it must be a sibling of `#budget-panel`, never a child, because `updateBudgetPanel()` rewrites that body's `innerHTML` wholesale. That constraint, why it matters, and the collapse ids it carries are recorded in `ui-persistence.md`.
+- **The CONTEXT WINDOW is NOT one of them either, and neither is its CALL TIMELINE** (FORK 2026-09-24, B5; context-window-panel.md §6.3 C3). Until 2026-08-06 the panel was its own `.rpanel` below AMYGDALA. It is now a `.model-group` (`data-section="cache"`, `id="cache-panel"`, labelled `💾 CONTEXT WINDOW`) inside **Models**, a static sibling of `#budget-panel` like the EEG, placed after the groups `updateBudgetPanel()` generates and above THALAMUS and the EEG, so it has no visibility row of its own and inherits Models'. The CALL TIMELINE lives in a second static host, `#cache-timeline`, the NEXT SIBLING of `#cache-panel-body` inside that group's body, after the THIS SESSION numbers. That spot is not a free choice: `renderCachePanel()` rewrites `#cache-panel-body`'s `innerHTML` on every cache, anatomy and compaction event, so a canvas inside it would lose its node, observers, focus and tooltip within one model call (context-window-panel.md P9). It is mounted ONCE (`syncCallTimeline` → `mountCallTimeline`), and a viewed-session switch re-points it at that session's store rather than re-mounting it. Closing the `model:cache` fold, scrolling it off-screen or hiding the document pauses its animation loop; nothing in it shows or hides by itself. Visual language: tinker-ui.md §5.8Y. Data contract: context-window-panel.md §5. Gate: `call-timeline-host-is-a-static-sibling`.
 
 ## The prefrontal sub-panel is "always active"
 
@@ -209,11 +212,12 @@ If you are adding a panel or a status readout that needs "busy/active/which runs
 
 ## Verify (the merge gate)
 
-The frontmatter's `verify:` block already enforces three of these:
+The frontmatter's `verify:` block already enforces four of these:
 
 1. Every `data-tab` attribute in `app.ts` is listed in the tab matrix above.
 2. `switchTab` (or a sibling function it calls) contains a branch that hides `exec-panel` when `tab !== "chat"`. The specific code shape doesn't matter — only that some such branch exists in `tinker-ui/src/app.ts`.
 3. The prefrontal panel render is wired (no conditional return that would render NOTHING when right-panels is visible).
+4. The CALL TIMELINE host is the static next sibling of `#cache-panel-body`, never emitted by the body's renderer, and mounted once (`call-timeline-host-is-a-static-sibling`, 2026-09-24).
 
 Future invariants worth adding (defer until first regression):
 

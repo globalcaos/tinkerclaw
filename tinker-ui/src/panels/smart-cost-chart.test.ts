@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+// The GENERATED AA tables, through the panel re-export the chart itself imports
+// (smart-cost-chart.ts:61). Extensionless, like this file's other local imports.
+import { AA_EFFORT_INDEX, aaEstimateAt, aaScoreAt } from "./aa-effort-index";
 import { EEG_EFFORT_MULT, eegRelCost } from "./eeg-trace";
 import {
   renderSmartCostChart,
@@ -20,6 +23,7 @@ import {
   scCostX,
   scLinearTicks,
   scTokenRatio,
+  scTaskCostFactor,
   scAssignTwins,
   scSyncTwinContext,
   scModelKey,
@@ -33,7 +37,43 @@ import {
   SC_PLAN_UTIL,
   SC_COPILOT_PINK,
   type ScModel,
+  scWaypointsFor,
+  scWaypointHud,
+  scWaypointTag,
 } from "./smart-cost-chart";
+
+// ─── 2026-09-05: AA REBASED THE INTELLIGENCE INDEX, AND THIS FILE HELD THE OLD SCALE ───
+// Overnight AA rescaled its nine-eval composite and every scored model fell 15-25%
+// (Fable 5.1 65.6529 → 56.7581, Opus 5 63.0532 → 54.0539, Sonnet 5 55.2612 → 45.1096,
+// Grok 4.6 60.923 → 50.5768, Kimi K3 59.6995 → 50.2337, Fable 5.0 62.0727 → 53.1913).
+// The nightly refresh regenerated src/shared/aa-effort-index.ts correctly — and TEN
+// assertions here went red, because they carried AA's numbers as transcribed literals.
+//
+// That is the SAME defect as the incident of the same morning, one layer down: a value
+// denominated in a VENDOR's units, hardcoded where it can go stale in silence. There it
+// was a panel floor of 53; here it was a wall of digits that has to be re-typed every
+// time AA moves — and when nobody re-types it the gate goes red and the nightly refresh
+// fails closed on work that was actually correct.
+//
+// THE SHAPE THE ASSERTIONS TAKE NOW. What this file exists to prove is that the CHART
+// REPRODUCES THE TABLE: right family, right cell on right rung, in ladder order, nothing
+// invented, nothing flattened, no headline copied onto an unscored rung. So an AA-VALUED
+// expectation is now read out of the table — owned by the nightly
+// ~/.openclaw/workspace/skills/model-rank-refresh/scripts/estimate_effort_index.py and
+// its driver refresh_model_surfaces.sh — instead of restating its digits. That is not a
+// tautology: `scPointsFor` reaching a different answer than `aaScoreAt` (a missed family
+// join, a shifted or dropped rung, a fallback firing where a measurement exists) is
+// exactly the bug class these tests were written for. Every STRUCTURAL claim — which
+// rungs, in what order, which are `measured`, `estimate.sd > 0` with a basis, the
+// clamping relations, the tooltip's text SHAPE — is unchanged; none is weakened.
+//
+// A fixture `index:` is an INPUT, not an assertion. Where nothing reads it, a stale AA
+// literal is inert and left alone. Where an assertion depends on it — Kimi's and Fable
+// 5.0's "never a bare copy of the headline" — it is deliberately kept OFF the table, so
+// the claim stays independent instead of collapsing into "the estimate is not the
+// measurement", which the bound on the next line already says.
+const AA_LADDER_5 = ["low", "medium", "high", "xhigh", "max"];
+const AA_EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
 const model = (over: Partial<ScModel> & { id: string }): ScModel => ({
   name: over.id.split("/").pop() ?? over.id,
@@ -77,9 +117,13 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
   // public source for how smart each effort is, then attribute. Do not invent.
 
   it("plots Opus 5 at AA's five named efforts, not a flattened headline", () => {
+    // `index` is a fixture INPUT — the pre-rescale headline, kept because every rung here
+    // is measured, so it is never drawn and nothing below reads it.
     const pts = scPointsFor(model({ id: "claude-opus-5", relCost: 2, index: 63.05 }));
-    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    expect(pts.map((p) => p.smart)).toEqual([52.4569, 58.6355, 61.4751, 62.5205, 63.0532]);
+    expect(pts.map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    // Five rungs, five of AA's OWN numbers, each paired to the right effort. A flattened
+    // headline, a shifted ladder or an invented cell still fails this; a rescale does not.
+    expect(pts.map((p) => p.smart)).toEqual(AA_LADDER_5.map((l) => aaScoreAt("claude-opus-5", l)));
     expect(pts.every((p) => p.measured)).toBe(true);
   });
 
@@ -94,52 +138,88 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
   // other public per-effort benchmark runs fitted to AA's scale, flagged as such. The
   // guard that matters is unchanged: `measured` is true ONLY for AA's own number, the
   // measured rung's value never moves, and an estimate is never a measurement.
-  it("plots Sonnet 5's whole ladder, with only max carrying an AA score", () => {
-    const pts = scPointsFor(model({ id: "claude-sonnet-5", relCost: 1, index: 55.26 }));
-    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
-    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(55.2612);
+  it("plots Sonnet 5's whole ladder, every rung AA's own measurement", () => {
+    const ID = "claude-sonnet-5";
+    // AA filled Sonnet 5's last gap (xhigh) on 2026-09-12, so it no longer carries an
+    // estimated rung; the estimate half of this contract lives on Opus 4.8 below.
+    const pts = scPointsFor(model({ id: ID, relCost: 1, index: 55.26 }));
+    expect(pts.map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    expect(pts.map((p) => p.smart)).toEqual(AA_LADDER_5.map((l) => aaScoreAt(ID, l)));
+  });
+
+  it("plots Opus 4.8's whole ladder, with AA's own rungs measured and the rest estimated", () => {
+    const ID = "claude-opus-4-8";
+    // The CLAIM — every measured rung is AA's own number, and every estimate is flagged
+    // and sits at or under max — is what has to survive, not which rungs AA happened to
+    // run yesterday. AA runs only max for Opus 4.8 as of 2026-09-12.
+    const MAX = aaScoreAt(ID, "max")!;
+    const pts = scPointsFor(model({ id: ID, relCost: 1, index: 41.99 }));
+    expect(pts.map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(
+      AA_LADDER_5.filter((l) => aaScoreAt(ID, l) !== undefined),
+    );
+    expect(pts.some((p) => !p.measured)).toBe(true);
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(MAX);
     for (const p of pts.filter((x) => !x.measured)) {
       expect(p.estimate, p.lvl).toBeDefined(); // flagged, with a σ and a basis
       expect(p.estimate!.sd).toBeGreaterThan(0);
-      expect(p.smart).toBeLessThan(55.2612); // clamped below the measured max
+      expect(p.smart, p.lvl).toBeLessThanOrEqual(MAX); // clamped at the measured max
     }
   });
 
   it("plots Grok 4.6 at AA's four named efforts, not a single flattened dot", () => {
+    const LVLS = ["low", "medium", "high", "xhigh"];
     const pts = scPointsFor(
       model({ id: "grok-4.6", provider: "xai", relCost: 0.0536, index: 60.92 }),
     );
-    expect(pts.map((p) => p.lvl)).toEqual(["low", "medium", "high", "xhigh"]);
-    expect(pts.map((p) => p.smart)).toEqual([51.6796, 59.0064, 60.923, 60.0136]);
+    expect(pts.map((p) => p.lvl)).toEqual(LVLS);
+    // Four rungs, four of AA's numbers — INCLUDING the dent: AA's own xhigh sits below its
+    // high (49.3394 < 50.5768 after the 2026-09-05 rescale, 60.0136 < 60.923 before it).
+    // Reading the table preserves that; a hand-typed "sensible" ladder would iron it out,
+    // and this is the assertion that proves the chart does not sort or tidy AA's data.
+    expect(pts.map((p) => p.smart)).toEqual(LVLS.map((l) => aaScoreAt("grok-4.6", l)));
   });
 
-  it("scores GLM-5.3 only at max — low and high ride the rail", () => {
+  it("scores GLM-5.3 at low and max — high rides the rail", () => {
     const pts = scPointsFor(model({ id: "glm-5.3", provider: "zai", relCost: 4.4, index: 59.51 }));
     expect(pts.map((p) => p.lvl)).toEqual(["low", "high", "max"]);
-    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
-    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(59.5134);
+    // 2026-09-25: AA scored glm-5-3 low=34.299. High is still an estimate / rail.
+    expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["low", "max"]);
+    // Asking the TABLE for the score also proves the join the literal never tested: the
+    // dotted id has to resolve to AA's hyphenated family key (glm-5.3 → glm-5-3).
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(aaScoreAt("glm-5.3", "max"));
+    expect(pts.find((p) => p.lvl === "low")!.smart).toBe(aaScoreAt("glm-5.3", "low"));
   });
 
   it("scores Kimi K3 at low and max, and rails the unscored high", () => {
+    const ID = "openrouter/moonshotai/kimi-k3";
+    // A fixture INPUT — what the panel hands the chart as the headline index — kept
+    // deliberately OFF the table. Binding it to aaScoreAt would make `not.toBe(HEADLINE)`
+    // compare the chart's output to its own source and collapse the claim into the
+    // `<= MAX` bound on the line above it. The bounds move with AA; this does not.
+    const HEADLINE = 59.7;
+    const LOW = aaScoreAt(ID, "low")!;
+    const MAX = aaScoreAt(ID, "max")!;
     const pts = scPointsFor(
       model({
-        id: "openrouter/moonshotai/kimi-k3",
+        id: ID,
         provider: "openrouter",
         relCost: 15,
-        index: 59.7,
+        index: HEADLINE,
       }),
     );
     expect(pts.map((p) => p.lvl)).toEqual(["low", "high", "max"]);
     expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["low", "max"]);
-    expect(pts.filter((p) => p.measured).map((p) => p.smart)).toEqual([48.2515, 59.6995]);
+    expect(pts.filter((p) => p.measured).map((p) => p.smart)).toEqual([LOW, MAX]);
     // the unscored middle rung is an ESTIMATE (flagged), clamped between the two
     // measured neighbours — never a bare copy of the headline
     const high = pts.find((p) => p.lvl === "high")!;
     expect(high.estimate).toBeDefined();
-    expect(high.smart).toBeGreaterThanOrEqual(48.2515);
-    expect(high.smart).toBeLessThanOrEqual(59.6995);
-    expect(high.smart).not.toBe(59.7);
+    expect(high.smart).toBeGreaterThanOrEqual(LOW);
+    // RED as of 2026-09-05 (est 54.07 over a measured max of 50.2337) — see the gate below.
+    expect(high.smart).toBeLessThanOrEqual(MAX);
+    expect(high.smart).not.toBe(HEADLINE);
   });
 
   it("says UNKNOWN for a catalog-tail model with no vendor page", () => {
@@ -194,7 +274,14 @@ describe("smart-cost chart — vendor ladder ∩ AA score, nothing invented", ()
     ]);
     expect(svg).toContain("TestModel · High");
     expect(svg).toContain("€6.0/Mtok"); // 4 × high(1.5)
-    expect(svg).toContain("idx 61.5 at High (AA)");
+    // The claim is the tooltip's SHAPE — "idx <the table's number at THIS effort> at High
+    // (AA)" — so only the digits come from the table and every other token stays literal:
+    // the rung label, the (AA) suffix, and the fact that it is printed as a MEASUREMENT
+    // and not as "≈ … ±σ (ESTIMATE …)". Deliberately NOT built with the exported
+    // scIdxTag(): that is the chart's own formatter, and asserting against it would
+    // compare the chart to itself. Renders `idx 52.0 at High (AA)` today, `idx 61.5`
+    // before the 2026-09-05 rescale; the one-decimal rounding is part of the shape.
+    expect(svg).toContain(`idx ${aaScoreAt("claude-opus-5", "high")!.toFixed(1)} at High (AA)`);
     expect(svg).not.toContain("measured once, not per effort");
     expect(svg).toContain("/task");
     expect(svg).toContain("1M ctx");
@@ -220,10 +307,25 @@ describe("smart-cost chart — tokens per task (the architect 2026-08-06 #2)", (
     }
   });
 
-  it("the REFERENCE (Opus 5 @ high — its top REAL effort) has ZERO shift", () => {
-    // Was "max" until 2026-08-25; Anthropic's ladder for this class stops at
-    // high, so max was a setting the reference model cannot be run at.
-    expect(scTaskShiftDecades("claude-code/claude-opus-5", "high")).toBeCloseTo(0, 10);
+  it("effort is counted ONCE: every graded effort of a model shifts by the same amount", () => {
+    // FIX 2026-09-30 (J19 r2 review): the €/Mtok view already carries the effort
+    // multiplier and tokens-per-task carries it too, so the old shift counted it twice
+    // (max drew 4x dearer than high). The shift is now the model's appetite net of effort.
+    const hi = scTaskShiftDecades("claude-code/claude-opus-5", "high");
+    for (const lvl of ["low", "medium", "xhigh", "max"]) {
+      expect(scTaskShiftDecades("claude-code/claude-opus-5", lvl)).toBeCloseTo(hi, 10);
+    }
+  });
+
+  it("per task, max costs what the token ladder says over high (2x), not its square (4x)", () => {
+    const perTask = (lvl: string) =>
+      EEG_EFFORT_MULT[lvl] * scTaskCostFactor("claude-code/claude-opus-5", lvl);
+    expect(perTask("max") / perTask("high")).toBeCloseTo(
+      scTokensPerTask("claude-code/claude-opus-5", "max") /
+        scTokensPerTask("claude-code/claude-opus-5", "high"),
+      10,
+    );
+    expect(perTask("max") / perTask("high")).toBeCloseTo(2, 10);
   });
 
   it("a more token-hungry model shifts RIGHT (positive decades)", () => {
@@ -232,7 +334,7 @@ describe("smart-cost chart — tokens per task (the architect 2026-08-06 #2)", (
   });
 
   it("a leaner model/effort shifts LEFT (negative decades)", () => {
-    // Opus 5 at medium burns fewer tokens than the max reference
+    // Opus 5 burns fewer tokens per task than the reference normalisation (Opus 5 @ high)
     expect(scTaskShiftDecades("claude-code/claude-opus-5", "medium")).toBeLessThan(0);
   });
 
@@ -728,12 +830,16 @@ describe("one brain, several vendors: every route keeps its own dot", () => {
 });
 
 describe("chart dots hold still (the architect: 'why is gemini flash pulsating?')", () => {
-  it("inlines no SMIL animation, even for the animated google mark", () => {
+  it("inlines the colourful Google G with no SMIL animation", () => {
     const svg = renderSmartCostChart([
       model({ id: "google/gemini-3.6-flash", provider: "google", name: "Gemini Flash", index: 50 }),
     ]);
     expect(svg).not.toMatch(/<animate/);
-    expect(svg).toContain("sc-ring"); // the mark survived the strip
+    expect(svg).toContain('fill="#FFC107"'); // yellow of the four-colour G
+    expect(svg).toContain('fill="#FF3D00"');
+    expect(svg).toContain('fill="#4CAF50"');
+    expect(svg).toContain('fill="#1976D2"');
+    expect(svg).toContain("sc-ring"); // the mark survived nesting
   });
 });
 
@@ -1000,7 +1106,7 @@ describe("smart-cost chart — no bubble wears the wrong vendor's mark", () => {
 
   it("reads the vendor out of the id's middle segment for routed models", () => {
     // the vendor is stated verbatim in the id and was simply never parsed
-    expect(dot("openrouter/google/gemini-3.7-flash", "openrouter")).toContain("#4285f4");
+    expect(dot("openrouter/google/gemini-3.7-flash", "openrouter")).toContain("#FFC107");
     // FORK 2026-09-02: was `openrouter/openai/gpt-5.3-codex`, removed from the catalog
     // by the architect's ban on OpenRouter routes that duplicate a vendor we hold a
     // direct subscription with. The `openai` alias is keyed on the id's MIDDLE SEGMENT,
@@ -1022,7 +1128,7 @@ describe("smart-cost chart — no bubble wears the wrong vendor's mark", () => {
   it("still gives first-party providers their own mark", () => {
     expect(dot("claude-code/claude-opus-5", "claude-code")).toContain(ANTHROPIC_MARK);
     expect(dot("openai/gpt-5.6-sol", "openai")).toContain("#10A37F");
-    expect(dot("google/gemini-3.7-flash", "google")).toContain("#4285f4");
+    expect(dot("google/gemini-3.7-flash", "google")).toContain("#FFC107");
   });
 
   it("falls back to a NEUTRAL glyph, never to a brand, for an unknown vendor", () => {
@@ -1038,8 +1144,78 @@ describe("smart-cost chart — no bubble wears the wrong vendor's mark", () => {
 // ladder — verified live 2026-08-30 15:09 UTC. So the rungs are real, the SCORES
 // are not, and these tests pin that the chart shows the first without claiming
 // the second. The census found 60 of 99 models in this state; Fable was a sample.
+
+// ─── GATE ADDED 2026-09-05: the two GENERATED AA tables must agree WITH EACH OTHER ───
+// The reds this file carries today are per-model SAMPLES of a defect that spans the
+// table, and three samples miss the other 57 models in the same shape. On 2026-09-05 AA
+// rebased its Index; the nightly regenerated src/shared/aa-effort-index.ts (Retrieved
+// 2026-09-05T03:45:47Z) but commit eb203762bfd never reached
+// src/shared/aa-effort-estimate.ts (still Retrieved 2026-09-04T04:10:24Z) — its own
+// message says the run "died on an xAI 401". The two shipped files are therefore on
+// DIFFERENT SCALES, and the chart is right now drawing ESTIMATED rungs ABOVE the
+// MEASUREMENTS they are supposed to sit under: claude-fable-5 xhigh est 60.41 over a
+// measured max of 53.1913, claude-sonnet-5 medium est 48.50 over max 45.1096, kimi-k3
+// high est 54.07 over max 50.2337, glm-5-3 medium est 52.57 over max 48.584.
+//
+// aa-effort-estimate.ts's own header promises this cannot happen — "Every estimate is
+// clamped between the model's measured neighbours and kept non-decreasing across efforts
+// … because a ladder whose 'high' outscores its measured 'max' is noise, not a finding".
+// The clamp is real, but it runs INSIDE the Python generator against whatever scale the
+// index held at generation time, and nothing checked the shipped PAIR afterwards. The
+// old transcribed literals actively hid it: they bounded post-rescale estimates by the
+// PRE-rescale maximum, so they were green and meaningless.
+//
+// This is the check that would have caught it. Prose describing an invariant decays into
+// being ignored; a failing assertion does not. It is CODE rather than a note in the
+// bible because there is a structural producer (two generated files, rewritten nightly)
+// and the want is consistency, not judgement. It goes green with no edit here the moment
+// estimate_effort_index.py is re-run against the new index.
+//
+// Note it does NOT require a globally non-decreasing ladder: AA's own MEASURED dents are
+// data (grok-4-6 xhigh 49.3394 < high 50.5768) and are left alone. Only ESTIMATED cells
+// are bound, and only against their nearest measured neighbour on each side.
+const ROUND = 0.005; // half the estimate table's published precision (2 decimals)
+describe("AA tables — an ESTIMATE never outranks the MEASUREMENT it sits under", () => {
+  it("clamps every estimated cell between its measured neighbours, table-wide", () => {
+    const offenders: string[] = [];
+    for (const fam of Object.keys(AA_EFFORT_INDEX)) {
+      for (let i = 0; i < AA_EFFORT_ORDER.length; i++) {
+        const est = aaEstimateAt(fam, AA_EFFORT_ORDER[i]);
+        if (!est) continue;
+        let below: number | undefined;
+        for (let j = i - 1; j >= 0 && below === undefined; j--) {
+          below = aaScoreAt(fam, AA_EFFORT_ORDER[j]);
+        }
+        let above: number | undefined;
+        for (let j = i + 1; j < AA_EFFORT_ORDER.length && above === undefined; j++) {
+          above = aaScoreAt(fam, AA_EFFORT_ORDER[j]);
+        }
+        const cell = `${fam}.${AA_EFFORT_ORDER[i]} est ${est.v}`;
+        // The generator publishes estimates at TWO decimals while the index carries four,
+        // so an estimate clamped to exactly its neighbour can still land half a rounding
+        // unit past it — gpt-oss-20b medium 9.14 against a measured 9.1365 is 0.0035 over
+        // and is arithmetic, not an inversion. Anything beyond ROUND is a real one.
+        if (below !== undefined && est.v < below - ROUND)
+          offenders.push(`${cell} < measured ${below}`);
+        if (above !== undefined && est.v > above + ROUND)
+          offenders.push(`${cell} > measured ${above}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe("smart-cost chart — vendor rungs AA never scored", () => {
-  const fable = () => model({ id: "claude-fable-5", relCost: 0.4464, index: 62.0727 });
+  const ID = "claude-fable-5";
+  // Fixture INPUT: the headline index the panel would hand the chart. Kept a literal ON
+  // PURPOSE — the two claims below are "no estimate equals the headline" and "no estimate
+  // outranks the measurement", and they only stay independent while the two numbers are.
+  // Until 2026-09-05 the single literal 62.0727 was silently standing for BOTH.
+  const HEADLINE = 62.0727;
+  // AA's single measured rung, from the generated table (62.0727 → 53.1913 in the
+  // 2026-09-05 rescale). Owner: model-rank-refresh/scripts/refresh_model_surfaces.sh.
+  const MAX = aaScoreAt(ID, "max")!;
+  const fable = () => model({ id: ID, relCost: 0.4464, index: HEADLINE });
 
   it("plots ALL five Anthropic rungs for Fable, not just the one AA scored", () => {
     const pts = scPointsFor(fable());
@@ -1049,7 +1225,7 @@ describe("smart-cost chart — vendor rungs AA never scored", () => {
   it("marks exactly the AA-scored rung as measured, the rest as rail", () => {
     const pts = scPointsFor(fable());
     expect(pts.filter((p) => p.measured).map((p) => p.lvl)).toEqual(["max"]);
-    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(62.0727);
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(MAX);
   });
 
   it("carries a flagged ESTIMATE on every unmeasured rung — never a bare headline copy", () => {
@@ -1057,11 +1233,14 @@ describe("smart-cost chart — vendor rungs AA never scored", () => {
     for (const p of pts.filter((x) => !x.measured)) {
       expect(p.estimate, p.lvl).toBeDefined();
       expect(p.estimate!.basis.length).toBeGreaterThan(0);
-      expect(p.smart).not.toBe(62.0727);
-      expect(p.smart).toBeLessThanOrEqual(62.0727);
+      expect(p.smart, p.lvl).not.toBe(HEADLINE); // not a bare headline copy
+      // RED as of 2026-09-05 (medium est 56.13 over a measured max of 53.1913) — see the
+      // cross-table gate above this describe. This is the assertion the old conflated
+      // literal was hiding: it bounded estimates by the HEADLINE, not the MEASUREMENT.
+      expect(p.smart, p.lvl).toBeLessThanOrEqual(MAX); // never outranks the measurement
     }
     // the measured rung is untouched, and the ladder reads in effort order
-    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(62.0727);
+    expect(pts.find((p) => p.lvl === "max")!.smart).toBe(MAX);
     const ys = pts.map((p) => p.smart);
     for (let i = 1; i < ys.length; i++) expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1]);
   });
@@ -1165,7 +1344,6 @@ describe("smart-cost chart — OpenRouter vendors get their own logo", () => {
     for (const id of [
       "openrouter/thinkingmachines/inkling",
       "openrouter/thinkingmachines/inkling-small",
-      "openrouter/inclusionai/ling-3.0-flash",
       "openrouter/nex-agi/nex-n2-pro",
     ]) {
       const out = dot(id);
@@ -1174,10 +1352,24 @@ describe("smart-cost chart — OpenRouter vendors get their own logo", () => {
     }
   });
 
+  // 2026-10-02: four labs from the CN price matrix gained their official lobehub marks.
+  it("draws the official marks for inclusionAI, StepFun, ByteDance Seed and Baidu", () => {
+    for (const [id, colour] of [
+      ["openrouter/inclusionai/ling-3.0-flash", "#1677FF"], // Ant Group, inclusionAI's parent
+      ["openrouter/stepfun/step-3.7-flash", "#01A9FF"],
+      ["openrouter/bytedance-seed/seed-2-1-turbo", "#00C8D2"],
+      ["openrouter/baidu/ernie-5.0", "#23A4FB"], // Wenxin, ERNIE's own mark
+    ] as const) {
+      const out = dot(id);
+      expect(out).toContain(colour);
+      expect(out).not.toContain(NEUTRAL);
+    }
+  });
+
   it("does not disturb the marks that already resolved", () => {
     expect(dot("openrouter/moonshotai/kimi-k3")).toContain("#07B2FE");
     expect(dot("openrouter/z-ai/glm-5.3")).toContain("#80EE24");
-    expect(dot("openrouter/google/gemini-3.7-flash")).toContain("#4285f4");
+    expect(dot("openrouter/google/gemini-3.7-flash")).toContain("#FFC107");
     // FORK 2026-09-02: was `openrouter/anthropic/claude-opus-5-fast`; Fable 5.1 is the
     // live Anthropic OpenRouter route that now carries this assertion.
     expect(dot("openrouter/anthropic/claude-fable-5.1")).toContain(ANTHROPIC_MARK);
@@ -1209,7 +1401,14 @@ describe("smart-cost chart — Claude Fable 5.1", () => {
   it("carries AA's measurement at every rung — the only fully scored model besides Opus 5", () => {
     const pts = scPointsFor(fable51());
     expect(pts.every((p) => p.measured)).toBe(true);
-    expect(pts.map((p) => p.smart)).toEqual([58.1487, 60.4752, 62.4807, 64.8016, 65.6529]);
+    // Re-stated here so a ladder shift cannot pass by moving both sides of the next
+    // assertion together — the derived expectation is indexed by exactly this order.
+    expect(pts.map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    // AA's five numbers for this family, from the table. The whole ladder moved on
+    // 2026-09-05 (65.6529 → 56.7581 at max) and this assertion did not have to.
+    expect(pts.map((p) => p.smart)).toEqual(
+      AA_LADDER_5.map((l) => aaScoreAt("openrouter/anthropic/claude-fable-5.1", l)),
+    );
   });
 
   it("tops the board: its max beats Opus 5's max", () => {
@@ -1274,7 +1473,8 @@ describe("smart-cost chart — Claude Fable 5.1 on the Max 20x subscription", ()
     const costs = pts.map((p) => Number(p.cost.toFixed(4)));
     expect(costs).toEqual([0.75, 1, 1.5, 2, 3].map((k) => Number((PLAN * k).toFixed(4))));
     expect(new Set(costs).size).toBe(5);
-    expect(PLAN).toBeLessThan(1); // the plan price, not the $50 sticker
+    // the plan price, not the $50 sticker (1.14 since the 2026-09-23 measured re-base)
+    expect(PLAN).toBeLessThan(50 / 10);
   });
 
   it("plots the triangles at the OFFICIAL API price, same effort ladder", () => {
@@ -1287,7 +1487,15 @@ describe("smart-cost chart — Claude Fable 5.1 on the Max 20x subscription", ()
   it("every rung's Y is AA-measured — no rung hangs on the headline index", () => {
     const pts = scPointsFor(sub());
     expect(pts.every((p) => p.measured)).toBe(true);
-    expect(pts.map((p) => p.smart)).toEqual([58.1487, 60.4752, 62.4807, 64.8016, 65.6529]);
+    expect(pts.map((p) => p.lvl)).toEqual(AA_LADDER_5);
+    // The same five AA numbers reached through the SUBSCRIPTION id — this is the assertion
+    // that catches the hyphenated/dotted id split, so it reads the table, not a literal.
+    // This block already had the precedent one field over: `const PLAN = eegRelCost(ID)`,
+    // "relCost comes from the SHIPPED table, never a literal — otherwise this fixture keeps
+    // asserting a price the chart no longer draws". As of 2026-09-05 the Y axis follows the
+    // same rule the X axis has followed since 2026-09-02.
+    expect(pts.map((p) => p.smart)).toEqual(AA_LADDER_5.map((l) => aaScoreAt(ID, l)));
+    // Five DISTINCT heights — the "not flattened" claim, which no table lookup can supply.
     expect(new Set(pts.map((p) => p.smart)).size).toBe(5);
   });
 
@@ -1299,10 +1507,191 @@ describe("smart-cost chart — Claude Fable 5.1 on the Max 20x subscription", ()
 
   it("the circle↔triangle gap IS the subscription discount", () => {
     expect(scApiMultiple(sub())).toBeCloseTo(50 / PLAN, 6);
-    expect(scApiMultiple(sub())!).toBeGreaterThan(100); // two orders of magnitude
+    // ~44× since the 2026-09-23 measured re-base (was "two orders of magnitude" on the
+    // blend that priced cache reads ~10× over list)
+    expect(scApiMultiple(sub())!).toBeGreaterThan(30);
   });
 
   it("keeps its real 1M window under the hyphenated id too", () => {
     expect(scDefaultCtx(ID)).toBe(1_000_000);
+  });
+});
+
+// the architect 2026-09-23: "visualize, both for claude and openai models, a few landmarks of how
+// much their tokens cost with what kind of subscription … assume 100% consumption of
+// tokens every week". The waypoints are the SAME token on another plan of the SAME
+// vendor; every figure comes from the measured seats in src/shared/rel-cost-table.ts.
+describe("smart-cost chart — plan-tier waypoints", () => {
+  const opus = () =>
+    model({
+      id: "claude-code/claude-opus-5",
+      relCost: eegRelCost("claude-code/claude-opus-5"),
+      index: 61,
+    });
+  const sol = () =>
+    model({
+      id: "openai-codex/gpt-5.6-sol",
+      provider: "openai-codex",
+      relCost: eegRelCost("openai-codex/gpt-5.6-sol"),
+      index: 58,
+      color: "#10A37F",
+    });
+  const anchorCost = (m: ScModel) => {
+    const p = scPointsFor(m);
+    return (p.find((x) => x.anchor) ?? p[0]).cost;
+  };
+
+  it("gives Claude three marks: Max 20× (ours), Pro = Max 5×, Team", () => {
+    const w = scWaypointsFor(opus());
+    expect(w.map((x) => x.tags)).toEqual([
+      ["Max 20× €200"],
+      ["Pro €20", "Max 5× €100"],
+      ["Team €125"],
+    ]);
+    expect(w.map((x) => x.ours)).toEqual([true, false, false]);
+    for (let i = 1; i < w.length; i++) expect(w[i].cost).toBeGreaterThan(w[i - 1].cost);
+  });
+
+  // 2026-09-30 (DevDay 09-29): Pro 200 fell to 10× and Pro 500 arrived at 25×, so every
+  // personal tier buys exactly Plus's allowance per € and they share ONE mark.
+  it("gives OpenAI two marks: Plus (ours) = Pro 5× = Pro 10× = Pro 25×, then Business", () => {
+    const w = scWaypointsFor(sol());
+    expect(w.map((x) => x.tags)).toEqual([
+      ["Plus €20", "Pro 5× €100", "Pro 10× €200", "Pro 25× €500"],
+      ["Business €25"],
+    ]);
+    expect(w.map((x) => x.ours)).toEqual([true, false]);
+    expect(scWaypointHud(w[0])).toBe(
+      "Plus €20/mo = Pro 5× €100/mo = Pro 10× €200/mo = Pro 25× €500/mo",
+    );
+    // the chart tag prints one plan once; the drag readout above keeps every multiple
+    expect(scWaypointTag(w[0])).toBe("Plus €20 · Pro €100/200/500");
+    expect(scWaypointTag(w[1])).toBe("Business €25");
+  });
+
+  it("gives the GPT-6 family a triangle and the same ladder as the 5.6 models", () => {
+    for (const id of [
+      "openai-codex/gpt-6.1-sol",
+      "openai-codex/gpt-6-sol",
+      "openai-codex/gpt-6-luna",
+    ]) {
+      const m = model({ id, provider: "openai-codex", relCost: eegRelCost(id) });
+      expect(scApiPointsFor(m).length).toBeGreaterThan(0);
+      expect(scWaypointsFor(m).map((x) => x.tags.length)).toEqual([4, 1]);
+    }
+  });
+
+  it("puts OUR seat's 100% mark at exactly 75% of the circle, every other mark under the triangle", () => {
+    for (const m of [opus(), sol()]) {
+      const w = scWaypointsFor(m);
+      const ours = w.find((x) => x.ours)!;
+      expect(ours.cost).toBeCloseTo(anchorCost(m) * SC_PLAN_UTIL, 9);
+      const tri = scApiPointsFor(m).find((p) => p.anchor)!;
+      for (const x of w) expect(x.cost).toBeLessThan(tri.cost);
+    }
+  });
+
+  it("draws no ladder for an unmeasured seat, a Copilot re-sell or a metered model", () => {
+    expect(scWaypointsFor(model({ id: "xai/grok-4.6", provider: "xai" }))).toEqual([]);
+    expect(
+      scWaypointsFor(model({ id: "github-copilot/claude-opus-4.7", provider: "github-copilot" })),
+    ).toEqual([]);
+    expect(scWaypointsFor(model({ id: "google/gemini-3.8-flash", provider: "google" }))).toEqual(
+      [],
+    );
+  });
+
+  it("renders a triangle per mark and shows the tags on ONE model per vendor", () => {
+    const opus55 = model({
+      id: "claude-code/claude-opus-5-5",
+      relCost: eegRelCost("claude-code/claude-opus-5-5"),
+      index: 64,
+    });
+    const svg = renderSmartCostChart([opus(), opus55, sol()]);
+    // One ANCHOR row per model: 3 Claude marks × 2 models + 2 OpenAI marks (2026-09-30).
+    expect(svg.match(/class="sc-apipos sc-wppos[^"]*sc-wp-anchor"/g)?.length).toBe(8);
+    // the architect 2026-09-23 #3 — "make all the triangles the same size, same behavior": a plan
+    // triangle is drawn with the list triangle's OWN classes and EXACT points, so every
+    // API rule (size, shade, dim, hover light, glide) applies to both by construction.
+    const listPts =
+      /<g class="sc-apipos"[^>]*data-model="claude-code\/claude-opus-5"[^>]*>[\s\S]*?<polygon class="sc-tri" points="([^"]+)"/.exec(
+        svg,
+      )![1];
+    const planPts =
+      /<g class="sc-apipos sc-wppos[^"]*"[^>]*data-model="claude-code\/claude-opus-5"[^>]*>[\s\S]*?<polygon class="sc-tri sc-wp[^"]*" points="([^"]+)"/.exec(
+        svg,
+      )![1];
+    expect(planPts).toBe(listPts);
+    expect(svg).not.toMatch(/<path class="sc-wp/);
+    // the smartest Claude (Opus 5.5) and the only OpenAI model carry the always-on tags
+    const shown = (id: string) =>
+      svg.match(
+        new RegExp(
+          `class="sc-apipos sc-wppos sc-wp-show sc-wp-anchor"[^>]*data-model="${id.replace(/[./]/g, "\\$&")}"`,
+          "g",
+        ),
+      )?.length;
+    expect(shown("claude-code/claude-opus-5-5")).toBe(3);
+    expect(shown("openai-codex/gpt-5.6-sol")).toBe(2);
+    expect(shown("claude-code/claude-opus-5")).toBeUndefined();
+    expect(svg).toContain(">Pro €20 · Max 5× €100<");
+    expect(svg).toContain(">Plus €20 · Pro €100/200/500<");
+  });
+
+  // 2026-09-30: the metered openai/gpt-6-astra tied the seat Astra, came first, won the
+  // showcase and drew nothing (no API triangle → no bridge → no marks), so the OpenAI
+  // tags never appeared on the live chart. The showcase must be a model whose marks draw.
+  it("never gives the showcase to a metered twin that draws no marks", () => {
+    const twin = model({ id: "openai/gpt-5.6-sol", provider: "openai", relCost: 20, index: 58 });
+    expect(scApiPointsFor(twin)).toEqual([]);
+    const svg = renderSmartCostChart([twin, sol()]);
+    expect(svg).toMatch(
+      /class="sc-apipos sc-wppos sc-wp-show[^"]*"[^>]*data-model="openai-codex\/gpt-5\.6-sol"/,
+    );
+    expect(svg).toContain(">Plus €20 · Pro €100/200/500<");
+  });
+
+  // The drag (app.ts wireUtilDrag) snaps onto what is DRAWN: every rung owns a row, and
+  // every mark carries its own x and readout, addressed by (model, effort).
+  it("gives every draggable rung its own row, stamped for the drag to snap onto", () => {
+    const m = opus();
+    const svg = renderSmartCostChart([m]);
+    const rungs = scApiPointsFor(m).map((p) => p.lvl);
+    expect(rungs.length).toBeGreaterThan(1);
+    for (const lvl of rungs) {
+      const row =
+        svg.match(
+          new RegExp(`<g class="sc-apipos sc-wppos[^"]*"[^>]*data-effort="${lvl}"[^>]*>`, "g"),
+        ) ?? [];
+      expect(row.length).toBe(3);
+      for (const g of row) {
+        expect(g).toMatch(/data-wp-x="-?[\d.]+"/);
+        expect(g).toMatch(/data-wp-hud="[^"]+\/mo/);
+      }
+      // the list triangle AND the dashed bridge of the same rung are addressable too, so
+      // the drag can light the whole row, not only its plan marks
+      expect(svg).toMatch(new RegExp(`class="sc-apipos"[^>]*data-effort="${lvl}"`));
+      expect(svg).toMatch(new RegExp(`<line class="sc-bridge-cost"[^>]*data-effort="${lvl}"`));
+    }
+    const anchorLvl = scApiPointsFor(m).find((p) => p.anchor)!.lvl;
+    const rest =
+      svg.match(/<g class="sc-apipos sc-wppos[^"]*sc-wp-anchor"[^>]*data-effort="([^"]+)"/g) ?? [];
+    expect(rest.every((g) => g.includes(`data-effort="${anchorLvl}"`))).toBe(true);
+  });
+
+  it("reads out plan and monthly commitment when the circle lands on a mark", () => {
+    const [max20, proMax5, team] = scWaypointsFor(opus());
+    expect(scWaypointHud(max20)).toBe("Max 20× €200/mo");
+    expect(scWaypointHud(proMax5)).toBe("Pro €20/mo = Max 5× €100/mo");
+    expect(scWaypointHud(team)).toBe("Team €125/mo");
+    // a non-anchor rung is the same ladder slid by its effort multiplier
+    const low = scWaypointsFor(opus(), "low");
+    const anchor = scWaypointsFor(opus());
+    expect(low.map(scWaypointHud)).toEqual(anchor.map(scWaypointHud));
+    expect(low[0].lvl).toBe("low");
+    expect(low[0].cost / anchor[0].cost).toBeCloseTo(
+      EEG_EFFORT_MULT.low / EEG_EFFORT_MULT[anchor[0].lvl],
+      9,
+    );
   });
 });

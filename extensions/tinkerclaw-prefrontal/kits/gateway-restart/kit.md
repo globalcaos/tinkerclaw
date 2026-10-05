@@ -24,7 +24,7 @@ parallelism:
     2=Start & Verify, 3=Post-check.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

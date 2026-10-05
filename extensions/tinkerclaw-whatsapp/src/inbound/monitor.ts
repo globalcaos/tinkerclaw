@@ -1,5 +1,11 @@
 import { DisconnectReason, isJidGroup } from "@whiskeysockets/baileys";
-import type { AnyMessageContent, proto, WAMessage, WASocket } from "@whiskeysockets/baileys";
+import type {
+  AnyMessageContent,
+  MiscMessageGenerationOptions,
+  proto,
+  WAMessage,
+  WASocket,
+} from "@whiskeysockets/baileys";
 import { createInboundDebouncer, formatLocationText } from "openclaw/plugin-sdk/channel-inbound";
 import { recordChannelActivity } from "openclaw/plugin-sdk/channel-runtime";
 import { saveMediaBuffer } from "openclaw/plugin-sdk/media-runtime";
@@ -17,6 +23,7 @@ import { readWebSelfIdentityForDecision, WhatsAppAuthUnstableError } from "../au
 // connect under whatsmeow backend, silently masked under Baileys when earlier
 // errors short-circuited. Add the import here.
 import { setGroupMetadataFetcher } from "../group-name-cache.js";
+import { getDbIfExists } from "../history/db.js";
 import { getPrimaryIdentityId, resolveComparableIdentity } from "../identity.js";
 import { DEFAULT_RECONNECT_POLICY, computeBackoff, sleepWithAbort } from "../reconnect.js";
 import type { OpenClawConfig } from "../runtime-api.js";
@@ -259,13 +266,19 @@ export async function attachWebInboxToSocket(
     });
   };
 
-  const sendTrackedMessage = async (jid: string, content: AnyMessageContent) => {
+  const sendTrackedMessage = async (
+    jid: string,
+    content: AnyMessageContent,
+    sendOptions?: MiscMessageGenerationOptions,
+  ) => {
     let lastErr: unknown = new Error(RECONNECT_IN_PROGRESS_ERROR);
     for (let attempt = 1; ; attempt++) {
       const currentSock = getCurrentSock();
       if (currentSock) {
         try {
-          const result = await currentSock.sendMessage(jid, content);
+          const result = sendOptions
+            ? await currentSock.sendMessage(jid, content, sendOptions)
+            : await currentSock.sendMessage(jid, content);
           rememberOutboundMessage(jid, result);
           return result;
         } catch (err) {
@@ -756,13 +769,70 @@ export async function attachWebInboxToSocket(
 
       await maybeMarkInboundAsRead(inbound);
 
+      const msgTsRaw = msg.messageTimestamp;
+      const msgTsNum = msgTsRaw != null ? Number(msgTsRaw) : Number.NaN;
+      const msgTsMs = Number.isFinite(msgTsNum) ? msgTsNum * 1000 : 0;
+
       // If this is history/offline catch-up, mark read above but skip auto-reply.
       if (upsert.type === "append") {
         const APPEND_RECENT_GRACE_MS = 60_000;
-        const msgTsRaw = msg.messageTimestamp;
-        const msgTsNum = msgTsRaw != null ? Number(msgTsRaw) : Number.NaN;
-        const msgTsMs = Number.isFinite(msgTsNum) ? msgTsNum * 1000 : 0;
         if (msgTsMs < connectedAtMs - APPEND_RECENT_GRACE_MS) {
+          continue;
+        }
+      }
+
+      // FORK 2026-09-17: absolute staleness cap, applied to EVERY upsert type.
+      //
+      // The catch-up guard above only fires for type="append", but the whatsmeow
+      // adapter labels every message it emits "notify" (baileys-adapter-wm.ts) —
+      // including the ON_DEMAND history-sync replays that requestBackfill asks
+      // for on each reconnect. So on this backend that guard is unreachable and
+      // long-dead messages walk into the auto-reply path as if they were live.
+      // Two reconnects on 2026-09-17 replayed 573 distinct messages aged 18-359
+      // days; one was an owner message addressed to the agent, which answered it
+      // twice into a 25-person group 71 days after it was written.
+      //
+      // Deliberately NOT keyed on connectedAtMs: genuinely offline-queued
+      // messages also land after connect with a pre-connect timestamp, and those
+      // still deserve an answer. Only true history replay is this old.
+      //
+      // Fails OPEN on an unparseable timestamp (msgTsMs === 0): losing the age
+      // of one message must never be able to silence the channel entirely.
+      const MAX_INBOUND_AGE_MS = 12 * 60 * 60_000;
+      if (msgTsMs > 0 && Date.now() - msgTsMs > MAX_INBOUND_AGE_MS) {
+        console.log(
+          `[wa-pipeline] SKIP stale replay: jid=${msgJid} id=${msgId} ageHours=${Math.round(
+            (Date.now() - msgTsMs) / 3_600_000,
+          )}`,
+        );
+        continue;
+      }
+
+      // FORK 2026-09-30: has the conversation moved on since this message?
+      //
+      // the architect, after the 2026-09-17 replay: "don't reply without understanding
+      // if the conversation has moved forward". The 12h cap above cannot see
+      // that. A reconnect replays up to 50 messages from every quiet chat, and an
+      // owner "Jarvis, ..." answered an hour earlier clears the cap, outlives the
+      // 20-minute dedupe, and gets answered a second time.
+      //
+      // So a message that is not fresh is answered only while it is still the end
+      // of the conversation. Anything said after it (by anyone, the agent's own
+      // reply included) means a reply is no longer due. Five minutes is the floor
+      // backfill itself uses: it only replays chats that were silent through a
+      // 5+ minute outage, so no live message is ever this old when it arrives.
+      //
+      // Lets the message through when the history DB is missing or the query
+      // fails: the 12h cap still stands behind this.
+      const FRESH_MS = 5 * 60_000;
+      if (msgTsMs > 0 && msgJid && Date.now() - msgTsMs > FRESH_MS) {
+        const laterMessages = countLaterMessages(msgJid, Math.floor(msgTsMs / 1000));
+        if (laterMessages > 0) {
+          console.log(
+            `[wa-pipeline] SKIP conversation moved on: jid=${msgJid} id=${msgId} ageMin=${Math.round(
+              (Date.now() - msgTsMs) / 60_000,
+            )} laterMessages=${laterMessages}`,
+          );
           continue;
         }
       }
@@ -836,9 +906,20 @@ export async function attachWebInboxToSocket(
     }
   })();
 
+  // FORK 2026-10-03: group admin calls go to whichever socket is live now (see sendTrackedMessage).
+  const requireCurrentSock = (): WASocket => {
+    const currentSock = getCurrentSock();
+    if (!currentSock) {
+      throw new Error(RECONNECT_IN_PROGRESS_ERROR);
+    }
+    return currentSock;
+  };
+
   const sendApi = createWebSendApi({
     sock: {
-      sendMessage: (jid: string, content: AnyMessageContent) => sendTrackedMessage(jid, content),
+      // FORK 2026-10-03: the options carry the quote of an explicit reply; dropping them sent
+      // every `replyTo` as a plain, unquoted message.
+      sendMessage: (jid, content, sendOptions) => sendTrackedMessage(jid, content, sendOptions),
       sendPresenceUpdate: async (presence, jid?: string) => {
         const currentSock = getCurrentSock();
         if (!currentSock) {
@@ -855,6 +936,10 @@ export async function attachWebInboxToSocket(
         } | null;
         await currentSock?.presenceSubscribe?.(jid);
       },
+      groupUpdateSubject: (jid, subject) => requireCurrentSock().groupUpdateSubject(jid, subject),
+      updateProfilePicture: (jid, content) =>
+        requireCurrentSock().updateProfilePicture(jid, content),
+      groupLeave: (jid) => requireCurrentSock().groupLeave(jid),
     },
     defaultAccountId: options.accountId,
     // FORK 2026-05-02: outbound persona-prefix resolver. Reads the live
@@ -872,14 +957,30 @@ export async function attachWebInboxToSocket(
     },
   });
 
+  // FORK 2026-09-03: shutdown must never throw. The whatsmeow backend issues
+  // two disconnects per stop (auto-reply/monitor-wm.ts awaits listener.close()
+  // and then disconnectWmClient()), so guard the repeat call out here rather
+  // than writing again into an already-dying pipe.
+  let closed = false;
+
   return {
     close: async () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
       try {
         detachMessagesUpsert();
         detachConnectionUpdate();
-        closeInboundMonitorSocket(sock);
+        // warn, not logVerbose: a close failure on the shutdown path has to be
+        // visible without verbose mode, and it is exactly one line per stop.
+        await closeInboundMonitorSocket(sock, (message) => {
+          inboundLogger.warn({ message }, "whatsapp inbound socket close");
+          inboundConsoleLog.warn(message);
+        });
       } catch (err) {
-        logVerbose(`Socket close failed: ${String(err)}`);
+        inboundLogger.warn({ error: String(err) }, "whatsapp inbound socket close failed");
+        inboundConsoleLog.warn(`WhatsApp inbound socket close failed: ${String(err)}`);
       }
     },
     onClose,
@@ -889,6 +990,28 @@ export async function attachWebInboxToSocket(
     // IPC surface (sendMessage/sendPoll/sendReaction/sendComposingTo)
     ...sendApi,
   } as const;
+}
+
+// Real messages in a chat after a given moment. Reactions (the thinking-emoji
+// cycle alone writes thousands), protocol frames and unparsed rows are not
+// conversation, so they do not count.
+function countLaterMessages(chatJid: string, afterEpochSec: number): number {
+  try {
+    const db = getDbIfExists();
+    if (!db) {
+      return 0;
+    }
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM messages
+         WHERE chat_jid = ? AND timestamp > ?
+           AND message_type NOT IN ('reaction', 'protocol', 'unknown', 'other')`,
+      )
+      .get(chatJid, afterEpochSec) as { n: number } | undefined;
+    return row?.n ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 export async function monitorWebInbox(options: MonitorWebInboxOptions) {

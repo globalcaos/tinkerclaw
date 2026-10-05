@@ -7,6 +7,12 @@ import {
   resetSessionStoreLockRuntimeForTests,
   setSessionWriteLockAcquirerForTests,
 } from "../config/sessions.js";
+import { onAgentEvent, type AgentEventPayload } from "../infra/agent-events.js";
+import {
+  readCompactionLedger,
+  resetCompactionLedgerForTest,
+  settleCompactionLedgerSeedsForTest,
+} from "../infra/compaction-ledger.js";
 import { log } from "./embedded-agent-runner/logger.js";
 import {
   readCompactionCount,
@@ -15,9 +21,23 @@ import {
 } from "./embedded-agent-subscribe.compaction-test-helpers.js";
 import {
   handleCompactionEnd,
+  handleCompactionStart,
   reconcileSessionStoreCompactionCountAfterSuccess,
 } from "./embedded-agent-subscribe.handlers.compaction.js";
 import type { EmbeddedPiSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
+
+// FORK 2026-09-25 (context-window-panel.md §6.1 A4 / A7) — the events writer, stubbed for the
+// pi-auto ledger case at the end of this file: the compaction.run row an end writes is spied, and
+// the ledger's restart seed answers "no rows from an earlier process" for every session it asks
+// about (the real query answers null with no writer running, which leaves every read undefined).
+// compaction-ledger.test.ts runs the real writer.
+const emitEventMock = vi.hoisted(() => vi.fn());
+vi.mock("../infra/events/emit.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../infra/events/emit.js")>()),
+  emitEvent: (...args: unknown[]) => emitEventMock(...args),
+  queryPriorBootLedger: async (query: { sessionKeys: readonly string[] }) =>
+    new Map(query.sessionKeys.map((key): [string, never[]] => [key, []])),
+}));
 
 function createCompactionContext(params: {
   storePath: string;
@@ -28,6 +48,8 @@ function createCompactionContext(params: {
   onAgentEvent?: (evt: { stream: string; data: Record<string, unknown> }) => void;
   /** FORK 2026-07-27: lets a test supply a pi-shaped session (model + settingsManager). */
   session?: unknown;
+  /** FORK 2026-09-24: the run param the pi-auto lane falls back to when pi's model is absent. */
+  modelProvider?: string;
 }): EmbeddedPiSubscribeContext {
   let compactionCount = params.initialCount;
   return {
@@ -39,6 +61,7 @@ function createCompactionContext(params: {
       sessionId: "session-1",
       agentId: params.agentId ?? "test-agent",
       onAgentEvent: params.onAgentEvent,
+      modelProvider: params.modelProvider,
     },
     state: {
       compactionInFlight: true,
@@ -57,8 +80,6 @@ function createCompactionContext(params: {
       compactionCount += 1;
     },
     getCompactionCount: () => compactionCount,
-    noteCompactionTokensAfter: vi.fn(),
-    getLastCompactionTokensAfter: vi.fn(() => undefined),
   } as unknown as EmbeddedPiSubscribeContext;
 }
 
@@ -150,9 +171,6 @@ describe("handleCompactionEnd", () => {
     });
 
     expect(await readCompactionCount(storePath, sessionKey)).toBe(2);
-    // FORK 2026-04-28 chunk-21: noteCompactionTokensAfter dropped upstream;
-    // the handler computes tokensAfter but voids it (compaction-retry signaling only).
-    expect(ctx.noteCompactionTokensAfter).not.toHaveBeenCalled();
   });
 });
 
@@ -162,6 +180,9 @@ describe("handleCompactionEnd", () => {
 // `result.tokensBefore`); reconstructing them at `compaction_start` yields tokens=0 because pi
 // has already popped the triggering assistant message off agent.state.messages.
 describe("handleCompactionEnd pi-auto diagnostics", () => {
+  /** FORK 2026-09-24: what every pi-auto event carries on the A1 contract, on an embedded lane. */
+  const PI_AUTO_EMBEDDED = { trigger: "pi-auto", lane: "embedded", provenance: "estimated" };
+
   function captureCompactionDiagLines(run: () => void): string[] {
     const infoSpy = vi.spyOn(log, "info").mockImplementation(() => {});
     try {
@@ -177,6 +198,7 @@ describe("handleCompactionEnd pi-auto diagnostics", () => {
   async function makeCtx(overrides?: {
     onAgentEvent?: (evt: { stream: string; data: Record<string, unknown> }) => void;
     session?: unknown;
+    modelProvider?: string;
   }): Promise<EmbeddedPiSubscribeContext> {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-compaction-piauto-"));
     const storePath = path.join(tmp, "sessions.json");
@@ -188,6 +210,7 @@ describe("handleCompactionEnd pi-auto diagnostics", () => {
       initialCount: 1,
       onAgentEvent: overrides?.onAgentEvent,
       session: overrides?.session,
+      modelProvider: overrides?.modelProvider,
     });
   }
 
@@ -373,7 +396,14 @@ describe("handleCompactionEnd pi-auto diagnostics", () => {
         // FORK 2026-08-29: the end event now forwards pi's reported context size so the
         // CONTEXT WINDOW panel can show what the compaction saved. This fixture sets
         // result.tokensBefore = 10; tokensAfter is absent, and an absent number stays absent.
-        data: { phase: "end", willRetry: false, completed: true, tokensBefore: 10 },
+        // FORK 2026-09-24: the full A1 contract; no start was seen, so no durationMs either.
+        data: {
+          phase: "end",
+          ...PI_AUTO_EMBEDDED,
+          willRetry: false,
+          completed: true,
+          tokensBefore: 10,
+        },
       },
     ]);
   });
@@ -403,7 +433,13 @@ describe("handleCompactionEnd pi-auto diagnostics", () => {
     expect(events).toEqual([
       {
         stream: "compaction",
-        data: { phase: "end", willRetry: true, completed: true, tokensBefore: 10 },
+        data: {
+          phase: "end",
+          ...PI_AUTO_EMBEDDED,
+          willRetry: true,
+          completed: true,
+          tokensBefore: 10,
+        },
       },
     ]);
   });
@@ -425,5 +461,207 @@ describe("handleCompactionEnd pi-auto diagnostics", () => {
     expect(lines[0]).toContain("aborted=true");
     // Aborted compaction must not bump the counter — unchanged pre-existing behaviour.
     expect(ctx.getCompactionCount()).toBe(1);
+  });
+
+  // FORK 2026-09-24 (A1 ratchet retired): pi-auto publishes the full contract owned by
+  // src/infra/compaction-telemetry.ts. CONTROL: before this change the start event was
+  // {phase:"start"} and the end event carried no trigger / lane / provenance / durationMs.
+  it("publishes the full A1 contract on start and end, with the measured duration", async () => {
+    const events: Array<{ stream: string; data: Record<string, unknown> }> = [];
+    const ctx = await makeCtx({
+      onAgentEvent: (evt) => {
+        events.push(evt);
+      },
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_000_000);
+      handleCompactionStart(ctx);
+      vi.setSystemTime(1_003_500);
+      captureCompactionDiagLines(() => {
+        handleCompactionEnd(ctx, {
+          type: "compaction_end",
+          reason: "threshold",
+          result: { summary: "s", firstKeptEntryId: "e1", tokensBefore: 120_000 },
+          willRetry: false,
+          aborted: false,
+        } as never);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(events).toEqual([
+      { stream: "compaction", data: { phase: "start", ...PI_AUTO_EMBEDDED } },
+      {
+        stream: "compaction",
+        data: {
+          phase: "end",
+          ...PI_AUTO_EMBEDDED,
+          willRetry: false,
+          completed: true,
+          tokensBefore: 120_000,
+          durationMs: 3_500,
+        },
+      },
+    ]);
+  });
+
+  it("never zeroes a figure pi did not measure", async () => {
+    const events: Array<{ stream: string; data: Record<string, unknown> }> = [];
+    const ctx = await makeCtx({
+      onAgentEvent: (evt) => {
+        events.push(evt);
+      },
+    });
+
+    captureCompactionDiagLines(() => {
+      handleCompactionEnd(ctx, {
+        type: "compaction_end",
+        reason: "threshold",
+        result: { summary: "s", tokensBefore: Number.NaN, tokensAfter: -1 },
+        willRetry: false,
+        aborted: false,
+      } as never);
+      handleCompactionEnd(ctx, {
+        type: "compaction_end",
+        reason: "overflow",
+        result: undefined,
+        willRetry: false,
+        aborted: true,
+      } as never);
+    });
+
+    // No tokensBefore / tokensAfter / tokensDropped / durationMs: absent, never 0.
+    expect(events.map((evt) => evt.data)).toEqual([
+      { phase: "end", ...PI_AUTO_EMBEDDED, willRetry: false, completed: true },
+      { phase: "end", ...PI_AUTO_EMBEDDED, willRetry: false, completed: false },
+    ]);
+  });
+
+  it("stamps lane cc-bridge when pi's own session model is the claude-code provider", async () => {
+    const events: Array<{ stream: string; data: Record<string, unknown> }> = [];
+    const ctx = await makeCtx({
+      onAgentEvent: (evt) => {
+        events.push(evt);
+      },
+      session: { messages: [], model: { id: "claude-opus-4-8", provider: "claude-code" } },
+    });
+
+    captureCompactionDiagLines(() => {
+      handleCompactionStart(ctx);
+      handleCompactionEnd(ctx, {
+        type: "compaction_end",
+        reason: "overflow",
+        result: undefined,
+        willRetry: false,
+        aborted: false,
+      } as never);
+    });
+
+    expect(events.map((evt) => evt.data.lane)).toEqual(["cc-bridge", "cc-bridge"]);
+  });
+
+  it("falls back to the run's modelProvider, and says cc-bridge only on positive evidence", async () => {
+    const cases: Array<{ modelProvider?: string; session?: unknown; lane: string }> = [
+      { modelProvider: "Claude-Code", lane: "cc-bridge" },
+      { modelProvider: "anthropic", lane: "embedded" },
+      { lane: "embedded" },
+      // pi's own model outranks the run param: it is the model pi's decider judged.
+      {
+        modelProvider: "claude-code",
+        session: { messages: [], model: { id: "gpt-5", provider: "openai" } },
+        lane: "embedded",
+      },
+    ];
+    for (const testCase of cases) {
+      const events: Array<{ stream: string; data: Record<string, unknown> }> = [];
+      const ctx = await makeCtx({
+        onAgentEvent: (evt) => {
+          events.push(evt);
+        },
+        session: testCase.session,
+        modelProvider: testCase.modelProvider,
+      });
+
+      handleCompactionStart(ctx);
+
+      expect(events.map((evt) => evt.data.lane)).toEqual([testCase.lane]);
+    }
+  });
+});
+
+// FORK 2026-09-25 (context-window-panel.md §6.1 A4 / A7) — pi-auto's two A1 targets carry the
+// run's session key, so the compaction.run row an end writes names that session and its ledger
+// totals move: the sessions.list row's compactions and lastCompactionAt, while droppedTokens turns
+// absent, because pi measures no drop. CONTROL: before this change both targets carried none, so
+// the bus events had no sessionKey, the row's was null, and the view stayed at
+// { compactions: 0, evictions: 0, droppedTokens: 0 }.
+describe("handleCompactionEnd pi-auto compaction ledger", () => {
+  const LEDGER_KEY = "agent:main:tinker:pi-auto-ledger";
+
+  beforeEach(() => {
+    emitEventMock.mockReset();
+    resetCompactionLedgerForTest();
+  });
+
+  afterEach(() => {
+    resetCompactionLedgerForTest();
+  });
+
+  it("counts a completed pi-auto compaction for the run's own session", async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-compaction-ledger-"));
+    const storePath = path.join(tmp, "sessions.json");
+    await seedSessionStore({ storePath, sessionKey: LEDGER_KEY, compactionCount: 0 });
+    const ctx = createCompactionContext({ storePath, sessionKey: LEDGER_KEY, initialCount: 0 });
+
+    // Unseeded reads are undefined (P10); the first queues the seed, which finds no earlier rows.
+    expect(readCompactionLedger(LEDGER_KEY)).toBeUndefined();
+    await settleCompactionLedgerSeedsForTest();
+    expect(readCompactionLedger(LEDGER_KEY)).toEqual({
+      compactions: 0,
+      evictions: 0,
+      droppedTokens: 0,
+    });
+
+    const events: AgentEventPayload[] = [];
+    const stop = onAgentEvent((evt) => {
+      if (evt.stream === "compaction") {
+        events.push(evt);
+      }
+    });
+    const infoSpy = vi.spyOn(log, "info").mockImplementation(() => {});
+    try {
+      handleCompactionStart(ctx);
+      handleCompactionEnd(ctx, {
+        type: "compaction_end",
+        reason: "threshold",
+        result: { summary: "s", firstKeptEntryId: "e1", tokensBefore: 90_000 },
+        willRetry: false,
+        aborted: false,
+      } as never);
+    } finally {
+      infoSpy.mockRestore();
+      stop();
+    }
+
+    expect(events.map((evt) => [evt.data.phase, evt.sessionKey])).toEqual([
+      ["start", LEDGER_KEY],
+      ["end", LEDGER_KEY],
+    ]);
+    const rows = emitEventMock.mock.calls.filter(([name]) => name === "compaction.run");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.[1]).toMatchObject({
+      sessionKey: LEDGER_KEY,
+      runId: "run-test",
+      label: "completed",
+      n1: 90_000,
+    });
+    expect(readCompactionLedger(LEDGER_KEY)).toEqual({
+      compactions: 1,
+      evictions: 0,
+      lastCompactionAt: expect.any(Number),
+    });
   });
 });

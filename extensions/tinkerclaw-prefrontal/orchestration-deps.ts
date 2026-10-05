@@ -47,11 +47,11 @@ const ADMIN_SCOPES = ["operator.admin"];
  * bill metered). Default = sonnet: a sensible, cheaper middle. Dynamic workflows are
  * a STANDING capability (not a max-effort tier), so the default should not be the
  * priciest model — a script picks `claude-code/claude-haiku-4-5` per-unit for cheap
- * parallel scanning (separate budget) and `claude-code/claude-fable-5` (the flagship)
+ * parallel scanning (separate budget) and `claude-code/claude-fable-5-1` (the flagship)
  * for hard reasoning or to break out of a going-in-circles fix loop, via agent({model})
  * (coerced to claude-code/* — see coerceClaudeCodeModel).
  */
-const DEFAULT_LEAF_MODEL = "claude-code/claude-sonnet-4-6";
+const DEFAULT_LEAF_MODEL = "claude-code/claude-sonnet-5-5";
 
 /**
  * BILLING GUARD: force a `claude-code/*` leaf model. A claude-code/* request is
@@ -64,6 +64,40 @@ function coerceClaudeCodeModel(requested: string | undefined): string {
   return typeof requested === "string" && requested.startsWith("claude-code/")
     ? requested
     : DEFAULT_LEAF_MODEL;
+}
+
+/** Must equal `LEAF_RESOLVER_SLOT` in `src/infra/thalamus-call-router.ts`; a core test compares them. */
+export const THALAMUS_LEAF_RESOLVER_SLOT = "openclaw.thalamus.leafModelResolver";
+
+/**
+ * The registered resolver's pick for one `model: "auto"` unit, or undefined. Read by `Symbol.for` key with no import,
+ * so nothing here depends on the Thalamus plugin existing. A throw or a malformed answer counts as no answer.
+ */
+function resolveAutoLeaf(
+  prompt: string,
+  opts: AgentOpts | undefined,
+  site: "orchestrate-auto" | "orchestrate-default",
+): { model: string; thinking?: string } | undefined {
+  const slot = (globalThis as Record<symbol, unknown>)[Symbol.for(THALAMUS_LEAF_RESOLVER_SLOT)];
+  const resolve = (slot as { resolve?: (r: unknown) => unknown } | undefined)?.resolve;
+  if (typeof resolve !== "function") return undefined;
+  try {
+    const out = resolve.call(slot, {
+      prompt,
+      label: opts?.label,
+      reads: opts?.reads,
+      writes: opts?.writes,
+      thinking: opts?.thinking,
+      site,
+    }) as { model?: unknown; thinking?: unknown } | undefined;
+    if (!out || typeof out.model !== "string" || out.model.trim() === "") return undefined;
+    return {
+      model: out.model,
+      ...(typeof out.thinking === "string" && out.thinking ? { thinking: out.thinking } : {}),
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 interface HistoryMessage {
@@ -217,8 +251,26 @@ export function createProductionOrchestrationRuntime(opts: ProductionRuntimeOpts
     const label = agentOpts?.label ?? "orchestration-agent";
     // Per-unit model override (agent({model})) is coerced; otherwise the (already
     // coerced) default leaf model. Either way the spawn is claude-code/* = tinker-sp-*.
-    const model = agentOpts?.model ? coerceClaudeCodeModel(agentOpts.model) : defaultLeafModel;
-    const thinking = agentOpts?.thinking; // per-unit effort override, or undefined to inherit
+    // FORK 2026-09-30 (THALAMUS v4 E3): `model: "auto"` asks the registered resolver for this unit's model. With none
+    // registered, or one that offers nothing usable, "auto" is exactly an omitted model: the default leaf model. The
+    // billing guard still has the last word on whatever comes back.
+    // FORK 2026-10-03: a unit with no model is Thalamus's too when it owns the `orchestrate-default` site (the architect: "Make
+    // sure Thalamus is owner of all those model choices when it is working"), unless the caller configured its own
+    // default leaf model. The resolver decides by site whether to act; an empty answer keeps the default leaf model.
+    const auto = agentOpts?.model === "auto";
+    const omitted = !agentOpts?.model && !opts.leafModel;
+    const choice = auto
+      ? resolveAutoLeaf(prompt, agentOpts, "orchestrate-auto")
+      : omitted
+        ? resolveAutoLeaf(prompt, agentOpts, "orchestrate-default")
+        : undefined;
+    const model = choice
+      ? coerceClaudeCodeModel(choice.model)
+      : agentOpts?.model && !auto
+        ? coerceClaudeCodeModel(agentOpts.model)
+        : defaultLeafModel;
+    // Per-unit effort override, or the resolver's when the script gave none, or undefined to inherit.
+    const thinking = agentOpts?.thinking ?? choice?.thinking;
     const finalText = await spawnTextVia(
       opts.callGateway,
       prompt,

@@ -26,6 +26,26 @@ export type SessionRunStatus = "running" | "done" | "failed" | "killed" | "timeo
 
 export type SubagentRunState = "active" | "interrupted" | "historical";
 
+/**
+ * FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/prompt-queue.md §6.3 / §7 step G5. The four states a
+ * prompt can be in after its `chat.send` was acked and before its terminal, while a gateway holder
+ * still owns it (§2). Mirrors the consumer, tinker-ui/src/prompt-state.ts `PendingPromptPhase`.
+ */
+export type GatewaySessionPendingPromptState = "behind" | "steered" | "preparing" | "running";
+
+/** One entry of GatewaySessionRow.pendingPrompts. */
+export type GatewaySessionPendingPrompt = {
+  /** The prompt's one identity (PQ-1): the client's `chat.send` idempotencyKey. */
+  key: string;
+  state: GatewaySessionPendingPromptState;
+  /**
+   * Epoch ms, the reporting holder's own timestamp for the prompt: the follow-up item's
+   * `enqueuedAt` (BEHIND), the steer's acceptance (STEERED), the reply operation's `startedAt`
+   * (PREPARING, RUNNING).
+   */
+  since: number;
+};
+
 export type GatewaySessionRow = {
   key: string;
   spawnedBy?: string;
@@ -100,6 +120,19 @@ export type GatewaySessionRow = {
     since?: number;
     lastActiveAt?: number;
   };
+  /**
+   * FORK 2026-09-24 — prompt-queue.md §6.3 / §7 step G5. WHICH prompts of this session a gateway
+   * holder still owns, and in which §2 state; `run` above says only WHETHER the session is working.
+   * DERIVED when the row is built (session-utils.ts deriveSessionPendingPrompts) from in-memory
+   * holders only, with no session-store read (failures.md M21). PQ-11 re-derives a prompt's state
+   * from it after a reload; PQ-5 counts a key's absence as evidence for LOST.
+   *
+   * ABSENT when nothing is pending, never `[]`. An absent field alone therefore cannot tell
+   * "nothing pending" from "a gateway without this field"; the consumer decides that
+   * (tinker-ui/src/prompt-state.ts `noGatewayHolder`). Additive: a client that does not know this
+   * field ignores it.
+   */
+  pendingPrompts?: GatewaySessionPendingPrompt[];
   subagentRunState?: SubagentRunState;
   hasActiveSubagentRun?: boolean;
   startedAt?: number;
@@ -132,6 +165,34 @@ export type GatewaySessionRow = {
   lastThreadId?: SessionEntry["lastThreadId"];
   compactionCheckpointCount?: number;
   latestCompactionCheckpoint?: SessionCompactionCheckpoint;
+  /**
+   * FORK 2026-09-24 — TINKER_UI_DESIGN_BIBLE/context-window-panel.md §6.1 A7. The session entry's
+   * own durable counter (SessionEntry.compactionCount), passed through as stored and ABSENT when
+   * the entry never recorded one. Only gateway-side executors bump it: the claude CLI's own
+   * compactions (trigger "cli-internal") and the EVICT button never reach it. `compactions` below
+   * counts every executor.
+   */
+  compactionCount?: number;
+  /**
+   * FORK 2026-09-24 — A4 / A7: the compaction LEDGER's figures for this session
+   * (src/infra/compaction-ledger.ts): the events database's `compaction.run` rows of earlier
+   * gateway processes, inside that table's retention window, plus this process's own. Read from
+   * memory when the row is built, never from a store (failures.md M21). All four are ABSENT until
+   * the ledger was seeded for this session after a gateway start (P10: the UI shows "—", not 0).
+   * Additive: a client that does not know these fields ignores them.
+   *
+   * `compactions`: completed compactions of every executor except the EVICT button.
+   */
+  compactions?: number;
+  /** Completed EVICT-button evictions (trigger "evict"). */
+  evictions?: number;
+  /**
+   * Tokens those compactions and evictions removed: each end's measured drop, else its before
+   * minus after. ALSO absent when some ran and none carried a figure (never a fabricated 0).
+   */
+  droppedTokens?: number;
+  /** Epoch ms of the latest completed compaction, evictions excluded; absent when there is none. */
+  lastCompactionAt?: number;
   pluginExtensions?: PluginSessionExtensionProjection[];
 };
 

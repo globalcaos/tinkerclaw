@@ -275,6 +275,8 @@ output/
 .artifacts/
 test/fixtures/openclaw-vitest-unit-report.json
 analysis/
+# FORK 2026-09-25: the upstream rule above is unanchored and silently swallowed recipes/analysis/ (deep-research.md)
+!extensions/tinkerclaw-prefrontal/recipes/analysis/
 .artifacts/qa-e2e/
 extensions/qa-lab/web/dist/
 

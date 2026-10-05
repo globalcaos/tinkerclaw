@@ -76,6 +76,12 @@ export type RunEmbeddedPiAgentParams = {
   disableMessageTool?: boolean;
   /** Internal one-shot model probe mode: no tools, no workspace/chat prompt policy. */
   modelRun?: boolean;
+  /**
+   * FORK 2026-09-29 (lifecycles.md L4b): resume the interrupted turn from the transcript with
+   * `Agent.continue()` instead of a prompt (continuation.ts). Falls back to the prompt when the
+   * transcript already ends in an answer.
+   */
+  continueFromTranscript?: boolean;
   /** Explicit system prompt mode override for trusted callers. */
   promptMode?: PromptMode;
   /** Keep the message tool available even when a narrow profile would omit it. */
@@ -90,6 +96,14 @@ export type RunEmbeddedPiAgentParams = {
   prompt: string;
   /** User-visible prompt body to submit and persist; runtime context travels separately. */
   transcriptPrompt?: string;
+  /**
+   * FORK 2026-10-01 (`[chat-divergence]` cause 1): the prompt keys this run answers (for webchat,
+   * the chat.send idempotencyKey). The attempt writes an `openclaw.prompt-key` marker for each key
+   * the session holds none for yet, just before pi persists the user row
+   * (gateway/prompt-key-marker.ts appendMissingPromptKeyMarkers), so a brand-new session's first
+   * prompt is keyed in pi's first flush. Omitted: no marker is written.
+   */
+  promptKeys?: readonly string[];
   images?: ImageContent[];
   imageOrder?: PromptImageOrderEntry[];
   /** Optional client-provided tools (OpenResponses hosted tools). */

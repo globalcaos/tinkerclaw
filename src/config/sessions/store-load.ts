@@ -2,12 +2,14 @@ import fs from "node:fs";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { normalizeSessionDeliveryFields } from "../../utils/delivery-context.shared.js";
 import { getFileStatSnapshot } from "../cache-utils.js";
+import { hydrateSessionStoreSkillsSnapshots } from "./skills-snapshot-store.js";
 import {
   isSessionStoreCacheEnabled,
   readSessionStoreCache,
   setSerializedSessionStore,
   writeSessionStoreCache,
 } from "./store-cache.js";
+import { normalizeStoreSessionKey } from "./store-entry.js";
 import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
 import {
   capEntryCount,
@@ -131,6 +133,14 @@ export function loadSessionStore(
 
   applySessionStoreMigrations(store);
   normalizeSessionStore(store);
+  // FORK 2026-09-21 — hydrate content-addressed skills snapshots HERE, not only in
+  // store.ts's wrapper: ~12 modules import this raw loader directly and would
+  // otherwise read `prompt: undefined`. In place, before the cache write, so the
+  // object cache (and every clone:false hit) holds the hydrated store.
+  // `serializedFromDisk` stays the on-disk text: the save path externalises
+  // before stringify, so an unchanged store still compares equal and skips the
+  // write. Idempotent; an identity no-op for legacy inline entries.
+  hydrateSessionStoreSkillsSnapshots({ storePath, store });
   const maintenance = opts.maintenanceConfig ?? resolveMaintenanceConfig();
   const beforeCount = Object.keys(store).length;
   if (maintenance.mode === "enforce" && beforeCount > maintenance.maxEntries) {
@@ -168,4 +178,51 @@ export function loadSessionStore(
   }
 
   return opts.clone === false ? store : structuredClone(store);
+}
+
+export type LoadSessionStoreEntryOptions = Omit<LoadSessionStoreOptions, "clone">;
+
+// FORK 2026-09-23 — single-entry reads. `loadSessionStore(path)[key]` deep-clones
+// the WHOLE store to hand back one entry; a live profile had ~20% of the gateway
+// main thread in that clone (3.6 MB store). These run the exact same load
+// (cache, mtime+size freshness, skills-snapshot hydration) with clone:false and
+// never let the shared cached object escape. Keys are OWN properties only.
+
+/** One entry as a private deep copy (callers may mutate it), or undefined. */
+export function loadSessionStoreEntry(
+  storePath: string,
+  sessionKey: string,
+  opts: LoadSessionStoreEntryOptions = {},
+): SessionEntry | undefined {
+  // READ-ONLY borrow of the cached object: only the entry is copied out.
+  const store = loadSessionStore(storePath, { ...opts, clone: false });
+  const entry = Object.hasOwn(store, sessionKey) ? store[sessionKey] : undefined;
+  return entry === undefined ? undefined : structuredClone(entry);
+}
+
+/**
+ * Membership without any clone. `ignoreCase` falls back, after an exact miss, to
+ * the first key equal under normalizeStoreSessionKey (trim + lowercase).
+ */
+export function hasSessionStoreEntry(
+  storePath: string,
+  sessionKey: string,
+  opts: LoadSessionStoreEntryOptions & { ignoreCase?: boolean } = {},
+): boolean {
+  const { ignoreCase, ...loadOpts } = opts;
+  // READ-ONLY borrow of the cached object; only a boolean leaves this function.
+  const store = loadSessionStore(storePath, { ...loadOpts, clone: false });
+  if (Object.hasOwn(store, sessionKey) && store[sessionKey]) {
+    return true;
+  }
+  if (!ignoreCase) {
+    return false;
+  }
+  const normalized = normalizeStoreSessionKey(sessionKey);
+  for (const key of Object.keys(store)) {
+    if (normalizeStoreSessionKey(key) === normalized) {
+      return Boolean(store[key]);
+    }
+  }
+  return false;
 }

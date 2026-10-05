@@ -8,7 +8,8 @@
 //     and left/right axis assignment
 //   • one point per day = that day's LAST reading (gauges; averaging would lie)
 //   • no legend — lines identified via the hover tooltip
-//   • header = icon + permanent name; click to collapse; drag to reorder (persisted)
+//   • header = icon + permanent name; click to collapse; pointer-drag to reorder (persisted)
+//   • optional linked X axis: all charts share the longest series' window; zoom/pan one, all follow
 //   • horizontal (secondary) wheel or Ctrl/⌘+wheel zooms the time window (plain
 //     vertical wheel scrolls the page); drag pans;
 //     double-click resets
@@ -46,6 +47,8 @@ const ICONS: Record<string, string> = {
   // GitHub TinkerClaw → real GitHub invertocat (white variant, bundled from
   // githubassets favicon-dark.png so it reads on the dark woody card).
   github: `<img src="${ASSET_BASE}github.png" width="14" height="14" style="vertical-align:-2px"/>`,
+  // Git commit marker (circle on a line) — the architect's own push activity.
+  activity: `<svg width="14" height="14" viewBox="0 0 24 24" style="vertical-align:-2px"><path fill="none" stroke="#8ECAE6" stroke-width="2" d="M12 3v6.2M12 14.8V21"/><circle cx="12" cy="12" r="3.1" fill="#8ECAE6"/></svg>`,
   stars: "⭐",
   moltbook: "🦞",
   // ClawHub views → real ClawHub lobster logomark (bundled from clawhub.ai's
@@ -79,8 +82,11 @@ const PW = W - ML - MR,
 const DAY = 86_400_000;
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-const OKEY = "pulse.pg.order",
-  CKEY = "pulse.pg.collapsed";
+export const PG_ORDER_KEY = "pulse.pg.order";
+export const PG_LINK_KEY = "pulse.pg.linkX";
+const OKEY = PG_ORDER_KEY,
+  CKEY = "pulse.pg.collapsed",
+  LKEY = PG_LINK_KEY;
 function loadOrder(): string[] {
   try {
     return JSON.parse(localStorage.getItem(OKEY) || "[]");
@@ -110,6 +116,62 @@ function saveCollapsed(o: Record<string, boolean>): void {
   }
 }
 
+export function loadLinkX(): boolean {
+  try {
+    return localStorage.getItem(LKEY) === "1";
+  } catch {
+    return false;
+  }
+}
+export function saveLinkX(on: boolean): void {
+  try {
+    localStorage.setItem(LKEY, on ? "1" : "0");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Union of every loaded group's full data span — the longest series wins. */
+export function longestRange(): { t0: number; t1: number } {
+  let t0 = Infinity,
+    t1 = -Infinity;
+  for (const g of DATA.values()) {
+    const r = fullRange(g);
+    if (r.t0 < t0) t0 = r.t0;
+    if (r.t1 > t1) t1 = r.t1;
+  }
+  if (!isFinite(t0)) {
+    const n = Date.now();
+    return { t0: n - DAY, t1: n };
+  }
+  if (t0 === t1) {
+    t0 -= DAY;
+    t1 += DAY;
+  }
+  return { t0, t1 };
+}
+
+function clampTo(
+  span: { t0: number; t1: number },
+  limit: { t0: number; t1: number },
+): {
+  t0: number;
+  t1: number;
+} {
+  const width = span.t1 - span.t0;
+  let { t0, t1 } = span;
+  if (t0 < limit.t0) {
+    t0 = limit.t0;
+    t1 = t0 + width;
+  }
+  if (t1 > limit.t1) {
+    t1 = limit.t1;
+    t0 = t1 - width;
+  }
+  if (t0 < limit.t0) t0 = limit.t0;
+  return { t0, t1 };
+}
+
 // One point per calendar day = that day's LAST reading (gauges/cumulative —
 // averaging same-day polls would distort, e.g. inbound [0,0,31] → ~10).
 function dailyLast(points: GPoint[]): GPoint[] {
@@ -122,7 +184,8 @@ function dailyLast(points: GPoint[]): GPoint[] {
   }
   return [...b.values()].sort((a, c) => a.ts - c.ts);
 }
-function seriesPoints(s: GSeries): GPoint[] {
+/** Test seam + renderer: daily-last, then optional running sum. */
+export function seriesPoints(s: GSeries): GPoint[] {
   let pts = dailyLast(s.points);
   if (s.cumulative) {
     let run = 0;
@@ -392,8 +455,13 @@ function domainOf(
   return { lo: ticks[0], hi: ticks[ticks.length - 1], ticks };
 }
 
+function viewOf(g: GGroup): { t0: number; t1: number } {
+  if (loadLinkX()) return VIEW.get(g.key) ?? longestRange();
+  return VIEW.get(g.key) ?? fullRange(g);
+}
+
 function renderSvg(g: GGroup): string {
-  const view = VIEW.get(g.key) ?? fullRange(g);
+  const view = viewOf(g);
   const { t0, t1 } = view;
   const L = domainOf(g, "left", t0, t1),
     R = domainOf(g, "right", t0, t1);
@@ -449,7 +517,7 @@ function chartHtml(g: GGroup): string {
   const collapsed = loadCollapsed()[g.key] ? " collapsed" : "";
   return `
     <div class="pg-chart${collapsed}" data-group="${esc(g.key)}">
-      <div class="pg-head" draggable="true" title="Drag to reorder · click to collapse">
+      <div class="pg-head" title="Drag to reorder · click to collapse">
         <span class="pg-grip">⠿</span><span class="pg-icon">${icon(g.key)}</span><span class="pg-name">${esc(g.title)}</span>${g.accent ? `<span class="pg-accent">${esc(g.accent)}</span>` : ""}
       </div>
       <div class="pg-body">${renderSvg(g)}</div>
@@ -457,6 +525,7 @@ function chartHtml(g: GGroup): string {
 }
 
 export function renderPresenceGraphsHtml(groups: GGroup[]): string {
+  DATA.clear();
   if (!groups.length) return `<div class="exec-kpi-empty">No graphs configured yet.</div>`;
   for (const g of groups) DATA.set(g.key, g);
   const ord = loadOrder();
@@ -468,41 +537,119 @@ export function renderPresenceGraphsHtml(groups: GGroup[]): string {
   return groups.map(chartHtml).join("");
 }
 
+/** Test seam: wipe in-memory series + view windows between specs. */
+export function resetPresenceGraphStateForTests(): void {
+  DATA.clear();
+  VIEW.clear();
+}
+
+function rerenderAll(container: HTMLElement): void {
+  clearPresenceGraphHover();
+  container.querySelectorAll<HTMLElement>(".pg-chart").forEach((chart) => {
+    const key = chart.dataset.group || "";
+    const g = DATA.get(key);
+    const body = chart.querySelector(".pg-body") as HTMLElement | null;
+    if (g && body) body.innerHTML = renderSvg(g);
+  });
+}
+
+function paintView(
+  container: HTMLElement,
+  range: { t0: number; t1: number },
+  onlyKey?: string,
+): void {
+  const linked = loadLinkX();
+  if (linked || !onlyKey) {
+    for (const key of DATA.keys()) VIEW.set(key, { ...range });
+    rerenderAll(container);
+    return;
+  }
+  VIEW.set(onlyKey, { ...range });
+  const chart = container.querySelector<HTMLElement>(
+    `.pg-chart[data-group="${CSS.escape(onlyKey)}"]`,
+  );
+  const g = DATA.get(onlyKey);
+  const body = chart?.querySelector(".pg-body") as HTMLElement | null;
+  if (g && body) {
+    clearPresenceGraphHover();
+    body.innerHTML = renderSvg(g);
+  }
+}
+
+/** Turn linked-X on (union of every series) or off (each chart its own span). */
+export function applyLinkX(container: HTMLElement, on: boolean): void {
+  saveLinkX(on);
+  if (on) paintView(container, longestRange());
+  else {
+    for (const key of DATA.keys()) VIEW.delete(key);
+    rerenderAll(container);
+  }
+}
+
 export function attachPresenceGraphs(container: HTMLElement): void {
   // The caller has just replaced every .pg-chart via innerHTML, so a tooltip
   // still up belongs to charts that no longer exist — and it now lives on
   // <body>, where no pointerleave can ever reach it.
   clearPresenceGraphHover();
+  if (loadLinkX()) {
+    const union = longestRange();
+    for (const key of DATA.keys()) VIEW.set(key, { ...union });
+  }
   if (container.dataset.pgDnd !== "1") {
     container.dataset.pgDnd = "1";
-    let dragEl: HTMLElement | null = null;
-    container.addEventListener("dragstart", (ev) => {
-      const head = (ev.target as HTMLElement).closest(".pg-head");
-      if (!head) return;
-      dragEl = head.closest(".pg-chart");
-      if (dragEl) dragEl.dataset.dragging = "1";
+    // HTML5 drag-and-drop on a header that also click-collapses is a coin
+    // flip in Chromium (the architect 2026-09-10: "I want to be able to drag-and-drop").
+    // Pointer events + a 4px threshold: a click still collapses, a drag reorders.
+    const THRESH = 4;
+    let drag: {
+      el: HTMLElement;
+      startY: number;
+      moved: boolean;
+      pointerId: number;
+    } | null = null;
+    container.addEventListener("pointerdown", (ev) => {
+      if (ev.button !== 0) return;
+      const target = ev.target as HTMLElement;
+      if (target.closest(".pg-body, button, input, a")) return;
+      const head = target.closest(".pg-head") as HTMLElement | null;
+      if (!head || !container.contains(head)) return;
+      const el = head.closest(".pg-chart") as HTMLElement | null;
+      if (!el) return;
+      drag = { el, startY: ev.clientY, moved: false, pointerId: ev.pointerId };
+      head.setPointerCapture?.(ev.pointerId);
     });
-    container.addEventListener("dragover", (ev) => {
-      if (!dragEl) return;
-      ev.preventDefault();
-      const over = (ev.target as HTMLElement).closest<HTMLElement>(".pg-chart");
-      if (!over || over === dragEl) return;
+    container.addEventListener("pointermove", (ev) => {
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+      if (!drag.moved) {
+        if (Math.abs(ev.clientY - drag.startY) < THRESH) return;
+        drag.moved = true;
+        drag.el.dataset.dragging = "1";
+      }
+      const over = document
+        .elementFromPoint?.(ev.clientX, ev.clientY)
+        ?.closest<HTMLElement>(".pg-chart");
+      if (!over || over === drag.el || !container.contains(over)) return;
       const r = over.getBoundingClientRect();
-      container.insertBefore(dragEl, ev.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+      container.insertBefore(drag.el, ev.clientY < r.top + r.height / 2 ? over : over.nextSibling);
     });
-    const finish = () => {
-      if (!dragEl) return;
-      delete dragEl.dataset.dragging;
-      dragEl = null;
-      saveOrder(
-        [...container.querySelectorAll<HTMLElement>(".pg-chart")].map((c) => c.dataset.group || ""),
-      );
+    const finish = (ev: PointerEvent) => {
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+      const moved = drag.moved;
+      const el = drag.el;
+      delete el.dataset.dragging;
+      if (moved) {
+        el.dataset.justDragged = "1";
+        saveOrder(
+          [...container.querySelectorAll<HTMLElement>(".pg-chart")].map(
+            (c) => c.dataset.group || "",
+          ),
+        );
+      }
+      drag = null;
+      if (moved) ev.preventDefault();
     };
-    container.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      finish();
-    });
-    container.addEventListener("dragend", finish);
+    container.addEventListener("pointerup", finish);
+    container.addEventListener("pointercancel", finish);
   }
   container.querySelectorAll<HTMLElement>(".pg-chart").forEach((chart) => {
     if (chart.dataset.wired === "1") return;
@@ -511,32 +658,18 @@ export function attachPresenceGraphs(container: HTMLElement): void {
     const head = chart.querySelector(".pg-head") as HTMLElement;
     const body = chart.querySelector(".pg-body") as HTMLElement;
     const svgEl = () => body.querySelector("svg") as SVGSVGElement;
-    const rerender = () => {
-      const g = DATA.get(key);
-      if (g) {
-        // The crosshair and the dimming live in the SVG about to be thrown away,
-        // and the tip is now a body-level singleton — so drop the hover instead
-        // of re-appending a tip that still shows the pre-zoom value.
-        clearHover();
-        body.innerHTML = renderSvg(g);
-      }
-    };
-    const full = () => fullRange(DATA.get(key)!);
-    const win = () => VIEW.get(key) ?? full();
+    const limit = () => (loadLinkX() ? longestRange() : fullRange(DATA.get(key)!));
+    const win = () => VIEW.get(key) ?? limit();
     const plotFrac = (cx: number) => {
       const r = svgEl().getBoundingClientRect();
       return (cx - r.left - (ML / W) * r.width) / ((PW / W) * r.width);
     };
 
-    let dragged = false;
-    head.addEventListener("dragstart", () => {
-      dragged = true;
-    });
-    head.addEventListener("dragend", () => {
-      setTimeout(() => (dragged = false), 0);
-    });
     head.addEventListener("click", () => {
-      if (dragged) return;
+      if (chart.dataset.justDragged === "1") {
+        delete chart.dataset.justDragged;
+        return;
+      }
       chart.classList.toggle("collapsed");
       const c = loadCollapsed();
       c[key] = chart.classList.contains("collapsed");
@@ -556,21 +689,14 @@ export function attachPresenceGraphs(container: HTMLElement): void {
         const frac = Math.max(0, Math.min(1, plotFrac(ev.clientX)));
         const v = win(),
           span = v.t1 - v.t0,
-          f = full();
+          f = limit();
         const nspan = Math.max(DAY, Math.min(f.t1 - f.t0, span * (delta > 0 ? 1.25 : 0.8)));
         const center = v.t0 + frac * span;
-        let nt0 = center - frac * nspan,
-          nt1 = nt0 + nspan;
-        if (nt0 < f.t0) {
-          nt0 = f.t0;
-          nt1 = nt0 + nspan;
-        }
-        if (nt1 > f.t1) {
-          nt1 = f.t1;
-          nt0 = nt1 - nspan;
-        }
-        VIEW.set(key, { t0: nt0, t1: nt1 });
-        rerender();
+        paintView(
+          container,
+          clampTo({ t0: center - frac * nspan, t1: center - frac * nspan + nspan }, f),
+          key,
+        );
       },
       { passive: false },
     );
@@ -586,20 +712,8 @@ export function attachPresenceGraphs(container: HTMLElement): void {
       if (dragX == null || !dragWin) return;
       const r = svgEl().getBoundingClientRect(),
         span = dragWin.t1 - dragWin.t0;
-      const dt = -((ev.clientX - dragX) / ((PW / W) * r.width)) * span,
-        f = full();
-      let nt0 = dragWin.t0 + dt,
-        nt1 = dragWin.t1 + dt;
-      if (nt0 < f.t0) {
-        nt0 = f.t0;
-        nt1 = nt0 + span;
-      }
-      if (nt1 > f.t1) {
-        nt1 = f.t1;
-        nt0 = nt1 - span;
-      }
-      VIEW.set(key, { t0: nt0, t1: nt1 });
-      rerender();
+      const dt = -((ev.clientX - dragX) / ((PW / W) * r.width)) * span;
+      paintView(container, clampTo({ t0: dragWin.t0 + dt, t1: dragWin.t1 + dt }, limit()), key);
     });
     window.addEventListener("pointerup", () => {
       dragX = null;
@@ -607,8 +721,15 @@ export function attachPresenceGraphs(container: HTMLElement): void {
       body.style.cursor = "";
     });
     body.addEventListener("dblclick", () => {
-      VIEW.delete(key);
-      rerender();
+      if (loadLinkX()) paintView(container, longestRange());
+      else {
+        VIEW.delete(key);
+        const g = DATA.get(key);
+        if (g) {
+          clearPresenceGraphHover();
+          body.innerHTML = renderSvg(g);
+        }
+      }
     });
 
     // Hover = ISOLATE the single nearest line: dim the others, thicken the

@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS task (
   dismissal_note TEXT,
   est_minutes INTEGER,
   hands TEXT CHECK (hands IN ('user','assistant','either')),
+  operator_id TEXT,
   inferred_signal_json TEXT,
   metadata_json TEXT,
   recurrence_rule_text TEXT,

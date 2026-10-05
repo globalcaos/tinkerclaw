@@ -1,0 +1,1161 @@
+[
+  {
+    "host": "ipv4announce.sktorrent.eu",
+    "endpoints": ["http:6969", "udp:6969"],
+    "a": ["94.23.207.177"],
+    "aaaa": ["2001:41d0:2:52b1::1"]
+  },
+  { "host": "207.241.226.111", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  { "host": "107.189.2.131", "endpoints": ["http:1337"], "a": [], "aaaa": [] },
+  { "host": "207.241.231.226", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "004430.xyz",
+    "endpoints": ["http:-", "https:-"],
+    "a": ["104.20.31.227", "172.66.167.98"],
+    "aaaa": []
+  },
+  { "host": "bughome.de", "endpoints": ["http:2832"], "a": ["188.138.100.213"], "aaaa": [] },
+  { "host": "bt2.archive.org", "endpoints": ["http:6969"], "a": ["207.241.231.226"], "aaaa": [] },
+  { "host": "fleira.no", "endpoints": ["http:6969"], "a": ["148.252.75.241"], "aaaa": [] },
+  {
+    "host": "1337.abcvg.info",
+    "endpoints": ["http:-", "https:-"],
+    "a": ["172.67.136.175", "104.21.72.244"],
+    "aaaa": ["2606:4700:3032::6815:48f4", "2606:4700:3037::ac43:88af"]
+  },
+  {
+    "host": "retracker01-msk-virt.corbina.net",
+    "endpoints": ["http:-", "udp:80"],
+    "a": ["83.102.180.21"],
+    "aaaa": []
+  },
+  { "host": "ipv6.rer.lol", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "lucke.fenesisu.moe",
+    "endpoints": ["http:6969"],
+    "a": ["207.211.184.229"],
+    "aaaa": []
+  },
+  { "host": "66691337.xyz", "endpoints": ["http:6969"], "a": ["185.44.65.162"], "aaaa": [] },
+  {
+    "host": "announce.sktorrent.eu",
+    "endpoints": ["http:6969"],
+    "a": ["94.23.207.177"],
+    "aaaa": []
+  },
+  {
+    "host": "ftp.pet",
+    "endpoints": ["http:2710"],
+    "a": ["117.85.115.214"],
+    "aaaa": ["240e:3a5:2021:2e70:c85f:daa6:8aea:c009"]
+  },
+  { "host": "asiatorrent.ddns.net", "endpoints": ["http:51413"], "a": [], "aaaa": [] },
+  {
+    "host": "bt.poletracker.org",
+    "endpoints": ["http:2710"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  {
+    "host": "ns3109441.mypdns.org",
+    "endpoints": ["http:6969"],
+    "a": ["141.95.3.138"],
+    "aaaa": ["2001:41d0:700:548a::5"]
+  },
+  {
+    "host": "bittorrent-tracker.e-n-c-r-y-p-t.net",
+    "endpoints": ["http:1337", "udp:1337"],
+    "a": ["107.189.2.131"],
+    "aaaa": ["2605:6400:30:fad6::dead:c0d3"]
+  },
+  { "host": "ch3oh.ru", "endpoints": ["http:6969"], "a": ["79.111.12.213"], "aaaa": [] },
+  { "host": "bt1.archive.org", "endpoints": ["http:6969"], "a": ["207.241.226.111"], "aaaa": [] },
+  { "host": "nyaa.tracker.wf", "endpoints": ["http:7777"], "a": ["195.16.73.95"], "aaaa": [] },
+  {
+    "host": "open.acgtracker.com",
+    "endpoints": ["http:1096"],
+    "a": ["212.60.5.95", "212.60.5.99", "212.60.5.96"],
+    "aaaa": []
+  },
+  {
+    "host": "open.ftorrent.com",
+    "endpoints": ["https:-", "udp:443"],
+    "a": ["149.106.106.25"],
+    "aaaa": ["2605:6dc0:1::12:6f2c"]
+  },
+  { "host": "bt.okmp3.ru", "endpoints": ["http:2710"], "a": [], "aaaa": [] },
+  {
+    "host": "bvarf.tracker.sh",
+    "endpoints": ["http:2086"],
+    "a": ["172.67.135.244", "104.21.26.114"],
+    "aaaa": ["2606:4700:3030::ac43:87f4", "2606:4700:3034::6815:1a72"]
+  },
+  {
+    "host": "open.trackerlist.xyz",
+    "endpoints": ["http:-"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  { "host": "fosstorrents.com", "endpoints": ["http:6969"], "a": ["47.55.184.114"], "aaaa": [] },
+  { "host": "play.aimisayo.com", "endpoints": ["http:6969"], "a": ["37.238.40.8"], "aaaa": [] },
+  {
+    "host": "bt.xcty.eu.org",
+    "endpoints": ["http:2095"],
+    "a": ["172.67.180.70", "104.21.51.125"],
+    "aaaa": ["2606:4700:3034::ac43:b446", "2606:4700:3036::6815:337d"]
+  },
+  { "host": "s1130639.ha009.t.mydomain.zone", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  {
+    "host": "region.nl1.privex.cc",
+    "endpoints": ["http:6969"],
+    "a": ["185.130.47.2"],
+    "aaaa": ["2a07:e03::666"]
+  },
+  {
+    "host": "api.ipv4online.uk",
+    "endpoints": ["https:-"],
+    "a": ["34.8.196.142", "34.8.38.57"],
+    "aaaa": []
+  },
+  { "host": "chihaya.de", "endpoints": ["http:-"], "a": ["8.8.8.8"], "aaaa": [] },
+  { "host": "cny.fan", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "banananetwork.qzz.io",
+    "endpoints": ["https:-"],
+    "a": ["104.21.19.193", "172.67.188.147"],
+    "aaaa": ["2606:4700:3031::6815:13c1", "2606:4700:3034::ac43:bc93"]
+  },
+  { "host": "bittracker.nekosunevr.co.uk", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "ht.therarbg.to",
+    "endpoints": ["https:-"],
+    "a": ["172.67.213.119", "104.21.37.213"],
+    "aaaa": ["2606:4700:3031::6815:25d5", "2606:4700:3032::ac43:d577"]
+  },
+  {
+    "host": "pybittrack.retiolus.net",
+    "endpoints": ["https:-"],
+    "a": ["37.27.218.237"],
+    "aaaa": []
+  },
+  { "host": "t1.hloli.org", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "home.yxgz.club",
+    "endpoints": ["http:6969"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  {
+    "host": "asiatorrent.giize.com",
+    "endpoints": ["http:51413"],
+    "a": ["27.147.182.71"],
+    "aaaa": []
+  },
+  { "host": "torrents.tmtime.dev", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "t.213891.xyz",
+    "endpoints": ["https:-"],
+    "a": ["172.67.137.235", "104.21.70.169"],
+    "aaaa": ["2606:4700:3037::ac43:89eb", "2606:4700:3034::6815:46a9"]
+  },
+  {
+    "host": "http1.torrust-tracker-demo.com",
+    "endpoints": ["https:-"],
+    "a": ["116.202.176.169"],
+    "aaaa": ["2a01:4f8:1c0c:9aae::1"]
+  },
+  {
+    "host": "tr.abiir.top",
+    "endpoints": ["https:-"],
+    "a": ["34.8.38.57", "34.8.196.142"],
+    "aaaa": []
+  },
+  { "host": "track3r.site", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "021912.xyz",
+    "endpoints": ["https:-"],
+    "a": ["104.21.42.32", "172.67.199.186"],
+    "aaaa": ["2606:4700:3030::6815:2a20", "2606:4700:3033::ac43:c7ba"]
+  },
+  {
+    "host": "orgtgju.org",
+    "endpoints": ["https:-"],
+    "a": ["172.67.187.90", "104.21.56.175"],
+    "aaaa": ["2606:4700:3036::ac43:bb5a", "2606:4700:3037::6815:38af"]
+  },
+  {
+    "host": "tracker1.520.jp",
+    "endpoints": ["https:-"],
+    "a": ["172.67.188.91", "104.21.48.236"],
+    "aaaa": ["2606:4700:3035::ac43:bc5b", "2606:4700:3036::6815:30ec"]
+  },
+  { "host": "tracker.bigbewbs.online", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.7471.top",
+    "endpoints": ["https:-"],
+    "a": ["104.21.94.129", "172.67.136.77"],
+    "aaaa": ["2606:4700:3033::ac43:884d", "2606:4700:3030::6815:5e81"]
+  },
+  { "host": "tracker.alaskantf.com", "endpoints": ["https:-"], "a": ["51.79.162.49"], "aaaa": [] },
+  {
+    "host": "de7c0e7a567e.sn.mynetname.net",
+    "endpoints": ["http:59002"],
+    "a": ["138.117.112.31"],
+    "aaaa": []
+  },
+  { "host": "tracker.bjut.jp", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.belmult.online",
+    "endpoints": ["https:-"],
+    "a": ["172.67.150.95", "104.21.63.211"],
+    "aaaa": ["2606:4700:3037::6815:3fd3", "2606:4700:3033::ac43:965f"]
+  },
+  { "host": "tracker.aburaya.live", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.anibt.net",
+    "endpoints": ["https:-"],
+    "a": ["172.67.68.98", "104.26.1.14", "104.26.0.14"],
+    "aaaa": ["2606:4700:20::681a:10e", "2606:4700:20::ac43:4462", "2606:4700:20::681a:e"]
+  },
+  {
+    "host": "tracker.bt4g.com",
+    "endpoints": ["https:-", "http:2095"],
+    "a": ["172.67.165.72", "104.21.57.182"],
+    "aaaa": ["2606:4700:3032::ac43:a548", "2606:4700:3031::6815:39b6"]
+  },
+  { "host": "tracker.expli.top", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "tracker.guguan.us.kg", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.cangku.moe",
+    "endpoints": ["https:-"],
+    "a": ["172.67.153.49", "104.21.32.178"],
+    "aaaa": ["2606:4700:3036::ac43:9931", "2606:4700:3037::6815:20b2"]
+  },
+  { "host": "tracker.cutie.dating", "endpoints": ["https:-"], "a": ["45.146.254.59"], "aaaa": [] },
+  {
+    "host": "threads.canofsocks.com",
+    "endpoints": ["https:-"],
+    "a": ["104.21.52.42", "172.67.195.17"],
+    "aaaa": ["2606:4700:3032::ac43:c311", "2606:4700:3031::6815:342a"]
+  },
+  { "host": "joczo.duckdns.org", "endpoints": ["http:6969"], "a": ["78.92.206.159"], "aaaa": [] },
+  {
+    "host": "tracker.foreverpirates.co",
+    "endpoints": ["https:-"],
+    "a": ["172.67.155.211", "104.21.64.205"],
+    "aaaa": ["2606:4700:3034::ac43:9bd3", "2606:4700:3035::6815:40cd"]
+  },
+  { "host": "tracker.manager.v6.navy", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.bug38.com",
+    "endpoints": ["https:-"],
+    "a": ["90.18.225.168", "176.172.42.174"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.gcrenwp.top",
+    "endpoints": ["https:-"],
+    "a": ["188.114.97.5", "188.114.96.5"],
+    "aaaa": ["2a06:98c1:3121::5", "2a06:98c1:3120::5"]
+  },
+  {
+    "host": "tracker.iochimari.moe",
+    "endpoints": ["https:-"],
+    "a": ["172.67.216.25", "104.21.53.179"],
+    "aaaa": ["2606:4700:3030::6815:35b3", "2606:4700:3032::ac43:d819"]
+  },
+  {
+    "host": "staticfile-bobcat.wasmer.app",
+    "endpoints": ["https:-"],
+    "a": ["62.210.172.150"],
+    "aaaa": ["2001:bc8:701:70a:d604:e6ff:fedb:1810"]
+  },
+  { "host": "tracker.lenition.de", "endpoints": ["https:-"], "a": ["82.223.121.51"], "aaaa": [] },
+  {
+    "host": "tracker.kuroy.me",
+    "endpoints": ["https:-"],
+    "a": ["188.114.97.5", "188.114.96.5"],
+    "aaaa": ["2a06:98c1:3120::5", "2a06:98c1:3121::5"]
+  },
+  {
+    "host": "tracker.leechshield.link",
+    "endpoints": ["https:-"],
+    "a": ["172.67.145.215", "104.21.28.104"],
+    "aaaa": ["2606:4700:3035::ac43:91d7", "2606:4700:3037::6815:1c68"]
+  },
+  {
+    "host": "tracker.onetracker.net",
+    "endpoints": ["https:-"],
+    "a": ["172.67.175.5", "104.21.80.66"],
+    "aaaa": ["2606:4700:3037::ac43:af05", "2606:4700:3035::6815:5042"]
+  },
+  { "host": "tracker.novy.vip", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "s1130638.ha016.t.mydomain.zone", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  { "host": "tracker.tamersunion.org", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "tracker.jdx3.org", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "s1130642.ha014.t.mydomain.zone", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  {
+    "host": "php-bobcat.wasmer.app",
+    "endpoints": ["https:-"],
+    "a": ["62.210.172.150"],
+    "aaaa": ["2001:bc8:701:70a:d604:e6ff:fedb:1810"]
+  },
+  {
+    "host": "tracker.qingwapt.org",
+    "endpoints": ["https:-"],
+    "a": ["104.21.69.140", "172.67.208.251"],
+    "aaaa": ["2606:4700:3032::ac43:d0fb", "2606:4700:3030::6815:458c"]
+  },
+  {
+    "host": "edgev.duckdns.org",
+    "endpoints": ["https:-"],
+    "a": ["159.146.99.45"],
+    "aaaa": ["2a02:ff0:3314:a066:f276:1cff:fed3:2eec"]
+  },
+  { "host": "s1124554.ha012.t.mydomain.zone", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.pmman.tech",
+    "endpoints": ["https:-"],
+    "a": ["104.21.71.114", "172.67.144.128"],
+    "aaaa": ["2606:4700:3032::6815:4772", "2606:4700:3036::ac43:9080"]
+  },
+  {
+    "host": "t.overflow.biz",
+    "endpoints": ["http:6969", "udp:6969"],
+    "a": ["152.243.213.247"],
+    "aaaa": []
+  },
+  {
+    "host": "siwserver.duckdns.org",
+    "endpoints": ["http:9900"],
+    "a": ["77.27.140.30"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker2.dler.org",
+    "endpoints": ["http:-", "udp:80"],
+    "a": ["211.75.210.221", "211.75.205.188", "211.75.205.187"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.bittor.pw",
+    "endpoints": ["http:1337", "udp:1337"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  { "host": "tracker.moeking.me", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "tracker-zhuqiy.xn--1r3au8b.space", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.yggleak.top",
+    "endpoints": ["https:-"],
+    "a": ["104.21.85.167", "172.67.207.168"],
+    "aaaa": ["2606:4700:3034::6815:55a7", "2606:4700:3032::ac43:cfa8"]
+  },
+  {
+    "host": "tr.nyacat.pw",
+    "endpoints": ["https:-", "http:-"],
+    "a": ["188.114.97.5", "188.114.96.5"],
+    "aaaa": ["2a06:98c1:3121::5", "2a06:98c1:3120::5"]
+  },
+  {
+    "host": "tr.burnabyhighstar.com",
+    "endpoints": ["https:-"],
+    "a": ["38.28.210.235"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.corpscorp.online",
+    "endpoints": ["http:-", "udp:80"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  {
+    "host": "tr.zukizuki.org",
+    "endpoints": ["https:-"],
+    "a": ["104.21.52.177", "172.67.202.89"],
+    "aaaa": ["2606:4700:3032::ac43:ca59", "2606:4700:3031::6815:34b1"]
+  },
+  {
+    "host": "tracker.zhuqiy.com",
+    "endpoints": ["https:-", "http:-"],
+    "a": ["104.26.14.88", "172.67.71.197", "104.26.15.88"],
+    "aaaa": ["2606:4700:20::ac43:47c5", "2606:4700:20::681a:e58", "2606:4700:20::681a:f58"]
+  },
+  { "host": "t.al.uy", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.dler.org",
+    "endpoints": ["http:6969", "udp:6969"],
+    "a": ["211.75.205.187", "211.75.210.221", "211.75.205.188"],
+    "aaaa": []
+  },
+  {
+    "host": "taciturn-shadow.spb.ru",
+    "endpoints": ["http:6969"],
+    "a": ["5.19.182.213"],
+    "aaaa": ["2a05:3580:d602:181c:5162:a0cf:b835:98d"]
+  },
+  {
+    "host": "supertracker.cc.cd",
+    "endpoints": ["http:-"],
+    "a": ["188.114.96.5", "188.114.97.5"],
+    "aaaa": ["2a06:98c1:3121::5", "2a06:98c1:3120::5"]
+  },
+  {
+    "host": "tracker.bt-hash.com",
+    "endpoints": ["http:-"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  {
+    "host": "torrentsmd.com",
+    "endpoints": ["http:8080"],
+    "a": ["188.114.96.5", "188.114.97.5"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.dler.com",
+    "endpoints": ["http:6969", "udp:6969"],
+    "a": ["211.75.205.187", "211.75.210.221", "211.75.205.188"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.beeimg.com",
+    "endpoints": ["http:6969"],
+    "a": [],
+    "aaaa": ["2a0a:e5c0:10:3::a480"]
+  },
+  {
+    "host": "tracker.23794.top",
+    "endpoints": ["http:6969"],
+    "a": ["123.245.62.74", "123.245.62.9"],
+    "aaaa": ["240e:30c:1002:3d5e:e26e:9bea:1893:475f", "240e:30c:1002:1064:d23c:e3ee:20e:b2f0"]
+  },
+  {
+    "host": "tracker.bz",
+    "endpoints": ["http:-"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  { "host": "tracker.cbase.cc", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.nexusstream.eu",
+    "endpoints": ["http:6969", "udp:6969"],
+    "a": ["37.60.249.217"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.opentrackr.org",
+    "endpoints": ["http:1337", "udp:1337"],
+    "a": ["93.158.213.92"],
+    "aaaa": []
+  },
+  { "host": "ttracker.just-h.party", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.qu.ax",
+    "endpoints": ["http:6969", "udp:6969"],
+    "a": ["43.250.54.126"],
+    "aaaa": ["2406:4fc0:1002::137"]
+  },
+  {
+    "host": "tracker.vectahosting.eu",
+    "endpoints": ["https:-"],
+    "a": ["87.106.37.101"],
+    "aaaa": ["2a01:239:459:7000::1"]
+  },
+  {
+    "host": "tracker.dhitechnical.com",
+    "endpoints": ["http:6969"],
+    "a": ["140.235.237.23"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.maya.no.eu.org",
+    "endpoints": ["https:-"],
+    "a": ["172.67.143.99", "104.21.87.135"],
+    "aaaa": ["2606:4700:3032::ac43:8f63", "2606:4700:3035::6815:5787"]
+  },
+  {
+    "host": "tracker.manager.itislove.cz",
+    "endpoints": ["https:-"],
+    "a": ["185.8.164.5"],
+    "aaaa": ["2a03:3b40:3::6"]
+  },
+  { "host": "tracker.imgdump.lol", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  { "host": "tracker.gbitt.info", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.dmcomic.org",
+    "endpoints": ["http:2710"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  { "host": "tracker.exe.in.th", "endpoints": ["http:6969"], "a": ["103.41.58.131"], "aaaa": [] },
+  {
+    "host": "tracker.ipv6tracker.ru",
+    "endpoints": ["http:-"],
+    "a": [],
+    "aaaa": ["2a00:ab00:1103:2e::100"]
+  },
+  { "host": "tracker.guguan.000.pe", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.mywaifu.best",
+    "endpoints": ["http:6969"],
+    "a": ["185.126.65.92"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.skyts.net",
+    "endpoints": ["http:6969", "udp:6969"],
+    "a": ["222.84.23.76"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.netmap.top",
+    "endpoints": ["http:6969"],
+    "a": ["1.117.67.94"],
+    "aaaa": ["2402:4e00:c032:3400:1420:bd5e:da3e:1"]
+  },
+  {
+    "host": "tracker.privateseedbox.xyz",
+    "endpoints": ["http:2710"],
+    "a": ["135.125.198.235"],
+    "aaaa": ["2001:41d0:700:5539::d00c:5"]
+  },
+  { "host": "[2a03:7220:8083:cd00::1]", "endpoints": ["udp:451"], "a": [], "aaaa": [] },
+  { "host": "[2a04:ac00:1:3dd8::1:2710]", "endpoints": ["udp:2710"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.sbsub.com",
+    "endpoints": ["http:2710"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  {
+    "host": "tracker.lyretain.site",
+    "endpoints": ["http:2710"],
+    "a": ["27.184.217.21"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.tritan.gg",
+    "endpoints": ["http:8080"],
+    "a": ["167.253.78.20"],
+    "aaaa": ["2602:f9ba:c0::20"]
+  },
+  { "host": "tracker.waaa.moe", "endpoints": ["http:6969"], "a": ["216.144.239.90"], "aaaa": [] },
+  { "host": "tracker.file09.com", "endpoints": ["http:-"], "a": [], "aaaa": [] },
+  { "host": "admin.52ywp.com", "endpoints": ["udp:6969"], "a": ["60.172.236.18"], "aaaa": [] },
+  {
+    "host": "wegkxfcivgx.ydns.eu",
+    "endpoints": ["http:-"],
+    "a": ["169.1.1.108"],
+    "aaaa": ["2c0f:f4c0::108"]
+  },
+  {
+    "host": "www.wareztorrent.com",
+    "endpoints": ["http:-"],
+    "a": [
+      "46.8.8.223",
+      "46.8.8.226",
+      "46.8.8.227",
+      "46.8.8.225",
+      "46.8.8.220",
+      "46.8.8.229",
+      "46.8.8.224",
+      "46.8.8.222",
+      "46.8.8.228"
+    ],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.zhuqiy.dgj055.icu",
+    "endpoints": ["http:-"],
+    "a": ["95.216.3.28", "95.216.3.11", "69.197.155.114"],
+    "aaaa": ["2a01:4f9:2a:368::1337:f00d", "2a01:4f9:2a:368::2", "2a01:4f9:2a:368::dead:beef"]
+  },
+  { "host": "1c.premierzal.ru", "endpoints": ["udp:6969"], "a": ["188.234.235.165"], "aaaa": [] },
+  { "host": "trackr.appolon.dev", "endpoints": ["http:6969"], "a": ["82.65.166.4"], "aaaa": [] },
+  { "host": "6ahddutb1ucc3cp.ru", "endpoints": ["udp:6969"], "a": ["185.189.13.108"], "aaaa": [] },
+  { "host": "vps-c1adea63.vps.ovh.net", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.tricitytorrents.com",
+    "endpoints": ["http:2710"],
+    "a": [],
+    "aaaa": ["2a13:7c00:7:4:f816:3eff:fec9:3064"]
+  },
+  { "host": "52.58.128.163", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "93.158.213.92", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.xn--djrq4gl4hvoi.top",
+    "endpoints": ["http:-"],
+    "a": ["154.201.75.73"],
+    "aaaa": []
+  },
+  {
+    "host": "anna.bt.bontal.net",
+    "endpoints": ["udp:6969"],
+    "a": [],
+    "aaaa": ["2a03:b0c0:2:f0::d8db:b001"]
+  },
+  {
+    "host": "archive.torrentonline.cc",
+    "endpoints": ["udp:42069"],
+    "a": ["92.112.127.61"],
+    "aaaa": ["2a12:bec4:1822:e2::a"]
+  },
+  {
+    "host": "bandito.byterunner.io",
+    "endpoints": ["udp:6969"],
+    "a": ["103.251.166.126"],
+    "aaaa": []
+  },
+  {
+    "host": "evan.im",
+    "endpoints": ["udp:6969"],
+    "a": ["74.119.149.136"],
+    "aaaa": ["2602:fd50:3b0:1a:d80c:b695:a0d2:81ee"]
+  },
+  {
+    "host": "exodus.desync.com",
+    "endpoints": ["udp:6969"],
+    "a": ["208.83.20.20"],
+    "aaaa": ["2607:f178:0:32::3"]
+  },
+  {
+    "host": "explodie.org",
+    "endpoints": ["udp:6969"],
+    "a": ["23.157.120.14"],
+    "aaaa": ["2602:fa69:1:1::14"]
+  },
+  { "host": "bt.ktrackers.com", "endpoints": ["udp:6666"], "a": ["51.159.54.68"], "aaaa": [] },
+  { "host": "tracker.pcfreetime.com", "endpoints": ["http:6969"], "a": ["8.210.14.3"], "aaaa": [] },
+  { "host": "bt.bontal.net", "endpoints": ["udp:6969"], "a": ["104.248.85.59"], "aaaa": [] },
+  { "host": "bt.rer.lol", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "mail.segso.net", "endpoints": ["udp:6969"], "a": ["65.109.28.33"], "aaaa": [] },
+  { "host": "martin-gebhardt.eu", "endpoints": ["udp:25"], "a": ["185.216.179.62"], "aaaa": [] },
+  {
+    "host": "burmese.app",
+    "endpoints": ["udp:6969"],
+    "a": [],
+    "aaaa": ["2400:6180:0:d2:0:2:2bda:e000"]
+  },
+  {
+    "host": "tracker.adgk.net",
+    "endpoints": ["https:-"],
+    "a": ["43.174.247.104", "43.174.246.104"],
+    "aaaa": ["240d:c010:77:2::d9"]
+  },
+  {
+    "host": "leet-tracker.moe",
+    "endpoints": ["udp:1337"],
+    "a": ["34.66.57.33"],
+    "aaaa": ["2600:1900:4001:4b5:8000::"]
+  },
+  {
+    "host": "d40969.acod.regrucolo.ru",
+    "endpoints": ["udp:6969"],
+    "a": ["176.99.7.59"],
+    "aaaa": []
+  },
+  {
+    "host": "ec2-18-191-163-220.us-east-2.compute.amazonaws.com",
+    "endpoints": ["udp:6969"],
+    "a": ["18.191.163.220"],
+    "aaaa": []
+  },
+  {
+    "host": "coeus.torrentonline.cc",
+    "endpoints": ["udp:42069"],
+    "a": ["143.20.64.104"],
+    "aaaa": ["2a0f:85c1:840:ab2::1"]
+  },
+  {
+    "host": "open.demonii.com",
+    "endpoints": ["udp:1337"],
+    "a": ["185.121.168.96"],
+    "aaaa": ["2a06:9f80:a000::96:1"]
+  },
+  {
+    "host": "open.demonoid.ch",
+    "endpoints": ["udp:6969"],
+    "a": ["185.121.168.96"],
+    "aaaa": ["2a06:9f80:a000::96:1"]
+  },
+  {
+    "host": "open.stealth.si",
+    "endpoints": ["udp:80"],
+    "a": ["151.242.104.187"],
+    "aaaa": ["2a03:94e0:2455:151:242:104:0:187"]
+  },
+  { "host": "tracker.chaoz.li", "endpoints": ["http:2710"], "a": ["185.53.179.128"], "aaaa": [] },
+  {
+    "host": "ipv6.govt.hu",
+    "endpoints": ["udp:6969"],
+    "a": [],
+    "aaaa": ["2a13:7c00:6:29:f816:3eff:feeb:fa7f"]
+  },
+  {
+    "host": "ns575949.ip-51-222-82.net",
+    "endpoints": ["udp:6969"],
+    "a": ["51.222.82.36"],
+    "aaaa": []
+  },
+  { "host": "new-line.net", "endpoints": ["udp:6969"], "a": ["94.243.222.100"], "aaaa": [] },
+  {
+    "host": "files.project-cataclysm.ru",
+    "endpoints": ["udp:6969"],
+    "a": ["159.194.224.36"],
+    "aaaa": []
+  },
+  {
+    "host": "rekcart.duckdns.org",
+    "endpoints": ["udp:15480"],
+    "a": ["37.120.182.83"],
+    "aaaa": ["2a00:11c0:47:3d36:d8cc:eff:fe66:34c6"]
+  },
+  { "host": "node01.madtia.cc", "endpoints": ["udp:42069"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.renfei.net",
+    "endpoints": ["http:8080"],
+    "a": ["188.114.96.5", "188.114.97.5"],
+    "aaaa": ["2a06:98c1:3120::5", "2a06:98c1:3121::5"]
+  },
+  { "host": "node02.madtia.cc", "endpoints": ["udp:42069"], "a": [], "aaaa": [] },
+  { "host": "seedpeer.net", "endpoints": ["udp:6969"], "a": ["180.131.145.175"], "aaaa": [] },
+  {
+    "host": "opentor.org",
+    "endpoints": ["udp:2710"],
+    "a": ["172.237.146.39", "172.237.146.18", "172.237.146.46"],
+    "aaaa": []
+  },
+  { "host": "ds32244.seedhost.eu", "endpoints": ["udp:6969"], "a": ["85.17.25.95"], "aaaa": [] },
+  {
+    "host": "obey.torrentonline.cc",
+    "endpoints": ["udp:42069"],
+    "a": ["92.112.126.181"],
+    "aaaa": ["2a12:bec4:1822:b6::a"]
+  },
+  {
+    "host": "torrentclub.online",
+    "endpoints": ["udp:1984", "udp:54123"],
+    "a": ["152.53.194.103"],
+    "aaaa": ["2a0a:4cc0:2000:be10:484:dfff:fe66:c4da"]
+  },
+  {
+    "host": "node01.torrentonline.cc",
+    "endpoints": ["udp:42069"],
+    "a": ["104.21.5.200", "172.67.133.207"],
+    "aaaa": ["2606:4700:3035::ac43:85cf", "2606:4700:3036::6815:5c8"]
+  },
+  { "host": "ydlkccp.dscloud.me", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  { "host": "opentracker.io", "endpoints": ["udp:6969"], "a": ["82.221.100.113"], "aaaa": [] },
+  { "host": "retracker.lanta.me", "endpoints": ["udp:2710"], "a": [], "aaaa": [] },
+  { "host": "tr4ck3r.duckdns.org", "endpoints": ["udp:6969"], "a": ["192.99.100.68"], "aaaa": [] },
+  { "host": "tracker.004430.xyz", "endpoints": ["udp:1337"], "a": ["108.165.191.38"], "aaaa": [] },
+  {
+    "host": "tracker.0x7c0.com",
+    "endpoints": ["udp:6969"],
+    "a": ["23.153.248.128"],
+    "aaaa": ["2602:2da::128"]
+  },
+  {
+    "host": "retracker.hotplug.ru",
+    "endpoints": ["udp:2710"],
+    "a": [],
+    "aaaa": ["2a04:ac00:1:3dd8::1:2710"]
+  },
+  { "host": "open.tracker.ink", "endpoints": ["udp:6969"], "a": ["154.212.206.56"], "aaaa": [] },
+  { "host": "p2p.publictracker.xyz", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "run.publictracker.xyz", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "p4p.arenabg.com",
+    "endpoints": ["udp:1337"],
+    "a": ["18.172.213.68", "18.172.213.94", "18.172.213.108", "18.172.213.125"],
+    "aaaa": [
+      "2600:9000:256f:5c00:a:4f58:59c0:93a1",
+      "2600:9000:256f:e200:a:4f58:59c0:93a1",
+      "2600:9000:256f:6200:a:4f58:59c0:93a1",
+      "2600:9000:256f:600:a:4f58:59c0:93a1",
+      "2600:9000:256f:1c00:a:4f58:59c0:93a1",
+      "2600:9000:256f:8a00:a:4f58:59c0:93a1",
+      "2600:9000:256f:2600:a:4f58:59c0:93a1",
+      "2600:9000:256f:2200:a:4f58:59c0:93a1"
+    ]
+  },
+  {
+    "host": "torrent.tracker.durukanbal.com",
+    "endpoints": ["udp:6969"],
+    "a": ["85.17.55.112"],
+    "aaaa": []
+  },
+  {
+    "host": "shahidrazi.online",
+    "endpoints": ["udp:1984"],
+    "a": ["52.38.196.63", "44.233.250.75"],
+    "aaaa": []
+  },
+  {
+    "host": "thouvenin.cloud",
+    "endpoints": ["udp:6969"],
+    "a": ["37.187.95.119"],
+    "aaaa": ["2001:41d0:a:3777::1"]
+  },
+  {
+    "host": "tracker.auctor.tv",
+    "endpoints": ["udp:6969"],
+    "a": ["43.250.54.126"],
+    "aaaa": ["2406:4fc0:1002::137"]
+  },
+  { "host": "tracker.aruku.ovh", "endpoints": ["udp:8081"], "a": ["15.235.207.99"], "aaaa": [] },
+  { "host": "torrent.i.ng", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "laestrygonian.ooguy.com", "endpoints": ["udp:9001"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker1.bt.moack.co.kr",
+    "endpoints": ["udp:80"],
+    "a": ["156.234.201.18"],
+    "aaaa": []
+  },
+  { "host": "tr3.ysagin.top", "endpoints": ["udp:2715"], "a": ["38.180.157.12"], "aaaa": [] },
+  { "host": "lotus-eater.mywire.org", "endpoints": ["udp:9001"], "a": [], "aaaa": [] },
+  { "host": "tracker1.myporn.club", "endpoints": ["udp:9337"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.ddunlimited.net",
+    "endpoints": ["udp:6969"],
+    "a": ["193.187.90.12"],
+    "aaaa": []
+  },
+  { "host": "torrent.bowed.net", "endpoints": ["udp:8081"], "a": ["23.134.124.81"], "aaaa": [] },
+  {
+    "host": "tracker.ducks.party",
+    "endpoints": ["udp:1984"],
+    "a": ["135.125.198.235"],
+    "aaaa": ["2001:41d0:700:5539::d00c:5"]
+  },
+  { "host": "tracker.bluefrog.pw", "endpoints": ["udp:2710"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.farted.net",
+    "endpoints": ["udp:6969"],
+    "a": ["31.56.179.159"],
+    "aaaa": ["2a13:7c00:6:110:f816:3eff:fef8:43e4"]
+  },
+  { "host": "cerf.cs.umd.edu", "endpoints": ["udp:8000"], "a": ["128.8.130.86"], "aaaa": [] },
+  { "host": "navegador.click", "endpoints": ["udp:6969"], "a": ["170.39.230.119"], "aaaa": [] },
+  { "host": "tracker.cn.nyaa.net", "endpoints": ["udp:6969"], "a": ["47.76.201.250"], "aaaa": [] },
+  {
+    "host": "tracker.cyberia.is",
+    "endpoints": ["udp:6969"],
+    "a": ["193.218.118.81"],
+    "aaaa": ["2a0f:e586:f:f::81"]
+  },
+  { "host": "tracker.darkness.services", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "tracker-de-2.cutie.dating", "endpoints": ["udp:1337"], "a": [], "aaaa": [] },
+  {
+    "host": "torrenttracker.nwc.acsalaska.net",
+    "endpoints": ["http:6969"],
+    "a": ["107.152.127.9"],
+    "aaaa": ["2001:4948:d:69::9"]
+  },
+  { "host": "tracker.ilibr.org", "endpoints": ["udp:6969"], "a": ["95.217.80.22"], "aaaa": [] },
+  {
+    "host": "ibksturm.synology.me",
+    "endpoints": ["udp:6969"],
+    "a": ["213.196.191.96"],
+    "aaaa": ["2001:470:25:7c::195"]
+  },
+  {
+    "host": "tracker.deadorbit.nl",
+    "endpoints": ["udp:6969"],
+    "a": ["194.110.247.18"],
+    "aaaa": []
+  },
+  { "host": "tracker.edkj.club", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.dorcus.digital",
+    "endpoints": ["udp:1337"],
+    "a": ["150.136.120.173"],
+    "aaaa": []
+  },
+  { "host": "tracker.filemail.com", "endpoints": ["udp:6969"], "a": ["52.58.128.163"], "aaaa": [] },
+  { "host": "tracker.cynma.tv", "endpoints": ["udp:6969"], "a": ["184.18.190.252"], "aaaa": [] },
+  {
+    "host": "tracker.fnix.net",
+    "endpoints": ["udp:6969"],
+    "a": ["5.255.124.190"],
+    "aaaa": ["2a04:52c0:129:4157::a80"]
+  },
+  {
+    "host": "tracker.flatuslifir.is",
+    "endpoints": ["udp:6969"],
+    "a": ["193.148.251.143", "45.134.88.121"],
+    "aaaa": ["2a0c:9a40:2202:102::1903", "2a0c:9a40:2201:10::1912"]
+  },
+  {
+    "host": "tracker.opentrackr.com",
+    "endpoints": ["udp:6969"],
+    "a": ["95.217.80.20"],
+    "aaaa": []
+  },
+  { "host": "tracker.peerfect.org", "endpoints": ["udp:6969"], "a": ["65.109.28.17"], "aaaa": [] },
+  {
+    "host": "tracker.playground.ru",
+    "endpoints": ["udp:6969"],
+    "a": ["212.42.38.197"],
+    "aaaa": []
+  },
+  { "host": "tracker.plx.im", "endpoints": ["udp:6969"], "a": ["54.36.179.216"], "aaaa": [] },
+  {
+    "host": "tracker.breizh.pm",
+    "endpoints": ["udp:6969"],
+    "a": ["82.67.183.86"],
+    "aaaa": ["2a01:e0a:ebd:2640:ba27:ebff:fe2c:db88"]
+  },
+  { "host": "tracker.govt.hu", "endpoints": ["udp:6969"], "a": ["185.189.13.39"], "aaaa": [] },
+  {
+    "host": "tracker.publictracker.xyz",
+    "endpoints": ["udp:6969"],
+    "a": ["93.158.213.92"],
+    "aaaa": []
+  },
+  { "host": "tracker.iperson.xyz", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.teambelgium.net",
+    "endpoints": ["udp:6969"],
+    "a": ["91.177.126.188"],
+    "aaaa": ["2a02:a03f:8b33:3d00::cafe"]
+  },
+  {
+    "host": "tracker.gmi.gd",
+    "endpoints": ["udp:6969"],
+    "a": ["209.141.59.25"],
+    "aaaa": ["2605:6400:20:6c::"]
+  },
+  {
+    "host": "tracker.theoks.net",
+    "endpoints": ["udp:6969"],
+    "a": ["209.141.59.16"],
+    "aaaa": ["2605:6400:20:d3:1337::1"]
+  },
+  {
+    "host": "tracker.hismz.cn",
+    "endpoints": ["udp:6969"],
+    "a": ["104.21.17.237", "172.67.178.219"],
+    "aaaa": ["2606:4700:3035::ac43:b2db", "2606:4700:3033::6815:11ed"]
+  },
+  {
+    "host": "tracker.therarbg.to",
+    "endpoints": ["udp:1337", "udp:6969"],
+    "a": ["93.158.213.92"],
+    "aaaa": []
+  },
+  { "host": "tracker.ixuexi.click", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "tracker.ptrmc.net", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "tracker.nyaa.net", "endpoints": ["udp:6969"], "a": ["31.59.141.120"], "aaaa": [] },
+  { "host": "tracker.srv00.com", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "tracker.huadongblower.xyz", "endpoints": ["udp:8080"], "a": [], "aaaa": [] },
+  {
+    "host": "tracker.opentorrent.top",
+    "endpoints": ["udp:6969"],
+    "a": ["90.226.147.124"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker-udp.gbitt.info",
+    "endpoints": ["udp:80"],
+    "a": ["109.201.134.183"],
+    "aaaa": ["2a00:1768:1001:26::183"]
+  },
+  {
+    "host": "anime-tracker.aruku.kro.kr",
+    "endpoints": ["udp:8081"],
+    "a": ["221.153.216.56"],
+    "aaaa": []
+  },
+  { "host": "tracker.wildkat.net", "endpoints": ["udp:6969"], "a": ["164.152.110.70"], "aaaa": [] },
+  { "host": "tracker.k.vu", "endpoints": ["udp:6969"], "a": ["45.38.170.167"], "aaaa": [] },
+  {
+    "host": "tracker.nyaa.vc",
+    "endpoints": ["udp:6969"],
+    "a": ["45.137.199.107"],
+    "aaaa": ["2a0b:64c0:10:1:be24:11ff:fee7:3eda"]
+  },
+  { "host": "tracker.torrentclaw.com", "endpoints": ["udp:1337"], "a": [], "aaaa": [] },
+  { "host": "tracker.sharebro.in", "endpoints": ["udp:6969"], "a": ["122.173.84.249"], "aaaa": [] },
+  {
+    "host": "tracker.torrent.eu.org",
+    "endpoints": ["udp:451"],
+    "a": ["91.216.110.52"],
+    "aaaa": ["2a03:7220:8083:cd00::1"]
+  },
+  { "host": "tracker.riverarmy.xyz", "endpoints": ["udp:6969"], "a": ["18.232.197.8"], "aaaa": [] },
+  {
+    "host": "tracker.trackarr.org",
+    "endpoints": ["udp:6969"],
+    "a": ["46.59.69.118"],
+    "aaaa": ["2001:9b1:28ff:cc00:b00b:1e54:face:ef9a"]
+  },
+  {
+    "host": "trackthis.cyber.pz.it",
+    "endpoints": ["udp:1337"],
+    "a": ["194.182.83.70"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.tryhackx.org",
+    "endpoints": ["udp:6969"],
+    "a": ["135.125.236.64"],
+    "aaaa": ["2001:41d0:701:1100::7949"]
+  },
+  {
+    "host": "tracker.tvunderground.org.ru",
+    "endpoints": ["udp:3218"],
+    "a": ["209.50.255.93"],
+    "aaaa": ["2604:9a00:1:104:1c00:33ff:fe00:132"]
+  },
+  {
+    "host": "tracker.wepzone.net",
+    "endpoints": ["udp:6969"],
+    "a": ["185.121.24.141"],
+    "aaaa": ["2602:fa7e:21::b"]
+  },
+  { "host": "tracker.yume-hatsuyuki.moe", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "tr.btube3.com", "endpoints": ["udp:2010"], "a": ["74.81.245.60"], "aaaa": [] },
+  { "host": "tracker.1h.is", "endpoints": ["udp:1337"], "a": ["103.224.182.238"], "aaaa": [] },
+  { "host": "torrentvpn.club", "endpoints": ["udp:6990"], "a": ["31.57.241.202"], "aaaa": [] },
+  {
+    "host": "tracker.nekomi.cn",
+    "endpoints": ["https:-"],
+    "a": [
+      "104.18.5.24",
+      "104.17.120.178",
+      "104.19.53.122",
+      "104.18.21.219",
+      "104.17.18.221",
+      "104.17.208.193"
+    ],
+    "aaaa": [
+      "2606:4700:3032:b613:41b1:857:3f00:93c2",
+      "2606:4700:3032:b622:1922:a831:a3e3:68e2",
+      "2606:4700:3032:b622:1922:bbfd:b4bf:519d",
+      "2606:4700:3035:cde5:7293:9f6f:f79a:b6c3",
+      "2606:4700:3035:cde5:72c9:5b7d:690f:f660",
+      "2606:4700:3036:1664:ce4e:2816:8e38:1bd7"
+    ]
+  },
+  { "host": "uabits.today", "endpoints": ["udp:6990"], "a": ["163.5.63.253"], "aaaa": [] },
+  {
+    "host": "ttk2.nbaonlineservice.com",
+    "endpoints": ["udp:6969"],
+    "a": ["84.17.44.172", "54.39.48.3"],
+    "aaaa": []
+  },
+  {
+    "host": "yuptracker-eu.gaijinent.com",
+    "endpoints": ["udp:27022"],
+    "a": ["52.211.139.85"],
+    "aaaa": []
+  },
+  {
+    "host": "v6.vito-tracker.space",
+    "endpoints": ["udp:6969"],
+    "a": [],
+    "aaaa": ["2a01:4f8:1c18:5fca::1"]
+  },
+  {
+    "host": "tracker1.itzmx.com",
+    "endpoints": ["http:8080", "udp:8080"],
+    "a": [
+      "104.19.22.28",
+      "104.19.22.25",
+      "104.19.22.30",
+      "104.19.22.24",
+      "104.19.22.23",
+      "104.19.22.29",
+      "104.19.22.31",
+      "104.19.22.26",
+      "104.19.22.27",
+      "104.19.22.22"
+    ],
+    "aaaa": []
+  },
+  { "host": "tracker.torrust-demo.com", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  { "host": "udp.tracker.linvk.com", "endpoints": ["udp:6969"], "a": ["143.246.43.3"], "aaaa": [] },
+  { "host": "zer0day.ch", "endpoints": ["udp:1337"], "a": ["93.158.213.92"], "aaaa": [] },
+  { "host": "tracker.orsvarn.com", "endpoints": ["udp:6969"], "a": ["81.170.132.66"], "aaaa": [] },
+  { "host": "wepzone.net", "endpoints": ["udp:6969"], "a": ["44.30.4.4"], "aaaa": [] },
+  { "host": "vps-dd0a0715.vps.ovh.net", "endpoints": ["udp:6969"], "a": [], "aaaa": [] },
+  {
+    "host": "whybother.torrentonline.cc",
+    "endpoints": ["udp:42069"],
+    "a": ["92.112.127.62"],
+    "aaaa": ["2a12:bec4:1822:db::a"]
+  },
+  {
+    "host": "tracker.tnl.one",
+    "endpoints": ["udp:8000"],
+    "a": ["88.151.197.103"],
+    "aaaa": ["2a0e:4007:fffe:703::60"]
+  },
+  {
+    "host": "yuptracker.gaijinent.com",
+    "endpoints": ["udp:27022"],
+    "a": ["188.42.48.85"],
+    "aaaa": []
+  },
+  { "host": "yuki.bt.bontal.net", "endpoints": ["udp:6969"], "a": ["178.128.94.74"], "aaaa": [] },
+  {
+    "host": "udp1.torrust-tracker-demo.com",
+    "endpoints": ["udp:6969"],
+    "a": ["116.202.177.184"],
+    "aaaa": ["2a01:4f8:1c0c:828e::1"]
+  },
+  { "host": "tracker.x6c.co", "endpoints": ["udp:6969"], "a": ["23.165.136.98"], "aaaa": [] },
+  {
+    "host": "yuptracker-sa.gaijinent.com",
+    "endpoints": ["udp:27022"],
+    "a": ["13.251.31.5"],
+    "aaaa": []
+  },
+  {
+    "host": "tracker.openwebtorrent.com",
+    "endpoints": ["wss:-"],
+    "a": ["104.21.31.24", "172.67.174.171"],
+    "aaaa": ["2606:4700:3037::6815:1f18", "2606:4700:3034::ac43:aeab"]
+  },
+  {
+    "host": "yuptracker-us.gaijinent.com",
+    "endpoints": ["udp:27022"],
+    "a": ["50.115.13.73"],
+    "aaaa": []
+  },
+  { "host": "www.2600.com", "endpoints": ["udp:6969"], "a": ["184.105.226.26"], "aaaa": [] },
+  {
+    "host": "vito-tracker.duckdns.org",
+    "endpoints": ["udp:6969"],
+    "a": ["85.121.5.80"],
+    "aaaa": ["2001:678:6d4:7410::199"]
+  },
+  { "host": "udp-tracker.adgk.net", "endpoints": ["udp:6969"], "a": ["158.51.78.55"], "aaaa": [] },
+  { "host": "tracker4.itzmx.com", "endpoints": ["udp:2710"], "a": ["212.60.5.203"], "aaaa": [] },
+  { "host": "tracker2.itzmx.com", "endpoints": ["udp:6961"], "a": ["212.60.5.203"], "aaaa": [] },
+  { "host": "tracker3.itzmx.com", "endpoints": ["udp:6961"], "a": ["212.60.5.203"], "aaaa": [] },
+  {
+    "host": "echostar.ddnsfree.com",
+    "endpoints": ["http:8080"],
+    "a": [],
+    "aaaa": ["2a0e:aa07:e15f::e"]
+  },
+  { "host": "ipv4.rer.lol", "endpoints": ["http:2710"], "a": [], "aaaa": [] },
+  { "host": "cn.pcfreetime.com", "endpoints": ["http:6969"], "a": ["116.62.205.211"], "aaaa": [] },
+  { "host": "tracker.moeblog.cn", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "tracker.samcze.pl", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "speedtest.iperson.xyz", "endpoints": ["http:6969"], "a": [], "aaaa": [] },
+  { "host": "wsad.run.place", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "tracker.valete.tf", "endpoints": ["udp:9999"], "a": [], "aaaa": [] },
+  {
+    "host": "v74853.hosted-by-vdsina.com",
+    "endpoints": ["udp:6969"],
+    "a": ["89.110.76.229"],
+    "aaaa": []
+  },
+  { "host": "bt.publicvm.com", "endpoints": ["http:8080"], "a": [], "aaaa": [] },
+  { "host": "tracker.puvvadi.net", "endpoints": ["https:-"], "a": [], "aaaa": [] },
+  { "host": "opentracker.8880085.xyz", "endpoints": ["https:-"], "a": [], "aaaa": [] }
+]

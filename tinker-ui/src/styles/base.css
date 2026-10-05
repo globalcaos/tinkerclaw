@@ -289,9 +289,13 @@ body {
   display: grid;
   grid-template-columns: 1fr auto;
   grid-template-rows: 1fr auto;
+  /* FORK 2026-09-07 — row 1 column 1 was an unnamed empty cell; it is now `agentname`,
+     which is where the configured agent name renders (beside the logo, level with the
+     toolbox, above the tabs). Naming it changes no existing placement: `controls` and
+     `tabs` keep the exact cells they had. */
   grid-template-areas:
-    ".        controls"
-    "tabs     tabs";
+    "agentname controls"
+    "tabs      tabs";
   padding: 0 12px 0 110px;
   font-size: 12px;
   position: relative;
@@ -369,6 +373,25 @@ body {
   box-shadow: 0 0 8px rgba(193, 154, 107, 0.35);
   color: var(--accent);
 }
+/* FORK 2026-09-23: no pointer-events:none here — the hover IS the live progress
+   view while it blinks. The click handler already ignores clicks while busy. */
+.topbar-icon-btn.tb-busy {
+  opacity: 1;
+  cursor: progress;
+  animation: tb-rebuild-spin 1s linear infinite;
+}
+.topbar-icon-btn.tb-error {
+  opacity: 1;
+  background: rgba(180, 60, 40, 0.35);
+}
+@keyframes tb-rebuild-spin {
+  from {
+    filter: hue-rotate(0deg);
+  }
+  to {
+    filter: hue-rotate(360deg);
+  }
+}
 .topbar select {
   background: var(--surface2);
   color: var(--text);
@@ -433,6 +456,64 @@ body {
   flex-direction: column;
   gap: 4px;
 }
+
+/* FORK 2026-10-02 — a reset archive is being read (app.ts loadResetArchivePage; a first read can
+   take tens of seconds). Zero height and a margin that cancels the flex gap, so showing it moves no
+   row; sticky, so it stays at the top of the pane while he waits there. */
+.messages.archive-loading::before {
+  content: "↺ Loading earlier turns…";
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  height: 22px;
+  /* its own height plus the flex gap: it overlays the first row instead of pushing it */
+  margin-bottom: -26px;
+  align-self: center;
+  white-space: nowrap;
+  font-size: 12px;
+  line-height: 22px;
+  padding: 0 12px;
+  border-radius: 11px;
+  color: var(--muted, #666);
+  background: var(--bg, #fff);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* FORK 2026-09-07 — the configured agent name, in the topbar beside the wooden logo.
+   Sits in the `agentname` grid cell (row 1, col 1). align-self:end puts it on the same
+   bottom edge as .topbar-controls, so the name and the toolbox icons share a baseline —
+   "at the height of the top-panel buttons". min-width:0 + ellipsis so a long name can
+   never widen column 2 of the #app grid (the failure the topbar's vertical split fixed). */
+.agent-name-banner {
+  grid-area: agentname;
+  align-self: end;
+  justify-self: start;
+  min-width: 0;
+  overflow: hidden;
+  padding-bottom: 2px;
+  pointer-events: none;
+}
+.agent-name-banner[hidden] {
+  display: none;
+}
+#agent-name-text {
+  display: block;
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #f3e3c8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* The topbar is a dark wood photo — a plain fill reads muddy, so the name carries its
+     own shadow to lift it off the grain. */
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.85),
+    0 0 14px rgba(193, 154, 107, 0.35);
+}
+
 .msg {
   max-width: 85%;
   padding: 6px 10px;
@@ -457,6 +538,63 @@ body {
   border-bottom-left-radius: 2px;
   color: #f0c878;
 }
+/* FORK 2026-10-01 (the architect) — the answering model's rail (chat-rail.ts): a line at the left of every
+   unit of a reply, in the model's EEG colour (--rail), opened and closed by its logo; the prompts
+   carry none. Each unit is its own .turn-seg so the keyed renderer never re-parses a run whole.
+   A segment lays its content out exactly as .messages does (flex column, gap 4px), so a bubble
+   keeps its width and alignment inside it. The line reaches 2px (half the .messages gap) above and
+   below the segment, so consecutive segments meet; its 10px box is the hover target for the
+   model's name and only its centre 2px is painted. Logo and line share the 9px centre. */
+.turn-seg,
+.turn-rail-cap {
+  position: relative;
+  padding-left: 20px;
+}
+.turn-seg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.turn-rail-line {
+  position: absolute;
+  left: 4px;
+  width: 10px;
+  top: -2px;
+  bottom: -2px;
+  background: linear-gradient(var(--rail), var(--rail)) center / 2px 100% no-repeat;
+  cursor: help;
+}
+.turn-rail-cap {
+  height: 18px;
+  flex: none;
+}
+.turn-rail-logo {
+  position: absolute;
+  left: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: help;
+}
+.turn-rail-logo svg {
+  width: 14px;
+  height: 14px;
+}
+.turn-rail-cap--start .turn-rail-logo {
+  top: 0;
+}
+.turn-rail-cap--start .turn-rail-line {
+  top: 18px;
+}
+.turn-rail-cap--end .turn-rail-logo {
+  bottom: 0;
+}
+.turn-rail-cap--end .turn-rail-line {
+  bottom: 18px;
+}
+
 .msg.system {
   align-self: flex-start;
   color: var(--muted);
@@ -1176,6 +1314,52 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.3);
   color: #f87171;
 }
+/* FORK 2026-09-29 (U9, plan 2026-09-29-chat-usage-chips-and-typed-outcomes.md) — the typed
+   turn-outcome bubble. It REUSES `.msg-overload-bubble` for the orange and `.exhausted` for the
+   red, one colour vocabulary rather than a second one, so only the GREY quiet variant and the
+   detail expander are new. `.quiet` = the two outcomes that are not errors: `aborted`
+   ("⏹ Stopped") and `empty` ("∅ No answer") — grey because nothing failed and nothing is retried. */
+.msg-outcome-bubble.quiet {
+  background: rgba(148, 163, 184, 0.1);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: #cbd5e1;
+}
+.msg-outcome-bubble .msg-outcome-head {
+  font-weight: 500;
+}
+/* The raw provider / CLI / gateway text, folded away by default: the headline answers "what
+   happened", this answers "show me". A native <details> whose parent row's HTML is deterministic,
+   so §5.8X node reuse keeps it open across a re-render without a fold key — the same footing
+   `renderEnvelope` already stands on. */
+.msg-outcome-bubble .msg-outcome-detail {
+  margin-top: 4px;
+  text-align: left;
+}
+.msg-outcome-bubble .msg-outcome-detail > summary {
+  cursor: pointer;
+  opacity: 0.75;
+  font-size: 0.92em;
+  text-align: center;
+  list-style: none;
+}
+.msg-outcome-bubble .msg-outcome-detail > summary::before {
+  content: "▸ ";
+}
+.msg-outcome-bubble .msg-outcome-detail[open] > summary::before {
+  content: "▾ ";
+}
+.msg-outcome-bubble .msg-outcome-detail > pre {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 8px;
+  font-size: 0.95em;
+  opacity: 0.9;
+}
 /* FORK: hover-revealed stop link on retry/overload bubbles + active-countdown pulse */
 .msg-overload-bubble .retry-stop-link {
   display: none;
@@ -1330,6 +1514,21 @@ code.fs-link.fs-link-error {
   line-height: 1.45;
 }
 
+/* FORK 2026-10-01 (the architect): the curiosity sense's extra information, its own bubble with a yellow border. */
+.msg.msg-deeper {
+  border: 1.5px solid #e2b93b;
+  background: rgba(226, 185, 59, 0.07);
+}
+.msg.msg-deeper .deeper-label {
+  color: #e2b93b;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+.msg.msg-deeper a {
+  color: #f0cf6b;
+}
 .msg.msg-fractal {
   background: rgba(107, 142, 35, 0.1);
   border: 1px solid rgba(107, 142, 35, 0.25);
@@ -1421,6 +1620,13 @@ code.fs-link.fs-link-error {
   overflow-x: auto;
   font-size: 11px;
   margin: 4px 0;
+}
+/* Untagged fences are prose in chat (drafts, letters, quoted messages): wrap them so a draft
+   never sits on one line over a scrollbar (the architect 2026-08-28 and 2026-10-02). Tagged code
+   (```bash, ```ts) keeps its exact lines and scrolls. Pinned by styles-prose-fence-wraps.test.ts. */
+.msg pre > code:not([class*="language-"]) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .msg code {
   font-family: "SF Mono", "Fira Code", monospace;
@@ -2709,6 +2915,18 @@ code.fs-link.fs-link-error {
   overflow-x: hidden;
   flex: 1;
 }
+/* FORK 2026-10-02 (the architect: "a very annoying vertical sliding bar spanning only the
+   'context window' panel"). The rule above was written for #budget-panel, but the static
+   folds that later moved into Models (CONTEXT WINDOW, THALAMUS, EEG) carry .rpanel-body
+   too, so each became its own overflow-y:auto box. Nothing caps their height (the rail
+   is not a flex container), so any descendant poking out the bottom turned into a
+   full-height scrollbar: CONTEXT WINDOW measured scrollHeight 197 in a 196 px box. A
+   fold is never a scroller. clip + visible is a legal pair (visible only turns into
+   auto next to hidden/scroll/auto), so the horizontal clipping stays. */
+.budget-panel-wrapper > .model-group.rpanel-body {
+  overflow-x: clip;
+  overflow-y: visible;
+}
 .budget-section {
   margin-bottom: 12px;
   padding-bottom: 10px;
@@ -3094,6 +3312,12 @@ code.fs-link.fs-link-error {
   text-transform: none;
 }
 /* Unified tooltip: JS-positioned, viewport-clamped */
+#global-hint.hint-wide {
+  max-width: min(560px, calc(100vw - 16px));
+  font-family: ui-monospace, "DejaVu Sans Mono", monospace;
+  font-size: 10px;
+  line-height: 1.35;
+}
 #global-hint {
   position: fixed;
   font-size: 9px;
@@ -3620,6 +3844,28 @@ code.fs-link.fs-link-error {
 /* FORK 2026-09-02 — the rule between sessions WITH a tab open and the ones
    without (emitted once, by renderSessionsPanel). Fades at both ends so it
    reads as a divider on the wood rather than a border on a row. */
+/* FORK 2026-09-25 (the architect) — a chained master/slave pair in the sessions panel. The two rows
+   are always adjacent (master on top, slave below) and a short chain in the pair's metal colour
+   joins them in a small left gutter: eyelet = master, collar = slave, as on the tab bar. */
+.session-chain-pair {
+  position: relative;
+  padding-left: 11px;
+}
+.session-chain-link {
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  width: 10px;
+  height: 26px;
+  transform: translateY(-50%);
+  color: var(--chain-color, #b8c2cc);
+  pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.55));
+}
+.session-chain-link svg {
+  display: block;
+}
+
 .session-open-sep {
   height: 1px;
   margin: 7px 3px 6px;
@@ -3726,6 +3972,107 @@ code.fs-link.fs-link-error {
   font-weight: 400;
   color: var(--muted);
   font-size: 10px;
+}
+/* FORK 2026-09-25 (the architect): ⏸ / ▶ next to SESSIONS — the freeze-thaw skill. Outline pills in
+   the header accent, like .sc-head-btn; while paused, ▶ glows green so a page whose gateway
+   is down still says how to bring it back. */
+.ft-btns {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+.ft-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 16px;
+  padding: 0;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  cursor: pointer;
+}
+.ft-btn svg {
+  width: 8px;
+  height: 8px;
+  fill: currentColor;
+}
+.ft-btn:hover {
+  color: #fff;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.ft-btns.ft-frozen #ft-pause {
+  opacity: 0.4;
+}
+.ft-btns.ft-frozen #ft-play {
+  color: #7cfc00;
+  border-color: #7cfc00;
+  animation: ft-glow 1.6s ease-in-out infinite;
+}
+.ft-btn.ft-busy {
+  animation: ft-glow 0.9s ease-in-out infinite;
+}
+.ft-btn.ft-error {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+/* FORK 2026-09-30 (the architect): ↻ rebuild + restart next to ▶ — the full rebuild that used to be the ⚙️
+   in the topbar. Its job states come from bindRebuildButton (tb-busy / tb-error / tb-active); the
+   hover stays the live progress view. */
+.ft-restart svg .ft-restart-arc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+.ft-btn.tb-busy {
+  cursor: progress;
+  animation: ft-glow 0.9s ease-in-out infinite;
+}
+.ft-btn.tb-busy svg {
+  animation: ft-restart-spin 1.2s linear infinite;
+}
+.ft-btn.tb-error {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+.ft-btn.tb-active {
+  color: #7cfc00;
+  border-color: #7cfc00;
+}
+@keyframes ft-restart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* FORK 2026-09-30 (the architect): the frontend rebuild, beside the gateway restart: the same pill in
+   colour — a rainbow ring (gradient border-box under the pill's own fill) and a rainbow arrow (the
+   svg's inline gradient). Its job states keep the shared tb-busy / tb-error rules above. */
+.ft-btn.ft-restart-fe {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(
+        color-mix(in srgb, var(--surface, #1a1a1e) 88%, #fff 12%),
+        color-mix(in srgb, var(--surface, #1a1a1e) 88%, #fff 12%)
+      )
+      padding-box,
+    linear-gradient(135deg, #ff4d6d, #ffb703, #38d39f, #4d8dff) border-box;
+}
+.ft-btn.ft-restart-fe:hover {
+  box-shadow: 0 0 10px rgba(255, 183, 3, 0.55);
+}
+.ft-btn.ft-restart-fe.tb-error {
+  background:
+    linear-gradient(rgba(180, 60, 40, 0.35), rgba(180, 60, 40, 0.35)) padding-box,
+    linear-gradient(#ff6b6b, #ff6b6b) border-box;
+}
+@keyframes ft-glow {
+  50% {
+    box-shadow: 0 0 12px currentColor;
+  }
 }
 .session-delete-btn {
   background: none;
@@ -4008,10 +4355,19 @@ code.fs-link.fs-link-error {
      auto-basis shrinks toward `min-width: 64px` (icon + 2-3 chars before
      ellipsis). Below that floor, the existing .tab-bar.has-overflow
      scroll-arrow mechanism kicks in. max-width caps very long titles
-     (e.g. Gemini-generated 32-char strings) at a readable width. */
-  flex: 0 1 auto;
+     (e.g. Gemini-generated 32-char strings) at a readable width.
+     FORK 2026-09-16 — equal share. `flex: 0 1 auto` weighted every tab's
+     shrink by its OWN content width, so a long-titled tab kept most of
+     its width while short-titled ones were floored at 64px and the tail
+     of the strip was clipped (some tabs showed nothing). Now the basis
+     is 0 and every tab grows equally; `max-width: max-content` lets a
+     tab whose title is shorter than its equal share stay narrow instead
+     of padding out, and the slack goes back to the others. The readable
+     cap for very long titles moved onto .tab-title (max-width there
+     bounds this tab's max-content). */
+  flex: 1 1 0;
   min-width: 64px;
-  max-width: 200px;
+  max-width: max-content;
   position: relative;
   margin-bottom: -1px;
 }
@@ -4123,9 +4479,14 @@ code.fs-link.fs-link-error {
      width regardless of available space. Now the tab title fills its
      shrinking parent: flex:1 takes the slack, min-width:0 lets it
      ellipsise all the way down to the icon when the tab itself shrinks
-     to min-width. */
+     to min-width.
+     FORK 2026-09-16 — max-width restored, but as a CAP not a target: with
+     .tab at `max-width: max-content` this is what bounds a very long
+     title (was `max-width: 200px` on .tab; 200 - 24px padding - 6px gap
+     - ~15px close glyph ≈ 155px). Tabs shorter than this are unaffected. */
   flex: 1;
   min-width: 0;
+  max-width: 155px;
 }
 /* FORK 2026-07-29 — TWO tab-title states that must never read as the same thing.
    They are kept adjacent deliberately: they were previously in different files
@@ -4225,54 +4586,90 @@ code.fs-link.fs-link-error {
    (see cloneTab in app.ts), so the old `.tab-clone-badge` / `.tab.tab-clone` overlap rules were
    retired — the icon is duplicated as real editable title text, not a separate CSS badge. */
 
-/* FORK: Queued message styling — SINGLE declaration site for these two selectors. Keep it that way.
-   2026-08-28: a byte-identical `.msg.msg-queued` / `.queued-badge` pair sat ~3,500 lines above this
-   one and lost the cascade to it, so editing that copy alone rendered nothing. That is the bug class:
-   a selector declared twice means half your edits never reach the screen. The earlier pair was
-   deleted and every computed declaration is unchanged — change the queued look HERE, and re-declare
-   these selectors nowhere else. The dimmed-grey dashed look must stay visually distinct from the
-   amber `.msg-undelivered` lane declared just below — see the note there for why. */
-.msg.msg-queued {
-  opacity: 0.45;
-  border-style: dashed;
+/* FORK 2026-09-24 — THE PENDING-PROMPT INDICATOR, keyed by TONE (TINKER_UI_DESIGN_BIBLE/
+   prompt-queue.md §6.1 and PQ-4, step U2). SINGLE declaration site for every selector in this
+   block. Keep it that way. 2026-08-28: a byte-identical copy of the old grey pair sat ~3,500 lines
+   above this block and lost the cascade to it, so editing that copy alone rendered nothing. That is
+   the bug class: a selector declared twice means half your edits never reach the screen.
+
+   WHO EMITS THESE: msg-order.ts `promptBubbleMarks` (the bubble's classes and its badge) and
+   prompt-state.ts `promptActionsHtml` (the owner's Resend and Dismiss on a LOST prompt, step U4),
+   and nothing else. Both read the row that prompt-state.ts's §6.1 table gives the bubble's ONE
+   derived state, so the class list is a pure function of that state. This block replaced two
+   stacked lanes (a dimmed grey "queued" pair and an amber "not delivered" pair) whose precedence let
+   the grey word hide the amber fact (contradiction C1). The badge and button TEXT live in
+   prompt-state.ts, never here.
+
+   PQ-4's four tones, and where each one is declared:
+     grey   the gateway has it, wait: BEHIND (dimmed), STEERED, CANCELLED. Here; the badge carries
+            the grey, and the bubble keeps the user bubble's own border.
+     amber  only your browser has it, or the gateway lost it: UNSENT (dashed, still moving) and
+            LOST (solid, it wants you). Here.
+     orange an automatic retry you may stop: the pulsing countdown under the FAILED ANSWER, never on
+            the prompt. `.msg-overload-bubble`.
+     red    it gave up: `.msg-overload-bubble.exhausted` and the error bubble `.msg.msg-error`.
+   prompt-state.ts can also name "normal" and "none" for a prompt bubble. Both add nothing, so they
+   have no rule, on purpose. ORDER MATTERS: `.msg.prompt-dashed` must follow the tone rule, whose
+   `border` shorthand would otherwise reset the style to solid. */
+.msg.msg-prompt {
   position: relative;
+}
+.msg.prompt-tone-amber {
+  border: 1px solid rgba(217, 119, 6, 0.55);
+}
+.msg.prompt-dashed {
+  border-style: dashed;
+}
+.msg.prompt-dimmed {
+  opacity: 0.45;
   transition: opacity 0.3s ease;
 }
-.queued-badge {
+.prompt-badge {
   position: absolute;
   top: -8px;
   right: 8px;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--muted);
   background: var(--bg);
   padding: 0 4px;
   border-radius: 3px;
-  border: 1px dashed rgba(107, 142, 35, 0.4);
-}
-
-/* FORK 2026-08-16 — a prompt the gateway has not provably received (see outbox.ts). Deliberately
-   AMBER and full-opacity, not the dimmed grey of "queued": queued means "accepted, waiting its
-   turn", undelivered means "nobody has this but your browser". Those must never look alike — the
-   reported harm included waiting for an answer to a prompt that had never been sent. */
-.msg.msg-undelivered {
-  border: 1px dashed rgba(217, 119, 6, 0.55);
-  position: relative;
-}
-.undelivered-badge {
-  position: absolute;
-  top: -8px;
-  right: 8px;
-  font-size: 9px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: #d97706;
-  background: var(--bg);
-  padding: 0 4px;
-  border-radius: 3px;
-  border: 1px dashed rgba(217, 119, 6, 0.5);
   cursor: help;
+}
+.prompt-badge.prompt-tone-grey {
+  color: var(--muted);
+  border: 1px solid rgba(107, 142, 35, 0.4);
+}
+.prompt-badge.prompt-tone-amber {
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.5);
+}
+.msg.prompt-dashed .prompt-badge {
+  border-style: dashed;
+}
+/* U4 (PQ-12, "action where the problem is"): the owner's controls on a LOST prompt, under its text.
+   Keyed by the row's tone like the badge; only amber has controls today. No confirmation dialog
+   behind them: the prompt journal keeps the text either way. */
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+.prompt-action {
+  font-size: 10px;
+  line-height: 1.6;
+  padding: 0 8px;
+  border-radius: 3px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.prompt-actions.prompt-tone-amber .prompt-action {
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.5);
+}
+.prompt-actions.prompt-tone-amber .prompt-action:hover {
+  background: rgba(217, 119, 6, 0.12);
 }
 
 /* FORK: Session/All scope toggle */
@@ -6104,6 +6501,34 @@ code.fs-link.fs-link-error {
   align-items: center;
   justify-content: space-between;
 }
+.exec-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.exec-linkx-toggle {
+  background: transparent;
+  border: 1px solid #2a2a30;
+  color: #a3a3ad;
+  cursor: pointer;
+  height: 22px;
+  line-height: 20px;
+  border-radius: 4px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 8px;
+  font: inherit;
+}
+.exec-linkx-toggle:hover {
+  background: #2a2a30;
+  color: #eaeaee;
+}
+.exec-linkx-toggle.on {
+  border-color: rgba(142, 202, 230, 0.55);
+  color: #8ecae6;
+  background: rgba(142, 202, 230, 0.08);
+}
 
 .exec-progress-inline {
   font-size: 10px;
@@ -6149,7 +6574,7 @@ code.fs-link.fs-link-error {
 .exec-group[data-axis="me"] .exec-group-header {
   border-left-color: #6cb1e8;
 }
-.exec-group[data-axis="acme"] .exec-group-header {
+.exec-group[data-axis="work"] .exec-group-header {
   border-left-color: #8a8a92;
 }
 .exec-group[data-axis="meta"] .exec-group-header {
@@ -7064,6 +7489,32 @@ code.fs-link.fs-link-error {
 }
 
 /* ─── Right-click context menu ─── */
+
+/* FORK 2026-09-23 (the architect: "set conversation slave") — master/slave tab chain overlay.
+   Click-through, above the chat, under context menus (1000) and drag ghosts. */
+.tab-chain-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 900;
+  transition: opacity 0.15s ease;
+}
+.tab-chain-overlay.see-through {
+  opacity: 0.12;
+}
+body.tab-chain-picking,
+body.tab-chain-picking #tab-bar-scroll .tab {
+  cursor: crosshair;
+}
+body.tab-chain-picking #tab-bar-scroll .tab:not(.tab-chain-master-picking):hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text, #eaeaee);
+}
+#tab-bar-scroll .tab.tab-chain-master-picking {
+  box-shadow:
+    inset 0 -2px 0 #d4a94a,
+    0 0 10px rgba(212, 169, 74, 0.35);
+}
 
 .exec-context-menu {
   position: fixed;
@@ -8304,6 +8755,39 @@ code.fs-link.fs-link-error {
   white-space: nowrap;
 }
 
+/* FORK 2026-09-29 (plan 2026-09-29-chat-usage-chips-and-typed-outcomes): the third chip. A plugin
+   or MCP server that PROVIDED a tool the agent called — D2: a hook that runs on every turn does not
+   count. Same pill as the recipe and skill chips (80% border / 32% fill, 999px radius, 11px), in
+   cyan — the one hue left that does not collide with green (recipe) or yellow (skill) on the woody
+   chat. #a6e9ff / #d6f5ff are the cyan analogues of the skill chip's #ffe566 / #fff6c2, the same
+   lightness step off the base hue, so the three chips read at equal salience. */
+.msg-plugin-notice {
+  align-self: center;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  margin: 2px 0 6px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, #3ecbff 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, #3ecbff 32%, transparent);
+  color: #a6e9ff;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.msg-plugin-notice-text strong {
+  color: #d6f5ff;
+  font-weight: 600;
+}
+.msg-plugin-notice-link {
+  cursor: pointer;
+  border-bottom: 1px dotted currentColor;
+  color: #3ecbff;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 /* FORK 2026-06-04 — Exec-mode Pulse presence graphs (grouped multi-line + axes). */
 .pg-chart {
   margin: 8px 0 12px;
@@ -9356,8 +9840,15 @@ code.fs-link.routing-why-policy:hover {
         below re-states its own colour instead of inheriting it. */
 
 /* Bar host. Each .cache-seg inside gets its width set inline as a %, so the flex
-   row is a literal 100%-of-the-context-window ruler. overflow:hidden clips the
-   segments to the rounded corners and absorbs any float rounding past 100%. */
+   row is a literal 100%-of-the-context-window ruler.
+
+   FORK 2026-09-24 (B2) — overflow:hidden survives ONLY to mask the rounded corners.
+   It no longer "absorbs any float rounding past 100%": allocateBarSpans in
+   context-cache.ts lays the spans out on an integer grid of hundredths-of-a-percent
+   and makes them sum to exactly 100 by construction, so there is nothing left to
+   clip. That is the point rather than a detail — anything this rule clipped was a
+   quantity silently deleted from a chart whose whole job is to show quantities, and
+   the deletion always landed on the LAST span (context-window-panel.md P2). */
 .cache-bar {
   display: flex;
   height: 14px;
@@ -9387,6 +9878,13 @@ code.fs-link.routing-why-policy:hover {
    that carry meaning. */
 .cache-seg--free {
   background: color-mix(in srgb, var(--text) 6%, transparent);
+  /* P2's "floors are paid by the free span first", expressed in CSS as well as in the
+     allocator. The free span is the ONLY flexible child of the bar (.cache-seg sets
+     flex:0 0 auto for everyone else), so if a min-width ever bites at a rail width the
+     allocator did not assume, the headroom gives the pixels up instead of a segment
+     being pushed out of the box. */
+  flex-shrink: 1;
+  min-width: 0;
 }
 /* Billed tokens the gateway could NOT attribute to a component — on the CLI pipe this is
    the claude CLI's own transcript, which we never see. Neutral hatched grey on purpose: it
@@ -9398,6 +9896,25 @@ code.fs-link.routing-why-policy:hover {
     color-mix(in srgb, var(--text) 17%, transparent) 0 3px,
     color-mix(in srgb, var(--text) 9%, transparent) 3px 6px
   );
+}
+
+/* FORK 2026-09-24 (B2) — context-window-panel.md P3. The moral code is the one span whose
+   width is guaranteed rather than negotiated: the allocator floors it at 2 device px, and
+   this min-width is the belt to that braces for the case the allocator cannot see — a rail
+   dragged narrower than the budget it assumed. .cache-seg--free above gives up the pixels.
+   The colour is NOT set here: it comes inline from SEGMENT_COLORS, like every other segment
+   (right-rail-interaction.md §7 — this file may not hold a second copy of the palette). */
+.cache-seg--moral {
+  min-width: 2px;
+}
+/* A call that carried NO moral code draws an EMPTY slot with a red outline, never a
+   zero-width span. An outline rather than a fill because there is no quantity here to fill
+   with — this is the shape of something missing. --red is the same token the excess warning
+   uses, deliberately: both mean "this one needs you now". */
+.cache-seg--moral-absent {
+  border: 1px solid var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  min-width: 2px;
 }
 
 /* Numeric readout under the bar. Monospace so the digits don't jitter as they tick;
@@ -9440,7 +9957,26 @@ code.fs-link.routing-why-policy:hover {
    row wrap onto two lines in a 300px rail. */
 .cache-meta--title {
   margin-top: 8px;
+}
+/* The dimming sits on the label and value, not on the row, so the output figure between them
+   (.cache-out) reads at full strength. Same look as the old row-level opacity for both spans. */
+.cache-meta--title > span:not(.cache-out) {
   opacity: 0.72;
+}
+/* FORK 2026-09-30 (the architect) — THIS CALL's output tokens, right after the label, in the output
+   purple (its colour is set inline from RESPONSE_COLOR). margin-right:auto keeps it beside the
+   label and pushes the billed value to the right edge. Reuses .cache-stat--glow when it changes,
+   hence the same transition as .cache-stat. */
+.cache-out {
+  flex: none;
+  margin-right: auto;
+  padding: 0 3px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transition:
+    background-color 0.45s ease-out,
+    box-shadow 0.45s ease-out;
 }
 .cache-meta--title > span:first-child {
   text-transform: uppercase;
@@ -9466,6 +10002,12 @@ code.fs-link.routing-why-policy:hover {
     color-mix(in srgb, var(--text) 34%, transparent) 0 2px,
     color-mix(in srgb, var(--text) 14%, transparent) 2px 4px
   );
+}
+/* Mirrors .cache-seg--moral-absent for the "moral code: absent" legend entry: an empty red
+   outline, so the legend says the same thing the bar does. */
+.cache-dot--moral-absent {
+  border: 1px solid var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 
 /* FORK 2026-08-29 (the architect: "it does not make sense to represent in a graph an unbounded value,
@@ -9680,8 +10222,14 @@ code.fs-link.routing-why-policy:hover {
   color: var(--text);
   border-color: var(--orange);
 }
-/* app.ts disables both for the duration of an operation, so a double-click cannot
-   fire two compactions (each of which is a real, billed model call). */
+/* FORK 2026-09-24 (context-window-panel.md §6.2 step B4) — disabled is a DERIVED state, not an
+   operation lock. One painter (app.ts `paintCacheButtons`) asks panels/context-buttons.ts
+   `buttonState`, which turns a button off, with the reason in its `title`, when no session is
+   attached; when the next call's lane owns its own context (claude-code); while a button RPC is
+   in flight on the session (both go off, so a double-click cannot fire two compactions, each a
+   real, billed model call); while a compaction is running on it; or after the gateway answered
+   "nothing to do" to it, until the session's next run. A busy session is NOT disabled: the first
+   press arms a "sure?" confirm. */
 .cache-act:disabled {
   opacity: 0.45;
   cursor: default;
@@ -10273,6 +10821,45 @@ code.fs-link.routing-why-policy:hover {
   fill-opacity: 0.2;
   stroke-width: 2.1;
 }
+/* LIT, not merely UNDIMMED (the architect 2026-09-23 #3: "make sure the whole model's path and
+   bubbles light up on-hover"). The rules above only RESTORE a hovered model to opacity
+   1 while everything else dims — measured on the live page, its path kept
+   stroke-opacity 0.34, so the model survived the dim without brightening. Brightness
+   lives in stroke-opacity, which the €/Mtok↔€/task crossfade OWNS, so each rule is
+   scoped to the axis actually on screen: lighting the hidden copy too would draw both
+   constellations at once. */
+.sc-svg.sc-focus:not(.sc-taskmode) .sc-line-cost.sc-hl,
+.sc-svg.sc-focus.sc-taskmode .sc-line-task.sc-hl {
+  stroke-opacity: 0.9;
+  stroke-width: 1.8;
+}
+.sc-svg.sc-focus:not(.sc-taskmode) .sc-line-est-cost.sc-hl,
+.sc-svg.sc-focus.sc-taskmode .sc-line-est-task.sc-hl {
+  stroke-opacity: 0.8;
+  stroke-width: 1.5;
+}
+.sc-svg.sc-focus:not(.sc-taskmode) .sc-rail-cost.sc-hl,
+.sc-svg.sc-focus.sc-taskmode .sc-rail-task.sc-hl {
+  stroke-opacity: 0.6;
+  stroke-width: 1.2;
+}
+.sc-svg.sc-focus:not(.sc-taskmode) .sc-line-api-cost.sc-hl,
+.sc-svg.sc-focus.sc-taskmode .sc-line-api-task.sc-hl {
+  stroke-opacity: 0.65;
+  stroke-width: 1.4;
+}
+.sc-svg.sc-focus .sc-dotpos.sc-hl .sc-ring {
+  stroke-opacity: 1;
+}
+.sc-svg.sc-focus .sc-apipos.sc-hl .sc-tri {
+  stroke-opacity: 0.9;
+}
+/* the model's dashed bridges light with it (they rest at stroke-opacity 0.16), same
+   axis scoping as the lines above */
+.sc-svg.sc-focus:not(.sc-taskmode) .sc-bridgelayer line.sc-bridge-cost.sc-hl,
+.sc-svg.sc-focus.sc-taskmode .sc-bridgelayer line.sc-bridge-task.sc-hl {
+  stroke-opacity: 0.42;
+}
 /* the twin connector is the POINT of the twin hover: it brightens instead of
    dimming, so the price gap between two vendors is what your eye lands on */
 .sc-svg.sc-focus .sc-twinlayer line {
@@ -10332,9 +10919,6 @@ code.fs-link.routing-why-policy:hover {
 .sc-svg.sc-taskmode .sc-dotg {
   transform: translateX(var(--sc-dx)) scale(var(--sc-k, 1));
 }
-.sc-ghostpos {
-  transform: scale(var(--sc-k, 1));
-}
 /* The API triangles counter-scale and glide on exactly the same terms as .sc-dotg —
    they are marks on the same axes, so any divergence here would show up as the two
    constellations drifting apart under zoom or falling out of step on the €/task
@@ -10352,6 +10936,70 @@ code.fs-link.routing-why-policy:hover {
 }
 .sc-apig:hover .sc-tri {
   fill-opacity: 0.2;
+}
+/* PLAN-TIER WAYPOINTS (the architect 2026-09-23; triangles + drag #2; "same size, same
+   behavior" #3). A plan triangle carries the API triangle's OWN classes
+   (.sc-apipos / .sc-apig / .sc-tri), so its size, resting shade, dimming, hover light
+   and €/task glide all come from the API rules above and cannot drift from them. The
+   rules here only ADD what a plan mark has and a list mark does not: the filled
+   "our seat" variant, the tag, and the drag states. */
+.sc-svg.sc-focus .sc-apipos.sc-hl .sc-tri.sc-wp-ours {
+  fill-opacity: 0.6;
+}
+/* THE DRAG is a tier ABOVE hover (the architect #3: "once I choose to start dragging a circle,
+   its row elements will also highlight"). The whole model is already lit — its circle
+   is under the pointer — so the dragged rung's row (plan triangles, list triangle and
+   the dashed bridge between them) goes one step further: fuller fill, heavier stroke,
+   full ink, tags on. Measured before this rule: row and hover-lit model both sat at
+   opacity 1 / stroke 1.9, so the row did not stand out from its own model. */
+.sc-svg.sc-util-dragging .sc-apipos.sc-wp-active {
+  opacity: 1;
+}
+.sc-svg.sc-util-dragging .sc-apipos.sc-wp-active .sc-tri {
+  fill-opacity: 0.34;
+  stroke-opacity: 1;
+  stroke-width: 2.6;
+}
+.sc-svg.sc-util-dragging .sc-apipos.sc-wp-active .sc-tri.sc-wp-ours {
+  fill-opacity: 0.75;
+}
+/* Scoped to the axis ON SCREEN: the row marks BOTH copies of its bridge (€/Mtok and
+   €/task) active, and unscoped this would raise the hidden copy's stroke-opacity from 0
+   and draw a second bright bridge at the other axis's x. */
+.sc-svg.sc-util-dragging:not(.sc-taskmode) .sc-bridgelayer line.sc-bridge-cost.sc-wp-active,
+.sc-svg.sc-util-dragging.sc-taskmode .sc-bridgelayer line.sc-bridge-task.sc-wp-active {
+  opacity: 1;
+  stroke-opacity: 0.75;
+  stroke-width: 2;
+}
+/* the mark the circle is snapped onto */
+.sc-svg.sc-util-dragging .sc-apipos.sc-wp-hit .sc-tri {
+  fill-opacity: 0.6;
+  stroke: #f0e6d8;
+}
+.sc-dotpos.sc-util-on-wp .sc-util-pct {
+  font-weight: 600;
+}
+.sc-wp-tag {
+  opacity: 0;
+  transition:
+    opacity 0.22s ease,
+    transform 0.18s ease;
+}
+/* Upward-stacked (Anthropic) tags mirror BELOW the dragged row, so the drag readout
+   above the circle never lands on them; --wp-flip is emitted per tag by the chart. */
+.sc-svg.sc-util-dragging .sc-wppos.sc-wp-active .sc-wp-tag {
+  transform: translateY(var(--wp-flip, 0px));
+}
+.sc-wppos.sc-wp-anchor.sc-wp-show .sc-wp-tag,
+.sc-svg.sc-focus .sc-wppos.sc-wp-anchor.sc-hl .sc-wp-tag,
+.sc-svg.sc-util-dragging .sc-wppos.sc-wp-active .sc-wp-tag,
+.sc-wpg:hover .sc-wp-tag {
+  opacity: 0.9;
+}
+/* while dragging, only the dragged row speaks — the model's anchor tags step aside */
+.sc-svg.sc-util-dragging.sc-focus .sc-wppos.sc-hl:not(.sc-wp-active) .sc-wp-tag {
+  opacity: 0;
 }
 /* bridge + API constellation crossfade, in lockstep with the circle layer */
 .sc-bridge-cost,
@@ -10381,10 +11029,15 @@ code.fs-link.routing-why-policy:hover {
 .sc-dotg:hover .sc-ring {
   fill-opacity: 0.18;
 }
-/* ghost landing rings — invisible until task mode, then fade in ahead of the dots */
+/* ghost landing rings — invisible until task mode, then fade in ahead of the dots.
+   The counter-scale sits HERE, on the circle, and never on .sc-ghostpos: that group is
+   positioned by its transform ATTRIBUTE, and a CSS transform replaces the attribute. On
+   .sc-ghostpos it sent all 374 rings to the SVG origin (2026-09-23, "bubbles on the
+   top-left"). Pinned by styles-svg-transform-invariant.test.ts. */
 .sc-ghost {
   opacity: 0;
   transition: opacity 0.7s ease;
+  transform: scale(var(--sc-k, 1));
 }
 .sc-svg.sc-taskmode .sc-ghost {
   opacity: 1;
@@ -10476,7 +11129,7 @@ code.fs-link.routing-why-policy:hover {
      zoom and custom properties inherit — and what needs it is the RADIUS, not the
      stroke. Zoom drives the viewBox, so an untouched `r` grows with the zoom while
      every other marker layer holds its on-screen size by counter-scaling
-     (.sc-dotg, .sc-ghostpos, .sc-apig); without this line the envelope would swell
+     (.sc-dotg, .sc-ghost, .sc-apig); without this line the envelope would swell
      away from the dot it is pointing at. No transition on the transform, so unlike
      .sc-dotg this needs no .sc-zooming suppression. */
   transform: scale(var(--sc-k, 1));
@@ -10672,6 +11325,19 @@ code.fs-link.routing-why-policy:hover {
   background: color-mix(in srgb, var(--accent) 26%, transparent);
   box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 55%, transparent);
 }
+/* FORK 2026-09-04: this pill is now an <a> (it leaves for the published
+   AI-analysis page) rather than a <button>, so it needs the anchor defaults
+   knocked out — otherwise the UA paints it underlined and lays it out as a
+   block, which is exactly how it rendered on the first try. */
+a.sc-head-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+a.sc-head-btn:hover {
+  text-decoration: none;
+}
 /* The dossier button, hosted in the SMART MODELS group label. FORK 2026-08-07
    (the architect): promoted from a 15px ⚖ glyph to a FILLED labelled pill. The chart
    button in the panel header is an OUTLINE pill in the same accent — filled vs
@@ -10708,7 +11374,12 @@ code.fs-link.routing-why-policy:hover {
 
 /* ─── Dossier popup (capability grid + censorship grid) ─── */
 .sd-card {
-  width: min(98vw, 1330px);
+  /* 2026-09-23: the table went from 19 columns to 36 (10->17 capability, 9->17 refusal),
+     so it now wants ~2070px. At the old 1330px cap, 15 columns — every refusal column
+     past BIO-CHEM — sat outside the visible box behind a horizontal scroll nobody knows
+     to use, which on the published page reads as "the censorship table is missing".
+     Measured, not guessed: body.clientWidth 1330 vs body.scrollWidth 2070. */
+  width: min(98vw, 2100px);
 }
 .sd-body {
   /* FORK 2026-08-30 (the architect: "extend the square with sliding bar so it fits the
@@ -10930,6 +11601,191 @@ code.fs-link.routing-why-policy:hover {
 .sd-s-none {
   color: color-mix(in srgb, var(--muted) 95%, transparent);
 }
+/* ── PLACES 1–5 (FORK 2026-10-02, the architect: "make the rankings more visible ... which one is
+   first, second, third ... a gradient from background color to whatever other color").
+   The cell wash used to follow the GRADE, which put gold on half the grid and named no
+   second or third. It now follows the PLACE in the column: the panel's own best-gold at
+   1st, fading step by step into the plain card at 6th. One hue on purpose — capability
+   stays ORDINAL and the censorship grid's red stays CATEGORICAL.
+
+   The badge is inline, after the grade chip, never absolutely positioned: a positioned
+   td paints over the sticky header rows when the table scrolls. Selectors carry
+   `.sd-table` / `.sd-legend` so they outrank both older `.sd-best-mark` rules, which the
+   1st-place badge still carries (the tests count one per column). */
+.sd-rank-1 {
+  background: color-mix(in srgb, #ffd76a 38%, transparent);
+}
+.sd-rank-2 {
+  background: color-mix(in srgb, #ffd76a 28%, transparent);
+}
+.sd-rank-3 {
+  background: color-mix(in srgb, #ffd76a 19%, transparent);
+}
+.sd-rank-4 {
+  background: color-mix(in srgb, #ffd76a 12%, transparent);
+}
+.sd-rank-5 {
+  background: color-mix(in srgb, #ffd76a 7%, transparent);
+}
+/* The muted grey p-number disappears into the lighter washes; cream reads on all five. */
+.sd-table .sd-rank-1 .sd-pnum,
+.sd-table .sd-rank-2 .sd-pnum,
+.sd-table .sd-rank-3 .sd-pnum {
+  color: #f6e7c1;
+}
+.sd-table .sd-rk,
+.sd-legend .sd-rk {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin: 0 0 0 3px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+  vertical-align: middle;
+  opacity: 1;
+  font-family: "SF Mono", ui-monospace, monospace;
+}
+.sd-table .sd-rk-1,
+.sd-legend .sd-rk-1 {
+  color: #1b1510;
+  background: #ffd76a;
+  box-shadow: 0 0 7px color-mix(in srgb, #ffd76a 70%, transparent);
+}
+.sd-table .sd-rk-2,
+.sd-legend .sd-rk-2 {
+  color: #1b1510;
+  background: color-mix(in srgb, #ffd76a 78%, #1b1510);
+}
+.sd-table .sd-rk-3,
+.sd-legend .sd-rk-3 {
+  color: #1b1510;
+  background: color-mix(in srgb, #ffd76a 60%, #1b1510);
+}
+.sd-table .sd-rk-4,
+.sd-legend .sd-rk-4 {
+  color: #ffe7a8;
+  background: color-mix(in srgb, #ffd76a 40%, #1b1510);
+}
+.sd-table .sd-rk-5,
+.sd-legend .sd-rk-5 {
+  color: #f3d995;
+  background: color-mix(in srgb, #ffd76a 26%, #1b1510);
+}
+/* The legend's five samples: each badge on its own place's wash. */
+.sd-leg-place {
+  display: inline-block;
+  padding: 2px 4px 2px 1px;
+  margin-right: 2px;
+  border-radius: 3px;
+}
+/* The MEASURED Epoch AI percentile, drawn under the glyph. The track is always the full
+   cell width so the bars line up down a column and the SHAPE is the comparison; the fill
+   is the percentile. Rendered only where a measurement exists — see sdMeter(). */
+.sd-meter {
+  display: block;
+  width: 84%;
+  height: 2px;
+  margin: 3px auto 0;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted) 28%, transparent);
+  overflow: hidden;
+}
+.sd-meter > i {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, #ffd76a 70%, transparent);
+}
+.sd-pnum {
+  display: block;
+  margin-top: 1px;
+  font-size: 6.5px;
+  letter-spacing: 0.02em;
+  color: color-mix(in srgb, var(--muted) 90%, transparent);
+}
+/* Column header: the label, then the plain-English "good at" line under it. The sub-line
+   is what makes this table legible to someone who has never heard of SWE-bench, so it is
+   allowed to wrap to two lines rather than being clipped. */
+.sd-cap-lab {
+  display: block;
+}
+/* REFUSAL HALF — the same two-line header and cell wash as the capability half, in a
+   DIFFERENT hue family. Gold reads as "how good", red as "how locked down"; a reader
+   sweeping all 34 columns must never take the two as one continuous meter. Colour is
+   never the only carrier: the glyph and an aria-label still say it in words, which
+   matters because this panel is scraped onto a public page. */
+.sd-cens-lab {
+  display: block;
+}
+.sd-cens-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 6.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: none;
+  color: color-mix(in srgb, var(--muted) 85%, transparent);
+}
+.sd-lock-hard {
+  background: color-mix(in srgb, #f38ba8 18%, transparent);
+}
+.sd-lock-gated {
+  background: color-mix(in srgb, #f38ba8 11%, transparent);
+}
+.sd-lock-soft {
+  background: color-mix(in srgb, #f38ba8 6%, transparent);
+}
+.sd-lock-open,
+.sd-lock-none {
+  background: transparent;
+}
+.sd-cap-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 6.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: none;
+  color: color-mix(in srgb, var(--muted) 85%, transparent);
+}
+/* BEST IN COLUMN. The mark was already a `1`; at seventeen columns it needed to be
+   findable at a glance, so it is now a filled gold pill rather than a superscript digit
+   the eye slides over. Content unchanged — the test suite counts `.sd-best-mark`. */
+.sd-best-mark {
+  display: inline-block;
+  min-width: 9px;
+  margin-left: 2px;
+  padding: 0 1px;
+  border-radius: 999px;
+  font-size: 6.5px;
+  font-weight: 700;
+  line-height: 9px;
+  vertical-align: super;
+  color: #1b1510;
+  background: #ffd76a;
+  box-shadow: 0 0 6px color-mix(in srgb, #ffd76a 60%, transparent);
+}
+/* The group banner's one-line gloss, e.g. BUILD "makes something that has to work". */
+.sd-grp-cap i {
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  opacity: 0.62;
+  text-transform: lowercase;
+}
+/* Seventeen capability columns + nine censorship ones do not fit a fixed 54px each.
+   The cap column narrows and the table is allowed to scroll sideways inside the card
+   rather than squeezing the model names, which are the row's only label. */
+.sd-cap-h {
+  width: 52px;
+  vertical-align: bottom;
+}
+/* ── end FORK 2026-09-23 ── */
 /* Active sort column — the "who is best at X" answer, highlighted top to bottom. */
 th.sd-sorted {
   color: #fff !important;
@@ -10943,7 +11799,10 @@ td.sd-sorted {
 }
 .sd-cens-h {
   text-align: center !important;
-  width: 58px;
+  /* 52px, matching .sd-cap-h: the two halves are one table and should measure the same.
+     Also buys ~100px of the width the 36-column table overruns. Not lower — at 54px the
+     header sub-lines began breaking words mid-syllable. */
+  width: 52px;
   font-size: 7.5px !important;
   letter-spacing: 0.04em !important;
   cursor: help;
@@ -11018,6 +11877,13 @@ td.sd-sorted {
 .sd-leg-k-cens {
   color: #f38ba8;
   background: color-mix(in srgb, #f38ba8 14%, transparent);
+}
+/* The wash explainer. Its own line (flex-basis 100%) rather than another inline chip:
+   it explains the two RAMPS, which is a different kind of statement from the glyph keys
+   beside it, and at 34 columns the legend row is already crowded. */
+.sd-leg-ramp {
+  flex-basis: 100%;
+  opacity: 0.85;
 }
 .sd-leg-hint {
   margin-left: auto;
@@ -11279,4 +12145,372 @@ td.sd-sorted {
 .sd-cn-payg {
   background: rgba(138, 143, 152, 0.14);
   color: #8a8f98;
+}
+
+/* FORK 2026-09-23 (the architect: "openrouter needs to be there"). OpenRouter's OWN default
+   route is now a column, tinted so it reads as a reference price rather than as one
+   more host — it is the number most people actually pay, and the gap between it and
+   the green cell in the same row is the whole argument for shopping around. */
+.sd-cn-or {
+  color: #9fb4d4;
+  background: rgba(159, 180, 212, 0.07);
+}
+/* A price we could not reach must LOOK unreachable. Muted and italic, never a dash
+   that could be mistaken for "this supplier does not sell it".
+   Selector is `.sd-cn-table td.sd-cn-na`, not `.sd-cn-na`: `.sd-cn-table td` already
+   sets text-align:right and outranks a bare class, which left the explanation floating
+   at the far right of the row instead of beside the model it belongs to. */
+.sd-cn-table td.sd-cn-na {
+  color: #8a8f98;
+  font-style: italic;
+  text-align: left;
+}
+/* The answer, above the grid. A table of 18x11 numbers is evidence; this is the
+   conclusion, because the architect asked the table to answer its question "in plain English"
+   and a reader should not have to do the ranking themselves. */
+.sd-cn-summary {
+  border: 1px solid var(--sd-rule, #3a3f47);
+  border-left: 3px solid #8fbf6f;
+  border-radius: 4px;
+  padding: 9px 12px;
+  margin: 0 0 12px;
+  background: rgba(143, 191, 111, 0.05);
+}
+.sd-cn-summary-h {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8fbf6f;
+  margin-bottom: 5px;
+}
+.sd-cn-answer {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #c9ced6;
+}
+.sd-cn-answer b {
+  color: #e6ebf2;
+}
+/* Sample sizes stay attached to the medians they qualify — a median over 3 models and
+   one over 17 are not the same claim, and hiding that is how a summary starts lying. */
+.sd-cn-n {
+  color: #8a8f98;
+  font-size: 10px;
+}
+.sd-cn-wins {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.sd-cn-win {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(143, 191, 111, 0.12);
+  color: #8fbf6f;
+  white-space: nowrap;
+}
+.sd-cn-win b {
+  color: #b9dba0;
+}
+/* The caveat is amber and IN the summary, not in the footnote paragraph, because the
+   cheapest route is frequently a quantised copy of the model and a reader who only
+   reads the headline would otherwise buy a worse model believing it is the same one. */
+.sd-cn-caveat {
+  margin: 7px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #d98f6f;
+}
+.sd-cn-caveat b {
+  color: #eab08c;
+}
+
+/* FORK 2026-10-02 (the architect: "the capacity matrix ... overflows on the right ... create two
+   separate matrices" and "the chinese provider ranking lacks nice logos ... make it all
+   prettier"). The dossier is now two tables under their own headings. In the Tinker panel
+   .sd-body is already the scroller, so .sd-scroll stays a plain block here and the sticky
+   header rows keep working; the exported page turns it into a sideways scroller instead. */
+.sd-sec-h {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 4px 0 8px;
+}
+.sd-sec-h-cens {
+  color: color-mix(in srgb, #f38ba8 80%, var(--accent));
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--sd-rule, #3a3f47);
+}
+.sd-scroll {
+  max-width: 100%;
+}
+/* CN price matrix: a logo, the name a person would say, and the lab under it. */
+.sd-cn-table th.sd-cn-model {
+  font-weight: 700;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.sd-cn-logo {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 7px;
+}
+.sd-cn-logo svg,
+.sd-cn-logo img {
+  width: 16px;
+  height: 16px;
+}
+.sd-cn-name {
+  vertical-align: middle;
+  font-size: 11px;
+}
+.sd-cn-lab {
+  display: block;
+  margin: 1px 0 0 23px;
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.sd-cn-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--accent) 3%, transparent);
+}
+.sd-cn-table td.sd-cn-far {
+  opacity: 0.45;
+}
+.sd-cn-table td.sd-cn-none {
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
+}
+.sd-cn-cheapest b {
+  display: inline-block;
+  min-width: 42px;
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(143, 191, 111, 0.16);
+  text-align: center;
+}
+
+/* FORK 2026-09-23 — Thalamus tier defaults (model picker right-click). */
+.thalamus-tier-menu-head {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9a9aa6;
+}
+.thalamus-tier-now {
+  margin-left: 6px;
+  font-size: 10px;
+  color: #8a8a94;
+}
+.model-btn-tier {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+  pointer-events: none;
+}
+
+/* FORK 2026-10-02 (the architect, Thalamus full deploy): the line under the dial, and the dial-stop letter after an effort level. */
+.thal-sug-line {
+  grid-column: 1 / -1;
+  margin: 1px 0 3px;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+.model-stop-role {
+  position: absolute;
+  top: -3px;
+  left: 100%;
+  margin-left: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
+/* FORK 2026-10-01 (the architect: "simplify it all … only the present turn's model/effort decisions") — the THALAMUS card,
+   panels/thalamus-turn.ts. Same frame as the retired .routing-why card. A row per model that worked on the turn, a
+   bar for its share of the work, a pulse while it is still running. */
+.thal-turn {
+  grid-column: 1 / -1;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  font-size: 10.5px;
+  line-height: 1.42;
+  color: var(--muted);
+}
+.thal-turn.is-live {
+  border-left-color: #8fae6a;
+}
+.thal-idle {
+  border-left-color: var(--border);
+  font-style: italic;
+}
+.thal-k,
+.thal-team-head {
+  font-family: "SF Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.thal-k {
+  margin-right: 2px;
+}
+.thal-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 6px;
+}
+.thal-pick b {
+  color: var(--text);
+  font-weight: 600;
+}
+.thal-why {
+  font-size: 9.5px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgba(201, 162, 39, 0.12);
+  border: 1px solid rgba(201, 162, 39, 0.35);
+  color: #d8c27a;
+}
+.thal-plan,
+.thal-fallback,
+.thal-tools {
+  font-size: 10px;
+}
+.thal-fallback {
+  color: #e6a26b;
+}
+.thal-team-head {
+  margin-bottom: 2px;
+}
+.thal-row {
+  display: grid;
+  grid-template-columns: minmax(70px, auto) 1fr auto;
+  column-gap: 6px;
+  row-gap: 2px;
+  padding: 2px 0;
+}
+.thal-who {
+  color: var(--text);
+  white-space: nowrap;
+}
+.thal-who i {
+  font-style: normal;
+  color: var(--muted);
+  margin-left: 4px;
+  font-size: 9.5px;
+}
+.thal-part {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thal-tok {
+  font-family: "SF Mono", monospace;
+  font-size: 9.5px;
+}
+.thal-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.thal-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.thal-row.is-running .thal-bar > span,
+.thal-row.is-running .thal-who::before {
+  animation: thal-pulse 1.2s ease-in-out infinite;
+}
+.thal-row.is-running .thal-who::before {
+  content: "●";
+  color: #8fae6a;
+  margin-right: 4px;
+  font-size: 8px;
+}
+@keyframes thal-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thal-row.is-running .thal-bar > span,
+  .thal-row.is-running .thal-who::before {
+    animation: none;
+  }
+}
+.thal-off {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.7;
+  margin-left: 6px;
+  font-size: 9px;
+}
+
+/* FORK 2026-10-03 — showToast() (app.ts) appends a div.toast to <body>, and NO rule styled it: all 15
+   toasts landed below the full-height layout, out of sight (found while proving the "page reloaded"
+   notice in a real browser). Fixed bottom-centre, above every panel, never in the way of a click. */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  z-index: 100000;
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 10px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.toast-error {
+  border-color: var(--red);
+}
+/* FORK 2026-10-03: who put an injected prompt in the chat, before a word of it (the architect: "with the identity of the agent"). */
+.msg.system-inject .inj-who {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: var(--blue);
+  color: #0f1a26;
+  font-weight: 700;
+  font-size: 11px;
+  white-space: nowrap;
 }

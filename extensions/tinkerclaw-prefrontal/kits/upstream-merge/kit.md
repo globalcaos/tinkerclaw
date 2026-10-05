@@ -26,7 +26,7 @@ parallelism:
     2=Resolve Conflicts, 3=Verify Wiring, 4=Build & Test.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

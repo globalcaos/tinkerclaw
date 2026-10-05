@@ -19,7 +19,8 @@ export type SessionAttachment = {
   stoppable: boolean; // false when visible but must not be signalled
 };
 
-export type ProcessProbe = { pid: number; cmdline: string; startedAt?: number };
+// `unit` is the systemd unit the process runs in (last segment of /proc/<pid>/cgroup), when known.
+export type ProcessProbe = { pid: number; cmdline: string; startedAt?: number; unit?: string };
 
 const MAX_ATTACHMENTS = 50;
 const DETAIL_MAX_CHARS = 160;
@@ -91,7 +92,13 @@ export function readLinuxProcesses(): ProcessProbe[] {
             startedAt = bootTimeMs + (startTicks / CLOCK_TICKS_PER_SECOND) * 1000;
           }
         }
-        probes.push({ pid: Number(entry), cmdline, startedAt });
+        let unit: string | undefined;
+        try {
+          unit = fs.readFileSync(`/proc/${entry}/cgroup`, "utf8").trim().split("/").pop();
+        } catch {
+          // no cgroup file: the row just keeps its generic label
+        }
+        probes.push({ pid: Number(entry), cmdline, startedAt, unit });
       } catch {
         // pid exited mid-scan or is unreadable: skip silently by design
       }
@@ -116,6 +123,22 @@ function collectAncestorPids(): Set<number> {
     pid = ppid;
   }
   return ancestors;
+}
+
+// FORK 2026-10-02: a process that only MENTIONS the chat key can live in its own systemd service (a
+// review page that wakes this chat on Send, a wake-on-finish watcher). Two Stop clicks meant for a
+// stuck turn also killed Sasha's trip page, because its row read "attached process". Name the service
+// so a Stop is a choice; what Stop does is unchanged. Our own worker units and the gateway keep the
+// generic label.
+function serviceName(unit: string | undefined): string | undefined {
+  if (!unit || !unit.endsWith(".service")) {
+    return undefined;
+  }
+  const name = unit.slice(0, -".service".length);
+  if (name.startsWith("tinkerclaw-worker-") || name === "openclaw-gateway") {
+    return undefined;
+  }
+  return name;
 }
 
 export function listSessionAttachments(params: {
@@ -196,7 +219,11 @@ export function listSessionAttachments(params: {
       processes.push({
         id: `process:${probe.pid}`,
         kind: "process",
-        label: probe.cmdline.includes("openclaw") ? "cli agent" : "attached process",
+        label: serviceName(probe.unit)
+          ? `service ${serviceName(probe.unit)}`
+          : probe.cmdline.includes("openclaw")
+            ? "cli agent"
+            : "attached process",
         detail: probe.cmdline.slice(0, DETAIL_MAX_CHARS),
         startedAt: probe.startedAt,
         ageMs: probe.startedAt !== undefined ? Math.max(0, now - probe.startedAt) : 0,

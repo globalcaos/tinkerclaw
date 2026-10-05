@@ -7,6 +7,7 @@
  * second parser that could drift. Pure: no fs / network — the caller loads the
  * kit.md text (the prefrontal.recipe.read RPC).
  */
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import { parse as parseYaml } from "yaml";
 import type {
   RecipeSpec,
@@ -62,13 +63,25 @@ export function firstSentence(prose: string): string {
  */
 export function parseRecipeMd(md: string): RecipeSpec {
   let fm: Record<string, unknown> = {};
+  // J17 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.recipe.parse`: the grammar's verdict on THIS
+  // text, in the closed `ok | rejected.<class>` label shape. First failing class wins. The parse
+  // itself stays deliberately tolerant (validateRecipeSpec is the hard gate), so this records
+  // what the grammar WOULD reject without changing a single return value.
+  let parseResult = "ok";
   const fmMatch = FRONTMATTER_RE.exec(md);
-  if (fmMatch) {
+  if (!fmMatch) {
+    parseResult = "rejected.no_frontmatter";
+  } else {
     try {
       const parsed = parseYaml(fmMatch[1]) as Record<string, unknown> | null;
-      if (parsed && typeof parsed === "object") fm = parsed;
+      if (parsed && typeof parsed === "object") {
+        fm = parsed;
+      } else {
+        parseResult = "rejected.frontmatter_not_a_map";
+      }
     } catch {
       // frontmatter parse failure → empty fm; slug/title fall back below
+      parseResult = "rejected.frontmatter_yaml";
     }
   }
   const slug = typeof fm.slug === "string" && fm.slug ? fm.slug : "unknown";
@@ -116,6 +129,15 @@ export function parseRecipeMd(md: string): RecipeSpec {
     if (dw) step.doneWhen = dw[1].trim();
     return step;
   });
+
+  if (parseResult === "ok" && steps.length === 0) {
+    parseResult = "rejected.no_steps";
+  } else if (parseResult === "ok" && !(typeof fm.slug === "string" && fm.slug)) {
+    parseResult = "rejected.no_slug";
+  }
+  // One row per parse (§4.12 cadence "per parse"). The label is the whole payload: no prompt
+  // text, no path, no slug — the catalog has no free-text type and this row needs none (L4).
+  emitEvent("j.recipe.parse", { label: parseResult });
 
   const out: RecipeSpec = { slug, title, summary, tags, steps };
   if (category) out.category = category;

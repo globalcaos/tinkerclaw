@@ -89,6 +89,20 @@ describe("Total Recall registration", () => {
     expect(compactionHooks!.length).toBe(1);
   });
 
+  it("registers a gateway_stop hook that ends the FTS worker thread", async () => {
+    const { api, hooks } = createMockApi();
+
+    const mod = await import("../index.js");
+    mod.default.register(api as any);
+
+    const stopHooks = hooks.get("gateway_stop");
+    expect(stopHooks).toBeDefined();
+    expect(stopHooks!.length).toBe(1);
+    // Nothing started a worker here; stopping must still settle, and twice is harmless.
+    await expect(stopHooks![0].handler({ reason: "test" }, {})).resolves.toBeUndefined();
+    await expect(stopHooks![0].handler({ reason: "test" }, {})).resolves.toBeUndefined();
+  });
+
   it("registers recall tool", async () => {
     const { api, registerTool } = createMockApi();
 

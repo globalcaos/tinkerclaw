@@ -2,8 +2,9 @@
  * FORK: Computational Humor (LIMBIC) extension entry point.
  *
  * Registers two plugin hooks:
- * 1. `before_prompt_build` -- inject humor calibration context (recent attempts,
- *    rate limit state, bridge discovery hints) into the system prompt.
+ * 1. `before_prompt_build` -- on Tinker chats, record the previous purple spoken line with the principal's
+ *    reaction to it, and hand the turn a short block: is a joke welcome now, and how did the last lines land
+ *    (J7 v4.9 §9: humor lives only in the spoken line, Data's deadpan register).
  * 2. `llm_output` -- capture user reaction to previous humor attempt by scanning
  *    for positive signals (laughter, emoji, affirmation).
  *
@@ -25,6 +26,14 @@ import {
   type LimbicRuntime,
   type HumorCalibration,
 } from "./src/limbic-runtime.js";
+import {
+  buildHumorBlock,
+  extractSpokenLine,
+  jokesOff,
+  lastTurnReplyText,
+  reactionTo,
+  type SpokenLineAttempt,
+} from "./src/spoken-line.js";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -34,6 +43,10 @@ const OPENCLAW_DIR = join(homedir(), ".openclaw");
 const COGNITIVE_DIR = join(OPENCLAW_DIR, "cognitive");
 const IDENTITY_STATE_PATH = join(COGNITIVE_DIR, "identity-persistence.json");
 const HUMOR_STATE_PATH = join(COGNITIVE_DIR, "computational-humor.json");
+/** The purple spoken line exists only on the Tinker web chat (VOICE.md). */
+const TINKER_PREFIX = "agent:main:tinker:";
+const RECENT_KEEP = 20;
+const RECENT_SHOW = 5;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -102,10 +115,25 @@ function readIdentityHumorCalibration(
   }
 }
 
+/** Spoken lines recorded by earlier runs, so the reactions survive a restart. */
+function readRecentSpokenLines(): SpokenLineAttempt[] {
+  try {
+    const raw = JSON.parse(readFileSync(HUMOR_STATE_PATH, "utf8"));
+    return Array.isArray(raw?.recentSpokenLines) ? raw.recentSpokenLines : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Write shared state for cross-extension discovery.
  */
-function writeHumorState(runtime: LimbicRuntime, trigger: HumorTrigger, turnCount: number): void {
+function writeHumorState(
+  runtime: LimbicRuntime,
+  trigger: HumorTrigger,
+  turnCount: number,
+  recentSpokenLines: SpokenLineAttempt[],
+): void {
   try {
     ensureDir(COGNITIVE_DIR);
     const state = {
@@ -113,6 +141,7 @@ function writeHumorState(runtime: LimbicRuntime, trigger: HumorTrigger, turnCoun
       turnCount,
       associations: runtime.getAssociations().length,
       pendingAttempts: runtime.getPendingAttempts().size,
+      recentSpokenLines,
     };
     writeFileSync(HUMOR_STATE_PATH, JSON.stringify(state, null, 2));
   } catch {
@@ -154,39 +183,41 @@ export default definePluginEntry({
     // Track the most recent humor attempt ID for reaction capture
     let lastAttemptId: string | undefined;
 
+    // Spoken lines and how the principal reacted to each, newest last
+    let recentSpokenLines = readRecentSpokenLines();
+
     // -------------------------------------------------------------------
-    // Hook: before_prompt_build -- inject humor calibration context
+    // Hook: before_prompt_build -- record the last spoken line, say whether a joke is welcome now
     // -------------------------------------------------------------------
     api.on(
       "before_prompt_build",
-      async (event: { systemPrompt?: string }, ctx: { sessionKey?: string }) => {
+      async (event: { prompt?: string; messages?: unknown[] }, ctx: { sessionKey?: string }) => {
         const sessionKey = ctx.sessionKey ?? "";
-        // Skip automated sessions
-        if (!sessionKey || sessionKey.includes("heartbeat") || sessionKey.includes("cron")) {
+        if (!sessionKey.startsWith(TINKER_PREFIX)) {
           return;
         }
 
         turnCount++;
 
-        // Evaluate humor opportunity
-        // (we don't have recentMessages here, so we just inject calibration state)
-        const pendingCount = runtime.getPendingAttempts().size;
-        const associationCount = runtime.getAssociations().length;
-
-        // Inject minimal context into system prompt
-        if (event.systemPrompt !== undefined && calibration.humorFrequency > 0) {
-          const humorContext = [
-            `[LIMBIC humor calibration: frequency=${calibration.humorFrequency.toFixed(2)},`,
-            `sensitivity=${calibration.sensitivityThreshold},`,
-            `associations=${associationCount},`,
-            `pending=${pendingCount},`,
-            `patterns=${calibration.preferredPatterns.join("/")}]`,
-          ].join(" ");
-          event.systemPrompt = `${event.systemPrompt}\n\n${humorContext}`;
+        // This prompt is the principal's reaction to the spoken line that closed the previous turn
+        const line = extractSpokenLine(lastTurnReplyText(event.messages));
+        if (
+          line &&
+          !recentSpokenLines.some((a) => a.sessionKey === sessionKey && a.line === line)
+        ) {
+          recentSpokenLines = [
+            ...recentSpokenLines,
+            { ts: Date.now(), sessionKey, line, reaction: reactionTo(event.prompt) },
+          ].slice(-RECENT_KEEP);
         }
+        writeHumorState(runtime, trigger, turnCount, recentSpokenLines);
 
-        // Persist shared state
-        writeHumorState(runtime, trigger, turnCount);
+        return {
+          prependSystemContext: buildHumorBlock({
+            jokesOff: jokesOff(event.prompt),
+            recent: recentSpokenLines.slice(-RECENT_SHOW),
+          }),
+        };
       },
     );
 
@@ -218,7 +249,7 @@ export default definePluginEntry({
           api.logger.info(
             `[computational-humor] positive reaction captured for attempt ${lastAttemptId}`,
           );
-          writeHumorState(runtime, trigger, turnCount);
+          writeHumorState(runtime, trigger, turnCount, recentSpokenLines);
         }
 
         // Clear the attempt ID after checking (one-shot)

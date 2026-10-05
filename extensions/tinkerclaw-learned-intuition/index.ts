@@ -1,14 +1,19 @@
 /**
  * FORK: Learned Intuition extension entry point -- AMYGDALA safety gate.
  *
- * Neural safety gate trained on real failures. 10 ONNX networks evaluate
- * every tool call through the before_tool_call hook. Falls back to rule-based
- * heuristics when ONNX models are unavailable. Generates personality nudges
- * on llm_output for Identity Persistence to read.
+ * Evaluates every tool call through the before_tool_call hook: deterministic
+ * AEGIS rules, a k-NN novelty channel and a prompt incongruity check. The
+ * legacy ONNX ensemble is off unless `legacyEnsemble` is set.
+ *
+ * Enforcement: `observeOnly` defaults to true, and while it is true NOTHING is
+ * blocked in-process — AEGIS hard-block matches included. They are logged and
+ * recorded as `enforced: false`. Set `observeOnly: false` to let AEGIS
+ * hard-blocks abort the tool call (neural soft-blocks additionally need
+ * phase >= 2). See `shouldEnforce` below.
  *
  * Hooks:
- *   - before_tool_call: evaluate action safety (ONNX gate or rule-based fallback)
- *   - llm_output: write personality nudge to shared cognitive file
+ *   - before_tool_call: evaluate action safety (observe-only unless observeOnly:false)
+ *   - llm_output: write personality nudge to shared cognitive file (opt-in: personalityNudge)
  *
  * Cross-extension discovery: writes `~/.openclaw/cognitive/learned-intuition.json`
  * and `~/.openclaw/cognitive/personality-nudge.json`.
@@ -60,6 +65,23 @@ const AMYGDALA_DECISIONS_PATH = join(DATA_DIR, "amygdala-decisions.jsonl");
 // ingests them so REAL enforced denials (the strongest feedback signal) appear
 // in the feed instead of being invisible.
 const HOOK_DECISIONS_PATH = join(AMYGDALA_DATA_DIR, "hook-decisions.jsonl");
+
+/**
+ * Resolve the amygdala data dir at CALL time rather than at module load.
+ *
+ * The policy snapshot is the one write here that can DELETE something
+ * (cc-hook-settings.json, when enforcement is off), so it must land under the
+ * HOME in effect when register() runs. With the module-level constant it did
+ * not: a test that redirects HOME still resolved the developer's real
+ * ~/.openclaw and disarmed their live enforcement hook. Same value in
+ * production, isolatable in tests.
+ */
+function amygdalaDataDir(): string {
+  // $HOME first, homedir() as the fallback: os.homedir() resolves the passwd
+  // entry and ignores a redirected HOME, which is precisely what makes it
+  // unisolatable in tests. Same value in production.
+  return join(process.env.HOME ?? homedir(), ".openclaw", "data", "amygdala");
+}
 // FORK 2026-06-07: register() runs ~5×/gateway boot; attach the tinker-bridge prudence
 // listener ONCE per process or every tool call gets evaluated (and recorded) N times.
 let tinkerBridgePrudenceListenerAttached = false;
@@ -232,14 +254,32 @@ function loadAmygdalaConfig(modelsDir: string): AmygdalaConfig {
   };
 }
 
+/**
+ * Whether a gate result actually aborts the tool call.
+ *
+ * - `observeOnly: true` (the default) never blocks anything, AEGIS included.
+ * - `observeOnly: false`: a `hard_block` (AEGIS floor) blocks at any phase; a
+ *   neural `soft_block` blocks only from phase 2 upward.
+ */
+export function shouldEnforce(
+  result: { blocked: boolean; decision: string },
+  observeOnly: boolean,
+  phase: number,
+): boolean {
+  if (!result.blocked || observeOnly) {
+    return false;
+  }
+  return result.decision === "hard_block" || phase !== 1;
+}
+
 // -- Plugin definition --
 
 export default definePluginEntry({
   id: "tinkerclaw-learned-intuition",
   name: "Learned Intuition",
   description:
-    "AMYGDALA safety gate — ONNX neural networks evaluate tool calls, " +
-    "rule-based fallback when models unavailable, personality nudge generation.",
+    "AMYGDALA safety gate — deterministic AEGIS rules, k-NN novelty and incongruity checks " +
+    "on tool calls. Observe-only by default; blocking needs observeOnly:false.",
   register(api: OpenClawPluginApi) {
     const cfg = api.pluginConfig as {
       phase?: number;
@@ -248,28 +288,41 @@ export default definePluginEntry({
       observeOnly?: boolean;
       modelsDir?: string;
       legacyEnsemble?: boolean;
+      personalityNudge?: boolean;
       hookEnforcement?: boolean;
     };
     const log = api.logger;
 
-    // FORK 2026-05-30 ("Amygdala" task): default the nudge to its top phase so
-    // its LLM influence is at maximum. observeOnly stays true by default so the
-    // AEGIS tool-gate keeps only OBSERVING (no surprise tool aborts) — set
-    // observeOnly:false in plugin config to also enable active blocking.
-    const phase = cfg.phase ?? 4;
+    // Defaults are the CONSERVATIVE ones the manifest documents. They used to
+    // read `phase ?? 4` / `alphaPrudence ?? 0.15` — cranking the nudge to its
+    // top phase — while openclaw.plugin.json advertised 1 and 0.0, so the
+    // documented default was not the shipped one. Code and manifest now agree,
+    // and the strong setting is something an owner asks for.
+    // observeOnly stays true by default so the whole in-process gate, AEGIS
+    // hard-blocks included, only OBSERVES (no surprise tool aborts) — set
+    // observeOnly:false in plugin config to enable active blocking.
+    const phase = cfg.phase ?? 1;
     const observeOnly = cfg.observeOnly ?? true;
     const modelsDir = cfg.modelsDir ?? join(homedir(), "src", "tinkerclaw", "models", "amygdala");
     // v3.1: the 5-net ONNX ensemble is retired from the decision path (default
-    // off); the pre-execution AEGIS hook is on by default.
+    // off). Pre-execution enforcement is OPT-IN: writing cc-hook-settings.json
+    // registers a PreToolUse hook with matcher "*" that tinker-bridge passes to
+    // every spawn, where it can synchronously deny any tool call. A plugin
+    // should not install a deny-hook across a whole machine merely by being
+    // loaded — that is the owner's call, made explicitly.
     const legacyEnsemble = cfg.legacyEnsemble === true;
-    const hookEnforcement = cfg.hookEnforcement !== false;
+    const hookEnforcement = cfg.hookEnforcement === true;
+    // The nudge is text written to steer the model on later turns (Identity
+    // Persistence injects it), so it is a prompt mutation with an extra step.
+    const personalityNudge = cfg.personalityNudge === true;
 
     // Ensure data directory exists
-    ensureDir(AMYGDALA_DATA_DIR);
+    const dataDir = amygdalaDataDir();
+    ensureDir(dataDir);
 
     // Build full config
     const amygdalaConfig = loadAmygdalaConfig(modelsDir);
-    amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.15; // FORK 2026-05-30: max by default
+    amygdalaConfig.trust.alpha_prudence = cfg.alphaPrudence ?? 0.0; // manifest-documented default
     amygdalaConfig.trust.phase = Math.min(4, Math.max(1, phase)) as 1 | 2 | 3 | 4;
     amygdalaConfig.legacyEnsemble = legacyEnsemble;
     amygdalaConfig.hookEnforcement = hookEnforcement;
@@ -286,7 +339,7 @@ export default definePluginEntry({
     // every tinker-bridge spawn. Done at register() so the artifacts exist before the
     // next worker spawns. Best-effort: a write failure must not break the gate.
     try {
-      const snap = writePolicySnapshot(AMYGDALA_DATA_DIR, { hookEnforcement });
+      const snap = writePolicySnapshot(dataDir, { hookEnforcement });
       log.info(
         `[learned-intuition] policy snapshot written (hookEnforcement=${hookEnforcement}, ` +
           `settings=${snap.settingsWritten}, hook=${snap.staged ?? "none"})`,
@@ -348,14 +401,16 @@ export default definePluginEntry({
             // stale — silence must stop being excused the moment the models do load.
             declareInstrument({
               ...NUDGE_WRITE_INSTRUMENT,
-              conditional: hook.useRuleBasedFallback
-                ? "ONNX personality models unavailable — the nudge writer returns before writing"
-                : undefined,
+              conditional: !personalityNudge
+                ? "personalityNudge is off (opt-in) — the nudge writer returns before writing"
+                : hook.useRuleBasedFallback
+                  ? "ONNX personality models unavailable — the nudge writer returns before writing"
+                  : undefined,
             });
             const nov = hook.noveltyStatus;
             log.info(
               `[learned-intuition] ready — mode=${mode}, phase=${phase}, observeOnly=${observeOnly}, ` +
-                `hookEnforcement=${hookEnforcement}, novelty=${nov.enabled ? `ref=${nov.size},thr=${nov.threshold?.toFixed(3)}` : "warming"}`,
+                `hookEnforcement=${hookEnforcement}, personalityNudge=${personalityNudge}, novelty=${nov.enabled ? `ref=${nov.size},thr=${nov.threshold?.toFixed(3)}` : "warming"}`,
             );
             if (hook.useRuleBasedFallback) {
               log.warn(
@@ -457,8 +512,7 @@ export default definePluginEntry({
           const evAny = result.evaluation as unknown as {
             prudence?: { combined?: { confidence?: number }; ensemble_disagreement?: number };
           } | null;
-          const enforced =
-            result.blocked && (result.decision === "hard_block" || !(observeOnly || phase === 1));
+          const enforced = shouldEnforce(result, observeOnly, phase);
           const record: AmygdalaDecisionRecord = {
             ts: new Date().toISOString(),
             tool: event.toolName,
@@ -492,13 +546,12 @@ export default definePluginEntry({
           }
 
           if (result.blocked) {
-            // FORK 2026-05-30: AEGIS is the ABSOLUTE deterministic veto. A
-            // `hard_block` (rule-based gate OR an AEGIS pre/post-check) ALWAYS
-            // aborts, independent of the AMYGDALA trust ramp — "AEGIS active, not
-            // observe-only". Only the neural `soft_block`s stay observe-only while
-            // the learned gate ramps (phase 1 / observeOnly).
+            // AEGIS `hard_block`s abort independent of the trust ramp, but only
+            // once the owner has turned observe-only off (observeOnly:false).
+            // Under the default observeOnly:true every block — AEGIS included —
+            // is logged as WOULD-block and the call proceeds, as documented.
             const isAegisHardBlock = result.decision === "hard_block";
-            if (isAegisHardBlock || !(observeOnly || phase === 1)) {
+            if (enforced) {
               log.warn(
                 `[learned-intuition] ${modeTag} ${isAegisHardBlock ? "AEGIS BLOCKED" : "BLOCKED"} ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"}`,
               );
@@ -512,7 +565,7 @@ export default definePluginEntry({
                 blockReason: result.response?.reason ?? "Action blocked by safety gate.",
               };
             }
-            // Neural soft-block during the trust ramp — observe-only.
+            // Observe-only (default) or a neural soft-block during the trust ramp.
             log.info(
               `[learned-intuition] ${modeTag} WOULD block ${event.toolName}(${target}): ${result.response?.reason ?? "unknown"} (observe-only, not blocking)`,
             );
@@ -527,8 +580,11 @@ export default definePluginEntry({
       { priority: 10 }, // High priority -- safety should evaluate early
     );
 
-    // -- Hook: llm_output --
+    // -- Hook: llm_output (personality nudge writer; opt-in) --
     api.on("llm_output", async (_event: { text: string }) => {
+      if (!personalityNudge) {
+        return; // Opt-in: see cfg.personalityNudge
+      }
       await ensureInit();
       if (!hookReady || hook.useRuleBasedFallback) {
         return; // No personality nudge without ONNX models

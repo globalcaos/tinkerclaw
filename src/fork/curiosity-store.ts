@@ -34,6 +34,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { emitJCuriosityGap } from "../infra/events/j-rows.js";
 
 export type GapSource =
   | "lcm-entropy"
@@ -486,6 +487,18 @@ export function appendGap(gap: Gap, baseDir?: string): string {
   fs.mkdirSync(dir, { recursive: true });
   const file = dailyFilePath(gap.ts, baseDir);
   fs.appendFileSync(file, JSON.stringify(gap) + "\n", "utf8");
+  // logging.md §4.12 (J8): the OPEN half of the transition, at age 0 by definition. A resolution
+  // row is appended through here too (markResolved), and that path emits its own `resolved` row
+  // carrying the gap's REAL open age — so this site skips an already-resolved record rather than
+  // counting one resolution twice. The topic is free text and never travels (L4).
+  if (gap.resolvedAt === undefined) {
+    emitJCuriosityGap({
+      toState: "logged",
+      ageMs: 0,
+      sessionKey: gap.sessionKey ?? null,
+      runId: gap.runId ?? null,
+    });
+  }
   return file;
 }
 
@@ -562,5 +575,13 @@ export function markResolved(
     resolutionSource: source,
   };
   appendGap(resolution, opts.baseDir);
+  // The CLOSE half: age is measured from the ORIGINAL detection, not from the resolution row's
+  // own `ts` (which is now) — "how long do they stay open" is the whole question of J8.
+  emitJCuriosityGap({
+    toState: "resolved",
+    ageMs: Math.max(0, now - original.ts),
+    sessionKey: original.sessionKey ?? null,
+    runId: original.runId ?? null,
+  });
   return resolution;
 }

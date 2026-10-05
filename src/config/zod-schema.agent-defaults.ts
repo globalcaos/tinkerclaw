@@ -86,6 +86,7 @@ export const AgentDefaultsSchema = z
     silentReplyRewrite: SilentReplyRewriteConfigSchema.optional(),
     repoRoot: z.string().optional(),
     systemPromptOverride: z.string().optional(),
+    identityLine: z.string().optional(),
     promptOverlays: z
       .object({
         gpt5: z

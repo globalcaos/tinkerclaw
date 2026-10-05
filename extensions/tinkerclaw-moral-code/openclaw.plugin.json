@@ -1,0 +1,7 @@
+{
+  "id": "tinkerclaw-moral-code",
+  "name": "Moral Code",
+  "description": "Delivers the ethical rules, objectives and starter-kit doctrine once per conversation (and after compaction) to every model",
+  "version": "0.1.0",
+  "configSchema": {}
+}

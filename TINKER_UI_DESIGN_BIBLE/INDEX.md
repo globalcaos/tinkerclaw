@@ -13,7 +13,7 @@ verify:
   # so eleven optics could have been deleted and it would still have passed (design-principles.md
   # #19, #20). The script header carries the rest.
   - name: every optic on disk has a row in the Files table, and every row names a real optic
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/bible/index-files-table.mjs
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/bible/index-files-table.mjs
   # NOTE: the previous "gateway is reachable" check was removed 2026-08-02. The validity of a
   # documentation index must not depend on a daemon being up, and it shelled out to
   # `openclaw gateway call`, measured at 4-18 s — a large share of the whole suite's runtime for a
@@ -39,6 +39,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "when X breaks, where does the symptom appear?" → `failures.md`
    - "what probes exist for inspecting Y?" → `probes.md`
    - "would anything tell me if X broke / what can we prove is working?" → `observability.md`
+   - "what do we record, where is the analyzable record, how do I query a trend (worker memory, lock holds, stalls against load, J-series metrics)?" → `logging.md`
    - "why is tinker-bridge's tool loop different?" → `tool-loop.md`
    - "which model gets picked, in what order?" → `auth-routing.md`
    - "which crons run, when, last status?" → `crons.md`
@@ -56,10 +57,13 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
    - "why is a turn slow / where do the seconds before the model go / is this stage worth its wall-clock?" → `turn-latency.md`
    - "what's the intent / decision / don't-regress for §X.Y?" → `bible.md`
    - "how does this UI panel work / what's the visual convention?" → `tinker-ui.md`
+   - "why does the chat open where it does / when does it follow the last line / where does a tab, a reload or a restart put me / why did an opened fold close?" → `tinker-ui.md` §5.20 (the viewport map)
    - "which panel is visible when / how do tabs and Dev↔Exec interact / what hides what?" → `panels.md`
    - "how does a panel/tab/button remember its collapsed or pressed state across a reload?" → `ui-persistence.md`
    - "why does this right-rail panel show the wrong tab's data / which state is per-session vs global / what does Session-All actually mean / how do the model+effort sliders apply?" → `right-rail-interaction.md`
+   - "how does the CONTEXT WINDOW panel work / why don't evict, compact or its counters move / what may the context bar draw / what is the call timeline?" → `context-window-panel.md`
    - "how do we know a turn/task is done / why does the thinking indicator do that / which signal wins when they disagree?" → `done-signals.md`
+   - "why does my prompt say queued / not delivered / retrying, who owns a prompt that has not been answered yet, and how must delete/reset end a turn that has not started?" → `prompt-queue.md`
    - "where does a session's visible name come from / who mints tab.title vs cookiePhrase / why does the side-panel name change when I close a tab?" → `session-naming.md`
    - "has this bug class been seen before?" → `bug-log.md`
 3. **Trust the frontmatter `last_verified` + `last_verified_commit` anchors.** Anything older than the most recent file in `git log src/` referenced by the section should be re-verified before relying on it.
@@ -82,6 +86,7 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 | `failures.md`               | Failure-mode propagation maps                                                                                                                                                                                                                                                                                                        | hand                              |
 | `probes.md`                 | Inspection primitives registry (live + proposed)                                                                                                                                                                                                                                                                                     | auto from gateway methods + hand  |
 | `observability.md`          | What the fork can PROVE it is doing — the DERIVED capability registry (plugins/hooks/RPCs), the measured OBSERVED/DECLARED/BLIND split, a ratchet on BLIND, and the instrument-placement rules each bought with an incident. Written after fractal-reflection failed 2,466/2,466 runs for eight weeks in silence (2026-08-04)        | auto-derived + executable ratchet |
+| `logging.md`                | **The a-priori record.** What the fork writes down and why — the event catalog (name, fields, units, cadence, retention, the question each answers), one append-only SQLite events database with its writer, PII and retention rules, per-worker memory series, the J-series metric map, and the queries they answer (2026-09-24)    | hand + executable catalog check   |
 | `tool-loop.md`              | Why tinker-bridge tool calls don't round-trip through OpenClaw exec                                                                                                                                                                                                                                                                  | hand                              |
 | `auth-routing.md`           | Cost-aware model routing, failover, billing tiers                                                                                                                                                                                                                                                                                    | mixed                             |
 | `crons.md`                  | Cron registry + auto-merge policy                                                                                                                                                                                                                                                                                                    | auto from jobs.json + hand        |
@@ -101,6 +106,8 @@ This directory IS the bible. The monolithic `TINKER_UI_DESIGN_BIBLE.md` was spli
 | `orca-leases.md`            | Cross-session file leases — how concurrent agents serialize edits on one tree (ORCA)                                                                                                                                                                                                                                                 | hand                              |
 | `panels.md`                 | Panel visibility matrix — which panel shows when, tab vs Dev/Exec interaction, what hides what                                                                                                                                                                                                                                       | hand                              |
 | `right-rail-interaction.md` | Right-rail state scoping — per-session vs global, Session-All semantics, model+effort slider application                                                                                                                                                                                                                             | hand                              |
+| `prompt-queue.md`           | **DESIGN (2026-09-24), written before the code.** Every prompt between Enter and its answer (queued, pending, steered, backlogged, retried, lost): today's three indicators on one lifecycle with one owner and one indicator per state, the PQ principles, the delete/reset liveness fix, and the next wave's gateway and UI plan   | hand + auto-validatable           |
+| `context-window-panel.md`   | The CONTEXT WINDOW right-rail panel — data flow, root causes of the dead evict/compact buttons and the always-0 counters, the IN-only context-bar principles (moral code first, never overflows), and the spec for the two-lane real-time call timeline (tokens out / tokens in) (2026-09-24)                                        | hand + auto-validatable           |
 | `session-naming.md`         | Where a session's visible name comes from — tab.title vs cookiePhrase minting, rename propagation                                                                                                                                                                                                                                    | hand                              |
 
 ## Discipline

@@ -163,6 +163,18 @@ vi.mock("../agents/openclaw-tools.js", () => {
         if (mode === "crash") {
           throw new Error("boom");
         }
+        if (mode === "media-wrapped") {
+          const err = new Error(
+            "LocalMediaAccessError: Host-local media sends only allow buffer-verified images, audio, video, PDF, and Office documents (got text/html).",
+          );
+          err.name = "GatewayClientRequestError";
+          throw err;
+        }
+        if (mode === "media") {
+          const err = new Error("Local media path is not under an allowed directory: /etc/x");
+          err.name = "LocalMediaAccessError";
+          throw err;
+        }
         return { ok: true };
       },
     },
@@ -765,6 +777,34 @@ describe("POST /tools/invoke", () => {
     expect(crashBody.ok).toBe(false);
     expect(crashBody.error?.type).toBe("tool_error");
     expect(crashBody.error?.message).toBe("tool execution failed");
+  });
+
+  it("returns a refused media attachment as a 400 with its reason, not an opaque 500", async () => {
+    cfg = {
+      ...cfg,
+      agents: {
+        list: [{ id: "main", default: true, tools: { allow: ["tools_invoke_test"] } }],
+      },
+    };
+
+    const wrappedRes = await invokeToolAuthed({
+      tool: "tools_invoke_test",
+      args: { mode: "media-wrapped" },
+      sessionKey: "main",
+    });
+    expect(wrappedRes.status).toBe(400);
+    const wrappedBody = await wrappedRes.json();
+    expect(wrappedBody.ok).toBe(false);
+    expect(wrappedBody.error?.message).toContain("(got text/html)");
+
+    const directRes = await invokeToolAuthed({
+      tool: "tools_invoke_test",
+      args: { mode: "media" },
+      sessionKey: "main",
+    });
+    expect(directRes.status).toBe(400);
+    const directBody = await directRes.json();
+    expect(directBody.error?.message).toContain("not under an allowed directory");
   });
 
   it("passes deprecated format alias through invoke payloads even when schema omits it", async () => {

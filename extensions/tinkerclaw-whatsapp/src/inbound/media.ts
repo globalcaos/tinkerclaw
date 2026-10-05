@@ -1,5 +1,4 @@
 import type { proto, WAMessage } from "@whiskeysockets/baileys";
-import { logVerbose } from "openclaw/plugin-sdk/runtime-env";
 import type { createWaSocket } from "../session.js";
 import { downloadMediaMessage, normalizeMessageContent } from "./runtime-api.js";
 
@@ -58,6 +57,23 @@ export async function downloadInboundMedia(
   ) {
     return undefined;
   }
+  // FORK 2026-09-27: whatsmeow hands over the media proto as JSON with `URL` (capital), and
+  // Baileys only treats a message as media when it has a lowercase `url` — every inbound
+  // voice note, image and document failed with '"audioMessage" message is not a media
+  // message'. `message` is the unwrapped inner proto, so setting it here also reaches the
+  // copy downloadMediaMessage extracts from `msg`.
+  for (const media of [
+    message.imageMessage,
+    message.videoMessage,
+    message.documentMessage,
+    message.audioMessage,
+    message.stickerMessage,
+  ]) {
+    const upper = (media as { URL?: unknown } | null | undefined)?.URL;
+    if (media && !media.url && typeof upper === "string") {
+      media.url = upper;
+    }
+  }
   try {
     const buffer = await downloadMediaMessage(
       msg as WAMessage,
@@ -70,7 +86,7 @@ export async function downloadInboundMedia(
     );
     return { buffer, mimetype, fileName };
   } catch (err) {
-    logVerbose(`downloadMediaMessage failed: ${String(err)}`);
+    console.warn(`[wa-inbound] media download failed id=${msg.key?.id ?? "?"}: ${String(err)}`);
     return undefined;
   }
 }

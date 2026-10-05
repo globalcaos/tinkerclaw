@@ -1,0 +1,60 @@
+diff --git a/cmd/whatsmeow-node/events.go b/cmd/whatsmeow-node/events.go
+index ce0a650..b1a650a 100644
+--- a/cmd/whatsmeow-node/events.go
++++ b/cmd/whatsmeow-node/events.go
+@@ -164,9 +164,54 @@ func (a *App) eventHandler(evt interface{}) {
+ 
+ 	// ── History Sync ─────────────────────────────
+ 	case *events.HistorySync:
++		convs := v.Data.GetConversations()
++		total := 0
++		for _, c := range convs {
++			total += len(c.GetMessages())
++		}
+ 		sendEvent("history_sync", map[string]interface{}{
+-			"type": v.Data.GetSyncType().String(),
++			"type":          v.Data.GetSyncType().String(),
++			"conversations": len(convs),
++			"messages":      total,
+ 		})
++		// FORK 2026-09-05 — REPLAY HISTORY AS ORDINARY MESSAGE EVENTS.
++		//
++		// Upstream emitted only the sync type and dropped Data.Conversations on
++		// the floor, so an on-demand backfill delivered a notification with no
++		// payload: WhatsApp answered 44 requests and every recovered message was
++		// discarded here, one layer below anything that could persist it. A
++		// 32-day hole in the local history could never be repaired, and every
++		// reconnect repeated the loss silently.
++		//
++		// Re-parsing each record through ParseWebMessage produces exactly the
++		// same (info, message) shape as a live message, so existing consumers
++		// store backfilled history with no changes on their side.
++		a.mu.Lock()
++		cli := a.client
++		a.mu.Unlock()
++		if cli == nil {
++			return
++		}
++		for _, conv := range convs {
++			chatJID, err := types.ParseJID(conv.GetID())
++			if err != nil {
++				continue
++			}
++			for _, histMsg := range conv.GetMessages() {
++				webMsg := histMsg.GetMessage()
++				if webMsg == nil {
++					continue
++				}
++				parsed, perr := cli.ParseWebMessage(chatJID, webMsg)
++				if perr != nil || parsed == nil {
++					continue
++				}
++				sendEvent("message", map[string]interface{}{
++					"info":    serializeMessageInfo(parsed.Info),
++					"message": protoToMap(parsed.Message),
++				})
++			}
++		}
+ 	}
+ }
+ 

@@ -12,7 +12,7 @@ verify:
   - name: workspace symlinks present (skills NOT symlinked per design)
     cmd: "[ -L ~/.openclaw/workspace/src ] || [ -d ~/.openclaw/workspace/src ]"
   - name: every fork-owned plugin dir uses the tinkerclaw- prefix
-    cmd: bash -lc 'cd "$(git rev-parse --show-toplevel)" && violators=$(for d in extensions/*/; do d=${d%/}; if grep -q "FORK\|fork-owned\|@tinkerclaw" "$d/openclaw.plugin.json" "$d/index.ts" "$d/README.md" 2>/dev/null && [[ "$(basename $d)" != tinkerclaw-* ]]; then echo "$d"; fi; done); test -z "$violators" || (echo "fork plugins missing tinkerclaw- prefix: $violators"; exit 1)'
+    cmd: bash -lc 'cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && violators=$(for d in extensions/*/; do d=${d%/}; if grep -q "FORK\|fork-owned\|@tinkerclaw" "$d/openclaw.plugin.json" "$d/index.ts" "$d/README.md" 2>/dev/null && [[ "$(basename $d)" != tinkerclaw-* ]]; then echo "$d"; fi; done); test -z "$violators" || (echo "fork plugins missing tinkerclaw- prefix: $violators"; exit 1)'
   - name: U3/U4/U6 fork RPC bundles registered in coreGatewayHandlers (source-only — liveness is probes.md's)
     cmd: node ~/src/tinkerclaw/scripts/bible/topology-fork-rpc-registration.mjs
   - name: SS3 fork.skill.put RPC + semantic fork.skill.search wired (resolveSkillEmbedFn, DRY with the consolidation cron)
@@ -43,6 +43,12 @@ verify:
     cmd: node ~/src/tinkerclaw/scripts/bible/topology-build-staging.mjs --check=markers
   - name: build staging — copyStaticExtensionAssets still runs BEFORE stageBundledPluginRuntime
     cmd: node ~/src/tinkerclaw/scripts/bible/topology-build-staging.mjs --check=order
+  # The two entries below resolve paths against the checkout whose bible is being verified (BIBLE_DIR, else
+  # the shared checkout), so a worktree's optic is checked against its own code (prompt-queue.md's idiom).
+  - name: worker threads — the events writer and the ENGRAM FTS worker are started BY PATH, so each keeps its own tsdown entry (a lost entry fails the spawn at run time, never the build)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF '"infra/events/writer-worker": "src/infra/events/writer-worker.ts"' tsdown.config.ts && grep -qF '"memory/engram/fts-worker": "src/memory/engram/fts-worker.ts"' tsdown.config.ts && grep -qF 'new Worker(' src/infra/events/emit.ts && grep -qF 'new Worker(' src/memory/engram/fts-worker-client.ts
+  - name: fork-telemetry subpath — declared in all three places (source, entrypoints list, package exports) and still publishes both telemetry owners' emitters, emitEvent and the worker reports
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF '"fork-telemetry"' scripts/lib/plugin-sdk-entrypoints.json && grep -qF '"./plugin-sdk/fork-telemetry"' package.json && grep -qF 'emitCompactionTelemetry' src/plugin-sdk/fork-telemetry.ts && grep -qF 'emitCallTelemetry' src/plugin-sdk/fork-telemetry.ts && grep -qF 'export { emitEvent }' src/plugin-sdk/fork-telemetry.ts && grep -qF 'noteWorkerSpawn' src/plugin-sdk/fork-telemetry.ts
 ---
 
 # Topology — components, ports, plugins, channels, symlinks
@@ -60,7 +66,7 @@ verify:
 | ClawMetry OTEL         | 4001  | traces + metrics endpoint                         | `~/src/clawmetry/` (separate process)       |
 | Mission Control        | 4000  | dashboard (Docker)                                | `~/src/mission-control/` (separate process) |
 
-**The gateway process is the central anchor.** Everything fork-side runs in-process under it: plugins, channel adapters, cron scheduler, the tinker-bridge worker pool. Subprocesses are claude-cli per tinker-bridge worker (re-parented to systemd via `--pipe`), whatsmeow-node binary for WhatsApp transport, and ephemeral exec tool processes.
+**The gateway process is the central anchor.** Everything fork-side runs in-process under it: plugins, channel adapters, cron scheduler, the tinker-bridge worker pool, and two worker THREADS (§"Worker threads inside the gateway process" below). Subprocesses are claude-cli per tinker-bridge worker (re-parented to systemd via `--pipe`), whatsmeow-node binary for WhatsApp transport, and ephemeral exec tool processes.
 
 **D1 — the process boundary.** Read one thing off this diagram: three of the ports in the table above (18789, 18791, 18792) are surfaces of the SAME pid, not three processes. Measured 2026-08-03 with `ss -ltnp` — a single `node` pid held `127.0.0.1:18789`, `[::1]:18789`, `127.0.0.1:18791` and `127.0.0.1:18792`, while `127.0.0.1:18790` was held by a DIFFERENT pid (the Vite dev server). Everything in the other two boxes has its own lifecycle.
 
@@ -79,11 +85,13 @@ flowchart LR
       CHAN["channel adapters"]
       CRONS["cron scheduler"]
       POOL["tinker-bridge worker pool"]
+      THR["worker THREADS — events writer · ENGRAM FTS<br/>same pid, own V8 isolates"]
     end
     GW --- PLUG
     GW --- CHAN
     GW --- CRONS
     GW --- POOL
+    GW --- THR
     GW --- CTRL
     GW --- RELAY
   end
@@ -126,6 +134,39 @@ Notes on edges the diagram deliberately does or does not draw:
 - **Port-name trap (2026-08-03):** `src/config/port-defaults.ts:15` defines `DEFAULT_BRIDGE_PORT = 18790` with `deriveDefaultBridgePort` = gatewayPort + 1, and **nothing anywhere calls either** — grep across `src/`, `extensions/` and `tinker-ui/` returns only the definitions themselves. In practice 18790 is the Vite dev server's port; the gateway knows it only as a CORS origin for the dev server (`src/agents/context-anatomy-http.ts:60`). Do not read "bridge port" as a gateway listener. A formal entry belongs in `config-shape.md`'s dead-code trap registry.
 - **18793 is also live and is NOT in the table above.** `DEFAULT_CANVAS_HOST_PORT = 18793` (`src/config/port-defaults.ts:17`) was observed bound by a third, separate pid on `0.0.0.0` — the only one of these not loopback-bound. Left out of D1 because this optic has never owned a canvas-host row; adding one needs a claim about what runs it.
 - **What D1's gate asserts, and what it deliberately does not (2026-08-04).** The invariant behind D1 is an ATTRIBUTION claim: each port drawn here is still _declared_ in the file this optic attributes it to, and 18792 is still bound by the CORE `browser` plugin rather than by its de-allowed fork twin. `scripts/bible/topology-d1-process-boundary.mjs --check=ports` re-reads the five declaration sites; `--check=relay-owner` re-reads the three relay call sites plus `plugins.allow`, so the twin joining the allowlist — which would put two implementations in a race for one port — fails the build. Neither check asks whether anything is LISTENING. A `ss -ltn | grep :18789` proves the daemon is up, not that this page is accurate, and it goes yellow-SKIP on any machine without a running gateway; that question belongs to `probes.md`, which already owns it as check 1 of the post-deploy smoke (`GET 127.0.0.1:18789/health`). The old liveness entry was dropped from `verify:` for exactly that reason.
+
+## Worker threads inside the gateway process (FORK 2026-09-23 / 2026-09-24)
+
+Two `node:worker_threads` Workers run INSIDE the gateway pid. They are threads, not processes: D1's
+"ONE node pid" still holds, `ss` and `ps` show nothing new, and both share the gateway's RSS — which
+is why each one's memory is read from its own V8 isolate, never from `/proc` (`logging.md` §4.9).
+
+| Thread        | Spawned by                                                                                   | Entry, started BY PATH                                                           | Owns                                                                                                                                                                                     | Failure contract                                                                                                                                                           |
+| ------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| events writer | `src/infra/events/emit.ts` `startEventWriter`, called from `server.impl.ts` at gateway start | `dist/infra/events/writer-worker.js` — tsdown entry `infra/events/writer-worker` | the ONLY connection to `<state>/logs/events.sqlite`: batched INSERTs, the daily retention pass, `stats`, the compaction-ledger seed, and saved queries on a second, read-only connection | a crash loses only the in-flight batch (counted `worker_crash`); respawn after 60 s. `OPENCLAW_EVENTS_DB=0` disables it; a test runner is refused the production path      |
+| ENGRAM FTS    | `src/memory/engram/fts-worker-client.ts`, on first search; one worker shared by every store  | `dist/memory/engram/fts-worker.js` — tsdown entry `memory/engram/fts-worker`     | full-text ranking over a snapshot the caller DESCRIBES (length + fingerprint), answered as (position, id, score)                                                                         | spawn failure, crash, `error`, or a request older than 120 s tears it down and the caller searches IN-THREAD; respawn held off 60 s; old-generation heap capped at 2048 MB |
+
+**Started BY PATH, so each needs its own tsdown entry.** `new Worker(url)` takes a file, not a module
+the bundle graph can see, so tsdown emits the worker only because `tsdown.config.ts` names it. A
+missing entry does not fail `pnpm build`; it fails the spawn at run time — the writer then logs one
+warning per backoff and writes no rows, which is exactly how `d27ed277e6b` shipped (inert in dist)
+until `4586979d653` added the entry. `tsdown.config.ts` is `merge=tier1`, so an upstream merge takes
+upstream's copy wholesale. The writer entry is put back, and asserted, only when
+`apply-fork-wiring.mjs` runs on the merged tree — `branch-policy.md` §5 says why the merge driver
+itself cannot. The two `memory/engram/fts-worker*` entries are put back by NOTHING (`2a13682aaf3`
+names the gap), and without them every search falls back in-thread.
+
+- **The main thread never reads the events database** (`logging.md` L3). `logs.query`, `logs.catalog`
+  and the compaction-ledger seed are messages to the writer thread. `tinkerclaw logs sql` and
+  `logs query --local` are the only local readers, and they run in a CHILD PROCESS on their own
+  read-only connection — never in the gateway.
+- **Lifetime.** The FTS worker is unref'd while idle and ref'd only while a request is in flight, so
+  it never holds a CLI open and never abandons one mid-answer. The writer is stopped in
+  `runClosePrelude` after the producers that feed it, with a 2 s final flush.
+- **Observability.** The FTS worker writes `worker.spawn` / `worker.exit` (worker_type `fts_thread`)
+  on every spawn and teardown; both threads are charted in `worker.sample` from their own isolate
+  (`events_writer` since `9b1a0fdf8d0`). `logs.writer.stats` is the writer's health probe
+  (`probes.md`).
 
 ## Command-lane topology (FORK 2026-07-24, commit eba0911c7b)
 
@@ -341,6 +382,48 @@ One correction worth carrying, because the comment in `scripts/runtime-postbuild
 
 **If you are adding an asset,** all four of these or it does not ship: declare it in `scripts/runtime-postbuild.mjs`; mirror it into `scripts/merge-drivers/apply-fork-wiring.mjs`; point `dest` at `dist/` (never `dist-runtime/`, never a hand-mangled path); and assert the derived invariant in the extension's own test rather than asserting that the repo file exists.
 
+## Fork plugin-SDK subpaths — the extension → core crossings
+
+Extensions reach core only through declared `openclaw/plugin-sdk/<subpath>` entries
+(`architecture.md` §Layering rules). A fork subpath is declared in THREE places that must agree: its
+source `src/plugin-sdk/<name>.ts`, `scripts/lib/plugin-sdk-entrypoints.json`, and a
+`./plugin-sdk/<name>` entry in `package.json` exports. `package.json` is `merge=tier1`, so the export
+is the part an upstream merge deletes (`branch-policy.md` §5); `pnpm lint:plugins:plugin-sdk-subpaths-exported`
+fails when an imported subpath is missing from either list. The live set is derived, never listed
+here: `grep -o '"./plugin-sdk/fork-[a-z-]*"' package.json`.
+
+### `fork-telemetry` (FORK 2026-09-24, `3e607f8ec59`; extended 2026-09-25)
+
+The CONTEXT WINDOW panel's two telemetry owners and the events door, published so an extension that
+ships on its own (`tinkerclaw-tinker-bridge` is `publishToClawHub: true`) can report what it observed
+without a relative `../../src` import. An extension may DESCRIBE a compaction, a model call or a
+worker it saw; it gets no way to start one and no store. Deliberately NOT exported: the compaction
+payload builder (a producer wants the emitter, not the wire shape) and the call owner's test-only
+counter reset.
+
+| Export                                                                                                       | From                                            | What it lets an extension do                                                      |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- | --------------------------------------------------------------------------------- |
+| `emitCompactionTelemetry`, `compactionTokenCount` + the compaction event types                               | `src/infra/compaction-telemetry.ts` (A1)        | describe a compaction it observed — the bridge's `cli-internal` trigger           |
+| `emitCallTelemetry`, `allocateCallIndex`, `buildCallEventData`, `callLaneForProvider` + the call event types | `src/infra/call-telemetry.ts` (A8)              | describe each model call it observed, numbered per (run, lane)                    |
+| `emitEvent` + `EmitEventRecord`                                                                              | `src/infra/events/emit.ts`                      | write a catalog row; undeclared names, keys and free text are dropped and counted |
+| `noteWorkerSpawn`, `noteWorkerExit` + the report types                                                       | `src/infra/events/samplers/worker-resources.ts` | report a worker it spawned; the spawn report registers the unit for sampling      |
+
+Production importers at the wave-0924 HEAD — re-derive with
+`grep -rl 'plugin-sdk/fork-telemetry' extensions --include=*.ts | grep -v '\.test\.'`:
+
+| Extension                         | Production files                                                                                                            | What they write                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `tinkerclaw-tinker-bridge`        | `src/stream.ts`, `src/worker.ts`                                                                                            | the claude CLI's own compactions and per-call usage; each claude child's spawn and exit |
+| `tinkerclaw-prefrontal`           | `recipe-matcher.ts`, `recipe-parse.ts`, `recipe-runner.ts`, `spawn-budget.ts`, `recovery-budget.ts`, `redispatch-budget.ts` | `j.recipe.match`, `j.recipe.parse`, `j.recipe.run`, `j.bound.derived`                   |
+| `tinkerclaw-learned-intuition`    | `src/rule-based-gate.ts`, `src/runtime-hook.ts`                                                                             | `j.aegis.decision`, `j.amygdala.ask`                                                    |
+| `tinkerclaw-fractal-reflection`   | `src/fractal-run.ts`                                                                                                        | `j.fractal.run`                                                                         |
+| `tinkerclaw-round-table`          | `src/orchestrator-api.ts`                                                                                                   | `j.synapse.debate`                                                                      |
+| `tinkerclaw-memory-enhancements`  | `src/hippocampus-index.ts`                                                                                                  | `j.mnemo.lookup`                                                                        |
+| `tinkerclaw-identity-persistence` | `src/behavioral-probes.ts`                                                                                                  | `j.cortex.probe`                                                                        |
+
+`buildCallEventData` and `callLaneForProvider` are published and imported by no extension's production
+code today (a bridge test uses `buildCallEventData`).
+
 ## Fork RPC bundles (gateway server-methods)
 
 All fork RPCs are spread into `coreGatewayHandlers` in `src/gateway/server-methods.ts` (one `...handlersObject` per bundle, same pattern as upstream). Each bundle is a `GatewayRequestHandlers` map whose string keys ARE the wire method names. This optic owns the registration map; `probes.md` owns how to call each one; `config-shape.md` owns the config keys that gate them.
@@ -453,6 +536,9 @@ Read it as a one-way valve. Code flows INTO the workspace by symlink, so there i
 | `claude-cli`           | one subprocess per tinker-bridge worker                        | `~/.claude/` install, spawned by tinker-bridge with `--pipe` re-parenting |
 | `ollama`               | local embedding model (mxbai-embed-large) for `memorySearch`   | `127.0.0.1:11434` (systemd)                                               |
 | `chrome-relay` profile | persistent Chrome at `CDP=127.0.0.1:18792`                     | user-managed, attached-only                                               |
+| `openclaw mcp tools`   | the agent's tools for an external MCP client (Claude Code)     | stdio child of the client; proxies to the gateway over HTTP               |
+
+**`openclaw mcp tools` (FORK 2026-09-22)** — a thin MCP proxy: `GET /tools/list?sessionKey=` for names + JSON schemas, `POST /tools/invoke` per call, both on the gateway port with the shared-secret bearer (= owner). It builds NOTHING locally: an in-process build loaded the whole plugin runtime a second time and started plugin services against the live state files. Calls run as `agent:main:claude-code`. The HTTP default deny (`DEFAULT_GATEWAY_HTTP_TOOL_DENY`: exec/spawn/shell/fs\_\*/apply_patch/sessions_spawn/sessions_send/cron/gateway/nodes) applies to both endpoints; `gateway.tools.allow` re-enables per tool.
 
 ## External services (HTTPS)
 

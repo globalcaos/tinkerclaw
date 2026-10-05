@@ -14,9 +14,11 @@ verify:
   - name: git-hooks/pre-push runs the bible:invariants gate (catches hook-removal regression)
     cmd: python3 -c 'import os; p = os.path.expanduser("~/src/tinkerclaw/git-hooks/pre-push"); assert os.path.isfile(p), "pre-push hook missing"; t = open(p).read(); assert "bible:invariants" in t, "pre-push hook no longer runs bible:invariants"'
   - name: no production module imports a relative path that does not exist (ratchet)
-    cmd: cd "$(git rev-parse --show-toplevel)" && node scripts/check-broken-relative-imports.mjs
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node scripts/check-broken-relative-imports.mjs
   - name: the broken-import guard is wired into check:architecture (not merely present on disk)
     cmd: python3 -c 'import json,os; p=json.load(open(os.path.expanduser("~/src/tinkerclaw/package.json"))); a=p["scripts"]["check:architecture"]; assert "lint:no-broken-relative-imports" in a, f"guard exists but nothing runs it — check:architecture is {a!r}"'
+  - name: every scripts/**/*.test.* file is run by some optic's `node --test` verify line — no vitest project collects top-level scripts/, so an un-gated one never runs (paths resolve against BIBLE_DIR's checkout, else the shared one)
+    cmd: python3 -c 'import glob,os; bd=os.path.abspath(os.environ.get("BIBLE_DIR") or os.path.expanduser("~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE")); os.chdir(os.path.dirname(bd)); tests=sorted(p for p in glob.glob("scripts/**/*.test.*", recursive=True) if "node_modules" not in p); fm="".join(t.split("\n---\n")[0] for t in (open(f).read() for f in glob.glob(os.path.join(bd, "*.md"))) if t.startswith("---\n")); miss=[t for t in tests if "node --test "+t not in fm]; assert tests, "no scripts/**/*.test.* file found -- the layout moved, re-derive this gate"; assert not miss, "scripts test(s) that no bible gate runs -> %s (add a node --test verify line in the owning optic)" % miss'
 ---
 
 # Unit tests — fork-side strategy
@@ -75,6 +77,26 @@ It is a **ratchet** at 28, not a wall: the remaining offenders are upstream-deri
 import a `../image.js` and `../shared.js` never brought across a merge), and deleting upstream files
 is the architect's call, not a gate's. See `canonical-derivations.md` for the same ratchet
 discipline applied to duplicate implementations.
+
+### `scripts/**` tests — collected by NOTHING; a verify line is their only runner (2026-09-25)
+
+The same rule, one directory over. No vitest project's include pattern reaches top-level `scripts/`:
+the only `scripts` include pattern under `test/vitest/` is `src/scripts/**` (the tooling project
+includes `["test/**/*.test.ts", "src/scripts/**/*.test.ts"]`), grep on 2026-09-25. The one test there
+today, `scripts/merge-drivers/apply-fork-wiring.test.mjs`, is also `node:test` rather than vitest, so
+no include pattern could collect it anyway. It landed on 2026-09-25 (`a018114b747`) guarding the TIER1
+driver's post-condition, and both commits that touched it say it runs only when invoked by hand. A
+test nobody runs fails rule 2 before it ever gets the chance to go red.
+
+- **Its runner is a `verify:` line in the optic that owns the code under test.** `branch-policy.md`
+  §5 runs `node --test scripts/merge-drivers/apply-fork-wiring.test.mjs`; `orca-leases.md` does the
+  same for `extensions/tinkerclaw-orca/lease-core.test.mjs`, the precedent. That puts it on
+  `pnpm bible:invariants`, which `pnpm test` and the pre-push hook both chain.
+- **This file's `verify:` gate is the backstop.** It fails when a `scripts/**/*.test.*` file appears
+  that no optic's frontmatter runs as `node --test <path>`, so a new script test lands with its gate
+  or the bible gate goes red.
+- **By hand:** `cd ~/src/tinkerclaw && node --test scripts/merge-drivers/apply-fork-wiring.test.mjs`
+  (7 tests, a few seconds, green on 2026-09-25).
 
 ## Framework
 

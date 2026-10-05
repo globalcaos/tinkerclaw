@@ -1,0 +1,39 @@
+{
+  "_note": "A backlink is classified 'ours' if its SOURCE url/domain matches any rule below (we created or control that surface); everything else is 'organic'. Each rule: {domain, path_prefix?, label}. path_prefix narrows to a subpath (e.g. only our GitHub profile). ours_urls is an exact-URL list for links we authored on otherwise-ambiguous hosts (our comment/issue/PR on a third-party GitHub repo). Edit freely as we acquire new owned surfaces.",
+  "rules": [
+    { "domain": "moltbook.com", "label": "Moltbook (jarvis_oscar comments/posts)" },
+    { "domain": "gitlab.com", "path_prefix": "/globalcaos", "label": "our GitLab" },
+    { "domain": "github.com", "path_prefix": "/globalcaos", "label": "our GitHub repos/profile" },
+    { "domain": "clawhub.ai", "path_prefix": "/globalcaos", "label": "our ClawHub skill listings" },
+    { "domain": "clawhub.com", "path_prefix": "/globalcaos", "label": "our ClawHub skill listings (legacy domain)" },
+    { "domain": "thetinkerzone.com", "label": "our WordPress site (self/internal)" },
+    { "domain": "sprintpaper.com", "label": "our site" }
+  ],
+  "_squat_note": "tinkerclaw.com is NOT ours (confirmed 2026-06-10) — it is a brand-squat: a commercial white-label OpenClaw SaaS run by a third party, listed on nbhdclaw.com/trustmrr.com/talent.app/indiehackers.com. Do NOT classify tinkerclaw.com as ours. Our fork lives only at github.com/globalcaos/tinkerclaw.",
+  "ours_urls": [
+    "https://github.com/openclaw/openclaw/issues/13991",
+    "https://github.com/openclaw/openclaw/issues/11919",
+    "https://github.com/openclaw/openclaw/issues/12219",
+    "https://github.com/openclaw/openclaw/issues/18099",
+    "https://github.com/openclaw/openclaw/issues/28108",
+    "https://github.com/openclaw/openclaw/issues/30286",
+    "https://github.com/openclaw/openclaw/pull/16689",
+    "https://github.com/openclaw/openclaw/pull/17307",
+    "https://github.com/openclaw/openclaw/pull/17326",
+    "https://github.com/openclaw/openclaw/pull/6500",
+    "https://github.com/openclaw/openclaw/pull/6735",
+    "https://github.com/openclaw/openclaw/pull/6747",
+    "https://github.com/openclaw/openclaw/pull/6753",
+    "https://github.com/MemTensor/MemOS/issues/1129",
+    "https://github.com/NevaMind-AI/memU/issues/361",
+    "https://github.com/mnemon-dev/mnemon/issues/1",
+    "https://github.com/volcengine/OpenViking/issues/311",
+    "https://github.com/DenchHQ/DenchClaw/issues/95",
+    "https://github.com/ALucek/agentic-memory/issues/3"
+  ],
+  "_ours_urls_note": "19 third-party GitHub threads (issues/PRs) authored or commented by globalcaos that contain a clickable github.com/globalcaos/tinkerclaw link. Verified live 2026-06-10 via `gh search issues author:globalcaos OR commenter:globalcaos` + per-thread URL check. These are the GitHub portion of tinkerclaw.ours = 66 (the rest: 28 moltbook.com posts + 19 clawhub.ai skill pages — 19 of our 20 skills link the repo; only teams-hack does not).",
+  "ambiguous_domains": {
+    "_note": "Links FROM these hosts can be ours (we authored a comment) OR organic (someone else did) — domain alone can't tell. The script flags these 'ambiguous' unless a path_prefix or ours_urls rule resolves them. Resolve by hand from our authored-comment IDs in engagement-state.json#github.known_comments.",
+    "domains": ["github.com", "openclaw.org"]
+  }
+}

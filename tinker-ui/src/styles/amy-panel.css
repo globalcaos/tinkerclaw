@@ -1,0 +1,64 @@
+/* Amygdala panel (design blocks 7-10). Every selector is amy- prefixed; tokens come from the theme. */
+.amy-panel { color: var(--text); background: #1d1812; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 12.5px; }
+.amy-p-head { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: #241d15; border-bottom: 1px solid #3a3124; }
+.amy-p-head b { font-size: 13px; }
+.amy-sp { flex: 1; }
+.amy-p-line { padding: 7px 11px 4px; color: #d8cdb9; }
+.amy-p-line--bad { color: #f3b1a8; }
+.amy-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--green2, #8fb03a); vertical-align: middle; }
+.amy-dot--amber { background: var(--amber, #d9a441); }
+.amy-dot--red { background: var(--red); }
+.amy-dot--grey { background: #6d6456; }
+.amy-strip { display: flex; gap: 2px; align-items: flex-end; height: 26px; padding: 0 11px 8px; }
+.amy-strip-bar { flex: 1; display: flex; flex-direction: column-reverse; border-radius: 2px; overflow: hidden; }
+.amy-strip--empty .amy-strip-bar { min-height: 1px; background: #30271c; }
+.amy-strip-ok { display: block; background: #5c5446; }
+.amy-strip-note { display: block; background: var(--amber, #d9a441); }
+.amy-strip-held { display: block; background: var(--red); }
+.amy-legend { font-size: 11px; color: var(--muted); padding: 0 11px 8px; display: flex; gap: 10px; }
+.amy-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+.amy-lg-ok { background: #5c5446; }
+.amy-lg-note { background: var(--amber, #d9a441); }
+.amy-lg-held { background: var(--red); }
+.amy-acc { border-top: 1px solid #30271c; }
+.amy-ah { display: flex; align-items: center; gap: 7px; padding: 6px 11px; cursor: pointer; user-select: none; }
+.amy-ah:hover { background: #231c14; }
+.amy-tw { color: var(--muted); width: 10px; }
+.amy-s { color: var(--muted); margin-left: auto; font-size: 11.5px; }
+.amy-ab { display: none; padding: 2px 11px 9px; }
+.amy-acc--open > .amy-ab { display: block; }
+.amy-kv { display: grid; grid-template-columns: 1fr auto 12px; gap: 3px 8px; align-items: center; }
+.amy-kv--top { margin-top: 6px; }
+.amy-v { color: var(--muted); font-size: 11.5px; text-align: right; }
+.amy-iv { display: grid; grid-template-columns: 38px 16px 1fr auto; gap: 2px 6px; align-items: center; padding: 3px 0; border-bottom: 1px dashed #2f271c; }
+.amy-iv:last-of-type { border-bottom: 0; }
+.amy-t { color: var(--muted); font-size: 11px; }
+.amy-lab { font-size: 11px; background: none; border: 1px solid #3a3124; border-radius: 5px; color: var(--muted); padding: 0 4px; margin-left: 2px; cursor: pointer; }
+.amy-lab:hover { border-color: var(--accent); color: var(--text); }
+.amy-qrow { display: grid; grid-template-columns: 1fr 26px 30px 54px; gap: 6px; align-items: center; padding: 3px 0; }
+.amy-qrow--off { opacity: 0.5; }
+/* Prompt names open their .md (app .fs-link handler). Text at rest, a link on hover: panel chrome, not chat prose. */
+code.fs-link.amy-qlink { font: inherit; color: inherit; background: none; padding: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration-color: rgba(168, 192, 112, 0.35); }
+/* Names are questions now (2026-10-01): let them take two lines instead of an ellipsis. */
+.amy-qname, code.fs-link.amy-qlink.amy-qname { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.25; }
+.amy-qlabel { font-weight: 600; }
+/* One header per family, named as in the J11 paper. */
+.amy-qfam { margin: 8px 0 2px; padding-top: 4px; border-top: 1px solid rgba(168, 192, 112, 0.18); font-size: 11px; color: var(--muted, #a89a80); }
+.amy-qfam b { color: var(--accent, #c8a96a); font-weight: 600; }
+code.fs-link.amy-qlink:hover { color: var(--accent); background: none; text-decoration-color: currentColor; }
+.amy-bar { height: 6px; background: #2f271c; border-radius: 3px; overflow: hidden; }
+.amy-bar i { display: block; height: 100%; background: var(--green2, #8fb03a); }
+.amy-bar i.amy-warn { background: var(--amber, #d9a441); }
+.amy-muted { color: var(--muted); }
+.amy-small { font-size: 11px; }
+.amy-lo { display: grid; grid-template-columns: 14px 1fr auto; gap: 2px 6px; align-items: start; padding: 4px 0; border-bottom: 1px dashed #2f271c; }
+.amy-lo small { grid-column: 2 / 4; color: var(--muted); font-size: 11px; }
+.amy-lo--undone > span { text-decoration: line-through; color: var(--muted); }
+.amy-btn { background: var(--surface2, #2a2218); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; font-size: 12px; cursor: pointer; margin-top: 7px; }
+.amy-btn:hover { border-color: var(--accent); }
+/* An older exchange's Rewind: visibly unavailable, the reason in its tooltip (2026-09-30). */
+.amy-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+.amy-btn[disabled]:hover { border-color: var(--border); }
+.amy-btn--small { margin-top: 0; padding: 1px 7px; font-size: 11px; }
+.amy-dot[data-amy-act] { cursor: pointer; }
+#amy-dot-host { display: flex; align-items: center; padding: 0 8px; }

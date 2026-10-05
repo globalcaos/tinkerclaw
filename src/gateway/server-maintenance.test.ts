@@ -43,6 +43,8 @@ function createMaintenanceTimerDeps() {
     removeChatRun: () => undefined,
     agentRunSeq: new Map(),
     nodeSendToSession: () => {},
+    broadcastToConnIds: () => {},
+    getSessionEventSubscriberConnIds: () => new Set<string>(),
   };
 }
 

@@ -6,7 +6,10 @@
  * for numbers we already have on disk.
  *
  * `args` is "<file>#<dot.path>", resolved relative to
- * ~/.openclaw/workspace/memory/online-presence/. Examples:
+ * ~/.openclaw/workspace/memory/online-presence/. The file must be a `.json`
+ * file that stays inside that directory: absolute paths, `..` segments and
+ * symlinks that resolve outside it are rejected before anything is read
+ * (see `resolveLocalStateFile`). Examples:
  *   localstate:inbound-campaign-state.json#inbound.organic
  *   localstate:engagement-state.json#clawhub.namespace_variants_jarvis_voice.total_downloads_visible_estimate
  *
@@ -35,6 +38,33 @@ export class MissingLocalStateKeyError extends Error {
 
 const BASE = path.join(os.homedir(), ".openclaw", "workspace", "memory", "online-presence");
 
+function isInside(base: string, candidate: string): boolean {
+  const rel = path.relative(base, candidate);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * Resolve a localstate file name to an absolute path that is guaranteed to be
+ * a `.json` file inside `base`. Rejects absolute paths, `..` traversal, and
+ * symlinks whose real target lies outside `base`. Exported for tests.
+ */
+export function resolveLocalStateFile(file: string, base: string = BASE): string {
+  if (path.isAbsolute(file) || path.extname(file).toLowerCase() !== ".json") {
+    throw new Error(`localstate poller: "${file}" must be a relative .json file under ${base}`);
+  }
+  const full = path.resolve(base, file);
+  if (!isInside(path.resolve(base), full)) {
+    throw new Error(`localstate poller: "${file}" resolves outside ${base}`);
+  }
+  // Symlink check: the real file must still live under the real base dir.
+  const realBase = fs.realpathSync(base);
+  const realFull = fs.realpathSync(full);
+  if (!isInside(realBase, realFull)) {
+    throw new Error(`localstate poller: "${file}" resolves outside ${base}`);
+  }
+  return realFull;
+}
+
 export const localStateValue: PollerFn = async (args) => {
   const hash = args.indexOf("#");
   if (hash < 0) {
@@ -45,7 +75,7 @@ export const localStateValue: PollerFn = async (args) => {
   if (!file || !dotPath) {
     throw new Error(`localstate poller: expected "file.json#a.b.c", got "${args}"`);
   }
-  const full = path.join(BASE, file);
+  const full = resolveLocalStateFile(file);
   const json = JSON.parse(fs.readFileSync(full, "utf8")) as unknown;
 
   let cur: unknown = json;

@@ -1,5 +1,5 @@
 {
-  "name": "@globalcaos/openclaw-total-recall",
+  "name": "@globalcaos/tinker-total-recall",
   "version": "0.1.0",
   "description": "Yesterday's chat got compacted away? Per-session event store with FTS + vector recall — pulled back on demand.",
   "keywords": [
@@ -22,6 +22,7 @@
   },
   "files": [
     "index.ts",
+    "dist/",
     "src/",
     "openclaw.plugin.json",
     "README.md"

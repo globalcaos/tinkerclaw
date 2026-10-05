@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Generator, Optional
+import os
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,10 +20,29 @@ DEFAULT_SESSIONS_DIR = Path.home() / ".openclaw" / "agents"
 
 
 class TranscriptParser:
-    """Parse OpenClaw transcript files for usage data."""
-    
+    """Parse OpenClaw transcript files for usage data.
+
+    PRIVACY: session transcripts contain the full text of your prompts and the
+    assistant's replies, not just token counts. Reading the default location is
+    therefore OPT-IN: set TOKEN_PANEL_READ_TRANSCRIPTS=1, or pass an explicit
+    sessions_dir. Only token/usage fields are extracted — message content is never
+    stored in the database or returned by the API — but the files are still opened,
+    so consent is asked for before that happens rather than after.
+    """
+
+    CONSENT_ENV = "TOKEN_PANEL_READ_TRANSCRIPTS"
+
     def __init__(self, sessions_dir: Optional[Path] = None):
-        self.sessions_dir = sessions_dir or DEFAULT_SESSIONS_DIR
+        if sessions_dir is None:
+            if os.environ.get(self.CONSENT_ENV) != "1":
+                raise PermissionError(
+                    "Reading OpenClaw session transcripts is opt-in. These files contain "
+                    "your prompts and replies in full. To allow usage extraction from them, "
+                    f"set {self.CONSENT_ENV}=1, or pass an explicit sessions_dir to point "
+                    "this at a directory you have chosen."
+                )
+            sessions_dir = DEFAULT_SESSIONS_DIR
+        self.sessions_dir = sessions_dir
     
     def find_session_files(self, agent: str = "main", since: datetime = None) -> list[Path]:
         """Find session files, optionally filtered by modification time."""

@@ -183,7 +183,7 @@ export async function runSetupWizard(
 ) {
   const onboardHelpers = await import("../commands/onboard-helpers.js");
   onboardHelpers.printWizardHeader(runtime);
-  await prompter.intro("OpenClaw setup");
+  await prompter.intro("TinkerClaw setup");
   await requireRiskAcknowledgement({ opts, prompter });
 
   const snapshot = await readSetupConfigFileSnapshot();
@@ -566,9 +566,26 @@ export async function runSetupWizard(
 
   const workspaceDir = resolveUserPath(workspaceInput.trim() || onboardHelpers.DEFAULT_WORKSPACE);
 
-  const { applyLocalSetupWorkspaceConfig, applySkipBootstrapConfig } =
-    await import("../commands/onboard-config.js");
+  const {
+    applyAgentNameConfig,
+    applyLocalSetupWorkspaceConfig,
+    applySkipBootstrapConfig,
+    DEFAULT_AGENT_NAME,
+    parseAgentNameFromIdentityLine,
+  } = await import("../commands/onboard-config.js");
   let nextConfig: OpenClawConfig = applyLocalSetupWorkspaceConfig(baseConfig, workspaceDir);
+
+  // FORK 2026-09-22: name the agent; it becomes the first sentence of its system prompt.
+  const existingName = parseAgentNameFromIdentityLine(baseConfig.agents?.defaults?.identityLine);
+  const agentName =
+    opts.agentName ??
+    (existingName && flow === "quickstart"
+      ? existingName
+      : await prompter.text({
+          message: "What should your agent be called?",
+          initialValue: existingName ?? DEFAULT_AGENT_NAME,
+        }));
+  nextConfig = applyAgentNameConfig(nextConfig, agentName);
   if (opts.skipBootstrap) {
     nextConfig = applySkipBootstrapConfig(nextConfig);
   }

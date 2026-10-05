@@ -15,9 +15,15 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { noteWorkerExit, noteWorkerSpawn } from "openclaw/plugin-sdk/fork-telemetry";
 import { createSubsystemLogger } from "openclaw/plugin-sdk/runtime-env";
+import { amygdalaSettingsArgs } from "./amygdala-settings.js";
+import { type ChildStreamsLike, guardChildStreams } from "./child-stream-guards.js";
+import { extractCliCommand } from "./cli-command.js";
 import {
   AMYGDALA_CC_HOOK_SETTINGS_PATH,
+  AMYGDALA_JEV_EFFECTIVE_SETTINGS_PATH,
+  AMYGDALA_JEV_HOOK_SETTINGS_PATH,
   DEFAULT_BINARY,
   DEFAULT_DISALLOWED_TOOLS,
   DEFAULT_PERMISSION_MODE,
@@ -25,6 +31,11 @@ import {
   RESUME_MAX_TRANSCRIPT_BYTES,
   maxOutputTokensFor,
 } from "./defaults.js";
+import {
+  readMaterializedMoralCode,
+  resolveCorePluginDir,
+  transcriptHasMoralCode,
+} from "./moral-code-delivery.js";
 import { loadPromptFile } from "./prompt-loader.js";
 import {
   type CcStreamStdoutLine,
@@ -33,14 +44,70 @@ import {
   serializeStdinLine,
 } from "./protocol.js";
 import { forgetResumeSessionId, setResumeSessionId } from "./session-map.js";
+import {
+  thalamusSpawnExtras,
+  leafModelOwnerText,
+  subagentModelOwnerText,
+} from "./thalamus-worker-seam.js";
 import { thinkLevelToMaxThinkingTokens } from "./thinking-budget.js";
 import {
   isTranscriptOversized,
   resolveTranscriptPath,
   transcriptExists,
 } from "./transcript-path.js";
+import {
+  newUnpromptedTurnId,
+  parseUnpromptedWakeMarker,
+  requestUnpromptedWake,
+  type TaskNotice,
+} from "./unprompted-turn.js";
+import {
+  FileChannel,
+  getBridgeTransport,
+  ownedUnits,
+  prepareWorkerDir,
+  removeWorkerDir,
+  systemctlUser,
+  type UnitCommand,
+  WORKER_SHELL,
+  type WorkerMeta,
+  workerOutSize,
+  type WorkerTurnMeta,
+  writeWorkerMeta,
+} from "./worker-transport.js";
+
+/** Is a restart draining right now? (core's restart-drain.ts global key; an extension may not import it) */
+function restartDrainActive(): boolean {
+  const s = (globalThis as Record<symbol, { active?: boolean } | undefined>)[
+    Symbol.for("openclaw.restartDrain")
+  ];
+  return s?.active === true;
+}
+
+/** How a restart drain left one worker (holdAtBoundary). */
+export type WorkerHoldVerdict = "held" | "ended" | "unfinished" | "idle" | "pipe";
 
 const log = createSubsystemLogger("tinkerclaw-tinker-bridge");
+
+/** How long an early empty `result` waits for turn activity before it ends a silent turn. */
+export const EARLY_EMPTY_RESULT_HOLD_MS = 45_000;
+/** Stream lines that show the CLI is working the current prompt. */
+const TURN_ACTIVITY_TYPES = new Set(["assistant", "user", "stream_event"]);
+
+/**
+ * FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): how long a turn the CLI started on
+ * its own, and finished, keeps its worker busy while it waits for the run that takes it
+ * (unprompted-turn.ts). Past it the pool may reap the worker again; the wake normally lands in
+ * seconds, and its retries end within a minute.
+ */
+export const UNPROMPTED_KEEP_MS = 30 * 60_000;
+const NOTICE_CAP = 10;
+const TASK_DESCRIPTION_CAP = 64;
+
+/** An empty `result` printed before the CLI did anything: no turns, no error, no text. */
+export function isEarlyEmptyResult(r: CcStreamStdoutResult): boolean {
+  return r.num_turns === 0 && !r.is_error && !(r.result ?? "").trim();
+}
 
 /**
  * FORK 2026-08-19 — NUL quarantine for the spawn argv.
@@ -93,6 +160,51 @@ export function stripNulBytesFromArgv(argv: string[]): { argv: string[]; strippe
     return a.split(NUL).join("");
   });
   return { argv: cleaned, stripped };
+}
+
+/**
+ * FORK 2026-09-22 — the system prompt goes by FILE, not argv.
+ *
+ * Linux caps a SINGLE argv entry at MAX_ARG_STRLEN = 131072 bytes. The combined
+ * persona + rules prompt sits at ~97–106k CHARS on a normal day, and emoji /
+ * accented text push its UTF-8 byte count past the cap: the turn then dies with
+ * `spawn E2BIG` before the child exists (tab "Enable Opus 4.8 picker",
+ * 2026-09-22 08:29 — 96,858 chars yet over the byte limit). The failure is
+ * deterministic for that payload, so no retry can help.
+ *
+ * `claude --append-system-prompt-file` reads the same text from disk and has no
+ * such cap. The file is private (0600, in a 0700 dir) and removed when the child
+ * exits. Returns null on any write failure so the caller can fall back to the
+ * argv route — a tmp-disk hiccup must never mute the brain.
+ */
+export function writeSystemPromptFile(sessionKey: string, prompt: string): string | null {
+  try {
+    const dir = path.join(os.tmpdir(), "tinkerclaw-sysprompt");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const safeKey = sessionKey.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64);
+    const file = path.join(
+      dir,
+      `${safeKey}-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.md`,
+    );
+    // NUL is harmless in a file but meaningless in a prompt; drop it here too so
+    // both delivery routes carry identical text.
+    fs.writeFileSync(file, prompt.split("\u0000").join(""), { encoding: "utf8", mode: 0o600 });
+    return file;
+  } catch (err) {
+    log.warn(`system-prompt file write failed (${(err as Error).message}) — falling back to argv`);
+    return null;
+  }
+}
+
+function removeSystemPromptFile(file: string | null): void {
+  if (!file) {
+    return;
+  }
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    // already gone — nothing to do
+  }
 }
 
 // FORK 2026-04-18 (paths de-hardcoded 2026-04-28 per bible §5.76):
@@ -213,6 +325,7 @@ function buildSubagentHelperBlock(): string {
       SPAWN_SUBAGENT_BIN: bin,
       RECIPE_STATE_BIN: recipeBin || "<not-installed>",
       RECIPES_DIR: recipesDir || "<not-installed>",
+      MODEL_CHOICE_OWNER: subagentModelOwnerText(),
     },
   });
 }
@@ -297,50 +410,6 @@ function buildPlanToolsBlock(): string {
   });
 }
 
-// FORK 2026-05-21: ethical-rules foundation layer. The persona block (SOUL.md /
-// jarvis-default.md) defines voice + posture; the narration / subagent-helper /
-// tool-choice / plan-tools blocks define mechanics. Neither layer guards against
-// the assistant doing something stupid under pressure — flattery, leaking
-// private data, sending half-baked outbound, impersonating the user. This block
-// ships ten Asimov-style priority-ordered rules that act as safeguards across
-// every channel, every turn. Resolution order (per loadPromptFile defaults):
-//   1. env var TINKERCLAW_ETHICAL_RULES_PROMPT
-//   2. ~/.openclaw/workspace/memory/knowledge/jarvis-ethical-rules.md (user)
-//   3. extensions/tinkerclaw-tinker-bridge/prompts/ethical-rules-default.md (bundled)
-// Inserted into combinedSystemPrompt immediately after the persona block so the
-// rules read as foundational, before voice/narration/tooling mechanics.
-function buildEthicalRulesBlock(): string {
-  return loadPromptFile({
-    plugin: "tinkerclaw-tinker-bridge",
-    subdir: "prompts",
-    file: "ethical-rules-default.md",
-    envVar: "TINKERCLAW_ETHICAL_RULES_PROMPT",
-    workspaceFile: "memory/knowledge/jarvis-ethical-rules.md",
-  });
-}
-
-// FORK 2026-07-26 (the architect): objectives foundation layer. The ethical rules above say what the
-// assistant must never do; the persona says how it sounds; the orchestration block below says
-// how to spend effort. NONE of them said what the work is FOR — so every task arrived at the
-// same importance and effort was allocated by quota pressure and prompt length. Prompt length
-// is a poor proxy for consequence. This block supplies the missing term: the operator's own
-// objective + a reach × permanence × proximity value model the effort/fan-out decisions can
-// key off. Advisory (no code enforces it), and it can raise EFFORT but never AUTONOMY — the
-// ethical rules keep priority, which is why it is inserted after them.
-// Resolution order (per loadPromptFile defaults):
-//   1. env var TINKERCLAW_OBJECTIVES_PROMPT
-//   2. ~/.openclaw/workspace/memory/knowledge/jarvis-objectives.md (user — personal strategy)
-//   3. extensions/tinkerclaw-tinker-bridge/prompts/objectives-default.md (bundled, generic)
-function buildObjectivesBlock(): string {
-  return loadPromptFile({
-    plugin: "tinkerclaw-tinker-bridge",
-    subdir: "prompts",
-    file: "objectives-default.md",
-    envVar: "TINKERCLAW_OBJECTIVES_PROMPT",
-    workspaceFile: "memory/knowledge/jarvis-objectives.md",
-  });
-}
-
 // FORK 2026-05-29: orchestration-disposition advisory block. Maps task classes
 // to quality kits (adversarial-verify, judge-panel, completeness-critic,
 // multi-modal-sweep, loop-until-dry) so the agent picks the right kit without
@@ -360,6 +429,7 @@ function buildOrchestrationDispositionBlock(): string {
     workspaceFile: false, // generic kit-class → kit mapping; no workspace override
     substitutions: {
       ORCHESTRATE_BIN: orchestrateBin || "<not-installed>",
+      LEAF_MODEL_OWNER: leafModelOwnerText(),
     },
   });
 }
@@ -425,12 +495,69 @@ export type WorkerSpawnParams = {
 export type WorkerTurnParams = {
   userText: string;
   signal?: AbortSignal;
+  /**
+   * FORK 2026-10-01 (TINKER_UI_DESIGN_BIBLE/bug-log.md [chat-divergence], cause 4): the gateway
+   * run this turn belongs to. On the file transport it is recorded in meta.json beside the turn's
+   * start, so that after a restart the run that takes the turn can name it (frozenTurn).
+   */
+  runId?: string;
 };
+
+/**
+ * FORK 2026-10-01 (bug-log [chat-divergence], cause 4) — the turn meta.json records
+ * (worker-transport.ts WorkerTurnMeta) plus the run it belongs to. After a restart the turn is
+ * taken by a run with a NEW id and replayed from its first byte; the old id is how the webchat
+ * finds that turn's prompt on its page. Optional: a meta written before the field reads as unknown.
+ */
+export type WorkerTurnMetaWithRun = WorkerTurnMeta & { runId?: string };
 
 export type WorkerEvent =
   | { type: "stream_line"; line: CcStreamStdoutLine }
   | { type: "stderr"; chunk: string }
   | { type: "exit"; code: number | null; signal: NodeJS.Signals | null };
+
+/**
+ * FORK 2026-09-03 (SIGTERM cause attribution) — carry WHY the child was killed.
+ *
+ * At least seven unrelated causes end a turn with the identical
+ * `signal=SIGTERM`: the user's Stop button (`AbortError: Reply operation
+ * aborted by user`), a gateway restart drain (`Reply operation aborted for
+ * restart`), the run wall-clock deadline (`TimeoutError: request timed out`),
+ * the LLM idle timeout (`LLM idle timeout (300s): no response from model`),
+ * budget exhaustion (`budget-exhausted`), `sessions_yield`, and the fast-fail
+ * init-stall abort in stream.ts. Downstream they were indistinguishable, so
+ * `src/fork/error-envelope.ts` classified ALL of them as "Gateway restarted —
+ * I'm resuming it automatically". For six of the seven BOTH halves are false:
+ * nothing restarted, nothing resumes, and the user has to type "keep going".
+ *
+ * DELIBERATELY NOT A TAXONOMY HERE. This module transports the cause text
+ * verbatim; `src/fork/error-envelope.ts` is its single owner and is unit-tested
+ * against the exact producer strings above. A duplicate enum on both sides of
+ * the extension boundary (`src/**` can never be imported from `extensions/**`)
+ * would drift silently the first time an upstream abort message is reworded.
+ *
+ * The channel is the `onExit` rejection message — the string that becomes the
+ * envelope's `raw`. It already crosses worker -> stream -> envelope, so it needs
+ * no new plumbing and no intermediate layer can drop it.
+ */
+function formatKillCause(raw: unknown): string {
+  if (raw === undefined || raw === null) {
+    return "";
+  }
+  const text =
+    typeof raw === "string"
+      ? raw
+      : raw instanceof Error
+        ? `${raw.name}: ${raw.message}`
+        : String(raw);
+  // `]` would close the `reason=[…]` delimiter early and newlines would break
+  // the single-line log shape. 200 chars is far more than any producer emits.
+  return text
+    .replace(/[\r\n\]]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
 
 export class ClaudeCodeWorker extends EventEmitter {
   readonly sessionKey: string;
@@ -447,15 +574,80 @@ export class ClaudeCodeWorker extends EventEmitter {
   private stdoutBuf = "";
   private stderrBuf = "";
   private running = false;
+  /** Per-spawn system-prompt file (see writeSystemPromptFile); removed on exit. */
+  private systemPromptFile: string | null = null;
+  /** Moral code owed to a resumed conversation that predates tinkerclaw-core (sent once). */
+  private pendingMoralCodePrefix: string | null = null;
   private currentTurn: {
     resolve: (line: CcStreamStdoutResult) => void;
     reject: (err: Error) => void;
     aborted: boolean;
+    /** The CLI has produced turn activity (assistant, tool or stream lines) for this turn. */
+    active?: boolean;
+    /** An early empty `result` held back, see EARLY_EMPTY_RESULT_HOLD_MS. */
+    heldEmpty?: { line: CcStreamStdoutResult; timer: ReturnType<typeof setTimeout> };
   } | null = null;
   private turnQueue: Array<() => Promise<void>> = [];
   private draining = false;
+  /**
+   * FORK 2026-09-03: the cause text of the FIRST kill of the CURRENT turn.
+   * Reset per TURN (in `send()`, where `currentTurn` is assigned) and NOT per
+   * child: the pool keeps workers warm across many turns (worker-pool.ts), so a
+   * per-child reset would let one turn's cause be reported on a later,
+   * unrelated turn — e.g. a fast-fail kill that lost its race, then reported
+   * against the next turn the user stopped by hand.
+   */
+  private lastKillCause: string | null = null;
+  /**
+   * FORK 2026-09-25 (TINKER_UI_DESIGN_BIBLE/logging.md §4.9): the systemd unit of the CURRENT child
+   * (`tinkerclaw-worker-…`, also its worker_id), the unit whose exit was last reported, and the
+   * turns this child has answered. The worker-resources sampler charts the UNIT's cgroup — never
+   * `proc.pid`, which is the systemd-run wrapper, not claude.
+   */
+  private unitId: string | null = null;
+  private exitReportedUnitId: string | null = null;
+  private turnsServed = 0;
+  /** FORK 2026-10-01: when the child last printed a stdout line (see `lastActivityAt`). */
+  private lastStdoutAt = 0;
+  /**
+   * FORK 2026-09-30 (TINKER_UI_DESIGN_BIBLE/lifecycles.md L4b): the FILE transport
+   * (worker-transport.ts), null on the pipe. Its meta mirrors to `<dir>/meta.json` whatever a new
+   * gateway needs to adopt this worker; `callOpen` is true while a TOP-LEVEL API call streams, and
+   * `pendingTurn` is an adopted turn a restart froze, waiting for a run to take it (resumeTurn).
+   */
+  private channel: FileChannel | null = null;
+  private meta: WorkerMeta | null = null;
+  private callOpen = false;
+  private boundaryWaiters: Array<() => void> = [];
+  private pendingTurn: WorkerTurnMetaWithRun | null = null;
+  /**
+   * FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost], unprompted-turn.ts): what the CLI
+   * does between the bridge's turns. `bgTasks` are its live background tasks (Bash in the
+   * background, Workflow, Monitor), from `background_tasks_changed`; `notices` the tasks it said
+   * ended while no turn was open; `unprompted` a turn it started on its own, kept line by line
+   * until a run takes it (takeUnpromptedTurn) or a prompt joins it (send).
+   */
+  private bgTasks = new Map<string, string>();
+  private taskDescriptions = new Map<string, string>();
+  private notices: TaskNotice[] = [];
+  private unprompted: {
+    id: string;
+    lines: unknown[];
+    startedAt: number;
+    result: CcStreamStdoutResult | null;
+    finishedAt: number;
+  } | null = null;
+  private strayActivityLogged = false;
   /** Session id as seen from the init line — useful for --resume later. */
   sessionId: string | null = null;
+
+  /**
+   * FORK 2026-10-02: the directory the CLI runs in, which names its transcript's projects/ folder
+   * (transcript-path.ts). stream.ts reads that transcript to itemise each call (cli-context.ts).
+   */
+  get cwd(): string {
+    return this.params.cwd;
+  }
 
   constructor(params: WorkerSpawnParams) {
     super();
@@ -468,6 +660,12 @@ export class ClaudeCodeWorker extends EventEmitter {
     if (this.running) {
       return;
     }
+    // FORK 2026-09-03: a respawn must not inherit the PREVIOUS child's stderr
+    // tail. That tail is appended to the exit message this fork now makes
+    // load-bearing for diagnosis, so a stale one pairs a fresh cause with an
+    // unrelated error (and can re-trigger the dead-resume purge below on an id
+    // the new child never mentioned).
+    this.stderrBuf = "";
     const binary = this.params.binary?.trim() || DEFAULT_BINARY;
     const args: string[] = [
       "--input-format",
@@ -497,9 +695,25 @@ export class ClaudeCodeWorker extends EventEmitter {
     // which synchronously DENIES destructive-execution AEGIS rules inside
     // claude-cli — real enforcement on the primary runner, even under
     // bypassPermissions. Absent → no extra flag, identical behavior.
-    if (fs.existsSync(AMYGDALA_CC_HOOK_SETTINGS_PATH)) {
-      args.push("--settings", AMYGDALA_CC_HOOK_SETTINGS_PATH);
-    }
+    // FORK 2026-09-29 (digital amygdala C5): the new plugin's files, when present, may replace
+    // the v3.1 file as the single --settings (amygdala-settings.ts); with none of them present
+    // this is exactly the v3.1 behaviour above.
+    args.push(
+      ...amygdalaSettingsArgs(
+        {
+          v31: AMYGDALA_CC_HOOK_SETTINGS_PATH,
+          next: AMYGDALA_JEV_HOOK_SETTINGS_PATH,
+          effective: AMYGDALA_JEV_EFFECTIVE_SETTINGS_PATH,
+        },
+        (p) => {
+          try {
+            return fs.statSync(p);
+          } catch {
+            return null;
+          }
+        },
+      ),
+    );
     const disallowed = this.params.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS;
     if (disallowed.length > 0) {
       args.push("--disallowedTools", disallowed.join(","));
@@ -520,6 +734,16 @@ export class ClaudeCodeWorker extends EventEmitter {
         args.push("--plugin-dir", trimmed);
       }
     }
+    // FORK 2026-09-22: tinkerclaw-core delivers the moral code once per conversation
+    // (SessionStart: startup | clear | compact). See moral-code-delivery.ts.
+    const corePluginDir = resolveCorePluginDir();
+    if (corePluginDir) {
+      args.push("--plugin-dir", corePluginDir);
+    } else {
+      log.warn(
+        "tinkerclaw-core Claude Code plugin not found — moral code falls back to the system prompt",
+      );
+    }
     // FORK 2026-04-18: also append the amygdala + fractal rule files so
     // Opus always has the rules in context — the per-turn UI injection
     // can then just say "do sections A→B→C per your rules" without
@@ -530,63 +754,37 @@ export class ClaudeCodeWorker extends EventEmitter {
     const toolChoiceBody = buildToolChoiceBlock();
     const narrationBody = buildChatNarrationBlock();
     const planToolsBody = buildPlanToolsBlock();
-    const ethicalRulesBody = buildEthicalRulesBlock();
-    const objectivesBody = buildObjectivesBlock();
     const orchestrationDispositionBody = buildOrchestrationDispositionBlock();
-    // FORK 2026-04-24 (ROOT CAUSE, subscription-billing regression):
-    // OpenClaw's embedded-agent-runner appends its full tool catalog + OpenClaw
-    // CLI quick-reference + heartbeat section + Runtime metadata to the
-    // system prompt (see `src/agents/system-prompt.ts:buildAgentSystemPrompt`
-    // — started sending that content on 2026-04-18 via commit 378684e4f5,
-    // "apply fork wiring after 309-commit upstream merge"). The block
-    // contains dozens of mentions of OpenClaw-specific verbs like
-    // `sessions_spawn`, `openclaw gateway start`, and
-    // `repo=/home/…/.openclaw/workspace` — exactly the fingerprint
-    // Anthropic's server-side classifier uses to route requests to the
-    // metered overage pool (HTTP 400 "out of extra usage"), even when
-    // everything else (env, cgroup, OAuth creds, credentials file) is
-    // already clean.
+    // FORK 2026-09-20 — MECHANISM A REMOVED (de-evasion). Deliberate, on the record.
     //
-    // Strip everything from the "You are a personal assistant running
-    // inside OpenClaw" sentinel onwards. That keeps the persona block at
-    // the top (`# Persona: JarvisOne (v1)…`) and drops the harness-
-    // specific tool policy. claude-cli maintains its own tool catalog so
-    // we don't lose tool access by trimming here. We also skip the
-    // rulesBody — it's fork-internal scaffolding for Jarvis's reply style
-    // that's not worth the risk of re-tripping the classifier.
+    // This block used to slice the system prompt at a "You are a personal
+    // assistant running inside OpenClaw" sentinel and drop everything after it.
+    // The rationale, stated verbatim in the comment this replaces, was that the
+    // appended harness catalog is "exactly the fingerprint Anthropic's
+    // server-side classifier uses to route requests to the metered overage
+    // pool", and that stripping it "makes Jarvis bill the subscription again".
     //
-    // Confirmed by bisect: merge-base `4a6a289d5a` works, raw-merge
-    // `3db21784ad` works, fork-wiring `378684e4f5` fails. The ONLY change
-    // in `378684e4f5` that affects request routing is the new
-    // `buildAgentSystemPrompt` content (persona injection + "running
-    // inside OpenClaw" text), and stripping it here (on top of HEAD) makes
-    // Jarvis bill the subscription again.
-    const OPENCLAW_SYSPROMPT_CUTOFF = "You are a personal assistant running inside OpenClaw";
-    const openClawCutoff = systemPromptBody.indexOf(OPENCLAW_SYSPROMPT_CUTOFF);
-    const personaOnly =
-      openClawCutoff > 0 ? systemPromptBody.slice(0, openClawCutoff).trim() : systemPromptBody;
-    // FORK 2026-06-11 (subagent task-delivery fix): OpenClaw places a spawned
-    // subagent's task in the system prompt under "## Your Role", but
-    // buildSubagentSystemPrompt appends that block AFTER the "You are a personal
-    // assistant running inside OpenClaw" sentinel — so the strip above DROPS it
-    // and every tinker-sp-* subagent wakes up with NO task (confirmed empirically via
-    // BOTH the prefrontal orchestrate runtime and openclaw-spawn-subagent.mjs:
-    // the child's own thinking reads "I don't see a clear **Your Role** section").
-    // Re-extract ONLY the "## Your Role" block (the task description) and keep it:
-    // it carries no OpenClaw harness verbs (sessions_spawn et al. live in the
-    // later "## Sub-Agent Spawning" / tool-catalog sections that the strip still
-    // drops), so it stays billing-classifier-safe. Self-gating: the main agent's
-    // prompt has no "## Your Role", so subagentRoleBlock is "" there (no-op).
-    const extractSubagentRoleBlock = (full: string): string => {
-      const start = full.indexOf("## Your Role");
-      if (start < 0) {
-        return "";
-      }
-      const rest = full.slice(start);
-      const end = rest.indexOf("\n## Rules");
-      return (end >= 0 ? rest.slice(0, end) : rest).trim();
-    };
-    const subagentRoleBlock = openClawCutoff > 0 ? extractSubagentRoleBlock(systemPromptBody) : "";
+    // That is removing truthful harness identity in order to change how the
+    // provider classifies and bills the request. It is evasion, not privacy,
+    // and no reframing of the switch changes its causal purpose. Removed.
+    //
+    // Standing rule for this bridge: ADD our own identity (the persona block),
+    // NEVER SUBTRACT harness identity. Billing follows whatever Anthropic's
+    // classifier honestly determines from what we actually send. A genuine
+    // privacy feature redacts the USER's data (PII, secrets, local paths,
+    // hostnames) — never the client/harness identity that bears on
+    // authorization, enforcement or billing.
+    //
+    // The prior behaviour and this correction are both kept in git history on
+    // purpose: the fix is published as loudly as the original.
+    const personaOnly = systemPromptBody;
+    // The "## Your Role" re-extraction below existed ONLY to rescue a spawned
+    // subagent's task from the strip above (OpenClaw places it after the
+    // sentinel, so the strip dropped it and subagents woke with no task). With
+    // nothing stripped, that block is already present in systemPromptBody, so
+    // re-appending it would duplicate the task. Kept as an empty no-op for the
+    // downstream concatenation.
+    const subagentRoleBlock = "";
     void rulesBody;
     // FORK 2026-04-27: order matters. Put the narration block RIGHT AFTER the
     // persona, before the dense subagent-helper / tool-choice text. When
@@ -606,8 +804,10 @@ export class ClaudeCodeWorker extends EventEmitter {
     const combinedSystemPrompt = [
       personaOnly,
       subagentRoleBlock ? `\n\n${subagentRoleBlock}\n` : "",
-      ethicalRulesBody,
-      objectivesBody,
+      // FORK 2026-09-22: the moral code (ethical rules, objectives, starter kit) no longer
+      // rides every spawn's system prompt — see moral-code-delivery.ts. Only when the
+      // tinkerclaw-core plugin is missing does it fall back to this position.
+      corePluginDir ? "" : `\n\n${readMaterializedMoralCode()}`,
       orchestrationDispositionBody,
       narrationBody,
       subagentHelpBody,
@@ -617,12 +817,34 @@ export class ClaudeCodeWorker extends EventEmitter {
       .filter(Boolean)
       .join("");
     if (combinedSystemPrompt.length > 0) {
-      args.push("--append-system-prompt", combinedSystemPrompt);
+      // By file: an argv entry over 128 KB kills the spawn with E2BIG.
+      // See writeSystemPromptFile.
+      removeSystemPromptFile(this.systemPromptFile);
+      this.systemPromptFile = writeSystemPromptFile(this.sessionKey, combinedSystemPrompt);
+      if (this.systemPromptFile) {
+        args.push("--append-system-prompt-file", this.systemPromptFile);
+      } else {
+        args.push("--append-system-prompt", combinedSystemPrompt);
+      }
     }
-    if (this.params.model) {
-      args.push("--model", this.params.model);
+    // FORK 2026-09-30 (THALAMUS v4 D5): a registered worker provider may add `--agents`, a per-spawn model and
+    // environment. With none registered `thalamusExtras` is empty and nothing below differs from before.
+    const thalamusExtras = thalamusSpawnExtras({
+      sessionKey: this.sessionKey,
+      model: this.params.model,
+    });
+    const spawnModel = thalamusExtras.model ?? this.params.model;
+    if (spawnModel) {
+      args.push("--model", spawnModel);
     }
+    args.push(...thalamusExtras.args);
     const cwd = path.resolve(this.params.cwd);
+    if (!fs.existsSync(cwd)) {
+      // Node reports a missing cwd as `spawn systemd-run ENOENT`, naming the wrong culprit.
+      throw new Error(
+        `claude-code cwd does not exist: ${cwd} — create it or set plugins.entries.tinkerclaw-tinker-bridge.config.cwd`,
+      );
+    }
     if (this.params.resumeSessionId) {
       // FORK 2026-06-23 (oversized-resume guard): a fat transcript wedges the
       // brain — `claude --resume` stalls parsing 14.5–15.3MB of history, emits
@@ -665,57 +887,88 @@ export class ClaudeCodeWorker extends EventEmitter {
       }
       if (!skipResume) {
         args.push("--resume", this.params.resumeSessionId);
+        if (corePluginDir) {
+          const transcriptPath = resolveTranscriptPath(cwd, this.params.resumeSessionId);
+          if (!transcriptHasMoralCode(transcriptPath)) {
+            const pack = readMaterializedMoralCode();
+            this.pendingMoralCodePrefix = pack || null;
+            if (pack) {
+              log.info(
+                `[moral-code] resumed ${this.sessionKey} has no moral code yet — prefixing the next message once`,
+              );
+            }
+          }
+        }
       }
     }
 
-    // ROOT CAUSE DISCOVERY 2026-04-18 + 2026-04-24: Anthropic's server-side
-    // harness detection reads BOTH the process cgroup path AND the PPID chain
-    // (`/proc/<pid>/status:PPid`). The 2026-04-18 fix used `systemd-run --scope`
-    // to isolate the cgroup — but with `--scope` the claude process keeps the
-    // gateway as its PPID, and Anthropic's detector now matches on that parent
-    // process name. Confirmed by live probe (see /tmp/catch-claude.sh): with
-    // --scope, `/proc/<claude-pid>/status` shows `PPid: <gateway-pid>` and the
-    // parent's comm is `openclaw-gatewa` — a textbook harness tell.
+    // TinkerClaw runs claude as a transient systemd user service via
+    // `systemd-run --user --pipe --unit=tinkerclaw-worker-<id>`. The service has
+    // systemd (pid 1) as its parent, and `--pipe` keeps stdin/stdout/stderr
+    // forwarded to the caller — which tinker-bridge needs for stream-json NDJSON
+    // in both directions. The transient unit lives under
+    // `app.slice/tinkerclaw-worker-<id>.service` and is auto-collected on exit.
     //
-    // Fix (2026-04-24): switch to `systemd-run --user --pipe --unit=llm-client-<id>`
-    // which runs claude as a transient systemd service. The service has
-    // systemd (pid 1) as its parent, so `/proc/<claude-pid>/status` shows
-    // `PPid: 1`, matching what a daemonized real CC install looks like. The
-    // `--pipe` flag keeps stdin/stdout/stderr forwarded to the caller — which
-    // tinker-bridge needs for stream-json NDJSON both directions. Confirmed by
-    // bare-shell probe: `systemd-run --user --pipe --setenv=CLAUDECODE=1 ...`
-    // bills against the subscription even with the gateway's exact env +
-    // allowlist. Cgroup isolation still intact (the transient unit lives
-    // under `app.slice/llm-client-<id>.service`, never under openclaw-gateway).
-    const unitId = `llm-client-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    // HONESTY NOTE (2026-09-19) — supersedes the anti-detection rationale
+    // repeated throughout this spawn path (the env allowlist below, the
+    // `OPENCLAW_*` strip, the PPID/cgroup reparent, and every "harness tell"
+    // remark). Those were added (2026-04-18/24) on the belief that Anthropic
+    // detects an OpenClaw harness from the child's PPID, cgroup, or environment,
+    // and the earlier generic `llm-client-<id>` unit name was a deliberate
+    // disguise. That belief is very likely FALSE: Anthropic's API receives an
+    // HTTPS request (auth + client headers + message content) and does NOT
+    // receive the caller's PPID, cgroup, or process environment — so none of
+    // those measures can change what the server sees or how it bills. The only
+    // OpenClaw-identifying signal that can actually reach Anthropic is request
+    // CONTENT (the system prompt), handled separately. This reparent is retained
+    // solely for its real benefits (clean transient-unit lifecycle + stdio
+    // forwarding) and the unit is now named honestly for what it is. The
+    // `OPENCLAW_*` env exclusion below is kept for now only as ordinary env
+    // hygiene and is marked for removal once the interactive billing check
+    // confirms subscription billing without it — a pending cleanup, not a
+    // legitimate measure.
+    const unitId = `tinkerclaw-worker-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     // NOTE: we build wrapperArgs AFTER cleanEnv so we can pass every env var
     // through `--setenv=K=V` — `systemd-run --pipe` does NOT inherit env
     // from the caller (unlike --scope), so the service would otherwise run
     // with only the user@1000.service's default env. Building the --setenv
     // list here keeps the wrapper call self-contained.
     const wrapperBinary = "systemd-run";
-    const wrapperBaseArgs = ["--user", "--pipe", "--quiet", "--same-dir", `--unit=${unitId}`];
+    // FORK 2026-09-30 (lifecycles.md L4b): on the FILE transport the unit owns its stdio (a FIFO
+    // and two files in its worker dir), so it outlives a gateway restart. See worker-transport.ts.
+    const workerDir = getBridgeTransport() === "file" ? prepareWorkerDir(unitId) : null;
+    const wrapperBaseArgs = workerDir
+      ? [
+          "--user",
+          "--quiet",
+          "--collect",
+          "--same-dir",
+          `--unit=${unitId}`,
+          `--setenv=TC_WORKER_DIR=${workerDir}`,
+        ]
+      : ["--user", "--pipe", "--quiet", "--same-dir", `--unit=${unitId}`];
 
     log.info(
-      `spawning claude (reparented to systemd via --pipe, unit=${unitId}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
+      `spawning claude (reparented to systemd, ${workerDir ? "file transport" : "--pipe"}, unit=${unitId}): sessionKey=${this.sessionKey} cwd=${cwd} args=[${args.map((a) => (a.length > 80 ? a.slice(0, 80) + "..." : a)).join(" | ")}]`,
     );
 
-    // FORK 2026-04-24: SWITCH TO ALLOWLIST. The previous implementation was
-    // "copy process.env, then delete the known-bad keys". That strategy keeps
-    // losing ground every time the gateway grows a new env var (provider
-    // API key, fork annotation, systemd leak). Anthropic's harness detector
-    // apparently matches on the presence of *any* env var a vanilla Claude
-    // Code install wouldn't have, not just a known denylist — so a single
-    // stray var silently routes the request to the metered overage pool.
-    //
-    // Empirically confirmed: a bare-shell spawn with `env -i` + minimal
-    // allowlist bills against the subscription; any wider env passes
-    // fail with HTTP 400 `out-of-extra-usage`. This switches to a closed
-    // allowlist: we construct the child env from scratch, copying only the
-    // vars a real CC install on an Ubuntu user session would have. That
-    // means the child cannot pick up stray OPENCLAW_*, ANTHROPIC_*,
-    // OPENAI_*, JOURNAL_STREAM, INVOCATION_ID, or any other harness-tell
-    // no matter how many new vars the gateway's systemd unit adds over time.
+    // The child runs on a minimal, constructed env (allowlist below) for two
+    // reasons, ONLY ONE of which is load-bearing:
+    //   (1) LEGITIMATE + NECESSARY: the child must NOT inherit the gateway's
+    //       Anthropic auth vars (`ANTHROPIC_API_KEY`, `CLAUDE_API_KEY`,
+    //       `ANTHROPIC_AUTH_TOKEN`). If it did, `claude` would bill the metered
+    //       API instead of the subscription OAuth in ~/.claude/.credentials.json.
+    //       Verified 2026-09-19: on subscription OAuth (those vars unset) a call
+    //       bills to the subscription; with the API key present it routes to the
+    //       API. Excluding the Anthropic auth vars is what keeps billing on the
+    //       subscription — nothing else here does.
+    //   (2) HYGIENE: a small, predictable env. Nothing more.
+    // De-evasion 2026-09-19: earlier revisions framed this allowlist as defeating
+    // an "Anthropic harness detector" that "matches on the OPENCLAW_ prefix." That
+    // premise is FALSE — Anthropic's API never receives the child's environment
+    // (see the honesty note at the systemd-run block). The `OPENCLAW_*` wiring the
+    // child's own helpers need is now re-exported explicitly (added to the allowlist
+    // below); it is no longer withheld to dodge anything.
     const allowedKeys = new Set([
       // Shell / user identity
       "HOME",
@@ -752,6 +1005,11 @@ export class ClaudeCodeWorker extends EventEmitter {
       "CLAUDECODE",
       "CLAUDE_CODE_ENTRYPOINT",
       "CLAUDE_CODE_EXECPATH",
+      // Long-lived headless login (`claude setup-token`). Claude Code's own documented
+      // variable for machines with no browser, so it is not a harness tell. A host that
+      // sets it in the gateway environment gets a login that does not share (and rotate)
+      // the refresh token of another machine; hosts without it are unaffected.
+      "CLAUDE_CODE_OAUTH_TOKEN",
       // Output-token ceiling — set explicitly below. A host-level override
       // (if present) wins; otherwise we pin it so the CLI never falls back to
       // a low default that would silently truncate a long answer.
@@ -761,6 +1019,20 @@ export class ClaudeCodeWorker extends EventEmitter {
       // ceiling above), so it doesn't read as a harness tell. Omitted for
       // off/undefined so the CLI keeps its own default.
       "MAX_THINKING_TOKENS",
+      // FORK 2026-09-19 (de-evasion): re-export the fork's OWN wiring that the
+      // child's helper scripts read directly (subagent-spawn / recipe-state /
+      // orchestrate bins, gateway token + url, bundled-plugins dir). Previously
+      // withheld on the mistaken anti-detection premise; Anthropic never sees the
+      // child env, so this is free and lets the helpers use them instead of
+      // re-reading openclaw.json. The Anthropic AUTH vars are deliberately NOT
+      // re-exported — that exclusion, not this allowlist, keeps billing on the
+      // subscription OAuth.
+      "OPENCLAW_SPAWN_SUBAGENT_BIN",
+      "OPENCLAW_RECIPE_STATE_BIN",
+      "OPENCLAW_ORCHESTRATE_BIN",
+      "OPENCLAW_GATEWAY_TOKEN",
+      "OPENCLAW_GATEWAY_URL",
+      "OPENCLAW_BUNDLED_PLUGINS_DIR",
     ]);
     const cleanEnv: NodeJS.ProcessEnv = {};
     for (const key of allowedKeys) {
@@ -778,8 +1050,10 @@ export class ClaudeCodeWorker extends EventEmitter {
     // FORK 2026-05-29: expose the OpenClaw session key to the child shell so the
     // jarvis-speak script can (a) gate voice to the home session only ("WhatsApp
     // never triggers voice") and (b) route its UI-inject bubble to the right
-    // session. Neutral name — NOT OPENCLAW_* — so it doesn't trip Anthropic's
-    // harness billing detection (which matches the OPENCLAW_ prefix).
+    // session. Named `TC_` for TinkerClaw, its honest owner. (The earlier
+    // "avoid the OPENCLAW_ prefix so Anthropic's detector doesn't see it" reason
+    // does not hold — the API never receives the child's env; see the honesty
+    // note at the systemd-run block above.)
     // FORK 2026-05-30: export the CANONICAL openclaw key (`agent:main:main`),
     // not `this.sessionKey` (the `tinker-sp-<hash>` worker-pool hash). The binary
     // gates on `== agent:main:main` and passes this to `chat.inject` — both
@@ -787,6 +1061,10 @@ export class ClaudeCodeWorker extends EventEmitter {
     // a bubble. Fall back to the hash only when the canonical key is absent
     // (yields a safe no-match → silent, never a mis-routed bubble).
     cleanEnv.TC_SESSION_KEY = this.params.openclawSessionKey ?? this.sessionKey;
+    // Never override a variable the bridge has already set (the allowlist is also enforced in the seam).
+    for (const [k, v] of Object.entries(thalamusExtras.env)) {
+      if (cleanEnv[k] === undefined) cleanEnv[k] = v;
+    }
     // FORK 2026-05-29: pin the output-token ceiling PER MODEL so a paid
     // response is never silently truncated by a low CLI default. The value
     // comes from the active model's `maxOutputTokens` (defaults.ts, single
@@ -795,7 +1073,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     // A host-level value (set before us) takes precedence; we only fill it in
     // when absent.
     if (!cleanEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS) {
-      cleanEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokensFor(this.params.model));
+      cleanEnv.CLAUDE_CODE_MAX_OUTPUT_TOKENS = String(maxOutputTokensFor(spawnModel));
     }
     // FORK 2026-06-11: pin the thinking-token budget from this session's think
     // level. MAX_THINKING_TOKENS is a native Claude Code knob (so it doesn't
@@ -804,7 +1082,7 @@ export class ClaudeCodeWorker extends EventEmitter {
     // (the CLI keeps its own default), never setting it to 0.
     const __maxThinking = thinkLevelToMaxThinkingTokens(
       this.params.thinkLevel,
-      maxOutputTokensFor(this.params.model),
+      maxOutputTokensFor(spawnModel),
     );
     if (__maxThinking !== undefined) {
       cleanEnv.MAX_THINKING_TOKENS = String(__maxThinking);
@@ -833,35 +1111,32 @@ export class ClaudeCodeWorker extends EventEmitter {
         /* leave unset; claude-cli detects its own install */
       }
     }
-    // FORK 2026-04-20, REGRESSION FIXED 2026-04-24:
-    // The original provider-agnostic subagent bridge commit (601e8a3561)
-    // re-exported `OPENCLAW_SPAWN_SUBAGENT_BIN`, `OPENCLAW_RECIPE_STATE_BIN`,
-    // `OPENCLAW_GATEWAY_TOKEN`, and `OPENCLAW_GATEWAY_URL` to the child
-    // claude subprocess so Jarvis's Bash could expand them. But this
-    // undoes the whole point of the `OPENCLAW_*` strip above (commit
-    // d5d0eb53fd): Anthropic's server-side harness detection matches on
-    // the `OPENCLAW_*` prefix and routes any request whose subprocess
-    // env contains those vars to the metered overage pool, returning
-    // HTTP 400 `out-of-extra-usage` even when the subscription is at 5%.
-    // That's exactly the failure mode the user saw after the 2026-04-20 merge.
+    // FORK 2026-09-19 (de-evasion — reverses the 2026-04-24 decision):
+    // The original subagent-bridge commit (601e8a3561) re-exported
+    // `OPENCLAW_SPAWN_SUBAGENT_BIN`, `OPENCLAW_RECIPE_STATE_BIN`,
+    // `OPENCLAW_GATEWAY_TOKEN`, and `OPENCLAW_GATEWAY_URL` so the child's Bash
+    // could expand them. A later fix (d5d0eb53fd) STRIPPED them on the belief that
+    // "Anthropic's harness detection matches on the OPENCLAW_ prefix and routes the
+    // request to the overage pool." That belief is FALSE: Anthropic's API never
+    // receives the child's environment (see the systemd-run honesty note), and the
+    // 2026-09-19 billing test confirmed the subscription OAuth channel bills to the
+    // subscription regardless. The strip defeated nothing.
     //
-    // Fix (now): DO NOT re-export any OPENCLAW_* var to the child. The
-    // spawn/recipe-state helper scripts get absolute paths interpolated
-    // directly into the narration block at buildSubagentHelperBlock time
-    // (see extensions/tinkerclaw-tinker-bridge/src/worker.ts:buildSubagentHelperBlock),
-    // and both scripts already fall back to reading gateway.auth.token /
-    // default URL from `~/.openclaw/openclaw.json` when their respective
-    // env vars aren't set (scripts/openclaw-spawn-subagent.mjs:58-67,
-    // scripts/openclaw-recipe-state.mjs:78-87). The subagent bridge still
-    // works; the harness-detection strip is honored.
-    // Full env dump — every key, every value (secrets truncated). We've ruled out
-    // all the obvious suspects, so cast a wide net.
-    const fullEnv = Object.entries(cleanEnv)
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => `${k}=${(v ?? "").length > 60 ? (v ?? "").slice(0, 60) + "…" : (v ?? "")}`)
-      .toSorted()
-      .join("\n  ");
-    log.info(`FULL env for claude spawn (${Object.keys(cleanEnv).length} vars):\n  ${fullEnv}`);
+    // Now: those wiring vars ARE re-exported (added to the allowlist above), so the
+    // helper scripts use them directly instead of falling back to re-reading
+    // ~/.openclaw/openclaw.json (scripts/openclaw-spawn-subagent.mjs:58-67,
+    // scripts/openclaw-recipe-state.mjs:78-87 — the fallback still works too).
+    // Billing stays on the subscription because the ANTHROPIC auth vars are
+    // excluded — that, not any OPENCLAW_ strip, is the load-bearing exclusion.
+    // Log the env SHAPE, never the values. This used to dump every key=value
+    // pair (truncated at 60 chars) into the gateway journal on every single
+    // spawn — which is not redaction: most tokens are shorter than 60 chars,
+    // and HOME/PATH/USER/XDG_RUNTIME_DIR leak the operator's identity and host
+    // layout into a log that gets read, tailed and pasted into bug reports.
+    // The allowlist above is the thing worth auditing, and the key names alone
+    // prove which vars survived it.
+    const envKeys = Object.keys(cleanEnv).toSorted().join(", ");
+    log.info(`env for claude spawn (${Object.keys(cleanEnv).length} vars, names only): ${envKeys}`);
 
     // Build --setenv=K=V args for every cleanEnv entry. systemd-run --pipe
     // does NOT inherit the caller's env (only --scope does), so the child
@@ -875,7 +1150,13 @@ export class ClaudeCodeWorker extends EventEmitter {
         setenvArgs.push(`--setenv=${k}=${v}`);
       }
     }
-    const rawWrapperArgs = [...wrapperBaseArgs, ...setenvArgs, binary, ...args];
+    const rawWrapperArgs = [
+      ...wrapperBaseArgs,
+      ...setenvArgs,
+      ...(workerDir ? ["/bin/sh", "-c", WORKER_SHELL, "tc-worker"] : []),
+      binary,
+      ...args,
+    ];
 
     // One stray NUL anywhere on this argv — the appended system prompt or any
     // --setenv value — makes Node refuse to start the child at all. See
@@ -888,19 +1169,82 @@ export class ClaudeCodeWorker extends EventEmitter {
       );
     }
 
-    this.proc = spawn(wrapperBinary, wrapperArgs, {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        PATH: cleanEnv.PATH,
-        HOME: cleanEnv.HOME,
-        DBUS_SESSION_BUS_ADDRESS: cleanEnv.DBUS_SESSION_BUS_ADDRESS,
-        XDG_RUNTIME_DIR: cleanEnv.XDG_RUNTIME_DIR,
-      },
-    });
+    const spawnEnv = {
+      PATH: cleanEnv.PATH,
+      HOME: cleanEnv.HOME,
+      DBUS_SESSION_BUS_ADDRESS: cleanEnv.DBUS_SESSION_BUS_ADDRESS,
+      XDG_RUNTIME_DIR: cleanEnv.XDG_RUNTIME_DIR,
+    };
+    if (workerDir) {
+      let channel: FileChannel;
+      try {
+        channel = await FileChannel.spawn({
+          unit: unitId,
+          dir: workerDir,
+          argv: wrapperArgs,
+          cwd,
+          env: spawnEnv,
+        });
+      } catch (err) {
+        removeWorkerDir(workerDir);
+        removeSystemPromptFile(this.systemPromptFile);
+        this.systemPromptFile = null;
+        throw err;
+      }
+      this.channel = channel;
+      this.meta = {
+        version: 1,
+        unit: unitId,
+        sessionKey: this.sessionKey,
+        openclawSessionKey: this.params.openclawSessionKey,
+        openclawSessionId: this.params.openclawSessionId,
+        model: this.params.model,
+        thinkLevel: this.params.thinkLevel,
+        cwd,
+        systemPromptFile: this.systemPromptFile,
+        createdAt: Date.now(),
+        turn: null,
+      };
+      writeWorkerMeta(workerDir, this.meta);
+      ownedUnits().add(unitId);
+      this.proc = channel as unknown as ChildProcessWithoutNullStreams;
+    } else {
+      this.proc = spawn(wrapperBinary, wrapperArgs, {
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: spawnEnv,
+      });
+    }
+    this.wireChild(this.proc, unitId, { resumed: args.includes("--resume") });
+  }
+
+  /**
+   * Hook a started child (either transport) to this worker. `resumed` null: an ADOPTED unit, which
+   * no `worker.spawn` row describes (this gateway did not start it).
+   */
+  private wireChild(
+    child: ChildProcessWithoutNullStreams,
+    unitId: string,
+    spawned: { resumed: boolean } | null,
+  ): void {
+    this.proc = child;
     this.running = true;
+    // FORK 2026-09-25 (logging.md §4.9, §9 step 5): one `worker.spawn` row per child, and the unit
+    // handed to the worker-resources sampler, which charts its cgroup (never `child.pid`: that is
+    // the systemd-run wrapper, not claude). A spawn that throws above never reaches this line.
+    this.unitId = unitId;
+    this.turnsServed = 0;
+    if (spawned) {
+      noteWorkerSpawn({
+        workerType: "tinker_bridge",
+        workerId: unitId,
+        resumed: spawned.resumed,
+      });
+    }
     this.proc.on("error", (err) => {
       log.error(`spawn error: ${(err as Error).message}`);
+      removeSystemPromptFile(this.systemPromptFile);
+      this.systemPromptFile = null;
       const stale = this.currentTurn;
       this.currentTurn = null;
       this.running = false;
@@ -908,14 +1252,48 @@ export class ClaudeCodeWorker extends EventEmitter {
       if (stale) {
         stale.reject(err as Error);
       }
+      // A child that never started emits 'error' and may never emit 'exit' (Node's contract), so
+      // its row closes here; a later 'exit' for the same unit adds nothing (reportWorkerExit).
+      if (child.pid === undefined) {
+        this.reportWorkerExit(unitId, null, null);
+      }
     });
+    this.attachChildStreamGuards(this.proc);
 
     this.proc.stdout.setEncoding("utf8");
     this.proc.stderr.setEncoding("utf8");
 
     this.proc.stdout.on("data", (chunk: string) => this.onStdoutChunk(chunk));
     this.proc.stderr.on("data", (chunk: string) => this.onStderrChunk(chunk));
-    this.proc.on("exit", (code, signal) => this.onExit(code, signal));
+    // The unit is bound here, not read at exit time: a late 'exit' of an earlier child must never
+    // be reported as the end of the child that replaced it.
+    this.proc.on("exit", (code, signal) => this.onExit(code, signal, unitId));
+  }
+
+  /**
+   * FORK 2026-09-14 (gateway crash class). A child that dies between spawn and our first
+   * `stdin.write()` — at boot on 2026-09-14 the anthropic OAuth refresh was failing and the CLI
+   * exited at once — surfaces as an ASYNCHRONOUS 'error' event (EPIPE) on the stdin pipe, not as
+   * a throw from write(). With no listener Node turned it into an uncaught exception and the
+   * whole gateway died, three times in eleven minutes (07:49, 07:52, 08:00). The exit handler
+   * still owns the turn's fate; this guard only keeps the PROCESS alive and fails the TURN.
+   * Kept as a method so the test can drive it with an EventEmitter stand-in for the child.
+   */
+  private attachChildStreamGuards(proc: ChildStreamsLike): void {
+    guardChildStreams(proc, (stream, err) => {
+      log.warn(`${stream} stream error [${this.sessionKey}]: ${err.message}`);
+      if (stream !== "stdin") {
+        return;
+      }
+      const stale = this.currentTurn;
+      if (!stale) {
+        return;
+      }
+      this.currentTurn = null;
+      stale.reject(
+        new Error(`claude stdin closed before the turn could be written (${err.message})`),
+      );
+    });
   }
 
   private onStdoutChunk(chunk: string): void {
@@ -936,10 +1314,13 @@ export class ClaudeCodeWorker extends EventEmitter {
         const logLine = JSON.stringify(parsed).slice(0, 400);
         log.debug(`stdout[${this.sessionKey}] ${logLine}`);
       }
+      this.lastStdoutAt = Date.now();
+      this.observeCallBoundary(parsed);
       if (parsed.type === "system" && (parsed as { subtype?: string }).subtype === "init") {
         const sid = (parsed as { session_id?: string }).session_id;
         if (typeof sid === "string") {
           this.sessionId = sid;
+          this.updateMeta({ cliSessionId: sid });
           // FORK (2026-04-22): persist so the next gateway boot can --resume.
           // Best-effort; failures just mean amnesia on next restart, not
           // broken turns.
@@ -950,14 +1331,199 @@ export class ClaudeCodeWorker extends EventEmitter {
           }
         }
       }
+      // FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): lines no turn of ours asked
+      // for. A turn the CLI starts on its own is kept here until a run takes it.
+      this.noteBackgroundLine(parsed);
+      if (!this.currentTurn) {
+        this.keepUnpromptedLine(parsed);
+      }
       this.emit("stream_line", { type: "stream_line", line: parsed } as WorkerEvent);
-      if (parsed.type === "result" && this.currentTurn) {
-        const t = this.currentTurn;
-        this.currentTurn = null;
-        t.resolve(parsed as CcStreamStdoutResult);
-        this.drainQueue();
+      const turn = this.currentTurn;
+      if (turn && !turn.active && TURN_ACTIVITY_TYPES.has(parsed.type)) {
+        turn.active = true;
+        if (turn.heldEmpty) {
+          clearTimeout(turn.heldEmpty.timer);
+          turn.heldEmpty = undefined;
+          log.warn(
+            `[early-empty-result] dropped: the CLI went on working after an empty result [${this.sessionKey}]`,
+          );
+        }
+      }
+      if (parsed.type === "result" && turn) {
+        const result = parsed as CcStreamStdoutResult;
+        // FORK 2026-10-01 (bug-log [event-ordering+cleanup-race]): a resumed CLI whose last turn
+        // left work pending (killed by the run limit at 02:44, background Workflow at 14:01) can
+        // print an empty `result` (num_turns=0, ~200 ms) BEFORE it reads the new prompt. Ending
+        // the turn on it made the gateway retry on a second process while the first one went on
+        // working the prompt: two workers on one session. Hold it; real activity drops it, and a
+        // turn that stays silent still ends with it, so the empty-response retry keeps working.
+        if (!turn.active && !turn.heldEmpty && isEarlyEmptyResult(result)) {
+          const timer = setTimeout(() => {
+            if (this.currentTurn === turn && turn.heldEmpty) {
+              log.warn(
+                `[early-empty-result] released after ${EARLY_EMPTY_RESULT_HOLD_MS} ms with no activity [${this.sessionKey}]`,
+              );
+              turn.heldEmpty = undefined;
+              this.finishTurn(turn, result);
+            }
+          }, EARLY_EMPTY_RESULT_HOLD_MS);
+          timer.unref?.();
+          turn.heldEmpty = { line: result, timer };
+          log.warn(
+            `[early-empty-result] held: num_turns=0 duration_ms=${result.duration_ms} before any turn activity [${this.sessionKey}]`,
+          );
+          continue;
+        }
+        this.finishTurn(turn, result);
+      } else if (parsed.type === "result" && this.unprompted && !this.unprompted.result) {
+        const kept = this.unprompted;
+        kept.result = parsed as CcStreamStdoutResult;
+        kept.finishedAt = Date.now();
+        this.turnsServed += 1;
+        log.info(
+          `[unprompted-turn] ${kept.id} ended (num_turns=${kept.result.num_turns}, ${kept.lines.length} lines kept); waiting for the run that takes it [${this.sessionKey}]`,
+        );
       }
     }
+  }
+
+  /**
+   * FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): the CLI's own account of its
+   * background tasks. `background_tasks_changed` lists the live ones (the pool must not reap a
+   * worker that has any, isBusy); `task_notification` with no turn of ours open is a task that
+   * ended between turns, named in the wake of the turn the CLI starts about it.
+   */
+  private noteBackgroundLine(line: { type: string }): void {
+    if (line.type !== "system") {
+      return;
+    }
+    const rec = line as {
+      subtype?: unknown;
+      tasks?: unknown;
+      task_id?: unknown;
+      description?: unknown;
+      summary?: unknown;
+      status?: unknown;
+    };
+    if (rec.subtype === "background_tasks_changed") {
+      this.bgTasks.clear();
+      for (const t of Array.isArray(rec.tasks) ? rec.tasks : []) {
+        const task = t as { task_id?: unknown; description?: unknown };
+        if (typeof task?.task_id === "string") {
+          const d =
+            typeof task.description === "string" && task.description
+              ? task.description
+              : task.task_id;
+          this.bgTasks.set(task.task_id, d);
+          this.rememberTask(task.task_id, d);
+        }
+      }
+    } else if (
+      rec.subtype === "task_started" &&
+      typeof rec.task_id === "string" &&
+      typeof rec.description === "string"
+    ) {
+      this.rememberTask(rec.task_id, rec.description);
+    } else if (
+      rec.subtype === "task_notification" &&
+      typeof rec.task_id === "string" &&
+      !this.currentTurn &&
+      !(this.unprompted && !this.unprompted.result)
+    ) {
+      const description =
+        this.taskDescriptions.get(rec.task_id) ??
+        (typeof rec.summary === "string" ? rec.summary : undefined);
+      this.notices.push({
+        taskId: rec.task_id,
+        ...(typeof rec.status === "string" ? { status: rec.status } : {}),
+        ...(description ? { description } : {}),
+      });
+      if (this.notices.length > NOTICE_CAP) {
+        this.notices.shift();
+      }
+    }
+  }
+
+  private rememberTask(id: string, description: string): void {
+    this.taskDescriptions.delete(id);
+    this.taskDescriptions.set(id, description);
+    if (this.taskDescriptions.size > TASK_DESCRIPTION_CAP) {
+      const oldest = this.taskDescriptions.keys().next().value;
+      if (oldest !== undefined) {
+        this.taskDescriptions.delete(oldest);
+      }
+    }
+  }
+
+  /**
+   * A line that came with no turn of ours open. The CLI opens every turn with `init` (measured
+   * 2026-10-01 for a background Bash and for a Monitor event); one that comes while nothing is
+   * queued opens a turn the CLI started on its own, and its lines are kept until a run takes it.
+   * Turn activity with no `init` before it is logged once, so a turn that starts some other way
+   * shows up in the journal instead of vanishing.
+   */
+  private keepUnpromptedLine(line: { type: string }): void {
+    const queued = this.turnQueue.length > 0 || this.draining || this.pendingTurn !== null;
+    const isInit = line.type === "system" && (line as { subtype?: unknown }).subtype === "init";
+    if (isInit && !queued && (!this.unprompted || this.unprompted.result)) {
+      this.openUnpromptedTurn();
+    }
+    const kept = this.unprompted;
+    if (kept && !kept.result) {
+      kept.lines.push(line);
+      return;
+    }
+    if (!queued && TURN_ACTIVITY_TYPES.has(line.type) && !this.strayActivityLogged) {
+      this.strayActivityLogged = true;
+      log.warn(
+        `[unprompted-turn] a ${line.type} line came with no turn open and no init before it; not kept [${this.sessionKey}]`,
+      );
+    }
+  }
+
+  private openUnpromptedTurn(): void {
+    const replaced = this.unprompted;
+    if (replaced) {
+      log.warn(
+        `[unprompted-turn] ${replaced.id} was never taken; a new turn of the CLI replaces it [${this.sessionKey}]`,
+      );
+    }
+    const id = newUnpromptedTurnId();
+    const notices = this.notices;
+    const liveTasks = [...this.bgTasks.values()];
+    this.notices = [];
+    this.strayActivityLogged = false;
+    this.unprompted = { id, lines: [], startedAt: Date.now(), result: null, finishedAt: 0 };
+    log.info(
+      `[unprompted-turn] ${id} the CLI started a turn on its own [${this.sessionKey}] notices=${notices.length} liveTasks=${liveTasks.length}`,
+    );
+    void requestUnpromptedWake({
+      info: { id, notices, liveTasks },
+      openclawSessionKey: this.params.openclawSessionKey,
+      model: this.params.model,
+      workerKey: this.sessionKey,
+    });
+  }
+
+  private replayLines(lines: unknown[]): void {
+    for (const line of lines) {
+      this.emit("stream_line", { type: "stream_line", line } as WorkerEvent);
+    }
+  }
+
+  private finishTurn(
+    t: NonNullable<ClaudeCodeWorker["currentTurn"]>,
+    result: CcStreamStdoutResult,
+  ): void {
+    if (t.heldEmpty) {
+      clearTimeout(t.heldEmpty.timer);
+      t.heldEmpty = undefined;
+    }
+    this.currentTurn = null;
+    this.updateMeta({ turn: null });
+    this.turnsServed += 1;
+    t.resolve(result);
+    this.drainQueue();
   }
 
   private onStderrChunk(chunk: string): void {
@@ -969,11 +1535,38 @@ export class ClaudeCodeWorker extends EventEmitter {
     }
   }
 
-  private onExit(code: number | null, signal: NodeJS.Signals | null): void {
+  private onExit(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+    exitedUnitId: string | null = this.unitId,
+  ): void {
     this.running = false;
+    removeSystemPromptFile(this.systemPromptFile);
+    this.systemPromptFile = null;
     const stale = this.currentTurn;
     this.currentTurn = null;
     this.proc = null;
+    // FORK 2026-10-01: the child's background tasks and any turn of its own die with it.
+    if (this.unprompted) {
+      log.warn(
+        `[unprompted-turn] ${this.unprompted.id} lost: the CLI exited before a run took it [${this.sessionKey}]`,
+      );
+    }
+    this.unprompted = null;
+    this.bgTasks.clear();
+    this.notices = [];
+    // FORK 2026-09-30 (L4b): a file-transport unit is gone (its dir was removed by the channel);
+    // a drain waiting on it has nothing left to wait for.
+    if (exitedUnitId) {
+      ownedUnits().delete(exitedUnitId);
+    }
+    if (this.channel && this.channel.unit === exitedUnitId) {
+      this.channel = null;
+      this.meta = null;
+      this.pendingTurn = null;
+      this.callOpen = false;
+      this.flushBoundaryWaiters();
+    }
     log.info(
       `claude exit[${this.sessionKey}] code=${code} signal=${signal} stderr_tail=${this.stderrBuf.slice(-500)}`,
     );
@@ -993,14 +1586,59 @@ export class ClaudeCodeWorker extends EventEmitter {
         `[dead-resume] sessionKey=${this.sessionKey} claude rejected resume id=${deadId} — purged ${purged} session-map binding(s); next turn starts FRESH`,
       );
     }
-    if (stale) {
+    if (stale?.heldEmpty) {
+      // FORK 2026-10-01: the CLI exited after an early empty result and nothing else: that empty
+      // result was the turn's answer, as it was before the hold existed.
+      clearTimeout(stale.heldEmpty.timer);
+      const held = stale.heldEmpty.line;
+      stale.heldEmpty = undefined;
+      stale.resolve(held);
+    } else if (stale) {
+      // FORK 2026-09-03: `reason=[…]` carries WHY the child died, verbatim from
+      // the aborter. It is the ONLY signal that reaches
+      // src/fork/error-envelope.ts (this message becomes the envelope's `raw`),
+      // and without it every SIGTERM rendered "Gateway restarted — I'm resuming
+      // it automatically", which is false for every cause but the restart. An
+      // EMPTY reason is deliberate and honest: it classifies to a neutral "the
+      // turn was interrupted" that promises nothing. It is placed BEFORE
+      // `stderr=` so a `reason=[…]` printed by the child can never win.
       stale.reject(
         new Error(
-          `claude subprocess exited (code=${code} signal=${signal}) stderr=${this.stderrBuf.slice(-500)}`,
+          `claude subprocess exited (code=${code} signal=${signal} reason=[${this.lastKillCause ?? ""}]) stderr=${this.stderrBuf.slice(-500)}`,
         ),
       );
     }
+    this.reportWorkerExit(exitedUnitId, code, signal);
     this.emit("exit", { type: "exit", code, signal } as WorkerEvent);
+  }
+
+  /**
+   * FORK 2026-09-25 (logging.md §4.9): report one child's end — once per unit, whichever of
+   * 'error' (a child that never started) or 'exit' arrives first. The kill cause crosses as TEXT
+   * and is classified in core into a closed set (worker-resources.ts classifyWorkerExit, through
+   * src/fork/error-envelope.ts's classifyAbortCause, the taxonomy's single owner); the text itself
+   * is never stored. It is the latch the error envelope reads, through the same classifier, so
+   * the row and the user-facing message name the same cause (an empty one is "unknown" in both).
+   */
+  private reportWorkerExit(
+    unitId: string | null,
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void {
+    if (unitId === null || unitId === this.exitReportedUnitId) {
+      return;
+    }
+    this.exitReportedUnitId = unitId;
+    if (this.unitId === unitId) {
+      this.unitId = null;
+    }
+    noteWorkerExit({
+      workerId: unitId,
+      code,
+      signal,
+      killCause: this.lastKillCause,
+      turnsServed: this.turnsServed,
+    });
   }
 
   private drainQueue(): void {
@@ -1040,28 +1678,104 @@ export class ClaudeCodeWorker extends EventEmitter {
           reject(new Error("claude subprocess not started"));
           return;
         }
+        // FORK 2026-09-03: the kill-cause latch belongs to THIS turn. Cleared
+        // here rather than in start(), because a pooled worker serves many turns
+        // without ever restarting its child.
+        this.lastKillCause = null;
+        // FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): the CLI is in a turn of its
+        // own. Its result would end this one, so this turn takes it: its lines so far are replayed
+        // and the prompt joins it, as a prompt sent mid-turn does. A finished one is left for the
+        // run its wake starts.
+        const joining = this.unprompted && !this.unprompted.result ? this.unprompted : null;
+        if (joining) {
+          this.unprompted = null;
+        }
+        this.notices = [];
+        this.strayActivityLogged = false;
         this.currentTurn = {
           resolve: (line) => resolve(line),
           reject: (err) => reject(err),
           aborted: false,
+          ...(joining
+            ? {
+                active: joining.lines.some((l) =>
+                  TURN_ACTIVITY_TYPES.has((l as { type?: string }).type ?? ""),
+                ),
+              }
+            : {}),
         };
+        if (joining) {
+          log.info(
+            `[unprompted-turn] ${joining.id}: a prompt came while the CLI was in a turn of its own; it joins that turn (${joining.lines.length} lines replayed) [${this.sessionKey}]`,
+          );
+          this.replayLines(joining.lines);
+        }
         const abortHandler = () => {
           if (this.currentTurn) {
             this.currentTurn.aborted = true;
-            this.kill("SIGTERM");
+            // FORK 2026-09-03: carry the abort's own cause through to the exit
+            // message. `AbortSignal.reason` is whatever the aborter passed to
+            // `AbortController.abort(reason)` — an Error for a user Stop, a
+            // restart drain, the run deadline, the idle timeout or budget
+            // exhaustion; the bare string "sessions_yield" for a yield. Node's
+            // DEFAULT (nothing passed) names no cause and formats to "", so the
+            // envelope stays neutral instead of claiming a restart.
+            this.kill("SIGTERM", params.signal?.reason);
           }
         };
         params.signal?.addEventListener("abort", abortHandler, { once: true });
+        // FORK 2026-09-25 (context-window-panel.md §6.1 A6 (i); cli-command.ts): a turn whose text
+        // IS a CLI command reaches the CLI as that command and nothing else. The CLI runs a slash
+        // command only when the line STARTS with it and reads everything after the name as its
+        // argument, so no prefix and no wrapper may ride along.
+        //
+        // It does NOT consume the moral code. A command line carries no conversation, and the
+        // prefix would stop `/compact` being a command at all. The pack stays owed to the next real
+        // turn, at least once: a compaction that succeeds also re-fires tinkerclaw-core's
+        // SessionStart hook (matcher startup|clear|compact), one that fails does not.
+        const cliCommand = extractCliCommand(params.userText);
+        let content: string;
+        if (cliCommand === null) {
+          const moralCodePrefix = this.pendingMoralCodePrefix;
+          this.pendingMoralCodePrefix = null;
+          content = moralCodePrefix ? `${moralCodePrefix}\n\n${params.userText}` : params.userText;
+        } else {
+          content = cliCommand;
+          const name = cliCommand.split(/\s/, 1)[0];
+          // Names and lengths only: the owner's instructions are the owner's text, not the journal's.
+          log.info(
+            `[cli-command] ${this.sessionKey} writing ${name} as a CLI command (instructions.len=${Math.max(0, cliCommand.length - name.length - 1)}, moral code ${this.pendingMoralCodePrefix ? "still owed" : "not owed"})`,
+          );
+        }
         const stdinLine = serializeStdinLine({
           type: "user",
-          message: { role: "user", content: params.userText },
+          message: { role: "user", content },
           ...(this.sessionId ? { session_id: this.sessionId } : {}),
         });
+        // FORK 2026-09-30 (L4b): the turn's output starts here; a gateway that adopts this worker
+        // after a restart replays it from this offset.
+        if (this.channel) {
+          this.callOpen = false;
+          // FORK 2026-10-01 (bug-log [chat-divergence], cause 4): and the run it belongs to, so
+          // the run that takes this turn after a restart can name it to the webchat (frozenTurn).
+          const turnMeta: WorkerTurnMetaWithRun = {
+            startOffset: this.channel.outSize(),
+            startedAt: Date.now(),
+            ...(params.runId ? { runId: params.runId } : {}),
+          };
+          this.updateMeta({ turn: turnMeta });
+        }
         try {
           this.proc.stdin.write(stdinLine);
         } catch (err) {
           this.currentTurn = null;
           reject(err as Error);
+          return;
+        }
+        // A turn that starts while a restart drains spends nothing until the next gateway takes
+        // it: frozen at once, its prompt waits in the FIFO.
+        if (this.channel && restartDrainActive()) {
+          void this.freezeUnit();
         }
       };
       this.turnQueue.push(task);
@@ -1083,10 +1797,40 @@ export class ClaudeCodeWorker extends EventEmitter {
    * turns there is no live claude turn to consume the line, so we no-op. This is
    * the queue-not-SIGTERM primitive for in-flight prompts: a new prompt steers
    * the live worker instead of aborting + respawning it.
+   *
+   * A CLI command (`/compact`, cli-command.ts) is never steered: it returns false
+   * and the gateway delivers it as its own turn (A6 (i), below).
    */
   steer(text: string): boolean {
     if (!this.proc || !this.running || !this.currentTurn) {
       return false;
+    }
+    // FORK 2026-09-25 (context-window-panel.md §6.1 A6 (i)): a CLI command is a TURN START, not a
+    // mid-turn aside. steer's contract is "fold prose into the running answer", and what the CLI
+    // does with a slash command that lands mid-turn is unmeasured (U3). So it is refused, and
+    // `false` IS the declared refusal: tryInflightSteer reads it as "not handled" and runs.ts
+    // flushSteerBuffer falls back to the run's next round (handle.queueMessage), where the command
+    // arrives as its own turn and send() writes it bare. Never throw instead: the hook's catch
+    // would reach the same fallback by accident rather than by contract.
+    if (extractCliCommand(text) !== null) {
+      log.info(
+        `[cli-command] ${this.sessionKey} steer refused a CLI command; it runs as its own turn`,
+      );
+      return false;
+    }
+    // FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): a wake for a turn the CLI
+    // started on its own is never news to the CLI. If that turn is still kept, the wake must run as
+    // its own turn to take it (false); otherwise a prompt already joined it, and the wake is
+    // handled by writing nothing (true).
+    const wakeId = parseUnpromptedWakeMarker(text);
+    if (wakeId !== null) {
+      if (this.unprompted?.id === wakeId) {
+        return false;
+      }
+      log.info(
+        `[unprompted-turn] ${wakeId}: its wake reached a live turn after the turn was joined; nothing written [${this.sessionKey}]`,
+      );
+      return true;
     }
     const line = serializeStdinLine({
       type: "user",
@@ -1106,7 +1850,252 @@ export class ClaudeCodeWorker extends EventEmitter {
     }
   }
 
-  kill(signal: NodeJS.Signals = "SIGTERM"): void {
+  // ── FORK 2026-09-30 (TINKER_UI_DESIGN_BIBLE/lifecycles.md L4b): restart hold and reattach ─────
+  //
+  // On the FILE transport a restart does not cut the turn. The drain freezes the unit at the end
+  // of the API call that is streaming (holdAtBoundary), the gateway lets go of it (detach), and the
+  // next gateway adopts it (adopt) and hands the turn to the first run of its session (resumeTurn),
+  // which replays the turn's output from its start and thaws the unit.
+
+  /** The canonical session key (`agent:main:…`) this worker serves. */
+  get openclawSessionKey(): string | undefined {
+    return this.params.openclawSessionKey;
+  }
+
+  isFileTransport(): boolean {
+    return this.channel !== null;
+  }
+
+  /** An adopted turn is waiting for a run (resumeTurn). */
+  hasPendingTurn(): boolean {
+    return this.pendingTurn !== null;
+  }
+
+  /**
+   * FORK 2026-10-01 (bug-log [chat-divergence], cause 4) — the adopted turn waiting for a run, as
+   * that run names it to the webchat: when it started (the gateway's clock) and, when the last
+   * gateway recorded it, the run it belonged to. The run that takes it has a NEW id and replays it
+   * from its first byte (resumeTurn); the page anchors that replay to the turn named here. Null
+   * when no turn waits. meta.json is read back unchecked, so each field is checked here.
+   */
+  frozenTurn(): { runId?: string; startedAt?: number } | null {
+    const turn = this.pendingTurn;
+    if (!turn) {
+      return null;
+    }
+    const runId: unknown = turn.runId;
+    const startedAt: unknown = turn.startedAt;
+    return {
+      ...(typeof runId === "string" && runId ? { runId } : {}),
+      ...(typeof startedAt === "number" && Number.isFinite(startedAt) ? { startedAt } : {}),
+    };
+  }
+
+  private updateMeta(patch: Partial<WorkerMeta>): void {
+    if (!this.channel || !this.meta) {
+      return;
+    }
+    this.meta = { ...this.meta, ...patch };
+    writeWorkerMeta(this.channel.dir, this.meta);
+  }
+
+  /**
+   * Track the TOP-LEVEL API call: open at its `message_start`, closed at the `message_delta` that
+   * carries its stop reason (or the turn's `result`). A subagent's call (parent_tool_use_id) is not
+   * this turn's boundary.
+   */
+  private observeCallBoundary(line: unknown): void {
+    if (!this.channel) {
+      return;
+    }
+    const rec = line as {
+      type?: unknown;
+      parent_tool_use_id?: unknown;
+      event?: { type?: unknown; delta?: { stop_reason?: unknown } };
+    };
+    if (rec.parent_tool_use_id) {
+      return;
+    }
+    if (rec.type === "stream_event" && rec.event?.type === "message_start") {
+      this.callOpen = true;
+    } else if (
+      rec.type === "result" ||
+      (rec.type === "stream_event" &&
+        rec.event?.type === "message_delta" &&
+        typeof rec.event.delta?.stop_reason === "string")
+    ) {
+      this.callOpen = false;
+      this.flushBoundaryWaiters();
+    }
+  }
+
+  private flushBoundaryWaiters(): void {
+    const waiters = this.boundaryWaiters;
+    this.boundaryWaiters = [];
+    for (const w of waiters) {
+      w();
+    }
+  }
+
+  private async freezeUnit(): Promise<boolean> {
+    if (!this.channel) {
+      return false;
+    }
+    const ok = await this.channel.freeze();
+    if (ok) {
+      this.updateMeta({ frozenAt: Date.now() });
+      log.info(`[restart-hold] froze ${this.channel.unit} sessionKey=${this.sessionKey}`);
+    } else {
+      log.warn(
+        `[restart-hold] could not freeze ${this.channel.unit} sessionKey=${this.sessionKey}`,
+      );
+    }
+    return ok;
+  }
+
+  /**
+   * The restart drain: hold this worker's turn at the end of the API call now streaming (nothing
+   * is cut, nothing more is spent). Past the budget it is frozen mid-call anyway: a frozen call may
+   * have to be repeated after the thaw, a killed turn is lost whole.
+   */
+  async holdAtBoundary(budgetMs: number): Promise<WorkerHoldVerdict> {
+    if (!this.channel) {
+      return this.currentTurn ? "pipe" : "idle";
+    }
+    if (!this.currentTurn) {
+      return "idle";
+    }
+    let reached = true;
+    if (this.callOpen) {
+      reached = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), Math.max(0, budgetMs));
+        timer.unref?.();
+        this.boundaryWaiters.push(() => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+    }
+    if (!this.currentTurn || !this.channel) {
+      return "ended";
+    }
+    // A unit that would not freeze runs on while the gateway is down: not held.
+    const frozen = await this.freezeUnit();
+    return frozen && reached ? "held" : "unfinished";
+  }
+
+  /** The restart was called off, or this process goes on (an in-process restart): thaw. */
+  async releaseHold(): Promise<void> {
+    if (this.channel?.frozen && (await this.channel.thaw())) {
+      this.updateMeta({ frozenAt: null });
+    }
+  }
+
+  /**
+   * The gateway is going: let go of the unit and leave it running (or frozen) for the next one.
+   * A pipe-transport worker cannot outlive its gateway and is killed, as before.
+   */
+  detach(): void {
+    if (!this.channel) {
+      this.kill("SIGTERM");
+      return;
+    }
+    ownedUnits().delete(this.channel.unit);
+    this.channel.detach();
+    this.channel = null;
+    this.meta = null;
+    this.running = false;
+    this.proc = null;
+    this.flushBoundaryWaiters();
+  }
+
+  /**
+   * Take the turn a restart froze: replay its output from the turn's start (the stream rebuilds
+   * the answer, its tool rows and its thinking from it), then thaw the unit so it goes on. Resolves
+   * with the turn's `result` line, like send().
+   */
+  resumeTurn(params: { signal?: AbortSignal } = {}): Promise<CcStreamStdoutResult> {
+    const turn = this.pendingTurn;
+    const channel = this.channel;
+    this.pendingTurn = null;
+    if (!turn || !channel || !this.proc) {
+      return Promise.reject(new Error("no frozen turn to resume on this worker"));
+    }
+    return new Promise((resolve, reject) => {
+      this.lastKillCause = null;
+      this.currentTurn = { resolve, reject, aborted: false };
+      params.signal?.addEventListener(
+        "abort",
+        () => {
+          if (this.currentTurn) {
+            this.currentTurn.aborted = true;
+            this.kill("SIGTERM", params.signal?.reason);
+          }
+        },
+        { once: true },
+      );
+      this.callOpen = false;
+      log.info(
+        `[reattach] resuming ${channel.unit} sessionKey=${this.sessionKey} from byte ${turn.startOffset} (turn of run ${typeof turn.runId === "string" && turn.runId ? turn.runId : "?"}, started ${turn.startedAt})`,
+      );
+      channel.startStdout(turn.startOffset);
+      void this.releaseHold();
+    });
+  }
+
+  /**
+   * Adopt a unit an earlier gateway started on the file transport. A turn it left in flight is
+   * kept for resumeTurn and its output is not read until then; an idle one is read from the end.
+   */
+  static adopt(
+    meta: WorkerMeta,
+    dir: string,
+    frozen: boolean,
+    run: UnitCommand = systemctlUser,
+  ): ClaudeCodeWorker {
+    const worker = new ClaudeCodeWorker({
+      sessionKey: meta.sessionKey,
+      cwd: meta.cwd,
+      model: meta.model,
+      thinkLevel: meta.thinkLevel,
+      openclawSessionId: meta.openclawSessionId,
+      openclawSessionKey: meta.openclawSessionKey,
+    });
+    worker.sessionId = meta.cliSessionId ?? null;
+    worker.systemPromptFile = meta.systemPromptFile ?? null;
+    const channel = FileChannel.attach(meta.unit, dir, meta.turn ? null : workerOutSize(dir), run);
+    channel.frozen = frozen;
+    worker.channel = channel;
+    worker.meta = meta;
+    worker.pendingTurn = meta.turn;
+    ownedUnits().add(meta.unit);
+    worker.wireChild(channel as unknown as ChildProcessWithoutNullStreams, meta.unit, null);
+    return worker;
+  }
+
+  /**
+   * Kill the child. `cause` is the reason the caller has for killing it — an
+   * `AbortSignal.reason` (Error or string), or a literal such as
+   * "fast-fail-init-stall". It is echoed VERBATIM in the `onExit` rejection so
+   * `src/fork/error-envelope.ts` can classify the SIGTERM by cause instead of
+   * calling every one of them a gateway restart.
+   *
+   * FIRST NAMED CAUSE WINS: a fast-fail kill is routinely followed within
+   * milliseconds by the run's own abort of the turn that is already dying, and
+   * the second kill must never overwrite the true cause. The one permitted
+   * upgrade is from an EMPTY cause — "" carries no claim, so replacing it with a
+   * named one can only add information.
+   *
+   * The extra parameter keeps `PoolWorker.kill(signal?: NodeJS.Signals)`
+   * satisfied (an additional OPTIONAL parameter stays assignable), so the pool's
+   * reason-less `kill("SIGTERM")` is unchanged and lands on "". That is correct
+   * for the pool: both of its kill paths are gated on `!isBusy()`, so neither
+   * can produce a user-visible envelope.
+   */
+  kill(signal: NodeJS.Signals = "SIGTERM", cause?: unknown): void {
+    if (this.lastKillCause === null || this.lastKillCause === "") {
+      this.lastKillCause = formatKillCause(cause);
+    }
     if (this.proc) {
       try {
         this.proc.kill(signal);
@@ -1120,12 +2109,85 @@ export class ClaudeCodeWorker extends EventEmitter {
     return this.running && this.proc !== null;
   }
 
+  /** When the child last printed a line; the pool's idle sweep counts it as use. */
+  lastActivityAt(): number {
+    return this.lastStdoutAt;
+  }
+
   /**
    * True while a turn is in flight or queued. The worker pool uses this to
    * never evict a worker mid-turn (people-profiles turns can run for many
    * minutes — see bible lifecycles.md L2).
    */
   isBusy(): boolean {
-    return this.currentTurn !== null || this.turnQueue.length > 0 || this.draining;
+    // An adopted turn waiting for its run is a turn in flight: never evicted, never respawned.
+    // FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): so is work the CLI owns after
+    // its turn ended: live background tasks (a Workflow, a Monitor, Bash in the background) and a
+    // turn it started on its own that waits for its run. Reaping the worker kills them all.
+    return (
+      this.currentTurn !== null ||
+      this.turnQueue.length > 0 ||
+      this.draining ||
+      this.pendingTurn !== null ||
+      this.bgTasks.size > 0 ||
+      this.holdsUnpromptedTurn()
+    );
+  }
+
+  private holdsUnpromptedTurn(): boolean {
+    const kept = this.unprompted;
+    return kept !== null && (!kept.result || Date.now() - kept.finishedAt <= UNPROMPTED_KEEP_MS);
+  }
+
+  /**
+   * FORK 2026-10-01 (bug-log [monitor-notify-idle-session-lost]): the turn the CLI started on its
+   * own and nobody has taken yet, if any.
+   */
+  unpromptedTurn(): { id: string; finished: boolean; startedAt: number } | null {
+    const kept = this.unprompted;
+    return kept ? { id: kept.id, finished: kept.result !== null, startedAt: kept.startedAt } : null;
+  }
+
+  /**
+   * Take the turn the CLI started on its own (the run its wake started, stream.ts): replay its
+   * lines from its `init`, then follow it live to its `result`, or resolve at once when it already
+   * ended. Nothing is written to the CLI: it has already answered. Resolves like send().
+   */
+  takeUnpromptedTurn(params: { id: string; signal?: AbortSignal }): Promise<CcStreamStdoutResult> {
+    const kept = this.unprompted;
+    if (!kept || kept.id !== params.id) {
+      return Promise.reject(new Error(`no unprompted turn ${params.id} on this worker`));
+    }
+    this.unprompted = null;
+    log.info(
+      `[unprompted-turn] ${kept.id} taken by a run (${kept.lines.length} lines replayed, ${kept.result ? "ended" : "still running"}) [${this.sessionKey}]`,
+    );
+    return new Promise((resolve, reject) => {
+      if (kept.result) {
+        this.replayLines(kept.lines);
+        resolve(kept.result);
+        return;
+      }
+      this.lastKillCause = null;
+      this.currentTurn = {
+        resolve,
+        reject,
+        aborted: false,
+        active: kept.lines.some((l) =>
+          TURN_ACTIVITY_TYPES.has((l as { type?: string }).type ?? ""),
+        ),
+      };
+      params.signal?.addEventListener(
+        "abort",
+        () => {
+          if (this.currentTurn) {
+            this.currentTurn.aborted = true;
+            this.kill("SIGTERM", params.signal?.reason);
+          }
+        },
+        { once: true },
+      );
+      this.replayLines(kept.lines);
+    });
   }
 }

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import type { DatabaseSync } from "node:sqlite";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { runGeminiEmbeddingBatches, type GeminiBatchRequest } from "./batch-gemini.js";
@@ -40,6 +41,16 @@ const EMBEDDING_RETRY_MAX_ATTEMPTS = 3;
 const EMBEDDING_RETRY_BASE_DELAY_MS = 500;
 const EMBEDDING_RETRY_MAX_DELAY_MS = 8000;
 const BATCH_FAILURE_LIMIT = 2;
+/**
+ * Chunks persisted per SQLite transaction in indexFile(), and the event-loop yield cadence:
+ * the persist loop awaits setImmediate BETWEEN committed batches, never inside one.
+ *
+ * Bounds two costs at once. The store runs journal_mode=delete, so every autocommit fsyncs —
+ * batching 50 INSERTs into one transaction removes ~98% of those fsyncs. And a batch of 50 is
+ * short enough that the main thread is never held for more than a few ms before the gateway's
+ * event loop gets it back.
+ */
+const CHUNK_PERSIST_TXN_BATCH = 50;
 const EMBEDDING_QUERY_TIMEOUT_REMOTE_MS = 60_000;
 const EMBEDDING_QUERY_TIMEOUT_LOCAL_MS = 5 * 60_000;
 const EMBEDDING_BATCH_TIMEOUT_REMOTE_MS = 2 * 60_000;
@@ -781,6 +792,80 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(pathname, source);
   }
 
+  /**
+   * Does this (source, path) hold ANY chunk whose validity interval is still OPEN and whose
+   * validity_start is STRICTLY EARLIER than `before`?
+   *
+   * SOUNDNESS — why one probe can replace ~2,800 per-chunk SELECTs. This predicate is the
+   * supersede-writer's per-chunk predicate (engram/supersede-writer.ts findSupersededChunkIds)
+   * with the start_line / end_line / model / hash<> / id<> conjuncts DROPPED — a strict
+   * relaxation over the same source, path, `validity_start < ?` and `validity_end IS NULL`.
+   * Every chunk of one indexFile pass is persisted with the same entry.path, options.source
+   * and the single `now` computed in indexFile, which is also each candidate's validityStart.
+   * So this result set is a SUPERSET of every per-chunk result set in the pass, and an empty
+   * superset proves every subset is empty. Skipping is not usually-right, it is provably
+   * equivalent whenever this returns false.
+   *
+   * And nothing written DURING the pass can re-populate it: persistChunk stamps
+   * validity_start = now, and `now < now` is false. (That strict `<` is the FORK 2026-09-03
+   * fix documented in supersede-writer.ts, which stops split fragments cannibalising their
+   * own siblings.)
+   *
+   * In the live pipeline clearIndexedFileData() has just DELETEd every chunk at
+   * (path, source), so this returns false and the whole per-chunk supersede pass is skipped.
+   * The probe is kept rather than the skip being hard-coded so that any future path which
+   * persists chunks WITHOUT clearing first still supersedes correctly — the optimisation
+   * cannot silently rot.
+   *
+   * FAIL-SAFE DIRECTION: on any error this returns true (assume prior facts exist), so a
+   * broken probe degrades to the old slow-but-correct behaviour, never to a silent skip.
+   * Logged, never swallowed.
+   */
+  private hasPriorOpenInterval(pathname: string, source: MemorySource, before: number): boolean {
+    try {
+      const row = this.db
+        .prepare(
+          `SELECT 1 AS present FROM chunks
+            WHERE source = ?
+              AND path = ?
+              AND validity_start < ?
+              AND validity_end IS NULL
+            LIMIT 1`,
+        )
+        .get(source, pathname, before) as { present?: number } | undefined;
+      return row !== undefined;
+    } catch (err) {
+      log.warn(
+        `memory embeddings: prior-open probe failed for ${pathname}; keeping per-chunk supersede: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return true;
+    }
+  }
+
+  /**
+   * Open one transaction for a persist batch. Returns false — LOUDLY, never silently — when
+   * BEGIN is refused because an outer transaction is already open on this handle. The batch
+   * then persists in autocommit exactly as it did before this optimisation instead of
+   * aborting the whole index, so a refused BEGIN preserves today's failure point (the first
+   * INSERT) rather than moving it earlier. VERIFICATION DISCIPLINE #4: an unobservable no-op
+   * is the bug, so this logs rather than swallowing.
+   */
+  private beginChunkTransaction(db: DatabaseSync): boolean {
+    try {
+      db.exec("BEGIN");
+      return true;
+    } catch (err) {
+      log.warn(
+        `memory embeddings: chunk-persist BEGIN refused, falling back to autocommit: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return false;
+    }
+  }
+
   private upsertFileRecord(entry: MemoryFileEntry | SessionFileEntry, source: MemorySource): void {
     this.db
       .prepare(
@@ -875,23 +960,83 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
 
     this.clearIndexedFileData(entry.path, options.source);
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const embedding = embeddings[i] ?? [];
-      const chunkId = hashText(
-        `${options.source}:${entry.path}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${this.provider.model}`,
-      );
-      this.persistChunk({
-        chunk,
-        embedding,
-        chunkId,
-        entry,
-        source: options.source,
-        now,
-        granularity,
-        topicCluster,
-        vectorReady,
-      });
+    // PERF 2026-09-03 — hoist the supersede prior-open check to ONE indexed probe per file
+    // (see hasPriorOpenInterval for the soundness proof). Deliberately placed AFTER
+    // clearIndexedFileData, because that is the state persistChunk's own per-chunk SELECT
+    // will actually see. Probing BEFORE the DELETE would report the rows we are about to
+    // remove, so the skip would never fire on the hot path — a re-index of an
+    // already-indexed session file, which is every pass after the first. The probe is
+    // skipped entirely when the feature is off, so it costs nothing by default.
+    const skipSupersede =
+      process.env.ENGRAM_SUPERSEDE_ENABLED === "true" &&
+      !this.hasPriorOpenInterval(entry.path, options.source, now);
+
+    // PERF: persist in transactions of CHUNK_PERSIST_TXN_BATCH chunks, yielding to the event
+    // loop BETWEEN committed batches.
+    //
+    // INVARIANT — THERE IS NO await BETWEEN BEGIN AND COMMIT. indexFile is fanned out at
+    // getIndexConcurrency() (default EMBEDDING_INDEX_CONCURRENCY = 4) over ONE shared
+    // DatabaseSync handle (manager-sync-ops.ts:844,957 -> runWithConcurrency; the handle is
+    // `protected abstract db` at manager-sync-ops.ts:157), and node:sqlite transactions
+    // belong to the HANDLE, not to this call. Until now the entire persist phase was
+    // synchronous, and that is precisely what made the concurrent fan-out safe: workers could
+    // only interleave at the embedding await. Yielding inside an OPEN transaction would
+    // destroy that invariant two ways — a sibling indexFile resuming mid-transaction throws
+    // "cannot start a transaction within a transaction" on its BEGIN, and any foreign write
+    // that slipped in (the embedding-cache flush at manager-sync-ops.ts:395 runs its own
+    // BEGIN/COMMIT on this same handle) would be silently discarded by our ROLLBACK.
+    // Committing before every yield makes both impossible BY CONSTRUCTION rather than merely
+    // unlikely, and means every point at which we hand the loop back exposes a consistent,
+    // durable store. ALTERNATIVE REJECTED: a promise-chain mutex around the persist phase —
+    // it serialises the fan-out for no gain once this invariant holds, and it would not even
+    // cover the foreign-writer case, since that flush is not under any such lock.
+    // manager-embedding-ops.supersede-perf.test.ts fails if a yield is ever observed while a
+    // transaction is open, which is the gate that keeps this invariant true.
+    //
+    // WHAT THIS TRADES AWAY: whole-file atomicity, which this code never had. A throw leaves
+    // earlier batches committed and skips upsertFileRecord below, so the stored hash stays
+    // stale and the next sync re-indexes the file — the same recovery as today, from a
+    // strictly better starting point (today each of ~2,800 INSERTs autocommits on its own).
+    for (let start = 0; start < chunks.length; start += CHUNK_PERSIST_TXN_BATCH) {
+      const end = Math.min(start + CHUNK_PERSIST_TXN_BATCH, chunks.length);
+      const db = this.db;
+      const inTransaction = this.beginChunkTransaction(db);
+      try {
+        for (let i = start; i < end; i++) {
+          const chunk = chunks[i];
+          const embedding = embeddings[i] ?? [];
+          const chunkId = hashText(
+            `${options.source}:${entry.path}:${chunk.startLine}:${chunk.endLine}:${chunk.hash}:${this.provider.model}`,
+          );
+          this.persistChunk({
+            chunk,
+            embedding,
+            chunkId,
+            entry,
+            source: options.source,
+            now,
+            granularity,
+            topicCluster,
+            vectorReady,
+            skipSupersede,
+          });
+        }
+        if (inTransaction) {
+          db.exec("COMMIT");
+        }
+      } catch (err) {
+        if (inTransaction) {
+          try {
+            db.exec("ROLLBACK");
+          } catch {}
+        }
+        throw err;
+      }
+      if (end < chunks.length) {
+        // The line that stops the gateway event loop stalling 130-180 s on a large session
+        // re-index. Reached only with every preceding batch COMMITted.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
     }
 
     this.upsertFileRecord(entry, options.source);
@@ -928,6 +1073,17 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     granularity: string;
     topicCluster: string;
     vectorReady: boolean;
+    /**
+     * Set by indexFile when its once-per-file prior-open probe found nothing. The supersede
+     * SELECT is then provably empty for every chunk of that pass (see hasPriorOpenInterval),
+     * so running it per chunk only burns main-thread time — measured 56-66 ms each, ~2,800
+     * times per session re-index.
+     *
+     * OPTIONAL, defaulting to false (run it), so any future caller that has not probed keeps
+     * the original behaviour. The default direction is the safe one: silence degrades to
+     * slow-but-correct, never to a silent skip.
+     */
+    skipSupersede?: boolean;
   }): void {
     if (!this.provider) {
       return;
@@ -942,6 +1098,7 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
       granularity,
       topicCluster,
       vectorReady,
+      skipSupersede = false,
     } = params;
 
     this.db
@@ -1013,7 +1170,17 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
     // 'all'/'valid-at' mode. Gated default-OFF: fires ONLY when ENGRAM_SUPERSEDE_ENABLED
     // === "true", so memory-write behavior is unchanged until explicitly enabled (then it
     // is one env var to soak and one to revert). Never throws into the write path.
-    if (this.provider && process.env.ENGRAM_SUPERSEDE_ENABLED === "true") {
+    //
+    // skipSupersede (2026-09-03): indexFile already proved, with ONE indexed probe, that no
+    // prior currently-valid row exists for this (source, path) strictly before `now`. That
+    // probe's WHERE is this SELECT's WHERE minus the span/model/hash conjuncts, so an empty
+    // probe means an empty result HERE for every chunk of the pass. Skipping is
+    // behaviour-preserving, not merely cheaper: with no match decideSupersede returns
+    // {action:'allow'} (supersede-writer.ts:153-155), applySupersede returns immediately for
+    // a non-supersede decision (:189-191), and both the log line and the onClosed
+    // trail-event hook sit inside `if (result.closed.length > 0)` (:203). No write, no log,
+    // no emitAgentEvent — the only difference is the elapsed time.
+    if (!skipSupersede && this.provider && process.env.ENGRAM_SUPERSEDE_ENABLED === "true") {
       try {
         supersedeContradictions(
           this.db,

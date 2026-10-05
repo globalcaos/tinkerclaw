@@ -31,16 +31,34 @@
  *     2 = runner internal error (bible folder missing, parse error, etc.).
  */
 import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// File-relative, never git-relative. A pre-push hook sets GIT_DIR, which makes
-// `git rev-parse --show-toplevel` treat scripts/ as the worktree and look for
-// TINKER_UI_DESIGN_BIBLE next to this file. That is the exact class this runner
-// exists to catch: scoring the wrong tree and calling it green.
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const BIBLE_DIR = path.join(REPO_ROOT, "TINKER_UI_DESIGN_BIBLE");
+/**
+ * FORK 2026-09-24 (final fix brief F14) — `BIBLE_DIR=<dir>` runs the gate against another
+ * checkout's bible (e.g. a worktree's, before its merge); relative paths resolve against the cwd.
+ * Unset or blank: the shared checkout's bible, exactly as before.
+ *
+ * KNOWN LIMIT (counted 2026-10-01): BIBLE_DIR only reaches the verify commands that start with
+ * `cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.."` (cc322a5bd15 converted the 48 `cd ~/src/tinkerclaw`
+ * ones). 224 more still name the shared checkout directly, in other forms, so a branch run checks develop there:
+ *   shell   `test -x ~/src/tinkerclaw/X`            -> `test -x "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/../X"`
+ *   python  `os.path.expanduser("~/src/tinkerclaw/X")` -> `os.path.join(os.environ.get("BIBLE_DIR") or os.path.expanduser(
+ *           "~/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE"), "..", "X")`  (design-principles.md already does this once)
+ * Find them: grep -nE "^\s+cmd:" TINKER_UI_DESIGN_BIBLE/*.md | grep -E "(~|\$HOME|/home/[^/]+)/src/tinkerclaw" | grep -v BIBLE_DIR
+ * Convert per form, then run the gate both with BIBLE_DIR unset and pointed at a worktree; the two must agree on develop.
+ */
+export function resolveBibleDir(env = process.env) {
+  const override = typeof env.BIBLE_DIR === "string" ? env.BIBLE_DIR.trim() : "";
+  return override
+    ? path.resolve(override)
+    : path.resolve(os.homedir(), "src/tinkerclaw/TINKER_UI_DESIGN_BIBLE");
+}
+
+const BIBLE_DIR = resolveBibleDir();
 
 const TIMEOUT_MS = 30_000;
 
@@ -163,13 +181,7 @@ function runShell(cmd) {
     const env = { ...process.env };
     const existing = env.PATH ?? "";
     env.PATH = existing ? `${systemPath}:${existing}` : systemPath;
-    // A hook sets GIT_DIR to .git/ and GIT_WORK_TREE may be absent, so any
-    // `git rev-parse --show-toplevel` inside a verify: command would resolve
-    // to scripts/ (this file's directory) instead of the repo. Drop both.
-    delete env.GIT_DIR;
-    delete env.GIT_WORK_TREE;
     const child = spawn("bash", ["-lc", cmd], {
-      cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
       env,
     });
@@ -526,7 +538,36 @@ async function main() {
   process.exit(failedAll > 0 ? 1 : 0);
 }
 
-main().catch((err) => {
-  console.error(`[test-invariants] internal error: ${String(err)}`);
-  process.exit(2);
-});
+/**
+ * FORK 2026-09-24 — true only when this module is the process entry (`node <path>`), so importing
+ * it (its test) never runs the gate. Compares REAL paths: Node resolves the ESM entry's
+ * `import.meta.url` through symlinks (unless `--preserve-symlinks-main`) while `process.argv[1]`
+ * keeps the path as typed, so the old `path.resolve(argv[1]) === fileURLToPath(import.meta.url)`
+ * was false when the script (or a parent directory) was reached through a symlink, and the merge
+ * gate exited 0 having run nothing. Both sides are realpath'd, so the flag cannot break it either.
+ * The `path.resolve` fallback is the old comparison; it only engages for a path realpath cannot
+ * resolve (dangling link, ELOOP, EACCES), and Node must traverse that same path to load its
+ * entry, so such an `argv1` did not load this module and `false` is the right answer.
+ * @param {string | undefined} argv1 the entry path as typed (default `process.argv[1]`)
+ * @param {string} moduleUrl a `file:` URL (default this module's `import.meta.url`); anything else
+ *   throws on purpose — a path passed where a URL belongs is a caller bug, not "not the entry".
+ */
+export function isEntryPoint(argv1 = process.argv[1], moduleUrl = import.meta.url) {
+  if (!argv1) return false;
+  const real = (p) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  return real(argv1) === real(fileURLToPath(moduleUrl));
+}
+
+// Run only as a script (`pnpm bible:invariants`); importing it (its test) must not run the gate.
+if (isEntryPoint()) {
+  main().catch((err) => {
+    console.error(`[test-invariants] internal error: ${String(err)}`);
+    process.exit(2);
+  });
+}

@@ -8,12 +8,15 @@
  * - No new window/tab creation — only attaches to user-selected tabs
  * - Token-based auth to gateway relay on port 18792
  *
- * Protocol: connects to extension-relay.ts via WebSocket at ws://127.0.0.1:<port>/extension.
+ * Protocol: connects to extension-relay.ts via WebSocket at ws://<host>:<port>/extension.
+ * Host and port are configurable on the options page (default 127.0.0.1:18792) so the relay
+ * can live on another machine, reached over the LAN or an SSH tunnel.
  * Relay sends forwardCDPCommand requests; extension forwards them via chrome.debugger API.
  * Extension sends forwardCDPEvent messages for debugger events back to relay.
  */
 
 const DEFAULT_PORT = 18792;
+const DEFAULT_HOST = "127.0.0.1";
 
 const TAB_GROUP_NAME = "Tinker Shared";
 // FORK 2026-06-04 (Browser Relay upgrade): make the shared/focused tab STAND OUT.
@@ -58,6 +61,20 @@ const reattachTimers = new Map();
 // Relay port + auth token
 // ---------------------------------------------------------------------------
 
+function isLoopbackHostName(host) {
+  const h = String(host || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  return h === "localhost" || h === "::1" || h === "::ffff:127.0.0.1" || /^127\./.test(h);
+}
+
+async function getRelayHost() {
+  const stored = await chrome.storage.local.get(["relayHost"]);
+  const raw = String(stored.relayHost || "").trim();
+  return raw || DEFAULT_HOST;
+}
+
 async function getRelayPort() {
   const stored = await chrome.storage.local.get(["relayPort"]);
   const raw = stored.relayPort;
@@ -68,17 +85,24 @@ async function getRelayPort() {
   return n;
 }
 
-async function getRelayToken() {
+async function getRelayToken(host) {
   // Try stored token first
   const stored = await chrome.storage.local.get(["relayToken"]);
   if (stored.relayToken) {
     return stored.relayToken;
   }
 
+  // The relay only waives the token for a chrome-extension:// origin arriving over
+  // loopback (extension-relay.ts upgrade handler). A remote relay always demands one,
+  // so never pretend an empty token is fine there.
+  if (!isLoopbackHostName(host ?? DEFAULT_HOST)) {
+    return "";
+  }
+
   // Auto-discover: probe the relay status endpoint (no auth needed for status)
   const port = await getRelayPort();
   try {
-    const resp = await fetch(`http://127.0.0.1:${port}/extension/status`);
+    const resp = await fetch(`http://${host ?? DEFAULT_HOST}:${port}/extension/status`);
     if (resp.ok) {
       // Relay is up and doesn't require token for extension connections
       // (loopback + chrome-extension:// origin is sufficient)
@@ -209,14 +233,14 @@ async function restoreSharedTabs() {
 // Relay port discovery
 // ---------------------------------------------------------------------------
 
-async function findRelayPort(basePort) {
+async function findRelayPort(host, basePort) {
   const candidates = [basePort, basePort + 1, basePort - 1];
   for (const port of candidates) {
     if (port <= 0 || port > 65535) {
       continue;
     }
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/extension/status`, {
+      const res = await fetch(`http://${host}:${port}/extension/status`, {
         signal: AbortSignal.timeout(800),
       });
       if (res.ok) {
@@ -242,13 +266,20 @@ async function ensureRelayConnection() {
   }
 
   relayConnectPromise = (async () => {
+    const host = await getRelayHost();
     const basePort = await getRelayPort();
-    const port = await findRelayPort(basePort);
-    const token = await getRelayToken();
-    const httpBase = `http://127.0.0.1:${port}`;
+    const port = await findRelayPort(host, basePort);
+    const token = await getRelayToken(host);
+    if (!token && !isLoopbackHostName(host)) {
+      throw new Error(
+        `Relay host ${host} is not loopback, so the relay requires a token. ` +
+          "Open the extension options and paste the gateway token.",
+      );
+    }
+    const httpBase = `http://${host}:${port}`;
     const wsUrl = token
-      ? `ws://127.0.0.1:${port}/extension?token=${encodeURIComponent(token)}`
-      : `ws://127.0.0.1:${port}/extension`;
+      ? `ws://${host}:${port}/extension?token=${encodeURIComponent(token)}`
+      : `ws://${host}:${port}/extension`;
 
     // Fast preflight: is the relay server up?
     try {

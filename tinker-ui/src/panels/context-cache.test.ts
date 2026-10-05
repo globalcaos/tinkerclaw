@@ -1,14 +1,17 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   cacheSegments,
   contextScaleTokens,
   CONTEXT_SCALE_TOKENS,
   fmtTokens,
+  keepsPreCallComposition,
   renderCachePanelHtml,
   unitemisedTokens,
   type CachePanelState,
 } from "./context-cache";
-import { SEGMENT_COLORS, SEGMENT_LABELS } from "./context-timeline";
+import { RESPONSE_COLOR, SEGMENT_COLORS, SEGMENT_LABELS } from "./context-timeline";
 
 /** Frozen clock. The panel must never read one, so this only ever travels as state. */
 const NOW = 1_700_000_000_000;
@@ -474,15 +477,19 @@ describe("THIS CALL / THIS SESSION stat panels", () => {
     expect(html).toMatch(/data-stat="evicted-total"[\s\S]*?250\.0k/);
   });
 
-  it("estimates the saving as evicted x turns, and says nothing without both", () => {
-    const withBoth = renderCachePanelHtml(
-      sample({ sessionStats: { turns: 4, compactions: 1, evictedTokens: 100_000 } }),
-    );
-    expect(withBoth).toMatch(/data-stat="saved"[\s\S]*?400\.0k/);
-    const noTurns = renderCachePanelHtml(
-      sample({ sessionStats: { compactions: 1, evictedTokens: 100_000 } }),
-    );
-    expect(noTurns).toMatch(/data-stat="saved"[\s\S]*?—/);
+  it("paints the per-drop `saved` it is handed, and never rebuilds evicted × turns (F4)", () => {
+    // The painted VALUE of the cell. A lazy scan onwards from data-stat="saved" also reaches the
+    // cell's title, and the old tooltip carried an em dash ("turns since — roughly"): a dash
+    // assertion written that way passes on the very tree it has to fail on.
+    const savedCell = (html: string): string | undefined =>
+      html.match(/data-stat="saved"[^>]*>.*?cache-stat-v">([^<]*)</)?.[1];
+    const stats = { turns: 4, compactions: 1, evictedTokens: 100_000 };
+    const paint = (over: { saved?: number }) =>
+      savedCell(renderCachePanelHtml(sample({ sessionStats: { ...stats, ...over } })));
+    expect(paint({ saved: 30_000 })).toBe("30.0k");
+    // CONTROL — the deleted ratchet branch painted 100k × 4 = "400.0k" for all three of these.
+    expect(paint({})).toBe("—");
+    expect(paint({ saved: 0 })).toBe("0");
   });
 
   it("glows only the keys it is told to, and only those", () => {
@@ -502,5 +509,188 @@ describe("THIS CALL / THIS SESSION stat panels", () => {
 
   it("no longer renders the action buttons — they moved to the panel title", () => {
     expect(renderCachePanelHtml(base)).not.toContain("data-cache-act");
+  });
+});
+
+// FORK 2026-09-30 (the architect: "this graph only is supposed to visualize the input tokens, not the
+// output ones ... add an extra number after 'this call', also purple").
+describe("output lives beside THIS CALL, in the output purple, and never on the bar", () => {
+  /** The THIS CALL title row, from its opening tag to its close. */
+  const callRow = (html: string): string =>
+    html.match(
+      /<div class="cache-meta cache-meta--title"><span>THIS (CALL|TURN)[\s\S]*?<\/div>/,
+    )?.[0] ?? "";
+
+  it("prints the output right after the label, purple, ahead of the billed figure", () => {
+    const row = callRow(renderCachePanelHtml(sample({ output: 16_700 })));
+    expect(row).toMatch(
+      new RegExp(`<span>THIS CALL</span><span class="cache-out"[^>]*color:${RESPONSE_COLOR}`),
+    );
+    expect(row).toContain(">16.7k out</span>");
+    expect(row.indexOf("16.7k out")).toBeLessThan(row.indexOf("billed"));
+  });
+
+  it("paints a dash, not a zero, when no output is known", () => {
+    expect(callRow(renderCachePanelHtml(sample({ output: undefined })))).toContain(">— out</span>");
+  });
+
+  it("is the only output figure: the grid no longer repeats it as a cell", () => {
+    const html = renderCachePanelHtml(sample({ output: 16_700 }));
+    expect((html.match(/data-stat="output"/g) ?? []).length).toBe(1);
+    expect(html).not.toMatch(/<div class="cache-stat[^"]*" data-stat="output"/);
+  });
+
+  it("keeps app.ts's glow on the figure when it changes", () => {
+    const row = callRow(renderCachePanelHtml(sample({ glow: ["output"] })));
+    expect(row).toMatch(/class="cache-out cache-stat--glow" data-stat="output"/);
+  });
+
+  it("draws no output purple anywhere on the WINDOW bar", () => {
+    const html = renderCachePanelHtml(sample({ output: 500_000 }));
+    const bar = html.match(/<div class="cache-bar cache-bar--window">[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(bar).not.toBe("");
+    expect(bar.toLowerCase()).not.toContain(RESPONSE_COLOR.toLowerCase());
+  });
+});
+
+describe("tool results are input, and do not look like output", () => {
+  it("are labelled as the tools' results, not the model's", () => {
+    expect(SEGMENT_LABELS.toolResults).toBe("Tool results");
+  });
+
+  it("are not painted in a purple that passes for RESPONSE_COLOR", () => {
+    // context-cache.bar.test.ts owns the ΔE ratchets. This pins the decision itself: tool results
+    // are not purple, so on this panel purple means output.
+    const hue = (hex: string): number => {
+      const [r, g, b] = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16) / 255);
+      const max = Math.max(r, g, b);
+      const d = max - Math.min(r, g, b);
+      if (d === 0) {
+        return 0;
+      }
+      const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      return (h * 60 + 360) % 360;
+    };
+    // Purple/violet: roughly 260°–300°. Indigo (systemPrompt, ~239°) sits outside it on purpose.
+    expect(hue(SEGMENT_COLORS.toolResults) < 260 || hue(SEGMENT_COLORS.toolResults) > 300).toBe(
+      true,
+    );
+    expect(hue(RESPONSE_COLOR)).toBeGreaterThan(260);
+    expect(hue(RESPONSE_COLOR)).toBeLessThan(300);
+  });
+});
+
+describe("keepsPreCallComposition — the bar keeps a pre-call composition over a post-turn one", () => {
+  // One turn's two anatomy rows for ONE (run, round), as A9 writes them. The pre-call row itemises
+  // the prompt that was sent (userMessage 2k); by post-turn it has slid into the conversation, and
+  // the reply and the tool results are in (context-window-panel.md F5).
+  type AnatomyRow = {
+    runId?: string;
+    roundNumber?: number;
+    snapshot?: "pre-call" | "post-turn";
+    contextSent: Record<string, unknown>;
+  };
+  const PRE: AnatomyRow = {
+    runId: "run-1",
+    roundNumber: 0,
+    snapshot: "pre-call",
+    contextSent: { ...base.contextSent },
+  };
+  const POST: AnatomyRow = {
+    runId: "run-1",
+    roundNumber: 0,
+    snapshot: "post-turn",
+    contextSent: {
+      ...base.contextSent,
+      conversationHistoryTokens: 52_000,
+      toolResultsTokens: 30_000,
+      userMessageTokens: 0,
+    },
+  };
+  type Keep = typeof keepsPreCallComposition;
+  /** CONTROL — the host's rule before this change: every row's composition replaced the last. */
+  const lastWriteWins: Keep = () => false;
+  /** app.ts's `context-anatomy` branch, composition half, under a given rule. */
+  const panelAfter = (rows: AnatomyRow[], keep: Keep): CachePanelState => {
+    const s = sample({ contextSent: undefined, compositionSnapshot: undefined });
+    for (const row of rows) {
+      if (keep(s, row)) {
+        continue;
+      }
+      s.contextSent = row.contextSent;
+      s.compositionSnapshot = row.snapshot;
+      s.compositionRunId = row.runId;
+      s.compositionRound = row.roundNumber;
+    }
+    return s;
+  };
+
+  it("CONTROL — last write wins: live, the bar swaps to the post-turn composition at turn end", () => {
+    const s = panelAfter([PRE, POST], lastWriteWins);
+    expect(s.contextSent).toBe(POST.contextSent);
+    expect(renderCachePanelHtml(s)).toContain("· post-turn");
+  });
+
+  it("keeps the pre-call composition of the same (run, round), the one a reload paints", () => {
+    const s = panelAfter([PRE, POST], keepsPreCallComposition);
+    expect(s.contextSent).toBe(PRE.contextSent);
+    expect(s.compositionSnapshot).toBe("pre-call");
+    const html = renderCachePanelHtml(s);
+    expect(html).toContain("· pre-call");
+    expect(html).not.toContain("· post-turn");
+  });
+
+  it("any other row replaces it: another run, another round, a pre-call row", () => {
+    for (const next of [
+      { ...POST, runId: "run-2" },
+      { ...POST, roundNumber: 1 },
+      { ...PRE, runId: "run-2", contextSent: { userMessageTokens: 9 } },
+    ]) {
+      expect(panelAfter([PRE, next], keepsPreCallComposition).contextSent).toBe(next.contextSent);
+    }
+  });
+
+  it("a post-turn composition never outranks the pre-call row of its own run", () => {
+    expect(panelAfter([POST, PRE], keepsPreCallComposition).contextSent).toBe(PRE.contextSent);
+  });
+
+  it("nothing is held without a full key on both sides: run, round and snapshot", () => {
+    const held = panelAfter([PRE], keepsPreCallComposition);
+    for (const row of [
+      { ...POST, runId: undefined },
+      { ...POST, runId: "" },
+      { ...POST, roundNumber: undefined },
+      { ...POST, snapshot: undefined },
+    ]) {
+      expect(keepsPreCallComposition(held, row)).toBe(false);
+    }
+    const unkeyed = panelAfter([{ ...PRE, runId: undefined }], keepsPreCallComposition);
+    expect(keepsPreCallComposition(unkeyed, POST)).toBe(false);
+  });
+});
+
+describe("app.ts host — an anatomy row reaches the bar only through that rule", () => {
+  // Resolved from the run root, NOT from import.meta.url: under jsdom that is an http:// URL.
+  const srcRoot = ["tinker-ui/src", "src"]
+    .map((p) => join(process.cwd(), p))
+    .find((p) => existsSync(join(p, "app.ts")));
+  const app = srcRoot ? readFileSync(join(srcRoot, "app.ts"), "utf8") : "";
+
+  it("finds app.ts", () => {
+    expect(srcRoot, `app.ts not found from ${process.cwd()}`).toBeTruthy();
+  });
+
+  it("the live composition write is gated by the rule (CONTROL: fails on the parent commit)", () => {
+    // Parent commit: `if (anatomy.contextSent) { as.contextSent = anatomy.contextSent; …` with no
+    // rule, so the post-turn row always replaced the pre-call one.
+    expect(app.match(/keepsPreCallComposition\(/g) ?? []).toHaveLength(1);
+    expect(app).toMatch(
+      /!keepsPreCallComposition\(as, anatomyKey\)\) \{\s*as\.contextSent = anatomy\.contextSent;/,
+    );
+  });
+
+  it("both composition writers record the row's key: the live row and the reload backfill", () => {
+    expect(app.match(/\.compositionRunId =(?!=)/g) ?? []).toHaveLength(2);
+    expect(app.match(/\.compositionRound =(?!=)/g) ?? []).toHaveLength(2);
   });
 });

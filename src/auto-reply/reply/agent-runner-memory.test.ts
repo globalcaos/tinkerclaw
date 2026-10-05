@@ -178,6 +178,57 @@ describe("runMemoryFlushIfNeeded", () => {
     expect(persisted.main.memoryFlushAt).toBe(1_700_000_000_000);
   });
 
+  // FORK 2026-10-01 (bug-log [chat-divergence] cause 6): a flush that STARTS during a restart drain
+  // is held by the drain at its own first model call, so the prompt behind it never leaves
+  // preparation and is lost at the stop. The flush waits for the next turn instead.
+  it("skips the memory flush while a restart drain is active, so the prompt can reach its own run", async () => {
+    setAgentRunnerMemoryTestDeps({
+      compactEmbeddedPiSession: compactEmbeddedPiSessionMock as never,
+      runWithModelFallback: runWithModelFallbackMock as never,
+      runEmbeddedPiAgent: runEmbeddedPiAgentMock as never,
+      refreshQueuedFollowupSession: refreshQueuedFollowupSessionMock as never,
+      incrementCompactionCount: incrementCompactionCountMock as never,
+      registerAgentRunContext: vi.fn() as never,
+      randomUUID: () => "00000000-0000-0000-0000-000000000001",
+      now: () => 1_700_000_000_000,
+      isRestartDrainActive: () => true,
+    });
+    const storePath = path.join(rootDir, "sessions.json");
+    const sessionKey = "main";
+    const sessionEntry: SessionEntry = {
+      sessionId: "session",
+      updatedAt: Date.now(),
+      totalTokens: 80_000,
+      compactionCount: 1,
+    };
+    const sessionStore = { [sessionKey]: sessionEntry };
+    await writeTestSessionStore(storePath, sessionKey, sessionEntry);
+    const replyOperation = createReplyOperation() as unknown as {
+      setPhase: ReturnType<typeof vi.fn>;
+    };
+
+    const followupRun = createTestFollowupRun();
+    const entry = await runMemoryFlushIfNeeded({
+      cfg: { agents: { defaults: { compaction: { memoryFlush: {} } } } },
+      followupRun,
+      sessionCtx: { Provider: "whatsapp" } as unknown as TemplateContext,
+      defaultModel: "anthropic/claude-opus-4-6",
+      agentCfgContextTokens: 100_000,
+      resolvedVerboseLevel: "off",
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      storePath,
+      isHeartbeat: false,
+      replyOperation: replyOperation as never,
+    });
+
+    // The same entry as the "runs a memory flush turn" case above would flush; here nothing runs.
+    expect(runEmbeddedPiAgentMock).not.toHaveBeenCalled();
+    expect(replyOperation.setPhase).not.toHaveBeenCalledWith("memory_flushing");
+    expect(entry?.sessionId).toBe("session");
+  });
+
   it("runs memory flush on the configured maintenance model without active fallbacks", async () => {
     registerMemoryFlushPlanResolver(() => ({
       softThresholdTokens: 4_000,

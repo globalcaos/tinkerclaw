@@ -376,9 +376,23 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
         `config change requires gateway restart (${reasons}) — deferring until ${initialDetails.join(", ")} complete`,
       );
 
+      // FORK 2026-09-14 — a forced restart is never allowed on top of a live turn.
+      //
+      // 12:31 a worker flipped `plugins.entries.github-copilot.enabled`; the deferral cap ran out
+      // at 12:46:28 with 8 embedded runs live ("restart timeout … restarting anyway"), the drain
+      // then timed out, and every in-flight chat — one 21 minutes old — died with SIGTERM. The
+      // counter this loop waits on (queue ops + pending replies + runs + tasks) never reaches zero
+      // on a busy day, so the cap WAS the normal path, not the exception. The cap now only forces
+      // when no embedded run and no restart-blocking task is live — i.e. when only bookkeeping
+      // counters are holding it — and otherwise keeps polling until the first idle instant.
+      const liveTurnCount = () => {
+        const counts = getActiveCounts();
+        return counts.embeddedRuns + counts.activeTasks;
+      };
       deferGatewayRestartUntilIdle({
         getPendingCount: () => getActiveCounts().totalActive,
         maxWaitMs: nextConfig.gateway?.reload?.deferralTimeoutMs,
+        canForceOnTimeout: () => liveTurnCount() === 0,
         hooks: {
           onReady: () => {
             restartPending = false;
@@ -390,11 +404,17 @@ export function createGatewayReloadHandlers(params: GatewayReloadHandlerParams) 
               `restart still deferred after ${elapsedMs}ms with ${remaining.join(", ")} active`,
             );
           },
+          onTimeoutDeferred: (_pending, elapsedMs) => {
+            const remaining = formatActiveDetails(getActiveCounts());
+            params.logReload.warn(
+              `restart deferral cap reached after ${elapsedMs}ms but ${liveTurnCount()} live turn(s) remain (${remaining.join(", ")}) — NOT forcing; the restart lands at the first idle instant`,
+            );
+          },
           onTimeout: (_pending, elapsedMs) => {
             const remaining = formatActiveDetails(getActiveCounts());
             restartPending = false;
             params.logReload.warn(
-              `restart timeout after ${elapsedMs}ms with ${remaining.join(", ")} still active; restarting anyway`,
+              `restart timeout after ${elapsedMs}ms with ${remaining.join(", ")} still active but no live turn; restarting now`,
             );
           },
           onCheckError: (err) => {

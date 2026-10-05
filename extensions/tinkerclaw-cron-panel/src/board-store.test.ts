@@ -348,6 +348,25 @@ describe("auto-resolve by absence", () => {
     expect(board.items.find((i) => i.text === "pin me")?.status).toBe("open");
     expect(board.items.find((i) => i.text === "dismiss me")?.status).toBe("dismissed");
   });
+
+  it("keeps an unread FOUND open until it is ticked, then lets it leave the card", () => {
+    const cfg = makeCfg();
+    writeReport(cfg, day(0), ["FOUND: an upgrade worth picking", "NOTE: heartbeat"]);
+    ingestBoard(cfg, JOB);
+
+    for (let k = 1; k <= RESOLVE_AFTER_MISSED_RUNS; k++)
+      writeReport(cfg, day(k), ["NOTE: heartbeat"]);
+    const board = ingestBoard(cfg, JOB);
+    const pick = board.items.find((i) => i.text === "an upgrade worth picking");
+    expect(pick?.status).toBe("open");
+
+    acknowledgeItem(cfg, JOB, pick!.id, true);
+    writeReport(cfg, day(RESOLVE_AFTER_MISSED_RUNS + 1), ["NOTE: heartbeat"]);
+    const after = ingestBoard(cfg, JOB);
+    // Ticked and long absent: it leaves the card (resolved), like any read item.
+    expect(after.items.find((i) => i.id === pick!.id)?.status).toBe("resolved");
+    expect(summarizeBoard(after).openCount).toBe(1);
+  });
 });
 
 describe("ordering and robustness", () => {

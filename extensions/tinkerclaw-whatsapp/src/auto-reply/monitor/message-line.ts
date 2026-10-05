@@ -11,9 +11,12 @@ import {
   type EnvelopeFormatOptions,
 } from "./message-line.runtime.js";
 import { prefetchSenderProfile } from "./people-prefetch.js";
-import { buildReplyModeBlock, deriveReplyMode } from "./reply-mode.js";
+import { buildReplyModeBlock, deriveReplyMode, type ReplyMode } from "./reply-mode.js";
 import { prefetchRecentThread } from "./thread-prefetch.js";
-import { UNKNOWN_CONTACT_PROTOCOL_BLOCK } from "./unknown-contact-protocol.js";
+import {
+  buildUnknownContactProtocolBlock,
+  shouldOfferContactResearch,
+} from "./unknown-contact-protocol.js";
 
 // FORK 2026-05-04: people-profiles preamble. Two parts now:
 //   (a) Sender's pre-resolved profile (name, role, manual context, rolling
@@ -34,6 +37,20 @@ const PEOPLE_PROFILE_HINT = [
 ].join("\n");
 
 /**
+ * The cross-chat search line is only emitted when the owner started the turn
+ * (owner-management, outbound-draft). In an outbound-auto-reply the message
+ * came from a contact and the reply goes back to that contact, so the hint
+ * stays scoped to this chat. Set OPENCLAW_WHATSAPP_CROSS_CHAT_HINT=all to also
+ * emit it in contact-initiated auto-replies.
+ */
+export function shouldOfferCrossChatLookup(mode: ReplyMode): boolean {
+  if (mode !== "outbound-auto-reply") {
+    return true;
+  }
+  return process.env.OPENCLAW_WHATSAPP_CROSS_CHAT_HINT?.trim().toLowerCase() === "all";
+}
+
+/**
  * FORK 2026-05-09: thread-escalation hint. The `[recent-thread]` block
  * eagerly inlines the last ~6 messages of the current chat. When the question
  * needs older or wider context (mentioned-but-not-shown people, weeks-old
@@ -46,16 +63,28 @@ const PEOPLE_PROFILE_HINT = [
  * present (no prior history), `<oldest_ts>` falls back to the inbound's own
  * timestamp.
  */
-function buildThreadEscalationHint(params: { chatJid: string; oldestUnixSec: number }): string {
+export function buildThreadEscalationHint(params: {
+  chatJid: string;
+  oldestUnixSec: number;
+  allowCrossChat?: boolean;
+}): string {
   const oldestIso = new Date(params.oldestUnixSec * 1000).toISOString();
+  const crossChat = params.allowCrossChat !== false;
   return [
     "[thread-escalation]",
     "If the [recent-thread] block above doesn't cover what the user is asking about,",
     "read further back in this chat by calling the `whatsapp_history` tool:",
     `  action="search", chat="${params.chatJid}", until="${oldestIso}", limit=20`,
     "Repeat with progressively older `until` values until you have enough context, or",
-    "until the messages are no longer relevant to the question. For cross-chat lookups,",
-    'add `query="<keyword>"` (full-text search across all chats).',
+    ...(crossChat
+      ? [
+          "until the messages are no longer relevant to the question. For cross-chat lookups,",
+          'add `query="<keyword>"` (full-text search across all chats).',
+        ]
+      : [
+          "until the messages are no longer relevant to the question. Keep lookups in this",
+          "chat: the reply goes to the contact who wrote it.",
+        ]),
     "Default to escalating once before answering when the user references something",
     'not in the prelude (e.g. "ese libro", "lo que dije ayer", "el plan que comentamos").',
     "[/thread-escalation]",
@@ -140,7 +169,10 @@ export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
     contactCard !== null &&
     !contactCard.knownInPhonebook &&
     !contactCard.slug;
-  const unknownContactBlock = showUnknownProtocol ? `${UNKNOWN_CONTACT_PROTOCOL_BLOCK}\n\n` : "";
+  const allowCrossChat = shouldOfferCrossChatLookup(replyMode);
+  const unknownContactBlock = showUnknownProtocol
+    ? `${buildUnknownContactProtocolBlock({ allowCrossChat, allowResearch: shouldOfferContactResearch() })}\n\n`
+    : "";
 
   const languagePolicyBlock = `${LANGUAGE_POLICY_BLOCK}\n\n`;
 
@@ -197,7 +229,11 @@ export function buildInboundPrelude(params: { msg: WebInboundMsg }): string {
   const oldestUnixSec =
     recent?.oldestUnixSec ??
     (msg.timestamp ? Math.floor(msg.timestamp / 1000) : Math.floor(Date.now() / 1000));
-  const escalationBlock = `${buildThreadEscalationHint({ chatJid, oldestUnixSec })}\n\n`;
+  const escalationBlock = `${buildThreadEscalationHint({
+    chatJid,
+    oldestUnixSec,
+    allowCrossChat,
+  })}\n\n`;
 
   return (
     `${replyModeBlock}${contactCardBlock}${unknownContactBlock}${languagePolicyBlock}` +

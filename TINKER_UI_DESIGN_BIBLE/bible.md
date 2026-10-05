@@ -94,6 +94,8 @@ extensions/hippocampus/ ← Fork-only plugin stub
 
 **Renamed `cc-bridge` → `tinker-bridge` (2026-06-19), name FULLY PURGED 2026-06-20.** Extension dir `extensions/tinkerclaw-cc-bridge` → `tinkerclaw-tinker-bridge`; plugin id `tinkerclaw-tinker-bridge`; ClawHub package `@globalcaos/tinker-bridge` with `publishToClawHub:true`. The `cc-bridge` name is retired EVERYWHERE — code symbols (`CcBridge*`→`TinkerBridge*`, `CC_BRIDGE_*`→`TINKER_BRIDGE_*`, file `cc-bridge-session-map.ts`→`tinker-bridge-session-map.ts`), the `ccBridge:true` cross-extension flag (both the `stream.ts` emit and the `learned-intuition` listener), the `cc_bridge_*` error codes, comments/docs/prompts — AND the persisted identifiers, with migrations so no live state is lost: the worker-pool prefix `cc-sp-`→`tinker-sp-` and the state dir `~/.openclaw/cc-bridge/`→`~/.openclaw/tinker-bridge/` migrate on first load (copy + rekey — `session-map.ts:migrateLegacyMap`, plus a legacy-path read fallback in `tinker-bridge-session-map.ts`); the `cc-bridge-tool` history customType→`tinker-bridge-tool` with a legacy-kind read back-compat in `session-utils.fs.ts` so pre-rename transcripts still render. **KEPT (genuinely NOT the bridge):** the provider id `claude-code` (auth/model routing keys on this, not the plugin id), and `cc-skills-bridge` (prefrontal's SKILL.md→recipe transpiler — a different component). The actual ClawHub push stays human-gated (the package description documents the Anthropic gray-zone).
 
+**Split into two published plugins (2026-09-21, the architect).** The bridge is published again as **cc-bridge** (one Claude login for the whole agent). ONLY the published surface changed: ClawHub package `@globalcaos/cc-bridge`, display name `cc-bridge`. The plugin id `tinkerclaw-tinker-bridge`, the dir, the state dir `~/.openclaw/tinker-bridge/` and the `tinker-sp-` prefix all STAY, so live config and persisted state need no migration. The harness identity sentence moved to a NEW plugin, `extensions/tinkerclaw-harness-id` (off by default). It uses `api.registerTextTransforms` to rename ("running inside <name>", default TinkerClaw) or strip the sentence `You are a personal assistant running inside OpenClaw.` It is designed to be used with an Anthropic API key only. Each README warns that combining the two may breach the terms of an Anthropic subscription. harness-id ENFORCES the separation at load time (`resolveHarnessIdGate`): it stays inactive while cc-bridge is enabled or any Anthropic auth profile is `oauth`/`token`. It also refuses harness names containing Claude/Anthropic.
+
 ### 5.67 Amygdala + Fractal Injection Pipeline (2026-04-18)
 
 - **Status:** `FRACTAL DEPLOYED; AMYGDALA RETIRED 2026-06-10` — the per-turn `🧠 AMYGDALA` section was retired (split/render extracted to `tinker-ui/src/sectioned-reply.ts`; see `tinker-ui.md` §5.74 for the authoritative current state + don't-regress). **The in-band injection design below is being superseded by §5.67a — Parallel Fractal Reflection v2 (DESIGN, 2026-06-11).** **UPDATE 2026-06-19 (Bug A): the `💬 ANSWER` section marker is RETIRED.** The UI now separates narration/answer STRUCTURALLY (text after the last tool = answer; `reply-grouping.ts` `narrationIndices`), so `buildInjectedPrompt` no longer injects `💬 ANSWER` (kept `🌿 FRACTAL`, which is also system-prompt-mandated). Root cause: the marker was injected only transiently/toggle-gated while `🌿 FRACTAL` was always-mandated → the model dropped `💬 ANSWER` and the positional collapse hid the answer. Authoritative current state: `tinker-ui.md` §5.8; root cause + fix: `bug-log.md` FIXED A. Lines below describing the two-section `💬 ANSWER → 🌿 FRACTAL` injection are now HISTORICAL.
@@ -1059,6 +1061,55 @@ The first real instance of §5.83's U11 (external skill acquisition): integratin
 - **Where facts land (per §5.84 rule):** decision/intent here; structural facts → `effort-allocator.ts` (policy) + `usage-snapshot-store.ts` (bridge) + the budget-panel poller. No hard classifier (FOUNDATION #2) — a live-signal-driven lever, not a fixed threshold.
 - **Deploy gate:** backend → snapshot dist → `pnpm build` → idle-safe restart → verify a true-Auto Tinker turn's ledger `pressure` is no longer pinned at `−0.5` and the chosen level rises as `seven_day.resets_at` nears with headroom.
 
+### 5.86 THALAMUS routes over SUPPLIES; an empty ladder renders as an ALARM (DECISION, 2026-09-04)
+
+**The steer (the architect, 2026-09-03, across three messages).** _"The mapping from the BIAS
+slider to specific models is not sufficient … the balanced default should be mainly opus 5,
+avoiding Fable … source from the best option available … not actively rate limited, or still have
+credit … if we are about to reach a token refresh and we cannot possibly consume all tokens,
+Thalamus should go ballistic."_ Then: _"we are experiencing too many rate limitations that stall
+our thinking. Thalamus should be resourceful and able to recover from failure and reroute."_ Then:
+_"we need to consume the credits we have more or less evenly … if we need a swarm, it would make
+more sense to spawn it with grok, and then collect it with opus or fable. Grok does not have a
+5-hour window."_
+
+**The decision.** Routing stops being an argmax over a fitness table and becomes a scheduling
+problem over renewable inventories. Fitness (Fugu's contribution — measure expertise, route by
+domain) is kept unchanged; what is added is the axis Fugu never needed because its pool was
+metered API endpoints and ours is a portfolio of subscriptions with disjoint clocks.
+
+**Intent, in four sentences.** Fairness enters as a PRICE (a shadow price bending the €/task axis)
+rather than as a second selector, so even consumption falls out of the selection we already have.
+Feasibility (spent / cooling / unfunded / does-not-fit / will-not-engage) is a VETO evaluated
+before fitness, because a constraint is not a preference. The dial is anchored on Opus 5 and Fable
+is reserved behind three NAMED reasons, which is the router finally enforcing what
+`auth-routing.md` has asserted since 2026-07-21. And the router's output is a PLAN — a primary
+plus an ordered recovery ladder — because a route that is a single point cannot survive a 429.
+
+**The don't-regress that generalises past routing.** `agents.defaults.model.fallbacks` was `[]`
+while a complete, tested, deployed failover machinery sat underneath it. Nothing was broken;
+the mechanism was STARVED (`bug-log.md`, tag `mechanism-starved`, 2026-09-04). The prevention is
+not another test — it is that **the THALAMUS panel renders an EMPTY chain as a warning line
+rather than as blank space.** This whole class is invisible precisely because "nothing there" and
+"nothing wrong" look identical on a screen; absent must render as silence and empty must render as
+an alarm. Copy that shape wherever a mechanism's input can legitimately be empty.
+
+**Where facts land (per §5.84's rule):** decision/intent here. Structural facts + `verify[]` → the
+OWNING optic, `tinker-ui.md` §5.8U (beside §5.8T, which owns the frontier the dial walks); `auth-routing.md` keeps only the Opus-anchor/Fable-reserved lineage it has owned since 2026-07-21. Implementation:
+`src/shared/thalamus-{supply,feasibility,plan,frontier}.ts`; panel `routing-rationale.ts`. Design
+spec: `~/src/jarvis-icu/docs/superpowers/specs/2026-09-03-thalamus-v2-design.md`. Paper: J19
+MAESTRO v0.2 §4.5 (the third axis) and §8.5 (shadow pricing), with the debate-side consequence in
+J6 Round Table v8.6 ("The Supply Feasibility Limit").
+
+### 5.87 THALAMUS v4 routes per call, reads through Jev, and ships OFF with a shadow (DECISION, 2026-10-01)
+
+- **WANT (the architect, 2026-09-30):** _"mix models within a same turn … at the lowest level possible"_ (06:05); _"now build it"_ (06:52); _Jev ranks the enhancements_ and Thalamus improves what Jev reads from which one the agent uses (07:26). The J-series paper (J19 v4.1) is the design for this iteration; build the best Thalamus it describes, not what runs today.
+- **DECIDED, while he was away (charter defaults):** the live system does not change. v4 ships **off**, with a **shadow** mode that computes the per-call decision on the real path, writes it down and changes nothing; turning shadow or any `enforce.*` switch on is his. Jev sees synthetic cases only. No paid call in the build beyond Jev on synthetic cases in the final phase, capped at €2. The amygdala behaves exactly as before. **Every shared path touched is byte-for-byte develop while v4 is off, each with a test.**
+- **Choices made (Phase A, challenges C1–C3 accepted):** two store files and one logical ledger; `openclaw-orchestrate` leaves stay on `claude-code/*` so "auto" mixes within the vendor until he widens the list; the Jev client moves to core behind `openclaw/plugin-sdk/fork-jev` with a shim in the amygdala. The Claude Code lane switches at the turn, the unit and the tool result, never per call.
+- **Rejected:** shrinking the design to today's harness; a second Jev client and store; switching whole conversations; cross-vendor translation inside a Claude Code worker; asking the agent which enhancement it used.
+- **Open for him:** the plan-price factor per subscription; widening the orchestrate leaf providers; which sources are private; the vendor × topic table; whether Jev may read real situations; turning shadow and each `enforce.*` on; registering the nightly learning run as a cron. The exploration gate that lets unknown tools through is a separate guard question on develop.
+- **Mechanism and gates:** `auth-routing.md` § THALAMUS v4; card `tinker-ui.md` §5.8AC; seams `tool-loop.md`; keys `config-shape.md`; ledger `logging.md` §5.1; privacy `pii-boundary.md`; scheduler `subagents-and-recipes.md`.
+
 ### 5.85 Bible-currency gate for BROCA tasks (DECISION, 2026-06-19)
 
 Any BROCA task that changes tinkerclaw must auto-keep the bible current. Mechanism: DOCTRINE (`orchestration-disposition.md` + `model-effort-gating` skill) + the `bible-currency-gate` recipe as a mandatory completion step. The EDIT is judgment-based (single-owner discipline + `pnpm bible:invariants`), NOT a mechanical auto-writer (the bible is gated + curated; an auto-dump would corrupt it). Scope: tinkerclaw-changing tasks only (read-only/marketing/research exempt). Level: orchestrator, once. Structural owner: `subagents-and-recipes.md` §"Bible-currency gate". Don't-regress: do not downgrade to a soft reminder or an auto-writer.
@@ -1089,8 +1140,23 @@ These are upstream files modified to support Tinker features. They require re-ap
 | `server-startup.ts`                | Session resume via `agentCommand` (not heartbeat)                                    | Manual                                                                                                                                                                         | `agentCommand` in server-startup                          |
 | `context-anatomy-db.ts`            | SQLite persistence for timeline (replaces JSONL)                                     | Fork-only (no merge risk)                                                                                                                                                      | `anatomy-timeline.db`                                     |
 | `context-anatomy.ts`               | Extended `ContextAnatomyEvent` type + JSONL functions removed                        | Yes (type may need re-extension)                                                                                                                                               | `responseThinkingTokens`                                  |
-| `attempt-hooks.ts` → `attempt.ts`  | `onTurnComplete` call site in `attempt.ts` (post-`llm_output` hook, fire-and-forget) | **No** — must be manually re-wired after every upstream merge of `attempt.ts` (last lost 2026-04-15, restored 2026-04-20). Guardian must check `_forkOnTurnComplete` presence. | `_forkOnTurnComplete` in attempt.ts                       |
+| `attempt-hooks.ts` → `attempt.ts`  | `onTurnComplete` call site in `attempt.ts` (post-`llm_output` hook, fire-and-forget) | Yes, since 2026-06-02 (`56abe6e300b`, driver Hook 4); was manual before (lost 2026-04-15, restored 2026-04-20). NOT a post-condition marker: a missed anchor there only warns. | `.onTurnComplete(` in attempt.ts                          |
 | `embedded-agent-subscribe.ts`      | `responseBreakdown` char counters                                                    | Yes (state may revert)                                                                                                                                                         | `responseBreakdown`                                       |
+| `attempt.ts` (wave-0924)           | `recordRunDone` import + call → the `run.done` events row (logging.md §4.6)          | Yes — driver Hook 5, plus a post-condition marker: `apply-fork-wiring.mjs` exits 1 when it is lost. `upstream/main` has no anchor for the call — re-site it by hand            | `recordRunDone(diagnosticRunBase`                         |
+| `sessions.ts` (wave-0924)          | `evictSessionTranscript` delegation + `createChatAbortOps` at reset AND delete       | Yes + post-condition markers. `upstream/main` no longer ships this file, so the next catch-up fails the run on purpose — re-site by hand                                       | `evictSessionTranscript(`, `chatAbortOps:` ×2             |
+| `package.json` (wave-0924)         | `./plugin-sdk/fork-telemetry` export                                                 | Yes (JSON patch beside `fork-overseer-budget`) + post-condition. Every OLDER `./plugin-sdk/fork-*` export is restored by nothing                                               | `"./plugin-sdk/fork-telemetry"`                           |
+| `tsdown.config.ts` (wave-0924)     | `infra/events/writer-worker` dist entry — the writer thread is spawned by path       | Yes (fork fts anchor, else upstream's `mcp/plugin-tools-serve`) + post-condition. The two `memory/engram/fts-worker*` entries are restored by nothing                          | `"infra/events/writer-worker"`                            |
+| `followup-runner.ts` (wave-0924)   | `promptKeys` on its reply op + a `followup` `start` event (prompt-queue G3, G5)      | Not needed — NOT tier-1, so an upstream change here CONFLICTS in the merge instead of being overwritten                                                                        | `stream: "followup"`                                      |
+
+**Tier-1 vs merged as text (wave-0924, 2026-09-25).** A `merge=tier1` file (`.gitattributes`) is
+replaced by upstream's copy wholesale, and a fork hunk there survives only if
+`scripts/merge-drivers/apply-fork-wiring.mjs` puts it back. Since `2a13682aaf3` the wave-0924 hunks
+also sit in that script's post-condition, which exits 1 naming any that is missing. **"Yes" in the
+column above means "when the script runs on the MERGED tree"** — the §9 checklist, after the merge.
+Inside git's merge the TIER1 driver patches and checks the pre-merge working-tree copy instead of the
+merge result, so it neither restores a hunk nor reports one lost (`branch-policy.md` §5). A file NOT
+in that list (`followup-runner.ts`, for one) merges as text: an upstream change near a fork hunk shows
+up as a conflict, which is the loud failure the tier-1 path had to build.
 
 ---
 
@@ -1133,6 +1199,16 @@ grep "ensureAuthProfileStore" extensions/budget-panel/index.ts
 grep "getModelUsage" tinker-ui/src/app.ts
 grep "claudeProfiles" tinker-ui/src/app.ts
 grep "OPENCLAW_BUNDLED_PLUGINS_DIR" ~/.config/systemd/user/openclaw-gateway.service  # must point to extensions/
+
+# wave-0924 tier-1 hunks (§6) — the driver re-applies AND asserts them on the merged tree; a non-zero
+# exit names what is missing. TINKERCLAW_DIR is its root: without it the script patches ~/src/tinkerclaw
+# whatever the cwd, so from a worktree it would re-wire the shared checkout instead of this one.
+TINKERCLAW_DIR="$PWD" node scripts/merge-drivers/apply-fork-wiring.mjs
+grep "recordRunDone(diagnosticRunBase" src/agents/embedded-agent-runner/run/attempt.ts
+grep -c "chatAbortOps: createChatAbortOps(context)," src/gateway/server-methods/sessions.ts  # 2
+grep '"./plugin-sdk/fork-telemetry"' package.json
+grep '"infra/events/writer-worker"' tsdown.config.ts
+grep 'stream: "followup"' src/auto-reply/reply/followup-runner.ts
 
 # Workspace shadow check — no workspace extension should duplicate a bundled one
 comm -12 <(ls extensions/ | sort) <(ls ~/.openclaw/workspace/extensions/ 2>/dev/null | sort) | head -5

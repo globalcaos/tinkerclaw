@@ -75,3 +75,19 @@ export function tokenRatioFor(modelId: string, effortLvl: string): number {
   const ref = tokensPerTaskFor("claude-code/claude-opus-5", TASK_REFERENCE.effort);
   return tokensPerTaskFor(modelId, effortLvl) / ref;
 }
+
+/**
+ * Turns a PER-TOKEN cost that already carries EFFORT_COST_MULT[effort] (the chart's
+ * €/Mtok view: relCost x costMult) into the per-task cost, relCost x tokenRatioFor.
+ *
+ * FIX 2026-09-30 (J19 r2 review, Astra): the per-task view multiplied that per-token
+ * cost by tokenRatioFor, whose tokens ALSO carry the multiplier, so effort was counted
+ * twice — max drew 4x dearer than high where the token model says 2x, and the frontier
+ * and the dial's picks were chosen on the squared ladder. The multiplier is divided back
+ * out here, once. The ungraded "" level puts no multiplier on the per-token side
+ * (its chart stop has costMult 1), so it keeps its whole token ratio.
+ */
+export function taskCostFactor(modelId: string, effortLvl: string): number {
+  const onPrice = effortLvl ? (EFFORT_COST_MULT[effortLvl] ?? 1) : 1;
+  return tokenRatioFor(modelId, effortLvl) / onPrice;
+}

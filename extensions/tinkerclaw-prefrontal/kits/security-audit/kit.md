@@ -23,7 +23,7 @@ parallelism:
     Step index: 0=Inventory, 1=Scan, 2=Analyze, 3=Report, 4=Remediate.
 model:
   provider: "anthropic"
-  name: "claude-opus-4-7"
+  name: "claude-opus-5-5"
   hosting: "cloud API — requires ANTHROPIC_API_KEY"
 resolverHints:
   [

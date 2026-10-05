@@ -9,6 +9,12 @@ import { splitTrailingDirective } from "../auto-reply/reply/streaming-directives
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { emitAgentEvent } from "../infra/agent-events.js";
 import { emitCacheTelemetry } from "../infra/cache-telemetry.js";
+import {
+  allocateCallIndex,
+  callLaneForProvider,
+  emitCallTelemetry,
+  type CallPromptParts,
+} from "../infra/call-telemetry.js";
 import { createInlineCodeState } from "../markdown/code-spans.js";
 import { coerceChatContentText } from "../shared/chat-content.js";
 import {
@@ -379,6 +385,123 @@ export function buildAssistantStreamData(params: {
   };
 }
 
+// FORK 2026-09-24 (context-window-panel.md §6.1 A8) — the EMBEDDED producer of the
+// `stream:"call"` contract, whose one owner is src/infra/call-telemetry.ts.
+//
+//   message_start   opens the call and takes its callIndex, so the ordinal follows the order the
+//                   calls began. Nothing is emitted: pi-ai pushes `start` once the HTTP response
+//                   is in and before any usage is parsed, so there is neither a send time nor a
+//                   measured count to report (U5, answered in the owner).
+//   message_update  the FIRST update whose usage carries a prompt emits `usage`. Anthropic-style
+//                   transports fill the prompt side from the SSE message_start before the first
+//                   content delta, so this lands at first token; a provider that reports usage
+//                   only when the call ends falls through to message_end.
+//   message_end     emits `usage` if no update did, then `end` with the call's final usage and
+//                   pi's stopReason.
+//
+// pi zero-initialises usage, so a 0 is not a measurement by itself: the prompt parts go out only
+// once their sum is > 0, and output only beside a measured prompt or when it is itself > 0. The
+// claude-code provider is skipped: its pi message is the whole TURN carrying the CLI's aggregate
+// usage (F7, the 2026-07-28 correction in handleMessageEnd), and the bridge reports that lane's
+// calls itself, one per API call.
+type EmbeddedCallCtx = { params: { runId: string; sessionKey?: string } };
+type EmbeddedCallState = { callIndex: number; usageSent: boolean };
+const openEmbeddedCalls = new WeakMap<EmbeddedCallCtx, EmbeddedCallState>();
+
+function readEmbeddedCallUsage(message: AgentMessage): {
+  prompt?: CallPromptParts;
+  output?: number;
+} {
+  const usage = normalizeUsage((message as { usage?: UsageLike }).usage);
+  if (!usage) {
+    return {};
+  }
+  const promptMeasured = derivePromptTokens(usage) !== undefined;
+  const outputMeasured = promptMeasured || (usage.output ?? 0) > 0;
+  const prompt: CallPromptParts | undefined = promptMeasured
+    ? { input: usage.input, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite }
+    : undefined;
+  return { prompt, output: outputMeasured ? usage.output : undefined };
+}
+
+function isEmbeddedLaneMessage(message: AgentMessage): boolean {
+  return callLaneForProvider((message as { provider?: unknown }).provider) === "embedded";
+}
+
+function emitEmbeddedCallUsage(
+  ctx: EmbeddedCallCtx,
+  state: EmbeddedCallState,
+  prompt: CallPromptParts,
+  t: number,
+): void {
+  state.usageSent = true;
+  emitCallTelemetry(
+    { runId: ctx.params.runId, sessionKey: ctx.params.sessionKey },
+    {
+      phase: "usage",
+      callIndex: state.callIndex,
+      t,
+      lane: "embedded",
+      provenance: "exact",
+      ...prompt,
+    },
+  );
+}
+
+/** message_start: open the call and take its index. Emits nothing (see above). */
+export function openEmbeddedCall(ctx: EmbeddedCallCtx, message: AgentMessage): void {
+  if (!ctx.params.runId || !isEmbeddedLaneMessage(message)) {
+    return;
+  }
+  openEmbeddedCalls.set(ctx, {
+    callIndex: allocateCallIndex(ctx.params.runId),
+    usageSent: false,
+  });
+}
+
+/** message_update: emit `usage` the first time the streamed message carries a prompt. */
+export function noteEmbeddedCallUsage(ctx: EmbeddedCallCtx, message: AgentMessage): void {
+  const state = openEmbeddedCalls.get(ctx);
+  if (!state || state.usageSent) {
+    return;
+  }
+  const { prompt } = readEmbeddedCallUsage(message);
+  if (prompt) {
+    emitEmbeddedCallUsage(ctx, state, prompt, Date.now());
+  }
+}
+
+/** message_end: `usage` if still owed, then `end`. A call nobody opened is opened here. */
+export function closeEmbeddedCall(ctx: EmbeddedCallCtx, message: AgentMessage): void {
+  if (!ctx.params.runId || !isEmbeddedLaneMessage(message)) {
+    return;
+  }
+  const state = openEmbeddedCalls.get(ctx) ?? {
+    callIndex: allocateCallIndex(ctx.params.runId),
+    usageSent: false,
+  };
+  openEmbeddedCalls.delete(ctx);
+  const { prompt, output } = readEmbeddedCallUsage(message);
+  const t = Date.now();
+  if (prompt && !state.usageSent) {
+    emitEmbeddedCallUsage(ctx, state, prompt, t);
+  }
+  const stopReason = (message as { stopReason?: unknown }).stopReason;
+  emitCallTelemetry(
+    { runId: ctx.params.runId, sessionKey: ctx.params.sessionKey },
+    {
+      phase: "end",
+      callIndex: state.callIndex,
+      t,
+      lane: "embedded",
+      provenance: "exact",
+      ...prompt,
+      output,
+      stopReason: typeof stopReason === "string" ? stopReason : undefined,
+    },
+  );
+}
+
 export function handleMessageStart(
   ctx: EmbeddedPiSubscribeContext,
   evt: AgentEvent & { message: AgentMessage },
@@ -387,6 +510,8 @@ export function handleMessageStart(
   if (msg?.role !== "assistant" || isTranscriptOnlyOpenClawAssistantMessage(msg)) {
     return;
   }
+  // FORK 2026-09-24 (A8): open this model call on the `stream:"call"` contract.
+  openEmbeddedCall(ctx, msg);
 
   // KNOWN: Resetting at `text_end` is unsafe (late/duplicate end events).
   // ASSUME: `message_start` is the only reliable boundary for “new assistant message begins”.
@@ -408,6 +533,9 @@ export function handleMessageUpdate(
   }
 
   ctx.noteLastAssistant(msg);
+  // FORK 2026-09-24 (A8): the call's prompt side, the first time an update carries it. Before the
+  // commentary return below on purpose: a suppressed message is still a model call.
+  noteEmbeddedCallUsage(ctx, msg);
   const suppressVisibleAssistantOutput = shouldSuppressAssistantVisibleOutput(msg);
   if (suppressVisibleAssistantOutput) {
     return;
@@ -701,6 +829,9 @@ export function handleMessageEnd(
       timestampMs: Date.now(),
     });
   }
+  // FORK 2026-09-24 (A8): close this model call on the `stream:"call"` contract. Before the
+  // commentary return on purpose: a suppressed message is still a model call.
+  closeEmbeddedCall(ctx, assistantMessage);
   if (suppressVisibleAssistantOutput) {
     return;
   }

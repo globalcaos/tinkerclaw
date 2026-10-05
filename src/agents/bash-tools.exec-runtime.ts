@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import { emitDiagnosticEvent } from "../infra/diagnostic-events.js";
+import { recordExecDone } from "../infra/events/turn-events.js";
 import {
   DEFAULT_EXEC_APPROVAL_TIMEOUT_MS,
   resolveExecApprovalAllowedDecisions,
@@ -202,6 +203,14 @@ function emitExecProcessCompleted(params: {
         }
       : {}),
   });
+  // logging.md §4.6 `exec.done`: the command's LENGTH, never its text or its output.
+  recordExecDone(
+    params.outcome,
+    params.command.length,
+    params.target,
+    params.mode,
+    params.sessionKey,
+  );
 }
 
 export function renderExecHostLabel(host: ExecHost) {

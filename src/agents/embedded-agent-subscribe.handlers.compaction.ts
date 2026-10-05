@@ -1,23 +1,112 @@
 import type { AgentEvent } from "@mariozechner/pi-agent-core";
-import { emitAgentEvent } from "../infra/agent-events.js";
+import {
+  type CompactionEmitTarget,
+  type CompactionLane,
+  type CompactionProvenance,
+  compactionTokenCount,
+  emitCompactionTelemetry,
+} from "../infra/compaction-telemetry.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { logCompactionDecision } from "./compaction-diagnostics.js";
 import type { EmbeddedPiSubscribeContext } from "./embedded-agent-subscribe.handlers.types.js";
+import { normalizeProviderId } from "./provider-id.js";
 import { makeZeroUsageSnapshot } from "./usage.js";
+
+/**
+ * FORK 2026-09-24 (A1 ratchet retired) — pi-auto on the full A1 compaction contract, published by
+ * src/infra/compaction-telemetry.ts, the one owner (context-window-panel.md §6.1). This subscriber
+ * only ever hears pi's OWN decider: the manual RPC's pi compaction
+ * (embedded-agent-runner/compact.ts, `session.compact()`) runs on a session no subscriber is
+ * attached to. So the trigger is always "pi-auto".
+ *
+ * Provenance is "estimated", not "exact". pi's `result.tokensBefore` is its estimateContextTokens()
+ * (pi-coding-agent core/compaction/compaction.js): the last assistant usage PLUS a chars/4
+ * estimate of every message after it, and on the cc-bridge lane that usage is the CLI's turn
+ * aggregate (handlers.messages.ts). It is never one provider-reported figure, so it may not claim
+ * to be one.
+ */
+const PI_AUTO_PROVENANCE: CompactionProvenance = "estimated";
+
+/**
+ * The provider id the tinker-bridge registers for the claude-code lane
+ * (extensions/tinkerclaw-tinker-bridge/src/defaults.ts `PROVIDER_ID`). Core does not import
+ * extensions, so the id is named here, as src/gateway/session-eviction.ts and cli-runner.ts do.
+ */
+const CLAUDE_CODE_PROVIDER_ID = "claude-code";
+
+/** The one field of pi's live AgentSession the lane needs, read defensively. */
+type PiSessionModelView = { model?: { provider?: unknown } } | undefined;
+
+/**
+ * FORK 2026-09-24 — the serving lane of the session pi compacted.
+ *
+ * claude-code is a provider-runtime plugin that routes through runEmbeddedPiAgent (cli-runner.ts),
+ * so pi's decider runs on the cc-bridge lane too, and what it compacts there is the gateway's
+ * mirror, not the CLI transcript the model reads (context-window-panel.md F1 / F2). The lane is
+ * how a consumer tells that such a compaction did not shrink the next call.
+ *
+ * Read off pi's live session model first: it is the model pi's decider judged, and the run's
+ * subscription params carry no modelProvider on the serving path (attempt.ts builds them without
+ * it), so ctx.params.modelProvider is only the fallback. With neither, "embedded": this
+ * subscriber IS the embedded pipe, and "cc-bridge" needs positive evidence.
+ */
+function resolvePiAutoCompactionLane(ctx: EmbeddedPiSubscribeContext): CompactionLane {
+  let sessionProvider: string | undefined;
+  try {
+    const raw = (ctx.params.session as unknown as PiSessionModelView)?.model?.provider;
+    sessionProvider = typeof raw === "string" && raw ? raw : undefined;
+  } catch {
+    /* pi internals are best-effort; this runs on the serving path and must never throw */
+  }
+  const provider = sessionProvider ?? ctx.params.modelProvider;
+  return provider && normalizeProviderId(provider) === CLAUDE_CODE_PROVIDER_ID
+    ? "cc-bridge"
+    : "embedded";
+}
+
+/**
+ * When this subscriber saw pi's compaction_start, keyed on the run's state object (stable for the
+ * subscription's life, and collected with it). The end handler takes it to report durationMs. An
+ * end with no start seen (pi's "overflow recovery failed" end in _checkCompaction has none)
+ * reports no duration rather than a made-up one.
+ */
+const piAutoCompactionStartedAt = new WeakMap<object, number>();
+
+function takePiAutoCompactionDurationMs(ctx: EmbeddedPiSubscribeContext): number | undefined {
+  const startedAt = piAutoCompactionStartedAt.get(ctx.state);
+  piAutoCompactionStartedAt.delete(ctx.state);
+  // A negative span (a clock step) is dropped by the contract's absent-not-zero rule.
+  return startedAt === undefined ? undefined : Date.now() - startedAt;
+}
+
+/**
+ * FORK 2026-09-25 — where both pi-auto events go: the run's own listener, and the session the run
+ * serves. The session key is load-bearing: the A1 owner writes the compaction LEDGER from the
+ * target, keying the compaction.run row and that session's in-memory totals (the sessions.list
+ * row's A7 figures) on it, and emitAgentEvent's fallback to the key registered for the run never
+ * reaches that half (compaction-telemetry.ts, THE LEDGER). Without it every pi-auto row landed
+ * with no session and counted for none.
+ */
+function piAutoCompactionTarget(ctx: EmbeddedPiSubscribeContext): CompactionEmitTarget {
+  return {
+    runId: ctx.params.runId,
+    sessionKey: ctx.params.sessionKey,
+    onAgentEvent: ctx.params.onAgentEvent,
+  };
+}
 
 export function handleCompactionStart(ctx: EmbeddedPiSubscribeContext) {
   ctx.state.compactionInFlight = true;
   ctx.state.livenessState = "paused";
   ctx.ensureCompactionPromise();
   ctx.log.debug(`embedded run compaction start: runId=${ctx.params.runId}`);
-  emitAgentEvent({
-    runId: ctx.params.runId,
-    stream: "compaction",
-    data: { phase: "start" },
-  });
-  void ctx.params.onAgentEvent?.({
-    stream: "compaction",
-    data: { phase: "start" },
+  // pi's compaction_start carries only its reason, so no token figure rides on the start event.
+  piAutoCompactionStartedAt.set(ctx.state, Date.now());
+  emitCompactionTelemetry(piAutoCompactionTarget(ctx), {
+    phase: "start",
+    trigger: "pi-auto",
+    lane: resolvePiAutoCompactionLane(ctx),
+    provenance: PI_AUTO_PROVENANCE,
   });
 
   // Run before_compaction plugin hook (fire-and-forget)
@@ -44,6 +133,11 @@ export function handleCompactionStart(ctx: EmbeddedPiSubscribeContext) {
  * FORK 2026-08-29 — pull pi's reported context size either side of a compaction off the result
  * blob. Both are optional and independently so: pi reports what it knows, and a missing number
  * must stay missing rather than become a fabricated 0.
+ *
+ * FORK 2026-09-24: pi-coding-agent 0.70.5's CompactionResult is {summary, firstKeptEntryId,
+ * tokensBefore, details}, so tokensAfter is always absent from pi-auto today and the panel's
+ * saving stays unknown for it. It is still read, so a pi that starts reporting it is heard with
+ * no change here.
  */
 function readCompactionTokens(evt: { result?: unknown }): {
   tokensBefore?: number;
@@ -53,10 +147,9 @@ function readCompactionTokens(evt: { result?: unknown }): {
     typeof evt.result === "object" && evt.result
       ? (evt.result as { tokensBefore?: unknown; tokensAfter?: unknown })
       : undefined;
-  const num = (v: unknown): number | undefined =>
-    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
-  const before = num(result?.tokensBefore);
-  const after = num(result?.tokensAfter);
+  // FORK 2026-09-24 (A1): the absent-not-zero rule has one owner now, the contract module.
+  const before = compactionTokenCount(result?.tokensBefore);
+  const after = compactionTokenCount(result?.tokensAfter);
   return {
     ...(before === undefined ? {} : { tokensBefore: before }),
     ...(after === undefined ? {} : { tokensAfter: after }),
@@ -76,6 +169,8 @@ export function handleCompactionEnd(
   },
 ) {
   ctx.state.compactionInFlight = false;
+  // Taken first, so the wall time covers pi's compaction and none of this handler's own work.
+  const durationMs = takePiAutoCompactionDurationMs(ctx);
   const willRetry = Boolean(evt.willRetry);
   // Increment counter whenever compaction actually produced a result,
   // regardless of willRetry.  Overflow-triggered compaction sets willRetry=true
@@ -112,13 +207,9 @@ export function handleCompactionEnd(
 
   if (hasResult && !wasAborted) {
     ctx.incrementCompactionCount();
-    const tokensAfter =
-      typeof evt.result === "object" && evt.result
-        ? (evt.result as { tokensAfter?: unknown }).tokensAfter
-        : undefined;
-    // FORK 2026-04-28 chunk-21: noteCompactionTokensAfter dropped upstream;
-    // telemetry path collapsed to compaction-retry signaling only.
-    void tokensAfter;
+    // FORK 2026-04-28 chunk-21: noteCompactionTokensAfter was dropped upstream, and the voided
+    // tokensAfter read that fed it is gone too. pi's context size now leaves only on the
+    // compaction event below (readCompactionTokens).
     const observedCompactionCount = ctx.getCompactionCount();
     void reconcileSessionStoreCompactionCountAfterSuccess({
       sessionKey: ctx.params.sessionKey,
@@ -140,31 +231,31 @@ export function handleCompactionEnd(
     ctx.maybeResolveCompactionWait();
     clearStaleAssistantUsageOnSessionMessages(ctx);
   }
-  // FORK 2026-08-29 (the architect: the CONTEXT WINDOW panel's "tokens saved by eviction"). pi hands us
-  // the before/after context size on every successful compaction and BOTH numbers were being
-  // dropped on the floor — tokensAfter was literally read and discarded with `void` above, and
-  // the end event carried only three booleans. The saving is the one number that makes a
-  // compaction legible as a WIN rather than as an unexplained pause, and it cannot be derived
-  // client-side: the UI never sees the pre-compaction transcript.
+  // FORK 2026-08-29 (the architect: the CONTEXT WINDOW panel's "tokens saved by eviction"). The saving
+  // is the one number that makes a compaction legible as a WIN rather than as an unexplained
+  // pause, and it cannot be derived client-side: the UI never sees the pre-compaction transcript.
+  // So the end event forwards the context size pi reports, as parts and never as a delta, so the
+  // consumer can check the subtraction (the cache-telemetry.ts rule, "parts only, never a
+  // ratio"). An absent field is honest, a 0 is a lie.
   //
-  // Reported as parts, never as a delta, so the consumer can check the subtraction — the same
-  // rule cache-telemetry.ts follows for the cache hit rate ("parts only, never a ratio").
-  // Omitted entirely when pi did not report them; an absent field is honest, a 0 is a lie.
-  const compactionTokens = readCompactionTokens(evt);
-  const endData = {
+  // FORK 2026-09-24 (A1 ratchet retired): the full A1 contract. trigger, lane and provenance on
+  // both phases (PI_AUTO_PROVENANCE, resolvePiAutoCompactionLane); completed and pi's willRetry;
+  // and each figure only when measured:
+  //   - tokensBefore: pi's result.tokensBefore, when present;
+  //   - tokensAfter: pi 0.70.5 never reports it (readCompactionTokens), so it is omitted today;
+  //   - tokensDropped: never sent. pi does not measure it and the contract forbids deriving it;
+  //   - durationMs: this subscriber's own start-to-end wall time, when it saw the start.
+  // FORK 2026-09-25: the target names the run's session (piAutoCompactionTarget), so the
+  // ledger row this end writes counts for it.
+  emitCompactionTelemetry(piAutoCompactionTarget(ctx), {
     phase: "end",
-    willRetry,
+    trigger: "pi-auto",
+    lane: resolvePiAutoCompactionLane(ctx),
+    provenance: PI_AUTO_PROVENANCE,
     completed: hasResult && !wasAborted,
-    ...compactionTokens,
-  };
-  emitAgentEvent({
-    runId: ctx.params.runId,
-    stream: "compaction",
-    data: endData,
-  });
-  void ctx.params.onAgentEvent?.({
-    stream: "compaction",
-    data: endData,
+    willRetry,
+    ...readCompactionTokens(evt),
+    ...(durationMs === undefined ? {} : { durationMs }),
   });
 
   // Run after_compaction plugin hook (fire-and-forget)

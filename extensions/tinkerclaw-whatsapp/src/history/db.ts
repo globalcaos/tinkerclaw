@@ -15,9 +15,58 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { resolveUserPath } from "openclaw/plugin-sdk/text-runtime";
 
-const DB_PATH = resolveUserPath("~/.openclaw/data/whatsapp-history.db");
+export const HISTORY_DB_PATH = resolveUserPath("~/.openclaw/data/whatsapp-history.db");
+const DB_PATH = HISTORY_DB_PATH;
 
 let db: Database.Database | null = null;
+let retentionTimer: ReturnType<typeof setInterval> | null = null;
+
+/** The -wal and -shm sidecars hold recent message text too. */
+const DB_FILES = [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`];
+
+/** chmod 0600 every database file that exists (main file and WAL sidecars). */
+function restrictDbFileModes(): void {
+  for (const file of DB_FILES) {
+    try {
+      if ((fs.statSync(file).mode & 0o077) !== 0) {
+        fs.chmodSync(file, 0o600);
+      }
+    } catch {
+      // missing file, or a filesystem without POSIX modes
+    }
+  }
+}
+
+/**
+ * Opt-in retention: OPENCLAW_WHATSAPP_HISTORY_RETENTION_DAYS=<n> deletes
+ * messages older than n days. Unset (default) keeps everything.
+ */
+export function resolveHistoryRetentionDays(
+  raw = process.env.OPENCLAW_WHATSAPP_HISTORY_RETENTION_DAYS,
+): number | null {
+  const n = Number(raw?.trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Delete messages older than `days` days. Returns the number of rows removed. */
+export function pruneHistoryOlderThan(database: Database.Database, days: number): number {
+  const cutoff = Math.floor(Date.now() / 1000) - Math.floor(days * 86400);
+  return database.prepare(`DELETE FROM messages WHERE timestamp < ?`).run(cutoff).changes;
+}
+
+/** True when the history database file is already on disk. */
+export function historyDbExists(): boolean {
+  return db !== null || fs.existsSync(DB_PATH);
+}
+
+/**
+ * Read-side accessor for prompt prefetches: returns null instead of creating
+ * the database when it does not exist yet (e.g. on the Baileys backend, which
+ * never writes history).
+ */
+export function getDbIfExists(): Database.Database | null {
+  return historyDbExists() ? getDb() : null;
+}
 
 export function getDb(): Database.Database {
   if (db) {
@@ -26,12 +75,23 @@ export function getDb(): Database.Database {
 
   const dir = path.dirname(DB_PATH);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
 
+  // The database holds message text: keep it readable by the gateway user
+  // only. Create the file 0600 before SQLite opens it; SQLite gives the -wal
+  // and -shm sidecars the same mode as the main file when it creates them.
+  try {
+    fs.closeSync(fs.openSync(DB_PATH, "a", 0o600));
+  } catch {
+    // let better-sqlite3 report the real error
+  }
+  restrictDbFileModes();
   db = new Database(DB_PATH);
   // WAL mode allows concurrent reads during writes — essential for live capture + query overlap
   db.pragma("journal_mode = WAL");
+  // Sidecars left over from an older version may still be group/world-readable.
+  restrictDbFileModes();
 
   db.exec(`
     -- Main messages table
@@ -106,6 +166,21 @@ export function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_from_me ON messages(from_me);
   `);
+
+  const retentionDays = resolveHistoryRetentionDays();
+  if (retentionDays !== null) {
+    const opened = db;
+    const prune = () => {
+      try {
+        pruneHistoryOlderThan(opened, retentionDays);
+      } catch {
+        // best-effort; retried on the next tick
+      }
+    };
+    prune();
+    retentionTimer ??= setInterval(prune, 6 * 60 * 60 * 1000);
+    retentionTimer.unref?.();
+  }
 
   return db;
 }

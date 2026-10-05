@@ -3,7 +3,7 @@ schema: "kit/1.0"
 slug: "feature"
 title: "Build a feature — intent to merged, in parallel"
 summary: "The full build pipeline for a new feature or capability: interview the user until a SPEC exists, turn it into an executable plan, build it in parallel waves with tests proven in isolation first, harden the tests, verify with fresh evidence, review adversarially, merge and delete the branch. Use when the user says build me, add, implement, create, I want a new feature, or ship this."
-version: "2.1.0"
+version: "2.2.0"
 owner: "globalcaos"
 license: "MIT"
 category: "coding"
@@ -37,8 +37,9 @@ parallelism:
   notes: |
     Every step is a barrier: each one consumes the artifact the previous one wrote.
     The parallelism lives INSIDE the sub-recipes — brainstorm-gate fans out read-only
-    exploration, implementation-plan drafts tasks and test tiers concurrently,
-    parallel-build runs ORCA waves, test-hardening fans out per module,
+    exploration, implementation-plan runs git-instructions then drafts hop-sized
+    tasks and test tiers concurrently,
+    parallel-build gates hops and runs ORCA waves, test-hardening fans out per module,
     verification-gate runs its independent checks concurrently and dispatches the
     second-opinion leg, code-review fans out three lenses. Do not flatten these
     groups to fake concurrency at this level.
@@ -105,13 +106,16 @@ approval. Nothing is built until this returns yes.
 ### 2. Turn the spec into an executable plan
 
 uses: implementation-plan
-**Done when:** A PLAN file exists at `{{plans_dir}}/YYYY-MM-DD-<feature>-plan.md` with edit-units whose `writes` sets are disjoint.
+**Done when:** A PLAN file exists at `{{plans_dir}}/YYYY-MM-DD-<feature>-plan.md` with hop-sized edit-units whose `writes` sets are disjoint.
 
-Receives: the SPEC path. Returns: the PLAN path. The plan carries a file map,
-an Interfaces block (consumes/produces with exact signatures) so parallel
-implementers agree without talking, tasks of 2–5 minute steps with exact verify
-commands, a `complexity: simple|complicated` tag per task, edit-units tagged
-`wave: isolate|integrate`, and the empty rulings ledger. No placeholders.
+Receives: the SPEC path. Returns: the PLAN path. `implementation-plan` runs
+`git-instructions` first: lineage (short-lived branch vs fork), the traced path,
+hops a human can pull and sign off. Those hops become the edit-units. The plan
+carries a file map, an Interfaces block (consumes/produces with exact signatures)
+so parallel implementers agree without talking, tasks of 2–5 minute steps with
+exact verify commands, a `complexity: simple|complicated` tag per task,
+edit-units tagged `wave: isolate|integrate` (wave = hop index), and the empty
+rulings ledger. No placeholders. A unit whose task needs "and" is two units.
 
 ### 3. Build it in parallel waves
 
@@ -197,6 +201,8 @@ dumps — the code is in the commits.
 - Follow existing patterns — do not invent new conventions. Every new file gets
   a header comment explaining purpose and wiring. No commented-out code, no
   leftover debug logging.
+- Commits follow `git-instructions`: one hop, tests travel, what/why/impact, no
+  "and" in the subject. ORCA is the executor, not the slicer.
 - The final report contains no code.
 
 ## Safety Notes
@@ -231,3 +237,4 @@ dumps — the code is in the commits.
   open. Step 7 is now part of the pipeline and step 8 must quote its status
   line.
 - **v2.1.0 (2026-09-03):** folded in the AI-native SDLC playbook (claude.com/blog/the-ai-native-sdlc-playbook — the source the "INTENT.md" video walks through): the report closes with fix rounds and rulings, the two leading indicators of the pipeline itself.
+- **v2.2.0 (2026-09-10):** `implementation-plan` and `parallel-build` now `uses: git-instructions` so any reviewed repo ships hop-sized commits a colleague can pull and sign off, one seam at a time.

@@ -1,0 +1,12 @@
+{
+  "familyInstructions": "Read the request. Which family of the assistant's tools, skills and procedures would help most with it? Pick the family, or none if no family helps.",
+  "memberInstructions": "Read the request. Which one of these skills, procedures or plugins would help most with it? A tool can help because it was made for this task, or because its way of working fits the same shape of work in another subject. Pick none if nothing here helps.",
+  "fitInstructions": "Read the request and this tool: {card} How does it fit? Made for this task, fits by the way it works, or covers only part of the task.",
+  "familyNoneText": "none of these families helps",
+  "memberNoneText": "none of these fits",
+  "fitOptions": {
+    "made-for": "it was made for this kind of task",
+    "by-structure": "it was made for something else but works the same way",
+    "covers-part": "it covers only part of the task"
+  }
+}

@@ -44,6 +44,8 @@ import {
   isReservedKey,
   thalamusRoute,
   type FrontierRung,
+  type RouteSuggestion,
+  type SuggestionVerdict,
   type TaskDomain,
   type ThalamusRoute,
 } from "./thalamus-frontier.js";
@@ -58,10 +60,48 @@ import {
 /** How the turn is executed. `solo` is the default and the cheap one. */
 export type CompositionMode = "solo" | "critic" | "debate" | "fan-out";
 
-/** Why a reserved model (Fable) was admitted. Never absent when one is picked. */
-export type ReservedReason = "dial" | "ballistic" | "feasibility";
+/** Why a reserved model (Fable) was admitted. Never absent when one is picked. `suggestion`: the architect suggested it. */
+export type ReservedReason = "dial" | "ballistic" | "feasibility" | "suggestion";
 
 export type RungVeto = { key: string; veto: FeasibilityVeto; detail?: string };
+
+/** Why the suggestion did not run: a better rung for this task, or the supply or the job ruled it out. */
+export type SuggestionMoveCause =
+  | "better"
+  | "cooling"
+  | "spent"
+  | "unfunded"
+  | "capacity"
+  | "engagement";
+
+/**
+ * What became of the architect's suggestion for this turn (the architect, 2026-10-02: "his picks are suggestions").
+ *   kept     the suggestion's rung runs.
+ *   moved    another rung runs; `cause` says why. `better` carries the lead in percent on the domain strength; a limit or a
+ *            cooling supply carries `untilMs` when the cooling store knows when it ends.
+ *   ignored  the model is not on the board at all (not in the catalog, not priced, outside the allowlist): the
+ *            stop is treated as unset, and the caller logs it.
+ */
+export type PlanSuggestion =
+  | ({ state: "kept" } & Pick<SuggestionVerdict, "key" | "effort" | "effortAsked">)
+  | {
+      state: "moved";
+      key: string;
+      effort: string;
+      cause: SuggestionMoveCause;
+      to: { key: string; effort: string };
+      gainPct?: number;
+      detail?: string;
+      untilMs?: number;
+    }
+  | { state: "ignored"; key: string; reason: "not-on-board" };
+
+/** A cooling supply changed this turn's pick: what the board would have run if it were open. */
+export type CoolingShift = {
+  from: { key: string; effort: string };
+  supply: SupplyId;
+  untilMs?: number;
+};
 
 export type ThalamusPlan = {
   /** The decision the frontier made, with its own reason string. */
@@ -85,6 +125,10 @@ export type ThalamusPlan = {
   /** Every rung that was vetoed, so the panel can show WHY the board shrank. */
   vetoes: RungVeto[];
   supplies: SupplyState[];
+  /** Present when a suggestion was given. */
+  suggestion?: PlanSuggestion;
+  /** Present when a cooling supply moved the pick off what the open board would have run. */
+  coolingShift?: CoolingShift;
   /** One line a human reads. */
   reason: string;
 };
@@ -100,6 +144,10 @@ export type ThalamusPlanParams = {
   estimatedTokens?: number;
   contextWindowFor?: (key: string) => number | undefined;
   cooling?: ReadonlySet<SupplyId>;
+  /** When each cooling supply reopens (ms epoch), from the cooling store; only used to say so. */
+  coolingUntil?: ReadonlyMap<SupplyId, number>;
+  /** The architect's suggestion for the dial's stop (model, effort). Auto turns only; the caller guarantees it. */
+  suggestion?: RouteSuggestion;
   unfunded?: ReadonlySet<SupplyId>;
   refusals?: RefusalLedger;
   /** How many independent units the caller intends to run. >1 ⇒ fan-out is on the table. */
@@ -122,8 +170,22 @@ export const MAX_CHAIN = 4;
  */
 export const COMPOSITION_MIN_BIAS = 4;
 
-/** Domains where a cross-vendor critic pays — a builder is a poor judge of its own blind spots. */
-const BUILDISH: ReadonlySet<TaskDomain> = new Set<TaskDomain>(["code", "agentic"]);
+/** Domains where a cross-vendor critic pays — a builder is a poor judge of its own blind spots.
+ *  WIDENED 2026-09-23 with the two domains split out of CODE that are still BUILDING something
+ *  a second pair of eyes can run and disagree with: a rendered page (frontend) and a query or
+ *  sheet whose answer is checkable (data). MATHS and SCIENCE are deliberately NOT here — they
+ *  are single-answer domains where a critic adds cost without adding an independent check. */
+const BUILDISH: ReadonlySet<TaskDomain> = new Set<TaskDomain>([
+  "code",
+  "frontend",
+  "agentic",
+  "data",
+  // 2026-10-02: the three new verticals that also BUILD something a critic can run — a
+  // command sequence on a server, a training script, a part. Same rule as above.
+  "shell",
+  "ml",
+  "cad",
+]);
 
 /** A domain is CONTESTED when the leader's margin over the best rival FROM ANOTHER SUPPLY is
  *  below this. Measured cross-supply on purpose: two models of one house share the lineage that
@@ -169,32 +231,124 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
   // ── M1 + M2: veto, then re-price on the truthful axis ────────────────────────────────────
   const vetoes: RungVeto[] = [];
   const priced: FrontierRung[] = [];
+  // Rungs a cooling supply alone kept off the board, priced as if open: the counterfactual that tells the card
+  // "cooling moved this turn" when the open board would have run something else.
+  const cooledOnly: FrontierRung[] = [];
   for (const r of params.rungs) {
     const f = feasibility(r.key, fctx);
+    const supply = params.supplies.get(supplyOfKey(r.key));
     if (!f.ok) {
       vetoes.push({ key: r.key, veto: f.veto!, detail: f.detail });
+      if (f.veto === "supply-cooling")
+        cooledOnly.push({ ...r, cost: effectiveCost(r.cost, supply) });
       continue;
     }
-    const supply = params.supplies.get(supplyOfKey(r.key));
     priced.push({ ...r, cost: effectiveCost(r.cost, supply) });
   }
   if (priced.length === 0) return undefined;
 
-  // ── the dial, and the three named reasons the reserved set opens ─────────────────────────
-  const onlyReservedLeft = priced.every((r) => isReservedKey(r.key));
-  const reservedReason: ReservedReason | undefined =
-    biasIdx >= 6 ? "dial" : ballistic ? "ballistic" : onlyReservedLeft ? "feasibility" : undefined;
+  // When a supply reopens: the cooling store's stated time, or for a spent supply the reset of the window that
+  // spent it. Only used to tell the card; nothing is decided from it.
+  const untilOf = (supply: SupplyId, veto: FeasibilityVeto): number | undefined =>
+    veto === "supply-cooling"
+      ? params.coolingUntil?.get(supply)
+      : veto === "supply-spent"
+        ? params.supplies.get(supply)?.binding?.resetAtMs
+        : undefined;
 
-  const route = thalamusRoute({
-    rungs: priced,
-    biasIdx,
-    domain,
-    strengthFor: params.strengthFor,
-    allowReserved: reservedReason !== undefined,
-  });
-  if (!route) return undefined;
+  // ── the suggestion: it runs only when its rung survived the vetoes; otherwise say which veto removed it ──
+  let suggestion = params.suggestion;
+  let suggestionMiss: PlanSuggestion | undefined;
+  if (suggestion && !priced.some((r) => r.key === suggestion!.key)) {
+    const v = vetoes.find((x) => x.key === suggestion!.key);
+    suggestionMiss = v
+      ? {
+          state: "moved",
+          key: suggestion.key,
+          effort: suggestion.effort ?? "",
+          cause: causeOfVeto(v.veto),
+          to: { key: "", effort: "" },
+          ...(v.detail ? { detail: v.detail } : {}),
+          ...(untilOf(supplyOfKey(suggestion.key), v.veto) !== undefined
+            ? { untilMs: untilOf(supplyOfKey(suggestion.key), v.veto) }
+            : {}),
+        }
+      : { state: "ignored", key: suggestion.key, reason: "not-on-board" };
+    suggestion = undefined;
+  }
+
+  // ── the dial, and the four named reasons the reserved set opens ──────────────────────────
+  const decide = (pool: readonly FrontierRung[], sug: RouteSuggestion | undefined) => {
+    const onlyReservedLeft = pool.every((r) => isReservedKey(r.key));
+    const reservedReason: ReservedReason | undefined =
+      biasIdx >= 6
+        ? "dial"
+        : ballistic
+          ? "ballistic"
+          : onlyReservedLeft
+            ? "feasibility"
+            : sug && isReservedKey(sug.key)
+              ? "suggestion"
+              : undefined;
+    const r = thalamusRoute({
+      rungs: pool,
+      biasIdx,
+      domain,
+      strengthFor: params.strengthFor,
+      allowReserved: reservedReason !== undefined,
+      suggestion: sug,
+    });
+    return r ? { route: r, reservedReason } : undefined;
+  };
+  const decided = decide(priced, suggestion);
+  if (!decided) return undefined;
+  const { route, reservedReason } = decided;
 
   const primary = route.rung;
+
+  // What became of the suggestion, and whether a cooling supply moved the pick.
+  let suggestionOutcome: PlanSuggestion | undefined;
+  if (route.suggestion) {
+    const v = route.suggestion;
+    suggestionOutcome =
+      v.state === "kept"
+        ? {
+            state: "kept",
+            key: v.key,
+            effort: v.effort,
+            effortAsked: v.effortAsked,
+          }
+        : {
+            state: "moved",
+            key: v.key,
+            effort: v.effort,
+            cause: "better",
+            to: v.to ?? { key: primary.key, effort: primary.effort },
+            gainPct: v.gainPct,
+          };
+  } else if (suggestionMiss) {
+    suggestionOutcome =
+      suggestionMiss.state === "moved"
+        ? { ...suggestionMiss, to: { key: primary.key, effort: primary.effort } }
+        : suggestionMiss;
+  }
+  let coolingShift: CoolingShift | undefined;
+  if (cooledOnly.length > 0) {
+    const ideal = decide([...priced, ...cooledOnly], params.suggestion);
+    const ip = ideal?.route.rung;
+    if (ip && (ip.key !== primary.key || ip.effort !== primary.effort)) {
+      const supply = supplyOfKey(ip.key);
+      if (params.cooling?.has(supply)) {
+        coolingShift = {
+          from: { key: ip.key, effort: ip.effort },
+          supply,
+          ...(params.coolingUntil?.get(supply) !== undefined
+            ? { untilMs: params.coolingUntil.get(supply) }
+            : {}),
+        };
+      }
+    }
+  }
 
   // ── M4: the recovery ladder — one rung per OTHER supply, cheapest-effective first ─────────
   const chain = buildChain(priced, route, primary);
@@ -238,7 +392,7 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
     }
   }
 
-  const reason = buildReason({
+  const reasonBase = buildReason({
     route,
     mode,
     panel,
@@ -249,6 +403,14 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
     chain,
     vetoes,
   });
+  const reason =
+    suggestionOutcome?.state === "moved" && suggestionOutcome.cause !== "better"
+      ? `${reasonBase} · suggestion ${suggestionOutcome.key} unavailable (${suggestionOutcome.cause}${suggestionOutcome.detail ? `: ${suggestionOutcome.detail}` : ""})`
+      : suggestionOutcome?.state === "ignored"
+        ? `${reasonBase} · suggestion ${suggestionOutcome.key} is not on the board, ignored`
+        : coolingShift
+          ? `${reasonBase} · ${coolingShift.supply} cooling moved the pick off ${coolingShift.from.key}`
+          : reasonBase;
 
   return {
     route,
@@ -265,8 +427,25 @@ export function thalamusPlan(params: ThalamusPlanParams): ThalamusPlan | undefin
     reservedReason: isReservedKey(primary.key) ? reservedReason : undefined,
     vetoes,
     supplies: [...params.supplies.values()],
+    ...(suggestionOutcome ? { suggestion: suggestionOutcome } : {}),
+    ...(coolingShift ? { coolingShift } : {}),
     reason,
   };
+}
+
+function causeOfVeto(v: FeasibilityVeto): SuggestionMoveCause {
+  switch (v) {
+    case "supply-cooling":
+      return "cooling";
+    case "supply-spent":
+      return "spent";
+    case "supply-unfunded":
+      return "unfunded";
+    case "engagement":
+      return "engagement";
+    default:
+      return "capacity";
+  }
 }
 
 /**

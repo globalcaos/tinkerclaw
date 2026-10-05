@@ -16,6 +16,8 @@ verify:
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-total-recall/index.ts")).read(); assert re.search(r"PACK_REBUILD_EVENT_DELTA\s*=\s*\d+", t) and re.search(r"PACK_REBUILD_MAX_AGE_MS\s*=", t), "pack reuse policy changed — re-measure the rebuild rate"'
   - name: the turn-phase telemetry contract is intact end to end (emitters + UI consumer)
     cmd: python3 -c 'import os; p=os.path.expanduser; a=open(p("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts")).read(); b=open(p("~/src/tinkerclaw/extensions/tinkerclaw-total-recall/index.ts")).read(); c=open(p("~/src/tinkerclaw/tinker-ui/src/turn-phase.ts")).read(); assert "turn-phase" in a and "turn-phase" in b and "turn-phase" in c, "phase telemetry broken — the indicator will silently fall back"'
+  - name: the holder-C window (§9) is still marked — chat.send sets the accepted-prompt mark right after its ack, and the pending-prompt derivation reads it (paths resolve against BIBLE_DIR's checkout, else the shared one)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && grep -qF 'releaseAcceptedChatSend = trackAcceptedChatSend(' src/gateway/server-methods/chat.ts && grep -qF 'export function trackAcceptedChatSend' src/gateway/session-utils.ts && grep -qF 'of acceptedChatSends' src/gateway/session-utils.ts
 ---
 
 # Turn latency — where the time goes and what it buys
@@ -649,3 +651,34 @@ file has recorded that error, after §6/§7, the `recalling memories` chain, and
 `src/agents/pi-tools.ts`, which was under active edit by a parallel session on the same day
 (`e9df1abe35a` named `createImageGenerateTool` at 3.4s of it). Left alone deliberately to avoid a
 collision, not because it is finished.
+
+## 9. The holder-C window — `chat.send` ack → `runReplyAgent` (2026-09-25)
+
+**What it is.** The span between `chat.send` answering `{status: "started"}` and the reply pipeline
+PLACING the prompt. In it `get-reply.ts` runs media understanding (`applyMediaUnderstandingIfNeeded`),
+link understanding (`applyLinkUnderstandingIfNeeded`) and the prepared-reply setup; then
+`get-reply-run.ts` calls `runReplyAgent`, and only inside that does `createReplyOperation`
+(`agent-runner.ts`) exist — the steer, the backlog and the reply operation all happen there. Until
+then the only thing holding the prompt is its chat abort controller (`prompt-queue.md` §4, holder C).
+
+**Measured once, and never on its own.** §1's worked example is the only reading on record:
+`res chat.send` at 02:54:35.976 → `compaction gate preflight` at 02:54:51.097, **15.1 s** (n=1, a
+congested gateway, 2026-08-12). That span CONTAINS this window plus `runReplyAgent`'s own prelude up
+to the preflight gate, so it bounds this window from above for one turn; it does not measure it. No
+`turn.span` row covers the window — `[turn-span]` stages are emitted only from `attempt.ts` and
+`pi-tools.ts` (§7.4), after the operation already exists — and a `hook.span` row times one plugin
+handler, not the span around it.
+
+**What changed on 2026-09-25 is the display, not the seconds.** Before it, a `sessions.list` row built
+inside the window listed the session's other prompts and not this one, so the UI could not tell
+"about to run" from LOST and kept page-liveness vetoes for it (`tinker-ui/src/prompt-state.ts`
+`gatewayHolderFacts`). `44f2ae2d1dc` marks the span on the gateway: `session-utils.ts`
+`trackAcceptedChatSend`, set right after the ack and released on placement (`onAgentRunStart`,
+`onPromptDisposition`), on abort, and when the dispatch settles or throws; `deriveSessionPendingPrompts`
+reports a marked key PREPARING. The seconds are the same; they now read as "preparing context"
+instead of as a gap.
+
+**The one instrument.** A `turn.span` pair at `chat.send`'s ack and at `createReplyOperation`, keyed by
+the prompt key (the `chat.send` idempotencyKey, PQ-1) and emitted unconditionally like the runner's
+`[turn-span]` lines, would turn the upper bound into a distribution. Until it exists, quote no p50
+for this window. **RUN: unmeasured.**

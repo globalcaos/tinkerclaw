@@ -28,6 +28,7 @@ import {
   getFlag,
   getOrderedIds,
   setOrderedIds,
+  uiStateHydrateOutcome,
   __resetUiStateHydrationForTests,
   hydrateUiState,
   isCollapsed,
@@ -35,12 +36,18 @@ import {
   loadTabList,
   migrateLegacyUiState,
   readUiStateSnapshot,
+  rehydrateUiState,
   scheduleUiStateMirror,
   setChoice,
   setCollapsed,
   setFlag,
   writeTabList,
   writeUiStateSnapshot,
+  recordClosedTab,
+  loadClosedTabs,
+  unionClosedTabs,
+  flushPendingUiStateMirror,
+  MAX_CLOSED_TABS,
   type UiStateSnapshot,
 } from "./ui-state";
 
@@ -1288,6 +1295,386 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
     });
   });
 
+  // FORK 2026-09-24 (the architect: "I have been deleting the SharePoint tab many times, and every time I
+  // restart the machine, it appears again, and the tab I leave open all the time goes back to being
+  // closed"). Every mirror was `keepalive: true` and nothing read the response. Chrome charges a
+  // keepalive body against a 64 KB per-page budget until its response is consumed, so the budget
+  // never came back: the 10th mirror of every page failed inside the browser, and so did every one
+  // after it, while the UI looked normal. Measured headless against a private prod-ui: 9 landed,
+  // 37 rejected. The double below models exactly that accounting.
+  describe("the keepalive budget — a page must never run out of writes", () => {
+    const KEEPALIVE_BUDGET = 64 * 1024;
+
+    /** Chrome's rule, as far as this module can see it: keepalive bytes stay charged until the
+     *  response body is read, and a request that would exceed the budget rejects before sending. */
+    function chromeLikeFetch() {
+      let charged = 0;
+      const stats = { landed: 0, rejected: 0 };
+      const fn = vi.fn((_input: unknown, init?: RequestInit) => {
+        const size = init?.keepalive ? String(init.body ?? "").length : 0;
+        if (charged + size > KEEPALIVE_BUDGET) {
+          stats.rejected++;
+          return Promise.reject(new TypeError("Failed to fetch"));
+        }
+        charged += size;
+        stats.landed++;
+        let released = false;
+        const text = vi.fn(() => {
+          if (!released) {
+            released = true;
+            charged -= size;
+          }
+          return Promise.resolve('{"ok":true}');
+        });
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text,
+          json: () => text().then(JSON.parse),
+        });
+      });
+      return { fn, stats, charged: () => charged };
+    }
+
+    /** A snapshot the size of the real one (~6.7 KB), so the budget binds where it did live. */
+    function realSizedStore(): Storage {
+      const s = fakeStorage();
+      setChoice("sessions:panel-order", "x".repeat(6_600), "", s);
+      return s;
+    }
+
+    it("thirty mirrors in one page all land (the old code lost the 10th and every one after)", async () => {
+      const chrome = chromeLikeFetch();
+      setFetch(chrome.fn);
+      const s = realSizedStore();
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      for (let i = 0; i < 30; i++) {
+        setChoice("tab:active", `tab-${i}`, "", s);
+        await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      }
+      expect(chrome.stats.rejected).toBe(0);
+      expect(chrome.stats.landed).toBe(31);
+      expect(chrome.charged()).toBe(0);
+    });
+
+    it("a routine mirror is an ordinary request, and its response body is read", async () => {
+      const text = vi.fn(() => Promise.resolve('{"ok":true}'));
+      const mock = vi.fn(() =>
+        Promise.resolve({ ok: true, status: 200, text } as unknown as Response),
+      );
+      setFetch(mock);
+      setFlag("topbar:exec", true, false, fakeStorage());
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(mock).toHaveBeenCalledTimes(1);
+      expect(callAt(mock, 0)[1]?.keepalive).toBeFalsy();
+      expect(text).toHaveBeenCalledTimes(1);
+    });
+
+    it("a REJECTED mirror is retried with no user action, and reports the streak it ended", async () => {
+      const s = fakeStorage();
+      const mock = vi
+        .fn()
+        .mockImplementationOnce(() => Promise.reject(new TypeError("Failed to fetch")))
+        .mockImplementation(() => Promise.resolve(jsonResponse({ ok: true })));
+      setFetch(mock);
+      setChoice("exec:tab", "sessions", "today", s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(mock).toHaveBeenCalledTimes(1);
+      expect(headerOf(callAt(mock, 0)[1], "x-tinker-mirror-failures")).toBe("");
+      // Nothing else happens on the page: the retry alone must bring the file level.
+      await vi.advanceTimersByTimeAsync(2_000 + MIRROR_SETTLE_MS);
+      expect(mock).toHaveBeenCalledTimes(2);
+      expect((bodyOf(callAt(mock, 1)[1]) as UiStateSnapshot).choices["exec:tab"]).toBe("sessions");
+      expect(headerOf(callAt(mock, 1)[1], "x-tinker-mirror-failures")).toBe("1");
+    });
+
+    it("a non-2xx answer counts as a failure and is retried with no user action", async () => {
+      const mock = vi
+        .fn()
+        .mockImplementationOnce(() => Promise.resolve(jsonResponse({ error: "boom" }, 500)))
+        .mockImplementation(() => Promise.resolve(jsonResponse({ ok: true })));
+      setFetch(mock);
+      setFlag("topbar:exec", true, false, fakeStorage());
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(mock).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2_000 + MIRROR_SETTLE_MS);
+      expect(mock).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(mock).toHaveBeenCalledTimes(2); // landed: no more retries
+    });
+
+    it("pagehide re-sends as keepalive when a routine mirror is still unanswered", async () => {
+      const s = fakeStorage();
+      let answer: ((r: Response) => void) | null = null;
+      const mock = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)))
+        .mockImplementation(() => Promise.resolve(jsonResponse({ ok: true })));
+      setFetch(mock);
+      recordClosedTab("tab-a", s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(mock).toHaveBeenCalledTimes(1);
+      flushPendingUiStateMirror(); // the page goes away before the server answered
+      expect(mock).toHaveBeenCalledTimes(2);
+      expect(callAt(mock, 1)[1]?.keepalive).toBe(true);
+      expect(Object.keys((bodyOf(callAt(mock, 1)[1]) as UiStateSnapshot).closedTabs ?? {})).toEqual(
+        ["tab-a"],
+      );
+      answer?.(jsonResponse({ ok: true }));
+    });
+
+    it("pagehide with nothing pending and nothing in flight sends nothing", async () => {
+      setFlag("topbar:exec", true, false, fakeStorage());
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      fetchMock.mockClear();
+      flushPendingUiStateMirror();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  // FORK 2026-09-16 (the architect: "I just restarted the computer and Jarvis does not have the tabs
+  // open the same way they were when I turned it off"). A page whose BOOT hydrate failed —
+  // the gateway mid-restart, or the 1500ms timeout on a cold machine — stayed NON-DURABLE for
+  // its whole life: the mirror gate held (correctly), but nothing ever re-read the file, so
+  // every tab opened, closed or renamed for hours afterwards silently never reached disk, and
+  // the next cold start restored the state from BEFORE the failed hydrate. The reconnect
+  // handshake is the natural retry point: a WebSocket that just said hello proves the
+  // gateway is up, and it runs before the tab restore.
+  describe("rehydrateUiState — a failed boot hydrate is retried on reconnect", () => {
+    const fileSnapshot = (): UiStateSnapshot => ({ ...sampleSnapshot(), tabs: sampleTabs() });
+
+    it("is a no-op once the boot hydrate succeeded — no second GET", async () => {
+      const s = fakeStorage();
+      await expect(hydrateUiState(s)).resolves.toBe(true);
+      expect(uiStateHydrateOutcome()).toBe("ok");
+      await expect(rehydrateUiState(s)).resolves.toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("after a FAILED boot hydrate: reads the file, local entries win, the file fills the gaps, the mirror is unblocked", async () => {
+      const s = fakeStorage();
+      setFetch(vi.fn(() => Promise.reject(new Error("gateway restarting"))));
+      await expect(hydrateUiState(s)).resolves.toBe(false);
+      expect(uiStateHydrateOutcome()).toBe("failed");
+      // The page kept working from its cache in the meantime.
+      writeTabList([{ id: "tab-main" }, { id: "tab-new", title: "opened meanwhile" }], s);
+      setChoice("exec:tab", "pulse", "today", s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS); // blocked: nothing posts
+
+      const live = vi.fn(() => Promise.resolve(jsonResponse(fileSnapshot())));
+      setFetch(live);
+      await expect(rehydrateUiState(s)).resolves.toBe(true);
+      expect(uiStateHydrateOutcome()).toBe("ok");
+      // Local tabs first, in their order; file-only tabs appended; no duplicates.
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main", "tab-new", "tab-abc"]);
+      expect(getChoice("exec:tab", "today", s)).toBe("pulse"); // local wins
+      expect(isCollapsed("budget-panel", false, s)).toBe(true); // file filled the gap
+      expect(getFlag("topbar:exec", false, s)).toBe(true);
+
+      // A successful rehydrate schedules the mirror itself, so the merged truth lands on disk.
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(live).toHaveBeenCalledTimes(2);
+      expect(callAt(live, 0)[1]?.method).toBe("GET");
+      expect(callAt(live, 1)[1]?.method).toBe("POST");
+      const posted = bodyOf(callAt(live, 1)[1]) as UiStateSnapshot;
+      expect(posted.tabs?.map((t) => t.id)).toEqual(["tab-main", "tab-new", "tab-abc"]);
+      expect(posted.choices).toEqual({ "exec:tab": "pulse" });
+    });
+
+    it("with an EMPTY cache (Chrome wiped site data on exit) the file is taken wholesale", async () => {
+      const s = fakeStorage();
+      setFetch(vi.fn(() => Promise.reject(new Error("gateway restarting"))));
+      await hydrateUiState(s);
+      setFetch(vi.fn(() => Promise.resolve(jsonResponse(fileSnapshot()))));
+      await expect(rehydrateUiState(s)).resolves.toBe(true);
+      expect(readUiStateSnapshot(s)).toEqual(fileSnapshot());
+    });
+
+    it("a rehydrate that fails again keeps the mirror blocked", async () => {
+      const s = fakeStorage();
+      const down = vi.fn(() => Promise.reject(new Error("still down")));
+      setFetch(down);
+      await hydrateUiState(s);
+      await expect(rehydrateUiState(s)).resolves.toBe(false);
+      expect(uiStateHydrateOutcome()).toBe("failed");
+      setFlag("topbar:exec", true, false, s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(down).toHaveBeenCalledTimes(2); // two GETs, never a POST
+      for (const call of down.mock.calls) {
+        expect((call as FetchCall)[1]?.method).toBe("GET");
+      }
+    });
+
+    it("a DEGRADED answer on rehydrate is no answer: store untouched, still blocked", async () => {
+      const s = fakeStorage();
+      setFetch(vi.fn(() => Promise.reject(new Error("gateway restarting"))));
+      await hydrateUiState(s);
+      writeTabList([{ id: "tab-main" }], s);
+      const before = snapshot(s);
+      setFetch(vi.fn(() => Promise.resolve(jsonResponse({ ...emptySnapshot(), degraded: true }))));
+      await expect(rehydrateUiState(s)).resolves.toBe(false);
+      expect(uiStateHydrateOutcome()).toBe("failed");
+      expect(snapshot(s)).toEqual(before);
+    });
+  });
+
+  describe("the self-retry — a failed hydrate keeps asking until the file has been read (2026-09-16)", () => {
+    const fileSnapshot = (): UiStateSnapshot => ({ ...sampleSnapshot(), tabs: sampleTabs() });
+
+    it("a failed BOOT hydrate retries on its own, with no reconnect, and the mirror comes back", async () => {
+      const s = fakeStorage();
+      let attempts = 0;
+      const flaky = vi.fn((_url: unknown, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        attempts += 1;
+        return attempts < 3
+          ? Promise.reject(new Error("ui server not listening yet"))
+          : Promise.resolve(jsonResponse(fileSnapshot()));
+      });
+      setFetch(flaky);
+      await expect(hydrateUiState(s)).resolves.toBe(false);
+      expect(uiStateHydrateOutcome()).toBe("failed");
+      writeTabList([{ id: "tab-main" }, { id: "tab-new", title: "opened meanwhile" }], s);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      expect(flaky.mock.calls.every((c) => (c as FetchCall)[1]?.method === "GET")).toBe(true);
+
+      // Ladder step 1 (2 s): still down. Step 2 (5 s more): the file answers.
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(attempts).toBe(2);
+      expect(uiStateHydrateOutcome()).toBe("failed");
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(attempts).toBe(3);
+      expect(uiStateHydrateOutcome()).toBe("ok");
+      // Local wins, the file fills the gaps — and the merged truth is mirrored without a hello.
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main", "tab-new", "tab-abc"]);
+      await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+      const posts = flaky.mock.calls.filter((c) => (c as FetchCall)[1]?.method === "POST");
+      expect(posts).toHaveLength(1);
+      const posted = bodyOf((posts[0] as FetchCall)[1]) as UiStateSnapshot;
+      expect(posted.tabs?.map((t) => t.id)).toEqual(["tab-main", "tab-new", "tab-abc"]);
+    });
+
+    it("the ladder tops out at one minute and never stops: one GET per step, never two timers", async () => {
+      const s = fakeStorage();
+      const down = vi.fn(() => Promise.reject(new Error("still down")));
+      setFetch(down);
+      await hydrateUiState(s);
+      expect(down).toHaveBeenCalledTimes(1);
+      // A hello-driven retry in the middle does not double the timer: it fails, and the SAME
+      // ladder carries on from the next step.
+      await expect(rehydrateUiState(s)).resolves.toBe(false);
+      expect(down).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(2_000); // step 1, armed at boot
+      expect(down).toHaveBeenCalledTimes(3);
+      await vi.advanceTimersByTimeAsync(10_000); // step 3 (10 s) after the two failures above
+      expect(down).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(down).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(down).toHaveBeenCalledTimes(6);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(down).toHaveBeenCalledTimes(7);
+      expect(uiStateHydrateOutcome()).toBe("failed");
+      for (const call of down.mock.calls) {
+        expect((call as FetchCall)[1]?.method).toBe("GET");
+      }
+    });
+
+    it("a page that hydrated cleanly at boot never arms the ladder", async () => {
+      const s = fakeStorage();
+      await expect(hydrateUiState(s)).resolves.toBe(true);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // FORK 2026-09-21 (the architect: closed and deleted tabs came back on Ctrl+Shift+R). Every path
+  // below used to resurrect a closed tab, because a close was only an ABSENCE from a list.
+  describe("closed-tab tombstones — a closed tab stays closed on every path", () => {
+    const tabsAB = () => [{ id: "tab-main" }, { id: "tab-a" }, { id: "tab-b" }];
+
+    it("a stale writer (second window) cannot write a closed tab back", () => {
+      const s = fakeStorage();
+      writeTabList(tabsAB(), s);
+      recordClosedTab("tab-a", s);
+      writeTabList(tabsAB(), s); // the other window still holds tab-a in memory
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main", "tab-b"]);
+    });
+
+    it("hydrate from a file that still lists the tab does not restore it", async () => {
+      const s = fakeStorage();
+      recordClosedTab("tab-a", s);
+      setFetch(vi.fn(() => Promise.resolve(jsonResponse({ ...sampleSnapshot(), tabs: tabsAB() }))));
+      await expect(hydrateUiState(s)).resolves.toBe(true);
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main", "tab-b"]);
+    });
+
+    it("a file tombstone wins over a local list that predates the close", async () => {
+      const s = fakeStorage();
+      writeTabList(tabsAB(), s);
+      setFetch(
+        vi.fn(() =>
+          Promise.resolve(
+            jsonResponse({ ...sampleSnapshot(), tabs: tabsAB(), closedTabs: { "tab-b": 5 } }),
+          ),
+        ),
+      );
+      await hydrateUiState(s);
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main", "tab-a"]);
+    });
+
+    it("the rehydrate merge does not re-add a file-only tab this page closed", async () => {
+      const s = fakeStorage();
+      setFetch(vi.fn(() => Promise.reject(new Error("gateway restarting"))));
+      await hydrateUiState(s);
+      writeTabList([{ id: "tab-main" }, { id: "tab-b" }], s);
+      recordClosedTab("tab-a", s); // closed while the mirror was off
+      setFetch(vi.fn(() => Promise.resolve(jsonResponse({ ...sampleSnapshot(), tabs: tabsAB() }))));
+      await expect(rehydrateUiState(s)).resolves.toBe(true);
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main", "tab-b"]);
+    });
+
+    it("tombstones are unioned, never replaced, and ride the mirror", async () => {
+      const s = fakeStorage();
+      recordClosedTab("tab-a", s, 100);
+      writeUiStateSnapshot({ ...sampleSnapshot(), closedTabs: { "tab-z": 200 } }, s);
+      expect(loadClosedTabs(s)).toEqual({ "tab-a": 100, "tab-z": 200 });
+      writeUiStateSnapshot({ ...sampleSnapshot(), closedTabs: {} }, s);
+      expect(loadClosedTabs(s)).toEqual({ "tab-a": 100, "tab-z": 200 });
+      expect(readUiStateSnapshot(s).closedTabs).toEqual({ "tab-a": 100, "tab-z": 200 });
+    });
+
+    it("tab-main is never tombstoned", () => {
+      const s = fakeStorage();
+      recordClosedTab("tab-main", s);
+      writeTabList([{ id: "tab-main" }], s);
+      expect(loadTabList(s).map((t) => t.id)).toEqual(["tab-main"]);
+    });
+
+    it("keeps only the newest MAX_CLOSED_TABS", () => {
+      const many: Record<string, number> = {};
+      for (let i = 0; i < MAX_CLOSED_TABS + 10; i++) many[`t${i}`] = i;
+      const kept = unionClosedTabs(many);
+      expect(Object.keys(kept)).toHaveLength(MAX_CLOSED_TABS);
+      expect(kept.t0).toBeUndefined();
+    });
+
+    it("a mirror pending at pagehide is flushed, not lost with the page", async () => {
+      const s = fakeStorage();
+      await hydrateUiState(s);
+      fetchMock.mockClear();
+      recordClosedTab("tab-a", s); // schedules the 250ms mirror
+      flushPendingUiStateMirror(); // what pagehide does on Ctrl+Shift+R
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      // The one request that must outlive the document is the one that may use keepalive.
+      expect(callAt(fetchMock, 0)[1]?.keepalive).toBe(true);
+      const body = JSON.parse(String((callAt(fetchMock, 0)[1] as RequestInit).body));
+      expect(Object.keys(body.closedTabs)).toEqual(["tab-a"]);
+    });
+  });
+
   describe("every writer schedules a mirror", () => {
     it("setCollapsed does", async () => {
       const s = fakeStorage();
@@ -1526,5 +1913,65 @@ describe("persisted order — the properties the ordering rule leans on", () => 
     // every other test file.
     expect(() => getOrderedIds("ui-state-test:absent-probe")).not.toThrow();
     expect(getOrderedIds("ui-state-test:absent-probe")).toEqual([]);
+  });
+});
+
+// FORK 2026-09-10 — the seat header is CARRIED when a seat is known and is NEVER a
+// precondition. The hivemind-seats draft made the mirror return early with no seat; nothing
+// sets `tinker.seatId` until the door lands, so a single-operator install silently stopped
+// persisting its desk (tabs gone after every browser exit). The server decides which desk a
+// seat-less request lands on; the client's only job is to send what it knows.
+describe("the seat header — carried when known, never a precondition for the mirror", () => {
+  const realFetch: unknown = globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  const SEAT_KEY = "tinker.seatId";
+
+  beforeAll(async () => {
+    // Drain the real-timer mirror the ordered-ids describe above left pending, so it does
+    // not land inside a call count below (same reason as the durable-layer describe).
+    setFetch(vi.fn(() => Promise.resolve(jsonResponse(emptySnapshot()))));
+    await new Promise((resolve) => setTimeout(resolve, MIRROR_SETTLE_MS));
+    setFetch(realFetch);
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    fetchMock = vi.fn(() => Promise.resolve(jsonResponse(emptySnapshot())));
+    setFetch(fetchMock);
+    __resetUiStateHydrationForTests();
+    sessionStorage.removeItem(SEAT_KEY);
+  });
+
+  afterEach(() => {
+    sessionStorage.removeItem(SEAT_KEY);
+    vi.useRealTimers();
+    setFetch(realFetch);
+  });
+
+  it("mirrors WITHOUT a seat id — a single-operator desk still reaches the file", async () => {
+    const s = fakeStorage();
+    writeTabList(sampleTabs(), s);
+    scheduleUiStateMirror(s);
+    await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = callAt(fetchMock, 0);
+    expect(init?.method).toBe("POST");
+    expect(headerOf(init, "X-Tinker-Seat")).toBe("");
+    expect((bodyOf(init) as UiStateSnapshot).tabs).toEqual(sampleTabs());
+  });
+
+  it("carries X-Tinker-Seat on hydrate AND mirror once sessionStorage names a seat", async () => {
+    sessionStorage.setItem(SEAT_KEY, "seat-alex");
+    const s = fakeStorage();
+    await expect(hydrateUiState(s)).resolves.toBe(true);
+    expect(headerOf(callAt(fetchMock, 0)[1], "X-Tinker-Seat")).toBe("seat-alex");
+
+    scheduleUiStateMirror(s);
+    await vi.advanceTimersByTimeAsync(MIRROR_SETTLE_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, init] = callAt(fetchMock, 1);
+    expect(init?.method).toBe("POST");
+    expect(headerOf(init, "X-Tinker-Seat")).toBe("seat-alex");
   });
 });

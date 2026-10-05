@@ -11,6 +11,8 @@ import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import { getRuntimeConfig } from "../../../config/config.js";
+import { appendMissingPromptKeyMarkers } from "../../../gateway/prompt-key-marker.js";
+import { bridgeReattachFor } from "../../../infra/bridge-reattach.js";
 import { emitTrustedDiagnosticEvent } from "../../../infra/diagnostic-events.js";
 import {
   createChildDiagnosticTraceContext,
@@ -21,6 +23,7 @@ import { isEmbeddedMode } from "../../../infra/embedded-mode.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { resolveHeartbeatSummaryForAgent } from "../../../infra/heartbeat-summary.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
+import { isRestartDrainActive } from "../../../infra/restart-drain.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { listRegisteredPluginAgentPromptGuidance } from "../../../plugins/command-registry-state.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
@@ -147,7 +150,10 @@ import {
   isSubagentEnvelopeSession,
   resolveSubagentCapabilityStore,
 } from "../../subagent-capabilities.js";
-import { resolveSystemPromptOverride } from "../../system-prompt-override.js";
+import {
+  resolveSystemPromptIdentityLine,
+  resolveSystemPromptOverride,
+} from "../../system-prompt-override.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { buildSystemPromptReport } from "../../system-prompt-report.js";
 import {
@@ -164,9 +170,11 @@ import { shouldAllowProviderOwnedThinkingReplay } from "../../transcript-policy.
 import { normalizeUsage, type NormalizedUsage } from "../../usage.js";
 import { DEFAULT_BOOTSTRAP_FILENAME } from "../../workspace.js";
 import { isRunnerAbortError } from "../abort.js";
+import { createBoundaryPauseGate } from "../boundary-pause.js";
 import { isCacheTtlEligibleProvider, readLastCacheTtlTimestamp } from "../cache-ttl.js";
 import { resolveCompactionTimeoutMs } from "../compaction-safety-timeout.js";
 import { runContextEngineMaintenance } from "../context-engine-maintenance.js";
+import { planContinuation } from "../continuation.js";
 import { applyFinalEffectiveToolPolicy } from "../effective-tool-policy.js";
 import { buildEmbeddedExtensionFactories, resolveCompactionMode } from "../extensions.js";
 import {
@@ -240,11 +248,15 @@ import {
   shouldStripBootstrapFromEmbeddedContext,
 } from "./attempt-bootstrap-routing.js";
 export { shouldStripBootstrapFromEmbeddedContext } from "./attempt-bootstrap-routing.js";
+import { wrapStreamFnWithLedger } from "../../../forensic/llm-ledger.js";
 import * as _forkAttemptHooks from "../../../fork/attempt-hooks.js"; // FORK: single hook entry point
+import { recordRunDone } from "../../../infra/events/turn-events.js"; // FORK: run.done row
+import { wrapStreamFnWithCallRouter } from "../call-router.js";
 import {
   rotateTranscriptAfterCompaction,
   shouldRotateCompactionTranscript,
 } from "../compaction-successor-transcript.js";
+import { wrapToolsWithDigest } from "../tool-result-digest.js";
 import { configureEmbeddedAttemptHttpRuntime } from "./attempt-http-runtime.js";
 import {
   assembleAttemptContextEngine,
@@ -703,6 +715,7 @@ export async function runEmbeddedAttempt(
         return;
       }
       diagnosticRunCompleted = true;
+      recordRunDone(diagnosticRunBase, diagnosticRunStartedAt, outcome, err);
       emitTrustedDiagnosticEvent({
         type: "run.completed",
         ...diagnosticRunBase,
@@ -997,7 +1010,19 @@ export async function runEmbeddedAttempt(
       senderIsOwner: params.senderIsOwner,
       warn: (message) => log.warn(message),
     });
-    const effectiveTools = [...tools, ...filteredBundledTools];
+    // FORK 2026-09-30 (THALAMUS v4, unit D3): a registered digester may condense a long text tool result before it
+    // enters the thread. Returns the same array when none is registered.
+    const effectiveTools = wrapToolsWithDigest([...tools, ...filteredBundledTools], {
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+      agentId: params.agentId,
+      trigger: params.trigger,
+      provider: params.provider,
+      model: params.modelId,
+      api: params.model.api,
+      thinkLevel: params.thinkLevel,
+    });
     // Char weight of the tool schemas shipped with every request. pi's
     // estimateTokens() only walks messages, so the preemptive-compaction
     // precheck further down never counted tool schemas at all. Computed ONCE
@@ -1223,6 +1248,10 @@ export async function runEmbeddedAttempt(
         }) ??
         buildEmbeddedSystemPrompt({
           workspaceDir: effectiveWorkspace,
+          identityLine: resolveSystemPromptIdentityLine({
+            config: params.config,
+            agentId: sessionAgentId,
+          }),
           defaultThinkLevel: params.thinkLevel,
           reasoningLevel: params.reasoningLevel ?? "off",
           extraSystemPrompt: params.extraSystemPrompt,
@@ -2024,6 +2053,32 @@ export async function runEmbeddedAttempt(
           nextCallId: () => `${params.runId}:model:${(diagnosticModelCallSeq += 1)}`,
         },
       );
+      // FORK 2026-09-17: every model call → the LLM ledger (full request, response, driver).
+      activeSession.agent.streamFn = wrapStreamFnWithLedger(activeSession.agent.streamFn, {
+        source: "agent",
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        agentId: params.agentId,
+        spawnedBy: params.spawnedBy,
+        trigger: params.trigger,
+        provider: params.provider,
+        model: params.modelId,
+        api: params.model.api,
+      });
+      // FORK 2026-09-30 (THALAMUS v4): a registered call router sees every call before it goes out. Returns
+      // the same function when none is registered.
+      activeSession.agent.streamFn = wrapStreamFnWithCallRouter(activeSession.agent.streamFn, {
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        agentId: params.agentId,
+        trigger: params.trigger,
+        provider: params.provider,
+        model: params.modelId,
+        api: params.model.api,
+        thinkLevel: params.thinkLevel,
+      });
 
       // FORK 2026-04-24 (originally added in 2ad1400a0d, lost in an upstream
       // merge, restored 2026-05-09): pipe runId + sessionKey + sessionId through
@@ -2036,18 +2091,27 @@ export async function runEmbeddedAttempt(
       // (stream.ts:170/204 early-returned on every emitToolStart/Result call),
       // so claude-cli tool calls were invisible in the Tinker UI even though
       // the tool-event consumer at app.ts:1501 was wired correctly.
+      let pendingContinuationCall: { fallbackText?: string } | undefined;
       {
         const piped = activeSession.agent.streamFn;
         const pipedRunId = params.runId;
         const pipedSessionKey = params.sessionKey;
         const pipedSessionId = params.sessionId;
         activeSession.agent.streamFn = (model, context, options) => {
+          // FORK 2026-09-30 (lifecycles.md L4b): the first call of a continued run tells the
+          // cc-bridge to take the turn its worker still holds (see continueFromTranscript below).
+          const continuation = pendingContinuationCall;
+          pendingContinuationCall = undefined;
           const pipedOptions = {
             ...options,
             __openclawRunId: pipedRunId,
             __openclawSessionKey: pipedSessionKey,
             __openclawSessionId: pipedSessionId,
             __openclawThinkLevel: params.thinkLevel,
+            // FORK 2026-10-02 (channel-reply): the bridge stamps a chat-channel run's final
+            // message so the channel gets the answer without the tool narration.
+            __openclawMessageChannel: runtimeChannel,
+            ...(continuation ? { __openclawContinuation: continuation } : {}),
           } as typeof options;
           return piped(model, context, pipedOptions);
         };
@@ -2246,6 +2310,8 @@ export async function runEmbeddedAttempt(
           session: activeSession,
           runId: params.runId,
           initialReplayState: params.initialReplayState,
+          modelId: params.model.id,
+          modelProvider: params.model.provider,
           hookRunner: getGlobalHookRunner() ?? undefined,
           verboseLevel: params.verboseLevel,
           reasoningMode: params.reasoningLevel ?? "off",
@@ -2336,6 +2402,20 @@ export async function runEmbeddedAttempt(
         abortRun(false, makeBudgetAbortReason());
       };
 
+      // FORK 2026-09-29 (lifecycles.md L4b): the restart drain holds this run at its next
+      // model-call boundary (boundary-pause.ts). A run that starts while a drain is active is held
+      // before its first call, so it spends nothing until the restart is done or called off.
+      const boundaryGate = createBoundaryPauseGate({
+        onPaused: () =>
+          log.info(
+            `restart drain: held at a model-call boundary runId=${params.runId} sessionId=${params.sessionId}`,
+          ),
+      });
+      // Not a cc-bridge run: it is one call for a whole Claude Code turn, and the bridge drains its
+      // worker at the API calls inside it (runs.ts drainEmbeddedRunsToBoundary).
+      if (isRestartDrainActive() && params.provider !== "claude-code") {
+        boundaryGate.requestPause();
+      }
       const queueHandle: EmbeddedPiQueueHandle & {
         kind: "embedded";
         cancel: (reason?: "user_abort" | "restart" | "superseded") => void;
@@ -2350,6 +2430,8 @@ export async function runEmbeddedAttempt(
           abortRun();
         },
         abort: abortRun,
+        boundaryPause: boundaryGate,
+        provider: params.provider,
       };
       let lastAssistant: AgentMessage | undefined;
       let currentAttemptAssistant: EmbeddedRunAttemptResult["currentAttemptAssistant"];
@@ -2482,8 +2564,43 @@ export async function runEmbeddedAttempt(
       let preflightRecovery: EmbeddedRunAttemptResult["preflightRecovery"];
       let promptErrorSource: "prompt" | "compaction" | "precheck" | null = null;
       let skipPromptSubmission = false;
+      // FORK 2026-09-03 (user Stop measured at ~9 s of dead work): the abort
+      // registration above fires `onAbort()` SYNCHRONOUSLY when the signal is
+      // already aborted, but nothing then stopped the attempt — the
+      // before_prompt_build hooks below still ran (~9 s live, runId 12a0e0c4)
+      // before `abortable()` finally honoured the signal at the prompt call.
+      // Fold the run here instead, onto the SAME `promptError` rails the abort
+      // would have taken 9 s later, so classification downstream is unchanged.
+      //
+      // DELIBERATELY sets `promptError` rather than throwing:
+      //   1. the `finally` that owns this attempt's cleanup (`clearTimeout`,
+      //      `unsubscribe()`, `clearActiveEmbeddedRun`, abort-listener removal)
+      //      is attached to the `try` immediately below — a throw raised
+      //      before/outside it leaks every one of those;
+      //   2. a raw throw escapes `runEmbeddedAttempt` entirely and is rethrown
+      //      by model-fallback's `shouldRethrowAbort`, so it would never reach
+      //      the externalAbort -> surface_error/"aborted" path and would land
+      //      back on the generic "Agent failed before reply" bubble.
+      let abortedBeforePromptBuild = false;
+      const noteExternalAbortBeforePrompt = (): void => {
+        if (abortedBeforePromptBuild || !params.abortSignal?.aborted) {
+          return;
+        }
+        abortedBeforePromptBuild = true;
+        skipPromptSubmission = true;
+        if (!promptError) {
+          promptError = makeAbortError(runAbortController.signal);
+          promptErrorSource = "precheck";
+        }
+        if (!isProbeSession) {
+          log.debug(
+            `embedded run aborted before prompt build: runId=${params.runId} sessionId=${params.sessionId}`,
+          );
+        }
+      };
       try {
         const promptStartedAt = Date.now();
+        noteExternalAbortBeforePrompt();
         if (emptyExplicitToolAllowlistError) {
           promptError = emptyExplicitToolAllowlistError;
           promptErrorSource = "precheck";
@@ -2518,7 +2635,12 @@ export async function runEmbeddedAttempt(
         };
         const promptBuildMessages =
           pruneProcessedHistoryImages(activeSession.messages) ?? activeSession.messages;
-        const hookResult = isRawModelRun
+        // FORK 2026-09-03: re-check immediately before the before_prompt_build
+        // hooks — they are the ~9 s an already-cancelled run used to burn
+        // (runId 12a0e0c4) before `abortable()` honoured the signal.
+        noteExternalAbortBeforePrompt();
+        const skipPromptBuildHooks = isRawModelRun || abortedBeforePromptBuild;
+        const hookResult = skipPromptBuildHooks
           ? undefined
           : await resolvePromptBuildHookResult({
               config: params.config ?? getRuntimeConfig(),
@@ -2555,6 +2677,10 @@ export async function runEmbeddedAttempt(
               hookPrependSystemContext: hookResult?.prependSystemContext,
             }),
             appendSystemContext: hookResult?.appendSystemContext,
+            leadingLine: resolveSystemPromptIdentityLine({
+              config: params.config,
+              agentId: sessionAgentId,
+            }),
           });
           if (prependedOrAppendedSystemPrompt) {
             const prependSystemLen = hookResult?.prependSystemContext?.trim().length ?? 0;
@@ -2612,6 +2738,9 @@ export async function runEmbeddedAttempt(
         if (googlePromptCacheStreamFn) {
           activeSession.agent.streamFn = googlePromptCacheStreamFn;
         }
+        // FORK 2026-09-29 (lifecycles.md L4b): OUTERMOST, so a held call reaches no other wrapper
+        // (no ledger row, no telemetry frame, no cache trace) until it is released.
+        activeSession.agent.streamFn = boundaryGate.wrap(activeSession.agent.streamFn);
 
         const routingSummary = describeProviderRequestRoutingSummary({
           provider: params.provider,
@@ -2930,7 +3059,68 @@ export async function runEmbeddedAttempt(
               messages: btwSnapshotMessages,
               inFlightPrompt: promptSubmission.prompt,
             });
-            if (promptSubmission.runtimeOnly) {
+            // FORK 2026-09-29 (lifecycles.md L4b): a restart-interrupted turn resumes from the
+            // transcript with Agent.continue(): no prompt, nothing re-asked. The drain left the
+            // transcript at a model-call boundary; continuation.ts trims a stub and closes any tool
+            // call the restart cut, persisting those results before the loop continues.
+            // A cc-bridge turn lives in its CLI session, not in these messages. It continues only
+            // when the bridge adopted the worker a restart froze mid-turn (src/infra/bridge-reattach.ts):
+            // the bridge then replays and thaws that turn. Any other bridge turn keeps the prompt.
+            const bridgeTurnHeld =
+              params.provider === "claude-code" &&
+              bridgeReattachFor(params.sessionKey)?.state === "pending";
+            const continuation =
+              params.continueFromTranscript && (params.provider !== "claude-code" || bridgeTurnHeld)
+                ? planContinuation(activeSession.agent.state.messages)
+                : undefined;
+            if (continuation && !continuation.ok) {
+              log.warn(
+                `continueFromTranscript: ${continuation.reason}; falling back to the prompt sessionKey=${params.sessionKey ?? params.sessionId}`,
+              );
+            }
+            // A held bridge turn is taken either way. When the transcript cannot continue (a chat
+            // cut in its FIRST turn has nothing on disk: live test 2026-09-30), the prompt path
+            // carries the call, the resume text is only the visible row, and the worker's turn is
+            // what runs: the bridge never sends that text to the CLI (stream.ts continuation).
+            if (bridgeTurnHeld && params.continueFromTranscript) {
+              pendingContinuationCall = { fallbackText: promptSubmission.prompt };
+            }
+            // FORK 2026-10-01 (`[chat-divergence]` cause 1, bug-log.md): key the prompt pi is about
+            // to persist. chat.send writes the `openclaw.prompt-key` marker only on a transcript
+            // that already holds an assistant row, so a brand-new session's first prompt was never
+            // keyed and the outbox redrew it LOST. Written HERE, not at SessionManager.open:
+            // prepareSessionManagerForRun resets a pre-created transcript with no assistant row to
+            // its header, dropping anything appended before it, and a marker leaf ahead of the
+            // orphaned-user repair above would hide that repair. On a cold session pi's first
+            // flush lands the marker right before the user row. A key already in the session
+            // (chat.send's, or an earlier attempt's that flushed) gets no second marker. A
+            // continued turn persists no user row, so it gets none.
+            if (!continuation?.ok) {
+              const promptKeyMarkers = appendMissingPromptKeyMarkers(sessionManager, {
+                promptKeys: params.promptKeys,
+                sessionKey: params.sessionKey ?? params.sessionId,
+                ts: Date.now(),
+              });
+              if (!promptKeyMarkers.ok) {
+                log.warn(
+                  `prompt-key marker not written runId=${params.runId} sessionKey=${params.sessionKey ?? params.sessionId}: ${formatErrorMessage(promptKeyMarkers.error)}`,
+                );
+              } else if (promptKeyMarkers.appended.length > 0) {
+                log.debug(
+                  `prompt-key marker written keys=${promptKeyMarkers.appended.join(",")} runId=${params.runId}`,
+                );
+              }
+            }
+            if (continuation?.ok) {
+              for (const result of continuation.synthetic) {
+                sessionManager.appendMessage(result as never);
+              }
+              activeSession.agent.state.messages = continuation.messages;
+              log.info(
+                `continueFromTranscript: resuming without a prompt sessionKey=${params.sessionKey ?? params.sessionId} trimmed=${continuation.trimmed} closedToolCalls=${continuation.synthetic.length}${bridgeTurnHeld ? " (cc-bridge worker held)" : ""}`,
+              );
+              await abortable(activeSession.agent.continue());
+            } else if (promptSubmission.runtimeOnly) {
               await abortable(activeSession.prompt(promptSubmission.prompt));
             } else {
               const runtimeContext = promptSubmission.runtimeContext?.trim();

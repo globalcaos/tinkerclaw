@@ -7,12 +7,26 @@
  *
  * Usage: node scripts/apply-fork-wiring.mjs
  */
-import { readFileSync, writeFileSync, statSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, statSync, readdirSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = process.env.TINKERCLAW_DIR || resolve(process.env.HOME, "src/tinkerclaw");
+// The tree to patch: TINKERCLAW_DIR when set; otherwise the git top-level the script runs in, when that is a
+// TinkerClaw tree (a worktree has a `.git` file, the main checkout a `.git` folder); ~/src/tinkerclaw only outside
+// any tree. 2026-10-01: the old default patched the shared checkout from a build worktree twice in one night.
+function treeRoot() {
+  if (process.env.TINKERCLAW_DIR) return process.env.TINKERCLAW_DIR;
+  for (let d = resolve(process.cwd()); ; d = dirname(d)) {
+    if (existsSync(resolve(d, ".git"))) {
+      if (existsSync(resolve(d, "src/agents"))) return d;
+      break;
+    }
+    if (dirname(d) === d) break;
+  }
+  return resolve(process.env.HOME, "src/tinkerclaw");
+}
+const ROOT = treeRoot();
 
 function readFile(rel) {
   return readFileSync(resolve(ROOT, rel), "utf-8");
@@ -172,6 +186,31 @@ $1})`,
     }
   }
 
+  // Hook 5: recordRunDone — the structured `run.done` row (logging.md §4.6).
+  // Lives in attempt.ts because this is the ONE place that knows a run ended
+  // for every outcome (ok, error, abort); the diagnostic event beside it is a
+  // different sink and does not persist a row. Tier-1 means upstream's copy of
+  // this file wins the merge outright, so without this block the run.done
+  // table silently stops filling at the next catch-up with nothing to notice.
+  const TURN_EVENTS_IMPORT =
+    'import { recordRunDone } from "../../../infra/events/turn-events.js"; // FORK: run.done row';
+  if (!src.includes("infra/events/turn-events.js")) {
+    // Anchor on FORK_IMPORT rather than "last import": the block above has
+    // just guaranteed it is present, and it keeps the two fork imports adjacent.
+    src = src.replace(FORK_IMPORT, `${FORK_IMPORT}\n${TURN_EVENTS_IMPORT}`);
+  }
+  if (!src.includes("recordRunDone(diagnosticRunBase")) {
+    const r = insertBeforeAnchor(
+      src,
+      /      emitTrustedDiagnosticEvent\(\{\n        type: "run\.completed",/,
+      "      recordRunDone(diagnosticRunBase, diagnosticRunStartedAt, outcome, err);",
+      "recordRunDone call",
+    );
+    if (r) {
+      src = r;
+    }
+  }
+
   writeFile(file, src);
 }
 
@@ -252,10 +291,112 @@ function patchSessions() {
     }
   }
 
+  // --- EVICTION mode (2026-09-24) -----------------------------------------
+  // The CONTEXT WINDOW panel's manual "evict" button. The 150-line transcript
+  // surgery it used to inline here now lives in ../session-eviction.ts, which
+  // is NOT tier-1 and so survives an upstream merge untouched; what remains in
+  // this file is the delegation, and that is what has to be put back.
+  if (!src.includes("evictSessionTranscript")) {
+    const withImport = insertBeforeAnchor(
+      src,
+      /import \{ reactivateCompletedSubagentSession \} from "\.\.\/session-subagent-reactivation\.js";/,
+      'import { evictSessionTranscript } from "../session-eviction.js";',
+      "session-eviction import",
+    );
+    if (withImport) {
+      src = withImport;
+      changed = true;
+    }
+    const withBranch = insertBeforeAnchor(
+      src,
+      /    if \(maxLines === undefined\) \{/,
+      `    // FORK 2026-08-28 — EVICTION mode. Checked FIRST: it is the only branch that rewrites the
+    // transcript without a model call, and \`keepFraction\` is what selects it. The body lives in
+    // ../session-eviction.ts (context-window-panel.md §6.1 A5); this tier-1 file only delegates,
+    // replies and broadcasts. The run interrupt stays here, shared with the other branches.
+    const keepFraction =
+      typeof p.keepFraction === "number" && Number.isFinite(p.keepFraction)
+        ? p.keepFraction
+        : undefined;
+    if (keepFraction !== undefined) {
+      const eviction = await evictSessionTranscript({
+        cfg,
+        entry,
+        agentId: target.agentId,
+        canonicalKey: target.canonicalKey,
+        storePath,
+        storeKey: compactTarget.primaryKey,
+        filePath,
+        keepFraction,
+        interruptRun: () =>
+          interruptSessionRunIfActive({
+            req,
+            context,
+            client,
+            isWebchatConnect,
+            requestedKey: key,
+            canonicalKey: target.canonicalKey,
+            sessionId,
+          }),
+      });
+      if (eviction.kind === "error") {
+        respond(false, undefined, eviction.error);
+        return;
+      }
+      respond(true, eviction.reply, undefined);
+      if (eviction.evicted) {
+        emitSessionsChanged(context, {
+          sessionKey: target.canonicalKey,
+          reason: "compact",
+          compacted: true,
+        });
+      }
+      return;
+    }
+`,
+      "eviction delegation branch",
+    );
+    if (withBranch) {
+      src = withBranch;
+      changed = true;
+    }
+  }
+
+  // --- chatAbortOps (2026-09-24) ------------------------------------------
+  // reset and delete both have to tear down an in-flight chat run before they
+  // mutate the session. The ops come from ./chat.js; upstream imports only
+  // chatHandlers from it, so the merge drops the symbol AND both call sites.
+  if (!src.includes("createChatAbortOps")) {
+    if (src.includes('import { chatHandlers } from "./chat.js";')) {
+      src = src.replace(
+        'import { chatHandlers } from "./chat.js";',
+        'import { chatHandlers, createChatAbortOps } from "./chat.js";',
+      );
+      changed = true;
+    } else {
+      console.warn(`    Could not find anchor for: createChatAbortOps import`);
+    }
+  }
+  // Two DISTINCT call sites, each keyed on its own preceding field so a
+  // partial erosion (one restored, one not) still gets topped up.
+  for (const [anchor, label] of [
+    ['      commandSource: "gateway:sessions.reset",\n', "sessions.reset chatAbortOps"],
+    ['      reason: "session-delete",\n', "sessions.delete chatAbortOps"],
+  ]) {
+    if (!src.includes(`${anchor}      chatAbortOps: createChatAbortOps(context),`)) {
+      if (!src.includes(anchor)) {
+        console.warn(`    Could not find anchor for: ${label}`);
+        continue;
+      }
+      src = src.replace(anchor, `${anchor}      chatAbortOps: createChatAbortOps(context),\n`);
+      changed = true;
+    }
+  }
+
   if (changed) {
     writeFile(file, src);
   } else {
-    console.log(`  ✅ ${file} — webchat delete bypass already present`);
+    console.log(`  ✅ ${file} — webchat delete bypass + eviction/abort wiring already present`);
   }
 }
 
@@ -1933,6 +2074,12 @@ const NEW_PATCHES = [
   ],
   ["hippocampus emptyPluginConfigSchema import path", patchHippocampusEmptyPluginConfigSchema],
   ["tsdown.config.ts native addons in neverBundle list", patchTsdownNativeAddons],
+  ["package.json ./plugin-sdk/fork-telemetry export", patchForkTelemetryExport],
+  ["attempt.ts call router wrap (THALAMUS v4)", patchAttemptCallRouter],
+  ["attempt.ts tool digest wrap (THALAMUS v4)", patchAttemptToolDigest],
+  ["package.json ./plugin-sdk/fork-jev and fork-thalamus exports", patchForkThalamusExports],
+  ["plugin-sdk-entrypoints.json fork-jev and fork-thalamus entries", patchForkThalamusEntrypoints],
+  ["tsdown.config.ts infra/events/writer-worker dist entry", patchTsdownWriterWorkerEntry],
 ];
 
 // ---------------------------------------------------------------------------
@@ -2514,6 +2661,397 @@ function patchHippocampusEmptyPluginConfigSchema() {
   console.log(`  ✏️  Patched: ${file} (emptyPluginConfigSchema import path)`);
 }
 
+// package.json: the fork publishes its own plugin-sdk subpaths under
+// ./plugin-sdk/fork-*. package.json is tier-1, so an upstream merge takes
+// THEIRS wholesale and every fork subpath disappears at once — an importer of
+// "openclaw/plugin-sdk/fork-telemetry" then fails to resolve at build time.
+function patchForkTelemetryExport() {
+  const file = "package.json";
+  const src = readFile(file);
+  const pkg = JSON.parse(src);
+  const SUBPATH = "./plugin-sdk/fork-telemetry";
+  if (pkg.exports?.[SUBPATH]) {
+    console.log(`  ✅ ${file} — ${SUBPATH} export already present`);
+    return;
+  }
+  if (!pkg.exports) {
+    console.warn(`  ⚠️  ${file} — no exports map to add ${SUBPATH} to`);
+    return;
+  }
+  const entry = {
+    types: "./dist/plugin-sdk/fork-telemetry.d.ts",
+    default: "./dist/plugin-sdk/fork-telemetry.js",
+  };
+  // Rebuild the map so the entry lands beside its fork siblings instead of
+  // after ./cli-entry. Key order has no effect on resolution, but it keeps the
+  // re-applied file diff-identical to the fork's own, which is what makes a
+  // post-merge `git diff` readable.
+  const SIBLING = "./plugin-sdk/fork-overseer-budget";
+  if (pkg.exports[SIBLING]) {
+    const rebuilt = {};
+    for (const [k, v] of Object.entries(pkg.exports)) {
+      rebuilt[k] = v;
+      if (k === SIBLING) {
+        rebuilt[SUBPATH] = entry;
+      }
+    }
+    pkg.exports = rebuilt;
+  } else {
+    pkg.exports[SUBPATH] = entry;
+  }
+  writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`);
+  console.log(`  ✏️  Patched: ${file} (${SUBPATH} export)`);
+}
+
+// attempt.ts: THALAMUS v4 (2026-09-30) per-call seam. attempt.ts is tier-1, so an upstream merge can drop the
+// wrap of `agent.streamFn` that tells a registered call router about every model call. The hunk sits right
+// after the LLM-ledger wrap; with no router registered the wrapper returns the function it was given, so
+// losing it costs nothing until Thalamus is switched on, and the marker below makes the loss loud.
+function patchAttemptCallRouter() {
+  const file = "src/agents/embedded-agent-runner/run/attempt.ts";
+  let src;
+  try {
+    src = readFile(file);
+  } catch {
+    console.warn(`  ⚠️  ${file} — not readable, call router wrap not restored`);
+    return;
+  }
+  if (src.includes("wrapStreamFnWithCallRouter(activeSession.agent.streamFn,")) {
+    console.log(`  ✅ ${file} — call router wrap already present`);
+    return;
+  }
+  const IMPORT_ANCHOR = 'import { wrapStreamFnWithLedger } from "../../../forensic/llm-ledger.js";';
+  const CALL_ANCHOR =
+    /( {6}activeSession\.agent\.streamFn = wrapStreamFnWithLedger\(activeSession\.agent\.streamFn, \{[\s\S]*?\n {6}\}\);\n)/;
+  if (!src.includes(IMPORT_ANCHOR) || !CALL_ANCHOR.test(src)) {
+    console.warn(`  ⚠️  ${file} — ledger wrap anchor not found, call router wrap not restored`);
+    return;
+  }
+  let out = src.replace(
+    IMPORT_ANCHOR,
+    `${IMPORT_ANCHOR}\nimport { wrapStreamFnWithCallRouter } from "../call-router.js";`,
+  );
+  out = out.replace(
+    CALL_ANCHOR,
+    `$1      // FORK 2026-09-30 (THALAMUS v4): a registered call router sees every call before it goes out. Returns
+      // the same function when none is registered.
+      activeSession.agent.streamFn = wrapStreamFnWithCallRouter(activeSession.agent.streamFn, {
+        runId: params.runId,
+        sessionKey: params.sessionKey,
+        sessionId: params.sessionId,
+        agentId: params.agentId,
+        trigger: params.trigger,
+        provider: params.provider,
+        model: params.modelId,
+        api: params.model.api,
+        thinkLevel: params.thinkLevel,
+      });
+`,
+  );
+  writeFile(file, out);
+  console.log(`  ✏️  Patched: ${file} (call router wrap)`);
+}
+
+// attempt.ts: THALAMUS v4 unit D3 (2026-09-30) wraps the run's tools so a registered digester can condense a long text
+// result before it enters the thread. With no digester registered `wrapToolsWithDigest` returns the array it was given,
+// so losing the hunk costs nothing until digests are switched on, and the marker below makes the loss loud.
+function patchAttemptToolDigest() {
+  const file = "src/agents/embedded-agent-runner/run/attempt.ts";
+  let src;
+  try {
+    src = readFile(file);
+  } catch {
+    console.warn(`  ⚠️  ${file} — not readable, tool digest wrap not restored`);
+    return;
+  }
+  if (src.includes("wrapToolsWithDigest([...tools, ...filteredBundledTools],")) {
+    console.log(`  ✅ ${file} — tool digest wrap already present`);
+    return;
+  }
+  const CALL_ANCHOR = "    const effectiveTools = [...tools, ...filteredBundledTools];\n";
+  const IMPORT_ANCHOR = 'import { wrapStreamFnWithCallRouter } from "../call-router.js";';
+  const LEDGER_ANCHOR = 'import { wrapStreamFnWithLedger } from "../../../forensic/llm-ledger.js";';
+  const anchor = src.includes(IMPORT_ANCHOR) ? IMPORT_ANCHOR : LEDGER_ANCHOR;
+  if (!src.includes(CALL_ANCHOR) || !src.includes(anchor)) {
+    console.warn(`  ⚠️  ${file} — effectiveTools anchor not found, tool digest wrap not restored`);
+    return;
+  }
+  let out = src.replace(
+    anchor,
+    `${anchor}\nimport { wrapToolsWithDigest } from "../tool-result-digest.js";`,
+  );
+  out = out.replace(
+    CALL_ANCHOR,
+    `    // FORK 2026-09-30 (THALAMUS v4, unit D3): a registered digester may condense a long text tool result before it
+    // enters the thread. Returns the same array when none is registered.
+    const effectiveTools = wrapToolsWithDigest([...tools, ...filteredBundledTools], {
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      sessionId: params.sessionId,
+      agentId: params.agentId,
+      trigger: params.trigger,
+      provider: params.provider,
+      model: params.modelId,
+      api: params.model.api,
+      thinkLevel: params.thinkLevel,
+    });
+`,
+  );
+  writeFile(file, out);
+  console.log(`  ✏️  Patched: ${file} (tool digest wrap)`);
+}
+
+// package.json + scripts/lib/plugin-sdk-entrypoints.json: THALAMUS v4 (2026-09-30) publishes two more fork
+// subpaths. `fork-jev` is the Jev client the amygdala and Thalamus share; `fork-thalamus` is the pure routing
+// logic and the provider registry. Same reason as fork-telemetry above: package.json is tier-1, an upstream
+// merge takes THEIRS wholesale, and an importer of either subpath then fails to resolve. Each entry lands
+// beside its fork siblings so the re-applied file stays diff-identical to the fork's own.
+const THALAMUS_SDK_SUBPATHS = [
+  { name: "fork-jev", after: ["./plugin-sdk/fork-telemetry", "./plugin-sdk/fork-overseer-budget"] },
+  { name: "fork-thalamus", after: ["./plugin-sdk/fork-jev", "./plugin-sdk/fork-telemetry"] },
+  { name: "fork-thalamus-runtime", after: ["./plugin-sdk/fork-thalamus", "./plugin-sdk/fork-jev"] },
+];
+
+function patchForkThalamusExports() {
+  const file = "package.json";
+  const pkg = JSON.parse(readFile(file));
+  if (!pkg.exports) {
+    console.warn(`  ⚠️  ${file} — no exports map to add the fork-jev / fork-thalamus subpaths to`);
+    return;
+  }
+  let changed = false;
+  for (const { name, after } of THALAMUS_SDK_SUBPATHS) {
+    const subpath = `./plugin-sdk/${name}`;
+    if (pkg.exports[subpath]) {
+      console.log(`  ✅ ${file} — ${subpath} export already present`);
+      continue;
+    }
+    const entry = {
+      types: `./dist/plugin-sdk/${name}.d.ts`,
+      default: `./dist/plugin-sdk/${name}.js`,
+    };
+    const sibling = after.find((k) => pkg.exports[k]);
+    if (sibling) {
+      const rebuilt = {};
+      for (const [k, v] of Object.entries(pkg.exports)) {
+        rebuilt[k] = v;
+        if (k === sibling) {
+          rebuilt[subpath] = entry;
+        }
+      }
+      pkg.exports = rebuilt;
+    } else {
+      pkg.exports[subpath] = entry;
+    }
+    changed = true;
+    console.log(`  ✏️  Patched: ${file} (${subpath} export)`);
+  }
+  if (changed) {
+    writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`);
+  }
+}
+
+function patchForkThalamusEntrypoints() {
+  const file = "scripts/lib/plugin-sdk-entrypoints.json";
+  let list;
+  try {
+    list = JSON.parse(readFile(file));
+  } catch {
+    console.warn(`  ⚠️  ${file} — not readable, fork-jev / fork-thalamus entries not restored`);
+    return;
+  }
+  if (!Array.isArray(list)) {
+    console.warn(`  ⚠️  ${file} — not an array`);
+    return;
+  }
+  let changed = false;
+  for (const { name } of THALAMUS_SDK_SUBPATHS) {
+    if (list.includes(name)) {
+      continue;
+    }
+    // Each entry goes after the one before it, so the order matches the fork's own file.
+    const chain = ["fork-telemetry", "fork-jev", "fork-thalamus", "fork-thalamus-runtime"];
+    const prev =
+      chain
+        .slice(0, chain.indexOf(name))
+        .toReversed()
+        .find((k) => list.includes(k)) ?? "fork-telemetry";
+    const at = list.indexOf(prev);
+    list.splice(at >= 0 ? at + 1 : list.length, 0, name);
+    changed = true;
+    console.log(`  ✏️  Patched: ${file} (${name})`);
+  }
+  if (changed) {
+    writeFile(file, `${JSON.stringify(list, null, 2)}\n`);
+  }
+}
+
+// tsdown.config.ts: the structured-events writer runs on a worker thread that
+// emit.ts starts BY PATH (resolveWriterWorkerEntry looks for
+// infra/events/writer-worker.js), so it needs its own dist entry — nothing
+// imports it, which means the bundler will not discover it on its own. Missing
+// this entry does not fail the build; it fails at run time, later, quietly.
+//
+// Two anchors, tried in order. The fork's own fts-worker-client entry keeps the
+// re-applied line where the fork has it — but that entry is FORK-OWNED, so the
+// upstream copy this driver runs against after a merge does not have it
+// (upstream/main 2026-09-20: absent). The fallback is the last upstream-owned
+// entry the fork's block sits under, which upstream/main does carry.
+function patchTsdownWriterWorkerEntry() {
+  const file = "tsdown.config.ts";
+  const src = readFile(file);
+  if (src.includes('"infra/events/writer-worker"')) {
+    console.log(`  ✅ ${file} — writer-worker dist entry already present`);
+    return;
+  }
+  const anchor = [
+    '    "memory/engram/fts-worker-client": "src/memory/engram/fts-worker-client.ts",',
+    '    "mcp/plugin-tools-serve": "src/mcp/plugin-tools-serve.ts",',
+  ].find((candidate) => src.includes(candidate));
+  if (!anchor) {
+    console.warn(
+      `  ⚠️  ${file} — could not find a buildCoreDistEntries anchor for the writer-worker entry`,
+    );
+    return;
+  }
+  writeFile(
+    file,
+    src.replace(
+      anchor,
+      `${anchor}
+    // FORK 2026-09-24 (logging.md §9 step 3): the structured-events writer thread is started BY
+    // PATH too (emit.ts resolveWriterWorkerEntry looks for infra/events/writer-worker.js).
+    "infra/events/writer-worker": "src/infra/events/writer-worker.ts",`,
+    ),
+  );
+  console.log(`  ✏️  Patched: ${file} (writer-worker dist entry)`);
+}
+
+// ---------------------------------------------------------------------------
+// TIER-1 POST-CONDITION — every fork hunk in a `merge=tier1` file must be
+// present AFTER the patches above have run.
+//
+// tier1-driver.sh takes upstream wholesale and trusts this script's exit code
+// to mean "fork wiring re-applied". Each patch, on a missing anchor, warns and
+// carries on — right for one patch, wrong for the run: when upstream refactors
+// an anchor away, nothing is restored and the script still exits 0. Measured
+// 2026-09-25 against upstream/main 244450952c0: attempt.ts now sits behind
+// startEmbeddedAttemptDiagnostics(), the recordRunDone call has nowhere to go,
+// and the run exited 0 with only a "Could not find anchor" line to show for it.
+//
+// This list turns "a patch warned" into a failed run. It holds the wave-0924
+// hunks (logging.md §4.6 run.done row, the session-eviction delegate, the chat
+// abort ops, the fork-telemetry export, the writer-worker dist entry, and from 2026-09-30 the fork-jev and
+// fork-thalamus exports and entrypoints); a new
+// fork edit to a tier-1 file adds its marker here beside its patch. Locked by
+// scripts/merge-drivers/apply-fork-wiring.test.mjs.
+// ---------------------------------------------------------------------------
+const TIER1_ATTEMPT = "src/agents/embedded-agent-runner/run/attempt.ts";
+const TIER1_SESSIONS = "src/gateway/server-methods/sessions.ts";
+const TIER1_REQUIRED_MARKERS = [
+  {
+    file: TIER1_ATTEMPT,
+    what: "recordRunDone import (logging.md §4.6 run.done row)",
+    pattern: /from "\.\.\/\.\.\/\.\.\/infra\/events\/turn-events\.js"/,
+  },
+  {
+    file: TIER1_ATTEMPT,
+    what: "recordRunDone call inside emitDiagnosticRunCompleted",
+    pattern: /recordRunDone\(diagnosticRunBase,/,
+  },
+  {
+    file: TIER1_ATTEMPT,
+    what: "wrapStreamFnWithCallRouter import and call (THALAMUS v4 per-call seam)",
+    pattern: /wrapStreamFnWithCallRouter\(activeSession\.agent\.streamFn,/,
+  },
+  {
+    file: TIER1_ATTEMPT,
+    what: "wrapToolsWithDigest import and call (THALAMUS v4 tool-result seam)",
+    pattern: /wrapToolsWithDigest\(\[\.\.\.tools, \.\.\.filteredBundledTools\],/,
+  },
+  {
+    file: TIER1_SESSIONS,
+    what: "evictSessionTranscript import from ../session-eviction.js",
+    pattern: /import \{ evictSessionTranscript \} from "\.\.\/session-eviction\.js";/,
+  },
+  {
+    file: TIER1_SESSIONS,
+    what: "sessions.compact keepFraction branch delegating to ../session-eviction.ts",
+    pattern: /await evictSessionTranscript\(\{/,
+  },
+  {
+    file: TIER1_SESSIONS,
+    what: "createChatAbortOps import from ./chat.js",
+    pattern: /import \{[^}]*\bcreateChatAbortOps\b[^}]*\} from "\.\/chat\.js";/,
+  },
+  {
+    file: TIER1_SESSIONS,
+    what: "chatAbortOps at the sessions.reset AND sessions.delete call sites",
+    pattern: /chatAbortOps: createChatAbortOps\(context\),/g,
+    count: 2,
+  },
+  {
+    file: "package.json",
+    what: "./plugin-sdk/fork-telemetry export",
+    pattern: /"\.\/plugin-sdk\/fork-telemetry": \{/,
+  },
+  {
+    file: "package.json",
+    what: "./plugin-sdk/fork-jev export",
+    pattern: /"\.\/plugin-sdk\/fork-jev": \{/,
+  },
+  {
+    file: "package.json",
+    what: "./plugin-sdk/fork-thalamus export",
+    pattern: /"\.\/plugin-sdk\/fork-thalamus": \{/,
+  },
+  {
+    file: "package.json",
+    what: "./plugin-sdk/fork-thalamus-runtime export",
+    pattern: /"\.\/plugin-sdk\/fork-thalamus-runtime": \{/,
+  },
+  {
+    file: "scripts/lib/plugin-sdk-entrypoints.json",
+    what: "fork-jev, fork-thalamus and fork-thalamus-runtime entrypoints",
+    pattern: /"fork-jev"[\s\S]*"fork-thalamus"[\s\S]*"fork-thalamus-runtime"/,
+  },
+  {
+    file: "tsdown.config.ts",
+    what: "infra/events/writer-worker dist entry",
+    pattern: /"infra\/events\/writer-worker": "src\/infra\/events\/writer-worker\.ts",/,
+  },
+];
+
+function checkTier1ForkMarkers() {
+  let ok = true;
+  for (const { file, what, pattern, count = 1 } of TIER1_REQUIRED_MARKERS) {
+    let src;
+    try {
+      src = readFile(file);
+    } catch {
+      console.warn(`  ⚠️  TIER1 fork wiring MISSING: ${file} is not readable — ${what}`);
+      ok = false;
+      continue;
+    }
+    const hits = (src.match(new RegExp(pattern.source, "g")) ?? []).length;
+    if (hits < count) {
+      console.warn(
+        `  ⚠️  TIER1 fork wiring MISSING: ${file} — ${what} (found ${hits}, need ${count})`,
+      );
+      ok = false;
+    }
+  }
+  if (ok) {
+    console.log(`  ✅ TIER1 fork wiring markers all present (${TIER1_REQUIRED_MARKERS.length})`);
+  } else {
+    console.warn(
+      "      restore: re-site each hunk by hand from the pre-merge side (git show ORIG_HEAD:<file>),\n" +
+        "      then fix that hunk's patch anchor above so the next merge restores it on its own.",
+    );
+  }
+  return ok;
+}
+
 for (const [label, fn] of NEW_PATCHES) {
   try {
     fn();
@@ -2533,6 +3071,12 @@ try {
   if (!checkCrossPackageImports()) structuralOk = false;
 } catch (err) {
   console.warn(`  ⚠️  cross-package guard: ${err.message}`);
+  structuralOk = false;
+}
+try {
+  if (!checkTier1ForkMarkers()) structuralOk = false;
+} catch (err) {
+  console.warn(`  ⚠️  tier1 marker guard: ${err.message}`);
   structuralOk = false;
 }
 

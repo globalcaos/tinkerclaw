@@ -57,6 +57,8 @@ const ENVELOPE_KEYS = new Set([
   "runId",
   "messageId",
   "messageSeq",
+  // FORK 2026-09-24: the transcript cursor epoch a message push carries next to messageSeq.
+  "epoch",
   "session",
   "parentSessionKey",
   "label",
@@ -71,10 +73,19 @@ const ENVELOPE_KEYS = new Set([
  *     (updatedAt, model, modelProvider, …) across the envelope itself.
  * Returns null when there is no usable key — a row we cannot attribute is not evidence about any
  * particular tab, and dropping it is strictly better than merging it onto the wrong one.
+ *
+ * FORK 2026-09-25 — `whole` says WHICH shape it was, because a field the row leaves out means a
+ * different thing in each. The nested row is the WHOLE row the gateway just rebuilt: server-chat.ts
+ * `buildSessionEventSnapshot` (lifecycle start/end) and server-session-events.ts
+ * `buildGatewaySessionSnapshot` with `includeSession` (message) both nest `loadGatewaySessionRow`,
+ * the builder `sessions.list` uses. The spread row is a hand-picked subset (that same helper
+ * without `includeSession`, server-methods/sessions.ts, server-methods/agent.ts, and the stale
+ * sweep's run-only push in server-maintenance.ts), so a field it leaves out is one it does not
+ * carry, never one the session no longer has. mergeChangedRow needs that difference.
  */
 export function extractChangedRow(
   payload: Record<string, unknown> | null | undefined,
-): { key: string; row: LiveSessionRow } | null {
+): { key: string; row: LiveSessionRow; whole: boolean } | null {
   if (!payload || typeof payload !== "object") {
     return null;
   }
@@ -84,7 +95,7 @@ export function extractChangedRow(
   }
   const nested = payload.session;
   if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-    return { key, row: { ...(nested as LiveSessionRow) } };
+    return { key, row: { ...(nested as LiveSessionRow) }, whole: true };
   }
   const row: LiveSessionRow = {};
   for (const [k, v] of Object.entries(payload)) {
@@ -92,8 +103,16 @@ export function extractChangedRow(
       row[k] = v;
     }
   }
-  return { key, row };
+  return { key, row, whole: false };
 }
+
+/**
+ * Gateway step G5's field (prompt-queue.md §6.3): the prompts the gateway holds for the session.
+ * The row builder spreads it in only when something is pending (src/gateway/session-utils.ts
+ * `buildGatewaySessionRow`: `...(pendingPrompts ? { pendingPrompts } : {})`), so on a WHOLE row
+ * its absence means "nothing pending". See mergeChangedRow.
+ */
+const PENDING_PROMPTS = "pendingPrompts";
 
 /**
  * The fields a governed surface actually renders. Used to decide whether a push is worth a repaint.
@@ -102,6 +121,11 @@ export function extractChangedRow(
  * Repainting all four surfaces on each one would put updateBudgetPanel (which walks every session
  * row) on the message cadence. Comparing what is DISPLAYED keeps the repaint on the events that
  * change the picture — the same reasoning as `activityFingerprint` in app.ts.
+ *
+ * FORK 2026-09-25 — `pendingPrompts` is one of them: pre-model-window.ts `gatewayReportsPreparing`
+ * reads it for the pending glow (prompt-queue.md U6). Its digest (key and state per entry, never
+ * `since`) moves when a prompt enters or leaves a gateway holder, which happens per prompt, not per
+ * message, so it does not put the repaint on the message cadence.
  */
 function livenessSignature(row: LiveSessionRow | undefined): string {
   if (!row) {
@@ -113,7 +137,24 @@ function livenessSignature(row: LiveSessionRow | undefined): string {
   const status = typeof row.status === "string" ? row.status : "?";
   const model = typeof row.model === "string" ? row.model : "?";
   const provider = typeof row.modelProvider === "string" ? row.modelProvider : "?";
-  return `${live}|${count}|${status}|${model}|${provider}`;
+  const pending = pendingDigest(row[PENDING_PROMPTS]);
+  return `${live}|${count}|${status}|${model}|${provider}|${pending}`;
+}
+
+/** The `pendingPrompts` report as `key:state` per entry, in order; "-" when the field is absent. */
+function pendingDigest(pending: unknown): string {
+  if (!Array.isArray(pending)) {
+    return "-";
+  }
+  return pending
+    .map((p) => {
+      if (!p || typeof p !== "object") {
+        return "?";
+      }
+      const entry = p as { key?: unknown; state?: unknown };
+      return `${String(entry.key)}:${String(entry.state)}`;
+    })
+    .join(",");
 }
 
 /**
@@ -129,12 +170,25 @@ function livenessSignature(row: LiveSessionRow | undefined): string {
  * against whichever form the list handed it; re-keying the row underneath them would strand those
  * lookups. A session with no row yet is APPENDED — that is a tab whose first turn started between
  * two full fetches, exactly the case the panel used to render only via the open-tab injection.
+ *
+ * ONE FIELD IS NOT MERGED (FORK 2026-09-25, prompt-queue.md §6.3, gateway step G5). A WHOLE row
+ * (`whole`, see extractChangedRow) that leaves out `pendingPrompts` is the gateway saying nothing
+ * is pending: the builder spreads the field in only when the list is non-empty, and never sends
+ * `[]`. Merged like every other field, the last report stood instead, so a prompt it once named
+ * stayed held (BEHIND, STEERED, PREPARING or RUNNING) after its holder was gone, until the next
+ * full `loadSessions()`: prompt-state.ts `gatewayHolderFacts` reads that phase before every LOST
+ * rule, and a stale `preparing` kept lifting the pre-model glow's time bound (pre-model-window.ts).
+ * So a whole row REPLACES the field, present or absent. A spread push never carries it, says
+ * nothing about it, and leaves it alone. An old gateway never sends the field: nothing to clear.
  */
 export function mergeChangedRow(params: {
   rows: readonly LiveSessionRow[] | null | undefined;
   key: string;
   row: LiveSessionRow;
   matches: KeyMatcher;
+  /** extractChangedRow's `whole`: the push carried the gateway's whole row. Absent or false is a
+   *  spread push, merged field by field with nothing cleared. */
+  whole?: boolean;
 }): { rows: LiveSessionRow[]; changed: boolean } {
   const { key, row, matches } = params;
   const rows = Array.isArray(params.rows) ? [...params.rows] : [];
@@ -154,6 +208,9 @@ export function mergeChangedRow(params: {
 
   const existing = rows[idx];
   const merged: LiveSessionRow = { ...existing, ...row, key: existing.key as string };
+  if (params.whole === true && row[PENDING_PROMPTS] === undefined) {
+    delete merged[PENDING_PROMPTS];
+  }
   const changed = livenessSignature(existing) !== livenessSignature(merged);
   rows[idx] = merged;
   return { rows, changed };

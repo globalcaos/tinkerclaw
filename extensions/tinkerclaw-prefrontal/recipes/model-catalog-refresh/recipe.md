@@ -90,6 +90,14 @@ This is not an add-time-only job. GLM-5.2 sat at `0.378/1.188` while the catalog
 every cost comparison it appeared in. Prices move weekly; between 2026-08-13 and 08-15
 glm-5.2 fell 27% and deepseek-v4-flash rose 56%.
 
+**Some catalog prices are TIME-WINDOWED — read `pricing.overrides` before calling a move.**
+OpenRouter's top-level `prompt`/`completion` is the price of the window that is open *when you
+fetch*, and some models carry an `overrides` array (`utc_days`, `utc_start`/`utc_end` in HHMM).
+DeepSeek V4.1 Flash is $0.30/$1.20 on weekdays 01:00-04:00 and 06:00-10:00 UTC and $0.15/$0.60
+otherwise, all weekend. This cron fires 03:45 UTC, inside the dear window on weekdays, so a
+Friday-to-Saturday diff shows a "-50%" that is only the clock (2026-09-12). Diff like against like
+(same window) or report the window; never rewrite the config to the off-peak figure on a weekend.
+
 **The SUBSCRIPTION rows need re-deriving too, and nothing prompts you to do it.** A metered
 price is wrong loudly (the catalog disagrees); an amortised plan price is wrong SILENTLY,
 because it is a flat fee divided by our own usage and both terms drift. On 2026-09-02 the
@@ -184,6 +192,7 @@ superseded scale with zero OpenRouter models).
 | smart × cost Y axis                        | `tinker-ui/src/app.ts` → `AA_INTELLIGENCE_INDEX`                   | every score this run; append new ids                                                                     |
 | smart × cost X axis + envelope price       | `src/shared/rel-cost-table.ts`                                     | one verified row per new id, on the right billing basis                                                  |
 | measured effort ladder                     | `src/shared/aa-effort-index.ts`                                    | every effort AA actually scored                                                                          |
+| measured effort SIDECAR (estimator input)  | `~/.openclaw/workspace/memory/aa-effort-index.json`                | the SAME cells as the .ts above — `estimate_effort_index.py` reads this file, not the .ts (2026-09-13)     |
 | estimated effort ladder                    | `src/shared/aa-effort-estimate.ts` (GENERATED)                     | regenerated after every AA refresh; a new AA measurement retires an estimate and re-fits every benchmark |
 | THALAMUS task routing + dossier best marks | `src/shared/domain-strength.generated.ts` (GENERATED)              | measured Epoch AI percentiles by domain                                                                  |
 | dossier rows                               | `tinker-ui/src/app.ts` → `openDossier`                             | dynamic from every configured scored model; no score floor                                               |
@@ -247,6 +256,10 @@ and, for each addition, its **cost and its billing route** — subscription or c
   metered rows were re-priced daily, because only the metered side has an external source
   that contradicts it. A flat-fee-per-usage constant ages in one direction and nothing
   raises a flag. → Step 2 now re-derives both sides.
+- **2026-09-13** — GLM-5.2 was re-scored 38.6 → 34.0 in `aa-effort-index.ts` but not in its JSON
+  sidecar, which is what the estimator reads; its high/xhigh estimates landed above the new
+  measurement and the clamp test went red after the full suite. → Step 5 table lists the sidecar,
+  and `refresh_model_surfaces.sh` now fails fast when the two disagree.
 - **2026-09-02** — two models drew flat with ZERO measured rungs not because AA lacked the
   data but because AA files them under an `-adaptive` slug our family key never matched. A
   join miss is visually identical to missing data, so it survived every previous audit.

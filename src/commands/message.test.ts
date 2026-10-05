@@ -172,6 +172,23 @@ async function runMessageCommand(opts: Record<string, unknown> = {}) {
 }
 
 describe("messageCommand", () => {
+  it("gives the gateway call 60 s, so a slow send is not reported as a failure", async () => {
+    const rawConfig = createTelegramSecretRawConfig();
+    const resolvedConfig = createTelegramResolvedTokenConfig("12345:resolved-token");
+    mockResolvedCommandConfig({
+      rawConfig: rawConfig as unknown as Record<string, unknown>,
+      resolvedConfig: resolvedConfig as unknown as Record<string, unknown>,
+    });
+
+    await runMessageCommand();
+
+    expect(runMessageActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gateway: expect.objectContaining({ timeoutMs: 60_000 }),
+      }),
+    );
+  });
+
   it("threads resolved SecretRef config into message actions", async () => {
     const rawConfig = createTelegramSecretRawConfig();
     const resolvedConfig = createTelegramResolvedTokenConfig("12345:resolved-token");

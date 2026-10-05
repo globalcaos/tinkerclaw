@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import os from "node:os";
@@ -305,6 +304,7 @@ describe("handleControlUiHttpRequest", () => {
           },
         );
         expect(handled).toBe(true);
+        expect(res.statusCode).toBe(404);
         expect(setHeader).toHaveBeenCalledWith("X-Frame-Options", "DENY");
         const csp = setHeader.mock.calls.find((call) => call[0] === "Content-Security-Policy")?.[1];
         expect(typeof csp).toBe("string");
@@ -539,46 +539,15 @@ describe("handleControlUiHttpRequest", () => {
     });
   });
 
-  it("includes CSP hash for inline scripts in index.html", async () => {
-    const scriptContent = "(function(){ var x = 1; })();";
-    const html = `<html><head><script>${scriptContent}</script></head><body></body></html>\n`;
-    const expectedHash = createHash("sha256").update(scriptContent, "utf8").digest("base64");
+  it("returns 404 for the retired stock dashboard root", async () => {
     await withControlUiRoot({
-      indexHtml: html,
       fn: async (tmp) => {
-        const { res, setHeader } = makeMockHttpResponse();
-        await handleControlUiHttpRequest({ url: "/", method: "GET" } as IncomingMessage, res, {
-          root: { kind: "resolved", path: tmp },
+        const { res, handled, end } = await runControlUiRequest({
+          url: "/",
+          method: "GET",
+          rootPath: tmp,
         });
-        const cspCalls = setHeader.mock.calls.filter(
-          (call) => call[0] === "Content-Security-Policy",
-        );
-        const lastCsp = String(cspCalls[cspCalls.length - 1]?.[1] ?? "");
-        expect(lastCsp).toContain(`'sha256-${expectedHash}'`);
-        expect(lastCsp).not.toMatch(/script-src[^;]*'unsafe-inline'/);
-      },
-    });
-  });
-
-  it("does not inject inline scripts into index.html", async () => {
-    const html = "<html><head></head><body>Hello</body></html>\n";
-    await withControlUiRoot({
-      indexHtml: html,
-      fn: async (tmp) => {
-        const { res, end } = makeMockHttpResponse();
-        const handled = await handleControlUiHttpRequest(
-          { url: "/", method: "GET" } as IncomingMessage,
-          res,
-          {
-            root: { kind: "resolved", path: tmp },
-            config: {
-              agents: { defaults: { workspace: tmp } },
-              ui: { assistant: { name: "</script><script>alert(1)//", avatar: "evil.png" } },
-            },
-          },
-        );
-        expect(handled).toBe(true);
-        expect(end).toHaveBeenCalledWith(html);
+        expectNotFoundResponse({ handled, res, end });
       },
     });
   });
@@ -892,9 +861,7 @@ describe("handleControlUiHttpRequest", () => {
           rootPath: tmp,
         });
 
-        expect(handled).toBe(true);
-        expect(res.statusCode).toBe(200);
-        expect(String(end.mock.calls[0]?.[0] ?? "")).toBe("inside-ok\n");
+        expectNotFoundResponse({ handled, res, end });
       },
     });
   });
@@ -910,9 +877,7 @@ describe("handleControlUiHttpRequest", () => {
           rootPath: tmp,
         });
 
-        expect(handled).toBe(true);
-        expect(res.statusCode).toBe(200);
-        expect(end.mock.calls[0]?.length ?? -1).toBe(0);
+        expectNotFoundResponse({ handled, res, end });
       },
     });
   });
@@ -981,7 +946,7 @@ describe("handleControlUiHttpRequest", () => {
     });
   });
 
-  it("serves hardlinked asset files for bundled roots (pnpm global install)", async () => {
+  it("returns 404 for bundled-root stock assets after dashboard retirement", async () => {
     await withControlUiRoot({
       fn: async (tmp) => {
         await createHardlinkedAssetFile(tmp);
@@ -993,9 +958,7 @@ describe("handleControlUiHttpRequest", () => {
           rootKind: "bundled",
         });
 
-        expect(handled).toBe(true);
-        expect(res.statusCode).toBe(200);
-        expect(String(end.mock.calls[0]?.[0] ?? "")).toBe("console.log('hi');");
+        expectNotFoundResponse({ handled, res, end });
       },
     });
   });

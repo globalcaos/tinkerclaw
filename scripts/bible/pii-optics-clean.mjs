@@ -84,13 +84,27 @@ export function readPattern(sourceAbs) {
         "report a clean scan — the single worst failure mode for this gate.",
     );
   }
+  // FORK 2026-09-29: the literal line holds only generic tokens. The private list (names,
+  // places, employer) lives OUTSIDE the repo; append it exactly as the hook does, so this
+  // check and the hook never disagree. Absent file = a stranger's clone: generic only.
+  const privateFile =
+    process.env.TINKERCLAW_PII_FILE ||
+    path.join(os.homedir(), ".config", "tinkerclaw", "pii-private.re");
+  let full = pattern;
+  try {
+    for (const line of readFileSync(privateFile, "utf8").replace(/\r/g, "").split("\n")) {
+      if (line && !line.startsWith("#")) full += `|${line}`;
+    }
+  } catch {
+    // no private list on this machine — generic tokens only
+  }
   let re;
   try {
-    re = new RegExp(pattern);
+    re = new RegExp(full);
   } catch (err) {
     throw new Error(`\`PII_RE\` does not compile as a regex: ${err.message}`);
   }
-  return { pattern, re };
+  return { pattern: full, re };
 }
 
 /**

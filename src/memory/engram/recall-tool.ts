@@ -3,6 +3,7 @@
  * The model calls recall(query) to retrieve compacted events.
  */
 
+import { emitJRecallResolve } from "../../infra/events/j-rows.js";
 import type { EmbeddingCache } from "./embedding-cache.js";
 import type { EmbedFn } from "./embedding-worker.js";
 import type { EventStore } from "./event-store.js";
@@ -183,6 +184,22 @@ export async function recall(
     candidateCount: candidateMap.size,
     resultCount: packed.length,
     truncated,
+  });
+
+  // logging.md §4.12 (J1): one row per recall — the question pointer compaction has to answer is
+  // whether an evicted range comes BACK when asked for. `pointer_age_ms` is how far back the
+  // oldest returned event reaches, so a hit on a week-old range is visibly different from a hit
+  // on the current turn; a miss carries null rather than a zero, because nothing was reached
+  // (L7). The query text, the candidate contents and the scores never leave this function (L4).
+  const oldestReturnedMs = packed.reduce<number | null>((oldest, scored) => {
+    const at = Date.parse(scored.event.timestamp);
+    return Number.isFinite(at) && (oldest === null || at < oldest) ? at : oldest;
+  }, null);
+  emitJRecallResolve({
+    outcome: packed.length > 0 ? "hit" : "miss",
+    pointerAgeMs: oldestReturnedMs === null ? null : Math.max(0, Date.now() - oldestReturnedMs),
+    eventsReturned: packed.length,
+    sessionKey: store.sessionKey,
   });
 
   return {

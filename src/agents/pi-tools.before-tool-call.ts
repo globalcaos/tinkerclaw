@@ -12,6 +12,7 @@ import {
   freezeDiagnosticTraceContext,
   type DiagnosticTraceContext,
 } from "../infra/diagnostic-trace-context.js";
+import { recordToolBlocked, recordToolDone } from "../infra/events/turn-events.js";
 import type { SessionState } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
@@ -581,6 +582,9 @@ export function wrapToolWithBeforeToolCallHook(
   const wrappedTool: AnyAgentTool = {
     ...tool,
     execute: async (toolCallId, params, signal, onUpdate) => {
+      // logging.md §4.6 `tool.done`: a blocked call's duration is the decision it waited on
+      // (hooks, trusted policies, a human approval); the tool itself never ran.
+      const hookStartedAt = Date.now();
       const outcome = await runBeforeToolCallHook({
         toolName,
         params,
@@ -590,6 +594,7 @@ export function wrapToolWithBeforeToolCallHook(
       });
       if (outcome.blocked) {
         if (outcome.kind !== "veto") {
+          recordToolBlocked(ctx, normalizeToolName(toolName || "tool"), outcome, hookStartedAt);
           throw new Error(outcome.reason);
         }
         const normalizedToolName = normalizeToolName(toolName || "tool");
@@ -611,6 +616,7 @@ export function wrapToolWithBeforeToolCallHook(
           reason: outcome.reason,
           deniedReason: outcome.deniedReason ?? "plugin-before-tool-call",
         });
+        recordToolBlocked(ctx, normalizedToolName, outcome, hookStartedAt);
         const blockedResult = buildBlockedToolResult({
           reason: outcome.reason,
           deniedReason: outcome.deniedReason ?? "plugin-before-tool-call",
@@ -667,6 +673,7 @@ export function wrapToolWithBeforeToolCallHook(
           ...eventBase,
           durationMs,
         });
+        recordToolDone(ctx, normalizedToolName, "ok", durationMs);
         return result;
       } catch (err) {
         const cause = unwrapErrorCause(err);
@@ -678,6 +685,7 @@ export function wrapToolWithBeforeToolCallHook(
           errorCategory: diagnosticErrorCategory(cause),
           ...(errorCode ? { errorCode } : {}),
         });
+        recordToolDone(ctx, normalizedToolName, "error", Date.now() - startedAt, cause);
         await recordLoopOutcome({
           ctx,
           toolName: normalizedToolName,

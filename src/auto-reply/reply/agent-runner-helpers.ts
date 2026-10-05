@@ -26,7 +26,9 @@ function resolveCurrentVerboseLevel(params: VerboseGateParams): VerboseLevel | u
     return undefined;
   }
   try {
-    const store = loadSessionStore(params.storePath);
+    // FORK 2026-09-23 — READ-ONLY borrow (clone:false): runs per tool event and
+    // only the level string leaves. Never mutate `store` or `entry`.
+    const store = loadSessionStore(params.storePath, { clone: false });
     const entry = store[params.sessionKey];
     return typeof entry?.verboseLevel === "string"
       ? normalizeVerboseLevel(entry.verboseLevel)

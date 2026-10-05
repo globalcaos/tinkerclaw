@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { clearThalamusCoolingCache, readThalamusCooling } from "../infra/thalamus-cooling.js";
 import { resetLogger, setLoggerOverride } from "../logging/logger.js";
 import { createWarnLogCapture } from "../logging/test-helpers/warn-log-capture.js";
 import { AUTH_STORE_VERSION } from "./auth-profiles/constants.js";
@@ -2196,5 +2199,95 @@ describe("runWithImageModelFallback", () => {
       ["openai", "gpt-image-1"],
       ["google", "gemini-2.5-flash-image-preview"],
     ]);
+  });
+});
+
+// THALAMUS (the architect, 2026-10-02): a limit cools its supply, so the next turn's plan skips it.
+describe("runWithModelFallback — a limit cools its supply", () => {
+  afterEach(() => {
+    delete process.env.OPENCLAW_THALAMUS_COOLING_FILE;
+    clearThalamusCoolingCache();
+  });
+
+  it("writes the supply's reopening time from the provider's own text, and an overload does not", async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "fallback-cool-")), "cooling.json");
+    process.env.OPENCLAW_THALAMUS_COOLING_FILE = file;
+    clearThalamusCoolingCache();
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new FailoverError("You have hit your usage limit. Try again in ~262 min.", {
+          reason: "rate_limit",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+          rawError: "You have hit your usage limit. Try again in ~262 min.",
+        }),
+      )
+      .mockResolvedValueOnce("ok");
+    const before = Date.now();
+
+    const result = await runWithModelFallback({
+      cfg: makeCfg(),
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      run,
+    });
+
+    expect(result.result).toBe("ok");
+    const cooling = readThalamusCooling({ nowMs: before });
+    expect([...cooling.set]).toEqual(["openai"]);
+    const until = cooling.until.get("openai") ?? 0;
+    expect(until).toBeGreaterThanOrEqual(before + 262 * 60_000);
+    expect(until).toBeLessThanOrEqual(Date.now() + 262 * 60_000);
+  });
+
+  it("a 426 (the supply rejects this client) fails over instead of ending the turn, and cools the supply", async () => {
+    // 2026-10-02 17:09: xAI answered an Auto turn with 426 "Your Grok CLI version (0.2.91) is outdated". It
+    // classified as nothing, so the error was rethrown and the turn died; Thalamus picked Grok again next turn.
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "fallback-cool-")), "cooling.json");
+    process.env.OPENCLAW_THALAMUS_COOLING_FILE = file;
+    clearThalamusCoolingCache();
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          '426 "Your Grok CLI version (0.2.91) is outdated. Please update to version 1.0.13 or later via `grok update` or the installation documentation."',
+        ),
+      )
+      .mockResolvedValueOnce("ok");
+    const before = Date.now();
+
+    const result = await runWithModelFallback({
+      cfg: makeCfg(),
+      provider: "openai",
+      model: "gpt-4.1-mini",
+      run,
+    });
+
+    expect(result.result).toBe("ok");
+    expect(run).toHaveBeenCalledTimes(2);
+    const cooling = readThalamusCooling({ nowMs: before });
+    expect([...cooling.set]).toEqual(["openai"]);
+    expect(cooling.entries.openai?.reason).toBe("client_rejected");
+  });
+
+  it("does not cool a supply for an overloaded vendor", async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "fallback-cool-")), "cooling.json");
+    process.env.OPENCLAW_THALAMUS_COOLING_FILE = file;
+    clearThalamusCoolingCache();
+    const run = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new FailoverError("Overloaded", {
+          reason: "overloaded",
+          provider: "openai",
+          model: "gpt-4.1-mini",
+        }),
+      )
+      .mockResolvedValueOnce("ok");
+
+    await runWithModelFallback({ cfg: makeCfg(), provider: "openai", model: "gpt-4.1-mini", run });
+
+    expect(readThalamusCooling({ nowMs: Date.now() }).set.size).toBe(0);
   });
 });

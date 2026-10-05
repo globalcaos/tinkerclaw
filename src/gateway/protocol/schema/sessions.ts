@@ -63,6 +63,9 @@ export const SessionsListParamsSchema = Type.Object(
     spawnedBy: Type.Optional(NonEmptyString),
     agentId: Type.Optional(NonEmptyString),
     search: Type.Optional(Type.String()),
+    /** Hivemind: panel filter. Does not hide jsonl from the agent. */
+    operatorId: Type.Optional(Type.String()),
+    includeHive: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -98,6 +101,8 @@ export const SessionsCreateParamsSchema = Type.Object(
     parentSessionKey: Type.Optional(NonEmptyString),
     task: Type.Optional(Type.String()),
     message: Type.Optional(Type.String()),
+    operatorId: Type.Optional(Type.String()),
+    seatId: Type.Optional(Type.String()),
   },
   { additionalProperties: false },
 );

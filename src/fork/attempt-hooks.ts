@@ -41,20 +41,28 @@ import { pointerCompact, estimateCacheTokens } from "../memory/engram/pointer-co
 import { renderMarkers } from "../memory/engram/time-range-marker.js";
 import { appendGap, detectUncertaintySpans, extractTopic, makeGap } from "./curiosity-store.js";
 
-// FORK 2026-07-28 — LIVENESS. Two instruments on this file's traffic path declare themselves
-// here, at module scope, and fire at the line where the work ACTUALLY happens (see
+// FORK 2026-07-28 — LIVENESS. Instruments on this file's traffic path declare themselves here, at
+// module scope, and fire at the line where the work ACTUALLY happens (see
 // infra/instrument-liveness.ts: declaring is a static property, being on the traffic path is a
 // dynamic one, and only the second is worth anything).
 //
-// `eeg:anatomy-write` is bound to the insert inside `onTurnComplete`, deliberately NOT to
-// `emitPrePromptAnatomy` further down — that function also calls `insertAnatomyEvent`, but it
-// has ZERO callers (attempt.ts never wires it; the comment at the onTurnComplete insert admits
-// as much). Instrumenting the orphan would declare an instrument that can only ever read NEVER,
-// i.e. reproduce the exact defect this registry exists to catch.
+// `eeg:anatomy-write` is bound to the insert inside `onTurnComplete`.
+//
+// FORK 2026-09-24 (A9) — CORRECTION to what this comment used to say. It stated that
+// `emitPrePromptAnatomy` was deliberately left uninstrumented because it "has ZERO callers", and
+// that was true for months. It is not any more: `captureForensicDumpHook` now calls it on call 1 of
+// every turn, so it is a live writer and carries its own instrument below. Leaving the old sentence
+// standing would have been worse than never writing it — it is read and believed, and it named an
+// orphan that no longer exists.
 declareInstrument({
   id: "eeg:anatomy-write",
   kind: "hook",
   description: "context-anatomy row reaching SQLite on turn completion",
+});
+declareInstrument({
+  id: "eeg:anatomy-precall-write",
+  kind: "hook",
+  description: "pre-call context-anatomy row reaching SQLite before the LLM request",
 });
 declareInstrument({
   id: "engram:retrieval-pack-inject",
@@ -386,30 +394,13 @@ const RECENT_MESSAGES_WINDOW = 20;
 const OBSERVATION_FORCE_INTERVAL = 10;
 
 // ---------------------------------------------------------------------------
-// Per-run tool execution accumulator
-// ---------------------------------------------------------------------------
-
-/** Accumulates tool-exec-complete events per runId until round completion. */
-const pendingToolExecs = new Map<
-  string,
-  Array<{
-    name: string;
-    toolCallId: string;
-    inputChars?: number;
-    outputChars?: number;
-    durationMs?: number;
-    isError?: boolean;
-  }>
->();
-
-// ---------------------------------------------------------------------------
 // U10 — per-run reasoning-trace stash
 // ---------------------------------------------------------------------------
 //
 // The pre-prompt thought search (maybeRunThoughtSearch, wired into attempt.ts)
 // produces a SerializedTree, but the augmentation hook only returns the prompt
 // string. To persist the trace in onTurnComplete we stash it by runId between
-// the two seams — the same per-run-map pattern as pendingToolExecs above.
+// the two seams — the same per-run-map pattern as `runStartedAtMs` further down.
 //
 // HANDOFF: reasoning-runtime.ts owns maybeRunThoughtSearch and currently
 // swallows the trace (it returns only the augmented prompt and takes no runId).
@@ -601,7 +592,18 @@ export async function emitPrePromptAnatomy(params: {
   effectivePrompt?: string;
   authProfileId?: string;
   roundNumber?: number;
-  log: { info: (msg: string) => void; warn: (msg: string) => void };
+  /** Which composition this row holds. `captureForensicDumpHook` passes "pre-call". */
+  snapshot?: "pre-call" | "post-turn";
+  /**
+   * Suppress the forensic half. EXPLICIT rather than "withhold `effectivePrompt` and the guard
+   * below happens not to fire": `captureForensicDumpHook` calls this function AND owns the forensic
+   * capture itself, and a silent no-op that depends on an absent argument is indistinguishable from
+   * a broken call — the same shape as an optional call to a method that does not exist.
+   */
+  skipForensicDump?: boolean;
+  // Only `warn` is ever called in here, so only `warn` is required: a hook with no info logger to
+  // hand must not be locked out of the pre-call row by a field this function never uses.
+  log: { warn: (msg: string) => void };
 }): Promise<void> {
   if (!params.sessionKey) {
     return;
@@ -625,12 +627,32 @@ export async function emitPrePromptAnatomy(params: {
         contextWindowTokens: params.contextWindowTokens ?? 0,
         authProfileId: params.authProfileId,
         roundNumber: params.roundNumber,
+        // FORK 2026-09-24 (A9) — the system-prompt BYTES, so the moral code can be attributed when
+        // it rides in there. The report carries counts only and can never answer that question.
+        systemPromptText: params.systemPromptText,
+        snapshot: params.snapshot ?? "pre-call",
       });
       if (anatomy) {
         anatomy.runId = params.runId;
         anatomy.sessionKey = anatomy.sessionKey ?? params.sessionKey;
         insertAnatomyEvent(anatomy);
-        // Push anatomy to UI immediately via WebSocket — no polling delay
+        // Fires AFTER the row reaches SQLite, same rule as `eeg:anatomy-write`: the instrument must
+        // attest to the write, not to having entered the block.
+        noteInstrumentFired(
+          "eeg:anatomy-precall-write",
+          `turn=${turnNumber} round=${params.roundNumber ?? 0} session=${params.sessionKey}`,
+        );
+        // Push the row to the UI at once, so the context bar shows THIS call's composition
+        // before the model answers (bible context-window-panel.md F5).
+        //
+        // FORK 2026-09-25 — unconditional. The pre-call row used to be held back
+        // (`emitLiveEvent: false`) because tinker-ui routed a round-0 row in WITHOUT its runId,
+        // so a turn's pre-call and post-turn rows (both round 0) painted two bars live against
+        // one upserted DB row. B6 removed that reason: app.ts's `context-anatomy` branch always
+        // passes the envelope runId, and `pushEvent` (panels/context-timeline.ts) merges by
+        // (runId, roundNumber), keeping a pre-call composition over a post-turn one: the DB
+        // upsert's own rule. The call timeline's pre-call seed (`CallTimelineStore.composition`,
+        // `r.preCall`) is fed by this event too.
         emitAgentEvent({
           runId: params.runId,
           stream: "lifecycle",
@@ -648,7 +670,13 @@ export async function emitPrePromptAnatomy(params: {
 
   // 2. Forensic dump (full text for treemap drill-down)
   //    Fire-and-forget — don't block the LLM call or anatomy delivery.
-  if (params.systemPromptText != null && params.effectivePrompt != null) {
+  //    Skipped outright when the caller owns the capture (`captureForensicDumpHook`), so the same
+  //    request is never dumped twice.
+  if (
+    !params.skipForensicDump &&
+    params.systemPromptText != null &&
+    params.effectivePrompt != null
+  ) {
     captureForensicDump({
       runId: params.runId,
       sessionKey: params.sessionKey,
@@ -685,10 +713,16 @@ export async function emitPrePromptAnatomy(params: {
 const runStartedAtMs = new Map<string, number>();
 const RUN_START_TTL_MS = 6 * 60 * 60 * 1000;
 
-/** First prompt of a run wins: retries and compaction rounds must not reset the turn's start. */
-function markRunStarted(runId: string): void {
+/**
+ * First prompt of a run wins: retries and compaction rounds must not reset the turn's start.
+ *
+ * Returns TRUE only for the FIRST prompt of this run. A9's pre-call anatomy keys off this return
+ * rather than doing its own `has()` lookup, so "is this call 1?" has exactly one owner and cannot
+ * answer differently in two places.
+ */
+function markRunStarted(runId: string): boolean {
   if (!runId || runStartedAtMs.has(runId)) {
-    return;
+    return false;
   }
   const now = Date.now();
   runStartedAtMs.set(runId, now);
@@ -698,6 +732,7 @@ function markRunStarted(runId: string): void {
       if (now - started > RUN_START_TTL_MS) runStartedAtMs.delete(id);
     }
   }
+  return true;
 }
 
 /** Consume the recorded start; undefined when the request hook never fired for this run. */
@@ -710,19 +745,129 @@ function takeRunDurationMs(runId: string): number | undefined {
   return Math.max(0, Date.now() - started);
 }
 
+// ---------------------------------------------------------------------------
+// Pre-call anatomy context (FORK 2026-09-24 — bible context-window-panel.md §6.1 A9)
+// ---------------------------------------------------------------------------
+
+/**
+ * WHY THIS CACHE EXISTS, AND WHAT IT HONESTLY COSTS.
+ *
+ * `buildContextAnatomy` needs a `SessionSystemPromptReport`. That report is built inside
+ * `attempt.ts` (`buildSystemPromptReport`) and handed OUT only on the post-turn path; the
+ * request-side hook this fork owns (`captureForensicDumpHook`) is not given it. `attempt.ts` is a
+ * tier-1 merge-driver file and this change does not touch it, so the report is reached the only
+ * other way available from inside this module: `onTurnComplete` already receives it and remembers
+ * it here for the NEXT turn of the same session.
+ *
+ * THE GAP, stated rather than hidden: the FIRST turn of a session (per gateway process) has no
+ * remembered report, so no pre-call row is written for it and the panel falls back to that turn's
+ * post-turn row (badged, per bible §5.4). From turn 2 on the pre-call row is there. Closing the gap
+ * is a one-line tier-1 addition — passing `systemPromptReport` into the `captureForensicDumpHook`
+ * call in attempt.ts — and A9 flags it as exactly that.
+ *
+ * WHAT STALENESS ACTUALLY LOSES: the remembered report describes the previous turn's system prompt,
+ * injected files, skills and tool schemas. Those are rebuilt per turn but change rarely within a
+ * session. The number this row exists FOR — `userMessageChars`, the turn's own prompt, which a
+ * post-turn snapshot structurally cannot itemise (F5) — is computed fresh from the live snapshot and
+ * never from the cache. So the stale part is the slowly-moving part.
+ *
+ * Deliberately NOT read from the session store on this path: `loadSessionEntryByKey` deserialises
+ * the whole sessions.json synchronously, and blocking work on the pre-prompt path is the exact class
+ * of event-loop stall this repo spent 2026-09-21..23 removing.
+ */
+export type PreCallAnatomyContext = {
+  systemPromptReport: unknown;
+  contextWindowTokens?: number;
+  authProfileId?: string;
+  atMs: number;
+};
+const preCallAnatomyContext = new Map<string, PreCallAnatomyContext>();
+const PRE_CALL_CONTEXT_TTL_MS = 6 * 60 * 60 * 1000;
+const PRE_CALL_CONTEXT_MAX = 256;
+/** One line per session, not one per turn: a permanent gap must be visible, not deafening. */
+const preCallContextGapLogged = new Set<string>();
+
+/**
+ * Remember a session's system-prompt report for its NEXT turn's pre-call row. The production
+ * caller is `onTurnComplete`; exported so a test can seed it without driving a whole turn.
+ */
+export function rememberPreCallAnatomyContext(
+  sessionKey: string,
+  ctx: PreCallAnatomyContext,
+): void {
+  preCallAnatomyContext.set(sessionKey, ctx);
+  if (preCallAnatomyContext.size > PRE_CALL_CONTEXT_MAX) {
+    for (const [key, value] of preCallAnatomyContext) {
+      if (ctx.atMs - value.atMs > PRE_CALL_CONTEXT_TTL_MS) {
+        preCallAnatomyContext.delete(key);
+        preCallContextGapLogged.delete(key);
+      }
+    }
+  }
+}
+
+/** The remembered context, or undefined when this session has not completed a turn yet. */
+function recallPreCallAnatomyContext(sessionKey: string): PreCallAnatomyContext | undefined {
+  const found = preCallAnatomyContext.get(sessionKey);
+  if (!found) {
+    return undefined;
+  }
+  if (Date.now() - found.atMs > PRE_CALL_CONTEXT_TTL_MS) {
+    preCallAnatomyContext.delete(sessionKey);
+    return undefined;
+  }
+  return found;
+}
+
+/**
+ * The messages exactly as the model will receive them on call 1: the session history PLUS this
+ * turn's prompt.
+ *
+ * WHY THE APPEND IS NOT OPTIONAL. attempt.ts calls `captureForensicDumpHook` with
+ * `activeSession.messages` and then `activeSession.prompt(promptSubmission.prompt)` on the NEXT
+ * line — the prompt is appended to the session INSIDE `prompt()`, after this hook has returned. So
+ * the array this hook is handed ends with the PREVIOUS turn's assistant reply, and a pre-call
+ * composition built from it as-is reads `userMessageChars = 0`: the very F5 defect the pre-call row
+ * exists to fix, reproduced one hook earlier. `effectivePrompt` is `promptSubmission.prompt`, the
+ * exact user-message bytes about to be sent, so appending it as the last user message is the
+ * request, not an approximation of it. (When the turn has no separate transcript prompt those bytes
+ * include the `prependContext` the moral code arrives in; when it has one, attempt.ts moves that
+ * context into a turn-local system-prompt override instead, and the pack is found there — the hook
+ * passes those system-prompt bytes too.)
+ *
+ * An empty prompt appends nothing: a runtime-only turn has no user text to itemise.
+ */
+export function buildPreCallMessagesSnapshot(
+  messages: readonly unknown[],
+  effectivePrompt: string,
+): unknown[] {
+  return effectivePrompt
+    ? [...messages, { role: "user", content: effectivePrompt }]
+    : [...messages];
+}
+
 /**
  * FORK 2026-06-04 (Stream C — forensic map permanently empty): standalone
- * pre-prompt forensic-dump capture, wired directly into attempt.ts right
- * before `activeSession.prompt(...)`. The pre-existing `emitPrePromptAnatomy`
- * export above ALSO calls `captureForensicDump`, but that whole function is
- * dead (never invoked from attempt.ts — the anatomy insert was moved into
- * `onTurnComplete`), so the forensic store (`sessionRuns` in dump-writer.ts)
- * was never populated and every `forensic.getLive*` RPC returned NO_DATA.
+ * pre-prompt capture, wired directly into attempt.ts right before
+ * `activeSession.prompt(...)`. It receives the POST-deliberation system-prompt
+ * bytes actually sent to the model so the dump reflects the exact request —
+ * which is why the forensic store (`sessionRuns` in dump-writer.ts) is
+ * populated at all and `forensic.getLive*` stopped returning NO_DATA.
  *
- * This hook captures ONLY the forensic dump (NOT anatomy — onTurnComplete owns
- * that) so the L3 treemap drill-down + `forensic.summarize` have real data.
- * It receives the POST-deliberation system-prompt bytes actually sent to the
- * model so the dump reflects the exact request. Fire-and-forget; never throws.
+ * FORK 2026-09-24 (A9) — IT IS NO LONGER FORENSIC-ONLY, and the old claim in this docblock that
+ * `emitPrePromptAnatomy` is "dead" is now FALSE and has been removed rather than left to be read and
+ * believed. This is the ONLY request-side hook the fork owns, so it is also the only place a
+ * PRE-CALL anatomy row can be written — and that row is the point: a post-turn snapshot has the
+ * assistant's reply last, so the turn's own user prompt has already slid into conversation history
+ * and `userMessageChars` reads 0 (bible context-window-panel.md F5). Only a pre-call snapshot can
+ * itemise the prompt the panel is being asked about.
+ *
+ * The anatomy is written and pushed live for CALL 1 OF THE TURN ONLY — `markRunStarted` returns
+ * that fact. Later tool-loop calls of the same run resend a snapshot whose last message is a tool
+ * result, so a pre-call row there would itemise nothing the user asked for; A8's per-call
+ * `send`/`usage` stream owns those. The anatomy build is synchronous (one pass over the messages,
+ * the same work `onTurnComplete` already does once per turn) and wrapped so it can never fail the
+ * prompt. Fire-and-forget; never throws.
  */
 export function captureForensicDumpHook(params: {
   runId: string;
@@ -734,13 +879,61 @@ export function captureForensicDumpHook(params: {
   messages: unknown[];
   tools?: unknown[];
   effectivePrompt: string;
-  log: { warn: (msg: string) => void };
+  // `info` is optional so every existing caller still type-checks; attempt.ts passes a full logger.
+  log: { warn: (msg: string) => void; info?: (msg: string) => void };
 }): void {
   // Stamp the run's start BEFORE the forensic early-return: this hook fires immediately
   // before the prompt, which is the only place the fork can observe a turn beginning.
-  markRunStarted(params.runId);
+  const isFirstCallOfTurn = markRunStarted(params.runId);
   if (!params.sessionKey) {
     return;
+  }
+
+  // FORK 2026-09-24 (A9): the pre-call anatomy row.
+  if (isFirstCallOfTurn) {
+    const sessionKey = params.sessionKey;
+    const recalled = recallPreCallAnatomyContext(sessionKey);
+    if (recalled) {
+      emitPrePromptAnatomy({
+        runId: params.runId,
+        sessionKey,
+        messagesSnapshot: buildPreCallMessagesSnapshot(params.messages, params.effectivePrompt),
+        systemPromptReport: recalled.systemPromptReport,
+        provider: params.provider,
+        modelId: params.model,
+        modelApi: params.modelApi,
+        contextWindowTokens: recalled.contextWindowTokens,
+        authProfileId: recalled.authProfileId,
+        systemPromptText: params.systemPromptText,
+        // MUST match the round number onTurnComplete persists (`contextAnatomy.roundNumber ?? 0`),
+        // or the post-turn write lands on a DIFFERENT key and the turn ends up with two rows rather
+        // than one upserted row — the exact duplicate the v6 uniqueness index exists to prevent.
+        roundNumber: 0,
+        snapshot: "pre-call",
+        // This hook owns the forensic capture below; the explicit flag is why nothing is dumped twice.
+        skipForensicDump: true,
+        log: params.log,
+      }).catch((err) => {
+        params.log.warn(`pre-call anatomy failed: ${String(err)}`);
+      });
+    } else if (!preCallContextGapLogged.has(sessionKey)) {
+      // Said out loud ONCE per session. A missing pre-call row is otherwise indistinguishable from a
+      // working one with nothing to report, and that silence is exactly how this whole code path sat
+      // dead and unnoticed for months. INFO, not warn, when the caller has it: the first turn of a
+      // session is the documented gap, not a fault, and single-turn subagent sessions hit it every
+      // time — a warn per subagent would bury the warnings that mean something.
+      preCallContextGapLogged.add(sessionKey);
+      const gapLine =
+        `[anatomy] no pre-call row for the first turn of ${sessionKey}: the system-prompt report ` +
+        `has not been seen yet for this session (it reaches this module only via onTurnComplete). ` +
+        `Closing this gap is a one-line addition in attempt.ts — pass systemPromptReport into ` +
+        `captureForensicDumpHook — which this change deliberately did NOT make (tier-1 file).`;
+      if (params.log.info) {
+        params.log.info(gapLine);
+      } else {
+        params.log.warn(gapLine);
+      }
+    }
   }
   captureForensicDump({
     runId: params.runId,
@@ -758,92 +951,16 @@ export function captureForensicDumpHook(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Hook: Round-level event emission (per LLM API call + tool execution)
+// Hook: Tool execution events (timeline detail)
 // ---------------------------------------------------------------------------
-
-/**
- * Emit a round-start event immediately before each LLM API call.
- * This tells the Tinker UI to show a new bar in the timeline.
- */
-export function emitRoundStart(params: {
-  runId: string;
-  sessionKey?: string;
-  roundNumber: number;
-  turnNumber: number;
-  model: string;
-  provider: string;
-  authProfileId?: string;
-  inputTokensEstimate: number;
-  toolsAvailable: number;
-}): void {
-  if (!params.sessionKey) {
-    return;
-  }
-  emitAgentEvent({
-    runId: params.runId,
-    stream: "lifecycle",
-    data: {
-      phase: "round-start",
-      sessionKey: params.sessionKey,
-      roundNumber: params.roundNumber,
-      turnNumber: params.turnNumber,
-      model: params.model,
-      provider: params.provider,
-      authProfileId: params.authProfileId,
-      inputTokensEstimate: params.inputTokensEstimate,
-      toolsAvailable: params.toolsAvailable,
-      timestampMs: Date.now(),
-    },
-  });
-}
-
-/**
- * Emit a round-complete event after an LLM API call finishes (streaming done).
- * This tells the Tinker UI to show the purple response bar.
- */
-export function emitRoundComplete(params: {
-  runId: string;
-  sessionKey?: string;
-  roundNumber: number;
-  turnNumber: number;
-  model: string;
-  provider: string;
-  outputTokens?: number;
-  inputTokens?: number;
-  stopReason?: string;
-  durationMs: number;
-  toolCallsRequested: number;
-}): void {
-  if (!params.sessionKey) {
-    return;
-  }
-  emitAgentEvent({
-    runId: params.runId,
-    stream: "lifecycle",
-    data: {
-      phase: "round-complete",
-      sessionKey: params.sessionKey,
-      roundNumber: params.roundNumber,
-      turnNumber: params.turnNumber,
-      model: params.model,
-      provider: params.provider,
-      outputTokens: params.outputTokens,
-      inputTokens: params.inputTokens,
-      stopReason: params.stopReason,
-      durationMs: params.durationMs,
-      toolCallsRequested: params.toolCallsRequested,
-      timestampMs: Date.now(),
-    },
-  });
-  const toolsTriggered = pendingToolExecs.get(params.runId);
-  pendingToolExecs.delete(params.runId);
-  updateAnatomyResponse(params.runId, params.roundNumber, {
-    responseTokens: params.outputTokens,
-    durationMs: params.durationMs,
-    stopReason: params.stopReason,
-    toolsTriggered: toolsTriggered ?? [],
-  });
-}
+//
+// FORK 2026-09-25 — the per-round pair that stood here, `emitRoundStart` / `emitRoundComplete`
+// (`lifecycle:round-start` / `round-complete`), is deleted. Neither ever had a caller (bible
+// context-window-panel.md F9), and B6 deleted the tinker-ui consumers that waited for them;
+// per-call columns come from the one `stream:"call"` consumer. The per-run tool accumulator
+// (`pendingToolExecs`) went with them: `emitRoundComplete` was its only reader and its only
+// `.delete()`, so a `tool-exec-complete` would have been pushed into a map nothing drained. (No
+// producer emits that phase today, only `tool-exec-start`, so the map never actually grew.)
 
 /**
  * Emit tool execution start/complete events for timeline detail.
@@ -880,17 +997,6 @@ export function emitToolExec(params: {
     },
   });
   if (params.phase === "tool-exec-complete") {
-    const list = pendingToolExecs.get(params.runId) ?? [];
-    list.push({
-      name: params.toolName,
-      toolCallId: params.toolCallId,
-      inputChars: params.inputChars,
-      outputChars: params.outputChars,
-      durationMs: params.durationMs,
-      isError: params.isError,
-    });
-    pendingToolExecs.set(params.runId, list);
-
     // AMYGDALA shadow logging (async, fire-and-forget, never blocks)
     amygdalaShadowLog({
       toolName: params.toolName,
@@ -1022,6 +1128,14 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
 
   // Context anatomy
   if (params.systemPromptReport && params.sessionKey) {
+    // FORK 2026-09-24 (A9): remember the report for the NEXT turn's pre-call row. Done FIRST and
+    // outside the anatomy build, so a build failure below still leaves the next turn able to emit.
+    rememberPreCallAnatomyContext(params.sessionKey, {
+      systemPromptReport: params.systemPromptReport,
+      contextWindowTokens: params.contextWindowTokens,
+      authProfileId: params.authProfileId,
+      atMs: Date.now(),
+    });
     try {
       const usageTotals = params.getUsageTotals?.();
       const contextAnatomy = buildContextAnatomy({
@@ -1036,6 +1150,12 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
         totalTokensUsed: usageTotals?.total,
         outputTokens: usageTotals?.output,
         authProfileId: params.authProfileId,
+        // FORK 2026-09-24 (A9): stamped so the panel can tell a composition MEASURED before the call
+        // from one reconstructed after it. When a pre-call row already exists for this
+        // (run_id, round_number) the upsert keeps ITS composition and ITS 'pre-call' stamp; this
+        // value only survives when there was no pre-call row — which is exactly when the panel must
+        // badge the figures as post-turn estimates (bible §5.4).
+        snapshot: "post-turn",
       });
       if (contextAnatomy) {
         // Effort is decided in the runner and was never carried this far, which is why every
@@ -1083,9 +1203,15 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
             anatomy: contextAnatomy,
           },
         });
-        // Insert the anatomy row here in onTurnComplete (emitPrePromptAnatomy is not wired into attempt.ts).
-        // If emitPrePromptAnatomy is wired in the future, add a UNIQUE(run_id, round_number) constraint
-        // and switch to INSERT OR REPLACE to avoid duplicates.
+        // FORK 2026-09-24 (A9) — the note that used to sit here ("if emitPrePromptAnatomy is wired
+        // in the future, add a UNIQUE(run_id, round_number) constraint") is DISCHARGED, not deleted
+        // as stale: `captureForensicDumpHook` now writes a pre-call row on the same
+        // (run_id, round_number), and `insertAnatomyEvent` is an UPSERT against the partial unique
+        // index added in schema v6. So this call no longer creates a second row for the turn — it
+        // fills the response side of the row the pre-call write already made, and leaves that row's
+        // pre-call composition (the only one that can itemise this turn's user prompt) intact.
+        // INSERT OR REPLACE was NOT the answer the old note guessed at: it would have discarded that
+        // composition wholesale, which is the one number the pre-call row exists to carry.
         contextAnatomy.runId = params.runId;
         contextAnatomy.sessionKey = contextAnatomy.sessionKey ?? params.sessionKey;
 
@@ -1119,8 +1245,10 @@ export async function onTurnComplete(params: PostTurnParams): Promise<void> {
 
         insertAnatomyEvent(contextAnatomy);
         // FORK 2026-07-28 — fire AFTER the row reaches SQLite, so the instrument attests to the
-        // write rather than to having entered the block. This is the LIVE anatomy writer;
-        // `emitPrePromptAnatomy` above is orphaned and is deliberately left uninstrumented.
+        // write rather than to having entered the block. FORK 2026-09-24 (A9): this is the
+        // POST-TURN writer; `emitPrePromptAnatomy` is now live too and carries its own instrument
+        // (`eeg:anatomy-precall-write`), so the two halves of a turn are separately observable and a
+        // pre-call path that silently stops firing shows up as a NEVER in the registry.
         noteInstrumentFired(
           "eeg:anatomy-write",
           `turn=${turnNumber} round=${anatomyRound} session=${params.sessionKey ?? "?"}`,

@@ -232,7 +232,16 @@ export function supplyStateFrom(
   // never as an obligation to spend.
   if (kind === "free-tier") shadow = Math.min(0, shadow);
 
-  const ballistic = kind === "subscription" && windows.some((w) => windowBallistic(w));
+  // A burn window is only free if EVERY window of the supply can afford it. Tokens spent to use up
+  // a short window's surplus are also spent from the longer windows, so a 5-hour bucket about to
+  // reset half-empty is NOT free while the same account's weekly bucket is at 99%: burning it would
+  // price the nearly-exhausted supply at σ = −1 and push work onto it. (Counterexample raised by
+  // the J19 concept review, 2026-09-29, and reproduced against this function before the fix.)
+  const burning = windows.filter((w) => windowBallistic(w));
+  const ballistic =
+    kind === "subscription" &&
+    burning.length > 0 &&
+    windows.every((w) => burning.includes(w) || w.pace === undefined || w.pace <= 0);
 
   const resets = windows.map((w) => w.resetAtMs).filter((n): n is number => typeof n === "number");
 
@@ -349,4 +358,72 @@ function shortWindowPenalty(s: SupplyState): number {
  */
 function burstUnknownPenalty(s: SupplyState): number {
   return s.kind === "free-tier" ? 0.3 : 0;
+}
+
+/**
+ * The budget poller's `budget.usage` payload → the `windows` map `supplyStates` expects.
+ *
+ * ONE HOME, because there are two readers and they must not disagree: the gateway reads the
+ * snapshot store, and the Tinker UI holds the same payload client-side as `budgetUsageData`.
+ * A private mapper on either side would let the card and the router describe the same afternoon
+ * differently, which is worse than showing nothing — the card would still look authoritative.
+ *
+ * Shape-tolerant on purpose: every vendor names its own fields, several publish a percentage
+ * with no reset instant, and any of them can be absent on a poll that partly failed. A field we
+ * cannot read is OMITTED, never defaulted — absent means UNKNOWN downstream, and a defaulted 0%
+ * would read as "plenty of headroom" on a supply we simply failed to fetch.
+ */
+export function supplyWindowsFromUsage(
+  payload: unknown,
+): Record<string, SupplyWindowInput[]> | undefined {
+  const p = payload as Record<string, any> | null | undefined;
+  if (!p || typeof p !== "object") return undefined;
+  const out: Record<string, SupplyWindowInput[]> = {};
+  const ms = (v: unknown): number | undefined => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v !== "string" || !v) return undefined;
+    const n = Date.parse(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const pct = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  const push = (key: string, label: string, used: unknown, reset?: unknown) => {
+    const u = pct(used);
+    if (u === undefined) return;
+    (out[key] ??= []).push({ label, usedPercent: u, resetAtMs: ms(reset) });
+  };
+
+  push(
+    "anthropic",
+    "5-hour",
+    p.claude?.limits?.five_hour?.utilization,
+    p.claude?.limits?.five_hour?.resets_at,
+  );
+  push(
+    "anthropic",
+    "7-day",
+    p.claude?.limits?.seven_day?.utilization,
+    p.claude?.limits?.seven_day?.resets_at,
+  );
+  push(
+    "chatgpt",
+    "5-hour",
+    p.chatgpt?.models?.["5h"]?.utilization_pct,
+    p.chatgpt?.models?.["5h"]?.resets_at,
+  );
+  push(
+    "chatgpt",
+    "Weekly",
+    p.chatgpt?.models?.Weekly?.utilization_pct,
+    p.chatgpt?.models?.Weekly?.resets_at,
+  );
+  // xAI publishes ONE window and no short one — the fact `fanOutSupply` is built on.
+  push("xai", "Weekly", p.xai?.usage_pct, p.xai?.period_end);
+  push("github-copilot", "monthly", p.copilot?.premium_used_pct);
+  const rpd = p.gemini?.rpd_used;
+  const rpdLimit = p.gemini?.rpd_limit;
+  if (typeof rpd === "number" && typeof rpdLimit === "number" && rpdLimit > 0) {
+    push("google", "daily", Math.round((100 * rpd) / rpdLimit));
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

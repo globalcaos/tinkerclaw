@@ -1,0 +1,22 @@
+{
+  "_example": true,
+  "_note": "EXAMPLE ONLY. Every entry below is a placeholder. Copy this file to ~/.config/backlink-audit/ours-allowlist.json (or anywhere you like and pass --allowlist / set BACKLINK_AUDIT_ALLOWLIST), replace the placeholders with the surfaces YOU control, and DELETE the \"_example\" key. While \"_example\" is true the tool warns on every run and refuses --write-state. A backlink is classified 'ours' if its SOURCE url/domain matches any rule below (you created or control that surface); everything else is 'organic'. Each rule: {domain, path_prefix?, label}. path_prefix narrows a shared host to your part of it (e.g. only your GitHub profile). ours_urls is an exact-URL list for links you authored on otherwise-ambiguous hosts (your comment, issue or PR on someone else's GitHub repo).",
+  "rules": [
+    { "domain": "example.com", "label": "your own website (self/internal links)" },
+    { "domain": "blog.example.net", "label": "your blog" },
+    { "domain": "github.com", "path_prefix": "/your-github-user", "label": "your GitHub repos/profile" },
+    { "domain": "gitlab.com", "path_prefix": "/your-gitlab-user", "label": "your GitLab repos/profile" },
+    { "domain": "clawhub.ai", "path_prefix": "/your-clawhub-handle", "label": "your skill-registry listings" },
+    { "domain": "social.example.org", "path_prefix": "/u/your-agent-handle", "label": "posts and comments by your agent account" }
+  ],
+  "_lookalike_note": "A domain that carries your project's name is NOT yours until you have checked who owns it (whois, DNS, your registrar account). Brand-squats exist: one project found its name on a .com run by a third party as a commercial white-label service. Never add a look-alike domain here on the strength of its name.",
+  "ours_urls": [
+    "https://github.com/some-org/some-repo/issues/123",
+    "https://github.com/another-org/another-repo/pull/45"
+  ],
+  "_ours_urls_note": "Third-party threads (issues/PRs) where YOU wrote the comment that contains a link to your work. Build the list from a search, not from memory: `gh search issues --include-prs --author <your-login>` plus `gh search issues --include-prs --commenter <your-login>`, then open each thread and confirm the link is really there and still live.",
+  "ambiguous_domains": {
+    "_note": "Links FROM these hosts can be yours (you authored a comment) OR organic (someone else did); the domain alone cannot tell. The tool flags them 'ambiguous' unless a path_prefix rule or an ours_urls entry resolves them. Resolve them by hand from your own record of authored comments, then pin the resolved ones in ours_urls.",
+    "domains": ["github.com", "forum.example.org"]
+  }
+}

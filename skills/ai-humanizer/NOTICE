@@ -1,0 +1,17 @@
+humanizer (ClawHub slug: ai-humanizer)
+Copyright (c) 2026 Brandon Wise. MIT License, see LICENSE.
+Upstream: https://github.com/brandonwise/humanizer
+
+This copy is humanizer 2.1.0 as published on ClawHub (upstream commit 08a4a44).
+
+Local changes:
+- SKILL.md: the same instructions, regrouped into tagged sections
+  (<role>, <why_this_matters>, <sources>, <task>, <core_principles>).
+- eslint.config.js: rules inlined so lint runs in a standalone checkout
+  (taken from upstream fix 1fbb2f6; the shipped file required
+  ../_config/eslint.base.js, which the package does not include).
+- .prettierrc, .editorconfig, .gitignore, LICENSE and the executable bit on
+  scripts/*.sh and src/cli.js restored from upstream; the ClawHub package
+  had dropped them.
+
+Everything else is byte-identical to upstream.

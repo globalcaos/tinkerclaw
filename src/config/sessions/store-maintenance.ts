@@ -14,6 +14,16 @@ const DEFAULT_SESSION_DISK_BUDGET_HIGH_WATER_RATIO = 0.8;
 const STRICT_ENTRY_MAINTENANCE_MAX_ENTRIES = 49;
 const MIN_BATCHED_ENTRY_MAINTENANCE_SLACK = 25;
 const BATCHED_ENTRY_MAINTENANCE_SLACK_RATIO = 0.1;
+/**
+ * FORK 2026-10-03 — the protected conversation keys may use up the entry budget,
+ * but never all of it: the newest `min(maxEntries, 25)` background entries always
+ * survive a cap. Without this floor, a store whose protected keys alone reached
+ * `maxEntries` (live: 239 against 80) deleted every background entry on every
+ * save, including the one that save had just written. A spawned subagent lost
+ * its model pin, lineage and label before its run read them, so every subagent
+ * ran on the default model (`agent-command.ts` found no `modelOverride`).
+ */
+const MIN_EVICTABLE_ENTRY_SLOTS = 25;
 
 /**
  * FORK 2026-08-11 (the architect) — session key classes that carry a real conversation
@@ -319,7 +329,11 @@ export function capEntryCount(
   const isPreserved = (key: string): boolean =>
     Boolean(opts.preserveKeys?.has(key)) || isProtectedSessionKey(key);
   const preservedCount = Object.keys(store).filter(isPreserved).length;
-  const maxRemovableEntries = Math.max(0, maxEntries - preservedCount);
+  const maxRemovableEntries = Math.max(
+    0,
+    maxEntries - preservedCount,
+    Math.min(maxEntries, MIN_EVICTABLE_ENTRY_SLOTS),
+  );
   const keys = Object.keys(store).filter((key) => !isPreserved(key));
   if (keys.length <= maxRemovableEntries) {
     return 0;

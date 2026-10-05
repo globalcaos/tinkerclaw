@@ -13,6 +13,8 @@
  * literal — that would re-introduce MAX_SCHEMA_RETRIES=2.
  */
 
+import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
+
 export interface RedispatchSignals {
   /** Count of `required` fields in the step's `out:` schema (value-of-work proxy). */
   requiredFieldCount: number;
@@ -43,5 +45,25 @@ export function deriveRedispatchBudget(signals: RedispatchSignals): number {
       ? Math.floor(signals.remainingTokenBudget / signals.estStepTokens)
       : Number.POSITIVE_INFINITY;
 
-  return Math.max(1, Math.min(derived, affordable));
+  const redispatches = Math.max(1, Math.min(derived, affordable));
+
+  // J16 / TINKER_UI_DESIGN_BIBLE/logging.md §4.12 `j.bound.derived` — the same row shape as
+  // spawn-budget.ts (see the field meanings there): n1 = the value returned, n2 = the
+  // affordability ceiling (NULL while no budget is threaded), n3 = 1 when that ceiling set the
+  // answer, n4 = how many of the four signals the caller supplied (requiredFieldCount is
+  // mandatory, so this is never below 1).
+  emitEvent("j.bound.derived", {
+    label: "redispatch",
+    n1: redispatches,
+    n2: Number.isFinite(affordable) ? affordable : null,
+    n3: Number.isFinite(affordable) && derived > affordable ? 1 : 0,
+    n4: [
+      signals.requiredFieldCount,
+      signals.fitnessSuccessRate,
+      signals.remainingTokenBudget,
+      signals.estStepTokens,
+    ].filter((s) => s != null).length,
+  });
+
+  return redispatches;
 }

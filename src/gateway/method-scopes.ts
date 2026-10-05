@@ -73,6 +73,12 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "doctor.memory.status",
     "doctor.memory.dreamDiary",
     "logs.tail",
+    // FORK 2026-09-24 (logging.md §9 step 3): the events writer's health snapshot; inspection only.
+    "logs.writer.stats",
+    // FORK 2026-09-25 (logging.md §8.2, §9 step 10): SAVED events queries by name and the catalog
+    // with last-seen times — read-only connection on the writer thread, no SQL text over RPC.
+    "logs.query",
+    "logs.catalog",
     "channels.status",
     "status",
     "usage.status",
@@ -239,12 +245,23 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     // dedupeDreamDiary) is WRITE. `cron.run` is ADMIN because it runs an ARBITRARY named
     // job; this runs one fixed, known job.
     "fork.engram.consolidate.run",
+    // FORK 2026-09-25 (logging.md §8.2, §9 step 7): the UI's telemetry write into the events
+    // database. WRITE, never READ — READ is also granted to WRITE holders
+    // (authorizeOperatorScopesForMethod), so a READ classification would hand every read-only
+    // operator token a write path into the observability store. The catalog's `uiIngestable` flag
+    // is the second gate: even with WRITE, a client can only send the `ui.*` rows.
+    "logs.ingest",
   ],
   [ADMIN_SCOPE]: [
     "channels.start",
     "channels.logout",
     "config.openExternalFile",
     "debug.dumpUiSnapshot",
+    // FORK 2026-09-14: reveals function names + file paths of the running code; inspection only.
+    "diagnostic.cpuProfile",
+    // FORK 2026-09-29: holds (and releases) every live turn for a restart (lifecycles.md L4b).
+    "gateway.drain",
+    "gateway.drainRelease",
     "agents.create",
     "agents.update",
     "agents.delete",
@@ -262,8 +279,12 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "sessions.delete",
     "sessions.compact",
     "sessions.compaction.restore",
+    // FORK 2026-09-30: points the tab at a branch without its last exchange (or back, with undo).
+    "sessions.rewind",
     "connect",
     "chat.inject",
+    // FORK 2026-09-29 (lifecycles.md L4b): display-only restart notice, written by boot recovery.
+    "chat.restartNotice",
     "nativeHook.invoke",
     "web.login.start",
     "web.login.wait",

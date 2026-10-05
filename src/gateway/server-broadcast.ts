@@ -1,3 +1,4 @@
+import { recordChatDeliver } from "../infra/events/turn-events.js";
 import { logRejectedLargePayload } from "../logging/diagnostic-payload.js";
 import {
   ADMIN_SCOPE,
@@ -23,6 +24,8 @@ import { logWs, shouldLogWs, summarizeAgentEventForWsLog } from "./ws-log.js";
 const EVENT_SCOPE_GUARDS: Record<string, string[]> = {
   agent: [READ_SCOPE],
   chat: [READ_SCOPE],
+  // FORK 2026-09-29 (lifecycles.md L4b): a display-only chat row (the restart notice).
+  "chat.notice": [READ_SCOPE],
   "chat.side_result": [READ_SCOPE],
   cron: [READ_SCOPE],
   health: [],
@@ -138,6 +141,10 @@ function chatDeliverField(value: unknown): string {
  * have to enable in advance cannot catch an incident you only notice afterwards,
  * so this line always prints. It fires on chat FINALS only — at most one line per
  * completed turn — so it cannot flood the log.
+ *
+ * The same counts are also the `chat.deliver` row (TINKER_UI_DESIGN_BIBLE/logging.md §4.6), so
+ * "did every final reach every client" is a query over days, not a grep. The line stays
+ * byte-identical (logging.md L5); the row carries the text LENGTH, never the text.
  */
 function logChatDelivery(event: string, payload: unknown, counts: GatewayBroadcastCounts): void {
   if (event !== "chat" || !payload || typeof payload !== "object") {
@@ -147,9 +154,11 @@ function logChatDelivery(event: string, payload: unknown, counts: GatewayBroadca
   if (chat.state !== "final") {
     return;
   }
+  const textLen = chatFinalTextLen(chat);
   console.log(
-    `[chat-deliver] sessionKey=${chatDeliverField(chat.sessionKey)} runId=${chatDeliverField(chat.runId)} attempted=${counts.attempted} sent=${counts.sent} scopeSkipped=${counts.scopeSkipped} droppedSlow=${counts.droppedSlow} sendThrew=${counts.sendThrew} textLen=${chatFinalTextLen(chat)}`,
+    `[chat-deliver] sessionKey=${chatDeliverField(chat.sessionKey)} runId=${chatDeliverField(chat.runId)} attempted=${counts.attempted} sent=${counts.sent} scopeSkipped=${counts.scopeSkipped} droppedSlow=${counts.droppedSlow} sendThrew=${counts.sendThrew} textLen=${textLen}`,
   );
+  recordChatDeliver(chat.sessionKey, counts, textLen);
 }
 
 export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient> }) {

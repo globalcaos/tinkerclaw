@@ -1,0 +1,50 @@
+/* The Jev window (design block 5b): a foreign-looking window, deliberately not in the theme's look. */
+.amy-jev{font-family:"JetBrains Mono","Fragment Mono",ui-monospace,Menlo,monospace;background:#FEFEFE;color:#1E1E1E;border:1.5px solid #1E1E1E;
+  border-radius:0;box-shadow:4px 4px 0 #d45bb6;align-self:flex-start;width:100%;max-width:540px;font-size:12px;line-height:1.4}
+.amy-jev-bar{background:#1E1E1E;color:#FEFEFE;display:flex;align-items:center;gap:8px;padding:4px 8px;cursor:pointer;user-select:none}
+.amy-jev-off .amy-jev-bar{cursor:default}
+.amy-jev-disc{width:18px;height:18px;border-radius:50%;background:#d45bb6;display:grid;place-items:center;flex:none}
+.amy-jttl{letter-spacing:.09em;font-weight:700;font-size:11px}
+.amy-jsm{margin-left:auto;color:#abbab9;font-size:11px;white-space:nowrap}
+.amy-jtw{color:#abbab9;width:10px;text-align:center}
+.amy-jev:not(.amy-open) .amy-jev-body{display:none}
+.amy-jstep{padding:3px 8px;background:#f0ede4;border-top:1px solid #1e1e1e55}
+.amy-jstep .amy-mt{color:#1e1e1e99}
+.amy-jr{display:grid;grid-template-columns:14px 178px minmax(0,1fr) auto;gap:0 8px;align-items:baseline;padding:3px 8px;border-top:1px dashed #1e1e1e40;cursor:pointer}
+.amy-jr:hover{background:#f9e7f3}
+.amy-jg{text-align:center}
+.amy-jq{font-weight:600}
+.amy-jw{margin-left:4px;color:var(--amber, #d9a441);font-weight:700}
+.amy-jx{margin-left:4px;color:var(--red, #c0392b);font-weight:700;font-size:10px}
+.amy-ja{color:#1E1E1E}
+.amy-jo{font-size:11px;padding:0 6px;border:1px solid #1E1E1E}
+.amy-jo.held{background:#f386a1}
+.amy-jo.refusal{background:#f386a1;border-style:double;border-width:3px}
+.amy-jo.note{background:#abbab9}
+.amy-jo.back{background:#1E1E1E;color:#FEFEFE}
+.amy-jo.ok{border-color:#1e1e1e55;color:#1e1e1e99}
+.amy-jd{display:none;padding:5px 8px 7px 30px;border-top:1px dashed #1e1e1e40;background:#f6f4ee;font-size:11.5px}
+.amy-jd.amy-show{display:block}
+.amy-prob{display:inline-block;width:110px;height:8px;background:#abbab9;vertical-align:middle;margin-right:6px}
+.amy-prob i{display:block;height:100%;background:#1E1E1E}
+.amy-jd .amy-mt{color:#1e1e1e99}
+.amy-lab{font:inherit;font-size:11px;padding:0 6px;border:1px solid #1E1E1E;color:#1E1E1E;background:#FEFEFE;cursor:pointer;border-radius:0}
+.amy-lab.amy-on{background:#d45bb6}
+.amy-jft{padding:3px 8px;border-top:1.5px solid #1E1E1E;font-size:10.5px;color:#1e1e1e99}
+/* Changes first (2026-10-02): what the amygdala would have changed, one card each, votes in view; the rest folded. */
+.amy-jsec{padding:5px 8px 3px;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:#f9e7f3;border-top:1px solid #1e1e1e55}
+.amy-jchange{padding:6px 8px 8px;border-top:1px solid #1e1e1e55;background:#FEFEFE}
+.amy-jc-head{display:flex;align-items:center;gap:6px;font-size:12.5px}
+.amy-jc-step,.amy-jc-why{margin-top:4px;font-size:11.5px;overflow-wrap:anywhere}
+.amy-jc-step .amy-mt,.amy-jc-why .amy-mt,.amy-jc-vote .amy-mt{color:#1e1e1e99;margin-right:6px}
+.amy-jc-why ul{margin:2px 0 0 18px;padding:0}
+.amy-jc-why li{margin:1px 0}
+.amy-jc-vote{margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.amy-jvote{font:inherit;font-size:11.5px;padding:2px 9px;background:#FEFEFE;color:#1E1E1E;border:1.5px solid #1E1E1E;cursor:pointer}
+.amy-jvote:hover{background:#f9e7f3}
+.amy-jvote.amy-voted{background:#1E1E1E;color:#FEFEFE}
+.amy-jnone{padding:6px 8px;border-top:1px solid #1e1e1e55;color:#1e1e1e99}
+.amy-jothers-bar{padding:4px 8px;border-top:1px solid #1e1e1e55;background:#f0ede4;cursor:pointer;color:#1e1e1ecc;user-select:none}
+.amy-jothers-bar .amy-jtw{color:#1e1e1e99}
+.amy-jothers{display:none}
+.amy-jothers.amy-show{display:block}

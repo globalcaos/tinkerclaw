@@ -79,7 +79,11 @@ import {
   normalizeMessageChannel,
 } from "../../utils/message-channel.js";
 import { resolveAssistantIdentity } from "../assistant-identity.js";
-import { registerChatAbortController, resolveAgentRunExpiresAtMs } from "../chat-abort.js";
+import {
+  registerChatAbortController,
+  resolveAgentRunExpiresAtMs,
+  type ChatAbortOps,
+} from "../chat-abort.js";
 import {
   MediaOffloadError,
   parseMessageWithAttachments,
@@ -116,6 +120,7 @@ import {
   waitForTerminalGatewayDedupe,
 } from "./agent-wait-dedupe.js";
 import { normalizeRpcAttachmentsToChatAttachments } from "./attachment-normalize.js";
+import { createChatAbortOps } from "./chat.js";
 import type { GatewayRequestHandlerOptions, GatewayRequestHandlers } from "./types.js";
 
 const RESET_COMMAND_RE = /^\/(new|reset)(?:\s+([\s\S]*))?$/i;
@@ -138,6 +143,14 @@ function resolveCanResetSessionFromClient(client: GatewayRequestHandlerOptions["
 async function runSessionResetFromAgent(params: {
   key: string;
   reason: "new" | "reset";
+  /**
+   * FORK 2026-09-24 (prompt-queue.md G1 follow-up) — this request's chat-run state
+   * (createChatAbortOps). With it the reset ends the session's live chat runs and backlogged
+   * prompts with one `chat` `aborted` each, as sessions.reset does; without it endSessionTurns
+   * skips that step and a live chat.send run on the session goes on with no terminal. REQUIRED
+   * so a caller cannot drop it silently.
+   */
+  chatAbortOps: ChatAbortOps;
 }): Promise<
   | { ok: true; key: string; sessionId?: string }
   | { ok: false; error: ReturnType<typeof errorShape> }
@@ -146,6 +159,7 @@ async function runSessionResetFromAgent(params: {
     key: params.key,
     reason: params.reason,
     commandSource: "gateway:agent",
+    chatAbortOps: params.chatAbortOps,
   });
   if (!result.ok) {
     return result;
@@ -430,6 +444,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       lane?: string;
       extraSystemPrompt?: string;
       modelRun?: boolean;
+      continueFromTranscript?: boolean;
       promptMode?: "full" | "minimal" | "none";
       bootstrapContextMode?: "full" | "lightweight";
       bootstrapContextRunKind?: "default" | "heartbeat" | "cron";
@@ -711,6 +726,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       const resetResult = await runSessionResetFromAgent({
         key: requestedSessionKey,
         reason: resetReason,
+        chatAbortOps: createChatAbortOps(context),
       });
       if (!resetResult.ok) {
         respond(false, undefined, resetResult.error);
@@ -1197,6 +1213,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           runId,
           lane: request.lane,
           modelRun: request.modelRun === true,
+          continueFromTranscript: request.continueFromTranscript === true,
           promptMode: request.promptMode,
           extraSystemPrompt: request.extraSystemPrompt,
           toolsAllow: request.allowTools,

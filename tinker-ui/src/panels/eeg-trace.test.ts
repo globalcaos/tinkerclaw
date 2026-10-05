@@ -15,6 +15,13 @@ import {
   EEG_COST_LOG_PX_FLOOR,
   EEG_COST_LOG_REF_REL,
   eegStopX,
+  eegPxPerEuro,
+  eegGridStepEuros,
+  eegEuroLabel,
+  EEG_TARGET_TURN_PX,
+  EEG_MAX_PAPER_PX,
+  EEG_GRID_TARGET_PX,
+  EEG_PX_PER_EURO,
   eegToolIdentity,
   eegAssignLanes,
   eegMergeIntervals,
@@ -54,20 +61,38 @@ const mainX = (svg: string): number => {
 const svgHeight = (svg: string): number => Number(/height="([\d.]+)"/.exec(svg)?.[1] ?? 0);
 
 describe("segment length = euro cost (the architect 2026-06-20: §1 grid)", () => {
-  // FORK 2026-08-11: these used claude-fable-5 vs claude-haiku-4-5. After the measured
-  // recalibration a subscription turn is worth fractions of a cent, so BOTH clamp to
-  // EEG_MIN_LEN (€0.178) and every length assertion compared 56 with 56. The renderer
-  // property is unchanged and is now exercised on METERED models, where euros are real
-  // cash. The subscription collapse is pinned by its own test at the end of this block.
+  // FORK 2026-10-01: these compared the HEIGHT OF TWO SEPARATE PAPERS. That stopped meaning
+  // anything when the pitch became per-tab (eegPxPerEuro): a one-sample paper draws its one sample
+  // at the target height whatever it cost, because that sample IS the tab's median. "Length = euro
+  // cost" was always a within-one-paper property, so it is now asserted within one paper, on the
+  // drawn strand rather than on the SVG box.
+  //
+  // (History: these used fable vs haiku; after the 2026-08-11 recalibration a subscription turn is
+  // worth fractions of a cent, both clamped to the old EEG_MIN_LEN floor and every assertion
+  // compared 56 with 56, so they were moved to metered models. The floor is gone from the ledger
+  // now, so prepaid turns carry honest length again — pinned at the end of this block.)
   it("a costlier turn renders a longer (taller) segment", () => {
-    // length = €; use a pricey model + many tokens to clear the ~€0.2 click floor.
-    const big = new EegTraceStore();
-    big.record(sample({ runId: "r1", model: "moonshotai/kimi-k3", outputTokens: 120000 }));
-    const small = new EegTraceStore();
-    small.record(sample({ runId: "r1", model: "z-ai/glm-5", outputTokens: 50 }));
-    expect(svgHeight(big.renderSvg({ width: WIDTH }))).toBeGreaterThan(
-      svgHeight(small.renderSvg({ width: WIDTH })),
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "big",
+        model: "moonshotai/kimi-k3",
+        outputTokens: 120000,
+        startedAt: T0,
+        endedAt: T0 + 1000,
+      }),
     );
+    store.record(
+      sample({
+        runId: "small",
+        model: "z-ai/glm-5",
+        outputTokens: 50,
+        startedAt: T0 + 5000,
+        endedAt: T0 + 6000,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(mainLenOf(svg, "big")).toBeGreaterThan(mainLenOf(svg, "small"));
   });
 
   it("a zero-token (live) turn still draws at the minimum length", () => {
@@ -78,43 +103,518 @@ describe("segment length = euro cost (the architect 2026-06-20: §1 grid)", () =
 
   it("draws a €1 horizontal grid: ruler lines + a €N gutter label", () => {
     const store = new EegTraceStore();
-    store.record(sample({ runId: "r1", model: "moonshotai/kimi-k3", outputTokens: 120000 }));
+    // Size the turn from Kimi's CURRENT table price so it costs €1.50 whatever the cheapest
+    // seat is: a hard-coded token count broke on every Kimi reprice (200k was €1.50 at
+    // $7.50, €2.00 at $10.00 — which draws a €2 rule and no €1 label).
+    const tokens = Math.round(1_500_000 / eegRelCost("moonshotai/kimi-k3"));
+    store.record(sample({ runId: "r1", model: "moonshotai/kimi-k3", outputTokens: tokens }));
     const svg = store.renderSvg({ width: WIDTH });
     expect(svg).toContain('class="eeg-eurogrid"');
     expect(svg).toContain("€1");
   });
 
   it("euro length scales with the model's €/Mtok at equal tokens (kimi taller than glm)", () => {
-    const kimi = new EegTraceStore();
-    kimi.record(sample({ runId: "r1", model: "moonshotai/kimi-k3", outputTokens: 200000 }));
-    const glm = new EegTraceStore();
-    glm.record(sample({ runId: "r1", model: "z-ai/glm-5", outputTokens: 200000 }));
-    expect(svgHeight(kimi.renderSvg({ width: WIDTH }))).toBeGreaterThan(
-      svgHeight(glm.renderSvg({ width: WIDTH })),
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "kimi",
+        model: "moonshotai/kimi-k3",
+        outputTokens: 200000,
+        startedAt: T0,
+        endedAt: T0 + 1000,
+      }),
     );
+    store.record(
+      sample({
+        runId: "glm",
+        model: "z-ai/glm-5",
+        outputTokens: 200000,
+        startedAt: T0 + 5000,
+        endedAt: T0 + 6000,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(mainLenOf(svg, "kimi")).toBeGreaterThan(mainLenOf(svg, "glm"));
   });
 
-  // FORK 2026-08-11: PINS the consequence of pricing the subscription honestly, so a
-  // future reader meets it as a documented property instead of as a mystery. €264.08/mo
-  // over the MEASURED trailing-30d burn makes one prepaid turn worth ~€0.05 — far under
-  // the €0.178 minimum drawn length. The euro axis (EEG_PX_PER_EURO = 90px per €1) was
-  // calibrated when the constants were 43× high; at true rates its natural pitch is
-  // nearer €0.01. Until that is decided, subscription work draws as a flat mat and only
-  // metered calls carry length. Do NOT "fix" this by re-inflating relCost.
-  it("a prepaid turn clamps to the minimum length however many tokens it burns", () => {
-    const small = new EegTraceStore();
-    small.record(sample({ runId: "r1", model: "claude-opus-4-8", outputTokens: 1000 }));
-    const huge = new EegTraceStore();
-    huge.record(sample({ runId: "r1", model: "claude-opus-4-8", outputTokens: 200000 }));
-    expect(svgHeight(huge.renderSvg({ width: WIDTH }))).toBe(
-      svgHeight(small.renderSvg({ width: WIDTH })),
+  // FORK 2026-10-01 — THE PREPAID COLLAPSE IS OVER, and this test is its inverse.
+  //
+  // It used to assert that a prepaid turn draws the SAME height however many tokens it burns,
+  // because €264.08/mo over the measured trailing-30d burn makes one turn worth ~€0.005, far under
+  // the €0.178 the drawn-length floor charged the ledger. Subscription work drew as a flat mat and
+  // only metered calls carried length. That floor was also what made the grid read tens of euros
+  // over a paper worth cents, which is what the architect reported.
+  //
+  // The ledger is exact now and the PITCH adapts to the tab, so prepaid turns carry honest,
+  // legible length: the fix was the axis calibration, never re-inflating relCost. Do NOT do that.
+  it("a prepaid turn carries honest length — 200x the tokens is visibly taller", () => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "small",
+        model: "claude-opus-4-8",
+        outputTokens: 1000,
+        startedAt: T0,
+        endedAt: T0 + 1000,
+      }),
     );
-    // …while the same token count on a metered model is visibly taller.
-    const metered = new EegTraceStore();
-    metered.record(sample({ runId: "r1", model: "moonshotai/kimi-k3", outputTokens: 200000 }));
-    expect(svgHeight(metered.renderSvg({ width: WIDTH }))).toBeGreaterThan(
-      svgHeight(huge.renderSvg({ width: WIDTH })),
+    store.record(
+      sample({
+        runId: "huge",
+        model: "claude-opus-4-8",
+        outputTokens: 200000,
+        startedAt: T0 + 5000,
+        endedAt: T0 + 6000,
+      }),
     );
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(mainLenOf(svg, "huge")).toBeGreaterThan(mainLenOf(svg, "small") * 10);
+    // and the paper is a readable size rather than a flat mat
+    expect(svgHeight(svg)).toBeGreaterThan(200);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// DECISIONS 2 + 3 (the architect 2026-10-01): "the trace has to indicate the cost in tokens of a particular
+// run, and the background grid tries to keep track of the total cost per tab. I sometimes see parts
+// of the graph that are empty, and yet the grid shows it has cost, it does not make sense."
+//
+// The ledger is EXACT: the spend clock is fed eegSampleEuros, never the legibility floor. The floor
+// applies to the DRAWN length only. Because true subscription-amortised euros are tiny, the scale
+// ADAPTS per tab, so a typical turn still draws a readable height and the gridlines land on real
+// euro amounts of THIS tab.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+const euroLabels = (svg: string): number[] =>
+  [...svg.matchAll(/class="eeg-eurolabel"[^>]*>€([\d.]+)</g)].map((m) => Number(m[1]));
+const euroGridYs = (svg: string): number[] =>
+  [...svg.matchAll(/class="eeg-eurogrid" x1="0" y1="([\d.]+)"/g)].map((m) => Number(m[1]));
+const mainLenOf = (svg: string, runId: string): number => {
+  const re = new RegExp(
+    `<path class="eeg-main" d="M [\\d.]+ ([\\d.]+) L [\\d.]+ ([\\d.]+)"[^>]*?data-eeg-run="${runId}"`,
+  );
+  const m = re.exec(svg);
+  if (!m) throw new Error(`no eeg-main path for ${runId}`);
+  return Number(m[1]) - Number(m[2]);
+};
+
+describe("the € grid reads REAL euros of this tab (the architect 2026-10-01)", () => {
+  // The review measured this exact shape at 1874x over-statement: the clock was fed
+  // eegClampEuros(), which floored EVERY sample at EEG_MIN_LEN / EEG_PX_PER_EURO = €0.1778. A tool
+  // call with no tokens — cost €0 — charged the grid €0.1778, so the axis was really a sample count
+  // wearing a euro label, and the architect read tens of euros off a paper worth fractions of a cent.
+  it("200 tool calls and 40 cheap turns do not invent euros that were never spent", () => {
+    const store = new EegTraceStore();
+    let t = T0;
+    for (let i = 0; i < 200; i++) {
+      store.record(
+        sample({
+          runId: "tool" + i,
+          tool: true,
+          model: "tool:local",
+          provider: "unknown",
+          chosenLevel: "",
+          startedAt: t,
+          endedAt: t + 200,
+        }),
+      );
+      t += 300;
+    }
+    for (let i = 0; i < 40; i++) {
+      store.record(
+        sample({
+          runId: "call" + i,
+          model: "claude-sonnet-4-5",
+          outputTokens: 2500,
+          startedAt: t,
+          endedAt: t + 4000,
+        }),
+      );
+      t += 5000;
+    }
+    const real = 40 * eegRelCost("claude-sonnet-4-5", "anthropic") * (2500 / 1_000_000);
+    const svg = store.renderSvg({ width: WIDTH });
+    const labels = euroLabels(svg);
+    // every printed amount is an amount this tab actually spent — never above the true total
+    for (const v of labels) expect(v).toBeLessThanOrEqual(real * 1.000001);
+    expect(real).toBeLessThan(0.05); // sanity: this really is a fractions-of-a-cent afternoon
+  });
+
+  it("a tab that spent nothing measurable draws no euro gridline at all", () => {
+    const store = new EegTraceStore();
+    for (let i = 0; i < 12; i++) {
+      store.record(
+        sample({
+          runId: "tool" + i,
+          tool: true,
+          model: "tool:local",
+          provider: "unknown",
+          chosenLevel: "",
+          startedAt: T0 + i * 1000,
+          endedAt: T0 + i * 1000 + 100,
+        }),
+      );
+    }
+    expect(euroLabels(store.renderSvg({ width: WIDTH }))).toHaveLength(0);
+  });
+});
+
+describe("every euro of axis advance is covered by ink (the architect 2026-10-01)", () => {
+  // the architect: "I sometimes see parts of the graph that are empty, and yet the grid shows it has cost."
+  // Free work (a tool call) buys no euros, so it takes no vertical space of its own — but it does
+  // NOT pile up either, because the costed run it happens inside is accruing while it runs. The
+  // tool branches spread across that run's extent in proportion to WHEN they ran, which is the
+  // behaviour the euro axis is supposed to produce.
+  it("tool calls inside a costed run spread across it rather than stacking on one pixel", () => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "main",
+        model: "claude-opus-4-8",
+        outputTokens: 12000,
+        startedAt: T0,
+        endedAt: T0 + 60_000,
+      }),
+    );
+    for (let i = 0; i < 5; i++) {
+      store.record(
+        sample({
+          runId: "t" + i,
+          tool: true,
+          model: "tool:local",
+          provider: "unknown",
+          chosenLevel: "",
+          startedAt: T0 + 5_000 + i * 10_000,
+          endedAt: T0 + 6_000 + i * 10_000,
+        }),
+      );
+    }
+    const svg = store.renderSvg({ width: WIDTH });
+    const splitYs = [...svg.matchAll(/<path class="eeg-branch" d="M [\d.]+ ([\d.]+)/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(splitYs).toHaveLength(5);
+    expect(new Set(splitYs).size).toBe(5); // five distinct rows, not one pile
+    const sorted = [...splitYs].sort((a, b) => a - b);
+    expect(sorted[sorted.length - 1] - sorted[0]).toBeGreaterThan(20);
+  });
+});
+
+// FINDING 2 (review 2026-10-01). STRAND_CAP was applied to a LIFETIME-wide bucket — every sample
+// sharing (tool/sub, model, effort) for the whole session — and the bucket was sorted oldest-first,
+// so `i < STRAND_CAP` kept the ten OLDEST and silently dropped everything after them. The dropped
+// strands were still in the clock, so they bought axis advance and drew no ink. Newest-at-top means
+// the missing ones were the RECENT ones: the top of the paper, where the architect looks for what just
+// happened, was the emptiest part. The cap's stated purpose is "so a big fan-out doesn't overwhelm
+// the paper", and a fan-out is a CONCURRENT burst, not a lifetime.
+describe("STRAND_CAP is per concurrency burst, newest kept (the architect 2026-10-01)", () => {
+  const branchRuns = (svg: string): string[] =>
+    [...svg.matchAll(/<path class="eeg-branch"[^>]*data-eeg-run="([^"]+)"/g)].map((m) => m[1]);
+
+  const burst = (n: number): EegTraceStore => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "main",
+        model: "claude-opus-4-8",
+        outputTokens: 12000,
+        startedAt: T0,
+        endedAt: T0 + 600_000,
+      }),
+    );
+    for (let i = 0; i < n; i++) {
+      store.record(
+        sample({
+          runId: "leg" + String(i).padStart(2, "0"),
+          subagent: true,
+          model: "claude-sonnet-4-5",
+          outputTokens: 3000,
+          startedAt: T0 + 1000 + i * 100,
+          endedAt: T0 + 500_000,
+        }),
+      );
+    }
+    return store;
+  };
+
+  it("a 60-way concurrent fan-out draws the NEWEST ten, never the oldest ten", () => {
+    const drawn = branchRuns(burst(60).renderSvg({ width: WIDTH })).sort();
+    expect(drawn).toHaveLength(10);
+    expect(drawn[0]).toBe("leg50");
+    expect(drawn[9]).toBe("leg59");
+  });
+
+  it("SEQUENTIAL strands in one group are ALL drawn — the cap bounds a burst, not a lifetime", () => {
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "main",
+        model: "claude-opus-4-8",
+        outputTokens: 12000,
+        startedAt: T0,
+        endedAt: T0 + 600_000,
+      }),
+    );
+    for (let i = 0; i < 40; i++) {
+      store.record(
+        sample({
+          runId: "seq" + i,
+          tool: true,
+          model: "tool:local",
+          provider: "unknown",
+          chosenLevel: "",
+          startedAt: T0 + i * 10_000,
+          endedAt: T0 + i * 10_000 + 1_000,
+        }),
+      );
+    }
+    expect(branchRuns(store.renderSvg({ width: WIDTH }))).toHaveLength(40);
+  });
+
+  it("the strands the cap drops do NOT charge the grid", () => {
+    // the paper must read the same whether the extra fifty were handed in or not: undrawn work
+    // buys no axis advance, so there is no empty region left behind it.
+    const capped = burst(60).renderSvg({ width: WIDTH });
+    const kept = burst(10).renderSvg({ width: WIDTH });
+    expect(svgHeight(capped)).toBeCloseTo(svgHeight(kept), 6);
+  });
+
+  it("the ×N gauge still reports the TRUE fan-out, not the drawn ten", () => {
+    const svg = burst(60).renderSvg({ width: WIDTH });
+    const ns = [...svg.matchAll(/<text class="eeg-xn"[^>]*>×(\d+)<\/text>/g)].map((m) =>
+      Number(m[1]),
+    );
+    expect(Math.max(...ns)).toBe(60);
+  });
+});
+
+// FINDING 8 (review 2026-10-01). An un-ended branch drew with its top clamped to TOP_PAD — i.e.
+// straight to the top of the paper. For a genuinely live strand that is right: it is still growing.
+// For a tool started six hours ago whose end stamp never landed, it meant one hairline spanning 91%
+// of the paper, reloaded forever. The spend clock already refuses to believe such a sample is still
+// running (EEG_LIVE_GRACE_MS) and collapses its euros to a step, but that bounds the euro ACCRUAL
+// and the branch GEOMETRY ignored it. Now the geometry is clamped to the same grace window.
+describe("an un-ended branch is clamped to the live grace window (the architect 2026-10-01)", () => {
+  it("a tool orphaned hours ago draws a stub, not a hairline across the whole paper", () => {
+    const store = new EegTraceStore();
+    const now = Date.now();
+    const sixHours = 6 * 3600_000;
+    store.record(
+      sample({
+        runId: "orphan",
+        tool: true,
+        model: "tool:local",
+        provider: "unknown",
+        chosenLevel: "",
+        startedAt: now - sixHours,
+        endedAt: undefined,
+      }),
+    );
+    // the eight ordinary calls are spread across the whole six hours, which is what makes the
+    // orphan's un-ended branch span the paper: it is clamped to EEG_LIVE_GRACE_MS after its own
+    // start, and everything after that window is work it was not party to.
+    for (let i = 0; i < 8; i++) {
+      store.record(
+        sample({
+          runId: "m" + i,
+          model: "claude-opus-4-8",
+          outputTokens: 9000,
+          startedAt: now - sixHours + (i + 1) * 2400_000,
+          endedAt: now - sixHours + (i + 1) * 2400_000 + 100_000,
+        }),
+      );
+    }
+    const svg = store.renderSvg({ width: WIDTH });
+    const h = svgHeight(svg);
+    const d = /<path class="eeg-branch" d="([^"]*)"/.exec(svg)?.[1] ?? "";
+    expect(d).not.toBe("");
+    const ys = d
+      .replace(/[MCL]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .map(Number)
+      .filter((_, i) => i % 2 === 1);
+    const span = Math.max(...ys) - Math.min(...ys);
+    expect(span).toBeLessThan(h * 0.25); // was 91% of the paper
+  });
+
+  it("a genuinely live branch still runs open to the top of the paper", () => {
+    const store = new EegTraceStore();
+    const now = Date.now();
+    store.record(
+      sample({
+        runId: "m0",
+        model: "claude-opus-4-8",
+        outputTokens: 9000,
+        startedAt: now - 300_000,
+        endedAt: now - 240_000,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "livesub",
+        subagent: true,
+        model: "claude-sonnet-4-5",
+        outputTokens: 2000,
+        startedAt: now - 60_000,
+        endedAt: undefined,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    const d = /<path class="eeg-branch" d="([^"]*)"/.exec(svg)?.[1] ?? "";
+    const ys = d
+      .replace(/[MCL]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .map(Number)
+      .filter((_, i) => i % 2 === 1);
+    expect(Math.min(...ys)).toBeLessThanOrEqual(27); // reaches TOP_PAD, still growing
+  });
+});
+
+describe("the scale ADAPTS so real euros stay readable (the architect 2026-10-01)", () => {
+  // At true subscription-amortised prices one opus turn is worth ~€0.005. On the old fixed 90px/€
+  // axis twenty of them drew a ~320px mat and every length assertion compared a floor with a floor.
+  // The pitch is now derived from the tab's OWN spend, so a typical turn draws a readable height.
+  it("twenty ordinary prepaid turns fill a readable paper, not a flat mat", () => {
+    const store = new EegTraceStore();
+    for (let i = 0; i < 20; i++) {
+      store.record(
+        sample({
+          runId: "r" + i,
+          model: "claude-opus-4-8",
+          outputTokens: 8000,
+          startedAt: T0 + i * 10_000,
+          endedAt: T0 + i * 10_000 + 5_000,
+        }),
+      );
+    }
+    const h = svgHeight(store.renderSvg({ width: WIDTH }));
+    expect(h).toBeGreaterThan(900);
+    expect(h).toBeLessThan(3000);
+  });
+
+  it("gridlines sit 40-100px apart at both subscription and metered magnitudes", () => {
+    for (const [model, tokens] of [
+      ["claude-opus-4-8", 8000],
+      ["moonshotai/kimi-k3", 200000],
+    ] as const) {
+      const store = new EegTraceStore();
+      for (let i = 0; i < 15; i++) {
+        store.record(
+          sample({
+            runId: "r" + i,
+            model,
+            outputTokens: tokens,
+            startedAt: T0 + i * 10_000,
+            endedAt: T0 + i * 10_000 + 5_000,
+          }),
+        );
+      }
+      const ys = euroGridYs(store.renderSvg({ width: WIDTH }));
+      expect(ys.length).toBeGreaterThan(1);
+      for (let i = 1; i < ys.length; i++) {
+        const gap = Math.abs(ys[i] - ys[i - 1]);
+        expect(gap).toBeGreaterThanOrEqual(40);
+        expect(gap).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
+  it("a costlier turn draws taller than a cheaper one ON THE SAME PAPER", () => {
+    // Cross-PAPER height comparison is meaningless now that each tab carries its own pitch — the
+    // property "length = euro cost" was always a within-one-paper property, and this is where it
+    // is pinned.
+    const store = new EegTraceStore();
+    store.record(
+      sample({
+        runId: "cheap",
+        model: "claude-opus-4-8",
+        outputTokens: 2000,
+        startedAt: T0,
+        endedAt: T0 + 1000,
+      }),
+    );
+    store.record(
+      sample({
+        runId: "dear",
+        model: "claude-opus-4-8",
+        outputTokens: 20000,
+        startedAt: T0 + 5000,
+        endedAt: T0 + 9000,
+      }),
+    );
+    const svg = store.renderSvg({ width: WIDTH });
+    expect(mainLenOf(svg, "dear")).toBeGreaterThan(mainLenOf(svg, "cheap") * 5);
+  });
+});
+
+describe("eegPxPerEuro — the per-tab pitch", () => {
+  it("draws the MEDIAN turn at the target height", () => {
+    const px = eegPxPerEuro([0.004, 0.005, 0.006]);
+    expect(px * 0.005).toBeCloseTo(EEG_TARGET_TURN_PX, 6);
+  });
+
+  it("uses the median, not the mean, so one big turn cannot shrink the other ninety-nine", () => {
+    const euros = [...Array.from({ length: 99 }, () => 0.005), 0.5];
+    const px = eegPxPerEuro(euros);
+    // median 0.005 -> the ordinary turn still draws at the target
+    expect(px * 0.005).toBeCloseTo(EEG_TARGET_TURN_PX, 6);
+    // a MEAN-based pitch would have halved it
+    const mean = euros.reduce((a, b) => a + b, 0) / euros.length;
+    expect(px * 0.005).toBeGreaterThan((EEG_TARGET_TURN_PX / mean) * 0.005 * 1.5);
+  });
+
+  it("bounds the paper so a spend spread over orders of magnitude stays scrollable", () => {
+    const euros = [...Array.from({ length: 100 }, () => 0.0001), 100];
+    const total = euros.reduce((a, b) => a + b, 0);
+    expect(eegPxPerEuro(euros) * total).toBeLessThanOrEqual(EEG_MAX_PAPER_PX + 1);
+  });
+
+  it("falls back to the fixed pitch when there is nothing measurable to scale to", () => {
+    expect(eegPxPerEuro([])).toBe(EEG_PX_PER_EURO);
+    expect(eegPxPerEuro([0, 0, Number.NaN, -1])).toBe(EEG_PX_PER_EURO);
+  });
+});
+
+describe("eegGridStepEuros + eegEuroLabel — round amounts, readable spacing", () => {
+  it("only ever returns a 1-2-5 value, over eight decades of pitch", () => {
+    for (let e = -4; e <= 4; e++) {
+      for (const k of [1, 1.7, 3.3, 7.9]) {
+        const step = eegGridStepEuros(k * Math.pow(10, e));
+        const mantissa = step / Math.pow(10, Math.floor(Math.log10(step) + 1e-9));
+        expect([1, 2, 5].some((m) => Math.abs(mantissa - m) < 1e-6)).toBe(true);
+      }
+    }
+  });
+
+  it("keeps the pixel spacing inside 40-100px at any pitch", () => {
+    for (let e = -4; e <= 4; e++) {
+      for (const k of [1, 1.7, 3.3, 7.9]) {
+        const px = k * Math.pow(10, e);
+        const spacing = eegGridStepEuros(px) * px;
+        expect(spacing).toBeGreaterThanOrEqual(40);
+        expect(spacing).toBeLessThanOrEqual(100);
+      }
+    }
+  });
+
+  it("steps DOWN rather than leaving a paper with real spend unruled", () => {
+    // a one-call paper: the target step would exceed the whole ledger
+    const px = EEG_TARGET_TURN_PX / 1.5;
+    expect(eegGridStepEuros(px, 1.5)).toBeLessThanOrEqual(1.5);
+    expect(eegGridStepEuros(px, 0.004)).toBeLessThanOrEqual(0.004);
+  });
+
+  it("labels at the precision the step deserves, never a fake amount", () => {
+    expect(eegEuroLabel(2, 1)).toBe("€2");
+    expect(eegEuroLabel(0.1, 0.05)).toBe("€0.10");
+    expect(eegEuroLabel(0.01, 0.01)).toBe("€0.01");
+    expect(eegEuroLabel(0.005, 0.005)).toBe("€0.005");
+  });
+
+  it("EEG_GRID_TARGET_PX sits inside the band it is snapped against", () => {
+    expect(EEG_GRID_TARGET_PX).toBeGreaterThan(40);
+    expect(EEG_GRID_TARGET_PX).toBeLessThan(100);
   });
 });
 
@@ -321,7 +821,7 @@ describe("eegCostWidthPx", () => {
   // ratio test guards the middle: the dearest models must stay SEPARABLE and their
   // widths must stay PROPORTIONAL, however wide that gets.
   it("never clips the expensive end — ratios survive at any magnitude", () => {
-    const kimi = eegCostWidthPx("moonshotai/kimi-k3", "medium"); // $15/Mtok, cash
+    const kimi = eegCostWidthPx("moonshotai/kimi-k3", "medium"); // $8.50/Mtok, cash
     const qwen = eegCostWidthPx("qwen/qwen3.8-max", "medium"); // $6/Mtok, cash
     const fable = eegCostWidthPx("claude-fable-5", "medium"); // prepaid reference
     expect(kimi).toBeGreaterThan(qwen);
@@ -334,8 +834,8 @@ describe("eegCostWidthPx", () => {
       eegRelCost("moonshotai/kimi-k3") / eegRelCost("claude-fable-5"),
       2,
     );
-    // and it is genuinely wide: kimi is ~33x fable and must draw that way.
-    expect(kimi).toBeGreaterThan(80);
+    // and it is genuinely wide: kimi is ~19x fable and must draw that way.
+    expect(kimi).toBeGreaterThan(40);
   });
 
   it("falls back to a default cost for unknown models (never NaN)", () => {
@@ -425,9 +925,16 @@ describe("eegCostWidthLogPx — the bounded surfaces (the architect 2026-08-28)"
     );
   });
 
-  it("draws the reference model (luna) at the documented base width", () => {
-    expect(eegRelCost("codex/gpt-5.6-luna")).toBeCloseTo(EEG_COST_LOG_REF_REL, 6);
-    expect(eegCostWidthLogPx("codex/gpt-5.6-luna", "medium")).toBeCloseTo(EEG_COST_LOG_BASE_PX, 6);
+  // 2026-09-23: Luna WAS the 1px reference. The measured-seat re-base moved it from
+  // 0.0107 to 0.082 and the anchor was KEPT fixed on purpose (re-normalising would scale
+  // the correction away), so Luna now draws by the formula like everything else.
+  it("draws luna by the log formula above the fixed 1px anchor", () => {
+    const rel = eegRelCost("codex/gpt-5.6-luna");
+    expect(rel).toBeGreaterThan(EEG_COST_LOG_REF_REL);
+    expect(eegCostWidthLogPx("codex/gpt-5.6-luna", "medium")).toBeCloseTo(
+      EEG_COST_LOG_BASE_PX + EEG_COST_LOG_PX_PER_DECADE * Math.log10(rel / EEG_COST_LOG_REF_REL),
+      6,
+    );
   });
 
   // What log BUYS at the bottom, and the half of the architect's report the top-end fix
@@ -480,16 +987,18 @@ describe("eegCostWidthLogPx — the bounded surfaces (the architect 2026-08-28)"
     // Restated 2026-08-29: the old `< 20` was a magic literal from the BASE=2.0 era.
     // Luna IS the reference, so the drawn ratio is 1 + (P/BASE)·log10(costRatio) by
     // CONSTRUCTION — 25.00 at the current constants — while the true cost ratio is
-    // ~1402×. The pinned property: the drawn ratio stays far below the cost ratio.
+    // ~794× at today's Relace seat ($8.50). The pinned property: the drawn ratio
+    // stays far below the cost ratio. 2026-09-26: Luna is 0.082 and Kimi K3 is 9.043 (Sail Research),
+    // so the true ratio is ~110× — hence > 100.
     const kimi = "moonshotai/kimi-k3";
     const luna = "codex/gpt-5.6-luna";
     const costRatio = eegRelCost(kimi) / eegRelCost(luna);
-    expect(costRatio).toBeGreaterThan(1000);
+    expect(costRatio).toBeGreaterThan(100);
     const drawnRatio = eegCostWidthLogPx(kimi, "medium") / eegCostWidthLogPx(luna, "medium");
-    expect(drawnRatio).toBeCloseTo(
-      1 + (EEG_COST_LOG_PX_PER_DECADE / EEG_COST_LOG_BASE_PX) * Math.log10(costRatio),
-      6,
-    );
+    // Luna is no longer the 1px anchor (2026-09-23), so both widths come off the anchor.
+    const px = (rel: number) =>
+      EEG_COST_LOG_BASE_PX + EEG_COST_LOG_PX_PER_DECADE * Math.log10(rel / EEG_COST_LOG_REF_REL);
+    expect(drawnRatio).toBeCloseTo(px(eegRelCost(kimi)) / px(eegRelCost(luna)), 6);
     expect(drawnRatio).toBeLessThan(costRatio / 10);
   });
 
@@ -556,13 +1065,14 @@ describe("eegCostWidthLogPx — the bounded surfaces (the architect 2026-08-28)"
 // .logWidth, and nothing computes a third.
 describe("resolveEegPaint carries both scales (the architect 2026-08-28)", () => {
   it("exposes width (linear) and logWidth (log) from the same run descriptor", () => {
-    const run = { model: "moonshotai/kimi-k3", provider: "openrouter" };
+    const run = { model: "github-copilot/gpt-5.5", provider: "github-copilot" };
     const paint = resolveEegPaint(run);
     expect(paint.width).toBeCloseTo(eegCostWidthPx(run.model, "", run.provider), 6);
     expect(paint.logWidth).toBeCloseTo(eegCostWidthLogPx(run.model, "", run.provider), 6);
     // the expensive end is exactly where the two scales must diverge: linear blows
     // straight past any chip box (it is drawn on the panel, whose row grows), log
-    // stays inside the box the selector derives for it.
+    // stays inside the box the selector derives for it. Kimi's cheapest seat fell to
+    // $7.50 (43.6px) overnight, so this pins Copilot GPT-5.5 (97px) instead.
     expect(paint.width).toBeGreaterThan(CHIP_SANE_MAX_PX);
     expect(paint.logWidth).toBeLessThan(chipBoxFor(paint.logWidth));
   });
@@ -638,13 +1148,15 @@ describe("eegProviderPaint", () => {
 });
 
 // FORK 2026-09-02 (the architect: "the cost of Fable 5.1 is not correct ... claude models cost
-// us about 112 times less"). The two Fable 5.1 routes are the SAME model on different
+// us about 112 times less"). 2026-09-23 correction: MEASURED with list-priced cache
+// reads, the Max 20× seat returns ~44× list at our 75% use (59× at 100%), not 112× — the
+// old blend priced cache reads ~10× over list. The two Fable 5.1 routes are the SAME model on different
 // bills, and the cost table must tell them apart by BILLING ROUTE (provider prefix),
 // not by the dot-vs-hyphen spelling of the id — which is how the original row did it,
 // and which would have silently re-broken on a future `claude-fable-5.2`.
 describe("fable 5.1 — subscription vs metered route", () => {
   it("the claude-code route is amortised, an openrouter route would be cash", () => {
-    expect(eegRelCost("claude-code/claude-fable-5-1")).toBeCloseTo(0.147, 4);
+    expect(eegRelCost("claude-code/claude-fable-5-1")).toBeCloseTo(1.1383, 4);
     expect(eegRelCost("openrouter/anthropic/claude-fable-5.1")).toBe(50);
   });
 
@@ -658,6 +1170,7 @@ describe("fable 5.1 — subscription vs metered route", () => {
     const haiku = eegRelCost("claude-code/claude-haiku-4-5");
     expect(eegRelCost("claude-code/claude-sonnet-5") / haiku).toBeCloseTo(2, 6);
     expect(eegRelCost("claude-code/claude-opus-5") / haiku).toBeCloseTo(5, 6);
+    expect(eegRelCost("claude-code/claude-opus-5-5") / haiku).toBeCloseTo(4, 6);
     expect(eegRelCost("claude-code/claude-fable-5-1") / haiku).toBeCloseTo(10, 6);
     // Fable 5.1 carries the SAME $10/$50 sticker as Fable 5 (live OR catalog
     // 2026-09-02), so the two share a row rather than 5.1 getting an assumed price.
@@ -667,7 +1180,7 @@ describe("fable 5.1 — subscription vs metered route", () => {
   it("a hypothetical future hyphen/dot spelling cannot flip the basis", () => {
     // Route decides, spelling does not: both metered ids stay at cash price.
     expect(eegRelCost("openrouter/anthropic/claude-fable-5-2")).toBe(50);
-    expect(eegRelCost("claude-code/claude-fable-5-2")).toBeCloseTo(0.147, 4);
+    expect(eegRelCost("claude-code/claude-fable-5-2")).toBeCloseTo(1.1383, 4);
   });
 });
 
@@ -705,6 +1218,30 @@ describe("EegTraceStore basics", () => {
     const svg = store.renderSvg({ width: WIDTH });
     expect(svg).not.toContain("eeg-main");
     expect(svg).not.toContain("data-eeg-turn");
+  });
+});
+
+// DECISION 1 (the architect 2026-10-01): "the toggle switch needs to go, and the EEG has to stay specific
+// for each tab." The all-scope overlay asked the vertical axis to mean two different quantities
+// depending on a switch — one tab's spend, then the union across tabs — using the same euro glyphs,
+// and it moved every strand's position when flipped. The whole surface is gone: no taggedSamples,
+// no overlay option, no dim. The paper shows the viewed tab, its own subagents and its own tools.
+describe("per tab only — no cross-session overlay surface (the architect 2026-10-01)", () => {
+  it("EegTraceStore exposes no taggedSamples() for an all-scope overlay", () => {
+    const store = new EegTraceStore();
+    expect((store as unknown as Record<string, unknown>).taggedSamples).toBeUndefined();
+  });
+
+  it("renderSvg ignores a stray overlay argument instead of merging foreign samples", () => {
+    const store = new EegTraceStore();
+    store.record(sample({ runId: "mine", model: "moonshotai/kimi-k3", outputTokens: 100000 }));
+    const foreign = sample({ runId: "theirs", model: "moonshotai/kimi-k3", outputTokens: 100000 });
+    const withStray = store.renderSvg({
+      width: WIDTH,
+      ...({ overlay: [foreign] } as Record<string, unknown>),
+    });
+    expect(withStray).toBe(store.renderSvg({ width: WIDTH }));
+    expect(withStray).not.toContain("theirs");
   });
 });
 
@@ -1011,14 +1548,20 @@ describe("tool calls branch off the trunk (the architect 2026-06-25: scope C —
 });
 
 describe("close-stale + prompt anchors + prompt-break (the architect 2026-06-19)", () => {
-  it("closeStaleRunning closes ONLY dead-running subagent samples, returns their ids, idempotent", () => {
+  // FORK 2026-10-01 (finding 8): TOOL strands are swept too. A tool's end stamp is written only
+  // while its tab is being viewed, so switching tabs between a tool's start and its result leaves
+  // it open forever — and the sweep used to skip it because `subagent` is false. Main-session
+  // samples are still never swept: a main turn may legitimately think for a long time.
+  it("closeStaleRunning closes dead-running BRANCH samples (subagent or tool), idempotent", () => {
     const store = new EegTraceStore();
     store.record(sample({ runId: "main", subagent: false, endedAt: undefined }));
     store.record(sample({ runId: "live", subagent: true, endedAt: undefined }));
     store.record(sample({ runId: "dead", subagent: true, endedAt: undefined }));
     store.record(sample({ runId: "done", subagent: true, endedAt: T0 + 500 }));
+    store.record(sample({ runId: "orphanTool", tool: true, endedAt: undefined }));
     const closed = store.closeStaleRunning((id) => id === "live", T0 + 99_000);
-    expect(closed).toEqual(["dead"]); // not main (not subagent), not live, not done (already ended)
+    // not main (not a branch), not live, not done (already ended)
+    expect(closed.sort()).toEqual(["dead", "orphanTool"]);
     expect(store.closeStaleRunning((id) => id === "live", T0 + 99_000)).toEqual([]); // idempotent
   });
 
@@ -1085,10 +1628,20 @@ describe("close-stale + prompt anchors + prompt-break (the architect 2026-06-19)
       segs.sort((p, q) => p.topY - q.topY); // [0] = upper/newer, [1] = lower/older
       return segs[1].topY - segs[0].botY;
     };
-    const m1 = sample({ runId: "m1", chosenLevel: "low", startedAt: T0, endedAt: T0 + 1_000 });
+    // FORK 2026-10-01: these carry tokens now. With the ledger exact, a sample that cost nothing
+    // measurable occupies no euros and therefore no vertical extent, so two zero-token calls share
+    // one y and there is no gap to measure. The gap rule being tested is about real calls.
+    const m1 = sample({
+      runId: "m1",
+      chosenLevel: "low",
+      outputTokens: 8000,
+      startedAt: T0,
+      endedAt: T0 + 1_000,
+    });
     const m2 = sample({
       runId: "m2",
       chosenLevel: "high",
+      outputTokens: 8000,
       startedAt: T0 + 10_000,
       endedAt: T0 + 11_000,
     });
@@ -1215,19 +1768,37 @@ describe("close-stale + prompt anchors + prompt-break (the architect 2026-06-19)
     // a max main, a quick low sonnet helper whose start+end snap to one row (the
     // degenerate-loop trigger), and a NEWER max main above it (so the helper sits in
     // the scrollback with room for the arch — the case that actually persists).
-    store.record(sample({ runId: "M1", chosenLevel: "max", startedAt: T0, endedAt: T0 + 1000 }));
+    // FORK 2026-10-01: the trunk calls carry tokens. The euro ledger is exact now, so a
+    // zero-token paper has zero extent and the helper has no room to arch into — the room this
+    // test needs is bought by the trunk's real spend, not by a floor on the ledger.
+    store.record(
+      sample({
+        runId: "M1",
+        chosenLevel: "max",
+        outputTokens: 20000,
+        startedAt: T0,
+        endedAt: T0 + 1000,
+      }),
+    );
     store.record(
       sample({
         runId: "H",
         subagent: true,
         parentRunId: "M1",
         chosenLevel: "low",
+        outputTokens: 500,
         startedAt: T0 + 100,
         endedAt: T0 + 200,
       }),
     );
     store.record(
-      sample({ runId: "M2", chosenLevel: "max", startedAt: T0 + 3000, endedAt: undefined }),
+      sample({
+        runId: "M2",
+        chosenLevel: "max",
+        outputTokens: 20000,
+        startedAt: T0 + 3000,
+        endedAt: undefined,
+      }),
     );
     const svg = store.renderSvg({ width: 300 });
     const d = /class="eeg-branch"[^>]*\bd="([^"]*)"/.exec(svg)?.[1] ?? "";
@@ -1664,13 +2235,17 @@ describe("×N concurrency gauge — legible rows, peak preserved (2026-08-17)", 
       n: Number(m[2]),
     }));
 
-  /** ten subagents spawning 12s apart, each running 20 min, inside a multi-day paper */
+  /** ten subagents spawning 12s apart, each running 20 min, inside a multi-day paper.
+   *  FORK 2026-10-01: every sample carries tokens. The gauge labels sit at a sample's y, and with
+   *  the ledger exact a zero-token paper has no vertical extent at all, so every row would land on
+   *  one pixel and the clustering this block tests would never be exercised. */
   const fanOut = (): EegTraceStore => {
     const store = new EegTraceStore();
     const samples: EegSample[] = [
-      sample({ runId: "old", startedAt: T0, endedAt: T0 + 60_000 }),
+      sample({ runId: "old", outputTokens: 10000, startedAt: T0, endedAt: T0 + 60_000 }),
       sample({
         runId: "recent",
+        outputTokens: 10000,
         startedAt: T0 + 3 * 86_400_000,
         endedAt: T0 + 3 * 86_400_000 + 1000,
       }),
@@ -1681,6 +2256,7 @@ describe("×N concurrency gauge — legible rows, peak preserved (2026-08-17)", 
         sample({
           runId: `leg-${i}`,
           subagent: true,
+          outputTokens: 4000,
           startedAt: spawn + i * 12_000,
           endedAt: spawn + 20 * 60_000 + i * 12_000,
         }),
@@ -1707,7 +2283,9 @@ describe("×N concurrency gauge — legible rows, peak preserved (2026-08-17)", 
   it("a genuinely sequential pair still gets its own gauge rows, not one merged label", () => {
     const store = new EegTraceStore();
     const day = 86_400_000;
-    const samples: EegSample[] = [sample({ runId: "trunk", startedAt: T0, endedAt: T0 + 1000 })];
+    const samples: EegSample[] = [
+      sample({ runId: "trunk", outputTokens: 10000, startedAt: T0, endedAt: T0 + 1000 }),
+    ];
     // two separate 2-deep fan-outs, a day apart — far enough to deserve two labels
     for (const [k, base] of [
       [0, T0 + day],
@@ -1718,6 +2296,7 @@ describe("×N concurrency gauge — legible rows, peak preserved (2026-08-17)", 
           sample({
             runId: `p${k}-${i}`,
             subagent: true,
+            outputTokens: 4000,
             startedAt: base + i * 1000,
             endedAt: base + 300_000,
           }),
