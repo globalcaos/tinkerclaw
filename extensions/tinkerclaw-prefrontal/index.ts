@@ -1205,60 +1205,12 @@ export default function register(api: OpenClawPluginApi) {
             },
           );
         }
-        // FORK 2026-06-07: BEEFED-UP Overseer trigger — engage the supervisory loop not
-        // only on an explicit overseer keyword match, but whenever the work is a JOB IN
-        // MULTIPLE STEPS or is suspicious to not finish in one turn. Cheapest signals
-        // first (keyword → seeded multi-step plan → structural heuristic on an unmatched
-        // prompt); NEVER on the Overseer's OWN injected nudge (it must not reset the task).
-        const isOverseerNudge = prompt.startsWith("⟦OVERSEER⟧");
-        const looksMultiStep = (p: string): boolean => {
-          const s = p.toLowerCase();
-          if (/\b(step[-\s]?by[-\s]?step|multi[-\s]?step|in stages|one by one|step \d)\b/.test(s))
-            return true;
-          // >=2 numbered/bulleted list items = a plan written out as a list
-          if ((p.match(/^\s*(?:\d+[.)]|[-*•])\s+\S/gm) || []).length >= 2) return true;
-          // a sequencing connective chaining distinct actions in a non-trivial request
-          if (
-            /\b(?:then|after that|afterwards|next,|followed by|once .{1,40}? (?:is )?done)\b/.test(
-              s,
-            ) &&
-            s.split(/\s+/).length >= 12
-          )
-            return true;
-          return false;
-        };
-        const overseerKitMatched =
-          outcome.seeded &&
-          outcome.confidence === "high" &&
-          (outcome.kitRefs ?? []).some((k) => k === "overseer" || k.endsWith("/overseer"));
-        const overseerReason = isOverseerNudge
-          ? null
-          : overseerKitMatched
-            ? "high-confidence overseer match"
-            : outcome.seeded && (outcome.stepCount ?? 0) >= 2
-              ? `multi-step plan (${outcome.stepCount} steps)`
-              : !outcome.seeded && looksMultiStep(prompt)
-                ? "multi-step request"
-                : null;
-        if (overseerReason) {
-          // Fire-and-forget: activation can NEVER block or break the turn. The Overseer's
-          // own (now full-context) completion check decides per turn whether to nudge or go
-          // silent — so engaging on a task that DID finish in one turn just self-terminates.
-          void (async () => {
-            try {
-              const { callGatewayFromCli } = await import("openclaw/plugin-sdk/gateway-runtime");
-              await callGatewayFromCli(
-                "fork.overseer.activate",
-                { timeout: "8000" },
-                { sessionKey, task: prompt },
-                { progress: false },
-              );
-              emitTrail("note", `Overseer engaged (${overseerReason})`, "overseer");
-            } catch (err) {
-              log.warn?.(`[overseer] auto-activate failed: ${String(err)}`);
-            }
-          })();
-        }
+        // FORK 2026-10-05: the Overseer is MANUAL ONLY. Auto-arming on multi-step prompts
+        // (added 2026-06-07) was removed at the architect's request: 250 deliveries Aug–Oct produced
+        // no useful directive (error envelopes, empty runs, "it's done" injected as a nudge),
+        // and each check cost a full-transcript subagent plus a main-chat wake-up. Fractal
+        // rule 15 does the completeness check inside the turn. Explicit use stays:
+        // `fork.overseer.activate` RPC + the `overseer` recipe.
 
         if (outcome.seeded) {
           const kits = outcome.kitRefs ?? [];

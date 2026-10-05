@@ -9,6 +9,8 @@ see_also: topology.md (Prefrontal plugin), flows.md (F6 tinker-bridge tool loop,
 verify:
   - name: recipe-matcher exists and auto-seeds a plan at turn start (FORK 2026-05-16 — the smart-router matching half)
     cmd: python3 -c 'import os; m=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipe-matcher.ts")).read(); assert "export async function seedPlanFromPrompt" in m and "NO-MATCH" in m and "recipe-gap" in m, "recipe-matcher.ts missing seedPlanFromPrompt or the no-match recipe-gap WARN — the smart-router matching half regressed"; idx=open(os.path.expanduser("~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/index.ts")).read(); assert "seedPlanFromPrompt" in idx and "before_prompt_build" in idx, "index.ts no longer wires seedPlanFromPrompt into a before_prompt_build hook — turn-start auto-seed is dead, restart-continue has nothing to resume for normal turns"'
+  - name: the Overseer never arms itself; only an explicit fork.overseer.activate call starts it (2026-10-05)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && ! grep -qE 'callGatewayFromCli\([[:space:]]*"fork\.overseer\.activate' extensions/tinkerclaw-prefrontal/index.ts && ! grep -qF 'Overseer engaged (' extensions/tinkerclaw-prefrontal/index.ts && grep -qF '"fork.overseer.activate": async' src/fork/overseer-runtime.ts
   - name: spawn helper script is executable
     cmd: test -x ~/src/tinkerclaw/scripts/openclaw-spawn-subagent.mjs
   - name: a detached fan-out runs on its own unit and --status tells running from dead (2026-10-01)
@@ -643,6 +645,12 @@ From bible / memory:
 - HTTP API: gateway-internal, served by the Prefrontal plugin.
 
 The infrastructure is COMPLETE (2026-04-01). Plan/kit RPCs added 2026-05-13 (Phases 1–7 of the plan-board implementation).
+
+### The Overseer is manual only (2026-10-05)
+
+The Overseer (`src/fork/overseer.ts`, `src/fork/overseer-runtime.ts`) re-checks a task after each turn with a separate judge and injects a `⟦OVERSEER⟧` prompt when work is left. From 2026-06-07 the prefrontal `before_prompt_build` hook armed it by itself on any prompt that looked multi-step (two list lines, "then", a seeded plan of 2+ steps). the architect switched that off on 2026-10-05: across Aug–Oct it made 250 deliveries and none was a useful directive (123 error envelopes, empty runs, "the task is complete" read as a nudge, its own report re-arming it), while each check cost a full-transcript subagent and a main-chat wake-up. Fractal rule 15 checks expected against delivered inside the same turn.
+
+Still available on purpose: the `fork.overseer.activate` / `deactivate` / `status` RPCs and the `overseer` recipe. Armed sessions live in memory only, so a gateway restart clears them. If it is ever re-armed automatically, fix first: the done marker accepts only a bare word, its report re-arms it, a timed-out spawn still announces, and failed runs inject error envelopes as instructions.
 
 ## Kit parallelism
 

@@ -18955,6 +18955,15 @@ changed? Name only axes with real signal. Silence on the rest.
     and model switching that told him to ask the architect for the token. Its reflection never read the
     draft. The owner: "not to start a conversation with him ... He needs a token ... simple as that.")
 
+    A status answer is a delivery too. When the owner asks where a piece of work stands ("show me
+    the present status", "what is pending", "where are we"), the recipe that governs that work
+    shapes the answer: its report step (a commit diagram, a Gantt, a test sheet) is part of what
+    was expected. Name that recipe from the inventory and check the reply carries its report
+    artifact before writing "clean". (2026-10-05: asked for the AcmeVision I/O and speaker status,
+    the turn answered in text and listed a merge into main as pending. Recipe \`acme-coding\`'s
+    diagram step never ran, and its reflection wrote "clean". The owner: "You failed to show me the
+    diagram we were working on, you failed to use the right recipe.")
+
     Worked instance: 2026-10-03, the AcmeVision temporal-network paper. Compile-paper's figure
     step sends a paper's diagrams to Napkin, and the 62-page PDF went out with one D2 drawing. That
     turn's reflection wrote up pandoc and grep troubles and never held the PDF against the recipe.

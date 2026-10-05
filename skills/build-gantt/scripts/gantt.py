@@ -860,14 +860,152 @@ read();apply();chips();stamp();setInterval(refresh,EVERY);document.addEventListe
 """
 
 
+# The machines panel (2026-10-05, the principal: "a little section where I can see the available machines for
+# this project … in real time if we have a healthy connection to them … the resources used by us, the
+# available in the machine, and its current load"). It reads /api/gantt/machines (machines.py) and
+# stays hidden when the plan names no machine but this one. Not %-formatted, unlike LIVE_JS.
+MACHINES_CSS = """
+#mchip{margin-left:auto;font-size:11.5px;color:#efe4d0;background:#2e2318;border:1px solid #199e70;border-radius:10px;
+ padding:1px 8px;cursor:pointer;white-space:nowrap}
+#mchip:not([hidden])+#live{margin-left:10px}
+#mchip i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#199e70;margin-right:5px}
+#mchip.bad{border-color:#e66767}#mchip.bad i{background:#e66767}
+#mchip.warn{border-color:#c98500}#mchip.warn i{background:#c98500}
+#mchip[hidden],#machines[hidden]{display:none}
+#machines{padding:2px 12px 20px;border-top:1px solid #4a3a28;margin-top:6px}
+#machines .mhd{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin:10px 0 2px}
+#machines h2{font-size:15px;margin:0}
+#machines .lg{display:flex;gap:10px;font-size:11.5px;color:#b8a888}
+#machines .lg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+#machines .mt{font-size:11.5px;color:#b8a888;margin-left:auto}
+.mrow{display:grid;grid-template-columns:minmax(200px,1.3fr) repeat(4,minmax(140px,1fr));gap:8px 18px;
+ background:#241c14;border:1px solid #4a3a28;border-radius:8px;padding:10px 12px;margin:8px 0}
+.mrow.down{border-color:#e66767}
+.mrow.old .mc{opacity:.5}
+.mid .nm{font-weight:650;font-size:13.5px}
+.mid .rl,.mid .lk,.mid .ex{font-size:11.5px;color:#b8a888;margin-top:2px}
+.mid .lk.bad{color:#f0a0a0}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:0}
+.dot.ok{background:#199e70}.dot.slow{background:#c98500}.dot.down{background:#e66767}
+.mc .mh{display:flex;justify-content:space-between;gap:6px;font-size:12px}
+.mc .mh b{font-weight:650}
+.mc .ms{font-size:11.5px;color:#b8a888;line-height:1.4}
+.mc.na{color:#7a6c58}
+.mc.nodata{grid-column:2/-1;align-self:center;font-size:12px}
+.mb{height:8px;background:#2e2318;border-radius:4px;overflow:hidden;display:flex;margin:5px 0 3px}
+.mb.thin{height:5px;margin-top:2px}
+.mb i{display:block;height:100%}
+.mb .us,#machines .lg .us{background:#3987e5}
+.mb .ot,#machines .lg .ot{background:#8a7a62}
+#machines .lg .fr{background:#2e2318;border:1px solid #4a3a28;box-sizing:border-box}
+.mb.warn .ot{background:#c98500}.mb.crit .ot{background:#e66767}
+.wt{color:#e8b04a}
+.asof{grid-column:1/-1;font-size:11px;color:#b8a888}
+@media (max-width:900px){.mrow{grid-template-columns:1fr 1fr}}
+"""
+
+MACHINES_JS = r"""
+(function(){
+const S=new URLSearchParams(location.search).get('session')||'',EVERY=15000;
+const box=document.getElementById('machines'),chip=document.getElementById('mchip');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num=x=>typeof x==='number'&&isFinite(x);
+const cl=x=>num(x)?Math.max(0,Math.min(1,x)):0;
+let busy=false;
+function size(b){if(!num(b))return '–';const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=1024;i++}
+ return (b>=100||i<2?Math.round(b):b.toFixed(1))+' '+u[i]}
+function pc(x){return num(x)?(x>0&&x<1?'<1':Math.round(x))+'%':'–'}
+function hm(iso){if(!iso)return '';const d=new Date(iso),t=d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+ return d.toDateString()===new Date().toDateString()?t:d.toLocaleDateString([],{weekday:'short'})+' '+t}
+function span(s){s=Math.max(0,s);const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+ return d?d+' d '+h+' h':h?h+' h '+m+' min':m+' min'}
+function bar(us,all,lvl,thin){const u=cl(us),a=Math.max(u,cl(all));
+ return '<div class="mb'+(lvl?' '+lvl:'')+(thin?' thin':'')+'"><i class="us" style="width:'+(u*100).toFixed(1)
+ +'%"></i><i class="ot" style="width:'+((a-u)*100).toFixed(1)+'%"></i></div>'}
+function lvl(f,warn,crit){return f>=crit?'crit':f>=warn?'warn':''}
+function cell(name,head,body,sub,cls,tip){return '<div class="mc'+(cls?' '+cls:'')+'"'+(tip?' title="'+esc(tip)+'"':'')
+ +' data-m="'+name+'"><div class="mh"><b>'+name+'</b><span>'+head+'</span></div>'+body+'<div class="ms">'+sub+'</div></div>'}
+function cpu(x,mine){const c=x.cpu||{},l=(x.load||[])[0],busy=num(c.pct)?c.pct/100:0;
+ const hot=busy>=.9||(num(l)&&x.cores&&l>x.cores);
+ return cell('CPU','<b>'+pc(c.pct)+'</b> busy',bar(mine?c.ours_pct/100:0,busy,hot?'warn':''),
+  (mine?'us '+pc(c.ours_pct)+' &middot; ':'')+(x.cores||'?')+' threads &middot; load '+(num(l)?l.toFixed(1):'–'),'',
+  'Load is the 1-minute average of runnable tasks; above the thread count the machine is queueing work.')}
+function ram(x,mine){const m=x.mem||{};if(!num(m.total))return cell('RAM','–','','','na');
+ const used=m.total-(m.available||0),sw=m.swap_total?m.swap_used/m.swap_total:0;
+ return cell('RAM',size(used)+' / '+size(m.total),bar(mine?m.ours/m.total:0,used/m.total,lvl(used/m.total,.85,.95)),
+  (mine?'us &asymp;'+size(m.ours)+' &middot; ':'')+size(m.available)+' free'
+  +(m.swap_total?' &middot; <span class="'+(sw>=.5?'wt':'')+'">swap '+size(m.swap_used)+' / '+size(m.swap_total)+'</span>':''),
+  '','Ours is the proportional memory of every process working in our folders.')}
+function gpu(x,mine){const gs=x.gpus||[];
+ if(!gs.length)return cell('GPU','none','<div class="mb"></div>','no GPU on this machine','na');
+ const g=gs[0],vr=num(g.mem_total)&&g.mem_total>0;
+ let body=bar(mine&&num(g.ours_util)?g.ours_util/100:0,num(g.util)?g.util/100:0,'');
+ if(vr)body+=bar(mine?(g.ours_mem||0)/g.mem_total:0,g.mem_used/g.mem_total,lvl(g.mem_used/g.mem_total,.85,.95),true);
+ const us=mine?'us '+(num(g.ours_util)?pc(g.ours_util):'–')+(vr?', '+size(g.ours_mem):'')+' &middot; ':'';
+ return cell('GPU','<b>'+pc(g.util)+'</b> busy',body,
+  us+(vr?'memory '+size(g.mem_used)+' / '+size(g.mem_total):'shares RAM')+(num(g.temp)?' &middot; '+Math.round(g.temp)+' &deg;C':''),
+  '',g.name+(gs.length>1?' (+'+(gs.length-1)+' more)':'')+(vr?'. Thick bar: compute; thin bar: memory.':''))}
+function disk(x,mine){const d=x.disk||{};if(!num(d.total)||!d.total)return cell('Disk','–','','','na');
+ const ours=(d.ours||0)+(d.image||0),free=d.free/d.total;
+ const usTxt=mine?(num(d.ours)?'us '+size(d.ours)+(d.image?' + '+size(d.image)+' image':'')
+  :(d.measuring?'us: measuring&hellip;':'us: –'))+' &middot; ':'';
+ return cell('Disk',size(d.used)+' / '+size(d.total),bar(mine?ours/d.total:0,d.used/d.total,free<.05?'crit':free<.12?'warn':''),
+  usTxt+'<span class="'+(free<.12?'wt':'')+'">'+size(d.free)+' free</span>','',
+  'Volume of '+(d.path||'?')+'. Our folders were measured '+(num(d.ours_at)?span(Date.now()/1000-d.ours_at)+' ago':'not yet')
+  +' (du, at most every 10 min).')}
+function ident(m,x){
+ const st=m.status==='down'?'down':(num(m.rtt_ms)&&m.rtt_ms>1500?'slow':'ok');
+ let link;
+ if(m.status==='down')link='<div class="lk bad">unreachable: '+esc(m.error||'no answer')+'</div><div class="lk">'
+  +(m.last_ok?'last reached '+hm(m.last_ok):'never reached')+(m.since?' &middot; down since '+hm(m.since):'')+'</div>';
+ else link='<div class="lk">'+(m.local?'this machine':'connected &middot; '+(num(m.rtt_ms)?m.rtt_ms+' ms':'–')
+  +(m.via?' via '+esc(m.via):''))+'</div>';
+ const ex=[];
+ if(x){
+  if(num(x.uptime_s))ex.push(x.uptime_s<3600?'<span class="wt">restarted '+span(x.uptime_s)+' ago</span>':'up '+span(x.uptime_s));
+  if(x.jobs)ex.push(x.jobs.length?'<span title="'+esc(x.jobs.map(j=>j.name+' started '+j.for).join('\n'))+'">'+x.jobs.length
+   +' run'+(x.jobs.length>1?'s':'')+' of ours: '+x.jobs.map(j=>esc(j.name)).join(', ')+'</span>':'no runs of ours');
+  else if(m.ours_declared)ex.push(x.procs?x.procs+(x.procs>1?' processes':' process')+' of ours':'nothing of ours running');
+  if(x.cpu&&num(x.cpu.temp))ex.push('<span class="'+(x.cpu.temp>=90?'wt':'')+'">CPU '+Math.round(x.cpu.temp)+' &deg;C</span>');
+ }
+ return '<div class="mid"><div class="nm"><span class="dot '+st+'"></span>'+esc(m.name)+'</div>'
+  +(m.role?'<div class="rl">'+esc(m.role)+'</div>':'')+link+(ex.length?'<div class="ex">'+ex.join(' &middot; ')+'</div>':'')+'</div>'}
+function row(m){const x=m.data,mine=m.ours_declared;
+ const cells=x?cpu(x,mine)+ram(x,mine)+gpu(x,mine)+disk(x,mine)
+  :'<div class="mc na nodata">No numbers yet: this machine has not answered since the panel started watching it.</div>';
+ return '<div class="mrow'+(m.status==='down'?' down':'')+(m.stale&&x?' old':'')+'" data-host="'+esc(m.host)+'">'
+  +ident(m,x)+cells+(m.stale&&x?'<div class="asof">Greyed numbers are from '+hm(m.data_at)+', its last answer.</div>':'')+'</div>'}
+function render(d){
+ if(!d||!d.show){box.hidden=true;chip.hidden=true;return}
+ const ms=d.machines||[],down=ms.filter(m=>m.status==='down');
+ box.hidden=false;
+ box.innerHTML='<div class="mhd"><h2>Machines</h2><span class="lg"><span><i class="us"></i>us</span><span><i class="ot"></i>everyone else</span>'
+  +'<span><i class="fr"></i>free</span></span><span class="mt">checked '
+  +new Date(d.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})+'</span></div>'+ms.map(row).join('');
+ chip.hidden=false;chip.className=down.length?'bad':'';
+ chip.title='Machines this build runs on. Click to see them.';
+ chip.innerHTML='<i></i>'+(down.length?esc(down.map(m=>m.name).join(', '))+' unreachable':ms.length+' machines connected')}
+async function load(){if(busy||document.hidden)return;busy=true;
+ try{const r=await fetch('/api/gantt/machines?session='+encodeURIComponent(S),{cache:'no-store'});
+  if(r.status===404){render(null);return}
+  const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));render(d)}
+ catch(e){if(!box.hidden){chip.className='warn';chip.innerHTML='<i></i>machines not checked: '+esc(e.message)}}
+ finally{busy=false}}
+chip.addEventListener('click',()=>box.scrollIntoView({behavior:'smooth',block:'start'}));
+load();setInterval(load,EVERY);document.addEventListener('visibilitychange',load);
+})();
+"""
+
+
 def live_page(chart, title):
     js = LIVE_JS % {"every": LIVE_REFRESH_S, "colors": json.dumps(dict(KIND_COLOR, pause=PAUSE_COLOR))}
     return (f'<!doctype html><html><head><meta charset="utf-8"><title>{esc(title)} · Gantt</title>'
-            f"<style>{LIVE_CSS}</style></head><body>"
+            f"<style>{LIVE_CSS}{MACHINES_CSS}</style></head><body>"
             '<div id="bar"><button id="expand">Expand all</button><button id="collapse">Collapse all</button>'
             '<button id="auto" title="Finished phases folded, running and planned ones open">Default</button>'
-            '<div id="now"></div><span id="live"><i></i>live</span></div>'
-            f'<div id="chart">{chart}</div><div id="drawer"></div><script>{js}</script></body></html>')
+            '<div id="now"></div><span id="mchip" hidden></span><span id="live"><i></i>live</span></div>'
+            f'<div id="chart">{chart}</div><section id="machines" hidden></section><div id="drawer"></div>'
+            f"<script>{js}</script><script>{MACHINES_JS}</script></body></html>")
 
 
 def boards_file():

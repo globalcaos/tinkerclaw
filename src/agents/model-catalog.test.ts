@@ -439,6 +439,26 @@ describe("loadModelCatalog", () => {
     expect(matches[0]).toMatchObject({ provider: "z.ai", id: "glm-5", name: "GLM-5" });
   });
 
+  // FORK 2026-10-05: a configured rank only reached models the configured step APPENDED, so a model
+  // already discovered (models.json lists every claude-code model) kept no rank and the picker could
+  // not fold to the smart ones. Goku showed 50 picker chips where the laptop showed 17.
+  it("applies the configured rank to a model that discovery already listed", async () => {
+    mockPiDiscoveryModels([
+      { id: "claude-opus-5-5", provider: "claude-code", name: "Claude Opus 5.5" },
+    ]);
+
+    const result = await loadModelCatalog({
+      config: {
+        agents: { defaults: { models: { "claude-code/claude-opus-5-5": { rank: 1 } } } },
+      } as OpenClawConfig,
+    });
+
+    const match = result.find(
+      (entry) => entry.provider === "claude-code" && entry.id === "claude-opus-5-5",
+    );
+    expect(match).toMatchObject({ rank: 1 });
+  });
+
   it("does not add unrelated models when provider plugins return nothing", async () => {
     mockSingleOpenAiCatalogModel();
 

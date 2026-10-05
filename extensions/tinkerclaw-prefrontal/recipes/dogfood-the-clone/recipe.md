@@ -42,7 +42,17 @@ finds real defects in the order a real user would hit them.
 ## Step 0 — measure both sides; never recall them
 
 Same commands on both: config sections, enabled plugins, skills present, scheduled jobs,
-credentials configured, what the UI actually renders. Write the numbers down. Memory is what
+credentials configured, what the UI actually renders. Write the numbers down. Two of those
+numbers are config, not code, and no pull carries them: `models.list` on both gateways (entries,
+and how many carry `rank`; the picker folds to the smart models only when ranks exist, and the
+model-rank cron runs on the laptop only), and the allowlist `agents.defaults.models` compared BY ID, never by count (models removed on the
+laptop stay on the clone, models added on the laptop never arrive; on 2026-10-05 Goku had FEWER
+models and still lacked Opus 5.5), plus the default `agents.defaults.model.primary` and
+`claude --version` on both (a new model id needs a minimum Claude Code: Opus 5.5 2.1.280, Sonnet 5.5
+2.1.284). Prove a new default with one short `claude -p --model <id>` call on the clone. Copy the laptop's ranks onto the clone's shared ids and drop what
+the laptop dropped, both host config. Also compare the laptop checkout's UNCOMMITTED changes
+(`git -C ~/src/tinkerclaw status --short`): the laptop's live page builds from that working tree,
+so a change the architect asked for that was never committed shows on the laptop and can never reach the clone. Memory is what
 produced the last wrong guess — on 2026-09-08 a stored note said `skills/` was gitignored, while
 `git ls-files` showed 132 tracked files, which would have sent the whole iteration at a
 non-existent problem.
@@ -125,6 +135,12 @@ config: copy it with paths rewritten and name its MCP server after the clone's a
   Confirm a restart by PID (`pgrep -x`), before and after.
 
 ## Failures overcome
+
+- **2026-10-05, "too many models" and THALAMUS out of place on Goku.** the architect: "Goku seems to have too
+  many models in the model picker ... Additionally, Thalamus is not right under the model picker,
+  which it should". Goku's 40 models carried no `rank` (the laptop's 50 did) and kept two Copilot
+  models removed on 2026-09-10; the THALAMUS move he asked for on 2026-10-04 had sat uncommitted in
+  the laptop checkout for a day. Step 0 now measures both.
 
 - `setup.sh` ran `pnpm install` and built the UI but never built the CORE, so the gateway died on
   `missing dist/entry.(m)js` immediately after the installer printed "Setup complete". Found only

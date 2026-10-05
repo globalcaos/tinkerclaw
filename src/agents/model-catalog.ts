@@ -86,6 +86,34 @@ function instantiatePiModelRegistry(
   return new Registry(authStorage, modelsFile);
 }
 
+// FORK 2026-10-05: the configured rank (agents.defaults.models["<provider>/<id>"].rank, written by the
+// model-rank refresh) used to reach only the models the configured step appended. A model discovery had
+// already listed kept no rank, so the picker could not fold to the smart ones (Goku: 50 chips, laptop 17).
+function applyConfiguredRanks(models: ModelCatalogEntry[], cfg: OpenClawConfig | undefined): void {
+  const configured = cfg?.agents?.defaults?.models;
+  if (!configured || typeof configured !== "object") {
+    return;
+  }
+  const rankByKey = new Map<string, number>();
+  for (const [ref, entry] of Object.entries(configured)) {
+    const rank = (entry as { rank?: unknown } | undefined)?.rank;
+    const slash = ref.indexOf("/");
+    if (typeof rank === "number" && slash > 0) {
+      rankByKey.set(catalogEntryDedupeKey(ref.slice(0, slash), ref.slice(slash + 1)), rank);
+    }
+  }
+  for (let i = 0; i < models.length; i++) {
+    const entry = models[i];
+    if (entry.rank !== undefined) {
+      continue;
+    }
+    const rank = rankByKey.get(catalogEntryDedupeKey(entry.provider, entry.id));
+    if (rank !== undefined) {
+      models[i] = { ...entry, rank };
+    }
+  }
+}
+
 function catalogEntryDedupeKey(provider: string, id: string): string {
   return `${normalizeProviderId(provider)}::${normalizeLowercaseStringOrEmpty(id)}`;
 }
@@ -213,6 +241,7 @@ export async function loadModelCatalog(params?: {
         appendCatalogEntriesIfAbsent(models, configuredModels);
       }
       logStage("configured-models-merged", `entries=${models.length}`);
+      applyConfiguredRanks(models, cfg);
 
       if (models.length === 0) {
         // If we found nothing, don't cache this result so we can try again.
