@@ -534,7 +534,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       lastSeam[seam] = t;
       const sessionKey = tabKey ?? str(hook.session_id) ?? "unknown";
       if (tabKey) seen.note(tabKey, hook, t);
-      if (seam === "prompt") tracker.notePrompt(sessionKey);
+      if (seam === "prompt") tracker.notePrompt(sessionKey, str(hook.prompt));
       else if (seam === "post-tool") tracker.recordToolResult(sessionKey, hook);
       // stop_hook_active is read for logging only.
       if (seam === "stop" && hook.stop_hook_active === true) {

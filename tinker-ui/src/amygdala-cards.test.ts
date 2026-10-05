@@ -4,13 +4,11 @@ import {
   renderExceptionalCard,
   renderHoldCard,
   renderMarker,
-  renderNoteChip,
   renderProofCard,
   renderRefusalStrip,
   renderRewoundMarker,
-  renderSentBackChip,
 } from "./amygdala-cards.js";
-import type { ChangeView, InterventionView, JevDecision, MarkerView } from "./amygdala-types.js";
+import type { ChangeView, InterventionView, MarkerView } from "./amygdala-types.js";
 
 const EVIL = '<img src=x onerror="alert(1)">';
 
@@ -31,29 +29,6 @@ function iv(over: Partial<InterventionView> = {}): InterventionView {
     title: "test-title",
     chips: ["chip-a", "chip-b"],
     cmd: "test-cmd",
-    ...over,
-  };
-}
-
-function dec(over: Partial<JevDecision> = {}): JevDecision {
-  return {
-    id: "d1",
-    ts: 1,
-    sessionKey: "s",
-    turnId: "t1",
-    stepLabel: "step",
-    seam: "post",
-    questionId: "surprise",
-    questionName: "test-name",
-    version: 2,
-    answer: 0.5,
-    prob: 0.5,
-    confidence: 0.9,
-    cacheHit: false,
-    latencyMs: 10,
-    weak: false,
-    codeDid: "note",
-    degraded: false,
     ...over,
   };
 }
@@ -170,45 +145,6 @@ describe("renderAskCard", () => {
       ),
     );
     expect(el.querySelector("img")).toBeNull();
-  });
-});
-
-describe("renderSentBackChip", () => {
-  const sb = (id: string, turnId = "t1") =>
-    dec({ id, turnId, codeDid: "sent-back", questionName: "claim-check", version: 3 });
-  it("empty when the turn has no sent-back decision", () => {
-    expect(renderSentBackChip([dec()], "t1", false)).toBe("");
-    expect(renderSentBackChip([sb("x", "other")], "t1", false)).toBe("");
-  });
-  it("once, then twice, capped at two", () => {
-    expect(dom(renderSentBackChip([sb("1")], "t1", false)).textContent).toContain("Sent back once");
-    expect(dom(renderSentBackChip([sb("1"), sb("2")], "t1", false)).textContent).toContain(
-      "Sent back twice",
-    );
-    expect(dom(renderSentBackChip([sb("1"), sb("2"), sb("3")], "t1", false)).textContent).toContain(
-      "Sent back twice",
-    );
-  });
-  it("is a plain details with name and version, open on request, no data-amy-act", () => {
-    const html = renderSentBackChip([sb("1")], "t1", true);
-    const d = dom(html).querySelector("details.amy-sentback")!;
-    expect(d.hasAttribute("open")).toBe(true);
-    expect(d.textContent).toContain("claim-check");
-    expect(d.textContent).toContain("v3");
-    expect(html).not.toContain("data-amy-act");
-    expect(
-      dom(renderSentBackChip([sb("1")], "t1", false))
-        .querySelector("details")!
-        .hasAttribute("open"),
-    ).toBe(false);
-  });
-  it("escapes the question name", () => {
-    const html = renderSentBackChip(
-      [dec({ codeDid: "sent-back", questionName: EVIL })],
-      "t1",
-      false,
-    );
-    expect(dom(html).querySelector("img")).toBeNull();
   });
 });
 
@@ -359,27 +295,6 @@ describe("renderExceptionalCard", () => {
       renderExceptionalCard(change({ questionName: EVIL, from: EVIL, to: EVIL }), true),
     );
     expect(el.querySelector("img")).toBeNull();
-  });
-});
-
-describe("renderNoteChip", () => {
-  const cls = (d: JevDecision) => dom(renderNoteChip(d)).querySelector(".amy-note-chip")!;
-  it("picks the class by question id", () => {
-    expect(cls(dec({ questionId: "surprise" })).classList.contains("amy-nc-s")).toBe(true);
-    expect(cls(dec({ questionId: "progress-made" })).classList.contains("amy-nc-f")).toBe(true);
-    expect(cls(dec({ questionId: "novelty" })).classList.contains("amy-nc-c")).toBe(true);
-    expect(cls(dec({ questionId: "worth-knowing" })).classList.contains("amy-nc-c")).toBe(true);
-    expect(cls(dec({ questionId: "anything-else" })).classList.contains("amy-nc-s")).toBe(true);
-  });
-  it("shows icon, name and answer; title carries what code did and the labels", () => {
-    const el = cls(dec({ questionId: "progress-made", answer: "no", questionName: "nothing-new" }));
-    expect(el.textContent).toBe("🔄 nothing-new no");
-    expect(el.getAttribute("title")).toContain("note");
-    expect(el.getAttribute("title")).toContain("👍");
-    expect(el.textContent).not.toContain("👍");
-  });
-  it("escapes the name", () => {
-    expect(dom(renderNoteChip(dec({ questionName: EVIL }))).querySelector("img")).toBeNull();
   });
 });
 

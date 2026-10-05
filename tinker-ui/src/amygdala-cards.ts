@@ -1,12 +1,13 @@
 /**
- * HTML-string builders for what the amygdala says inside the chat: hold / proof / ask cards, the sent-back chip, the
- * refusal strip and rewind marker, the exceptional-change card, the note chip on a tool row and the reply marker
- * (design doc §9.1, blocks 1-6). DOM-free: every builder returns a string, every dynamic value goes through `esc`, and
- * interactions are `data-amy-act` attributes that app.ts handles by delegation. A question's wording never appears,
+ * HTML-string builders for what the amygdala says inside the chat besides the two Jev windows: the hold / proof / ask
+ * cards that wait for an answer (enforce mode), the refusal offer and the Rewound line (all three ride on their action's
+ * row in the WOULD HAVE window, amygdala-jev.ts), the reply marker, and the exceptional-change card at the end of the
+ * chat (design doc §9.1, blocks 1-6). DOM-free: every builder returns a string, every dynamic value goes through `esc`,
+ * and interactions are `data-amy-act` attributes that app.ts handles by delegation. A question's wording never appears,
  * only its name.
  */
-import { DID_WORD, esc, fmtAnswer, fmtClock } from "./amygdala-html.js";
-import type { ChangeView, InterventionView, JevDecision, MarkerView } from "./amygdala-types.js";
+import { esc, fmtClock } from "./amygdala-html.js";
+import type { ChangeView, InterventionView, MarkerView } from "./amygdala-types.js";
 
 function chipsHtml(chips: string[], bad = false): string {
   if (!chips.length) return "";
@@ -95,24 +96,6 @@ export function renderAskCard(iv: InterventionView, selected: string | null): st
     `</div>` +
     `<div class="amy-foot">Asked because the readings lead to different actions.</div>` +
     `</div>`
-  );
-}
-
-/** Block 4. A plain <details>; "" when the turn has no sent-back decision. */
-export function renderSentBackChip(
-  decisions: JevDecision[],
-  turnId: string,
-  open: boolean,
-): string {
-  const sent = decisions.filter((d) => d.turnId === turnId && d.codeDid === "sent-back");
-  if (!sent.length) return "";
-  const times = Math.min(sent.length, 2) === 1 ? "once" : "twice";
-  const last = sent[sent.length - 1]!;
-  return (
-    `<details class="amy-sentback" data-turn="${esc(turnId)}"${open ? " open" : ""}>` +
-    `<summary>🔁 Sent back ${times} · ${esc(last.questionName)}</summary>` +
-    `<div class="amy-sb-detail">Question that caught it: <i>${esc(last.questionName)}</i> · v${esc(last.version)}</div>` +
-    `</details>`
   );
 }
 
@@ -209,20 +192,6 @@ export function renderExceptionalCard(c: ChangeView, expanded: boolean): string 
     actions +
     `</div>`
   );
-}
-
-function noteKind(questionId: string): { cls: string; icon: string } {
-  if (questionId === "progress-made") return { cls: "amy-nc-f", icon: "🔄" };
-  if (questionId === "novelty" || questionId === "worth-knowing")
-    return { cls: "amy-nc-c", icon: "💡" };
-  return { cls: "amy-nc-s", icon: "⚡" };
-}
-
-/** Block 5: rides on a tool row. The title says what code did; 👍/👎 live in the title only. */
-export function renderNoteChip(d: JevDecision): string {
-  const { cls, icon } = noteKind(d.questionId);
-  const title = `code: ${DID_WORD[d.codeDid]} · 👍 / 👎 on the opened line in the Jev window`;
-  return `<span class="amy-note-chip ${cls}" title="${esc(title)}" data-decision="${esc(d.id)}">${icon} ${esc(d.questionName)} ${esc(fmtAnswer(d))}</span>`;
 }
 
 /** One-line marker under a reply. */

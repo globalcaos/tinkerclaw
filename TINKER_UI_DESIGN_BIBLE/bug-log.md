@@ -29,6 +29,22 @@ verify:
 
 # Bug Fix Log
 
+### FIXED [spec-drift+gate-blindspot]: develop could not be built or deployed for a day, with every test green (2026-10-05; bug id `switch-reason-missing-member`)
+
+- **Symptom:** the public push of develop stopped at its build proof: `scripts/deploy-worktree.sh --dry-run` failed at `build:plugin-sdk:dts` with TS2322 in `src/shared/thalamus-route-call.ts` (`"preference-changed"` is not a `SwitchReason`).
+- **Root cause:** `bef21b92051` (10-04 09:48) made the per-call router emit a new switch reason without adding it to the `SwitchReason` union in `src/shared/thalamus-v4-types.ts`. vitest strips types, so nothing went red; develop stayed unbuildable until a deploy path ran. Second sighting of the same class after `527bdc90efb` (09-23).
+- **Fix:** `07632e2e762` adds the member. The card's label maps are `Record<string, string>`, so nothing else needed a change; the unknown reason shows as written.
+- **Tests:** the deploy dry-run of the published squash passed (build, gates, smoke test), and the 84 test files the publish touched passed (2,551 tests).
+- **LESSON:** the only proof that develop deploys is the deploy path. A commit that changes a shared type needs the dts step, not just its tests.
+
+### FIXED [spec-drift]: two tinker-ui bible checks failed on correct code and kept the push gate red (2026-10-05; bug id `stale-ui-contract-checks`)
+
+- **Symptom:** `pnpm bible:invariants` failed §5.8L ("subagentAttributionDeps object not found") and §5.8O ("fs-link label for the skill md is gone") on a clean develop.
+- **Root cause:** both checks matched the code's old text, not its behaviour. §5.8L searched 600 characters from the object's first mention, which is a call site; a 10-01 comment moved the closing brace out of reach. §5.8O looked for the literal `SKILL.md ↗`, which `6b12cf2a094` replaced with a label derived from the path.
+- **Fix:** `534aa867a0b`. §5.8L anchors on the declaration; §5.8O accepts the derived label when `usage-chips.test.ts` pins the rendered text. §5.8L still fails when `ownerOf` stops reading `subagentOwnerTab` (mutation-tested).
+- **Still open:** §5.8 ("loadChat stopped stripping \_temporary") fails because `6f83be4f715` (09-08) removed the preserve loop it guards. Restating that check needs the redesign's guarantee, not a regex.
+- **LESSON:** a check that greps for the code's wording breaks on a refactor that keeps the behaviour. Pin the behaviour in a test and let the check point at the test.
+
 ### FIXED [scope-mismatch]: the parallel worker's turns that ran while its tab was in the background never came back, and read as deleted (2026-10-03; bug id `worker-turns-lost-in-background`)
 
 - **Symptom:** _"In the 'Parallel worker' tab I still cannot see its full history. Try again to recover it all, and make sure the bug that deleted it is fixed."_ (4th report on this tab; after `tab-history-erased` below.)

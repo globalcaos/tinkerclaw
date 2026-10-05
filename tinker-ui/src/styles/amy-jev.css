@@ -31,20 +31,56 @@
 .amy-lab{font:inherit;font-size:11px;padding:0 6px;border:1px solid #1E1E1E;color:#1E1E1E;background:#FEFEFE;cursor:pointer;border-radius:0}
 .amy-lab.amy-on{background:#d45bb6}
 .amy-jft{padding:3px 8px;border-top:1.5px solid #1E1E1E;font-size:10.5px;color:#1e1e1e99}
-/* Changes first (2026-10-02): what the amygdala would have changed, one card each, votes in view; the rest folded. */
-.amy-jsec{padding:5px 8px 3px;font-weight:700;font-size:11px;letter-spacing:.06em;text-transform:uppercase;background:#f9e7f3;border-top:1px solid #1e1e1e55}
-.amy-jchange{padding:6px 8px 8px;border-top:1px solid #1e1e1e55;background:#FEFEFE}
+/* Two windows per reply (the architect 2026-10-05): CHECKS, whose body is a check timeline in the call timeline's encoding, and
+   WOULD HAVE, the actions to review. */
+.amy-turn{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.amy-jkind{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:#abbab9}
+.amy-jkind-act{color:#1E1E1E;background:#d45bb6;padding:0 5px}
+.amy-thead{display:flex;align-items:baseline;gap:8px;padding:6px 8px 0;font-size:11px}
+.amy-thead b{letter-spacing:.06em}
+.amy-thead span{margin-left:auto;color:#1e1e1e99;font-size:10.5px}
+.amy-tlanes{position:relative;padding:15px 8px}
+.amy-tl{display:block;width:100%;height:88px}
+.amy-tcap{position:absolute;left:8px;font-size:10px;line-height:14px;color:#1e1e1e99}
+.amy-tcap-top{top:0}
+.amy-tcap-bot{bottom:0}
+.amy-tax{stroke:#1E1E1E;stroke-width:1}
+.amy-tc-ok{fill:#d6d1c4;background:#d6d1c4}
+.amy-tc-note{fill:#7f9b99;background:#7f9b99}
+.amy-tc-held{fill:#f386a1;background:#f386a1}
+.amy-tc-back{fill:#1E1E1E;background:#1E1E1E}
+.amy-tc-refusal{fill:#d45bb6;background:#d45bb6}
+.amy-cached{fill-opacity:.45;opacity:.45}
+.amy-tc.amy-cached{opacity:1}
+.amy-tsel{fill:#f9e7f3}
+.amy-tcol{fill:#d45bb6;fill-opacity:0;cursor:pointer}
+.amy-tcol:hover{fill-opacity:.14}
+.amy-tticks{display:flex;justify-content:space-between;padding:0 8px;font-size:10px;color:#1e1e1e99}
+.amy-tleg{display:flex;flex-wrap:wrap;align-items:center;gap:3px 12px;padding:5px 8px 4px;font-size:10.5px;color:#1e1e1ecc}
+.amy-tleg i{display:inline-block;width:9px;height:9px;margin-right:4px;vertical-align:-1px}
+.amy-tleg-r{margin-left:auto;color:#1e1e1e80}
+.amy-thint{padding:3px 8px 6px;font-size:10.5px;color:#1e1e1e99}
+.amy-tdet{border-top:1px solid #1e1e1e55}
+.amy-tseam{padding:3px 8px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:#1e1e1e99;border-top:1px dashed #1e1e1e40}
+.amy-jact{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;padding:6px 8px 7px;border-top:1px solid #1e1e1e55;background:#FEFEFE}
 .amy-jc-head{display:flex;align-items:center;gap:6px;font-size:12.5px}
-.amy-jc-step,.amy-jc-why{margin-top:4px;font-size:11.5px;overflow-wrap:anywhere}
-.amy-jc-step .amy-mt,.amy-jc-why .amy-mt,.amy-jc-vote .amy-mt{color:#1e1e1e99;margin-right:6px}
-.amy-jc-why ul{margin:2px 0 0 18px;padding:0}
-.amy-jc-why li{margin:1px 0}
-.amy-jc-vote{margin-top:6px;display:flex;align-items:center;flex-wrap:wrap;gap:6px}
-.amy-jvote{font:inherit;font-size:11.5px;padding:2px 9px;background:#FEFEFE;color:#1E1E1E;border:1.5px solid #1E1E1E;cursor:pointer}
+.amy-ja-time{margin-left:auto;color:#1e1e1e99;font-size:10.5px}
+.amy-jc-step,.amy-jc-why{margin-top:3px;font-size:11.5px;overflow-wrap:anywhere}
+.amy-jc-step .amy-mt,.amy-jc-why .amy-mt{color:#1e1e1e99;margin-right:6px}
+.amy-ja-votes{display:flex;flex-direction:column;gap:4px;align-self:start}
+.amy-jvote{font:inherit;font-size:11px;padding:1px 8px;background:#FEFEFE;color:#1E1E1E;border:1.5px solid #1E1E1E;cursor:pointer;white-space:nowrap;text-align:left}
 .amy-jvote:hover{background:#f9e7f3}
 .amy-jvote.amy-voted{background:#1E1E1E;color:#FEFEFE}
-.amy-jnone{padding:6px 8px;border-top:1px solid #1e1e1e55;color:#1e1e1e99}
-.amy-jothers-bar{padding:4px 8px;border-top:1px solid #1e1e1e55;background:#f0ede4;cursor:pointer;color:#1e1e1ecc;user-select:none}
-.amy-jothers-bar .amy-jtw{color:#1e1e1e99}
-.amy-jothers{display:none}
-.amy-jothers.amy-show{display:block}
+.amy-ja-extra{grid-column:1/-1}
+/* A waiting card keeps the theme look: the window's black mono text must not cascade into it. */
+.amy-ja-extra .amy-card{width:auto;margin-top:2px;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;font-size:13px;line-height:1.45}
+/* The refusal offer, the Rewound line and the reply marker take Jev's look inside its window; the waiting cards keep theirs. */
+.amy-jev .amy-refstrip{margin:2px 0 0;border-radius:0;background:#f9e7f3;border:1px solid #1E1E1E;font-size:11.5px;padding:5px 8px}
+.amy-jev .amy-refstrip .amy-t{color:#1E1E1E}
+.amy-jev .amy-refstrip .amy-m{color:#1e1e1e99;font-size:10.5px}
+.amy-jev .amy-refstrip .amy-btn{border-radius:0;background:#FEFEFE;color:#1E1E1E;border:1.5px solid #1E1E1E;font-size:11.5px;padding:2px 9px}
+.amy-jev .amy-refstrip .amy-btn:hover{background:#1E1E1E;color:#FEFEFE}
+.amy-jev .amy-refstrip .amy-btn:disabled{opacity:.45;cursor:default;background:#FEFEFE;color:#1E1E1E}
+.amy-jev .amy-rewound{display:block;margin:2px 0 0;border-radius:0;border:1px dashed #1E1E1E;color:#1E1E1E;font-size:11.5px;padding:3px 8px}
+.amy-jev .amy-rewound a{color:#b03a93}
+.amy-jev .amy-marker{margin:0;padding:5px 8px;border-left:0;border-top:1px solid #1e1e1e55;color:#1e1e1ecc;font-size:11.5px}

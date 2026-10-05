@@ -1,17 +1,34 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { DID_WORD, GLYPH } from "./amygdala-html.js";
-import { groupBySteps, renderJevNotConsulted, renderJevWindow, summarise } from "./amygdala-jev.js";
-import type { CodeDid, JevDecision, TurnView } from "./amygdala-types.js";
+import {
+  actionsOf,
+  actionsSummary,
+  checksSummary,
+  renderJevActions,
+  renderJevChecks,
+  renderJevNotConsulted,
+  stepsOf,
+} from "./amygdala-jev.js";
+import type {
+  CodeDid,
+  InterventionView,
+  JevDecision,
+  MarkerView,
+  TurnView,
+} from "./amygdala-types.js";
+
+// Fixed local times so the clock strings do not depend on the machine's time zone.
+const T0 = new Date(2026, 9, 5, 9, 38, 12).getTime();
 
 function dec(id: string, over: Partial<JevDecision> = {}): JevDecision {
   return {
     id,
-    ts: 1,
+    ts: T0,
     sessionKey: "s",
     turnId: "t1",
     stepLabel: "read a.md",
-    seam: "pre",
+    seam: "pre-tool",
     questionId: "q-id",
     questionName: "Danger level",
     version: 2,
@@ -27,8 +44,27 @@ function dec(id: string, over: Partial<JevDecision> = {}): JevDecision {
   };
 }
 
-function turn(decisions: JevDecision[]): TurnView {
-  return { turnId: "t1", sessionKey: "s", ts: 1, decisions, interventions: [], markers: [] };
+function iv(id: string, over: Partial<InterventionView> = {}): InterventionView {
+  return {
+    id,
+    ts: T0,
+    sessionKey: "s",
+    turnId: "t1",
+    kind: "hold",
+    state: "settled",
+    title: "Held before it ran",
+    chips: ["effect: delete"],
+    ...over,
+  };
+}
+
+function turn(
+  decisions: JevDecision[],
+  interventions: InterventionView[] = [],
+  markers: MarkerView[] = [],
+  turnId = "t1",
+): TurnView {
+  return { turnId, sessionKey: "s", ts: T0, decisions, interventions, markers };
 }
 
 function parse(html: string): HTMLElement {
@@ -38,44 +74,178 @@ function parse(html: string): HTMLElement {
 }
 
 const none = new Set<string>();
+const LANE = 40;
+const AX = 8;
+const y = (r: Element): number => Number(r.getAttribute("y"));
 
-describe("renderJevWindow", () => {
-  it("returns empty string for a turn without decisions", () => {
-    expect(renderJevWindow(turn([]), { open: true, openRows: none })).toBe("");
+// the architect 2026-10-05: "two kinds of messages, one with a summary of the checks it performed, which should expand into a
+// nice diagram of what it did and when ... and another type of entry ... with actions it would have taken".
+
+describe("stepsOf: one timeline column per step", () => {
+  it("a tool call's pre and post checks share its column, even when parallel calls interleave", () => {
+    const s = stepsOf([
+      dec("1", { toolUseId: "A", stepLabel: "exec a", ts: T0 }),
+      dec("2", { toolUseId: "B", stepLabel: "exec b", ts: T0 + 1 }),
+      dec("3", { toolUseId: "A", stepLabel: "exec a", seam: "post-tool", ts: T0 + 2 }),
+      dec("4", { toolUseId: "B", stepLabel: "exec b", seam: "post-tool", ts: T0 + 3 }),
+    ]);
+    expect(s.map((x) => [x.label, x.before.length, x.after.length])).toEqual([
+      ["exec a", 1, 1],
+      ["exec b", 1, 1],
+    ]);
+  });
+  it("without a tool use id, consecutive checks on a label share a column; the same command run again is a new one", () => {
+    const s = stepsOf([
+      dec("1", { stepLabel: "prompt", seam: "prompt", ts: T0 }),
+      dec("2", { stepLabel: "read a", ts: T0 + 1 }),
+      dec("3", { stepLabel: "read a", seam: "post-tool", ts: T0 + 2 }),
+      dec("4", { stepLabel: "read a", ts: T0 + 3 }),
+      dec("5", { stepLabel: "stop", seam: "stop", ts: T0 + 4 }),
+    ]);
+    expect(s.map((x) => [x.label, x.before.length, x.after.length])).toEqual([
+      ["prompt", 1, 0],
+      ["read a", 1, 1],
+      ["read a", 1, 0],
+      ["stop", 0, 1],
+    ]);
+  });
+  it("sorts by time whatever order the events came in", () => {
+    const s = stepsOf([
+      dec("b", { stepLabel: "b", ts: T0 + 5 }),
+      dec("a", { stepLabel: "a", ts: T0 }),
+    ]);
+    expect(s.map((x) => x.label)).toEqual(["a", "b"]);
+  });
+});
+
+describe("renderJevChecks: the summary line and its timeline", () => {
+  const ds = [
+    dec("p", { stepLabel: "prompt", seam: "prompt", ts: T0 }),
+    dec("a1", { toolUseId: "A", stepLabel: "exec rm x", ts: T0 + 60_000 }),
+    dec("a2", {
+      toolUseId: "A",
+      stepLabel: "exec rm x",
+      ts: T0 + 60_001,
+      codeDid: "held",
+      decisionId: "D1",
+    }),
+    dec("a3", {
+      toolUseId: "A",
+      stepLabel: "exec rm x",
+      seam: "post-tool",
+      ts: T0 + 61_000,
+      cacheHit: true,
+    }),
+    dec("s", { stepLabel: "stop", seam: "stop", ts: T0 + 14 * 60_000 + 28_000, latencyMs: 4000 }),
+  ];
+  const render = (o: Partial<Parameters<typeof renderJevChecks>[2]> = {}) =>
+    parse(renderJevChecks("t1", ds, { open: true, openRows: none, ...o }));
+
+  it("returns empty string when Jev answered nothing", () => {
+    expect(renderJevChecks("t1", [], { open: true, openRows: none })).toBe("");
   });
 
-  it("collapsed vs open, chevron, body always present", () => {
-    const t = turn([dec("a")]);
-    const c = parse(renderJevWindow(t, { open: false, openRows: none }));
-    expect(c.querySelector(".amy-jev")!.classList.contains("amy-open")).toBe(false);
-    expect(c.querySelector(".amy-jtw")!.textContent).toBe("▸");
-    expect(c.querySelector(".amy-jev-body")).not.toBeNull();
-    const bar = c.querySelector(".amy-jev-bar")!;
+  it("collapsed by default: one bar saying how many checks, on how many steps, from when to when", () => {
+    const el = parse(renderJevChecks("t1", ds, { open: false, openRows: none }));
+    const w = el.querySelector(".amy-jev-checks")!;
+    expect(w.classList.contains("amy-open")).toBe(false);
+    const bar = w.querySelector(".amy-jev-bar")!;
     expect(bar.getAttribute("data-amy-act")).toBe("jev-toggle");
-    expect(bar.getAttribute("data-turn")).toBe("t1");
-    expect(bar.querySelector("svg")).not.toBeNull();
-    const o = parse(renderJevWindow(t, { open: true, openRows: none }));
-    expect(o.querySelector(".amy-jev")!.classList.contains("amy-open")).toBe(true);
-    expect(o.querySelector(".amy-jtw")!.textContent).toBe("▾");
+    expect(bar.getAttribute("data-run")).toBe("t1");
+    expect(bar.querySelector(".amy-jttl")!.textContent).toBe("JEV");
+    expect(bar.querySelector(".amy-jkind")!.textContent).toBe("checks");
+    expect(bar.querySelector(".amy-jsm")!.textContent).toBe("5 checks · 3 steps · 09:38–09:52");
+    expect(bar.querySelector(".amy-jtw")!.textContent).toBe("▸");
+    expect(render().querySelector(".amy-jtw")!.textContent).toBe("▾");
   });
 
-  it("groups by step with interleaved seams", () => {
-    const ds = [
-      dec("1", { stepLabel: "read a", seam: "pre" }),
-      dec("2", { stepLabel: "read a", seam: "pre" }),
-      dec("3", { stepLabel: "read a", seam: "post" }),
-      dec("4", { stepLabel: "exec b", seam: "pre" }),
-      dec("5", { stepLabel: "read a", seam: "pre" }),
-    ];
-    const g = groupBySteps(ds);
-    expect(g.map((x) => x.rows.length)).toEqual([2, 1, 1, 1]);
-    const el = parse(renderJevWindow(turn(ds), { open: true, openRows: none }));
-    expect(el.querySelectorAll(".amy-jstep").length).toBe(4);
-    expect(el.querySelectorAll(".amy-jr").length).toBe(5);
-    expect(el.querySelector(".amy-jstep")!.textContent).toBe("├ read a");
+  it("checksSummary names one clock when everything happened in the same minute", () => {
+    expect(checksSummary([dec("a")])).toBe("1 check · 1 step · 09:38");
   });
 
-  it("renders glyph and pill class for every codeDid", () => {
+  it("draws one cell per check and one clickable column per step, with the step in its tooltip", () => {
+    const el = render();
+    expect(el.querySelectorAll("svg.amy-tl rect.amy-tc")).toHaveLength(5);
+    const cols = el.querySelectorAll("rect.amy-tcol");
+    expect(cols).toHaveLength(3);
+    expect(cols[1]!.getAttribute("data-amy-act")).toBe("jev-col");
+    expect(cols[1]!.getAttribute("data-run")).toBe("t1");
+    expect(cols[1]!.getAttribute("data-col")).toBe("1");
+    expect(cols[1]!.querySelector("title")!.textContent).toBe(
+      "exec rm x\n09:39:12 · 2 before it ran, 1 after · held",
+    );
+  });
+
+  it("checks made before a step sit above the axis, after it below; a change touches the axis and marks it", () => {
+    const el = render();
+    const cells = [...el.querySelectorAll("rect.amy-tc")];
+    const held = cells.find((r) => r.classList.contains("amy-tc-held"))!;
+    const above = cells.filter((r) => y(r) < LANE);
+    const below = cells.filter((r) => y(r) >= LANE + AX);
+    expect(above).toHaveLength(3); // prompt + two pre-tool checks
+    expect(below).toHaveLength(2); // post-tool + stop
+    // The held answer is the one nearest the axis in its column.
+    const col1Above = above.filter((r) => r.getAttribute("x") === held.getAttribute("x"));
+    expect(Math.max(...col1Above.map(y))).toBe(y(held));
+    const mark = el.querySelector("rect.amy-tmark")!;
+    expect(mark.classList.contains("amy-tc-held")).toBe(true);
+    expect(el.querySelectorAll("rect.amy-tmark")).toHaveLength(1);
+    expect(el.querySelectorAll("rect.amy-cached")).toHaveLength(1);
+  });
+
+  it("says when: the span in the title, the clock at both ends and the middle, the lanes' tallest stacks", () => {
+    const el = render();
+    expect(el.querySelector(".amy-thead")!.textContent).toBe(
+      "CHECK TIMELINE3 steps · 09:38:12 → 09:52:40 · 14 min 28 s",
+    );
+    expect([...el.querySelectorAll(".amy-tticks span")].map((s) => s.textContent)).toEqual([
+      "09:38:12",
+      "09:39:12",
+      "09:52:40",
+    ]);
+    expect(el.querySelector(".amy-tcap-top")!.textContent).toBe("before it ran ↑ 2");
+    expect(el.querySelector(".amy-tcap-bot")!.textContent).toBe("after it ran ↓ 1");
+  });
+
+  it("the legend lists only what the drawing painted", () => {
+    const leg = render().querySelector(".amy-tleg")!.textContent!;
+    expect(leg).toContain("ok");
+    expect(leg).toContain("held");
+    expect(leg).toContain("cached");
+    expect(leg).not.toContain("sent back");
+    expect(leg).not.toContain("refusal");
+  });
+
+  it("no column picked: a hint; a picked column lists its checks before and after, each opening to its detail", () => {
+    expect(render().querySelector(".amy-thint")!.textContent).toBe(
+      "Click a column to see that step's checks.",
+    );
+    const el = render({ col: 1, openRows: new Set(["a3"]) });
+    expect(el.querySelector(".amy-thint")).toBeNull();
+    expect(el.querySelector("rect.amy-tsel")!.getAttribute("x")).toBe(
+      el.querySelectorAll("rect.amy-tcol")[1]!.getAttribute("x"),
+    );
+    const det = el.querySelector(".amy-tdet")!;
+    expect(det.querySelector(".amy-jstep")!.textContent).toBe("├ exec rm x · 09:39:12");
+    expect([...det.querySelectorAll(".amy-tseam")].map((s) => s.textContent)).toEqual([
+      "before it ran",
+      "after it ran",
+    ]);
+    const rows = det.querySelectorAll(".amy-jr");
+    expect([...rows].map((r) => r.getAttribute("data-id"))).toEqual(["a1", "a2", "a3"]);
+    expect(rows[0]!.getAttribute("data-amy-act")).toBe("jev-row");
+    const details = det.querySelectorAll(".amy-jd");
+    expect(details[2]!.classList.contains("amy-show")).toBe(true);
+    expect(details[0]!.classList.contains("amy-show")).toBe(false);
+    expect(details[2]!.textContent).toContain("96 ms · cached");
+    const lab = details[2]!.querySelectorAll("button[data-amy-act=label]");
+    expect(lab[0]!.getAttribute("data-target-id")).toBe("a3");
+    expect(lab[0]!.getAttribute("data-target-kind")).toBe("verdict");
+    // A column out of range is ignored.
+    expect(render({ col: 9 }).querySelector(".amy-tdet")).toBeNull();
+  });
+
+  it("rows carry the glyph and pill of what code did, for every kind", () => {
     const cls: Record<CodeDid, string> = {
       ok: "ok",
       held: "held",
@@ -87,94 +257,103 @@ describe("renderJevWindow", () => {
     };
     for (const k of Object.keys(cls) as CodeDid[]) {
       const el = parse(
-        renderJevWindow(turn([dec("x", { codeDid: k })]), { open: true, openRows: none }),
+        renderJevChecks("t1", [dec("x", { codeDid: k })], { open: true, col: 0, openRows: none }),
       );
-      expect(el.querySelector(".amy-jg")!.textContent).toBe(GLYPH[k]);
-      const pill = el.querySelector(".amy-jo")!;
+      expect(el.querySelector(".amy-jr .amy-jg")!.textContent).toBe(GLYPH[k]);
+      const pill = el.querySelector(".amy-jr .amy-jo")!;
       expect(pill.classList.contains(cls[k])).toBe(true);
       expect(pill.textContent).toBe(DID_WORD[k]);
+      expect(el.querySelector(`rect.amy-tc-${cls[k]}`)).not.toBeNull();
     }
   });
 
-  it("marks weak and degraded rows", () => {
+  it("footer: checks, cached, the judge's time (cached answers cost none) and the steps that ran on rules only", () => {
+    expect(render().querySelector(".amy-jft")!.textContent).toBe(
+      "5 checks · 1 cached · judge 4.3 s",
+    );
+    expect(render({ rulesOnly: 2 }).querySelector(".amy-jft")!.textContent).toBe(
+      "5 checks · 1 cached · judge 4.3 s · 2 steps on the hard rules only",
+    );
+  });
+
+  it("marks weak and degraded answers in the step list", () => {
     const el = parse(
-      renderJevWindow(turn([dec("w", { weak: true }), dec("d", { degraded: true }), dec("n")]), {
+      renderJevChecks("t1", [dec("w", { weak: true }), dec("d", { degraded: true }), dec("n")], {
         open: true,
+        col: 0,
         openRows: none,
       }),
     );
-    expect(el.querySelectorAll(".amy-jw").length).toBe(1);
-    expect(el.querySelector(".amy-jw")!.getAttribute("title")).toBe("rests on inferred fields");
-    expect(el.querySelectorAll(".amy-jx").length).toBe(1);
+    expect(el.querySelectorAll(".amy-jw")).toHaveLength(1);
+    expect(el.querySelectorAll(".amy-jx")).toHaveLength(1);
   });
 
-  it("shows detail only for open rows, with label buttons, cache and footer", () => {
-    const ds = [dec("a", { cacheHit: true }), dec("b")];
-    const el = parse(renderJevWindow(turn(ds), { open: true, openRows: new Set(["a"]) }));
-    const details = el.querySelectorAll(".amy-jd");
-    expect(details[0].classList.contains("amy-show")).toBe(true);
-    expect(details[1].classList.contains("amy-show")).toBe(false);
-    expect(details[0].textContent).toContain("q-id v2");
-    expect(details[0].textContent).toContain("96 ms · cached");
-    expect(details[1].textContent).not.toContain("cached");
-    const btn = details[0].querySelectorAll("button[data-amy-act=label]");
-    expect(btn.length).toBe(2);
-    expect(btn[0].getAttribute("data-target-id")).toBe("a");
-    expect(btn[0].getAttribute("data-target-kind")).toBe("verdict");
-    expect(btn[0].getAttribute("data-kind")).toBe("useful");
-    expect(btn[0].getAttribute("data-value")).toBe("1");
-    expect(btn[1].getAttribute("data-value")).toBe("-1");
-    const row = el.querySelector(".amy-jr")!;
-    expect(row.getAttribute("data-amy-act")).toBe("jev-row");
-    expect(row.getAttribute("data-id")).toBe("a");
-    expect(el.querySelector(".amy-jft")!.textContent).toBe("2 answers · 1 cached");
-  });
-
-  it("escapes question name and step label", () => {
+  it("escapes the step label and question name; never emits an instructions field", () => {
     const evil = "<img src=x onerror=alert(1)>";
-    const html = renderJevWindow(turn([dec("e", { questionName: evil, stepLabel: evil })]), {
+    const html = renderJevChecks("t1", [dec("e", { questionName: evil, stepLabel: evil })], {
       open: true,
+      col: 0,
       openRows: new Set(["e"]),
     });
     const el = parse(html);
     expect(el.querySelector("img")).toBeNull();
     expect(el.querySelector(".amy-jq")!.textContent).toContain(evil);
-    expect(el.querySelector(".amy-jstep")!.textContent).toContain(evil);
-  });
-
-  it("never emits an instructions field", () => {
-    const html = renderJevWindow(turn([dec("a")]), { open: true, openRows: new Set(["a"]) });
+    expect(el.querySelector("rect.amy-tcol title")!.textContent).toContain(evil);
     expect(html).not.toMatch(/instructions/i);
   });
 });
 
-describe("summarise", () => {
-  it("nothing changed", () => {
-    expect(summarise([dec("1"), dec("2"), dec("3")])).toBe("nothing changed · 3 answers");
-  });
-  it("counts the would-be changes, one per decision, ahead of the answers", () => {
-    const ds = [
-      ...Array.from({ length: 5 }, (_, i) => dec(`o${i}`)),
-      dec("h", { codeDid: "held", decisionId: "D1" }),
-      dec("h2", { codeDid: "held", decisionId: "D1" }),
-      dec("p", { codeDid: "proof", decisionId: "D2" }),
-      dec("s", { codeDid: "sent-back", decisionId: "D3" }),
-    ];
-    expect(summarise(ds)).toBe("3 to review: 1 held · 1 proof · 1 sent back · 9 answers");
-  });
-  it("counts note, ask and refusal", () => {
-    const ds = [
-      dec("n", { codeDid: "note" }),
-      dec("a", { codeDid: "ask" }),
-      dec("r", { codeDid: "refusal" }),
-    ];
-    expect(summarise(ds)).toBe("3 to review: 1 note · 1 ask · 1 refusal · 3 answers");
+describe("renderJevNotConsulted", () => {
+  it("renders both variants as one CHECKS line without a body", () => {
+    const a = parse(renderJevNotConsulted("t9", "real-steps-stay-local"));
+    expect(a.textContent).toContain("JEV");
+    expect(a.textContent).toContain("not consulted (real steps stay local) · rules only");
+    expect(a.querySelector(".amy-jev-checks")).not.toBeNull();
+    expect(a.querySelector(".amy-jev-body")).toBeNull();
+    expect(a.querySelector("[data-amy-act]")).toBeNull();
+    const b = parse(renderJevNotConsulted("t9", "judge-down"));
+    expect(b.textContent).toContain("unreachable · judge checks skipped");
   });
 });
 
-// the architect 2026-10-02: "keep only the things that Jarvis would have changed, clearly so I can evaluate, then leave the
-// rest expandable in another section".
-describe("renderJevWindow: changes first, the rest folded", () => {
+describe("actionsOf: what Jev would have done", () => {
+  it("one action per decision with its driving answers; its intervention attached; lone rules after; time order", () => {
+    const t = turn(
+      [
+        dec("o", {}),
+        dec("h1", { codeDid: "held", decisionId: "D1", stepLabel: "rm -rf x", ts: T0 + 10 }),
+        dec("h2", { codeDid: "held", decisionId: "D1", stepLabel: "rm -rf x", ts: T0 + 11 }),
+        dec("n", { codeDid: "note", decisionId: "D2", ts: T0 + 30 }),
+      ],
+      [
+        iv("iv1", { decisionId: "D1", ts: T0 + 12 }),
+        iv("iv2", { kind: "proof", cmd: "curl x", chips: ["rule: network"], ts: T0 + 20 }),
+      ],
+    );
+    const a = actionsOf([t]);
+    expect(a.map((x) => [x.did, x.key, x.reasons.length, x.iv?.id])).toEqual([
+      ["held", "D1", 2, "iv1"],
+      ["proof", "iv2", 0, "iv2"],
+      ["note", "D2", 1, undefined],
+    ]);
+    expect(a[1]!.step).toBe("curl x");
+    expect(a[1]!.chips).toEqual(["rule: network"]);
+  });
+  it("actionsSummary counts each kind in words", () => {
+    const a = actionsOf([
+      turn([
+        dec("s", { codeDid: "sent-back", decisionId: "D1" }),
+        dec("n1", { codeDid: "note", decisionId: "D2" }),
+        dec("n2", { codeDid: "note", decisionId: "D3" }),
+        dec("n3", { codeDid: "note", decisionId: "D4" }),
+      ]),
+    ]);
+    expect(actionsSummary(a)).toBe("4 to review: 1 sent back · 3 notes");
+    expect(actionsSummary([])).toBe("nothing to review");
+  });
+});
+
+describe("renderJevActions: the actions to review", () => {
   const ds = [
     dec("a", { stepLabel: "read a.md" }),
     dec("h1", {
@@ -191,7 +370,6 @@ describe("renderJevWindow: changes first, the rest folded", () => {
       questionName: "Planted instructions: is it obeying you, or text it read?",
       answer: "read-content",
     }),
-    dec("b", { stepLabel: "read b.md" }),
     dec("s", {
       codeDid: "sent-back",
       decisionId: "D2",
@@ -199,21 +377,44 @@ describe("renderJevWindow: changes first, the rest folded", () => {
       seam: "stop",
       questionName: "False success: does it claim work the record never shows?",
       answer: 0.83,
+      ts: T0 + 60_000,
     }),
   ];
-  const render = (o: Partial<Parameters<typeof renderJevWindow>[1]> = {}) =>
-    parse(renderJevWindow(turn(ds), { open: true, openRows: none, ...o }));
+  const render = (o: Partial<Parameters<typeof renderJevActions>[2]> = {}, t = turn(ds)) =>
+    parse(renderJevActions("t1", [t], { open: true, ...o }));
 
-  it("one card per would-be change, saying what, on which step and why, with the votes in view", () => {
+  it("returns empty string when Jev would have changed nothing", () => {
+    expect(renderJevActions("t1", [turn([dec("a"), dec("b")])], { open: true })).toBe("");
+  });
+
+  it("a bar in Jev's look says 'would have' and counts them; it folds on a click", () => {
     const el = render();
-    const cards = el.querySelectorAll(".amy-jchange");
-    expect(cards).toHaveLength(2);
-    expect(cards[0]!.textContent).toContain("Would have held this step");
-    expect(cards[0]!.textContent).toContain("rm -rf x");
-    expect(cards[0]!.textContent).toContain("Danger level: how hard is this step to undo?");
-    expect(cards[0]!.textContent).toContain("Planted instructions");
-    expect(cards[1]!.textContent).toContain("Would have sent the reply back");
-    const votes = cards[0]!.querySelectorAll("button[data-amy-act=label]");
+    const w = el.querySelector(".amy-jev-act")!;
+    expect(w.classList.contains("amy-open")).toBe(true);
+    const bar = w.querySelector(".amy-jev-bar")!;
+    expect(bar.getAttribute("data-amy-act")).toBe("jev-act-toggle");
+    expect(bar.getAttribute("data-run")).toBe("t1");
+    expect(bar.querySelector(".amy-jkind")!.textContent).toBe("would have");
+    expect(bar.querySelector(".amy-jsm")!.textContent).toBe("2 to review: 1 held · 1 sent back");
+    expect(
+      render({ open: false }).querySelector(".amy-jev-act")!.classList.contains("amy-open"),
+    ).toBe(false);
+    expect(render({ shadow: false }).querySelector(".amy-jkind")!.textContent).toBe("acted");
+  });
+
+  it("one row per action: what, on which step, why, when, with the votes in view", () => {
+    const el = render();
+    const rows = el.querySelectorAll(".amy-jact");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain("Would have held this step");
+    expect(rows[0]!.querySelector(".amy-jc-step")!.textContent).toBe("step rm -rf x");
+    const why = rows[0]!.querySelector(".amy-jc-why")!.textContent!;
+    expect(why).toContain("because Jev answered");
+    expect(why).toContain("Danger level: how hard is this step to undo? → 3");
+    expect(why).toContain("Planted instructions");
+    expect(rows[0]!.querySelector(".amy-ja-time")!.textContent).toBe("09:38");
+    expect(rows[1]!.textContent).toContain("Would have sent the reply back to be finished");
+    const votes = rows[0]!.querySelectorAll("button[data-amy-act=label]");
     expect(votes).toHaveLength(2);
     expect(votes[0]!.getAttribute("data-target-id")).toBe("D1");
     expect(votes[0]!.getAttribute("data-target-kind")).toBe("decision");
@@ -224,54 +425,73 @@ describe("renderJevWindow: changes first, the rest folded", () => {
     expect(votes[1]!.textContent).toContain("wrong call");
   });
 
-  it("the answers that changed nothing sit in their own folded section", () => {
-    const el = render();
-    const bar = el.querySelector(".amy-jothers-bar")!;
-    expect(bar.textContent).toContain("2 answers that changed nothing");
-    expect(bar.getAttribute("data-amy-act")).toBe("jev-others");
-    expect(el.querySelector(".amy-jothers")!.classList.contains("amy-show")).toBe(false);
-    expect(el.querySelectorAll(".amy-jothers .amy-jr")).toHaveLength(2);
-    expect(
-      render({ othersOpen: true }).querySelector(".amy-jothers")!.classList.contains("amy-show"),
-    ).toBe(true);
-  });
-
-  it("says plainly when nothing would have changed", () => {
-    const el = parse(renderJevWindow(turn([dec("a"), dec("b")]), { open: true, openRows: none }));
-    expect(el.querySelector(".amy-jnone")!.textContent).toBe(
-      "Nothing would have changed in this turn.",
-    );
-    expect(el.querySelector(".amy-jchange")).toBeNull();
-  });
-
   it("a vote already given shows on its button; enforce mode says what it did", () => {
-    const el = render({ votes: new Map([["D1", 1]]) });
-    const v = el.querySelectorAll(".amy-jchange")[0]!.querySelectorAll("button");
+    const v = render({ votes: new Map([["D1", 1]]) })
+      .querySelectorAll(".amy-jact")[0]!
+      .querySelectorAll("button");
     expect(v[0]!.classList.contains("amy-voted")).toBe(true);
     expect(v[1]!.classList.contains("amy-voted")).toBe(false);
-    expect(render({ shadow: false }).querySelector(".amy-jchange")!.textContent).toContain(
+    expect(render({ shadow: false }).querySelector(".amy-jact")!.textContent).toContain(
       "Held this step",
     );
   });
 
-  it("without a decision id the vote falls back to the first reason's answer", () => {
-    const el = parse(
-      renderJevWindow(turn([dec("x", { codeDid: "note" })]), { open: true, openRows: none }),
-    );
-    const b = el.querySelector(".amy-jchange button")!;
+  it("without a decision id the vote falls back to the first answer; a lone rule with no decision has no vote", () => {
+    const b = render({}, turn([dec("x", { codeDid: "note" })])).querySelector(".amy-jact button")!;
     expect(b.getAttribute("data-target-id")).toBe("x");
     expect(b.getAttribute("data-target-kind")).toBe("verdict");
+    const lone = render({}, turn([], [iv("r1", { cmd: "rm -rf /tmp/x" })])).querySelector(
+      ".amy-jact",
+    )!;
+    expect(lone.querySelector("button")).toBeNull();
+    expect(lone.querySelector(".amy-jc-why")!.textContent).toBe(
+      "because of the rules effect: delete",
+    );
+    expect(lone.querySelector(".amy-jc-step")!.textContent).toBe("step rm -rf /tmp/x");
   });
-});
 
-describe("renderJevNotConsulted", () => {
-  it("renders both variants as one line without a body", () => {
-    const a = parse(renderJevNotConsulted("t9", "real-steps-stay-local"));
-    expect(a.textContent).toContain("JEV");
-    expect(a.textContent).toContain("not consulted (real steps stay local) · rules only");
-    expect(a.querySelector(".amy-jev-body")).toBeNull();
-    expect(a.querySelector("[data-amy-act]")).toBeNull();
-    const b = parse(renderJevNotConsulted("t9", "judge-down"));
-    expect(b.textContent).toContain("unreachable · judge checks skipped");
+  it("the extra markup (a waiting card, the refusal offer) rides on its own row", () => {
+    const el = render({ extra: (a) => (a.did === "held" ? '<div class="probe">card</div>' : "") });
+    const rows = el.querySelectorAll(".amy-jact");
+    expect(rows[0]!.querySelector(".amy-ja-extra .probe")).not.toBeNull();
+    expect(rows[1]!.querySelector(".amy-ja-extra")).toBeNull();
+  });
+
+  it("a reply marker closes the window, and alone is enough to draw it", () => {
+    const m: MarkerView = {
+      kind: "unsupported-after-two",
+      sessionKey: "s",
+      turnId: "t1",
+      items: ["claims"],
+      ts: T0,
+    };
+    const el = parse(renderJevActions("t1", [turn([], [], [m])], { open: true }));
+    expect(el.querySelector(".amy-jev-act .amy-marker")!.textContent).toBe(
+      "still unsupported after two attempts: claims",
+    );
+    expect(el.querySelector(".amy-jsm")!.textContent).toBe("nothing to review");
+  });
+
+  it("actions of several turns in one reply share the window, in time order", () => {
+    const html = renderJevActions(
+      "t1",
+      [
+        turn([dec("x", { codeDid: "note", decisionId: "D9", ts: T0 + 5 })], [], [], "t2"),
+        turn([dec("y", { codeDid: "held", decisionId: "D8", ts: T0 })]),
+      ],
+      { open: true },
+    );
+    const rows = parse(html).querySelectorAll(".amy-jact");
+    expect([...rows].map((r) => r.getAttribute("data-turn"))).toEqual(["t1", "t2"]);
+  });
+
+  it("escapes names and steps", () => {
+    const evil = "<img src=x onerror=alert(1)>";
+    const el = render(
+      {},
+      turn([dec("e", { codeDid: "note", questionName: evil, stepLabel: evil })]),
+    );
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector(".amy-jc-step")!.textContent).toContain(evil);
   });
 });

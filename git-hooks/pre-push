@@ -21,6 +21,15 @@ set -euo pipefail
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 PII_SCRIPT="$ROOT_DIR/scripts/pii-pre-push.sh"
 
+# FORK 2026-10-05 — git hands this hook GIT_DIR; on a push from a linked worktree it is that
+# worktree's gitdir, which shares the main repository's config. Every gate below inherited it, and
+# a test suite that makes a scratch repo with `git init` in a temp folder re-initialised THIS
+# repository instead: core.bare = true, and every git command in the main checkout failed with
+# "this operation must be run in a work tree" (twice in 21 minutes during one publish push).
+# The gates find the repository from their working folder, the root of the checkout pushing.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY
+cd "$ROOT_DIR"
+
 # Gate 1 — PII leak grep
 if [[ ! -x "$PII_SCRIPT" ]]; then
   echo "[pre-push] missing: $PII_SCRIPT (run chmod +x and try again)" >&2
@@ -39,7 +48,9 @@ else
   echo "[pre-push] running bible:invariants…" >&2
   # cd to repo root so node + pnpm find the right project. The runner exits 0
   # on all-pass OR all-skip-because-gateway-down; non-zero only on real fails.
-  if ! (cd "$ROOT_DIR" && pnpm bible:invariants); then
+  # FORK 2026-10-05: judge the tree being pushed. Unset, the gate reads the shared checkout
+  # (~/src/tinkerclaw), so another session's uncommitted edit there blocked a clean publish worktree.
+  if ! (cd "$ROOT_DIR" && BIBLE_DIR="${BIBLE_DIR:-$ROOT_DIR/TINKER_UI_DESIGN_BIBLE}" pnpm bible:invariants); then
     echo "" >&2
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
     echo "🛑 BLOCKED: bible:invariants failed" >&2

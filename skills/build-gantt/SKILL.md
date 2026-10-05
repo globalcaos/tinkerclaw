@@ -1,6 +1,6 @@
 ---
 name: build-gantt
-description: Draw a master-worker build as a Gantt chart in the chat. Phases in colour by kind of work (conception, spec, build, review and integration, field test, manual), one lane per parallel unit with its build and review segments at their real times, folded idle gaps, a now line, and the remaining phases as dashed estimates on their own scale. Use it in EVERY master-worker loop, before each turn is sent to the worker and at each phase review, and whenever the principal asks how a build is going ("report progress", "where are we", "show me the plan", "gantt").
+description: Draw a master-worker build as a Gantt chart in the chat. Phases in colour by kind of work (conception, spec, build, review and integration, field test, manual), one lane per parallel unit with its build and review segments at their real times, folded idle gaps, a now line, and the remaining phases as dashed estimates on their own scale. In Tinker it also gives a chained master a live Gantt tab (icon only, between master and slave) that folds phases and opens what each unit did. Use it in EVERY master-worker loop, before each turn is sent to the worker and at each phase review, and whenever the principal asks how a build is going ("report progress", "where are we", "show me the plan", "gantt").
 ---
 
 # build-gantt
@@ -24,6 +24,23 @@ definition, coding, to a final fully visual manual)."
    turn as the send; say so in one line if the principal could read it as "after".
 2. **Every phase review**, with the phase's real lanes filled in.
 3. **On request**: "report progress", "where are we", "show the plan".
+
+## The Gantt tab (Tinker)
+
+Since 2026-10-05 the chart also lives in its own tab. The principal asked for "a slither tab (only
+a graph icon) between master and slave … attached to the master … connected in real time to the
+ongoing process". When the master of a chain runs `render` from a Tinker chat, the plan is
+attached to that chat (`$TC_SESSION_KEY`) in `~/.openclaw/data/gantt-boards.json`. Within 20 s
+an icon tab appears right after the master. It shows the plan as a live page that derives from the
+workflow journals every 15 s (`gantt.py live`, in memory, the plan file is never written).
+
+- Finished phases are folded, running and planned ones open. A click on a phase folds or unfolds
+  it. A click on a lane opens what each unit was asked to do and what it reported (`gantt.py agent`).
+- The tab belongs to the master's session. Closing the pair hides it and reopening brings it
+  back. Deleting the master session drops the board. Releasing the chain hides the tab.
+- Nothing changes in the loop: keep pasting the chart block at each send. The tab is for
+  watching between sends; the block is the record in the chat.
+- `attach PLAN.json` gives a chat its tab by hand (another plan, another chat); `detach` drops it.
 
 ## The plan file
 
@@ -109,6 +126,10 @@ The master owns it.
 G=~/src/tinkerclaw/skills/build-gantt/scripts/gantt.py
 python3 $G derive <charter_dir>/gantt.json      # fill lanes from the workflow journals
 python3 $G render <charter_dir>/gantt.json --png /tmp/gantt.png > /tmp/gantt.block.md
+python3 $G attach <charter_dir>/gantt.json [--session KEY]   # the chat's Gantt tab (render does it too)
+python3 $G detach [--session KEY]
+python3 $G live <charter_dir>/gantt.json > /tmp/gantt-live.html # the tab's page, to look at it offline
+python3 $G agent <wf_id> <agent_id>                         # one unit: model, task, report
 ```
 
 `render` prints a ` ```html-render ` block: paste it into the Tinker reply. It leaves out the table view to stay small (about 35 KB
@@ -138,6 +159,13 @@ Before sending, the actual reply must contain the generated `html-render` chart 
   working time against real plus estimated time, so it moves when the estimates move.
 
 ## Failures Overcome
+
+- 2026-10-05, building the Gantt tab: `derive` took 12.2 s on a 39-phase, 248-lane build, too slow
+  for a page that refreshes every 15 s. It read every line of every agent transcript to find two
+  timestamps, and ran one glob over `~/.claude/projects` per workflow (93 % of the time). It now
+  reads each transcript's head and tail and walks the projects once: 0.41 s, the same 449
+  segments. The live page also never writes the plan: a server-side derive that wrote the file
+  would race the master's own edits.
 
 - 2026-10-04 09:02, the architect: "You still failed to show me the gantt, try again." The prior markdown-image syntax check passed but did not prove delivery. A direct image in `html-render` produced an `<img src="/tinker/diagrams/sv2-gantt-31-chat.png">` inside the live snapshot's `#messages`. Repeated delivery failures now require checking that destination element, not only reply syntax.
 

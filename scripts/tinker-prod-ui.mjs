@@ -15,6 +15,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
+import { checkoutDrift } from "./lib/checkout-drift.mjs";
 
 const PORT = Number(process.env.TINKER_PROD_PORT || 18793);
 const GW_HOST = process.env.TINKER_GATEWAY_HOST || "127.0.0.1";
@@ -374,6 +376,137 @@ async function handleOpenFile(req, res) {
   return true;
 }
 
+// FORK 2026-10-05 (the architect: "a dedicated tab to visualize [the gantt] … between master and slave …
+// attached to the master … connected in real time to the ongoing process"). A chain master gets
+// its plan registered by skill build-gantt (`gantt.py render` from a Tinker chat, or `attach`) in
+// ~/.openclaw/data/gantt-boards.json. The tab bar reads /api/gantt/boards; the Gantt tab's iframe
+// loads /api/gantt/view, which fetches /api/gantt/chart again every 15 s, and its drawer asks
+// /api/gantt/agent for one unit. gantt.py derives from the workflow journals IN MEMORY: the plan
+// file is the master's and is never written from here.
+const GANTT_PY = path.join(ROOT, "skills", "build-gantt", "scripts", "gantt.py");
+const GANTT_BOARDS_FILE = path.join(HOME, ".openclaw", "data", "gantt-boards.json");
+const GANTT_CACHE_MS = 8_000;
+const ganttRuns = new Map();
+
+const ganttKeysMatch = (a, b) => a === b || a.endsWith(`:${b}`) || b.endsWith(`:${a}`);
+
+function readGanttBoards() {
+  let boards;
+  try {
+    boards = JSON.parse(fs.readFileSync(GANTT_BOARDS_FILE, "utf-8"))?.boards;
+  } catch {
+    return [];
+  }
+  if (!isPlainObject(boards)) return [];
+  return Object.entries(boards)
+    .filter(([, b]) => isPlainObject(b) && typeof b.plan === "string" && fs.existsSync(b.plan))
+    .map(([session, b]) => ({
+      session,
+      plan: b.plan,
+      title: typeof b.title === "string" ? b.title : "",
+      at: typeof b.at === "string" ? b.at : null,
+    }));
+}
+
+function runGanttPy(args, timeoutMs) {
+  return new Promise((resolve) => {
+    execFile(
+      "python3",
+      [GANTT_PY, ...args],
+      { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
+      (err, stdout, stderr) =>
+        resolve({
+          ok: !err,
+          stdout: String(stdout ?? ""),
+          stderr: String(stderr || err?.message || ""),
+        }),
+    );
+  });
+}
+
+/** One gantt.py run per plan and mode every GANTT_CACHE_MS, shared by every page that asks. */
+function ganttRender(plan, mode) {
+  const key = `${mode}:${plan}`;
+  const hit = ganttRuns.get(key);
+  if (hit && Date.now() - hit.at < GANTT_CACHE_MS) return hit.promise;
+  const promise = runGanttPy(["live", plan, ...(mode === "chart" ? ["--fragment"] : [])], 60_000);
+  ganttRuns.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+function sendCompressed(req, res, status, type, body) {
+  const headers = { "Content-Type": type, "Cache-Control": "no-store" };
+  let out = Buffer.from(body, "utf-8");
+  if (/\bgzip\b/.test(String(req.headers["accept-encoding"] ?? ""))) {
+    out = zlib.gzipSync(out);
+    headers["Content-Encoding"] = "gzip";
+  }
+  res.writeHead(status, headers);
+  res.end(out);
+}
+
+const GANTT_EMPTY_PAGE = (msg) =>
+  `<!doctype html><meta charset="utf-8"><body style="margin:0;padding:24px;background:#1a140e;color:#b8a888;font:13px ui-sans-serif,system-ui,sans-serif">${msg}</body>`;
+
+async function handleGantt(sub, url, req, res) {
+  if (sub === "boards") {
+    if (req.method === "DELETE") {
+      const session = url.searchParams.get("session") || "";
+      if (!session) return json(res, 400, { error: "Missing session" });
+      const r = await runGanttPy(["detach", "--session", session], 15_000);
+      return json(res, r.ok ? 200 : 500, { ok: r.ok, detail: (r.ok ? r.stdout : r.stderr).trim() });
+    }
+    return json(res, 200, { boards: readGanttBoards() });
+  }
+  if (sub === "agent") {
+    const wf = url.searchParams.get("wf") || "";
+    const agent = url.searchParams.get("agent") || "";
+    if (!/^wf_[A-Za-z0-9_-]{1,64}$/.test(wf) || !/^[A-Za-z0-9]{1,64}$/.test(agent)) {
+      return json(res, 400, { error: "bad workflow or agent id" });
+    }
+    const r = await runGanttPy(["agent", wf, agent], 20_000);
+    let body;
+    try {
+      body = JSON.parse(r.stdout);
+    } catch {
+      body = { error: r.stderr.trim().slice(-300) || "gantt.py printed nothing" };
+    }
+    return json(res, body.error ? 404 : 200, body);
+  }
+  if (sub === "view" || sub === "chart") {
+    const session = url.searchParams.get("session") || "";
+    const board = session
+      ? readGanttBoards().find((b) => ganttKeysMatch(b.session, session))
+      : null;
+    if (!board) {
+      const msg = "No Gantt plan is attached to this chat.";
+      return sendCompressed(
+        req,
+        res,
+        404,
+        "text/html; charset=utf-8",
+        sub === "view" ? GANTT_EMPTY_PAGE(msg) : msg,
+      );
+    }
+    const r = await ganttRender(board.plan, sub);
+    if (!r.ok) {
+      console.error(
+        `[tinker-prod-ui] gantt.py live ${board.plan} failed: ${r.stderr.trim().slice(-500)}`,
+      );
+      const msg = `The chart could not be drawn: ${r.stderr.trim().split("\n").pop() || "gantt.py failed"}`;
+      return sendCompressed(
+        req,
+        res,
+        500,
+        "text/html; charset=utf-8",
+        sub === "view" ? GANTT_EMPTY_PAGE(msg) : msg,
+      );
+    }
+    return sendCompressed(req, res, 200, "text/html; charset=utf-8", r.stdout);
+  }
+  json(res, 404, { error: "Unknown gantt route" });
+}
+
 // FORK 2026-09-30 (the architect: "deploy them hot, from now on") — a deploy is live only when open pages
 // run it, and when this server runs its own new code too.
 //   - servedBundle(): the Tinker bundle dist/index.html names now (/api/ui-build).
@@ -701,6 +834,17 @@ function startRebuild(kind, opts = {}) {
     `starting ${kind} rebuild (${by === "page" ? "from the page" : `by ${requester}`}: ${reason})`,
   ];
   recordDisruption("rebuild", { phase: "start", kind, by, requester, origin, reason });
+  // FORK 2026-10-05 — a frontend build is made from the shared checkout as it is. Say it when that
+  // is not develop: on 10-05 a dead session's branch was rebuilt, reported "ok", and hid a merged
+  // feature for an hour (scripts/lib/checkout-drift.mjs).
+  job.warning = "";
+  if (kind === "fe") {
+    const drift = checkoutDrift(ROOT);
+    if (drift) {
+      job.warning = drift.warning;
+      appendRebuildLog(kind, drift.warning);
+    }
+  }
   // One 'end' line per run. A spawn that fails emits 'error' AND then 'close' (exit -2, measured on
   // Node 22), and Node's docs say to guard handlers on both against running twice.
   let endRecorded = false;
@@ -1256,6 +1400,10 @@ const server = http.createServer((req, res) => {
   }
   if (pathname === "/api/open-file") {
     void handleOpenFile(req, res);
+    return;
+  }
+  if (pathname.startsWith("/api/gantt/")) {
+    void handleGantt(pathname.slice("/api/gantt/".length), url, req, res);
     return;
   }
   // FORK 2026-09-30 (the architect: "make code changes and deploy them hot, from now on"): what this server

@@ -342,56 +342,77 @@ await post("/__mock/event", {
 await page.waitForTimeout(400);
 await shot("04-sent-back", "#messages");
 
-// ── 5 notes on tool rows + 5b Jev window ────────────────────────────────────────────────────────────────────────────
+// ── 5 the two Jev windows: CHECKS (timeline) and WOULD HAVE (the architect 2026-10-05) ────────────────────────────────────────
 const noteHistory = [
   userMsg("Check the folder.", NOW - 60_000),
   ...toolMsgs("toolu_note1", "ls /work/demo", NOW - 55_000),
   ...toolMsgs("toolu_note2", "cat notes.txt", NOW - 52_000),
+  ...toolMsgs("toolu_note3", "grep -r invoice /work/demo", NOW - 50_000),
   asstMsg("Here is what is in the folder.", NOW - 45_000),
+];
+// A realistic reply: the prompt's checks, three tool calls checked before and after, the stop's checks.
+const QS = [
+  ["danger-level", "Danger level", 0],
+  ["planted-instructions", "Planted instructions", "no"],
+  ["reads-private", "Reads something private", "no"],
+  ["safe-to-repeat", "Safe to repeat", "yes"],
+  ["off-task", "Off task", 0.1],
+];
+let seq = 0;
+const at = (ms) => NOW - 58_000 + ms;
+const checksFor = (stepLabel, seam, toolUseId, t0, n, over = {}) =>
+  QS.slice(0, n).map(([questionId, questionName, answer], i) =>
+    dec(`c${++seq}`, 1, {
+      ts: t0 + i * 40,
+      stepLabel,
+      seam,
+      questionId,
+      questionName,
+      answer,
+      prob: 0.1,
+      codeDid: "ok",
+      cacheHit: i % 3 === 2,
+      latencyMs: 120 + i * 30,
+      ...(toolUseId ? { toolUseId } : {}),
+      ...over,
+    }),
+  );
+const noteDecisions = [
+  ...checksFor("prompt", "prompt", null, at(0), 3),
+  ...checksFor("Bash ls /work/demo", "pre-tool", "toolu_note1", at(3_000), 4),
+  ...checksFor("Bash ls /work/demo", "post-tool", "toolu_note1", at(3_600), 2),
+  ...checksFor("Bash cat notes.txt", "pre-tool", "toolu_note2", at(6_000), 5),
+  dec("dn", 1, {
+    ts: at(6_300),
+    stepLabel: "Bash cat notes.txt",
+    seam: "post-tool",
+    toolUseId: "toolu_note2",
+    codeDid: "note",
+    questionId: "reads-private",
+    questionName: "Reads something private",
+    answer: "yes",
+    prob: 0.7,
+    interventionId: "ivn",
+  }),
+  ...checksFor("Bash cat notes.txt", "post-tool", "toolu_note2", at(6_400), 2),
+  ...checksFor("Bash grep -r invoice /work/demo", "pre-tool", "toolu_note3", at(8_000), 4),
+  ...checksFor("Bash grep -r invoice /work/demo", "post-tool", "toolu_note3", at(8_500), 3),
+  ...checksFor("stop", "stop", null, at(12_000), 3),
 ];
 await scenario({
   history: noteHistory,
   feed: {
-    decisionEvents: [
-      dec("d1", 1, {
-        stepLabel: "Bash ls /work/demo",
-        codeDid: "ok",
-        answer: 0,
-        prob: 0.02,
-        questionId: "danger-level",
-        toolUseId: "toolu_note1",
-      }),
-      dec("d2", 1, {
-        stepLabel: "Bash cat notes.txt",
-        codeDid: "note",
-        questionId: "reads-private",
-        questionName: "Reads something private",
-        answer: "yes",
-        prob: 0.7,
-        toolUseId: "toolu_note2",
-      }),
-      dec("d3", 1, {
-        stepLabel: "Reply",
-        seam: "stop",
-        codeDid: "ok",
-        questionId: "supported-by-sources",
-        questionName: "Supported by sources",
-        answer: "yes",
-        prob: 0.96,
-        cacheHit: true,
-      }),
-      dec("d4", 1, {
-        stepLabel: "Bash cat notes.txt",
-        codeDid: "ok",
-        questionId: "safe-to-repeat",
-        questionName: "Safe to repeat",
-        answer: "yes",
-        prob: 0.55,
-        weak: true,
-        degraded: false,
+    decisionEvents: noteDecisions,
+    interventions: [
+      iv("ivn", "dn", "note", {
+        state: "settled",
+        title: "Note for the agent",
+        chips: [],
+        ts: at(6_300),
       }),
     ],
   },
+  st: status({ mode: "shadow", state: "shadow", line: "Shadow · watching" }),
 });
 await page
   .locator(".reasoning-group summary, .reasoning-toggle, [data-reasoning-toggle]")
@@ -399,14 +420,41 @@ await page
   .click()
   .catch(() => {});
 await page.waitForTimeout(300);
-await shot("05-notes-and-window-closed", "#messages");
+await shot("05-two-windows-closed", "#messages");
 check(
-  (await page.locator(".amy-note-chip").count()) >= 1,
-  "5 notes: a note chip rides on the tool row it judged",
+  (await page.locator(".amy-turn .amy-jev").count()) === 2,
+  "5 two windows: one CHECKS and one WOULD HAVE after the reply",
 );
+check(
+  (await page.locator(".amy-note-chip, .amy-sentback, .amy-settled").count()) === 0,
+  "5 two windows: nothing else of Jev's (no chip on a tool row, no settled line)",
+);
+const sumText = (await page.locator(".amy-jev-checks .amy-jsm").innerText()).trim();
+check(
+  sumText.startsWith(`${noteDecisions.length} checks · 5 steps`),
+  `5 checks: the bar counts checks and steps (${sumText})`,
+);
+const actRows = page.locator(".amy-jev-act.amy-open .amy-jact");
+check(
+  (await actRows.count()) === 1 &&
+    (await actRows.first().innerText()).includes("Would have added a note for the agent"),
+  "5 would have: open by default, one row saying what it would have done",
+);
+await shot("05-would-have", ".amy-jev-act");
 await click("[data-amy-act=jev-toggle]");
-await click("[data-amy-act=jev-row]");
-await shot("05b-jev-window-open", ".amy-turn");
+const cols = await page.locator(".amy-jev-checks.amy-open rect.amy-tcol").count();
+check(cols === 5, `5 checks: the opened window draws one column per step (${cols})`);
+const svgBox = await page.locator(".amy-jev-checks svg.amy-tl").boundingBox();
+check(
+  !!svgBox && svgBox.width > 300 && svgBox.height >= 80,
+  `5 checks: the timeline is painted at size (${JSON.stringify(svgBox)})`,
+);
+await shot("05b-checks-open", ".amy-jev-checks");
+await click(".amy-jev-checks rect.amy-tcol[data-col='2']");
+const detRows = await page.locator(".amy-tdet .amy-jr").count();
+check(detRows === 8, `5 checks: a click on the third column lists its 8 checks (${detRows})`);
+await click(".amy-tdet .amy-jr");
+await shot("05c-column-picked", ".amy-turn");
 
 // ── 6 exceptional approval ──────────────────────────────────────────────────────────────────────────────────────────
 await scenario({

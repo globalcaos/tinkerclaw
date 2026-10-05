@@ -8,7 +8,18 @@
   gantt.py render PLAN.json [--now ISO] [--html OUT.html] [--png OUT.png] [--width 1100]
       Print a ```html-render block on stdout. --html writes a standalone page,
       --png a screenshot of it (headless Chrome), for looking at it or for channels
-      that cannot draw HTML.
+      that cannot draw HTML. Run from a Tinker chat ($TC_SESSION_KEY set), it also
+      attaches the plan to that chat, which gives a chained master its Gantt tab.
+  gantt.py live PLAN.json [--fragment] [--now ISO]
+      Derive in memory (the plan file is never written) and print the interactive
+      page the Gantt tab shows: phases fold and unfold, a click on a lane opens what
+      each unit was asked and what it reported. --fragment prints only the chart,
+      which the page fetches again every few seconds.
+  gantt.py agent WF AGENT_ID
+      One workflow unit as JSON: model, task prompt, result summary, start, end, state.
+  gantt.py attach PLAN.json [--session KEY] | detach [--session KEY]
+      Register or drop a plan for a chat session (default $TC_SESSION_KEY) in
+      ~/.openclaw/data/gantt-boards.json, the list the Tinker tab bar reads.
 
 The plan file format is described in SKILL.md next to this script.
 """
@@ -77,12 +88,63 @@ def lane_of(label):
     return key, rest.strip(), kind, verb
 
 
+_WF_DIRS = None
+
+
+def workflow_dir(wf):
+    """One walk of ~/.claude/projects per process: a glob per workflow was 93 % of derive."""
+    global _WF_DIRS
+    if _WF_DIRS is None:
+        _WF_DIRS = {}
+        for d in glob.glob(os.path.expanduser("~/.claude/projects/*/*/subagents/workflows/wf_*")):
+            _WF_DIRS.setdefault(os.path.basename(d), d)
+    return _WF_DIRS.get(wf)
+
+
+def _ts_of(line):
+    try:
+        t = json.loads(line).get("timestamp")
+    except (ValueError, AttributeError):
+        return None
+    return parse_t(t) if t else None
+
+
+def first_last_ts(f):
+    """First and last timestamp of an agent transcript, read from its head and its tail.
+
+    The transcript is append-only, so those two ends are its start and its end. Reading every line
+    of every transcript made derive take 12-15 s on a 39-phase, 248-lane build (2026-10-05), and
+    the Gantt tab derives again every few seconds; head and tail gave the same 449 segments."""
+    with open(f, "rb") as fh:
+        first = None
+        for line in fh:
+            first = _ts_of(line)
+            if first:
+                break
+        if not first:
+            return None, None
+        size = fh.seek(0, os.SEEK_END)
+        back = 1 << 16
+        while True:
+            start = max(0, size - back)
+            fh.seek(start)
+            lines = fh.read(size - start).split(b"\n")
+            if start:
+                lines = lines[1:]  # the first piece is the end of a line cut in half
+            for line in reversed(lines):
+                t = _ts_of(line)
+                if t:
+                    return first, t
+            if not start:
+                return first, first
+            back <<= 2
+
+
 def workflow_agents(wf):
-    hits = glob.glob(os.path.expanduser(f"~/.claude/projects/*/*/subagents/workflows/{wf}"))
-    if not hits:
+    d = workflow_dir(wf)
+    if not d:
         print(f"derive: workflow {wf} not found under ~/.claude/projects", file=sys.stderr)
         return []
-    d = hits[0]
     labels, finished = {}, set()
     for line in open(os.path.join(d, "journal.jsonl")):
         o = json.loads(line)
@@ -96,29 +158,93 @@ def workflow_agents(wf):
         f = os.path.join(d, f"agent-{aid}.jsonl")
         if not os.path.exists(f):
             continue
-        ts = []
-        for line in open(f):
-            try:
-                t = json.loads(line).get("timestamp")
-            except ValueError:
-                continue
-            if t:
-                ts.append(parse_t(t))
-        if not ts:
+        start, end = first_last_ts(f)
+        if not start:
             continue
-        start, end = min(ts), max(ts)
         if aid in finished:
             state = "done"
         elif (now - end).total_seconds() < CUT_AFTER_MIN * 60:
             state, end = "running", None
         else:
             state = "cut"
-        out.append({"label": label, "start": start, "end": end, "state": state})
+        out.append({"label": label, "start": start, "end": end, "state": state, "agent": aid})
     return out
+
+
+AGENT_ID = re.compile(r"^[A-Za-z0-9]{1,64}$")
+WF_ID = re.compile(r"^wf_[A-Za-z0-9_-]{1,64}$")
+HARNESS_SPLIT = "The computed task text follows:\n"
+
+
+def agent_detail(wf, aid):
+    """What one workflow unit was asked to do and what it reported, for the Gantt tab's drawer."""
+    if not WF_ID.match(wf or "") or not AGENT_ID.match(aid or ""):
+        return {"error": "bad workflow or agent id"}
+    d = workflow_dir(wf)
+    f = os.path.join(d, f"agent-{aid}.jsonl") if d else ""
+    if not d or not os.path.exists(f):
+        return {"error": f"unit {aid} of {wf} not found"}
+    label, result, finished = "", None, False
+    for line in open(os.path.join(d, "journal.jsonl")):
+        o = json.loads(line)
+        if o.get("agentId") != aid:
+            continue
+        if o.get("type") == "started":
+            label = o.get("label", "")
+        elif o.get("type") == "result":
+            result, finished = o.get("result"), True
+    try:
+        model = json.load(open(os.path.join(d, f"agent-{aid}.meta.json"))).get("model", "")
+    except (OSError, ValueError):
+        model = ""
+    task = ""
+    with open(f) as fh:
+        for line in fh:
+            try:
+                o = json.loads(line)
+            except ValueError:
+                continue
+            if o.get("type") != "user":
+                continue
+            c = (o.get("message") or {}).get("content")
+            if isinstance(c, list):
+                c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
+            task = str(c or "")
+            break
+    if HARNESS_SPLIT in task:  # drop the workflow harness preamble and its two-space indent
+        task = "\n".join(ln[2:] if ln.startswith("  ") else ln
+                         for ln in task.split(HARNESS_SPLIT, 1)[1].split("\n")).strip()
+    summary, head = "", ""
+    if isinstance(result, dict):
+        head = str(result.get("head") or "")
+        summary = result.get("summary")
+        if not isinstance(summary, str):
+            summary = json.dumps(result, indent=1, ensure_ascii=False)
+    elif result is not None:
+        summary = str(result)
+    start, end = first_last_ts(f)
+    now = dt.datetime.now().astimezone()
+    if finished:
+        state = "done"
+    elif end and (now - end).total_seconds() < CUT_AFTER_MIN * 60:
+        state = "running"
+    else:
+        state = "cut"
+    return {"wf": wf, "agent": aid, "label": label, "model": model, "state": state,
+            "start": start.isoformat(timespec="seconds") if start else None,
+            "end": end.isoformat(timespec="seconds") if end else None,
+            "head": head, "summary": summary[:6000], "task": task[:12000]}
 
 
 def derive(path):
     plan = json.load(open(path))
+    n = derive_plan(plan)
+    json.dump(plan, open(path, "w"), indent=1, ensure_ascii=False)
+    print(f"derive: {n} lanes from workflow journals written to {path}")
+
+
+def derive_plan(plan):
+    """Fill auto_tasks in memory and return the lane count; derive() is what writes the file."""
     planned_names = {t["label"].split()[0].upper(): t["label"] for ph in plan["phases"]
                      for t in ph.get("tasks", []) if re.match(r"^[A-Za-z]{1,2}\d+\b", t["label"])}
     for ph in plan["phases"]:
@@ -135,6 +261,7 @@ def derive(path):
                 if a["state"] == "cut":
                     seg["note"] += " · cut before it finished"
                     seg["cut"] = True
+                seg["wf"], seg["agent"] = wf, a["agent"]  # the Gantt tab's drawer reads the unit
                 lane["segments"].append(seg)
         notes = ph.get("notes", {})
         auto = []
@@ -150,9 +277,7 @@ def derive(path):
         if ph.get("workflows"):
             ph["auto_tasks"] = auto
     plan["derived_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
-    json.dump(plan, open(path, "w"), indent=1, ensure_ascii=False)
-    n = sum(len(p.get("auto_tasks", [])) for p in plan["phases"])
-    print(f"derive: {n} lanes from workflow journals written to {path}")
+    return sum(len(p.get("auto_tasks", [])) for p in plan["phases"])
 
 
 def natural(s):
@@ -177,7 +302,8 @@ def build_rows(plan, now):
                 en = parse_t(s.get("e")) if s.get("e") else None
                 status = "running" if en is None else ("pause" if s.get("kind") == "pause" else "done")
                 segs.append({"s": st, "e": en or now, "kind": s.get("kind") or t.get("kind") or ph["kind"],
-                             "status": status, "note": s.get("note", ""), "cut": s.get("cut", False)})
+                             "status": status, "note": s.get("note", ""), "cut": s.get("cut", False),
+                             "wf": s.get("wf"), "agent": s.get("agent")})
             rows.append({"label": t["label"], "note": t.get("note", ""), "segs": segs,
                          "est": t.get("est_hours"), "after": t.get("after"), "after_phase": t.get("after_phase"), "not_before": t.get("not_before"),
                          "kind": t.get("kind") or ph["kind"]})
@@ -410,26 +536,41 @@ def esc(s):
     return html.escape(str(s), quote=True)
 
 
+def seg_info(s):
+    """The words for one segment, shared by the bar's tooltip and the Gantt tab's drawer."""
+    minutes = (s["e"] - s["s"]).total_seconds() / 60
+    return {
+        "kindName": "Pause" if s["status"] == "pause" else KIND_NAME.get(s["kind"], s["kind"]),
+        "when": (f"{fmt_t(s['s'])} → {s['e'].strftime('%H:%M')}" if s["status"] != "planned"
+                 else f"planned, {fmt_t(s['s'])} → {fmt_t(s['e'])} if the estimate holds"),
+        "statusText": {"done": "done", "running": "running now", "planned": "planned (estimate)",
+                       "pause": "pause"}[s["status"]],
+        "minutes": minutes,
+        "dur": fmt_dur(minutes),
+    }
+
+
 def bar_html(s, x, cls_extra=""):
     planned = s["status"] == "planned"
     x0, x1 = x(s["s"], planned), x(s["e"], planned)
     w = max(x1 - x0, 0.35)
     color = PAUSE_COLOR if s["status"] == "pause" else KIND_COLOR.get(s["kind"], "#888")
-    minutes = (s["e"] - s["s"]).total_seconds() / 60
+    info = seg_info(s)
+    minutes = info["minutes"]
     cls = ["bar", s["status"]] + (["cut"] if s.get("cut") else []) + ([cls_extra] if cls_extra else [])
-    kind_name = "Pause" if s["status"] == "pause" else KIND_NAME.get(s["kind"], s["kind"])
-    when = (f"{fmt_t(s['s'])} → {s['e'].strftime('%H:%M')}" if s["status"] != "planned"
-            else "planned, after the work before it")
-    status = {"done": "done", "running": "running now", "planned": "planned (estimate)",
-              "pause": "pause"}[s["status"]]
-    tip = (f"{s.get('row', '')}\n{kind_name} · {status}\n{when} · {fmt_dur(minutes)}"
+    when = info["when"] if not planned else "planned, after the work before it"
+    tip = (f"{s.get('row', '')}\n{info['kindName']} · {info['statusText']}\n{when} · {info['dur']}"
            + (f"\n{s['note']}" if s.get("note") else ""))
     text = fmt_dur(minutes) if w > 4.5 and s["status"] != "pause" else ""
     style = f"left:{x0:.2f}%;width:{w:.2f}%;" + (f"border-color:{color}" if planned else f"background:{color}")
     return f'<div class="{" ".join(cls)}" style="{style}" data-t="{esc(tip)}">{esc(text)}</div>'
 
 
-def render(plan, now, table=True, collapse_done=False):
+def render(plan, now, table=True, collapse_done=False, interactive=False):
+    """interactive=True is the Gantt tab's chart: every lane is emitted, phases carry data-ph and
+    fold (done ones start folded), lanes carry data-lane, and the drawer's data rides along as
+    JSON in #gd. The page around it (live_page) owns the script, so the chart can be swapped in
+    place on each refresh."""
     phases, plan_start, plan_end = build_rows(plan, now)
     spans, xa = make_axis(phases, plan_start, plan_end, plan.get("gap_minutes", 40),
                           plan.get("future_share", 0.32))
@@ -479,7 +620,8 @@ def render(plan, now, table=True, collapse_done=False):
         tip = f"{ph['label']}\n{fmt_dur(sum((s['e'] - s['s']).total_seconds() / 60 for s in merge_segs(segs)))}" + (
             f"\nwaits: {ph['waits']}" if ph["waits"] else "") + (f"\n{ph['note']}" if ph["note"] else "")
         short = ph["label"].split(" · ")[0]
-        out.append(f'<div class="{cls}" style="left:{x0:.3f}%;width:{max(x1 - x0, 0.6):.3f}%;background:{c};border-color:{c}" data-t="{esc(tip)}">{esc(short)}</div>')
+        goto = f' data-goto="{esc(ph["id"])}"' if interactive else ""
+        out.append(f'<div class="{cls}" style="left:{x0:.3f}%;width:{max(x1 - x0, 0.6):.3f}%;background:{c};border-color:{c}" data-t="{esc(tip)}"{goto}>{esc(short)}</div>')
     out.append("</div></div>")
 
     # axis
@@ -508,21 +650,57 @@ def render(plan, now, table=True, collapse_done=False):
     ov.append(f'<div class="now" style="left:{nx:.3f}%"></div>')
     ov.append("</div>")
     out.append("".join(ov))
+    lanes_data, phases_data = [], {}
     for ph in phases:
         segs = phase_span(ph)
         c = KIND_COLOR.get(ph["kind"], "#888")
         title = ph["label"] + (f" — waits: {ph['waits']}" if ph["waits"] else "")
         mark = " ⏸" if ph["waits"] else ""
-        out.append(f'<div class="lab ph" title="{esc(title)}"><i class="sw" style="background:{c}"></i>{esc(ph["label"] + mark)}</div>')
-        out.append('<div class="trk ph">')
+        done = not ph["planned"] and not ph.get("mixed") and not any(
+            s["status"] in ("running", "planned") for r in ph["rows"] for s in r["segs"])
+        pid = esc(ph["id"])
+        if interactive:
+            out.append(f'<div class="lab ph tg{"" if done else " open"}" data-ph="{pid}" data-open="{0 if done else 1}" title="{esc(title)}">'
+                       f'<b class="car"></b><i class="sw" style="background:{c}"></i>{esc(ph["label"] + mark)}</div>')
+            out.append(f'<div class="trk ph" data-ph="{pid}">')
+        else:
+            out.append(f'<div class="lab ph" title="{esc(title)}"><i class="sw" style="background:{c}"></i>{esc(ph["label"] + mark)}</div>')
+            out.append('<div class="trk ph">')
         for s in merge_segs(segs):
             s2 = dict(s, row=ph["label"], note="whole phase", kind=ph["kind"])
             out.append(bar_html(s2, x))
         out.append("</div>")
-        done = not ph["planned"] and not ph.get("mixed") and not any(
-            s["status"] in ("running", "planned") for r in ph["rows"] for s in r["segs"])
-        for r in ([] if (collapse_done and done) else ph["rows"]):
-            out.append(f'<div class="lab" title="{esc(r["label"] + (" — " + r["note"] if r["note"] else ""))}">{esc(r["label"])}</div><div class="trk">')
+        if interactive:
+            running_n = sum(1 for r in ph["rows"] if any(s["status"] == "running" for s in r["segs"]))
+            phases_data[ph["id"]] = {
+                "label": ph["label"], "kind": ph["kind"], "waits": ph["waits"], "note": ph["note"],
+                "status": "done" if done else ("running" if running_n else ("planned" if ph["planned"] else "open")),
+                "lanes": len(ph["rows"]), "running": running_n,
+                "worked": fmt_dur(merged_minutes([(s["s"], s["e"]) for s in segs if s["status"] in ("done", "running")])),
+            }
+        seen = set()
+        for r in ([] if (collapse_done and done and not interactive) else ph["rows"]):
+            tip = esc(r["label"] + (" — " + r["note"] if r["note"] else ""))
+            if not interactive:
+                out.append(f'<div class="lab" title="{tip}">{esc(r["label"])}</div><div class="trk">')
+            else:
+                key = f'{ph["id"]}|{r["label"]}'
+                while key in seen:
+                    key += "+"
+                seen.add(key)
+                hid = " hid" if done else ""
+                out.append(f'<div class="lab ln{hid}" data-in="{pid}" data-lane="{esc(key)}" title="{tip}">{esc(r["label"])}</div>'
+                           f'<div class="trk ln{hid}" data-in="{pid}" data-lane="{esc(key)}">')
+                lanes_data.append({
+                    "key": key, "phase": ph["id"], "label": r["label"], "note": r["note"],
+                    "kind": r["kind"], "est": r.get("est"), "after": r.get("after"),
+                    "afterPhase": r.get("after_phase"),
+                    "segs": [dict({k: v for k, v in seg_info(s).items() if k != "minutes"},
+                                  kind=s["kind"], status=s["status"], note=s.get("note", ""),
+                                  cut=bool(s.get("cut")), wf=s.get("wf"), agent=s.get("agent"),
+                                  s=s["s"].isoformat(timespec="minutes"))
+                             for s in r["segs"]],
+                })
             for s in r["segs"]:
                 out.append(bar_html(dict(s, row=r["label"]), x))
             out.append("</div>")
@@ -559,8 +737,183 @@ def render(plan, now, table=True, collapse_done=False):
         out.append("</table></details>")
     foot = f"Drawn {now.strftime('%d %b %H:%M')}. Idle stretches over {plan.get('gap_minutes', 40)} min are folded; bar length is working time. Real work and the plan (estimates, +N h) have separate scales; ⏸ = waits on something outside the build."
     out.append(f'<div class="sub" style="margin:6px 0 0">{esc(foot)}</div>')
-    out.append(f'<div id="tip"></div><script>{JS}</script></div>')
+    if interactive:
+        data = json.dumps({"lanes": lanes_data, "phases": phases_data, "drawn": now.isoformat(timespec="seconds")},
+                          ensure_ascii=False).replace("</", "<\\/")
+        out.append(f'<div id="tip"></div><script type="application/json" id="gd">{data}</script></div>')
+    else:
+        out.append(f'<div id="tip"></div><script>{JS}</script></div>')
     return "".join(out)
+
+
+# ---------------------------------------------------------------- the Gantt tab (Tinker)
+
+LIVE_REFRESH_S = 15
+
+LIVE_CSS = """
+html,body{margin:0;background:#1a140e;color:#efe4d0;font:13px/1.35 ui-sans-serif,system-ui,sans-serif}
+#bar{position:sticky;top:0;z-index:20;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 12px;
+ background:#1a140e;border-bottom:1px solid #4a3a28}
+#bar button{background:#2e2318;color:#efe4d0;border:1px solid #4a3a28;border-radius:6px;padding:3px 9px;font:inherit;
+ font-size:12px;cursor:pointer}
+#bar button:hover{border-color:#c9a86a}
+#now{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11.5px;color:#b8a888;margin-left:8px}
+#now .c{background:#2e2318;border:1px solid #199e70;color:#efe4d0;border-radius:10px;padding:1px 8px;cursor:pointer}
+#now .c:hover{background:#3a2d1e}
+#live{font-size:11.5px;color:#b8a888;margin-left:auto;white-space:nowrap}
+#live i{display:inline-block;width:8px;height:8px;border-radius:50%;background:#199e70;margin-right:5px;animation:pl 2s infinite}
+#live.stale i{background:#e66767;animation:none}
+@keyframes pl{50%{opacity:.3}}
+#chart{padding:10px 12px}
+.bg .lab.tg{cursor:pointer}
+.bg .lab.tg .car{display:inline-block;width:13px;color:#b8a888;font-weight:400}
+.bg .lab.tg .car::before{content:'\\25B8'}
+.bg .lab.tg.open .car::before{content:'\\25BE'}
+.bg .trk.ph,.bg .ln,.bg .strip div{cursor:pointer}
+.bg .lab.ln{padding-left:14px}
+.bg .lab.ln:hover,.bg .lab.ln.sel{color:#efe4d0;background:rgba(239,228,208,.07)}
+.bg .trk.ln.sel{background:rgba(239,228,208,.05)}
+.bg .hid{display:none}
+#drawer{position:fixed;top:0;right:0;bottom:0;width:min(470px,94vw);background:#120d09;border-left:1px solid #4a3a28;
+ box-shadow:-8px 0 24px rgba(0,0,0,.5);transform:translateX(105%);transition:transform .18s;z-index:30;
+ overflow-y:auto;padding:14px 16px;box-sizing:border-box}
+#drawer.open{transform:none}
+#drawer h2{font-size:15px;margin:0 26px 4px 0}
+#drawer .x{position:absolute;top:8px;right:10px;cursor:pointer;color:#b8a888;font-size:20px;background:none;border:0}
+#drawer .meta{color:#b8a888;font-size:12px;margin:2px 0 6px}
+#drawer .seg{border:1px solid #4a3a28;border-radius:8px;padding:8px 10px;margin:8px 0}
+#drawer .seg.running{border-color:#199e70}
+#drawer .seg h3{font-size:12.5px;margin:0 0 2px;font-weight:650}
+#drawer .k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+#drawer pre{white-space:pre-wrap;word-break:break-word;background:#1a140e;border:1px solid #4a3a28;border-radius:6px;
+ padding:6px 8px;font:11.5px/1.45 ui-monospace,monospace;max-height:360px;overflow:auto;color:#d8ccb4}
+#drawer details summary{cursor:pointer;color:#b8a888;font-size:12px;margin-top:6px}
+#drawer .sum{font-size:12.5px;white-space:pre-wrap;margin-top:4px;line-height:1.45}
+"""
+
+LIVE_JS = """
+(function(){
+const S=new URLSearchParams(location.search).get('session')||'',PK='gantt-open:'+S,EVERY=%(every)d*1000;
+const COL=%(colors)s;
+const chart=document.getElementById('chart'),drawer=document.getElementById('drawer'),
+ live=document.getElementById('live'),nowEl=document.getElementById('now');
+let pref={};try{pref=JSON.parse(localStorage.getItem(PK)||'{}')||{}}catch(e){}
+let data={lanes:[],phases:{}},sel=null,selSig='',busy=false;const units={};
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const q=v=>CSS.escape(v);
+function read(){const g=chart.querySelector('#gd');if(g){try{data=JSON.parse(g.textContent)}catch(e){}}}
+function phLab(id){return chart.querySelector('.lab.tg[data-ph="'+q(id)+'"]')}
+function isOpen(id){if(id in pref)return pref[id];const el=phLab(id);return !!el&&el.dataset.open==='1'}
+function apply(){chart.querySelectorAll('.lab.tg').forEach(el=>{const id=el.dataset.ph,o=isOpen(id);
+ el.classList.toggle('open',o);chart.querySelectorAll('[data-in="'+q(id)+'"]').forEach(r=>r.classList.toggle('hid',!o))});
+ chart.querySelectorAll('.ln').forEach(el=>el.classList.toggle('sel',el.dataset.lane===sel))}
+function save(){try{localStorage.setItem(PK,JSON.stringify(pref))}catch(e){}}
+function setOpen(id,o){pref[id]=o;save();apply()}
+function lane(key){return data.lanes.find(l=>l.key===key)}
+function sig(L){return L?L.segs.map(s=>s.status+s.when).join('|'):''}
+function chips(){const run=data.lanes.filter(l=>l.segs.some(s=>s.status==='running'));
+ nowEl.innerHTML=run.length?'<span>Running now:</span>'+run.map(l=>{const s=l.segs.find(x=>x.status==='running');
+ return '<span class="c" data-lane="'+esc(l.key)+'" title="'+esc(s.when)+'">'+esc(l.phase)+' · '+esc(l.label)+' · '+esc(s.dur)+'</span>'}).join('')
+ :'<span>Nothing running right now</span>'}
+function show(key){const el=chart.querySelector('.lab.ln[data-lane="'+q(key)+'"]');if(el)el.scrollIntoView({block:'center',behavior:'smooth'})}
+function openLane(key){const L=lane(key);if(!L)return;sel=key;selSig=sig(L);apply();
+ const P=data.phases[L.phase]||{};
+ let h='<button class="x" title="Close (Esc)">&times;</button><h2>'+esc(L.label)+'</h2><div class="meta">'+esc(P.label||L.phase)
+ +(L.note?'<br>'+esc(L.note):'')+(L.est?'<br>Estimate '+esc(L.est)+' h':'')+(L.after?'<br>Starts after '+esc(L.after):'')
+ +(L.afterPhase?'<br>Starts after phase '+esc(L.afterPhase):'')+(P.waits?'<br>&#9208; Waits on: '+esc(P.waits):'')+'</div>';
+ L.segs.forEach(s=>{h+='<div class="seg '+esc(s.status)+'"><h3><i class="k" style="background:'+(COL[s.kind]||'#888')+'"></i>'
+ +esc(s.kindName)+' &middot; '+esc(s.statusText)+'</h3><div class="meta">'+esc(s.when)+' &middot; '+esc(s.dur)+(s.note?' &middot; '+esc(s.note):'')+'</div>'
+ +(s.agent?'<div class="unit" data-wf="'+esc(s.wf)+'" data-agent="'+esc(s.agent)+'"><div class="meta">Loading what this unit was asked and what it reported&hellip;</div></div>':'')+'</div>'});
+ if(!L.segs.some(s=>s.agent))h+='<div class="meta">'+(L.segs.every(s=>s.status==='planned')?'Not started yet: the bar is the plan\\'s estimate.':'Drawn from the plan file; no workflow unit is linked to this lane.')+'</div>';
+ drawer.innerHTML=h;drawer.classList.add('open');drawer.querySelectorAll('.unit').forEach(loadUnit)}
+async function loadUnit(el){const k=el.dataset.wf+'/'+el.dataset.agent;let a=units[k];
+ if(!a){try{const r=await fetch('/api/gantt/agent?wf='+encodeURIComponent(el.dataset.wf)+'&agent='+encodeURIComponent(el.dataset.agent),{cache:'no-store'});
+ a=await r.json();if(!r.ok||a.error)throw new Error(a.error||('HTTP '+r.status));if(a.state==='done')units[k]=a}
+ catch(e){el.innerHTML='<div class="meta">Could not load this unit: '+esc(e.message)+'</div>';return}}
+ el.innerHTML='<div class="meta">'+esc(a.model||'model not recorded')+(a.head?' &middot; commit '+esc(a.head):'')+' &middot; '+esc(a.wf)+'</div>'
+ +(a.summary?'<div class="sum">'+esc(a.summary)+'</div>':'<div class="meta">'+(a.state==='running'?'Still working; no report yet.':'Ended without a report.')+'</div>')
+ +(a.task?'<details'+(a.summary?'':' open')+'><summary>What it was asked to do</summary><pre>'+esc(a.task)+'</pre></details>':'')}
+function closeDrawer(){drawer.classList.remove('open');sel=null;apply()}
+chart.addEventListener('click',e=>{const g=e.target.closest('[data-goto]');
+ if(g){setOpen(g.dataset.goto,true);const el=phLab(g.dataset.goto);if(el)el.scrollIntoView({block:'start',behavior:'smooth'});return}
+ const p=e.target.closest('[data-ph]');if(p){setOpen(p.dataset.ph,!isOpen(p.dataset.ph));return}
+ const l=e.target.closest('[data-lane]');if(l)openLane(l.dataset.lane)});
+nowEl.addEventListener('click',e=>{const c=e.target.closest('[data-lane]');if(!c)return;const L=lane(c.dataset.lane);
+ if(L){setOpen(L.phase,true);show(L.key);openLane(L.key)}});
+drawer.addEventListener('click',e=>{if(e.target.closest('.x'))closeDrawer()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
+document.getElementById('expand').onclick=()=>{Object.keys(data.phases).forEach(id=>pref[id]=true);save();apply()};
+document.getElementById('collapse').onclick=()=>{Object.keys(data.phases).forEach(id=>pref[id]=false);save();apply()};
+document.getElementById('auto').onclick=()=>{pref={};save();apply()};
+chart.addEventListener('mousemove',e=>{const tip=chart.querySelector('#tip'),bg=chart.querySelector('.bg');if(!tip||!bg)return;
+ const b=e.target.closest('[data-t]');if(!b){tip.style.display='none';return}tip.textContent=b.getAttribute('data-t');tip.style.display='block';
+ const R=bg.getBoundingClientRect();let x=e.clientX-R.left+12,y=e.clientY-R.top+14;if(x>R.width-310)x=R.width-310;tip.style.left=x+'px';tip.style.top=y+'px'});
+chart.addEventListener('mouseleave',()=>{const t=chart.querySelector('#tip');if(t)t.style.display='none'});
+function stamp(){live.classList.remove('stale');live.innerHTML='<i></i>live &middot; updated '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+async function refresh(){if(busy||document.hidden)return;busy=true;
+ try{const r=await fetch('/api/gantt/chart?session='+encodeURIComponent(S),{cache:'no-store'});const t=await r.text();
+ if(!r.ok)throw new Error(t.slice(0,120)||('HTTP '+r.status));const y=scrollY;chart.innerHTML=t;read();apply();chips();scrollTo(0,y);
+ if(sel&&drawer.classList.contains('open')){const L=lane(sel);if(!L)closeDrawer();else if(sig(L)!==selSig)openLane(sel)}stamp()}
+ catch(e){live.classList.add('stale');live.innerHTML='<i></i>not updated: '+esc(e.message)}finally{busy=false}}
+read();apply();chips();stamp();setInterval(refresh,EVERY);document.addEventListener('visibilitychange',refresh);
+})();
+"""
+
+
+def live_page(chart, title):
+    js = LIVE_JS % {"every": LIVE_REFRESH_S, "colors": json.dumps(dict(KIND_COLOR, pause=PAUSE_COLOR))}
+    return (f'<!doctype html><html><head><meta charset="utf-8"><title>{esc(title)} · Gantt</title>'
+            f"<style>{LIVE_CSS}</style></head><body>"
+            '<div id="bar"><button id="expand">Expand all</button><button id="collapse">Collapse all</button>'
+            '<button id="auto" title="Finished phases folded, running and planned ones open">Default</button>'
+            '<div id="now"></div><span id="live"><i></i>live</span></div>'
+            f'<div id="chart">{chart}</div><div id="drawer"></div><script>{js}</script></body></html>')
+
+
+def boards_file():
+    return os.environ.get("GANTT_BOARDS_FILE") or os.path.expanduser("~/.openclaw/data/gantt-boards.json")
+
+
+def read_boards():
+    try:
+        b = json.load(open(boards_file())).get("boards", {})
+        return b if isinstance(b, dict) else {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
+def write_boards(boards):
+    f = boards_file()
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    tmp = f + ".tmp"
+    json.dump({"boards": boards}, open(tmp, "w"), indent=1, ensure_ascii=False)
+    os.replace(tmp, f)
+
+
+def attach(path, session):
+    """Give this chat a Gantt tab: Tinker draws it next to the chat while it is a chain master."""
+    path = os.path.abspath(path)
+    try:
+        title = json.load(open(path)).get("title", "")
+    except (OSError, ValueError):
+        title = ""
+    boards = {k: v for k, v in read_boards().items() if os.path.exists(v.get("plan", ""))}
+    if boards.get(session, {}).get("plan") == path and boards[session].get("title") == title:
+        return False
+    boards[session] = {"plan": path, "title": title,
+                       "at": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
+    write_boards(boards)
+    return True
+
+
+def detach(session):
+    boards = read_boards()
+    gone = [k for k in boards if k == session or k.endswith(":" + session) or session.endswith(":" + k)]
+    for k in gone:
+        del boards[k]
+    if gone:
+        write_boards(boards)
+    return gone
 
 
 def phase_span(ph):
@@ -607,18 +960,47 @@ def chrome():
 
 
 def main(argv):
-    if len(argv) < 3 or argv[1] not in ("derive", "render"):
+    cmds = ("derive", "render", "live", "agent", "attach", "detach")
+    if len(argv) < 2 or argv[1] not in cmds or (len(argv) < 3 and argv[1] != "detach"):
         print(__doc__)
         return 2
+    if argv[1] == "agent":
+        if len(argv) < 4:
+            print(__doc__)
+            return 2
+        d = agent_detail(argv[2], argv[3])
+        print(json.dumps(d, ensure_ascii=False))
+        return 1 if "error" in d else 0
+    if argv[1] in ("attach", "detach"):
+        rest = argv[2:] if argv[1] == "detach" else argv[3:]
+        opts = dict(zip(rest[0::2], rest[1::2]))
+        session = opts.get("--session") or os.environ.get("TC_SESSION_KEY", "")
+        if not session:
+            print(f"{argv[1]}: no --session and no $TC_SESSION_KEY", file=sys.stderr)
+            return 2
+        if argv[1] == "attach":
+            attach(argv[2], session)
+            print(f"attach: {os.path.abspath(argv[2])} is the Gantt tab of {session}")
+        else:
+            print(f"detach: dropped {detach(session) or 'nothing'}")
+        return 0
     path = argv[2]
     if argv[1] == "derive":
         derive(path)
         return 0
-    args = [a for a in argv[3:] if a != "--collapse-done"]
+    args = [a for a in argv[3:] if a not in ("--collapse-done", "--fragment")]
     opts = dict(zip(args[0::2], args[1::2]))
     now = parse_t(opts["--now"]) if "--now" in opts else dt.datetime.now().astimezone()
     plan = json.load(open(path))
+    if argv[1] == "live":
+        if any(ph.get("workflows") for ph in plan["phases"]):
+            derive_plan(plan)
+        chart = render(plan, now, table=False, interactive=True)
+        print(chart if "--fragment" in argv else live_page(chart, plan.get("title", "Build")))
+        return 0
     print("```html-render\n" + render(plan, now, table=False, collapse_done="--collapse-done" in argv) + "\n```")
+    if os.environ.get("TC_SESSION_KEY") and attach(path, os.environ["TC_SESSION_KEY"]):
+        print(f"render: this chat's Gantt tab now shows {os.path.abspath(path)}", file=sys.stderr)
     page = (f'<!doctype html><html><head><meta charset="utf-8"></head>'
             f'<body style="margin:0;padding:10px;background:#1a140e">{render(plan, now)}</body></html>')
     if "--html" in opts:
