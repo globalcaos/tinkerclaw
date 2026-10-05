@@ -124,7 +124,6 @@ describe("inert while the gateway has no amygdala methods", () => {
     expect(m.ui.tailHtml()).toBe("");
     expect(m.ui.panelBodyHtml()).toBe("");
     expect(m.ui.dotHtml()).toBe("");
-    m.ui.decorateChat(document.createElement("div")); // no throw
     expect(m.calls.map((c) => c[0])).toEqual(["amygdala2.status"]);
   });
   it("an {ok:false} status answer is inert too, and events before the probe do not draw anything", async () => {
@@ -260,9 +259,15 @@ describe("clicks call the gateway with the right parameters", () => {
   });
   it("local toggles repaint and are remembered; unknown acts are not ours", async () => {
     const { ui, spies } = await available({ decisionEvents: [dec("v1")] });
-    expect(ui.afterRun(userRow(9_000), null)).not.toContain("amy-open");
-    await ui.handleClick(btn({ "data-amy-act": "jev-toggle", "data-turn": `${TAB}#1` }));
-    expect(ui.afterRun(userRow(9_000), null)).toContain("amy-open");
+    const checksOpen = (): boolean =>
+      document
+        .createRange()
+        .createContextualFragment(ui.afterRun(userRow(9_000), null))
+        .querySelector(".amy-jev-checks")!
+        .classList.contains("amy-open");
+    expect(checksOpen()).toBe(false);
+    await ui.handleClick(btn({ "data-amy-act": "jev-toggle", "data-run": `${TAB}#1` }));
+    expect(checksOpen()).toBe(true);
     expect(spies.repaintChat).toHaveBeenCalled();
     await ui.handleClick(btn({ "data-amy-act": "acc", "data-acc": "learning" }));
     expect(await ui.handleClick(btn({ "data-amy-act": "no-such-act" }))).toBe(false);
@@ -270,18 +275,30 @@ describe("clicks call the gateway with the right parameters", () => {
     await ui.handleClick(btn({ "data-amy-act": "dot" }));
     expect(spies.openPanel).toHaveBeenCalled();
   });
-  // FORK 2026-10-02 — the chip's open state was read from a set nothing wrote, so it shut on every
-  // re-render of its turn.
-  it("a sent-back chip the owner opened stays open across re-renders until he closes it", async () => {
-    const { ui } = await available({ decisionEvents: [dec("v1", { codeDid: "sent-back" })] });
-    const chip = (): string =>
-      ui.afterRun(userRow(9_000), null).match(/<details class="amy-sentback"[^>]*>/)?.[0] ?? "";
-    expect(chip()).not.toBe("");
-    expect(chip()).not.toContain(" open");
-    ui.noteSentBackToggle(`${TAB}#1`, true);
-    expect(chip()).toContain(" open");
-    ui.noteSentBackToggle(`${TAB}#1`, false);
-    expect(chip()).not.toContain(" open");
+  it("WOULD HAVE opens by default and folds on a click; a card that waits for an answer keeps it open", async () => {
+    const { ui } = await available({
+      decisionEvents: [dec("v1", { codeDid: "sent-back", decisionId: "D1" })],
+    });
+    const act = (): Element | null =>
+      document
+        .createRange()
+        .createContextualFragment(ui.afterRun(userRow(9_000), null))
+        .querySelector(".amy-jev-act");
+    expect(act()!.classList.contains("amy-open")).toBe(true);
+    await ui.handleClick(btn({ "data-amy-act": "jev-act-toggle", "data-run": `${TAB}#1` }));
+    expect(act()!.classList.contains("amy-open")).toBe(false);
+    ui.onEvent("amygdala2.intervention", hold({ decisionId: "D1" }));
+    expect(act()!.classList.contains("amy-open")).toBe(true);
+  });
+  it("a click on a timeline column lists that step's checks; a second click folds them", async () => {
+    const { ui } = await available({ decisionEvents: [dec("v1", { codeDid: "ok" })] });
+    await ui.handleClick(btn({ "data-amy-act": "jev-toggle", "data-run": `${TAB}#1` }));
+    expect(ui.afterRun(userRow(9_000), null)).not.toContain("amy-tdet");
+    const col = btn({ "data-amy-act": "jev-col", "data-run": `${TAB}#1`, "data-col": "0" });
+    await ui.handleClick(col);
+    expect(ui.afterRun(userRow(9_000), null)).toContain('class="amy-tdet"');
+    await ui.handleClick(col);
+    expect(ui.afterRun(userRow(9_000), null)).not.toContain("amy-tdet");
   });
 });
 
@@ -598,25 +615,34 @@ describe("rewind", () => {
   });
 });
 
-describe("note chips on tool rows", () => {
-  it("adds one chip to the tool row a note judged, once", async () => {
+// the architect 2026-10-05: "two kinds of messages". Nothing else of Jev's is drawn per reply: no chip on a tool row, no
+// sent-back chip, no settled one-liners.
+describe("two windows per reply", () => {
+  it("one CHECKS and one WOULD HAVE window for a reply with several turns, and nothing else", async () => {
     const { ui } = await available({
       decisionEvents: [
-        dec("n1", {
-          codeDid: "note",
-          questionId: "surprise",
-          questionName: "Surprise",
-          toolUseId: "toolu_9",
+        dec("n1", { codeDid: "note", decisionId: "D1", toolUseId: "toolu_9" }),
+        dec("o1", { codeDid: "ok", turnId: `${TAB}#2`, ts: 11_000 }),
+        dec("s1", { codeDid: "sent-back", decisionId: "D2", turnId: `${TAB}#2`, ts: 12_000 }),
+      ],
+      interventions: [
+        hold({ id: "ivn", decisionId: "D1", kind: "note", state: "settled" }),
+        hold({
+          id: "ivs",
+          decisionId: "D2",
+          kind: "send-back",
+          state: "settled",
+          turnId: `${TAB}#2`,
         }),
       ],
     });
-    const root = document.createElement("div");
-    root.innerHTML =
-      '<div class="tool-row" data-tid="tm2-toolu_9-0"><span class="detail">Bash ls</span></div><div class="tool-row" data-tid="other"></div>';
-    ui.decorateChat(root);
-    ui.decorateChat(root);
-    expect(root.querySelectorAll(".amy-note-chip").length).toBe(1);
-    expect(root.querySelector('[data-tid="tm2-toolu_9-0"] .amy-note-chip')).not.toBeNull();
-    expect(root.querySelector('[data-tid="other"] .amy-note-chip')).toBeNull();
+    const frag = document
+      .createRange()
+      .createContextualFragment(ui.afterRun(userRow(9_000), userRow(20_000)));
+    expect(frag.querySelectorAll(".amy-turn")).toHaveLength(1);
+    expect(frag.querySelectorAll(".amy-jev")).toHaveLength(2);
+    expect(frag.querySelector(".amy-jev-checks .amy-jsm")!.textContent).toContain("3 checks");
+    expect(frag.querySelectorAll(".amy-jev-act .amy-jact")).toHaveLength(2);
+    expect(frag.querySelector(".amy-sentback, .amy-note-chip, .amy-settled, .amy-card")).toBeNull();
   });
 });

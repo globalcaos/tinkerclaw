@@ -156,6 +156,20 @@ describe("buildSituation", () => {
     expect(s2.request.value).toBe("real words");
   });
 
+  // 2026-10-05: 408 of 3 129 requests in a day began with this block, so Jev read a JSON header as the user's words.
+  it("strips the web chat's sender block in front of a prompt", () => {
+    const s = buildSituation(
+      {
+        ...base,
+        seam: "prompt",
+        prompt:
+          'Sender (untrusted metadata):\n```json\n{\n  "label": "Tinker UI (webchat-ui)"\n}\n```\n\n[Mon 2026-10-05 11:47 GMT+2] make it clearer',
+      },
+      ctx,
+    );
+    expect(s.request.value).toBe("make it clearer");
+  });
+
   it("marks supplied context fields with their origins", () => {
     const s = buildSituation(
       { ...base, seam: "stop", reply: "done" },

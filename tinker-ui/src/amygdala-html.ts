@@ -20,6 +20,23 @@ export function fmtClock(ts: number): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+/** "HH:MM:SS" in the browser's time zone. */
+export function fmtClockS(ts: number): string {
+  const d = new Date(ts);
+  return `${fmtClock(ts)}:${String(d.getSeconds()).padStart(2, "0")}`;
+}
+
+/** "380 ms", "4.2 s", "14 min", "2 min 5 s", "1 h 3 min". */
+export function fmtDuration(ms: number): string {
+  const v = Math.max(0, Number.isFinite(ms) ? ms : 0);
+  if (v < 1000) return `${Math.round(v)} ms`;
+  if (v < 60_000) return `${(v / 1000).toFixed(1)} s`;
+  const s = Math.round(v / 1000);
+  if (s < 3600) return s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`;
+  const m = Math.round(s / 60);
+  return m % 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m / 60} h`;
+}
+
 /** "€0.003" (three decimals under a euro, two above). */
 export function fmtEur(n: number): string {
   return `€${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;

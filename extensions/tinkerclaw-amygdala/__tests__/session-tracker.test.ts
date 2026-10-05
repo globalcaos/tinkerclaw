@@ -12,6 +12,31 @@ const post = (
 });
 
 describe("SessionTracker", () => {
+  // 2026-10-05: 405 of 408 wrapped requests in a day were long-job wake-ups. Jev read "Longjob · … done" as the owner's
+  // request and flagged the next steps as unasked. A prompt an agent wrote continues the owner's request.
+  it("a long-job wake-up keeps the owner's last request; the owner's next prompt replaces it", () => {
+    const t = new SessionTracker();
+    t.notePrompt("tab", "[Mon 2026-10-05 11:02 GMT+2] give Alex a working token");
+    t.setRequest("tab", "give Alex a working token");
+    t.notePrompt(
+      "tab",
+      'Sender (untrusted metadata):\n```json\n{"label": "longjob (webchat-ui)"}\n```\n\n[Mon 2026-10-05 11:08 GMT+2] ⟦AGENT:⏳ Longjob · Teams message⟧ done',
+    );
+    expect(t.sessionContext("tab").request).toBe("give Alex a working token");
+    t.setRequest("tab", "give Alex a working token");
+    t.notePrompt("tab", "[Mon 2026-10-05 11:31 GMT+2] what was the .exe for?");
+    expect(t.sessionContext("tab").request).toBeUndefined();
+  });
+
+  it("with no request from the owner yet, an agent's prompt stays the request (a subagent's task)", () => {
+    const t = new SessionTracker();
+    t.notePrompt("sub", "[Day 2026-09-29 17:45 GMT+2] ⟦AGENT:main⟧ please fix it");
+    expect(t.sessionContext("sub").request).toBeUndefined();
+    t.setRequest("sub", "please fix it");
+    t.notePrompt("sub", "⟦AGENT:main⟧ now the tests");
+    expect(t.sessionContext("sub").request).toBeUndefined();
+  });
+
   it("a record entry carries the result's shape, never its text: lines and failure (2026-10-03)", () => {
     const t = new SessionTracker();
     t.recordToolResult("s", {

@@ -90,6 +90,16 @@ export function judgedReply(reply: string | undefined): string | undefined {
   return answer === "" ? undefined : answer;
 }
 
+/** The web chat's header in front of a prompt it relays: `Sender (untrusted metadata):` and a fenced JSON block. */
+const SENDER_BLOCK = /^\s*Sender \(untrusted metadata\):\s*```json[\s\S]*?```\s*/;
+const DATE_STAMP = /^\s*\[(?:Day\b|[A-Z][a-z]{2}\b)[^\]\n]*\]\s*/;
+
+/** A prompt an agent or a job wrote into the chat (a long-job wake-up, a sub-agent's task), marked `⟦AGENT:…⟧`. */
+export function isAgentPrompt(prompt: string | undefined): boolean {
+  if (!prompt) return false;
+  return /^\s*⟦AGENT:/.test(prompt.replace(SENDER_BLOCK, "").replace(DATE_STAMP, ""));
+}
+
 function stripWrapper(prompt: string): string {
   let s = prompt;
   for (const re of APPENDED_BLOCKS) {
@@ -98,7 +108,8 @@ function stripWrapper(prompt: string): string {
   }
   for (;;) {
     const next = s
-      .replace(/^\s*\[(?:Day\b|[A-Z][a-z]{2}\b)[^\]\n]*\]\s*/, "")
+      .replace(SENDER_BLOCK, "")
+      .replace(DATE_STAMP, "")
       .replace(/^\s*⟦[^⟧]*⟧\s*/, "");
     if (next === s) {
       return s.trim();

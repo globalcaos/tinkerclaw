@@ -63,17 +63,18 @@ Apply `{{replacements}}` in order across the PII files (e.g. `perl -i -pe 's/<fi
 
 ## Step 3 — PII GATE (hard, blocking)
 
-`git -C /tmp/clean-pub add -A` then assert `git diff --cached {{remote}}/{{branch}} | grep -aP '^\+.*({{piiRe}})'` is EMPTY. Not empty → fix, repeat. Never proceed past a non-empty gate.
+Stage the sanitized files by name, `git -C /tmp/clean-pub diff --name-only -z | xargs -0 git -C /tmp/clean-pub add --` (the session guard blocks a blanket `add -A` on files this session did not edit with its own tools, and the sanitizer is a script; 2026-10-05), then assert `git diff --cached {{remote}}/{{branch}} | grep -aP '^\+.*({{piiRe}})'` is EMPTY. Not empty → fix, repeat. Never proceed past a non-empty gate.
 
 ## Step 4 — verify + squash-commit + FF push
 
 - Verify the sanitized tree: touched tests (single-file, not parallel), a typecheck, and `{{verifyCmd}}` (slow — a `timeout` kill is NOT a failure; confirm all _run_ checks pass).
 - **Run the touched tests through the repo's own runner (2026-10-05).** One `pnpm vitest run <files>` call over files from several vitest projects stops before any test with `Projects "unit" and "unit-fast" have different 'maxWorkers' but same 'sequence.groupOrder'` and reports "no tests". Use `node scripts/test-projects.mjs <root files>`, then `cd tinker-ui && npx vitest run <ui files>`; sum the "Test Files … passed" lines and compare with the number of files you passed in.
 - **Build the exact commit you will push** with `scripts/deploy-worktree.sh --sha <squash> --dry-run`. On 2026-10-05 develop itself failed the plugin-sdk dts step (a type error a day old, every vitest green); fix it on the source branch first, then apply the same fix to the squash.
-- One squashed commit (message summarizes the published body of work; co-author trailer).
+- One squashed commit (message summarizes the published body of work; no AI co-author trailer or generated-by line, the commit is the architect's, 2026-09-29).
 - Assert FF: `HEAD^ == {{remote}}/{{branch}}`. Re-run the PII gate on `git diff {{remote}}/{{branch}}..HEAD`.
 - `git push {{remote}} HEAD:{{branch}}` (fast-forward; NO force-push). The repo's `core.hooksPath` pre-push runs as a backstop. That hook also runs `pnpm bible:invariants`, which takes more than 15 minutes: run the push as a tracked background job with a limit of an hour or more. A shorter `timeout` kills the hook and the push with it (2026-10-05: rc 124, nothing pushed).
 - Clean up the worktree + temp scripts; keep the WIP backup until confirmed.
+- **Before reporting "published", hold the cut against the source tip (2026-10-05).** A run takes an hour or more and the source branch keeps moving. Run `git log --oneline <cut-commit>..{{branch}}` (the commit the worktree was made from, not the squash) and say in the report what landed after the cut and is NOT published, or publish again. On 2026-10-05 the morning publish was cut at about 09:10, the Gantt tab and Jev's two windows landed during the run, the report said only "published", and the architect found Goku's page "old".
 
 ## Don't-regress
 
@@ -81,3 +82,4 @@ Apply `{{replacements}}` in order across the PII files (e.g. `perl -i -pe 's/<fi
 - The local branch will diverge from the squashed remote; reconcile ONLY after the WIP is committed/cleared by its owner.
 - History-clean is the point — a tip-only sanitize still leaks via `git show <old-commit>`.
 - Ensure the public remote's pre-push actually invokes the PII grep (`scripts/pii-pre-push.sh`); wire it (`core.hooksPath`) if missing — manual gating is the real guard, the hook is the backstop.
+- **`core.bare` must read `false` when the run ends (2026-10-05).** The main checkout was found with `core.bare = true` in `{{repoRoot}}/.git/config` at 09:43 during a publish run, and every git command there failed with "this operation must be run in a work tree" for every session sharing it. Cause, pinned the same morning: the gates the pre-push hook runs inherited `GIT_DIR` (on a push from this throwaway worktree, its gitdir, which shares the main config), and a test suite's `git init` in a temp folder re-initialised the main repository as bare. The hook drops git's environment since develop `5aa6c826c21` (`test/git-hooks-pre-push.test.ts`), but a worktree cut from an older commit still runs its own old hook. Last step of every run, before cleanup: `git -C {{repoRoot}} config core.bare false && git -C {{repoRoot}} rev-parse --is-inside-work-tree` must print `true`.

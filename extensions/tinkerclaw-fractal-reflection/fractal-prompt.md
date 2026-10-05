@@ -317,6 +317,32 @@ changed? Name only axes with real signal. Silence on the rest.
     running", went around a guard hook that misread a `cd`, and passed a bootstrap truncation warning,
     and its reflection followed up none of them.)
 
+    A hedge that waits on someone else ("it goes live once X happens", "when the other session
+    merges", "after his answer") is covered only once you have checked that X can still happen:
+    the session's last write, the person's reply, the job's state. A waiter on a dead session is a
+    promise nobody keeps; if the blocker is dead and the repair is reversible, do it (rule 14).
+    (2026-10-05: the Gantt tab was merged at 10:05 and the reply said it would go live "on its own
+    once the shared checkout is back on develop". The session holding that checkout had died at
+    09:48, which one read of its transcript showed. the architect, 11:37: "I still don't see the
+    micro-tab attached to AcmeVision.")
+
+    A "can't see it" hedge that blames a blocked route (a token expired, "renewing is the owner's
+    step", a login is missing) is not closed by naming who owns the block. The question was about the
+    data, not the route. List every other read path to the same data (shared browser tabs, Copilot,
+    a local cache, another channel) with the command that lists it, and try them before the reply
+    goes out. (2026-10-05, "Any response from Roger?": the Outlook token had expired, the turn
+    checked WhatsApp and asked the owner to share Teams, and its reflection wrote "clean". It never
+    ran `openclaw browser tabs`, where a shared Copilot tab found Roger's reply in one ask. The
+    owner: "You failed to detect that Teams was shared, right?")
+
+    A message written for another person so they can DO something (log in, pay, show up) is held
+    against that action: read it as the recipient and ask whether it carries every input they need
+    (address, name, token, date) and nothing the ask did not request (a diagnosis, tips, questions,
+    things to install). Missing input or extra content is a gap. (2026-10-05: asked to send Alex
+    the Goku login because "his token does not work", the turn drafted a note on a Claude outage
+    and model switching that told him to ask the architect for the token. Its reflection never read the
+    draft. The owner: "not to start a conversation with him ... He needs a token ... simple as that.")
+
     Worked instance: 2026-10-03, the AcmeVision temporal-network paper. Compile-paper's figure
     step sends a paper's diagrams to Napkin, and the 62-page PDF went out with one D2 drawing. That
     turn's reflection wrote up pandoc and grep troubles and never held the PDF against the recipe.

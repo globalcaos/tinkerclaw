@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { classifyEffect, isShellTool } from "./effect-class.js";
-import type { SessionContext } from "./situation.js";
+import { isAgentPrompt, type SessionContext } from "./situation.js";
 import type { ToolRecordEntry } from "./types.js";
 
 export type HookPayload = Record<string, unknown>;
@@ -19,6 +19,9 @@ const FILE_WRITERS = new Set(["write", "edit", "multiedit", "notebookedit"]);
 interface SessionState {
   turnN: number;
   lastRequest: string | undefined;
+  /** The owner's own last request; a turn an agent's prompt started (a long-job wake-up) continues it. */
+  lastOwnerRequest: string | undefined;
+  agentTurn: boolean;
   toolRecord: ToolRecordEntry[];
   results: number;
   repeatedErrors: number;
@@ -109,6 +112,8 @@ export class SessionTracker {
       s = {
         turnN: 0,
         lastRequest: undefined,
+        lastOwnerRequest: undefined,
+        agentTurn: false,
         toolRecord: [],
         results: 0,
         repeatedErrors: 0,
@@ -134,16 +139,23 @@ export class SessionTracker {
     return this.epoch ? `${sessionKey}#${this.epoch}.${n}` : `${sessionKey}#${n}`;
   }
 
-  /** A prompt seam starts a new turn. The request is cleared: the situation builder derives it from the prompt. */
-  notePrompt(sessionKey: string): void {
+  /**
+   * A prompt seam starts a new turn. The owner's prompt clears the request, so the situation builder derives it from
+   * the prompt. An agent's prompt (`⟦AGENT:…⟧`, a long-job wake-up) continues the owner's last request when there is
+   * one (2026-10-05: 405 wake-ups in a day were read as the request).
+   */
+  notePrompt(sessionKey: string, prompt?: string): void {
     const s = this.touch(sessionKey);
     s.turnN += 1;
-    s.lastRequest = undefined;
+    s.agentTurn = isAgentPrompt(prompt);
+    s.lastRequest = s.agentTurn ? s.lastOwnerRequest : undefined;
   }
 
-  /** Remember the user's words (already stripped of metadata wrappers) for the later seams of this turn. */
+  /** Remember the request (already stripped of metadata wrappers) for the later seams of this turn. */
   setRequest(sessionKey: string, request: string | null | undefined): void {
-    this.touch(sessionKey).lastRequest = request ?? undefined;
+    const s = this.touch(sessionKey);
+    s.lastRequest = request ?? undefined;
+    if (!s.agentTurn) s.lastOwnerRequest = s.lastRequest;
   }
 
   /** Append one finished tool call (a `post-tool` payload) and update the futility signals. */

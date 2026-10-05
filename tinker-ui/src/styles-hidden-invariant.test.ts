@@ -35,6 +35,8 @@ const HIDDEN_TOGGLED_CONTAINERS = [
   ".reasoning-content",
   ".attach-strip",
   ".msg-phase-plugins",
+  // FORK 2026-10-05 — the Gantt tab's chart pane (gantt-tab.ts), display:flex when shown.
+  ".gantt-view",
 ] as const;
 
 /** Strip comments so a selector quoted inside a warning note cannot satisfy the assertion. */

@@ -41,15 +41,5 @@
 .amy-rewound{align-self:center;font-size:12px;color:var(--muted);border:1px dashed #5a4a33;border-radius:999px;padding:3px 12px}
 .amy-rewound a{color:var(--accent);cursor:pointer;text-decoration:underline}
 
-.amy-note-chip{font-size:11.5px;border-radius:6px;padding:1px 7px;margin-left:auto}
-.amy-nc-s{background:#2e2a12;color:#e8d68a;border:1px solid #5e5420}
-.amy-nc-f{background:#321d1a;color:#f0b9b9;border:1px solid #6a3530}
-.amy-nc-c{background:#262033;color:#cbb6ef;border:1px solid #4b3d69}
-
-.amy-sentback{font-size:12px;color:#e9d6a6;margin-top:8px}
-.amy-sentback summary{display:inline-block;cursor:pointer;background:#2d2615;border:1px solid #5e4d25;border-radius:7px;padding:4px 9px;list-style:none}
-.amy-sentback summary::-webkit-details-marker{display:none}
-.amy-sb-detail{font-size:12px;color:#cbbfa9;margin-top:6px;border-left:2px solid #5e4d25;padding-left:9px}
-
 .amy-marker{font-size:12px;color:var(--muted);margin-top:6px;border-left:2px solid #5e4d25;padding-left:9px}
 .amy-card + .amy-card { margin-top: 8px; }

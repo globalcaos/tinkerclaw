@@ -2,24 +2,26 @@ import {
   renderAskCard,
   renderExceptionalCard,
   renderHoldCard,
-  renderMarker,
-  renderNoteChip,
   renderProofCard,
   renderRefusalStrip,
   renderRewoundMarker,
-  renderSentBackChip,
 } from "./amygdala-cards.js";
 /**
- * The amygdala UI's glue (design doc §9): one object that owns the client store and turns it into the four things app.ts
- * hooks in — HTML drawn after each reply in the chat, the panel body, the composer dot, and note chips on tool rows —
- * plus the click handling for every `data-amy-act` the builders emit.
+ * The amygdala UI's glue (design doc §9): one object that owns the client store and turns it into the three things app.ts
+ * hooks in — HTML drawn after each reply in the chat (the two Jev windows, CHECKS and WOULD HAVE; the architect 2026-10-05), the
+ * panel body and the composer dot — plus the click handling for every `data-amy-act` the builders emit.
  *
  * INERT UNLESS THE GATEWAY HAS THE METHODS: `onConnected` asks `amygdala2.status`; an unknown-method error (the plugin is
  * off, or this is a gateway from before it) leaves `available` false and every hook returns "" so today's v3.1 panel and
  * chat are untouched. Nothing here talks to a gateway except through the injected `req`.
  */
 import { esc } from "./amygdala-html.js";
-import { renderJevNotConsulted, renderJevWindow } from "./amygdala-jev.js";
+import {
+  type JevAction,
+  renderJevActions,
+  renderJevChecks,
+  renderJevNotConsulted,
+} from "./amygdala-jev.js";
 import { AmygdalaStore } from "./amygdala-store.js";
 import type { FeedView, InterventionView, TurnView } from "./amygdala-types.js";
 import { renderAmygdalaPanelBody, renderDot } from "./panels/amygdala.js";
@@ -68,14 +70,6 @@ export interface AmygdalaUi {
   dotHtml(): string;
   /** True when the click was ours. */
   handleClick(el: Element): Promise<boolean>;
-  /** Put note chips on the tool rows of `root` that a note judged. */
-  decorateChat(root: Element): void;
-  /**
-   * FORK 2026-10-02 — the owner opened or closed a turn's "Sent back" chip (a native <details>).
-   * Its open state is drawn from a set nothing wrote, so the chip snapped shut whenever its turn
-   * re-rendered; app.ts's delegated `toggle` listener reports it here.
-   */
-  noteSentBackToggle(turnId: string, open: boolean): void;
 }
 
 const CLOCK_SKEW_MS = 5_000;
@@ -100,16 +94,18 @@ function rowTime(m: unknown): number | undefined {
 export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
   const now = deps.now ?? Date.now;
   const store = new AmygdalaStore();
-  // Interactive state that is not data: which windows/rows/expanders are open, which ask option is selected.
+  // Interactive state that is not data: which windows/rows/expanders are open, which ask option is selected. A reply's
+  // two windows are keyed by its first turn id (the run key).
   const openWindows = new Set<string>();
+  /** WOULD HAVE windows the owner folded (they open by default: they are there to be reviewed). */
+  const closedActions = new Set<string>();
+  /** The step column clicked in a reply's check timeline. */
+  const selectedCol = new Map<string, number>();
   const openRows = new Set<string>();
-  /** Turns whose "answers that changed nothing" section is unfolded. */
-  const openOthers = new Set<string>();
-  /** Votes given in this page, by target id, so a card shows which one counted (2026-10-02). */
+  /** Votes given in this page, by target id, so a row shows which one counted (2026-10-02). */
   const votes = new Map<string, number>();
   const openAcc = new Set<string>();
   const shownWhy = new Set<string>();
-  const openSentBack = new Set<string>();
   const expandedChanges = new Set<string>();
   const selectedOption = new Map<string, string>();
   /** Steps the judge did not answer: turnId → why. A turn with answers draws its window; one without draws "not consulted". */
@@ -194,68 +190,73 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
       .finally(() => deps.repaintChat());
   }
 
-  function turnHtml(t: TurnView): string {
+  /** What rides on an action's row: a card waiting for an answer (enforce mode), the refusal offer, the Rewound line. */
+  function actionExtra(a: JevAction, t: TurnView | undefined): string {
+    const iv = a.iv;
+    if (!iv || !t) return "";
+    if (iv.state === "open") {
+      if (iv.kind === "hold") return renderHoldCard(iv, { showWhy: shownWhy.has(iv.id) });
+      if (iv.kind === "proof") return renderProofCard(iv);
+      if (iv.kind === "ask") return renderAskCard(iv, selectedOption.get(iv.id) ?? null);
+    }
+    if (iv.kind !== "refusal") return "";
+    if (t.rewound) return renderRewoundMarker(t.turnId, t.rewound);
+    if (t.refusalKept) return "";
+    // Rewind always removes the tab's LAST exchange, so only the newest un-rewound turn may offer it.
+    const newest = t.turnId === newestLiveTurnId();
+    if (newest && !retryByTurn.has(t.turnId)) askRetry(t.turnId);
+    const pick = newest ? retryByTurn.get(t.turnId) : null;
+    return renderRefusalStrip(
+      t.turnId,
+      iv,
+      newest,
+      newest ? undefined : "Rewind the newer exchange first: Rewind always removes the last one",
+      pick
+        ? {
+            label: deps.modelLabel?.(pick.model) ?? pick.model,
+            chipHtml: deps.modelChip?.(pick.model) ?? "",
+            reason: pick.reason,
+          }
+        : null,
+    );
+  }
+
+  /**
+   * One reply's Jev: the CHECKS window (or its "not consulted" line) and the WOULD HAVE window, keyed by the reply's first
+   * turn. `consults` are this reply's steps the judge was not asked about that have no answers of their own.
+   */
+  function runHtml(
+    turns: TurnView[],
+    consults: { turnId: string; state: "real-steps-stay-local" | "judge-down" }[],
+  ): string {
+    const key = turns[0]?.turnId ?? consults[0]?.turnId;
+    if (!key) return "";
+    const decisions = turns.flatMap((t) => t.decisions);
     const parts: string[] = [];
-    if (t.decisions.length > 0) {
+    if (decisions.length > 0) {
       parts.push(
-        renderJevWindow(t, {
-          open: openWindows.has(t.turnId),
+        renderJevChecks(key, decisions, {
+          open: openWindows.has(key),
+          col: selectedCol.get(key),
           openRows,
-          now: now(),
-          othersOpen: openOthers.has(t.turnId),
-          votes,
-          shadow: store.state.status?.mode !== "enforce",
+          rulesOnly: consults.length,
         }),
       );
-    } else if (consult.has(t.turnId)) {
-      parts.push(renderJevNotConsulted(t.turnId, consult.get(t.turnId)!.state));
+    } else if (consults.length > 0) {
+      parts.push(renderJevNotConsulted(key, consults[consults.length - 1]!.state));
     }
-    for (const iv of t.interventions) {
-      switch (iv.kind) {
-        case "hold":
-          parts.push(renderHoldCard(iv, { showWhy: shownWhy.has(iv.id) }));
-          break;
-        case "proof":
-          parts.push(renderProofCard(iv));
-          break;
-        case "ask":
-          parts.push(renderAskCard(iv, selectedOption.get(iv.id) ?? null));
-          break;
-        case "refusal":
-          if (!t.refusalKept && !t.rewound) {
-            // Rewind always removes the tab's LAST exchange, so only the newest un-rewound turn may offer it.
-            const newest = t.turnId === newestLiveTurnId();
-            if (newest && !retryByTurn.has(t.turnId)) askRetry(t.turnId);
-            const pick = newest ? retryByTurn.get(t.turnId) : null;
-            parts.push(
-              renderRefusalStrip(
-                t.turnId,
-                iv,
-                newest,
-                newest
-                  ? undefined
-                  : "Rewind the newer exchange first: Rewind always removes the last one",
-                pick
-                  ? {
-                      label: deps.modelLabel?.(pick.model) ?? pick.model,
-                      chipHtml: deps.modelChip?.(pick.model) ?? "",
-                      reason: pick.reason,
-                    }
-                  : null,
-              ),
-            );
-          }
-          break;
-        default:
-          break; // notes ride on tool rows; send-backs are the chip below
-      }
-    }
-    const chip = renderSentBackChip(t.decisions, t.turnId, openSentBack.has(t.turnId));
-    if (chip) parts.push(chip);
-    for (const m of t.markers) parts.push(renderMarker(m));
-    if (t.rewound) parts.push(renderRewoundMarker(t.turnId, t.rewound));
+    const byId = new Map(turns.map((t) => [t.turnId, t]));
+    // A card that waits for an answer keeps the window open even if the owner folded it.
+    const waiting = turns.some((t) => t.interventions.some((i) => i.state === "open"));
+    const acts = renderJevActions(key, turns, {
+      open: waiting || !closedActions.has(key),
+      votes,
+      shadow: store.state.status?.mode !== "enforce",
+      extra: (a) => actionExtra(a, byId.get(a.turnId)),
+    });
+    if (acts) parts.push(acts);
     return parts.length
-      ? `<div class="amy-turn" data-amy-turn="${esc(t.turnId)}">${parts.join("")}</div>`
+      ? `<div class="amy-turn" data-amy-turn="${esc(key)}">${parts.join("")}</div>`
       : "";
   }
 
@@ -282,11 +283,14 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
     return turns.filter((t) => inRun(t.ts, from, to));
   }
 
-  /** "Not consulted" windows of this tab's steps in this run that have no turn of their own in the store. */
-  function consultOnly(userMsg: unknown, nextUserMsg: unknown): string {
+  /** This tab's steps in this run the judge was not asked about, that have no turn of their own in the store. */
+  function consultsForRun(
+    userMsg: unknown,
+    nextUserMsg: unknown,
+  ): { turnId: string; state: "real-steps-stay-local" | "judge-down" }[] {
     const from = rowTime(userMsg);
     const to = rowTime(nextUserMsg);
-    const out: string[] = [];
+    const out: { turnId: string; state: "real-steps-stay-local" | "judge-down" }[] = [];
     for (const [turnId, c] of consult) {
       if (c.sessionKey !== deps.tabKey() || store.turn(turnId)) continue;
       if (
@@ -294,12 +298,10 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
           ? nextUserMsg === null || nextUserMsg === undefined
           : inRun(c.ts, from, to)
       ) {
-        out.push(
-          `<div class="amy-turn" data-amy-turn="${esc(turnId)}">${renderJevNotConsulted(turnId, c.state)}</div>`,
-        );
+        out.push({ turnId, state: c.state });
       }
     }
-    return out.join("");
+    return out;
   }
 
   function panelInput() {
@@ -440,9 +442,7 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
 
     afterRun(userMsg, nextUserMsg) {
       if (!available()) return "";
-      return (
-        turnsForRun(userMsg, nextUserMsg).map(turnHtml).join("") + consultOnly(userMsg, nextUserMsg)
-      );
+      return runHtml(turnsForRun(userMsg, nextUserMsg), consultsForRun(userMsg, nextUserMsg));
     },
 
     tailHtml() {
@@ -470,13 +470,21 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
       const d = (name: string): string => el.getAttribute(name) ?? "";
       switch (act) {
         case "jev-toggle":
-          toggle(openWindows, d("data-turn"));
+          toggle(openWindows, d("data-run"));
           break;
+        case "jev-act-toggle":
+          toggle(closedActions, d("data-run"));
+          break;
+        case "jev-col": {
+          // A second click on the same column folds its list again.
+          const run = d("data-run");
+          const col = Number(d("data-col"));
+          if (selectedCol.get(run) === col || !Number.isInteger(col)) selectedCol.delete(run);
+          else selectedCol.set(run, col);
+          break;
+        }
         case "jev-row":
           toggle(openRows, d("data-id"));
-          break;
-        case "jev-others":
-          toggle(openOthers, d("data-turn"));
           break;
         case "why":
           toggle(shownWhy, d("data-iv"));
@@ -606,29 +614,6 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
       deps.repaintChat();
       deps.repaintPanel();
       return true;
-    },
-
-    noteSentBackToggle(turnId, open) {
-      if (!turnId) return;
-      if (open) openSentBack.add(turnId);
-      else openSentBack.delete(turnId);
-    },
-
-    decorateChat(root) {
-      if (!available()) return;
-      const chips = new Map<string, string>();
-      for (const t of store.turnsFor(deps.tabKey())) {
-        for (const dec of t.decisions)
-          if (dec.codeDid === "note" && dec.toolUseId)
-            chips.set(dec.toolUseId, renderNoteChip(dec));
-      }
-      if (chips.size === 0) return;
-      for (const row of Array.from(root.querySelectorAll<HTMLElement>(".tool-row[data-tid]"))) {
-        // The app's row id is `<message uid>-<tool use id>-<block index>`; a bare tool use id is accepted too.
-        const tid = row.dataset.tid ?? "";
-        const chip = chips.get(tid) ?? chips.get(tid.replace(/^[^-]+-/, "").replace(/-\d+$/, ""));
-        if (chip && !row.querySelector(".amy-note-chip")) row.insertAdjacentHTML("beforeend", chip);
-      }
     },
   };
 }

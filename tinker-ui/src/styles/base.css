@@ -4383,6 +4383,47 @@ code.fs-link.fs-link-error {
 .tab.tab-active:hover {
   background: var(--surface);
 }
+/* FORK 2026-10-05 (the architect: "a slither tab (only a graph icon) between master and slave") — the
+   Gantt tab, right after a chain master that has a build plan (gantt-tab.ts). Icon only, tinted in
+   the chain's metal. It has no data-tab-id, so drag, close and the chain anchor ignore it. */
+.tab.tab-gantt {
+  flex: 0 0 auto;
+  min-width: 0;
+  /* .tab caps at max-content, which is just the 16 px icon: too small a target. */
+  max-width: none;
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+  cursor: pointer;
+}
+.tab.tab-gantt svg {
+  display: block;
+  opacity: 0.85;
+}
+.tab.tab-gantt:hover svg,
+.tab.tab-gantt.tab-active svg {
+  opacity: 1;
+}
+/* The chart it opens covers the chat area (messages and composer); the master chat keeps running
+   underneath with its scroll intact. Scoped under .chat-area so it outranks `.chat-area > *`
+   (position: relative) on specificity, not on source order. */
+.chat-area > .gantt-view {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  background: #1a140e;
+}
+.gantt-view[hidden] {
+  display: none;
+}
+.gantt-view iframe {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #1a140e;
+}
 /* FORK 2026-09-01 — drag-reorder context tabs. Source dims; a 2px accent
    marker shows the insertion slot; the ghost is the cloned tab following
    the pointer (same contract as .exec-drag-ghost / .exec-drop-indicator). */

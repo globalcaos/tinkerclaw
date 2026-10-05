@@ -1544,6 +1544,13 @@ async function deleteSession(rawKey: string | undefined | null): Promise<void> {
   // would take the partner tab down with it, and a dead key would keep the pair "linked".
   const chainsLeft = unlinkSession(liveTabChains(), key, sessionKeyMatches);
   if (chainsLeft.length !== loadTabChains().length) saveTabChains(chainsLeft);
+  // FORK 2026-10-05 (the architect: "deleting the first would delete the graph tab") — a master's Gantt
+  // board goes with its session. The chain release above already hides the tab.
+  if (ganttBoards.some((b) => sessionKeyMatches(b.session, key))) {
+    void fetch(`/api/gantt/boards?session=${encodeURIComponent(key)}`, { method: "DELETE" })
+      .then(() => refreshGanttBoards())
+      .catch((err) => console.error("[gantt] board detach failed", err));
+  }
   const affectedTab = tabs.find((t) => t.sessionKey && sessionKeyMatches(key, t.sessionKey));
   if (affectedTab && affectedTab.id !== "tab-main") {
     closeTab(affectedTab.id);
@@ -3579,6 +3586,15 @@ import { FORTUNE_COOKIES, fortuneForKey, randomFortune } from "../../src/shared/
 // cannot drift. See src/shared/reseller-route-policy.ts for why it is a vendor-namespace
 // predicate rather than a list of banned model names.
 import { isRedundantResellerRoute } from "../../src/shared/reseller-route-policy.js";
+// FORK 2026-10-05 (the architect: a Gantt tab between a chain's master and slave) — pure rules in gantt-tab.ts.
+import {
+  GANTT_VIEW_CHOICE,
+  type GanttBoard,
+  ganttBoardsByMaster,
+  ganttTabHtml,
+  ganttViewUrl,
+  parseGanttBoards,
+} from "./gantt-tab.js";
 import {
   modelCatalogIdsForPickerAndPanel,
   panelIdsDownToCopilot,
@@ -6769,6 +6785,81 @@ function loadTabChains(): TabChain[] {
 function saveTabChains(chains: TabChain[]): void {
   setChoice(LOOP_CHAINS_CHOICE, serializeChains(chains), LOOP_CHAINS_DEFAULT);
   chainOverlay?.wake();
+}
+
+// FORK 2026-10-05 (the architect: "a dedicated tab to visualize [the gantt] … a slither tab (only a graph
+// icon) between master and slave … attached to the master … connected in real time"). The board
+// list is polled from tinker-prod-ui; renderTabs draws an icon-only tab right after each chain
+// master that has one. Clicking it covers the chat area with the live chart (#gantt-view) while
+// the master stays the active chat underneath, so nothing else about the tab model changes.
+// `ganttViewFor` is the master tab id whose chart is on screen, or null.
+let ganttBoards: GanttBoard[] = [];
+let ganttBoardsLoaded = false;
+let ganttViewFor: string | null = null;
+
+function currentGanttBoards(): Map<string, GanttBoard> {
+  return ganttBoardsByMaster(
+    loadTabChains(),
+    ganttBoards,
+    (id) => tabs.find((t) => t.id === id)?.sessionKey,
+    (a, b) => sessionKeyMatches(a, b),
+  );
+}
+
+async function refreshGanttBoards(): Promise<void> {
+  let next: GanttBoard[];
+  try {
+    const res = await fetch("/api/gantt/boards", { cache: "no-store" });
+    // A server without the route (an older tinker-prod-ui) simply has no Gantt tabs.
+    next = res.ok ? parseGanttBoards(await res.json()) : [];
+  } catch (err) {
+    console.error("[gantt] board list fetch failed", err);
+    return;
+  }
+  const changed = JSON.stringify(next) !== JSON.stringify(ganttBoards);
+  const first = !ganttBoardsLoaded;
+  ganttBoards = next;
+  ganttBoardsLoaded = true;
+  if (first) {
+    // A pushed build reloads the page: land back on the chart if that is where the architect was.
+    const want = getChoice(GANTT_VIEW_CHOICE, "");
+    if (want && currentGanttBoards().has(want)) {
+      openGanttView(want);
+      return;
+    }
+  }
+  if (changed || first) renderTabs();
+}
+
+function openGanttView(masterTabId: string): void {
+  const tab = tabs.find((t) => t.id === masterTabId);
+  if (!tab?.sessionKey) return;
+  // Switch first: applyTabSwitch closes any open chart, including this one.
+  if (activeTabId !== masterTabId) switchToTab(masterTabId);
+  ganttViewFor = masterTabId;
+  setChoice(GANTT_VIEW_CHOICE, masterTabId, "");
+  const pane = $("gantt-view");
+  const frame = pane?.querySelector("iframe");
+  if (pane && frame) {
+    const src = ganttViewUrl(tab.sessionKey);
+    if (frame.getAttribute("src") !== src) frame.setAttribute("src", src);
+    pane.hidden = false;
+  }
+  renderTabs();
+}
+
+/** `render: false` from inside renderTabs, which is already drawing the result. */
+function closeGanttView(opts: { render?: boolean } = {}): void {
+  if (!ganttViewFor) return;
+  ganttViewFor = null;
+  setChoice(GANTT_VIEW_CHOICE, "", "");
+  const pane = $("gantt-view");
+  if (pane) {
+    pane.hidden = true;
+    // Unload it: the page polls every 15 s, and nobody is looking.
+    pane.querySelector("iframe")?.setAttribute("src", "about:blank");
+  }
+  if (opts.render !== false) renderTabs();
 }
 
 // FORK 2026-09-25 (the architect: "when I close a tab linked by a master-slave chain, both tabs should
@@ -18838,6 +18929,32 @@ changed? Name only axes with real signal. Silence on the rest.
     running", went around a guard hook that misread a \`cd\`, and passed a bootstrap truncation warning,
     and its reflection followed up none of them.)
 
+    A hedge that waits on someone else ("it goes live once X happens", "when the other session
+    merges", "after his answer") is covered only once you have checked that X can still happen:
+    the session's last write, the person's reply, the job's state. A waiter on a dead session is a
+    promise nobody keeps; if the blocker is dead and the repair is reversible, do it (rule 14).
+    (2026-10-05: the Gantt tab was merged at 10:05 and the reply said it would go live "on its own
+    once the shared checkout is back on develop". The session holding that checkout had died at
+    09:48, which one read of its transcript showed. the architect, 11:37: "I still don't see the
+    micro-tab attached to AcmeVision.")
+
+    A "can't see it" hedge that blames a blocked route (a token expired, "renewing is the owner's
+    step", a login is missing) is not closed by naming who owns the block. The question was about the
+    data, not the route. List every other read path to the same data (shared browser tabs, Copilot,
+    a local cache, another channel) with the command that lists it, and try them before the reply
+    goes out. (2026-10-05, "Any response from Roger?": the Outlook token had expired, the turn
+    checked WhatsApp and asked the owner to share Teams, and its reflection wrote "clean". It never
+    ran \`openclaw browser tabs\`, where a shared Copilot tab found Roger's reply in one ask. The
+    owner: "You failed to detect that Teams was shared, right?")
+
+    A message written for another person so they can DO something (log in, pay, show up) is held
+    against that action: read it as the recipient and ask whether it carries every input they need
+    (address, name, token, date) and nothing the ask did not request (a diagnosis, tips, questions,
+    things to install). Missing input or extra content is a gap. (2026-10-05: asked to send Alex
+    the Goku login because "his token does not work", the turn drafted a note on a Claude outage
+    and model switching that told him to ask the architect for the token. Its reflection never read the
+    draft. The owner: "not to start a conversation with him ... He needs a token ... simple as that.")
+
     Worked instance: 2026-10-03, the AcmeVision temporal-network paper. Compile-paper's figure
     step sends a paper's diagrams to Napkin, and the 62-page PDF went out with one D2 drawing. That
     turn's reflection wrote up pandoc and grep troubles and never held the PDF against the recipe.
@@ -21346,7 +21463,6 @@ function updateChat(skipScroll = false): ChatPositioning | null {
   // pass created: the only ones the per-node listeners below still need.
   const fresh = renderChatInto(el, units, CHAT_UNIT_RENDER);
   clearOrphanedViewerOpen(el);
-  amyUi.decorateChat(el);
   // FORK 2026-08-06 (the architect: the progress-bar frame "flashes white" and "fills up
   // from zero for a second" when the chat re-renders): innerHTML rebuilds recreate
   // EVERY <iframe>, and a recreated srcdoc iframe reloads from scratch — white flash
@@ -21384,11 +21500,6 @@ function updateChat(skipScroll = false): ChatPositioning | null {
         const det = ev.target;
         if (!(det instanceof HTMLDetailsElement)) {
           return;
-        }
-        // FORK 2026-10-02 — the amygdala's sent-back chip renders from its own set, which nothing
-        // wrote, so it snapped shut whenever its turn's unit re-rendered (a new turn arriving).
-        if (det.classList.contains("amy-sentback")) {
-          amyUi.noteSentBackToggle(det.getAttribute("data-turn") ?? "", det.open);
         }
         const key = det.getAttribute("data-fold-key");
         if (!key) {
@@ -21756,9 +21867,15 @@ function renderTabs() {
   }
 
   const running = tabsRunningNow();
+  // FORK 2026-10-05 — the Gantt tab follows its master; once the board list has loaded, a chart
+  // whose master closed, unchained or lost its board closes with it.
+  const ganttByMaster = currentGanttBoards();
+  if (ganttViewFor && ganttBoardsLoaded && !ganttByMaster.has(ganttViewFor)) {
+    closeGanttView({ render: false });
+  }
   let html = "";
   for (const tab of tabs) {
-    const isActive = tab.id === activeTabId;
+    const isActive = tab.id === activeTabId && ganttViewFor !== tab.id;
     const classes = ["tab"];
     if (isActive) {
       classes.push("tab-active");
@@ -21808,6 +21925,15 @@ function renderTabs() {
     html += `<div class="${classes.join(" ")}"${glowStyle} data-tab-id="${tab.id}" data-hint="${escapeHtml(tab.title)}">
       <span class="tab-title">${escapeHtml(tab.title)}</span>${closeBtn}
     </div>`;
+    const board = ganttByMaster.get(tab.id);
+    if (board) {
+      const chain = chainOf(loadTabChains(), tab.id);
+      html += ganttTabHtml(tab.id, board, {
+        active: ganttViewFor === tab.id,
+        color: chain ? chainColor(chain) : "currentColor",
+        escape: escapeHtml,
+      });
+    }
   }
   container.innerHTML = html;
   checkTabOverflow();
@@ -22026,6 +22152,44 @@ function checkTabOverflow() {
  * key so switching tabs does not re-request an identity that cannot have changed.
  */
 let agentNameHeaderKey: string | null = null;
+/**
+ * Hivemind seats: who is in the chair. The door (/tinker/login) records a name against a seat;
+ * /tinker/api/seat returns it for this browser's seat. One fetch per page load; a failure
+ * leaves the banner at the agent name alone and lets the next repaint retry.
+ * FORK 2026-10-05: ported from main 01bf3e2. The 2026-09-21 seat port left it out, so the banner
+ * read a name nothing ever wrote.
+ */
+let conductorNamePromise: Promise<string> | null = null;
+function loadConductorName(): Promise<string> {
+  if (conductorNamePromise) return conductorNamePromise;
+  let seat = "";
+  try {
+    seat = sessionStorage.getItem(SEAT_ID_STORAGE_KEY) ?? "";
+  } catch {
+    seat = "";
+  }
+  if (!seat || !TOKEN) return Promise.resolve("");
+  conductorNamePromise = fetch(`${BASE}api/seat`, {
+    headers: { Authorization: `Bearer ${TOKEN}`, "X-Tinker-Seat": seat },
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j: { displayName?: unknown } | null) => {
+      const n = typeof j?.displayName === "string" ? j.displayName.trim() : "";
+      if (n) {
+        try {
+          sessionStorage.setItem(CONDUCTOR_STORAGE_KEY, n);
+        } catch {
+          // The banner still paints from the returned value.
+        }
+      }
+      return n;
+    })
+    .catch(() => {
+      conductorNamePromise = null;
+      return "";
+    });
+  return conductorNamePromise;
+}
 function refreshAgentNameHeader(): void {
   const host = document.getElementById("agent-name-banner");
   const text = document.getElementById("agent-name-text");
@@ -22059,6 +22223,9 @@ function refreshAgentNameHeader(): void {
       }
       text.textContent = formatAgentBanner(name, conductor);
       host.hidden = false;
+      void loadConductorName().then((fetched) => {
+        if (fetched) text.textContent = formatAgentBanner(name, fetched);
+      });
     })
     .catch(() => {
       // Leave the latch DOWN so the next repaint retries; latching on a failed load is how the
@@ -22395,6 +22562,8 @@ function initAttachStrip(): void {
 function applyTabSwitch(tab: Tab) {
   // FORK: Save current tab's full state before switching
   saveCurrentTabState();
+  // FORK 2026-10-05 — going to another chat leaves the Gantt chart; renderTabs below redraws.
+  closeGanttView({ render: false });
 
   activeTabId = tab.id;
   saveActiveTabId();
@@ -26679,6 +26848,10 @@ function init() {
     </div>
     <div class="alt-view" id="alt-view"></div>
     <div class="chat-area">
+      <!-- FORK 2026-10-05 (the architect: a Gantt tab between a chain's master and slave). The live chart
+           covers the chat area while its icon tab is active; the master chat keeps running under
+           it, so its scroll and its stream are untouched. openGanttView / closeGanttView. -->
+      <div class="gantt-view" id="gantt-view" hidden><iframe title="Gantt chart" src="about:blank"></iframe></div>
       <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
       <!-- FORK 2026-06-11 — tinkerui-slider: the per-tab thinking slider was
            RELOCATED from this chat-area strip into the Models side panel
@@ -26766,6 +26939,13 @@ function init() {
              silently re-collapse the panel for anyone who had it open. The .rpanel-body class
              keeps the terminal-green type context the panel markup re-states its own colours
              against (base.css, constraint 2). -->
+        <!-- FORK 2026-10-04 (the architect: "Move the thalamus panel right on top of the context window panel").
+             This reverses the 2026-08-29 order. Both hosts stay static and outside #budget-panel, so their
+             bind-once listeners and persisted fold keys survive repaints. Only their sibling order changes. -->
+        <div class="model-group rpanel-body${!isCollapsed("model:thalamus", MODEL_SECTION_DEFAULT_COLLAPSED["thalamus"]) ? " open" : ""}" data-section="thalamus" id="thalamus-panel">
+          <div class="model-group-label">THALAMUS</div>
+          <div class="model-group-body"><div id="thalamus-panel-body" style="grid-column:1/-1"></div></div>
+        </div>
         <div class="model-group rpanel-body${!isCollapsed("model:cache", MODEL_SECTION_DEFAULT_COLLAPSED["cache"]) ? " open" : ""}" data-section="cache" id="cache-panel">
           <div class="model-group-label">💾 CONTEXT WINDOW <span id="cache-count" class="model-group-count"></span><span class="cache-actions"><button type="button" class="cache-act" data-cache-act="evict" title="${escapeHtml(CACHE_ACT_DESCRIPTION.evict)}">evict</button><button type="button" class="cache-act" data-cache-act="compact" title="${escapeHtml(CACHE_ACT_DESCRIPTION.compact)}">compact</button></span></div>
           <!-- FORK 2026-09-24 (B5, context-window-panel.md §5 and P9) — the CALL TIMELINE's host: a
@@ -26777,21 +26957,6 @@ function init() {
                because those three sections are one innerHTML string owned by
                context-cache.ts. -->
           <div class="model-group-body"><div id="cache-panel-body" style="grid-column:1/-1"></div><div id="cache-timeline" style="grid-column:1/-1"></div></div>
-        </div>
-        <!-- FORK 2026-08-29 (the architect: "move the context window up over thalamus, under thinking").
-             THALAMUS was the last group generated INSIDE #budget-panel, which forced it above
-             every static sibling. Moving CONTEXT WINDOW into that generated block was not an
-             option — see its note above: innerHTML there recreates nodes on every repaint while
-             the bind-once latches stay true. So THALAMUS became a static host instead. It is the
-             cheap one to move: a label plus one pure render call and no listeners of its own.
-
-             It keeps its data-section and its "model:thalamus" fold key, so the boot
-             binding (~L19608, which selects every direct .model-group child of #models-panel)
-             wires it with no extra code and the persisted fold state carries over untouched.
-             updateBudgetPanel() fills #thalamus-panel-body on every repaint. -->
-        <div class="model-group rpanel-body${!isCollapsed("model:thalamus", MODEL_SECTION_DEFAULT_COLLAPSED["thalamus"]) ? " open" : ""}" data-section="thalamus" id="thalamus-panel">
-          <div class="model-group-label">THALAMUS</div>
-          <div class="model-group-body"><div id="thalamus-panel-body" style="grid-column:1/-1"></div></div>
         </div>
         <div class="model-group rpanel-body${!isCollapsed("model:eeg", MODEL_SECTION_DEFAULT_COLLAPSED["eeg"]) ? " open" : ""}" data-section="eeg">
           <div class="model-group-label">📈 EEG ${zoneDoc("eeg")}</div>
@@ -37003,12 +37168,22 @@ function init() {
       return;
     }
 
+    // FORK 2026-10-05 — the Gantt tab (no data-tab-id, so it never starts a drag).
+    const ganttEl = tgt.closest("[data-gantt-for]") as HTMLElement | null;
+    if (ganttEl) {
+      openGanttView(ganttEl.dataset.ganttFor!);
+      return;
+    }
+
     const tabEl = tgt.closest("[data-tab-id]") as HTMLElement | null;
     if (tabEl) {
       if (tabDragDidReorder) {
         tabDragDidReorder = false;
         return;
       }
+      // Clicking the master itself while its chart is up goes back to the chat (switchToTab is a
+      // no-op for the active tab).
+      if (ganttViewFor === tabEl.dataset.tabId) closeGanttView();
       switchToTab(tabEl.dataset.tabId!);
     }
   });
@@ -37130,6 +37305,10 @@ function init() {
     },
     anchor: tabChainAnchor,
   });
+  // FORK 2026-10-05 — Gantt tabs: which chain masters have a build plan. A new board shows within
+  // 20 s of the master's first `gantt.py render`.
+  void refreshGanttBoards();
+  setInterval(() => void refreshGanttBoards(), 20_000);
   document.addEventListener(
     "click",
     (e) => {

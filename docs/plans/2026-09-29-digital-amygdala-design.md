@@ -656,6 +656,8 @@ driving is Phase F, against a spare-port build of the worktree's `tinker-ui`.
 
 ### 9.2 The Jev window
 
+> **Superseded 2026-10-05** (the architect: "two kinds of messages"). Blocks 4, 5 and 5b no longer draw separately: each reply gets one CHECKS window (a summary line that opens into a check timeline in the call timeline's encoding) and one WOULD HAVE window (the actions to review, with the refusal offer and any waiting card on their rows). The note chip on tool rows and the sent-back chip are gone. The live description is `TINKER_UI_DESIGN_BIBLE/tinker-ui.md` §5.8AG; the text below is the original design.
+
 One window per turn, above that turn's reply, updating live. Title bar: cube mark on a magenta disc, `JEV`, summary
 (`n decisions · x held · y proof · z sent back`; all-proceeded turns say so), chevron. Collapsed by default; a click on
 the bar opens it; a click on a line opens its numbers. **Rows** are `▪ proceeded · ■ held · ▲ proof/note · ◀ sent back`
