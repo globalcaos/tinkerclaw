@@ -246,7 +246,8 @@ describe("the plugin entry", () => {
     expect(Object.keys(out ?? {})).toEqual(["prependContext"]);
     expect(out!.prependContext).toContain("skill zyxq-frobnicator");
     expect(out!.prependContext).toContain("None of these may fit");
-    expect(out!.prependContext!.split("\n")[1]).toMatch(/^1\. skill zyxq-frobnicator, \d+%/);
+    // Jev is off here, so the entry is recall's own pick: it carries no percentage, which would be a made-up number.
+    expect(out!.prependContext!.split("\n")[1]).toMatch(/^1\. skill zyxq-frobnicator: /);
   });
 
   it("enforce: a prompt no enhancement fits gets nothing added", async () => {

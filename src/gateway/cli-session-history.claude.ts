@@ -11,6 +11,7 @@ import {
 import type { SessionEntry } from "../config/sessions.js";
 import { classifyErrorText, type TurnOutcome, type TurnOutcomeKind } from "../fork/turn-outcome.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { isLongUsageWindow } from "../shared/usage-window.js";
 import { attachOpenClawTranscriptMeta } from "./session-utils.fs.js";
 
 export const CLAUDE_CLI_PROVIDER = "claude-cli";
@@ -351,8 +352,13 @@ function claudeCliOutcome(rawText: string, forcedKind: TurnOutcomeKind | undefin
   if (shaped.kind !== forcedKind) {
     return fromText;
   }
-  let retryAfter = shaped.recoverable ? fromText.retryAfter : undefined;
-  if (shaped.recoverable && retryAfter === undefined && rawText.trim()) {
+  // FORK 2026-10-05 — the probe lends the KIND's recoverability; the CLI's own text names the
+  // window. "You've hit your weekly limit" is a rate_limit no retry can outlast
+  // (src/shared/usage-window.ts), so it must not re-arm the client ladder.
+  const recoverable =
+    shaped.recoverable && !(forcedKind === "rate_limit" && isLongUsageWindow(rawText));
+  let retryAfter = recoverable ? fromText.retryAfter : undefined;
+  if (recoverable && retryAfter === undefined && rawText.trim()) {
     try {
       retryAfter = resolveRetryAfterSeconds(rawText, Date.now());
     } catch {
@@ -361,7 +367,7 @@ function claudeCliOutcome(rawText: string, forcedKind: TurnOutcomeKind | undefin
   }
   return {
     kind: forcedKind,
-    recoverable: shaped.recoverable,
+    recoverable,
     headline: shaped.headline,
     ...(fromText.detail !== undefined ? { detail: fromText.detail } : {}),
     ...(retryAfter !== undefined ? { retryAfter } : {}),

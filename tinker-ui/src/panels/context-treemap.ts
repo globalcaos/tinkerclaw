@@ -1051,8 +1051,15 @@ export function mountContextTreemap(
   }
 
   // ─── Load latest dump ───
+  // FORK 2026-10-06 (the architect: "I could see a 'loading context' indicator that did not add anything …
+  // do not try to reload that which is already loaded") — a drawn treemap stays on screen while a
+  // refresh is in flight, and a refresh that fails (a gateway still starting) keeps it. "Loading..."
+  // and "No context yet" are for a panel that has nothing to show.
   async function loadLatest() {
-    container.innerHTML = `<div class="tm-empty">Loading...</div>`;
+    const shown = currentDump !== null;
+    if (!shown) {
+      container.innerHTML = `<div class="tm-empty">Loading...</div>`;
+    }
     try {
       const sk = getSessionKey();
       const dump = await reqFn("forensic.getLive", { sessionKey: sk || undefined });
@@ -1070,7 +1077,9 @@ export function mountContextTreemap(
       level = 1;
       renderLevel();
     } catch {
-      renderEmpty(`No context yet — send a message first`);
+      if (!shown) {
+        renderEmpty(`No context yet — send a message first`);
+      }
     }
   }
 
@@ -1193,6 +1202,8 @@ export function mountContextTreemap(
   // ─── Public hooks ───
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapRefresh = loadLatest;
+  // oxlint-disable-next-line typescript-eslint/no-explicit-any
+  (container as any).__treemapLoaded = () => currentDump !== null;
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
   (container as any).__treemapClear = () => {
     currentDump = null;

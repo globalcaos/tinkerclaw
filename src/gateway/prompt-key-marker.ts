@@ -232,6 +232,50 @@ export function appendMissingPromptKeyMarkers(
 }
 
 /**
+ * FORK 2026-10-05 (bug-log `failover-reprompt`) — the prompt row an earlier attempt of THIS run
+ * already wrote. A run can make several attempts (a provider failover, run.ts's thinking-level
+ * retry), and each one used to end in activeSession.prompt(), which persisted the prompt again,
+ * unkeyed, after the failed attempt's rows: one prompt shown twice on the served branch, 34 extra
+ * copies in 31 runs between 09-23 and 10-05. A key is unique per prompt, so the user row this run's
+ * marker claims on the branch IS that prompt, and the attempt continues from it instead.
+ *
+ * Walks the branch from root to leaf with attachPromptKeysToUserRows' bound: a marker for one of
+ * `promptKeys` arms the claim, any other marker disarms it, and the first user message met while
+ * armed is the claimed row. Undefined when nothing is claimed, or when a compaction follows the row
+ * (a retry after a compaction keeps the prompt path).
+ */
+export function findPromptRowClaimedOnBranch(
+  branchEntries: readonly unknown[],
+  promptKeys: readonly string[] | undefined,
+): { entryId: string; idempotencyKey: string } | undefined {
+  const keys = new Set((promptKeys ?? []).filter((key) => typeof key === "string" && key !== ""));
+  if (keys.size === 0) {
+    return undefined;
+  }
+  let armed: string | undefined;
+  let claimed: { entryId: string; idempotencyKey: string } | undefined;
+  for (const raw of branchEntries) {
+    const entry = (raw ?? {}) as TreeEntryLike;
+    if (claimed) {
+      if (entry.type === "compaction") {
+        return undefined;
+      }
+      continue;
+    }
+    if (isPromptKeyMarkerEntry(entry)) {
+      const ref = readPromptKeyMarkerRef(entry.data, 0);
+      armed = ref && keys.has(ref.idempotencyKey) ? ref.idempotencyKey : undefined;
+      continue;
+    }
+    const role = (entry.message as { role?: unknown } | undefined)?.role;
+    if (armed && entry.type === "message" && role === "user" && typeof entry.id === "string") {
+      claimed = { entryId: entry.id, idempotencyKey: armed };
+    }
+  }
+  return claimed;
+}
+
+/**
  * A prompt row, as opposed to the synthetic rows readSessionMessages fabricates from non-message
  * entries — a tinker-bridge tool_result wears role:"user" too, and was never a prompt.
  */

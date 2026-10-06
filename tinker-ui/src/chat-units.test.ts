@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PENDING_RAIL } from "./chat-rail.js";
 import { buildChatUnits, chatRowKey, THINKING_UNIT_KEY, type ChatUnitDeps } from "./chat-units.js";
 
 type Row = Record<string, unknown>;
@@ -42,7 +43,6 @@ function deps(over: Partial<ChatUnitDeps> = {}): ChatUnitDeps {
     streamRunId: null,
     streamMsgUid: null,
     esc: (s) => s,
-    phaseSpanText: () => "1.0s",
     skillNoticesHtmlAfter: () => "",
     renderThinkingIndicator: () => "",
     queuedRows: () => [],
@@ -201,6 +201,65 @@ describe("buildChatUnits", () => {
     ]);
   });
 
+  // FORK 2026-10-05 (the architect: "the 'TURN TIMING' box disappears after a while, not being visible when
+  // the answer appears, it should stay exactly where it was. The chat should work like a very long
+  // paper, when something is written here it stays, it might expand and contract, but never
+  // disappear"). Measured on the live page the same day: 59 of 64 blocks sat in a hidden group.
+  const timing = (uid: string, extra: Row = {}): Row => ({
+    role: "assistant",
+    _uid: uid,
+    _isPhaseTiming: true,
+    content: "turn timing",
+    ...extra,
+  });
+
+  it("keeps the TURN TIMING block where it was when the run folds: its own unit, above the group", () => {
+    const [prompt, ...rest] = turn();
+    const units = buildChatUnits([prompt, timing("tm"), ...rest], deps());
+    expect(units.map((u) => u.key)).toEqual(["u:u1", "u:tm", "g:u:a1", "u:a2", THINKING_UNIT_KEY]);
+    expect(units[1].html).toContain('data-uid="tm"');
+    expect(units[2].html).not.toContain('data-uid="tm"');
+  });
+
+  it("a block written after an intermediate stays at its place too, never inside the fold", () => {
+    const view = [
+      user("u1", "hello"),
+      tool("a1", "t1"),
+      timing("tm"),
+      result("r1", "t1"),
+      say("a2", "the answer, longer than the narration above it"),
+    ];
+    const units = buildChatUnits(view, deps());
+    expect(units.map((u) => u.key)).toEqual(["u:u1", "g:u:a1", "u:tm", "u:a2", THINKING_UNIT_KEY]);
+    expect(units[1].html).not.toContain('data-uid="tm"');
+  });
+
+  it("a run of only the block and the answer has nothing to fold", () => {
+    const units = buildChatUnits(
+      [user("u1", "hi"), timing("tm"), say("a2", "short answer")],
+      deps(),
+    );
+    expect(units.map((u) => u.key)).toEqual(["u:u1", "u:tm", "u:a2", THINKING_UNIT_KEY]);
+  });
+
+  it("never grafts the turn's own block into a 🌿 section; only one written after the answer goes", () => {
+    const fractal = say("fr", "🌿 FRACTAL: a lesson");
+    const view = [
+      user("u1", "hello"),
+      // Tagged as the reflection's by runId because the 🌿 text streamed in the SAME run.
+      timing("tm", { _fractalPass: true }),
+      tool("a1", "t1"),
+      result("r1", "t1"),
+      say("a2", "the answer, longer than the narration above it"),
+      timing("tm-r"),
+      fractal,
+    ];
+    const units = buildChatUnits(view, deps());
+    const html = (key: string) => units.find((u) => u.key === key)?.html ?? "";
+    expect(html("u:tm")).not.toContain("mpg-graft");
+    expect(html("u:tm-r")).toContain('data-phase-graft-into="fr"');
+  });
+
   it("joins back into the exact page string, in row order", () => {
     const units = buildChatUnits(turn(), deps());
     expect(units.map((u) => u.html).join("")).toBe(
@@ -281,6 +340,91 @@ describe("buildChatUnits — the answering model's rail", () => {
     expect(html(after, "u:a8")).toBe(html(before, "u:a8"));
     expect(html(after, "rail-start:u:a8")).toBe(html(before, "rail-start:u:a8"));
     expect(html(after, "rail-end:u:a8")).toBe(html(before, "rail-end:u:a8"));
+  });
+
+  // FORK 2026-10-06 (the architect: "I still see the line next to 'TURN TIMING', which does not make sense
+  // because this part does not use any agent to be computed"). The block is the browser's and the
+  // gateway's measurement of the turn, like the prompt it sits under: the model wrote none of it.
+  const timingRow = (uid: string): Row => ({
+    role: "assistant",
+    _uid: uid,
+    _isPhaseTiming: true,
+    content: "turn timing",
+  });
+
+  it("never draws the line beside TURN TIMING: the rail opens below it, at the model's first row", () => {
+    const [prompt, ...rest] = turn();
+    const units = buildChatUnits([prompt, timingRow("tm"), ...rest], deps(railDeps()));
+    expect(units.map((u) => u.key)).toEqual([
+      "u:u1",
+      "u:tm",
+      "rail-start:u:tm",
+      "g:u:a1",
+      "u:a2",
+      "rail-end:u:tm",
+      THINKING_UNIT_KEY,
+    ]);
+    expect(units[1].html).not.toContain("turn-");
+  });
+
+  it("a run holding only TURN TIMING draws no rail, not even a pending one, and asks no resolver", () => {
+    let asked = 0;
+    const units = buildChatUnits(
+      [user("u1", "hello"), timingRow("tm")],
+      deps({
+        runRail: () => {
+          asked++;
+          return { rail: PENDING_RAIL, model: null };
+        },
+      }),
+    );
+    expect(asked).toBe(0);
+    expect(units.map((u) => u.key)).toEqual(["u:u1", "u:tm", THINKING_UNIT_KEY]);
+    expect(units[1].html).not.toContain("turn-");
+  });
+
+  it("a TURN TIMING block written after the answer stays outside the rail, which closes above it", () => {
+    const view = [...turn(), timingRow("tm-r")];
+    const units = buildChatUnits(view, deps(railDeps()));
+    const keys = units.map((u) => u.key);
+    expect(keys.indexOf("rail-end:u:a1")).toBe(keys.indexOf("u:a2") + 1);
+    expect(keys.indexOf("u:tm-r")).toBe(keys.indexOf("rail-end:u:a1") + 1);
+    expect(units.find((u) => u.key === "u:tm-r")?.html).not.toContain("turn-");
+  });
+
+  it("tells the resolver which run is the last one, the only one a turn in flight can be", () => {
+    const tails: boolean[] = [];
+    const view = [...turn(), user("u2", "and again"), say("a3", "second answer")];
+    buildChatUnits(
+      view,
+      deps({
+        runRail: (_rows, _prev, tail) => {
+          tails.push(tail);
+          return null;
+        },
+      }),
+    );
+    expect(tails).toEqual([false, true]);
+  });
+
+  it("a pending rail keeps the run's room and carries no model to the next run", () => {
+    const prevs: unknown[] = [];
+    const view = [...turn(), user("u2", "and again"), say("a3", "second answer")];
+    const units = buildChatUnits(
+      view,
+      deps({
+        runRail: (_rows, prev) => {
+          prevs.push(prev);
+          return { rail: PENDING_RAIL, model: null };
+        },
+      }),
+    );
+    expect(prevs).toEqual([null, null]);
+    const cap = units.find((u) => u.key === "rail-start:u:a1")?.html ?? "";
+    expect(cap).toContain("is-pending");
+    expect(
+      units.find((u) => u.key === "u:a2")?.html.startsWith('<div class="turn-seg is-pending">'),
+    ).toBe(true);
   });
 
   it("changes nothing when no resolver is wired", () => {

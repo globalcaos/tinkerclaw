@@ -25,11 +25,15 @@ import {
   registerCallRouter,
   registerLeafModelResolver,
   registerToolResultDigester,
+  registerTaskRanker,
   registerWorkerProvider,
+  requestTaskRanking,
   setRoutingReadProvider,
+  toHistoryItem,
   type CallRouter,
   type EnhancementCard,
   type Estimate,
+  type HistoryItem,
   type RefusalRecord,
   type RungTimeStats,
   type ThalamusBoardLike,
@@ -71,6 +75,7 @@ import { createScheduler, type PlanDecision, type Scheduler } from "./scheduler.
 import { createShadowRouter, type ShadowStats } from "./shadow.js";
 import { createShortlistSeam } from "./shortlist-seam.js";
 import { ThalamusStore, type SubagentCallRow } from "./store.js";
+import { createTaskRanker } from "./task-ranker.js";
 import { createUseTracker } from "./use-tracker.js";
 
 export type Logger = {
@@ -179,6 +184,9 @@ export function createRuntime(deps: RuntimeDeps) {
   const now = deps.now ?? Date.now;
 
   let running = false;
+  // Counts stop() calls. A start() still awaiting its defaults when stop() lands must not go on to register
+  // the worker provider (a process-global slot) and the listeners, because nothing would ever remove them.
+  let stops = 0;
   let store: ThalamusStore | undefined;
   let ownStore = false;
   const cardMap = new Map<string, EnhancementCard>();
@@ -282,7 +290,9 @@ export function createRuntime(deps: RuntimeDeps) {
         deps.logger.info("[thalamus] OPENCLAW_THALAMUS_V4=off, not starting");
         return;
       }
+      const stopsAtStart = stops;
       const d = await defaults();
+      if (stops !== stopsAtStart) return;
       mkdirSync(cfg.dataDir, { recursive: true, mode: 0o700 });
       try {
         chmodSync(cfg.dataDir, 0o700);
@@ -317,9 +327,48 @@ export function createRuntime(deps: RuntimeDeps) {
         now,
         mode: () => cfg.mode,
       });
+      // One ranked result per task (Broca retrieval v2, phase E): the seam below and Broca's matcher hook both read it, through
+      // the slot, so Jev is asked once. History is the replay set joined to what was used; it is rebuilt at most once a minute.
+      let historyCache: { at: number; items: HistoryItem[] } | undefined;
+      const history = (): HistoryItem[] => {
+        if (historyCache && now() - historyCache.at < 60_000) return historyCache.items;
+        const items: HistoryItem[] = [];
+        try {
+          for (const t of store?.listReplayTexts({ limit: 500 }) ?? []) {
+            const used = store?.getUse(t.taskId)?.used.map((u) => u.cardId) ?? [];
+            if (used.length > 0) items.push(toHistoryItem(t.text, used));
+          }
+        } catch {
+          /* history is a convenience; recall still has its other sources */
+        }
+        historyCache = { at: now(), items };
+        return items;
+      };
+      const recent = (sessionKey: string): string[] => {
+        try {
+          return (store?.recentUses(100) ?? [])
+            .filter((u) => u.session === sessionKey)
+            .flatMap((u) => u.used.map((x) => x.cardId))
+            .slice(0, 6);
+        } catch {
+          return [];
+        }
+      };
+      if (cfg.shortlist.rank) {
+        const ranker = createTaskRanker({
+          reader,
+          cards,
+          history,
+          recent,
+          budgetMs: () => cfg.shortlist.budgetMs,
+          now,
+        });
+        cleanups.push(registerTaskRanker(ranker));
+      }
       seam = createShortlistSeam({
         reader,
         cards,
+        ...(cfg.shortlist.rank ? { ranking: requestTaskRanking } : {}),
         mode: () => cfg.mode,
         inject: () => cfg.enforce.shortlist,
         budgetMs: () => cfg.shortlist.budgetMs,
@@ -668,6 +717,7 @@ export function createRuntime(deps: RuntimeDeps) {
     },
 
     stop(): void {
+      stops += 1;
       for (const off of cleanups.splice(0).reverse()) {
         try {
           off();

@@ -41,7 +41,14 @@ import {
   touchBackgroundRuns,
   type BackgroundRun,
 } from "./background-runs.js";
-import { answeringModel, railTitle, type ChatRail, type RailModel } from "./chat-rail.js";
+import {
+  namedModel,
+  PENDING_RAIL,
+  railTitle,
+  runRailState,
+  type ChatRail,
+  type RailModel,
+} from "./chat-rail.js";
 // FORK 2026-08-13 (the architect) — the gateway's own narration of the 21-36s pre-turn gap.
 // FORK 2026-08-16 — what each timing row MEANS, plus the papers behind it. Pure data + lookup,
 // unit-tested; app.ts owns only the overlay that renders it.
@@ -106,6 +113,14 @@ import { bubbleText, finalTextBubbles, planFinalWrite, runTextBubbles } from "./
 // dock-anchor lookup over app.ts-owned message state.
 import { upsertFractalDock, renderTranscriptSection, type FractalDockRow } from "./fractal-dock.js";
 import { isGatewayRestartResume, stripInjectedFractalDoctrine } from "./fractal-prompt-strip.js";
+import {
+  HISTORY_INDICATOR_DELAY_MS,
+  historyIndicators,
+  isGatewayWait,
+  type HistoryIndicator,
+  type HistoryLoad,
+  type HistoryLoadKind,
+} from "./history-loading.js";
 import {
   applyOlderPage,
   applyOlderReply,
@@ -366,6 +381,10 @@ import {
   type CronGroupNode,
   type CronTaxonomy,
 } from "./panels/cron-taxonomy.js";
+import { fetchHiveMe, initHiveUsersPanel } from "./panels/hive-admin.ts";
+import { groupByOwner, type HiveMe } from "./panels/hive-owner-groups.ts";
+// FORK 2026-10-06 — multi-user mode (hive door): who this page belongs to, null in single-user mode.
+let hiveMe: HiveMe | null = null;
 // FORK 2026-06-13 (eeg): seismograph trace store (bible §5.8h) — pure state +
 // SVG renderer live in their own unit-tested module; app.ts only feeds and
 // mounts it (effort stream → record, lifecycle end → turnEnd, history → backfill).
@@ -581,6 +600,7 @@ import {
   pageSentPromptKey,
   retryLifecycleAction,
   retryPromptForRun,
+  retryTrackStep,
   type RetryLifecycleDeps,
   type RetryLifecycleEvent,
 } from "./retry-lifecycle.js";
@@ -668,6 +688,7 @@ import {
 import {
   collectUsage,
   recipeMark,
+  renderAdviceLine,
   renderUsageChip,
   renderUsageChips,
   skillMark,
@@ -1047,8 +1068,12 @@ function reloadPage(
   location.reload();
 }
 function requestUiReload(cause: string, why: string): void {
-  if (viewedSessionBusy() || composerInUse()) {
-    console.info(`[ui-reload] ${why} — deferred until the turn ends and the composer is quiet`);
+  // FORK 2026-10-06 — and never onto a gateway that cannot answer yet (gatewayAnswersHistory): the
+  // page keeps showing what it has through a restart and reloads once history comes back.
+  if (viewedSessionBusy() || composerInUse() || !gatewayAnswersHistory()) {
+    console.info(
+      `[ui-reload] ${why} — deferred until the turn ends, the composer is quiet and the gateway answers`,
+    );
     if (!pendingHmrReload) {
       pendingHmrSince = Date.now();
     }
@@ -1101,7 +1126,9 @@ setInterval(() => {
   }
   // FORK 2026-10-03: both branches reload through reloadPage, so the reload names its cause, and
   // clear pendingHmrReload only AFTER it, because reloadPage reads it to record the wait.
-  if (!viewedSessionBusy()) {
+  // FORK 2026-10-06 — the first branch also waits for the gateway to answer history again; the
+  // ten-minute ceiling below does not, so a gateway that never comes back cannot hold the page.
+  if (!viewedSessionBusy() && gatewayAnswersHistory()) {
     reloadPage(
       pendingReloadCause || "new-build",
       pendingReloadWhy || "deferred reload",
@@ -6655,8 +6682,18 @@ function openStageDoc(stage: string, ms: number): void {
  * stage of the turn was the one stage that left no tag.
  *
  * Idempotent: the first caller wins, so wiring it to several run-admission sites is safe.
+ *
+ * FORK 2026-10-05 — `runId` is the run that just named its model. A block opened only by the
+ * client windows ("sending", "preparing context") names no run until a gateway stage does, so the
+ * answer rail could not find the turn's model through it (chat-rail.ts reads `_phaseRunId`). The
+ * block gets the run here when it has none; a stage that names one later is never overridden.
+ * Only while THIS tab's pre-model window is open: send() resets the live block, so the block is
+ * then this turn's own, never an older one a run started elsewhere would inherit.
  */
-function closePreModelWindow(): void {
+function closePreModelWindow(runId?: string): void {
+  // Read before the window closes below; the stamp runs after, once "preparing context" has been
+  // recorded, because recording it is what creates the block when no stage has.
+  const ownWindowOpen = preparingSince !== null || pendingSince !== null;
   if (preparingSince !== null) {
     // FORK 2026-08-23 — attach the runner stages collected during this window. This is the
     // only moment they can be attached: the row is created here, and the stages are only
@@ -6684,6 +6721,16 @@ function closePreModelWindow(): void {
   // A model named without `chat.send` having resolved would leave this dangling into the next
   // turn's measurement.
   pendingSince = null;
+  if (runId && ownWindowOpen) {
+    const group = livePhaseGroup();
+    if (group && !group._phaseRunId) {
+      group._phaseRunId = runId;
+      const id = group._clientRowId;
+      if (typeof id === "string" && id) {
+        updateClientRow(sessionKey, id, group);
+      }
+    }
+  }
 }
 
 // FORK 2026-05-17: the ONE place `budgetScope` is mutated (bible panels.md
@@ -7226,8 +7273,34 @@ type RetryEntry = {
   // internal: true between firing the re-send and the next schedule/clear so the
   // 1s tick does not re-fire while nextRetryAt is already in the past.
   firing: boolean;
+  // FORK 2026-10-05 — the run the last fire started (its outbox key is the run id). Its failure is
+  // the ONE event that moves the ladder a step (retry-lifecycle.ts retryTrackStep), whichever of
+  // the run's two or three failure signals carries it.
+  firedRunId?: string;
 };
 const retryState = new Map<string, RetryEntry>();
+
+// FORK 2026-10-05 — runs whose failure already ENDED a session's track: the ladder ran out on them,
+// a stop named them, or the owner stopped retrying while they were out. A later signal of the same
+// run (its second final, a late error) must not start the ladder over at attempt 0
+// (retry-lifecycle.ts retryTrackStep). A few per session is plenty: a run's signals land within
+// seconds of each other.
+const retryEndedRuns = new Map<string, Set<string>>();
+const RETRY_ENDED_RUNS_KEPT = 16;
+function noteRetryEnded(sk: string, runId: string | undefined): void {
+  if (!runId) {
+    return;
+  }
+  let ended = retryEndedRuns.get(sk);
+  if (!ended) {
+    ended = new Set();
+    retryEndedRuns.set(sk, ended);
+  }
+  ended.add(runId);
+  if (ended.size > RETRY_ENDED_RUNS_KEPT) {
+    ended.delete(ended.values().next().value as string);
+  }
+}
 
 /**
  * The most recent real (non-temp) user turn in a messages array: its text, and the key that names
@@ -7452,6 +7525,7 @@ function scheduleRetry(
     // unconditionally, so it still shows up when that tab is opened.
     if (retryTargetIsViewed(sk)) messages.push(exhaustedMsg);
     persistErrorMsg(sk, exhaustedMsg);
+    noteRetryEnded(sk, st.firedRunId);
     retryState.delete(sk);
     if (retryTargetIsViewed(sk)) updateChat();
     return;
@@ -7555,6 +7629,7 @@ async function retryLastTurn(sk: string) {
     cancelRetry(sk, false);
     return;
   }
+  st.firedRunId = fired.entry.id;
   if (fired.persisted) {
     drawLadderRetryBubble(sk, fired.entry);
   } else {
@@ -7641,6 +7716,8 @@ function renderRetryWarningBubble(msg: Record<string, unknown>): string {
 function cancelRetry(sk: string, pushBubble: boolean) {
   const st = retryState.get(sk);
   if (st) st.cancelled = true;
+  // FORK 2026-10-05 — a fire still out when the track ends must not re-arm it when it fails.
+  noteRetryEnded(sk, st?.firedRunId);
   retryState.delete(sk);
   if (pushBubble) {
     const cancelMsg = {
@@ -7697,12 +7774,33 @@ function advanceRetryLifecycle(p: RetryLifecycleEvent | undefined): void {
       }
     : p;
   const action = retryLifecycleAction(withText, retryLifecycleDeps());
+  // FORK 2026-10-05 — what the action does to the live track is the pure, tested rule
+  // retry-lifecycle.ts retryTrackStep: a run's failure moves the ladder ONCE, and the failure of the
+  // run the last fire started is that one move (bug-log `[failure-as-value+retry-storm]`).
+  const step =
+    action.kind === "none"
+      ? "ignore"
+      : retryTrackStep(
+          action,
+          retryState.get(action.sessionKey),
+          retryEndedRuns.get(action.sessionKey),
+        );
+  if (action.kind === "stop") {
+    // No retry can help: end the track and retire its countdowns. The outcome bubble under the
+    // failed answer says why and, for a usage limit, when it resets.
+    if (step === "stop") {
+      noteRetryEnded(action.sessionKey, action.runId);
+      cancelRetry(action.sessionKey, false);
+      clearPersistedRetryWarnings(action.sessionKey);
+    }
+    return;
+  }
   if (action.kind === "schedule") {
     // FORK 2026-09-29 (U9): `onlyIfIdle` is set by the outcome-derived final path. scheduleRetry is
     // NOT idempotent — each call pushes a NEW orange countdown bubble and resets the clock — and a
     // recoverable failure now arrives TWICE (the surfaced error, then the backstop final). The
     // error armed the track; the final must not draw a second bubble over it (review focus 3).
-    if (action.onlyIfIdle && retryState.has(action.sessionKey)) {
+    if (step === "ignore") {
       return;
     }
     // Nothing to re-send -- a tab whose transcript this page has never loaded has no
@@ -9438,9 +9536,26 @@ function gwConnect() {
     updateDots();
     updateBtn();
     updateChat();
-    setTimeout(gwConnect, 2000);
+    // FORK 2026-10-06 (the architect: "Make the message 'connecting to gateway' also as fast as possible")
+    // — a restarting gateway listens again within seconds (06:54: 11 s after it stopped), and the
+    // fixed 2 s re-dial added up to 2 s on top. Re-dial every 0.5 s for the first minute of an
+    // outage, then every 2 s as before: a refused dial costs nothing, and a long outage stays quiet.
+    if (gatewayDownSince === 0) {
+      gatewayDownSince = Date.now();
+    }
+    setTimeout(
+      gwConnect,
+      Date.now() - gatewayDownSince < GW_FAST_REDIAL_WINDOW_MS ? GW_FAST_REDIAL_MS : 2000,
+    );
   });
 }
+
+/** FORK 2026-10-06 — when the current outage began (0 while connected), and the fast re-dial. */
+let gatewayDownSince = 0;
+/** FORK 2026-10-06 — this page load has completed a gateway hello before (every later one is a reconnect). */
+let pageHadGateway = false;
+const GW_FAST_REDIAL_MS = 500;
+const GW_FAST_REDIAL_WINDOW_MS = 60_000;
 
 // FORK 2026-08-12 (the architect: "the ui does not connect" — fixed only by restarting Chrome).
 //
@@ -9674,6 +9789,16 @@ function onFrame(f: unknown) {
       })
         .then(async (hello: unknown) => {
           connected = true;
+          // FORK 2026-10-06 (the architect, after a restart that kept his page: "Consider what the front-end
+          // has loaded, and do not try to reload that which is already loaded") — a hello that is
+          // NOT this page's first, over a page that still holds the viewed chat, is a reconnect: a
+          // catch-up, never a reload. See `catchUp` below.
+          const reconnectOverLoadedPage = pageHadGateway && pageHoldsServerRows(messages);
+          const viewedKeyBefore = sessionKey;
+          pageHadGateway = true;
+          // FORK 2026-10-06 — a pushed build reloads only once history answers on THIS connection.
+          gatewayConnectedAt = Date.now();
+          gatewayDownSince = 0;
           thalamusV4Ui.reset();
           // The handshake landed — stop THIS dial's abort timer, and no other. `ws` is provably
           // the dial that answered: `req()` sends on the module-level socket and rejects unless it
@@ -9690,8 +9815,15 @@ function onFrame(f: unknown) {
           void req("sessions.subscribe", {}).catch(() => {
             /* older gateway, or refused: fall back to the client lane alone */
           });
-          void fetchAmygdalaAll(); // seed persisted Amygdala feed on connect
-          void amyUi.onConnected().then(() => renderAmygdalaPanel());
+          // Seed the persisted Amygdala feeds on connect. A reconnect keeps feeds already held: the
+          // v2 probe clears and re-reads its tabs, and a refusal from a gateway still starting
+          // switched its panel off until the next hello (amygdala-ui.ts probe → setAvailable(false)).
+          if (!reconnectOverLoadedPage || amygdalaAll.length === 0) {
+            void fetchAmygdalaAll();
+          }
+          if (!reconnectOverLoadedPage || !amyUi.available()) {
+            void amyUi.onConnected().then(() => renderAmygdalaPanel());
+          }
           // FORK 2026-08-16 — the gateway is back, so replay anything it never provably received.
           // This is the exact moment the reported bug used to bite: a restart drops the socket,
           // every in-flight chat.send is rejected, and the prompt died there. Now the reconnect
@@ -9854,10 +9986,54 @@ function onFrame(f: unknown) {
           // remaining hazards (a live delta cursor, a bubble mid-stream, a "restarting" run) are
           // vetoed inside loadChat itself, where they have a single owner.
           const historyMergeOwed = pendingHistoryReload;
-          loadSessions({ loadChat: true, forceChat: historyMergeOwed });
-          loadBudget();
-          refreshTreemap();
-          refreshTimelineRespectingMode();
+          // FORK 2026-10-06 — THE CATCH-UP. A reconnect over a page that still holds the viewed chat
+          // (same canonical key as before the drop) reads only the rows after that page, FIRST: the
+          // restart's notice and a resumed answer are the only things that can have been added. The
+          // list follows it, and every panel that already holds data is left as it is; one that
+          // holds nothing is read once the chat has been answered, i.e. once the gateway is ready.
+          // Measured on the 08:24 restart: the old reconnect sent sessions.list (32.6 s),
+          // budget.usage (11.4 s), budget.status, forensic.getLive and anatomy.session (5.2–5.5 s)
+          // into a gateway still running its start sidecars, which they slowed (ready 41.5 s after
+          // listening), for panels whose content was already on screen.
+          const catchUp =
+            reconnectOverLoadedPage &&
+            sessionKey === viewedKeyBefore &&
+            sessionKey.startsWith("agent:");
+          let sessionsLoaded: Promise<void>;
+          if (catchUp) {
+            foregroundHistoryLoad = loadChat({ force: historyMergeOwed, catchUp: true });
+            sessionsLoaded = foregroundHistoryLoad
+              .catch(() => undefined)
+              .then(() => loadSessions());
+            void foregroundHistoryLoad
+              .catch(() => undefined)
+              .then(() => {
+                if (!budgetPanelLoaded()) {
+                  loadBudget();
+                }
+                if (!treemapLoaded()) {
+                  refreshTreemap();
+                }
+                if (!timelineCtrl?.hasEvents()) {
+                  refreshTimelineRespectingMode();
+                }
+              });
+          } else {
+            sessionsLoaded = loadSessions({ loadChat: true, forceChat: historyMergeOwed });
+            // FORK 2026-10-06 — the viewed tab's history waits for sessions.list (18.6 s on the 06:54
+            // restart, the gateway's model catalog still loading), and nothing was on screen for it:
+            // the indicator now covers the whole wait, list and history, from the moment of connect.
+            if (sessionKey) {
+              void withHistoryLoad(
+                sessionKey,
+                "tail",
+                sessionsLoaded.then(() => foregroundHistoryLoad),
+              ).catch(() => undefined);
+            }
+            loadBudget();
+            refreshTreemap();
+            refreshTimelineRespectingMode();
+          }
           // FORK 2026-07-26 — the viewed sessionKey is only known here (restored from the
           // active tab), so this is the first point the cache panel can be filled from
           // history. Without it a hard refresh leaves the panel blank until the next turn.
@@ -9880,7 +10056,13 @@ function onFrame(f: unknown) {
           //
           // Now genuinely serialised: one at a time, so a background prefetch never queues ahead
           // of the foreground tab the user is actually waiting for. Still fire-and-forget.
+          // FORK 2026-10-06 — and it STARTS only once the viewed tab's history is in. The viewed
+          // tab's read waits for sessions.list (loadSessions) while this loop did not, so after a
+          // reload the first background read always went out first and the viewed tab's read queued
+          // behind it on the gateway's one event loop (06:16: the first read was a background tab's).
           void (async () => {
+            await sessionsLoaded.catch(() => undefined);
+            await foregroundHistoryLoad.catch(() => undefined);
             const toHydrate = others.filter(
               // FORK 2026-09-16 — detached tabs are prefetched too (see hydrateTab).
               (t) => t.sessionKey && t.id !== activeTabId,
@@ -10649,7 +10831,7 @@ function onEvent(evt: unknown) {
         // Answering IS the end of preparing, so close the window here too — idempotent, so
         // whichever path arrives first wins and the other is a no-op.
         if (sessionKeyMatches(p.sessionKey)) {
-          closePreModelWindow();
+          closePreModelWindow(typeof p.runId === "string" ? p.runId : undefined);
         }
         activeRuns.set(p.runId, runInfo);
         setSending(true);
@@ -12653,6 +12835,23 @@ function onEvent(evt: unknown) {
             }
           }
         }
+        // FORK 2026-10-06 (Broca retrieval v2, phase E): the one advice line for this turn, from the ranked list both Thalamus and
+        // Broca read. It is stamped on the prompt that opened the run (same guard as the recipe chip: a line is a claim about one
+        // specific turn) and drawn under it by `skillNoticesHtmlAfter`. No chat.send, no row of its own.
+        // `d.kind`, not `kind`: an unknown verb is coerced to "note" above, and this one is deliberately not in that list.
+        if (d.kind === "advice" && (!p.sessionKey || sessionKeyMatches(p.sessionKey))) {
+          const line = d.payload?.adviceLine;
+          if (typeof line === "string" && line.trim()) {
+            for (let i = messages.length - 1; i >= 0; i--) {
+              const m = messages[i] as { role?: string; _adviceLine?: string };
+              if (m?.role === "user") {
+                m._adviceLine = line;
+                updateChat(true);
+                break;
+              }
+            }
+          }
+        }
         PF_DEBUG_STATE.lastTrailEvent = entry;
         PF_DEBUG_STATE.eventCounts.trail++;
         pfLog(
@@ -12837,7 +13036,7 @@ function onEvent(evt: unknown) {
         // property of the viewed tab (like `sending`), so a background run starting must not
         // close, or mis-time, the window this tab is showing.
         if (sessionKeyMatches(p.sessionKey)) {
-          closePreModelWindow();
+          closePreModelWindow(typeof p.runId === "string" ? p.runId : undefined);
         }
         activeRuns.set(p.runId, {
           model: p.data.model,
@@ -13453,9 +13652,13 @@ async function loadSessions(opts?: { loadChat?: boolean; forceChat?: boolean }) 
     // loadChat at the call site. This runs AFTER the loop above has canonicalised the active tab's
     // sessionKey from the freshly fetched list, so a forced re-read cannot fetch a key the list
     // just replaced — and the tab still pays for exactly ONE chat.history.
-    loadChat(opts.forceChat ? { force: true } : undefined);
+    // FORK 2026-10-06 — kept, so the background prefetch can wait for it (the reconnect handler).
+    foregroundHistoryLoad = loadChat(opts.forceChat ? { force: true } : undefined);
   }
 }
+
+/** FORK 2026-10-06 — the viewed tab's latest history load from loadSessions; the prefetch waits on it. */
+let foregroundHistoryLoad: Promise<void> = Promise.resolve();
 
 // FORK 2026-06-22 (bug: "responses amalgamated in one bubble, no tool calls, no
 // thinking/answer split"): chat.history serves tool calls as OpenClaw-canonical
@@ -13547,7 +13750,139 @@ function normalizeHistoryRenderBlocks(msgs: unknown[]): void {
 // NOT retryable: the server answered, and asking again forever would spin without the answer ever
 // changing. Classify, don't blanket-retry.
 const HISTORY_RETRY_BACKOFF_MS = [400, 1_200, 3_000, 7_000, 15_000];
+// FORK 2026-10-06 — a gateway that is starting or a socket that is reconnecting answers within
+// seconds of being ready, so its wait is retried every second instead of climbing the ladder: on
+// the 06:15 restart the ladder had reached 7–15 s gaps by the time the gateway was ready, and the
+// chat stayed blank for those seconds too (history-loading.ts isGatewayWait).
+const HISTORY_GATEWAY_WAIT_RETRY_MS = 1_000;
 const HISTORY_STRIP_ID = "history-strip";
+
+// ─── FORK 2026-10-06: THE CHAT HISTORY LOADING INDICATOR (history-loading.ts) ──────────────────
+// Every read that fills the viewed chat is registered here while it is in flight: the tail read of
+// loadChat (a load, a reload, a reconnect, a tab switch) and the scroll-back reads (loadOlderPage,
+// loadResetArchivePage). Two static hosts in .chat-area draw them, OUTSIDE #messages, so the keyed
+// renderer (chat-render.ts) never sees a foreign node: one at the top of the pane for a scroll back,
+// one centred on an empty page. A page that already holds rows shows only the scroll back.
+const historyLoads = new Map<number, HistoryLoad>();
+let historyLoadSeq = 0;
+/** When this page last completed the gateway hello, and when a chat.history last came back. */
+let gatewayConnectedAt = 0;
+let historyAnsweredAt = 0;
+
+/** Register a read; the returned function ends it. A read under the delay never shows. */
+function beginHistoryLoad(key: string, kind: HistoryLoadKind): () => void {
+  const id = ++historyLoadSeq;
+  historyLoads.set(id, { key, kind, startedAt: Date.now() });
+  setTimeout(renderHistoryIndicators, HISTORY_INDICATOR_DELAY_MS + 20);
+  renderHistoryIndicators();
+  return () => {
+    if (historyLoads.delete(id)) {
+      renderHistoryIndicators();
+    }
+  };
+}
+
+/** `promise`, with the indicator up for `key` until it settles. */
+async function withHistoryLoad<T>(
+  key: string,
+  kind: HistoryLoadKind,
+  promise: Promise<T>,
+): Promise<T> {
+  const end = beginHistoryLoad(key, kind);
+  try {
+    return await promise;
+  } finally {
+    end();
+  }
+}
+
+function historyIndicatorEl(id: string): HTMLElement | null {
+  const existing = $(id);
+  if (existing) {
+    return existing;
+  }
+  const host = $("messages")?.parentElement ?? null;
+  if (!host) {
+    return null;
+  }
+  const el = document.createElement("div");
+  el.id = id;
+  el.className = "history-loading";
+  el.hidden = true;
+  el.setAttribute("role", "status");
+  el.setAttribute("aria-live", "polite");
+  el.innerHTML =
+    '<span class="hl-spinner" aria-hidden="true"></span><span class="hl-label"></span>' +
+    '<span class="hl-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+  host.appendChild(el);
+  return el;
+}
+
+function paintHistoryIndicator(id: string, ind: HistoryIndicator | undefined): void {
+  const pane = $("messages");
+  const el = ind || $(id) ? historyIndicatorEl(id) : null;
+  if (!el) {
+    return;
+  }
+  if (!ind || !pane) {
+    el.hidden = true;
+    return;
+  }
+  const label = el.querySelector(".hl-label");
+  if (label && label.textContent !== ind.label) {
+    label.textContent = ind.label;
+  }
+  el.dataset.place = ind.place;
+  el.dataset.kind = ind.kind;
+  // Over the messages pane, measured now: the composer and the strips below it change height.
+  const top = pane.offsetTop;
+  const height = pane.clientHeight;
+  const y = ind.place === "top" ? top + 8 : top + Math.round(height / 2) - 17;
+  el.style.top = `${Math.max(top, y)}px`;
+  el.hidden = false;
+}
+
+function renderHistoryIndicators(): void {
+  const retry = sessionKey ? historyLoadState.get(sessionKey) : undefined;
+  const shown =
+    historyLoads.size === 0 && connected
+      ? []
+      : historyIndicators({
+          loads: historyLoads.values(),
+          viewedKey: sessionKey,
+          matches: (loadKey, viewedKey) => sessionKeyMatches(loadKey, viewedKey),
+          pageHasRows: pageHoldsServerRows(messages),
+          retryReason: retry?.kind === "retrying" ? retry.reason : null,
+          now: Date.now(),
+          // FORK 2026-10-06 — no socket yet, or it dropped: "Connecting to the gateway", moving.
+          connecting: !connected,
+        });
+  paintHistoryIndicator(
+    "history-loading-top",
+    shown.find((i) => i.place === "top"),
+  );
+  paintHistoryIndicator(
+    "history-loading-main",
+    shown.find((i) => i.place !== "top"),
+  );
+}
+window.addEventListener("resize", () => {
+  if (historyLoads.size > 0) {
+    renderHistoryIndicators();
+  }
+});
+
+/**
+ * FORK 2026-10-06 — does the gateway answer this page's history again? Connected, and (when a tab
+ * is viewed) a chat.history has come back since that connection. A pushed build waits for this
+ * before it reloads the page (requestUiReload): on the 06:15 restart the new bundle was pushed the
+ * second the gateway stopped, the page reloaded onto a gateway that refused history for 47 s, and
+ * everything it was showing was gone for the minute that followed. Waiting keeps the old page on
+ * screen through the restart, and the reload lands on a gateway that has just served that history.
+ */
+function gatewayAnswersHistory(): boolean {
+  return connected && (!sessionKey || historyAnsweredAt >= gatewayConnectedAt);
+}
 
 type HistoryLoadState =
   | { kind: "ok" }
@@ -13590,6 +13925,7 @@ function setHistoryLoadState(sk: string, st: HistoryLoadState): void {
     historyLoadState.set(sk, st);
   }
   renderHistoryStrip();
+  renderHistoryIndicators();
 }
 
 /**
@@ -13654,7 +13990,10 @@ function renderHistoryStrip(): void {
     return;
   }
   const st = sessionKey ? historyLoadState.get(sessionKey) : undefined;
-  if (!st || st.kind === "ok") {
+  // FORK 2026-10-06 — a gateway that is starting, or a socket that is reconnecting, is a WAIT, and
+  // the moving indicator over the chat already says so in plain words (history-loading.ts). The
+  // strip stays for what is a fault: a read failed for good, or retried for another reason.
+  if (!st || st.kind === "ok" || (st.kind === "retrying" && isGatewayWait(st.reason))) {
     el.style.display = "none";
     el.textContent = "";
     el.removeAttribute("data-state");
@@ -13706,6 +14045,7 @@ async function fetchChatHistoryResilient(
   for (;;) {
     try {
       const res = await req<{ messages?: unknown[] } | null>("chat.history", request);
+      historyAnsweredAt = Date.now();
       if (historyFetchGen.get(sk) !== gen) {
         return null;
       }
@@ -13721,9 +14061,10 @@ async function fetchChatHistoryResilient(
         setHistoryLoadState(sk, { kind: "failed", reason });
         return null;
       }
-      const delay =
-        HISTORY_RETRY_BACKOFF_MS[Math.min(failures - 1, HISTORY_RETRY_BACKOFF_MS.length - 1)] ??
-        15_000;
+      const delay = isGatewayWait(reason)
+        ? HISTORY_GATEWAY_WAIT_RETRY_MS
+        : (HISTORY_RETRY_BACKOFF_MS[Math.min(failures - 1, HISTORY_RETRY_BACKOFF_MS.length - 1)] ??
+          15_000);
       setHistoryLoadState(sk, { kind: "retrying", attempt: failures + 1, reason });
       await new Promise((r) => setTimeout(r, delay));
       if (historyFetchGen.get(sk) !== gen) {
@@ -13912,18 +14253,24 @@ function mergeHistoryIntoSavedPage(ts: TabState, key: string, incoming: unknown[
  * produced unpainted until the architect reloaded the tab by hand. Every hazard that a merge can
  * actually destroy still vetoes a forced call — see the gate.
  */
-async function loadChat(opts?: { force?: boolean }) {
+async function loadChat(opts?: { force?: boolean; catchUp?: boolean }) {
   if (!sessionKey) {
     return;
   }
   const keyAtStart = sessionKey;
+  // FORK 2026-10-06 — `catchUp`: a reconnect over a page that still holds this chat (the hello
+  // handler). Its EEG is held too, and a backfill reads up to 5,000 samples per lineage key from a
+  // gateway that may still be starting, so a store with samples is left as it is.
+  const eegHeld = opts?.catchUp === true && getEegStore(keyAtStart).toSnapshot().samples.length > 0;
   // FORK 2026-08-28 (R1: "a cloned tab carries an EXACT chat AND EEG copy of its parent") — the
   // EEG/anatomy backfill used to be the TAIL of this function, downstream of all three of its
   // silent early-returns, so one swallowed chat.history promise cost the tab BOTH halves of R1 at
   // once. They are independent reads of independent stores (chat.history over the websocket vs
   // /tinker/api/context-anatomy over HTTP); neither has any business cancelling the other. Kick it
   // here, before anything below can return.
-  backfillEegFromAnatomy(keyAtStart);
+  if (!eegHeld) {
+    backfillEegFromAnatomy(keyAtStart);
+  }
   // FORK 2026-07-28 (the architect: "sometimes the wait is so long I have to hard refresh") — this used to
   // be `.catch(() => ({ messages: [] }))`, which made FAILURE INDISTINGUISHABLE FROM AN EMPTY
   // SESSION. The empty array was then assigned to the live messages and rendered, so a rejected or
@@ -13951,14 +14298,19 @@ async function loadChat(opts?: { force?: boolean }) {
     tabWindowOf(stAtStart, keyAtStart),
     messages,
   );
-  let res = await fetchChatHistoryResilient(keyAtStart, request);
+  // FORK 2026-10-06 — the moving indicator is up while the read is in flight (history-loading.ts).
+  let res = await withHistoryLoad(
+    keyAtStart,
+    "tail",
+    fetchChatHistoryResilient(keyAtStart, request),
+  );
   if (res === null) {
     const retry = forgetWindowAfterFailedCursorRead(stAtStart, keyAtStart, request, messages);
     if (retry === null) {
       return;
     }
     ({ request, base } = retry);
-    res = await fetchChatHistoryResilient(keyAtStart, request);
+    res = await withHistoryLoad(keyAtStart, "tail", fetchChatHistoryResilient(keyAtStart, request));
     if (res === null) {
       return;
     }
@@ -14254,19 +14606,35 @@ async function loadOlderPage(fill?: HoleFill): Promise<OlderReplyOutcome | null>
   }
   const w = tabWindowOf(tabStates.get(tabId), key);
   const request = fill ? holeFillRequest(key, w, fill) : buildOlderRequest(key, w);
+  // FORK 2026-10-05 (the architect: "Some tabs appear without history. I should be able to scroll back until
+  // the beginning") — a scroll to the top pages back while the session runs, too. The live-run gate
+  // turned every gesture into a silent no-op on a tab whose session was mid-turn, and AcmeVision's
+  // turns run 30-45 min, so that tab showed its last hundred rows for most of the day. An older page
+  // is written ABOVE the page by identity, a prompt the page holds by its key is an anchor, and a
+  // row of a run the page watched live is skipped (planOlderPage; compose test "an older page
+  // under a live run"): it cannot touch the bubble the live writer is filling. A hole fill still
+  // waits for a quiet session, since its rows land in the middle of the page.
+  const liveRunGate = fill !== undefined;
   // A page with no server rows was blanked while its window lingered: nothing above it to page.
   if (
     request === null ||
     !pageHoldsServerRows(messages) ||
-    transcriptWriterLive() ||
-    viewedSessionBusy()
+    (liveRunGate && (transcriptWriterLive() || viewedSessionBusy()))
   ) {
     return null;
   }
   olderPageInFlightFor = tabId;
+  // The same marker as an archive read (base.css .messages.archive-loading): an older page on a
+  // loaded gateway takes seconds, and a pane that showed nothing read as "no more history".
+  // FORK 2026-10-06 — the class is now the state flag only (tests and the e2e drivers read it); what
+  // he sees is the moving indicator at the top of the pane (history-loading.ts).
+  const pane = fill ? null : $("messages");
+  pane?.classList.add("archive-loading");
   let res: unknown;
   try {
-    res = await req("chat.history", request);
+    res = await (fill
+      ? req("chat.history", request)
+      : withHistoryLoad(key, "older", req("chat.history", request)));
     olderPageFailedAt.delete(key);
   } catch {
     // Nothing written; the next gesture asks again once the backoff is over (R33).
@@ -14274,6 +14642,7 @@ async function loadOlderPage(fill?: HoleFill): Promise<OlderReplyOutcome | null>
     return null;
   } finally {
     olderPageInFlightFor = null;
+    pane?.classList.remove("archive-loading");
   }
   const st = tabStates.get(tabId);
   const now = tabWindowOf(st, key);
@@ -14283,8 +14652,7 @@ async function loadOlderPage(fill?: HoleFill): Promise<OlderReplyOutcome | null>
     sessionKey !== key ||
     now.epoch !== w.epoch ||
     now.firstSeq !== w.firstSeq ||
-    transcriptWriterLive() ||
-    viewedSessionBusy()
+    (liveRunGate && (transcriptWriterLive() || viewedSessionBusy()))
   ) {
     return null;
   }
@@ -14368,7 +14736,11 @@ async function loadResetArchivePage(): Promise<boolean> {
   let res: unknown;
   try {
     // An archive's first read merges its claude-cli transcripts: measured 10-60 s on the loaded box.
-    res = await req("chat.history", request, { timeoutMs: RESET_ARCHIVE_TIMEOUT_MS });
+    res = await withHistoryLoad(
+      key,
+      "older",
+      req("chat.history", request, { timeoutMs: RESET_ARCHIVE_TIMEOUT_MS }),
+    );
     resetArchiveFailedAt.delete(key);
   } catch {
     resetArchiveFailedAt.set(key, Date.now());
@@ -14627,6 +14999,8 @@ function restoreScrollAnchor(el: HTMLElement, a: ScrollAnchor | null): boolean {
 //     It is NOT a throughput cap — nothing is dropped, trimmed or deferred; an identical fetch
 //     that is already in the air is simply not started a second time.
 const eegBackfillInFlight = new Set<string>();
+/** The session's own anatomy rows one EEG read asks for (one row per turn; Main had 1,391). */
+const EEG_ANATOMY_LIMIT = 5000;
 
 function backfillEegFromAnatomy(eegSk: string): void {
   if (!eegSk) {
@@ -14640,9 +15014,8 @@ function backfillEegFromAnatomy(eegSk: string): void {
   // reconnect during a stream would wipe samples the effort feed is still writing" — the guard
   // just did not reach the non-viewed case. `streamRunId` stays scoped to the viewed tab: it is
   // that tab's own cursor and means nothing about anyone else's.
-  if (sessionIsBusy(eegSk) || (sessionKeyMatches(eegSk) && streamRunId !== null)) {
-    return;
-  }
+  // FORK 2026-10-05 — that liveness is now read when the rows arrive, and a live session gets the
+  // older-only merge, which clears nothing (below), instead of no history at all.
   if (eegBackfillInFlight.has(eegSk)) {
     return;
   }
@@ -14696,7 +15069,10 @@ function backfillEegFromAnatomy(eegSk: string): void {
         // FORK 2026-07-16: tree=1 also pulls the subagent family (flat
         // `<root>:subagent:%` keys) so a fan-out's branches restore reload-proof —
         // the single-session anatomy fetch was why fan-outs never showed in the EEG.
-        `${base}/tinker/api/context-anatomy/${encodeURIComponent(k)}?tree=1&limit=500`;
+        // FORK 2026-10-05 — the session's own rows have a limit of their own on the server
+        // (querySessionTree), and `fields=eeg` sends only what this reader uses, so the whole
+        // history of a busy tab (Main: 1,391 rows) fits in one read.
+        `${base}/tinker/api/context-anatomy/${encodeURIComponent(k)}?tree=1&limit=${EEG_ANATOMY_LIMIT}&fields=eeg`;
       Promise.all(
         eegKeys.map((k) =>
           fetch(anatomyUrl(k), Object.keys(hdrs).length ? { headers: hdrs } : undefined)
@@ -14803,16 +15179,46 @@ function backfillEegFromAnatomy(eegSk: string): void {
           const localBranches = snap.samples.filter((s) => s.subagent).length;
           const evBranches = events.filter(evIsSub).length;
           const evMain = events.length - evBranches;
-          if (localMain >= evMain && localBranches >= evBranches) {
-            console.log("[eeg-dbg] early-return: local >= events, NOT rebuilding", {
+          // FORK 2026-10-05 (the architect: "it cannot be missing from the chat or from the EEG") — "the store
+          // holds as many" never meant "the store reaches as far back". Live per-call samples of a
+          // busy afternoon outnumbered the server's one row per turn, so the paper kept starting
+          // this morning; and a session mid-turn was skipped outright, so a tab that runs all day
+          // never got its past. A store that holds samples is now never cleared when it is richer
+          // or while its session runs: the rows OLDER than its oldest trunk sample are added to it,
+          // and every live sample stays. Only a poorer, idle store is rebuilt, as before.
+          const tsOfEv = (ev: any): number =>
+            typeof ev?.timestampMs === "number"
+              ? ev.timestampMs
+              : typeof ev?.timestamp === "number"
+                ? ev.timestamp
+                : 0;
+          const busyNow =
+            sessionIsBusy(eegSk) || (sessionKeyMatches(eegSk) && streamRunId !== null);
+          const olderOnly =
+            snap.samples.length > 0 &&
+            (busyNow || (localMain >= evMain && localBranches >= evBranches));
+          let localOldest = Number.POSITIVE_INFINITY;
+          for (const s of snap.samples) {
+            if (!s.subagent && !s.tool && s.startedAt < localOldest) {
+              localOldest = s.startedAt;
+            }
+          }
+          const source = olderOnly
+            ? events.filter((ev) => tsOfEv(ev) > 0 && tsOfEv(ev) < localOldest)
+            : events;
+          if (source.length === 0) {
+            console.log("[eeg-dbg] nothing older than the store", {
               localMain,
               evMain,
               localBranches,
               evBranches,
+              busyNow,
             });
             return;
           }
-          store.clear();
+          if (!olderOnly) {
+            store.clear();
+          }
           const samples: EegSample[] = [];
           const ends: EegTurnEnd[] = [];
           let lastTurn: number | undefined;
@@ -14829,7 +15235,7 @@ function backfillEegFromAnatomy(eegSk: string): void {
               : typeof ev.timestamp === "number"
                 ? ev.timestamp
                 : 0;
-          const mainTs = events
+          const mainTs = source
             .filter(
               (ev) => !(typeof ev?.sessionKey === "string" && ev.sessionKey.includes(":subagent:")),
             )
@@ -14851,8 +15257,8 @@ function backfillEegFromAnatomy(eegSk: string): void {
               ...(pt ? { promptText: pt.length > 280 ? `${pt.slice(0, 280)}…` : pt } : {}),
             };
           };
-          for (let i = 0; i < events.length; i++) {
-            const ev = (events[i] ?? {}) as any;
+          for (let i = 0; i < source.length; i++) {
+            const ev = (source[i] ?? {}) as any;
             const model = typeof ev.model === "string" ? ev.model : "";
             const ts =
               typeof ev.timestampMs === "number"
@@ -17660,6 +18066,11 @@ async function abort() {
   void loadSessions();
 }
 
+/** FORK 2026-10-06 — the budget panel has its numbers (a reconnect leaves them to the 300 s poll). */
+function budgetPanelLoaded(): boolean {
+  return modelConfigData !== null && _budgetData !== null && budgetUsageData !== null;
+}
+
 async function loadBudget() {
   try {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -18955,6 +19366,15 @@ changed? Name only axes with real signal. Silence on the rest.
     and model switching that told him to ask the architect for the token. Its reflection never read the
     draft. The owner: "not to start a conversation with him ... He needs a token ... simple as that.")
 
+    A delivery that LISTS the members of a class (the machines a build uses, the files a change
+    touched, the people on a thread) is held against a census of that class, not against the list
+    the turn happened to read. Count the class from every source that names a member, including the
+    retired, the pending and the commented-out entries, and name each one the list leaves out with
+    the reason. (2026-10-05: the machines panel copied the active rows of \`hosts.conf\`; Fore1 and
+    Fore2 sat in its comments and in TOOLS.md, and the reflection wrote "no gap found". The owner:
+    "the Fore1 and Fore2 are still missing. They either are reachable or not, but we need to see
+    them listed.")
+
     A status answer is a delivery too. When the owner asks where a piece of work stands ("show me
     the present status", "what is pending", "where are we"), the recipe that governs that work
     shapes the answer: its report step (a commit diagram, a Gantt, a test sheet) is part of what
@@ -19265,6 +19685,10 @@ function reconstructInjectionFields(msg: Record<string, unknown>): void {
       msg._recipeTitle = split.recipeTitle;
       msg._recipePath = split.recipePath;
     }
+    // FORK 2026-10-06: the advice line survives a reload the same way, in the `<recipe_advice>` tag of the stored turn.
+    if (split.kind === "recipe" && split.adviceLine) {
+      msg._adviceLine = split.adviceLine;
+    }
   }
   msg._fullPrompt = rawText;
   // Rewrite the FIRST text block (regardless of strict text===rawText match)
@@ -19404,8 +19828,12 @@ function skillNoticesHtmlAfter(
         _usage?: unknown;
         _recipeTitle?: unknown;
         _recipePath?: unknown;
+        _adviceLine?: unknown;
       }
     | undefined;
+
+  // FORK 2026-10-06 (Broca retrieval v2, phase E): the advice line rides in the same row as the chips and is drawn even when no chip is.
+  const adviceHtml = renderAdviceLine(row?._adviceLine);
 
   const legacy: UsageMark[] = [];
   const rTitle = row?._recipeTitle;
@@ -19450,15 +19878,17 @@ function skillNoticesHtmlAfter(
   }
 
   const marks = collectUsage(row?.__openclaw?.usage, row?._usage, legacy);
-  if (marks.length === 0) return "";
+  if (marks.length === 0) return adviceHtml;
 
   // Cross-ROW de-dup. When the boundary that closed this run is the harness's injected skill BODY,
   // that row draws the chip itself, in the place the body would have been painted (§5.8O's fold,
   // which must stay intact). Leaving the same skill in this row too is what made one `Skill` call
   // paint two chips.
   const folded = end < view.length ? skillNoticeFromInjectedBody(rowFirstText(view[end])) : null;
-  return renderUsageChips(
-    folded ? marks.filter((m) => !(m.kind === "skill" && m.name === folded.name)) : marks,
+  return (
+    renderUsageChips(
+      folded ? marks.filter((m) => !(m.kind === "skill" && m.name === folded.name)) : marks,
+    ) + adviceHtml
   );
 }
 
@@ -20749,6 +21179,83 @@ function renderMsg(
 // FORK 2026-08-17 — `thinkingTickInterval` is gone with the second clock; the one clock's handle is
 // `activityClockInterval`, declared beside ACTIVITY_TICK_MS.
 
+/**
+ * FORK 2026-10-05 — the viewed session's fresh client runs, and the one the thinking indicator
+ * names: the newest main run, else the newest run. Moved out of renderThinkingIndicator so the
+ * answer rail of the turn in flight reads the SAME run (inFlightTurnModel below).
+ */
+function viewedRunsForIndicator(): {
+  viewed: Array<[string, ActiveRunInfo]>;
+  primary: [string, ActiveRunInfo] | null;
+} {
+  const viewed: Array<[string, ActiveRunInfo]> = [];
+  for (const [runId, info] of activeRuns) {
+    if (!runBelongsToViewedSession(info)) {
+      continue;
+    }
+    // FORK 2026-07-29 — same freshness bound every other surface now applies (run-state.ts).
+    // Without it this list could hold a run whose lifecycle:end was dropped, and the chat would
+    // disagree with the tab/row/count in the other direction.
+    if (!clientRunIsFresh(info, Date.now())) {
+      continue;
+    }
+    viewed.push([runId, info]);
+  }
+  if (viewed.length === 0) {
+    return { viewed, primary: null };
+  }
+  // Primary = the NEWEST main (non-subagent) run if present, else the newest
+  // viewed run. Preferring oldest/first-found left a stale Sol entry masking
+  // a live Grok pin (the architect 2026-07-24: "thinking indicator showing sol").
+  // FORK 2026-07-28: fourth copy, now routed through the one canonical predicate. This one
+  // decides which run is "primary" in the thinking indicator, so the old wrong arithmetic made
+  // every subagent look like a main run on non-main tabs.
+  const isSub = (i: ActiveRunInfo) => isSubagentOfViewedSession(i);
+  const recency = (i: ActiveRunInfo) => Math.max(i.lastEventAt || 0, i.startedAt || 0);
+  const pickNewest = (list: Array<[string, ActiveRunInfo]>) =>
+    list.reduce((a, b) => (recency(a[1]) >= recency(b[1]) ? a : b));
+  const mains = viewed.filter(([, i]) => !isSub(i));
+  return { viewed, primary: mains.length > 0 ? pickNewest(mains) : pickNewest(viewed) };
+}
+
+/**
+ * FORK 2026-10-05 (the architect: "wait until we know for sure the model that needs to be used, then
+ * display all the thinking and model indicators synchronized, without going back") — THE model of
+ * the viewed session's turn in flight, as that turn NAMED it, or null while it has named none.
+ *
+ * Read by the thinking indicator (both lanes) and by the answer rail of the last run (chatRunRail),
+ * so the pill's name and the line's colour and logo switch in the same repaint and cannot differ.
+ * Named = the run table's own entry (lifecycle `phase:start`, an effort event, the pinned model the
+ * send itself requested), or the run this tab saw on the background lane before it was viewed.
+ *
+ * Never the session row's model: the gateway persists a session's model when a run ENDS
+ * (session-usage.ts), so during an Auto turn the row names the PREVIOUS turn's model, and painting
+ * it was the "assigns the last model used, then the whole line changes" report. Supersedes the
+ * 2026-07-29 row fallback for the turn in flight: a turn that has not named its model reads
+ * "working", never a guess.
+ */
+function inFlightTurnModel(): RailModel | null {
+  const picked = viewedRunsForIndicator().primary;
+  if (picked) {
+    return namedModel(picked[1]);
+  }
+  if (!sessionKey) {
+    return null;
+  }
+  const now = Date.now();
+  let seen: BackgroundRun | undefined;
+  for (const run of backgroundRuns.values()) {
+    if (
+      sessionKeyMatches(run.sessionKey, sessionKey) &&
+      clientRunIsFresh(run, now) &&
+      (!seen || run.lastEventAt > seen.lastEventAt)
+    ) {
+      seen = run;
+    }
+  }
+  return namedModel(seen);
+}
+
 function renderThinkingIndicator(): string {
   // ─── THE ONE VERDICT ────────────────────────────────────────────────────────────────────────
   // FORK 2026-08-15 (the architect: "the chat one is showing but the rest are mute ... they need to be
@@ -20786,20 +21293,10 @@ function renderThinkingIndicator(): string {
     // button has always called the session-level abort() (see the delegated #messages handler),
     // so one Stop is the correct semantics. runBelongsToViewedSession stays the ONE shared
     // predicate so chat/prefrontal/model-count can't disagree. See done-signals.md §3 + panels.md §147.
-    const viewed: Array<[string, ActiveRunInfo]> = [];
+    const { viewed, primary: picked } = viewedRunsForIndicator();
     let subagentCount = 0;
     let restarting = false;
-    for (const [runId, info] of activeRuns) {
-      if (!runBelongsToViewedSession(info)) {
-        continue;
-      }
-      // FORK 2026-07-29 — same freshness bound every other surface now applies (run-state.ts).
-      // Without it this list could hold a run whose lifecycle:end was dropped, and the chat would
-      // disagree with the tab/row/count in the other direction.
-      if (!clientRunIsFresh(info, Date.now())) {
-        continue;
-      }
-      viewed.push([runId, info]);
+    for (const [, info] of viewed) {
       // FORK 2026-07-28: was a third inlined copy of the subagent predicate, with the same wrong
       // prefix arithmetic that made this badge read 0 on every non-main tab.
       if (isSubagentOfViewedSession(info)) {
@@ -20809,30 +21306,18 @@ function renderThinkingIndicator(): string {
         restarting = true;
       }
     }
-    if (viewed.length > 0) {
-      // Primary = the NEWEST main (non-subagent) run if present, else the newest
-      // viewed run. Preferring oldest/first-found left a stale Sol entry masking
-      // a live Grok pin (the architect 2026-07-24: "thinking indicator showing sol").
-      // FORK 2026-07-28: fourth copy, now routed through the one canonical predicate. This one
-      // decides which run is "primary" in the thinking indicator, so the old wrong arithmetic made
-      // every subagent look like a main run on non-main tabs.
-      const isSub = (i: ActiveRunInfo) => isSubagentOfViewedSession(i);
-      const recency = (i: ActiveRunInfo) => Math.max(i.lastEventAt || 0, i.startedAt || 0);
-      const pickNewest = (list: Array<[string, ActiveRunInfo]>) =>
-        list.reduce((a, b) => (recency(a[1]) >= recency(b[1]) ? a : b));
-      const mains = viewed.filter(([, i]) => !isSub(i));
-      const [primaryRunId, primary] = mains.length > 0 ? pickNewest(mains) : pickNewest(viewed);
+    if (picked) {
+      const [primaryRunId, primary] = picked;
       // The row's name comes from detailedModelLabel (see below), not the picker's
       // shortModelLabel, whose compact form cannot tell two Opus versions apart.
-      // FORK 2026-07-29 — an activeRuns entry is created with model:"" and only filled when a
-      // lifecycle event carries d.model, so the rich row could show a bare "working" for the first
-      // seconds of every turn. The session row already knows the model; use it before giving up.
-      const rowModel = viewedSessionRowModel();
-      // FORK 2026-07-31 — a gateway-injected sentinel must never masquerade as the
-      // answering model (see isTranscriptOnlyModel); fall back to the row's real pair.
-      const synthetic = isTranscriptOnlyModel(primary.model);
-      const runProvider = (synthetic ? viewedSessionRowProvider() : primary.provider) || "";
-      const runModel = (synthetic ? rowModel : primary.model) || "";
+      // FORK 2026-10-05 — only the model the turn NAMED (inFlightTurnModel's rule, which the answer
+      // rail reads too). The 2026-07-29 fallback to the session row is gone for the turn in flight:
+      // the row keeps the PREVIOUS turn's model until this one ends, so it painted the last model
+      // and then switched (the architect: "pretending nothing happened"). The 2026-07-31 sentinel guard
+      // holds by construction: namedModel never returns a transcript-only id.
+      const named = namedModel(primary);
+      const runProvider = named?.provider || "";
+      const runModel = named?.model || "";
       // FORK 2026-08-06: glow = the model's EEG trace color, resolved centrally.
       const color = resolveEegGlowColor({ model: runModel, provider: runProvider });
       const elapsed = Math.floor((Date.now() - primary.startedAt) / 1000);
@@ -20840,9 +21325,7 @@ function renderThinkingIndicator(): string {
       // major (Opus 5.5 vs Opus 4.8, GPT-6 Sol vs GPT-5.6 Sol). Families it has no rule for
       // take the panel's modelName (glm-5.3-flash), not the picker's compressed GLM5.3.
       const name =
-        (runModel ? detailedModelLabel(runModel) || modelName(runModel) : "") ||
-        (rowModel ? detailedModelLabel(rowModel) || modelName(rowModel) : "") ||
-        "working";
+        (runModel ? detailedModelLabel(runModel) || modelName(runModel) : "") || "working";
       const recipeLabel = activeRecipeStep ? ` &middot; ${esc(activeRecipeStep)}` : "";
       // One small badge for "+N subagents running" — detail is in the RECIPES panel.
       const subBadge =
@@ -20874,9 +21357,12 @@ function renderThinkingIndicator(): string {
       // branch that actually fired after the 2026-07-31 restart: the tab had no
       // client run left, so the indicator took the server-resolved state, which
       // carried the gateway's own injected message (openclaw/gateway-injected).
-      const syntheticState = isTranscriptOnlyModel(state.model);
-      const stateProvider = (syntheticState ? viewedSessionRowProvider() : state.provider) || "";
-      const stateModel = (syntheticState ? viewedSessionRowModel() : state.model) || "";
+      // FORK 2026-10-05 — and no session-row model either: `state.model` falls back to the row,
+      // which names the PREVIOUS turn's model until this one ends. Only what the turn named
+      // (inFlightTurnModel, the same answer the rail paints) or "working".
+      const namedState = inFlightTurnModel();
+      const stateProvider = namedState?.provider || "";
+      const stateModel = namedState?.model || "";
       // FORK 2026-08-06: same central glow resolution as the rich row.
       const color = resolveEegGlowColor({ model: stateModel, provider: stateProvider });
       return `<div class="thinking-indicator" data-state="server"><div class="thinking-run" data-provider="${esc(stateProvider)}" style="--thinking-dot-color:${color};--thinking-glow:${color}40;--thinking-glow-bg:${color}20;--thinking-glow-bg2:${color}30">
@@ -21366,12 +21852,52 @@ function railRunModel(runId: string): RailModel | undefined {
   }
   return railModelByRun.get(runId);
 }
-/** One run's rail: the model that answered it, in its EEG colour, with its logo and full name. */
+/**
+ * FORK 2026-10-05 — is the viewed session's turn still going? The pre-model window (the pill's
+ * pending state) or a live run by the ONE resolver: the same two states the thinking indicator
+ * draws, so the rail treats the last run as in flight exactly while the pill is up.
+ */
+function viewedTurnInFlight(): boolean {
+  if (!sessionKey) {
+    return false;
+  }
+  if (viewedSessionPending()) {
+    return true;
+  }
+  const row = Array.isArray(sessions)
+    ? ((sessions as Array<Record<string, unknown>>).find(
+        (s) => s && typeof s.key === "string" && sessionKeyMatches(s.key as string, sessionKey),
+      ) as SessionRowForLiveness | undefined)
+    : undefined;
+  return sessionHasActiveRuns(sessionKey, row).live;
+}
+
+/**
+ * One run's rail: the model that answered it, in its EEG colour, with its logo and full name.
+ * FORK 2026-10-05 — the last run, while its turn is in flight, takes the model the thinking
+ * indicator names (inFlightTurnModel) and is PENDING_RAIL until there is one: never the previous
+ * run's model, never the session row's (chat-rail.ts runRailState).
+ */
 function chatRunRail(
   rows: readonly unknown[],
   prev: RailModel | null,
-): { rail: ChatRail; model: RailModel } | null {
-  const model = answeringModel(
+  tail: boolean,
+): { rail: ChatRail; model: RailModel | null } | null {
+  const inFlight = tail && viewedTurnInFlight();
+  if (inFlight) {
+    // While the run table still holds the turn, remember its model under every run id its rows
+    // carry (railRunModel records as it reads), so the rail resolves to the SAME model once the
+    // turn settles and the table forgets it. Without this the settled run fell back to a guess.
+    for (const raw of rows) {
+      const r = (raw ?? {}) as { _runId?: unknown; _phaseRunId?: unknown };
+      for (const id of [r._runId, r._phaseRunId]) {
+        if (typeof id === "string" && id) {
+          railRunModel(id);
+        }
+      }
+    }
+  }
+  const state = runRailState(
     rows,
     {
       runModel: railRunModel,
@@ -21381,10 +21907,15 @@ function chatRunRail(
       },
     },
     prev,
+    inFlight ? { model: inFlightTurnModel() } : null,
   );
-  if (!model) {
+  if (!state) {
     return null;
   }
+  if (state.kind === "pending") {
+    return { rail: PENDING_RAIL, model: null };
+  }
+  const model = state.model;
   return {
     model,
     rail: {
@@ -21430,7 +21961,6 @@ function updateChat(skipScroll = false): ChatPositioning | null {
     streamRunId,
     streamMsgUid,
     esc,
-    phaseSpanText: (m) => phaseDurationText(phaseGroupSpanMs(phaseEntriesOf(m), Date.now())),
     skillNoticesHtmlAfter,
     renderThinkingIndicator,
     queuedRows: () => queuedForSession(pendingQueuedSends, sessionKey, sessionKeyMatches),
@@ -21728,6 +22258,8 @@ function updateDots() {
   if (l) {
     l.textContent = connected ? "Connected" : "Disconnected";
   }
+  // FORK 2026-10-06 — the chat's own "Connecting to the gateway" indicator follows the same state.
+  renderHistoryIndicators();
 }
 
 function updateSelect() {
@@ -25169,6 +25701,12 @@ function refreshTreemap() {
   }
 }
 
+/** FORK 2026-10-06 — the context treemap is drawing a dump (context-treemap.ts `__treemapLoaded`). */
+function treemapLoaded(): boolean {
+  const tmCanvas = $("treemap-canvas");
+  return Boolean((tmCanvas as unknown)?.__treemapLoaded?.());
+}
+
 // ─── Response map ───
 function updateResponseMap() {
   const canvas = $("response-canvas");
@@ -26310,6 +26848,22 @@ function updateSessionsPanel() {
   for (const [g, items] of groups) {
     groups.set(g, pairChainedRows(items, rowKey, chainPairs, sessionKeyMatches));
   }
+  // FORK 2026-10-06 (the user: the admin sees every user's chats, grouped under their owner's tag).
+  // Open tabs keep their place at the top; the rest of the main list is grouped by owner.
+  let ownerHeaders: Map<number, string> | null = null;
+  if (hiveMe?.admin) {
+    const pinnedRows = groups.get("pinned");
+    if (pinnedRows) {
+      const g = groupByOwner(
+        pinnedRows,
+        (it) => it.session,
+        hiveMe.operatorId,
+        (it) => sessionHasOpenTab((it.session as { key: string }).key),
+      );
+      groups.set("pinned", g.ordered);
+      ownerHeaders = g.headers;
+    }
+  }
   const chainColorAt = (
     list: Array<{ session: unknown; shortLabel: string }>,
     i: number,
@@ -26361,6 +26915,10 @@ function updateSessionsPanel() {
         } else if (sawOpen && !sepDone) {
           html += '<div class="session-open-sep" aria-hidden="true"></div>';
           sepDone = true;
+        }
+        const ownerHead = ownerHeaders?.get(i);
+        if (ownerHead) {
+          html += `<div class="session-owner-head">👤 ${esc(ownerHead)}</div>`;
         }
         const color = chainColorAt(items, i);
         if (color) {
@@ -26861,7 +27419,9 @@ function init() {
            covers the chat area while its icon tab is active; the master chat keeps running under
            it, so its scroll and its stream are untouched. openGanttView / closeGanttView. -->
       <div class="gantt-view" id="gantt-view" hidden><iframe title="Gantt chart" src="about:blank"></iframe></div>
-      <div class="messages" id="messages"><div class="msg system">Connecting to gateway...</div></div>
+      <!-- FORK 2026-10-06: the pane starts empty; "Connecting to the gateway" is the moving indicator
+           (history-loading.ts), painted over it until the socket connects. -->
+      <div class="messages" id="messages"></div>
       <!-- FORK 2026-06-11 — tinkerui-slider: the per-tab thinking slider was
            RELOCATED from this chat-area strip into the Models side panel
            (#budget-panel), rendered directly under the active tab's model row by
@@ -26993,6 +27553,10 @@ function init() {
         </div>
         <div id="amygdala-body" class="rpanel-body"><div style="color:var(--muted);font-size:12px;padding:8px">Idle — gate decisions stream here live as the agent runs tools.</div></div>
       </div>
+      <div class="rpanel" id="hive-users-panel" hidden>
+        <div class="rpanel-header rpanel-header--toggle" title="Collapse / expand users"><span class="rpanel-caret">▾</span> 👥 USERS <span id="hive-users-count" class="sessions-count"></span></div>
+        <div id="hive-users-body" class="rpanel-body"></div>
+      </div>
     </div>
     <div class="context-timeline" id="context-timeline"></div>
     <div class="bottom-right-panel" id="bottom-right-panel">
@@ -27013,6 +27577,17 @@ function init() {
   // FORK 2026-08-24 — the rail's DOM exists as of the assignment above, and the
   // socket will not be authed for another ~400ms. Fill it from the last visit now.
   paintRightRailFromSnapshots();
+
+  // FORK 2026-10-06 — multi-user mode: ask the hive door who this page belongs to. Admins get the
+  // USERS panel at the bottom of the rail and an owner-grouped chat list. Single-user: no-op.
+  void fetchHiveMe().then((me) => {
+    hiveMe = me;
+    if (!me) return;
+    const panel = document.getElementById("hive-users-panel");
+    const body = document.getElementById("hive-users-body");
+    if (me.admin && panel && body) initHiveUsersPanel(panel, body, me);
+    updateSessionsPanel();
+  });
 
   // ─── Global tooltip system (viewport-clamped) ───
   const hintEl = document.createElement("div");
@@ -37761,6 +38336,8 @@ if (prefrontalContainer) {
   prefrontalCtrl = mountPrefrontalTree(prefrontalContainer);
   updatePrefrontalTree(); // Show empty state on boot
 }
+// FORK 2026-10-06 — "Connecting to the gateway", moving, from the first frame until the hello.
+renderHistoryIndicators();
 gwConnect();
 // FORK 2026-08-18 — start the ATTACHED ACTIVITY poll AFTER init() has built the DOM: the strip's
 // host node (#attach-strip) is created there, and the delegated Stop/Clear listener has to bind to

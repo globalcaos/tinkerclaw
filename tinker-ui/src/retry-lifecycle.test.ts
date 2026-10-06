@@ -2,13 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 import {
+  envelopeVerdictOf,
   isRetryOwnableSessionKey,
   pageSentPromptKey,
   resolveRetryKey,
   retryLifecycleAction,
   retryPromptForRun,
+  retryTrackStep,
   type RetryLifecycleDeps,
 } from "./retry-lifecycle";
+import { nextRetryDelayMs, RETRY_LADDER_MS } from "./retry-policy";
 
 // Stand-in for app.ts `sessionKeyMatches` (short "tinker:A" vs canonical
 // "agent:main:tinker:A"): exact match, or one key is a suffix of the other.
@@ -322,9 +325,10 @@ describe("U9 — a `final` that carries a TurnOutcome is not a success", () => {
     ).toMatchObject({ retryAfterSec: 30 });
   });
 
-  it("neither schedules NOR cancels on a non-recoverable outcome", () => {
-    // Cancelling would run the SUCCESS cleanup on a failure: it retires the countdown bubbles and
-    // ends a ladder on the strength of a turn that did not answer.
+  it("a non-recoverable outcome STOPS its run's track, and never cancels it as a success", () => {
+    // Cancelling would run the SUCCESS cleanup on a failure. FORK 2026-10-05: no retry can help a
+    // run that failed this way, so the action is `stop`, and app.ts applies it only to a track whose
+    // own prompt or last fire it names (retryTrackStep, tested below).
     for (const kind of [
       "auth",
       "billing",
@@ -344,7 +348,7 @@ describe("U9 — a `final` that carries a TurnOutcome is not a success", () => {
           viewingA(),
         ),
         kind,
-      ).toEqual({ kind: "none" });
+      ).toEqual({ kind: "stop", sessionKey: "tinker:A" });
     }
   });
 
@@ -670,5 +674,196 @@ describe("app.ts own-run wiring", () => {
     // Both halves must consult it: the schedule path (advanceRetryLifecycle) and the fire path
     // (retryLastTurn). `lastUserTextForSession` survives only as the named fallback.
     expect(appSrc.match(/retryPromptForRun\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it("REGRESSION: a fire records its run, and every action goes through retryTrackStep", () => {
+    // FORK 2026-10-05: without the fired run on the track, a fire's failure is indistinguishable
+    // from a repeat signal, and the ladder either stalls or re-arms at attempt 0.
+    expect(appSrc).toMatch(/function retryLastTurn[\s\S]*?st\.firedRunId = fired\.entry\.id;/);
+    expect(appSrc).toMatch(/function advanceRetryLifecycle[\s\S]{0,2400}?retryTrackStep\(/);
+  });
+});
+
+// ─── FORK 2026-10-05 — the ladder that never gave up (bug-log `[failure-as-value+retry-storm]`) ──
+// One prompt was re-sent 169 times between 2026-10-03 22:08 and 10-04 00:30. Each fire's run failed
+// with the Claude weekly limit and reached the page as TWO finals: the lifecycle final, whose whole
+// body is the gateway's error envelope and which carries no typed outcome, and the backstop final,
+// which does. The first read as a success and cancelled the track; the second armed a new one at
+// attempt 0. The ladder never reached its last step.
+describe("an error envelope in a final is never a success; a run moves the ladder once", () => {
+  /** The envelope the gateway wrote for that run (muqqajso, 20:07:25 UTC), id and actions trimmed. */
+  const weekly =
+    '__ERR_ENV__:{"kind":"error","id":"err_mustpsc3","fatal":false,"category":"rate_limit",' +
+    '"headline":"Rate limited","explanation":"You hit the Claude subscription\'s WEEKLY usage limit.' +
+    ' This is your own usage and it clears at the next weekly reset.","icon":"🚦",' +
+    '"raw":"You\'ve hit your weekly limit · resets Oct 8, 6pm (Europe/Madrid)"}';
+  const burst =
+    '__ERR_ENV__:{"kind":"error","id":"err_burst","fatal":false,"category":"rate_limit",' +
+    '"headline":"Rate limited","raw":"429 Too Many Requests"}';
+  const fatal =
+    '__ERR_ENV__:{"kind":"error","id":"err_auth","fatal":true,"category":"auth",' +
+    '"headline":"Sign in again","raw":"401 Unauthorized"}';
+  const typed = {
+    kind: "rate_limit",
+    recoverable: true,
+    headline: "Rate limited",
+    source: "envelope",
+  };
+
+  it("reads the envelope: a burst can clear; a weekly window and a fatal error cannot", () => {
+    expect(envelopeVerdictOf(burst)).toEqual({ recoverable: true, retryKind: "rate_limit" });
+    expect(envelopeVerdictOf(weekly)).toEqual({ recoverable: false, retryKind: "rate_limit" });
+    expect(envelopeVerdictOf(fatal)).toEqual({ recoverable: false, retryKind: null });
+    expect(envelopeVerdictOf(`a partial answer\n\n${burst}`)).toEqual({
+      recoverable: true,
+      retryKind: "rate_limit",
+    });
+    expect(envelopeVerdictOf("An ordinary answer.")).toBeNull();
+    expect(envelopeVerdictOf("__ERR_ENV__:{not json")).toBeNull();
+    expect(envelopeVerdictOf(undefined)).toBeNull();
+  });
+
+  it("an envelope final never cancels: recoverable schedules if idle, the weekly window stops", () => {
+    const deps = viewingA(["run-1"]);
+    expect(
+      retryLifecycleAction(
+        { sessionKey: "tinker:A", state: "final", runId: "run-1", finalText: burst },
+        deps,
+      ),
+    ).toEqual({
+      kind: "schedule",
+      sessionKey: "tinker:A",
+      retryKind: "rate_limit",
+      onlyIfIdle: true,
+      runId: "run-1",
+    });
+    expect(
+      retryLifecycleAction(
+        { sessionKey: "tinker:A", state: "final", runId: "run-1", finalText: weekly },
+        deps,
+      ),
+    ).toEqual({ kind: "stop", sessionKey: "tinker:A", runId: "run-1" });
+  });
+
+  it("a long window stops even when an older gateway stamped the outcome recoverable", () => {
+    expect(
+      retryLifecycleAction(
+        {
+          sessionKey: "tinker:A",
+          state: "final",
+          finalOutcome: {
+            ...typed,
+            detail: "You've hit your weekly limit · resets Oct 8, 6pm (Europe/Madrid)",
+          },
+        },
+        viewingA(),
+      ),
+    ).toEqual({ kind: "stop", sessionKey: "tinker:A" });
+    expect(
+      retryLifecycleAction(
+        rateLimited("tinker:A", { errorMessage: "You've hit your weekly limit · resets 6pm" }),
+        viewingA(),
+      ),
+    ).toEqual({ kind: "stop", sessionKey: "tinker:A" });
+  });
+
+  it("retryTrackStep: arm; advance on the fired run's failure; ignore repeats; stop its own only", () => {
+    const sched = (over: Record<string, unknown> = {}) => ({
+      kind: "schedule" as const,
+      sessionKey: "tinker:A",
+      retryKind: "rate_limit" as const,
+      ...over,
+    });
+    const stop = (runId?: string) => ({
+      kind: "stop" as const,
+      sessionKey: "tinker:A",
+      ...(runId ? { runId } : {}),
+    });
+    const firing = { firing: true, firedRunId: "fire-1", retryOf: "prompt-0" };
+    const waiting = { firing: false, firedRunId: "fire-1", retryOf: "prompt-0" };
+    expect(retryTrackStep(sched({ onlyIfIdle: true }), undefined)).toBe("arm");
+    expect(retryTrackStep(sched({ onlyIfIdle: true, runId: "fire-1" }), firing)).toBe("advance");
+    expect(retryTrackStep(sched({ onlyIfIdle: true, runId: "another" }), firing)).toBe("ignore");
+    expect(retryTrackStep(sched({ onlyIfIdle: true, runId: "fire-1" }), waiting)).toBe("ignore");
+    expect(retryTrackStep(sched(), waiting)).toBe("advance");
+    expect(retryTrackStep(stop("fire-1"), waiting)).toBe("stop");
+    expect(retryTrackStep(stop("prompt-0"), waiting)).toBe("stop");
+    expect(retryTrackStep(stop("another"), waiting)).toBe("ignore");
+    expect(retryTrackStep(stop(), waiting)).toBe("ignore");
+    expect(retryTrackStep(stop("fire-1"), undefined)).toBe("ignore");
+    expect(retryTrackStep({ kind: "cancel", sessionKey: "tinker:A" }, waiting)).toBe("ignore");
+    // A run whose failure ended a ladder cannot start a new one; a new run still can.
+    const ended = new Set(["fire-6"]);
+    expect(retryTrackStep(sched({ onlyIfIdle: true, runId: "fire-6" }), undefined, ended)).toBe(
+      "ignore",
+    );
+    expect(retryTrackStep(sched({ runId: "fire-6" }), undefined, ended)).toBe("ignore");
+    expect(retryTrackStep(sched({ onlyIfIdle: true, runId: "typed-7" }), undefined, ended)).toBe(
+      "arm",
+    );
+  });
+
+  it("REPLAY: every run failing as two finals moves the ladder once, and it gives up", () => {
+    // app.ts's track, driven by the real decisions: scheduleRetry arms or steps the track and ends
+    // it when nextRetryDelayMs runs out; retryLastTurn fires (attempt++, firing, firedRunId).
+    let track:
+      | { attempt: number; firing: boolean; firedRunId?: string; retryOf?: string }
+      | undefined;
+    let fires = 0;
+    let gaveUp = false;
+    const own = ["prompt-0"];
+    const ended = new Set<string>();
+    const scheduleRetry = () => {
+      track ??= { attempt: 0, firing: false, retryOf: "prompt-0" };
+      track.firing = false;
+      if (nextRetryDelayMs(track.attempt) === null) {
+        gaveUp = true;
+        if (track.firedRunId) {
+          ended.add(track.firedRunId);
+        }
+        track = undefined;
+      }
+    };
+    const deliver = (ev: Record<string, unknown>) => {
+      const action = retryLifecycleAction(ev, viewingA(own));
+      const step = retryTrackStep(action, track, ended);
+      if (action.kind === "stop" && step === "stop" && action.runId) {
+        ended.add(action.runId);
+      }
+      if (action.kind === "cancel" || (action.kind === "stop" && step === "stop")) {
+        track = undefined;
+      } else if (action.kind === "schedule" && step !== "ignore") {
+        scheduleRetry();
+      }
+    };
+    const runFails = (runId: string, text: string) => {
+      deliver({ sessionKey: "tinker:A", state: "final", runId, finalText: text });
+      deliver({
+        sessionKey: "tinker:A",
+        state: "final",
+        runId,
+        finalText: text,
+        finalOutcome: { ...typed, ...(text === weekly ? { recoverable: false } : {}) },
+      });
+    };
+
+    runFails("prompt-0", burst);
+    for (let i = 1; i <= 50 && track; i++) {
+      const id = `fire-${i}`;
+      own.push(id);
+      track.attempt++;
+      track.firing = true;
+      track.firedRunId = id;
+      fires++;
+      runFails(id, burst);
+    }
+    expect(gaveUp).toBe(true);
+    expect(fires).toBe(RETRY_LADDER_MS.length);
+
+    // And the weekly limit is never retried at all.
+    track = undefined;
+    gaveUp = false;
+    runFails("prompt-0", weekly);
+    expect(track).toBeUndefined();
   });
 });

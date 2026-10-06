@@ -96,4 +96,30 @@ describe("planContinuation", () => {
   it("refuses an empty transcript", () => {
     expect(planContinuation([] as never, 99)).toMatchObject({ ok: false });
   });
+
+  // FORK 2026-10-05 (bug-log `failover-reprompt`): pi appends a turn's runtime-context custom
+  // message right after its prompt, so a call that failed before any output leaves
+  // [user][custom][stub]. Measured on two of the three Tinker retries (mucpt768 09-30, mtba8duf
+  // 10-02): read as an answer, the retry prompted again and wrote the prompt twice.
+  const runtimeContext = () => ({
+    role: "custom",
+    customType: "openclaw.runtime-context",
+    content: "ctx",
+    timestamp: 1,
+  });
+  const errorStub = () => ({ role: "assistant", content: [], stopReason: "error", timestamp: 5 });
+
+  it("continues past the runtime-context message after an unanswered prompt", () => {
+    const messages = [user("go"), runtimeContext(), errorStub()];
+    const plan = planContinuation(messages as never, 99);
+    expect(plan).toMatchObject({ ok: true, trimmed: 1, synthetic: [] });
+    if (plan.ok) {
+      expect(plan.messages).toEqual([user("go"), runtimeContext()]);
+    }
+  });
+
+  it("a custom message after an answer still ends in that answer", () => {
+    const messages = [user("go"), assistantText("done"), runtimeContext()];
+    expect(planContinuation(messages as never, 99)).toMatchObject({ ok: false });
+  });
 });

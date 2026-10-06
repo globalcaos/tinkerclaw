@@ -23,6 +23,8 @@
  * Rendered by: tinker-ui/src/app.ts.
  */
 
+import { isLongUsageWindow, usageWindowOf } from "../shared/usage-window.js";
+
 export type MessageKind = "jarvis" | "user" | "error";
 
 export type ErrorCategory =
@@ -728,26 +730,29 @@ export function rateLimitDetail(raw: string): {
     ? "Wait until the reset time shown above, then send your message again"
     : "Wait for the window to reset, then send your message again";
 
+  // FORK 2026-10-05 — one reading of the window, shared with the turn outcome and the UI ladder
+  // (src/shared/usage-window.ts), so the card, the colour and the retry can never disagree.
+  const window = usageWindowOf(s);
   // Claude Code surfaces the rolling 5-hour window as a "session limit".
-  if (/session limit|hit your session/.test(s)) {
+  if (window === "session") {
     return {
       explanation: `You hit your Claude session limit — the rolling 5-hour usage window. This is your own usage, not a provider fault.${when}`,
       suggestedActions: [waitAction, "Switch to a different auth profile temporarily"],
     };
   }
-  if (/weekly|per week|7[\s-]?day/.test(s)) {
+  if (window === "weekly") {
     return {
       explanation: `You hit the Claude subscription's WEEKLY usage limit. This is your own usage and it clears at the next weekly reset.${when}`,
       suggestedActions: [waitAction, "Switch to a different auth profile temporarily"],
     };
   }
-  if (/5[\s-]?hour|\b5h\b|five[\s-]?hour/.test(s)) {
+  if (window === "five-hour") {
     return {
       explanation: `You hit the Claude subscription's rolling 5-HOUR usage limit. This is your own usage and it clears at the next 5-hour reset.${when}`,
       suggestedActions: [waitAction, "Switch to a different auth profile temporarily"],
     };
   }
-  if (/per minute|requests per|tokens per|too many requests|\b429\b/.test(s)) {
+  if (window === "burst") {
     return {
       explanation: `Short-term PEAK rate limit: too many requests or tokens per minute. This is a burst limit (your peak consumption, not your overall 5-hour or weekly quota) and clears within about a minute.${when}`,
       suggestedActions: [
@@ -852,10 +857,15 @@ export function buildErrorEnvelope(input: BuildEnvelopeInput): ErrorEnvelope {
       suggestedActions = [retryAction, ...suggestedActions];
     }
   }
+  // FORK 2026-10-05 — a usage limit that resets in hours or days blocks the conversation until the
+  // owner acts (waits, or switches profile): that is `fatal` by this file's own definition, and it
+  // is what stops the client ladder re-sending the prompt into the same wall. Measured 2026-10-03:
+  // marked non-fatal, the weekly limit re-sent one prompt 169 times in 2.4 hours.
+  const longWindow = code === "rate_limited" && isLongUsageWindow(raw);
   return {
     kind: "error",
     id: makeId(),
-    fatal: input.fatal ?? entry.fatal,
+    fatal: input.fatal ?? (longWindow ? true : entry.fatal),
     category: entry.category,
     headline,
     explanation,

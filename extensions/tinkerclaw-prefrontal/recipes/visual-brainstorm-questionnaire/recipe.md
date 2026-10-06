@@ -86,6 +86,8 @@ On wake, read `$STATE_DIR/events` (JSONL). The click events are the exploration 
 - 2-4 options per question, at most ~12 questions per page
 - The submit event is the ONLY wake signal — do not poll chat or ask the user to type 'done'
 - Mockups are content fragments with inline style/SVG; full <!DOCTYPE> documents only when the frame must be overridden
+- A project that already has its own questionnaire app (AcmeVision: `vms-questions/build.py` + `server.py`) reuses it in a new folder, never by overwriting the old page or its answers
+- When the owner asks for a DEFAULT, an untouched question must save its recommendation, flagged `defaulted: true`, so an untouched save is a full answer and the agent can still tell a default from a choice. A default that would loosen a rule the owner set (a merge gate, a spend) stays on his rule, and the question says why
 
 ## Safety Notes
 
@@ -94,6 +96,7 @@ On wake, read `$STATE_DIR/events` (JSONL). The click events are the exploration 
 
 ## Failures Overcome
 
+- 2026-10-05, SV2 decisions (the architect: "Turn it into a questionnaire with the reasoning behind every decision, and propose the most autonomous route as default"): the reused app treated ★ as a hint only, so untouched questions would have saved empty. Saves now fill the ★ and flag it
 - Chat one-question-at-a-time brainstorms burning 10+ turns
 - Inline <script> dead when injected client-side — companion server wraps fragments SERVER-side, so handlers work
 - Submit event without a `choice` field reached server.log but never the events file — wake watcher stayed asleep (2026-06-13, first live run)

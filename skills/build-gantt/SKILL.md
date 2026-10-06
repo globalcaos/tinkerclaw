@@ -1,6 +1,6 @@
 ---
 name: build-gantt
-description: Draw a master-worker build as a Gantt chart in the chat. Phases in colour by kind of work (conception, spec, build, review and integration, field test, manual), one lane per parallel unit with its build and review segments at their real times, folded idle gaps, a now line, and the remaining phases as dashed estimates on their own scale. In Tinker it also gives a chained master a live Gantt tab (icon only, between master and slave) that folds phases and opens what each unit did. Use it in EVERY master-worker loop, before each turn is sent to the worker and at each phase review, and whenever the principal asks how a build is going ("report progress", "where are we", "show me the plan", "gantt").
+description: Draw a master-worker build as a Gantt chart (in Tinker a live Gantt tab beside the master; elsewhere the chart in the reply). Phases in colour by kind of work (conception, spec, build, review and integration, field test, manual), one lane per parallel unit with its build and review segments at their real times, folded idle gaps, a now line, and the remaining phases as dashed estimates on their own scale. In Tinker it also gives a chained master a live Gantt tab (icon only, between master and slave) that folds phases and opens what each unit did. Use it in EVERY master-worker loop, before each turn is sent to the worker and at each phase review, and whenever the principal asks how a build is going ("report progress", "where are we", "show me the plan", "gantt").
 ---
 
 # build-gantt
@@ -19,11 +19,13 @@ definition, coding, to a final fully visual manual)."
 
 1. **Every send in a master-worker loop** (recipe `master-worker-coding`, Step 2): after the
    review, before `converse.mjs` sends the turn. Mark the phase being sent as `"status":
-"next"` (or leave it planned), derive, render, and put the block in the turn's reply.
-   In Tinker the reply must be the turn's last text block, so the chart arrives in the same
-   turn as the send; say so in one line if the principal could read it as "after".
+"next"` (or leave it planned), derive, render, and look at the PNG. In Tinker the master's
+   Gantt tab is the chart: the block does NOT go into the reply (see "The Gantt tab"). Put it in
+   the reply only where the master has no tab: another channel (send the PNG) or a chat with no board.
 2. **Every phase review**, with the phase's real lanes filled in.
-3. **On request**: "report progress", "where are we", "show the plan".
+3. **On request**: "report progress", "where are we", "show the plan". In a Tinker chat with a
+   Gantt tab, answer in words and point to the tab; draw the chart in the chat only when the
+   principal asks to see it there.
 
 ## The Gantt tab (Tinker)
 
@@ -38,8 +40,14 @@ workflow journals every 15 s (`gantt.py live`, in memory, the plan file is never
   it. A click on a lane opens what each unit was asked to do and what it reported (`gantt.py agent`).
 - The tab belongs to the master's session. Closing the pair hides it and reopening brings it
   back. Deleting the master session drops the board. Releasing the chain hides the tab.
-- Nothing changes in the loop: keep pasting the chart block at each send. The tab is for
-  watching between sends; the block is the record in the chat.
+- The tab replaces the block in the chat. The principal, 2026-10-05 20:31: "No need to show me the
+  gantt here, it should be automatically updating the real one, right?" At a send the master still
+  derives, renders and looks at the PNG (the archive below keeps one per send), and the reply says
+  in one line where the build stands, without the block.
+- The tab follows the worker on its own when the plan has `worker_prompt_has` (see the plan file):
+  a workflow the worker starts during a turn shows up under the phase being sent within 15 s,
+  before the master writes its id in at the next wake. Without it the tab only moves the now line
+  and the bars of workflows the plan already lists.
 - `attach PLAN.json` gives a chat its tab by hand (another plan, another chat); `detach` drops it.
 
 ### The machines panel
@@ -62,6 +70,10 @@ shows.
 ]
 ```
 
+- **List every machine the build has used or may use, not only today's runners:** the ones taken out of
+  rotation, waiting to be onboarded, or off the network too. Read the runner config AND its comments
+  (`hosts.conf` names retired and pending machines there) and TOOLS.md. Reachable or not, the principal
+  wants to see each one; the role line says why it is there and what we do not run on it.
 - `host` is an ssh alias (`~/.ssh/config`), or `local`. The jump host comes from ssh's own config
   (`ssh -G`), so a machine reached through a gateway that is down says so.
 - `dirs` are where our work lives on that machine. A process is ours when its working folder is
@@ -141,6 +153,11 @@ The master owns it.
   `auto_tasks`: `build B3 recorder` and `review B3 recorder` become lane `B3 recorder` with
   two segments, at their real times. An agent that started, never returned a result and has
   been quiet for 10 minutes is marked cut. Lanes you write by hand stay in `tasks`.
+- `worker_prompt_has` (top level) lists strings every worker prompt carries (AcmeVision 2.0:
+  `"You are the WORKER"` and `"sv2-build/charter.md"`). A workflow the plan does not list, newer
+  than the newest one it does, whose Claude Code session opened with a prompt holding all of them,
+  joins the phase marked `"status": "next"` (or `"next": true`). `live` adds it in memory, `derive`
+  writes it into the plan. No key, or no phase being sent: nothing is added.
 - A planned phase (`"status": "planned"`) gets bars from `est_hours`. Its tasks run in
   parallel from the phase start unless `after` names a task in the same phase. Planned
   phases follow one another after the last real work. A phase with `"with": "<id>"` starts when that phase starts
@@ -152,7 +169,8 @@ The master owns it.
   own deadline): running lanes then draw a dashed tail to it, a planned lane is dropped when a real unit
   with the same id appears (also across phases), and the phase's leftover lanes are scheduled from now.
   `not_before` holds a lane until a given time. A unit labelled `C1 build` or `build C1 …` lands in lane
-  C1 either way, named after the plan's `C1 …` task.
+  C1 either way, named after the plan's `C1 …` task. A split unit (`K36a:build`, `K36b:build`)
+  gets its own lane, K36a, and retires the planned K36.
 - At every send, re-size the running phase's leftover `est_hours` from what it has cost so far. A time-left
   that stays flat while the phase runs past its plan is a finding: say so in the reply beside the chart.
   On 2026-10-01 Phase C was planned at 3.5 h, passed 10 h, and its time-left did not move in 2.5 h of work.
@@ -181,7 +199,8 @@ or any channel that cannot draw HTML, send the PNG instead of the block.
 
 ## Delivery check — inspect the reply, not only the chart
 
-Before sending, the actual reply must contain the generated `html-render` chart block, or a native markdown image at `/tinker/diagrams/<file>-chat.png` linked to the full PNG. For PNG delivery, follow `/home/user/.openclaw/workspace/memory/knowledge/tinker-inline-diagrams.md`: copy to both public and dist, check HTTP 200, and LOOK at the served image. Never substitute `[embed ref=...]`, a hosted page reference, or a status card for the inline chart. A screenshot of the standalone page proves the chart exists; it does not prove the reply includes a renderable chart. Replay this check against the final reply text; an embed-only reply fails even when its referenced file exists. After a repeated missing-chart report, do not keep repeating markdown syntax checks: emit a direct `<img>` in `html-render`, then verify that the latest Tinker snapshot's `#messages` contains that image element. HTTP 200 and matching reply syntax alone do not establish delivery.
+This applies when the chart is owed in a reply: no Gantt tab (another channel, a chat with no
+board), or the principal asks to see it in the chat. Before sending, the actual reply must contain the generated `html-render` chart block, or a native markdown image at `/tinker/diagrams/<file>-chat.png` linked to the full PNG. For PNG delivery, follow `/home/user/.openclaw/workspace/memory/knowledge/tinker-inline-diagrams.md`: copy to both public and dist, check HTTP 200, and LOOK at the served image. Never substitute `[embed ref=...]`, a hosted page reference, or a status card for the inline chart. A screenshot of the standalone page proves the chart exists; it does not prove the reply includes a renderable chart. Replay this check against the final reply text; an embed-only reply fails even when its referenced file exists. After a repeated missing-chart report, do not keep repeating markdown syntax checks: emit a direct `<img>` in `html-render`, then verify that the latest Tinker snapshot's `#messages` contains that image element. HTTP 200 and matching reply syntax alone do not establish delivery.
 
 ## How to read it (say this once to a new reader)
 
@@ -197,6 +216,19 @@ Before sending, the actual reply must contain the generated `html-render` chart 
   working time against real plus estimated time, so it moves when the estimates move.
 
 ## Failures Overcome
+
+- 2026-10-05 20:31, the architect, after the turn-36 send carried the chart in the reply: "No need to show me
+  the gantt here, it should be automatically updating the real one, right?" Only half true. The tab
+  redrew every 15 s, but from the workflow ids the master writes in at its wakes, so a running turn's
+  units stayed off the chart until the turn was over. `worker_prompt_has` lets the tab find them, and
+  the block left the reply. The same check showed split units (`K36a:build`) drawn as raw labels
+  beside the planned K36; they now get their own lane.
+
+- 2026-10-05 13:16, the architect, on the first machines panel: "the Fore1 and Fore2 are still missing. They
+  either are reachable or not, but we need to see them listed." The list was copied from the active
+  rows of `hosts.conf`; Fore2 (out of rotation since 10-02) and Fore1 (not onboarded) sat in its
+  comments. Hence the "list every machine" line above. The same pass found the Orins' GPU blank:
+  JetPack 6's nvidia-smi answers [N/A], so the probe now reads the Jetson sysfs load first.
 
 - 2026-10-05, building the Gantt tab: `derive` took 12.2 s on a 39-phase, 248-lane build, too slow
   for a page that refreshes every 15 s. It read every line of every agent transcript to find two

@@ -18,6 +18,13 @@ import type { JevQuestion, JevVerdict } from "openclaw/plugin-sdk/fork-jev";
 import {
   answeredChoice,
   buildEnhancementQuestions,
+  buildRankQuestions,
+  interpretRanking,
+  localRanking,
+  skipReasonOf,
+  type RankItem,
+  type RankResult,
+  type SkipReason,
   type EnhancementQuestions,
   buildFitQuestion,
   buildShortlist,
@@ -119,6 +126,10 @@ export type TaskReadResult = {
   usedJev: boolean;
   /** Why Jev was not (successfully) used; absent when it was. */
   local?: WhyLocal;
+  /** The same fact in the ledger's closed vocabulary; `invalid` is an answer that could not be used. Absent when Jev answered. */
+  skip?: SkipReason;
+  /** The gate's reason behind a `not-allowed` skip (`private-source`, `jev-off`, ...). */
+  skipDetail?: string;
   private: boolean;
   /** The option-set version the enhancement question was asked with; 0 when not asked. */
   enhancementVersion: number;
@@ -167,7 +178,7 @@ export class RoutingReader {
     return isPrivateSource(i.source, this.d.config.privateSources);
   }
 
-  private localTask(i: ReadInput, why: WhyLocal): TaskReadResult {
+  private localTask(i: ReadInput, why: WhyLocal, skip?: SkipReason): TaskReadResult {
     const cards = this.d.cards();
     return {
       task: localTaskRead({
@@ -182,6 +193,8 @@ export class RoutingReader {
       shortlist: cards.length > 0 ? localShortlist(i.text, cards) : notAsked("local"),
       usedJev: false,
       local: why,
+      skip: skip ?? (why === "jev-silent" ? "error" : "not-allowed"),
+      ...(why === "jev-silent" ? {} : { skipDetail: why }),
       private: this.isPrivate(i),
       enhancementVersion: 0,
       verdicts: [],
@@ -216,7 +229,7 @@ export class RoutingReader {
   /** Turn the verdicts of `taskQuestions` into the task read and the short list. */
   interpretTask(i: ReadInput, verdicts: JevVerdict[], enh?: EnhancementQuestions): TaskReadResult {
     if (verdicts.length === 0 || verdicts.every((v) => v.skipped !== undefined)) {
-      return this.localTask(i, "jev-silent");
+      return this.localTask(i, "jev-silent", skipReasonOf(verdicts));
     }
     const task = taskReadFromVerdicts(
       { id: i.id, ts: i.ts, sessionKey: i.sessionKey, floor: this.d.config.confidenceFloor },
@@ -224,6 +237,7 @@ export class RoutingReader {
       this.isPrivate(i),
     );
     let shortlist: Shortlist = notAsked("jev");
+    let skip: SkipReason | undefined;
     if (enh) {
       const joint = jointProbabilities(verdicts, enh.families);
       // The list is built from the probabilities by share (paper 7.1), with "none fits" among the options. It is NOT
@@ -233,11 +247,13 @@ export class RoutingReader {
       shortlist = joint.complete
         ? buildShortlist(joint, { calibration: this.d.calibration?.() })
         : localShortlist(i.text, this.d.cards());
+      if (!joint.complete) skip = "invalid";
     }
     return {
       task,
       shortlist,
       usedJev: true,
+      ...(skip ? { skip } : {}),
       private: this.isPrivate(i),
       enhancementVersion: enh?.version ?? 0,
       verdicts,
@@ -254,9 +270,52 @@ export class RoutingReader {
         budgetMs: this.d.config.budgetMs,
       });
     } catch {
-      return this.localTask(i, "jev-silent");
+      return this.localTask(i, "jev-silent", "error");
     }
     return this.interpretTask(i, verdicts, built.enh);
+  }
+
+  /**
+   * Rank recall's candidates (phase C): ONE request carries a mode question per candidate (USE, INSPIRE or NO) and a part
+   * question for each candidate that has sections. The same `gate` as every other read decides whether Jev is asked, so a
+   * private source never reaches it. Whatever Jev does not answer validly stays local and says why (`skip`), including
+   * the case where the budget runs out first: the wait is bounded here, not only by the transport.
+   */
+  async rankCandidates(
+    i: ReadInput,
+    items: readonly RankItem[],
+    o: { budgetMs?: number } = {},
+  ): Promise<RankResult> {
+    if (items.length === 0) {
+      return { use: [], inspire: [], source: "local", asked: 0, answered: 0, dropped: 0 };
+    }
+    const g = this.gate(i);
+    if (!g.allowed) return localRanking(items, "not-allowed", { skipDetail: g.why });
+    if (!this.d.ask) return localRanking(items, "error", { skipDetail: "no-ask" });
+    const budget = o.budgetMs ?? this.d.config.budgetMs ?? 2600;
+    const built = buildRankQuestions(items);
+    const t0 = performance.now();
+    const ask = this.d.ask;
+    // A throw from `ask` becomes a rejection, so it is labelled `error` like any other failure.
+    const asked = Promise.resolve().then(() =>
+      ask(situationOf({ id: i.id, text: i.text }), built.questions, { budgetMs: budget }),
+    );
+    // The ask may still be in flight when the budget ends; its late failure must not surface as an unhandled rejection.
+    asked.catch(() => undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"late">((resolve) => {
+      timer = setTimeout(() => resolve("late"), budget);
+    });
+    try {
+      const verdicts = await Promise.race([asked, late]);
+      const jevMs = Math.round(performance.now() - t0);
+      if (verdicts === "late") return localRanking(items, "timeout", { jevMs });
+      return interpretRanking(items, built, verdicts, { jevMs });
+    } catch {
+      return localRanking(items, "error", { jevMs: Math.round(performance.now() - t0) });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**

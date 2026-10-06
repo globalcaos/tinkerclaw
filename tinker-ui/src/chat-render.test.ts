@@ -420,7 +420,6 @@ function unitsOf(w: World): ChatUnit[] {
     streamRunId: w.streamRunId,
     streamMsgUid: w.streamMsgUid,
     esc,
-    phaseSpanText: () => "2.4s",
     skillNoticesHtmlAfter: (view, i) =>
       textOf(view[i] as Row).includes("skill")
         ? `<div class="msg-skill-notice">🔧 skill</div>`

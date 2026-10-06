@@ -13,13 +13,18 @@
 
 import {
   classifyTaskDomain,
+  isInteractiveSession,
+  isRuntimeNotice,
   localShortlist,
   notAsked,
   shortlistContext,
+  shortlistFromResult,
   type EnhancementCard,
   type Shortlist,
   shouldShuffle,
   shuffleList,
+  type TaskRankInput,
+  type TaskRanking,
 } from "openclaw/plugin-sdk/fork-thalamus";
 import type { ThalamusMode } from "./config.js";
 import type { ReadInput, RoutingReader } from "./reads/routing-reader.js";
@@ -58,6 +63,15 @@ const timeout = <T>(p: Promise<T>, ms: number): Promise<T | undefined> =>
 const INJECTED_PROMPT =
   /^\s*(?:\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{4}-\d{2}-\d{2} [^\]]*\]\s*)?(?:\[System\b|\[inject(?:ed)?\b|<cross-session-message\b|⟦(?:AGENT|OVERSEER)\b)/i;
 
+/** What the seam needs to know of a prompt beyond `ReadInput`, for the shared ranking (Broca retrieval v2, phase E). */
+export type PrepareInput = ReadInput & {
+  runId: string;
+  /** `inputProvenance.kind` of the run, when the gateway recorded one. */
+  provenanceKind?: string;
+  /** The user turn before this one, for a request with no subject of its own. */
+  previousUserText?: string;
+};
+
 export function createShortlistSeam(d: {
   reader: RoutingReader;
   cards: () => readonly EnhancementCard[];
@@ -66,6 +80,11 @@ export function createShortlistSeam(d: {
   inject?: () => boolean;
   budgetMs: () => number;
   tracker: UseTracker;
+  /**
+   * Broca retrieval v2: the ranked result both this seam and Broca's matcher read, started by whichever hook asks first. Absent,
+   * or an answer of undefined (no ranker registered), or a session that is not interactive: the old flat read, as before.
+   */
+  ranking?: (input: TaskRankInput) => Promise<TaskRanking> | undefined;
   /** Learning switches and the draw. Absent: no shuffle and no replay capture, exactly as before phase F. */
   learning?: {
     shuffle: () => boolean;
@@ -76,10 +95,10 @@ export function createShortlistSeam(d: {
   };
 }) {
   return {
-    async prepare(input: ReadInput & { runId: string }): Promise<Prepared> {
+    async prepare(input: PrepareInput): Promise<Prepared> {
       const mode = d.mode();
       if (mode === "off") return { list: notAsked("local"), injected: false, usedJev: false };
-      if (INJECTED_PROMPT.test(input.text))
+      if (INJECTED_PROMPT.test(input.text) || isRuntimeNotice(input.text))
         return { list: notAsked("local"), injected: false, usedJev: false };
       const cards = d.cards();
       const byId = new Map(cards.map((c) => [c.id, c]));
@@ -87,18 +106,80 @@ export function createShortlistSeam(d: {
       let list: Shortlist;
       let usedJev = false;
       let questionVersion = 0;
+      // Why the list is local, for the ledger row (the 2026-10-05 review could not count it).
+      let skip: string | undefined;
+      let skipDetail: string | undefined;
+      // The Jev call's own time is kept even when the prompt does not wait for it. The run is known to the tracker only
+      // after `noteShown`, so the time is passed on then if the call has finished, or when it finishes if it has not.
+      let jevMs: number | undefined;
+      let shownNoted = false;
+      const t0 = performance.now();
+      const done = (ms: number) => {
+        jevMs = ms;
+        if (shownNoted) d.tracker.noteJevMs(input.runId, ms);
+      };
+      // The shared ranking, for a task typed in a Tinker tab or the main chat. Anything else keeps the flat read.
+      const shared = isInteractiveSession(input.sessionKey)
+        ? d.ranking?.({
+            runId: input.runId,
+            sessionKey: input.sessionKey,
+            text: input.text,
+            ...(input.trigger ? { trigger: input.trigger } : {}),
+            ...(input.provenanceKind ? { provenanceKind: input.provenanceKind } : {}),
+            ...(input.previousUserText ? { previousUserText: input.previousUserText } : {}),
+          })
+        : undefined;
       try {
-        const read = await timeout(d.reader.readTask(input), d.budgetMs());
-        if (read) {
-          list = read.shortlist;
-          usedJev = read.usedJev;
-          questionVersion = read.enhancementVersion;
+        if (shared) {
+          shared.then(
+            (r) => {
+              done(
+                r.ranked && r.result.jevMs !== undefined
+                  ? r.result.jevMs
+                  : Math.round(performance.now() - t0),
+              );
+            },
+            () => undefined,
+          );
+          const got = await timeout(shared, d.budgetMs());
+          if (got?.ranked) {
+            list = shortlistFromResult(got.result);
+            usedJev = got.result.source !== "local";
+            skip = got.result.skip;
+            skipDetail = got.result.skipDetail;
+          } else if (got) {
+            // Not owed a list, or nothing to say: nothing is shown and the ledger says which.
+            list = notAsked("local");
+            skipDetail = got.why;
+          } else {
+            list = cards.length > 0 ? localShortlist(input.text, cards) : notAsked("local");
+            skip = "timeout";
+          }
         } else {
-          // Late or failed: the prompt goes on with the instant local list.
-          list = cards.length > 0 ? localShortlist(input.text, cards) : notAsked("local");
+          const reading = d.reader.readTask(input);
+          reading.then(
+            () => done(Math.round(performance.now() - t0)),
+            () => undefined,
+          );
+          const read = await timeout(
+            reading.catch(() => "error" as const),
+            d.budgetMs(),
+          );
+          if (read && read !== "error") {
+            list = read.shortlist;
+            usedJev = read.usedJev;
+            questionVersion = read.enhancementVersion;
+            skip = read.skip;
+            skipDetail = read.skipDetail;
+          } else {
+            // Late or failed: the prompt goes on with the instant local list.
+            list = cards.length > 0 ? localShortlist(input.text, cards) : notAsked("local");
+            skip = read === "error" ? "error" : "timeout";
+          }
         }
       } catch {
         list = notAsked("local");
+        skip = "error";
       }
 
       const priv = d.reader.isPrivate(input);
@@ -129,7 +210,11 @@ export function createShortlistSeam(d: {
         questionVersion,
         ...(shuffled ? { shuffled } : {}),
         ...(d.learning ? { taskKind: classifyTaskDomain(input.text) } : {}),
+        ...(skip ? { skip } : {}),
+        ...(skipDetail ? { skipDetail } : {}),
       });
+      shownNoted = true;
+      if (jevMs !== undefined) d.tracker.noteJevMs(input.runId, jevMs);
       if (d.learning?.replayAllowed(input)) {
         try {
           d.learning.recordReplay(input.runId, input.text);

@@ -10,6 +10,7 @@
  */
 import path from "node:path";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { APPENDED_PROMPT_BLOCKS } from "../shared/appended-prompt-blocks.js";
 
 export interface BranchResult {
   ok: boolean;
@@ -40,10 +41,7 @@ function messageText(content: unknown): string {
 }
 
 /** Blocks the chat appends after the user's words; they never go back into the composer. */
-const APPENDED_BLOCKS = [
-  /\n\s*-{3,}\s*\n+\s*\*\*After your reply, append a 🌿 FRACTAL/,
-  /\n\s*<!-- TINKERCLAW chat-row contract -->/,
-];
+const APPENDED_BLOCKS = APPENDED_PROMPT_BLOCKS;
 
 /** The user's words: no `[Tue … GMT+2]` or `⟦…⟧` prefix, no appended blocks. */
 export function composerText(raw: string): string {

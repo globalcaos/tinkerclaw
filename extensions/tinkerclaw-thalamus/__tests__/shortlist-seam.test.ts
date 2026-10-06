@@ -4,6 +4,10 @@ import {
   seedCards,
   shortlistContext,
   type EnhancementCard,
+  type RankedEntry,
+  type RankResult,
+  type TaskRankInput,
+  type TaskRanking,
 } from "openclaw/plugin-sdk/fork-thalamus";
 import { describe, expect, it, vi } from "vitest";
 import type { ThalamusMode } from "../src/config.js";
@@ -61,6 +65,7 @@ function setup(
     cards?: EnhancementCard[];
     budgetMs?: number;
     inject?: boolean;
+    ranking?: (i: TaskRankInput) => Promise<TaskRanking> | undefined;
   } = {},
 ) {
   const store = new ThalamusStore(":memory:");
@@ -83,6 +88,7 @@ function setup(
     cards: () => list,
     mode: () => mode,
     ...(o.inject === undefined ? {} : { inject: () => o.inject as boolean }),
+    ...(o.ranking ? { ranking: o.ranking } : {}),
     budgetMs: () => o.budgetMs ?? 500,
     tracker,
   });
@@ -218,5 +224,148 @@ describe("the short-list seam: never late, never wrong about privacy", () => {
     const { seam } = setup("shadow", { ask, cfg: { jevEnabled: true } });
     await seam.prepare(input());
     expect(ask).not.toHaveBeenCalled();
+  });
+});
+
+// Broca retrieval v2, phase E: the seam reads the one ranked result per task the matcher hook reads too.
+describe("the short-list seam on the shared ranking", () => {
+  const entry = (
+    cardId: string,
+    mode: "USE" | "INSPIRE",
+    source: "jev" | "local",
+    score: number,
+    section?: string,
+  ): RankedEntry => ({
+    cardId,
+    mode,
+    source,
+    score,
+    modeScore: score,
+    recallRank: 0,
+    ...(section ? { section, sectionSource: source } : {}),
+  });
+  const ranked = (over: Partial<RankResult> = {}): TaskRanking => ({
+    ranked: true,
+    runId: "run-1",
+    basis: "own",
+    result: {
+      use: [entry("skill:translation-checker", "USE", "jev", 0.9)],
+      inspire: [entry("skill:photo-sorter", "INSPIRE", "jev", 0.4, "Decide")],
+      source: "jev",
+      asked: 2,
+      answered: 2,
+      dropped: 0,
+      jevMs: 290,
+      ...over,
+    },
+  });
+  const tinker = { sessionKey: "agent:main:tinker:abc" };
+
+  it("builds the list from the ranking and records the mode, source and section of each entry", async () => {
+    const ranking = vi.fn(() => Promise.resolve(ranked()));
+    const { seam, tracker, store } = setup("enforce", { ranking });
+    const out = await seam.prepare(input(tinker));
+    expect(ranking).toHaveBeenCalledTimes(1);
+    expect(ranking.mock.calls[0][0]).toMatchObject({
+      runId: "run-1",
+      sessionKey: tinker.sessionKey,
+    });
+    expect(out.usedJev).toBe(true);
+    expect(out.list.entries.map((e) => [e.cardId, e.mode, e.source, e.section])).toEqual([
+      ["skill:translation-checker", "USE", "jev", undefined],
+      ["skill:photo-sorter", "INSPIRE", "jev", "Decide"],
+    ]);
+    expect(out.text).toContain('the "Decide" part');
+    tracker.finish("run-1", "done");
+    const row = store.getUse("run-1")!;
+    expect(row.shown.map((e) => [e.mode, e.source])).toEqual([
+      ["USE", "jev"],
+      ["INSPIRE", "jev"],
+    ]);
+    expect(row.listSource).toBe("jev");
+    expect(row.jevMs).toBe(290);
+  });
+
+  it("carries the skip reason of a partly local ranking into the ledger row", async () => {
+    const ranking = () =>
+      Promise.resolve(
+        ranked({
+          use: [entry("skill:translation-checker", "USE", "local", 0)],
+          inspire: [],
+          source: "local",
+          skip: "timeout",
+        }),
+      );
+    const { seam, tracker, store } = setup("shadow", { ranking });
+    const out = await seam.prepare(input(tinker));
+    expect(out.usedJev).toBe(false);
+    expect(out.text).toBeUndefined();
+    tracker.finish("run-1", "done");
+    expect(store.getUse("run-1")).toMatchObject({ listSource: "local", skipReason: "timeout" });
+  });
+
+  it("shows nothing, and records why, when the prompt is not owed a list", async () => {
+    const ranking = () =>
+      Promise.resolve<TaskRanking>({ ranked: false, runId: "run-1", why: "follow-up-no-context" });
+    const { seam, tracker, store } = setup("enforce", { ranking });
+    const out = await seam.prepare(input({ ...tinker, text: "yes do it" }));
+    expect(out.list.shown).toBe(false);
+    expect(out.text).toBeUndefined();
+    tracker.finish("run-1", "done");
+    expect(store.getUse("run-1")).toMatchObject({
+      listShown: false,
+      skipDetail: "follow-up-no-context",
+    });
+  });
+
+  it("shows nothing and records `local-quiet` when the ranker had only recall's order to offer", async () => {
+    const ranking = () =>
+      Promise.resolve<TaskRanking>({ ranked: false, runId: "run-1", why: "local-quiet" });
+    const { seam, tracker, store } = setup("enforce", { ranking });
+    const out = await seam.prepare(input(tinker));
+    expect(out.list.shown).toBe(false);
+    expect(out.text).toBeUndefined();
+    tracker.finish("run-1", "done");
+    expect(store.getUse("run-1")).toMatchObject({ listShown: false, skipDetail: "local-quiet" });
+  });
+
+  it("falls back to the instant local list when the ranking is late", async () => {
+    const ranking = () => new Promise<TaskRanking>(() => undefined);
+    const { seam, tracker, store } = setup("shadow", { ranking, budgetMs: 20 });
+    const out = await seam.prepare(input(tinker));
+    expect(out.usedJev).toBe(false);
+    expect(out.list.entries[0]?.cardId).toBe("skill:translation-checker");
+    tracker.finish("run-1", "done");
+    expect(store.getUse("run-1")?.skipReason).toBe("timeout");
+  });
+
+  it("keeps the flat read for a session that is not interactive, and never asks the ranking", async () => {
+    const ranking = vi.fn(() => Promise.resolve(ranked()));
+    const { seam } = setup("shadow", { ranking });
+    const out = await seam.prepare(
+      input({ sessionKey: "agent:main:whatsapp:1", source: "channel:whatsapp" }),
+    );
+    expect(ranking).not.toHaveBeenCalled();
+    expect(out.list.entries[0].cardId).toBe("skill:translation-checker");
+    expect(out.list.entries[0].mode).toBeUndefined();
+  });
+
+  it.each([
+    "System (untrusted): exec completed",
+    "<task-notification><task-id>x</task-id></task-notification>",
+    "[Tue 2026-10-06 08:43 GMT+2] ⟦AGENT:📈 Thalamus⟧ Turn 03",
+  ])("gives a marked notice no list and never asks the ranking: %s", async (text) => {
+    const ranking = vi.fn(() => Promise.resolve(ranked()));
+    const { seam } = setup("enforce", { ranking });
+    const out = await seam.prepare(input({ ...tinker, text }));
+    expect(ranking).not.toHaveBeenCalled();
+    expect(out.list.shown).toBe(false);
+    expect(out.text).toBeUndefined();
+  });
+
+  it("without a ranking dependency it reads as before", async () => {
+    const { seam } = setup("shadow");
+    const out = await seam.prepare(input(tinker));
+    expect(out.list.entries[0].cardId).toBe("skill:translation-checker");
   });
 });

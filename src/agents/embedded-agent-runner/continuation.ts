@@ -105,7 +105,15 @@ export function planContinuation(
   if (synthetic.length > 0) {
     base = [...base, ...(synthetic as unknown as AgentMessage[])];
   }
-  const tailRole = (base[base.length - 1] as Msg).role;
+  // FORK 2026-10-05: the tail is the last message that is not `custom`. pi appends a turn's
+  // runtime-context custom message right after its prompt, and convertToLlm sends a custom message
+  // as user context, so [user][custom] is an unanswered prompt. A custom message after an answer
+  // still ends in that answer.
+  let tail = base.length - 1;
+  while (tail >= 0 && (base[tail] as Msg).role === "custom") {
+    tail -= 1;
+  }
+  const tailRole = tail >= 0 ? (base[tail] as Msg).role : undefined;
   if (tailRole !== "user" && tailRole !== "toolResult") {
     return { ok: false, reason: "the transcript ends in an assistant answer" };
   }

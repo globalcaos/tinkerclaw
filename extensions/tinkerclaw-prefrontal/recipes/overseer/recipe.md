@@ -37,9 +37,9 @@ nudging until the task is truly finished, then goes silent.
 - Anything end-to-end where "I'll do X next" without doing it would slip through.
 - When the user explicitly asks you to oversee, see it through, or not stop until done.
 
-(The runtime engages this loop automatically on these shapes — an explicit overseer
-keyword, a multi-step plan, or a request that reads as multi-step — so it covers the
-cases above without the user having to ask.)
+(Since 2026-10-05 the runtime does NOT engage this loop by itself: the architect switched the
+auto-arming off. Start it on purpose, when he asks you to see something through, with
+the `fork.overseer.activate` RPC (`sessionKey`, `task`); `fork.overseer.deactivate` stops it.)
 
 ## Steps
 
@@ -102,3 +102,10 @@ target; the loop should end on completion, not on exhausting iterations.
 - **Treating the ceiling as a quota:** running to 25 iterations because the bound
   is 25. The working budget is derived and small; completion, not the cap, is the
   exit.
+
+- **2026-10-05 — auto-arming switched off.** The runtime armed this loop on any prompt that looked
+  multi-step. Across Aug–Oct it made 250 deliveries and none was a useful directive: error envelopes,
+  empty runs, "the task is complete" injected back as a nudge, and its own report re-arming it. On a
+  finished morning briefing it woke the main chat five times. the architect: _"Ok, deactivate it. The new
+  Thalamus with Jev is not taking care of it."_ Now manual only; the bible check in
+  `subagents-and-recipes.md` fails if auto-arming returns.

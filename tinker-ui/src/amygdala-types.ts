@@ -119,6 +119,27 @@ export interface QuestionRow {
 }
 
 /** `amygdala2.feed`: what the UI loads on connect and after a reload. */
+/** The WOULD HAVE explainer's words for one decision (2026-10-05): what the agent was doing, what worried Jev, and the
+ * reply it recommends. `vote`/`agreed` come back once the owner voted. */
+export interface JevExplanation {
+  decisionId: string;
+  sessionKey: string;
+  turnId: string;
+  ts: number;
+  status: "pending" | "done" | "failed";
+  model?: string;
+  explanation?: {
+    doing: string;
+    jev: string;
+    risk: "none" | "low" | "real";
+    suggest: 1 | -1;
+    replies: { vote: 1 | -1; text: string }[];
+  };
+  error?: string;
+  vote?: 1 | -1;
+  agreed?: boolean;
+}
+
 export interface FeedView {
   decisionEvents: JevDecision[];
   interventions: InterventionView[];
@@ -128,6 +149,7 @@ export interface FeedView {
   spend: { eur: number; eur30: number; calls: number };
   counts: { checks: number; held: number; asked: number };
   precedents: number;
+  explanations?: JevExplanation[];
 }
 
 /** What one turn looks like to the renderers (built by the store). */

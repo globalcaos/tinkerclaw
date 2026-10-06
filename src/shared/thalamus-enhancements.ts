@@ -59,6 +59,10 @@ export type ShortlistEntry = {
   rank: number;
   prob: number;
   fit?: Answered<FitKind>;
+  /** Broca retrieval v2: a direct USE or an INSPIRE, who made the entry, and the part to take inspiration from. Absent on lists made before. */
+  mode?: "USE" | "INSPIRE";
+  source?: "jev" | "local";
+  section?: string;
 };
 
 export type Shortlist = {

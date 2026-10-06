@@ -92,6 +92,15 @@ const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ["decisions", "topic", "TEXT"],
   ["decisions", "step_kind", "TEXT"],
   ["enh_uses", "task_kind", "TEXT"],
+  // Broca retrieval v2 (phase C): why the list was local, the gate's reason, and the Jev call's own wall time.
+  ["enh_uses", "skip_reason", "TEXT"],
+  ["enh_uses", "skip_detail", "TEXT"],
+  ["enh_uses", "jev_ms", "INT"],
+  // Broca retrieval v2 (phase F): the mode (USE / INSPIRE) and source (jev / local) of each shown entry, in list order and
+  // comma-joined, so the daily review can split the hit rate in SQL. Derived from `shown_json` when the row is written;
+  // an entry from a list made without a ranking has `?` in both.
+  ["enh_uses", "shown_modes", "TEXT"],
+  ["enh_uses", "shown_sources", "TEXT"],
 ];
 
 const json = (v: unknown): string => JSON.stringify(v);
@@ -236,6 +245,12 @@ export type UseRow = {
   mode: string;
   /** The task's kind of work, from the local read, so the loop can tell what kind of task a pattern repeats in. */
   taskKind?: string;
+  /** Why the list is not Jev's: timeout, breaker-open, not-allowed, error, or invalid (an answer that could not be used). */
+  skipReason?: string;
+  /** The gate's reason behind `not-allowed`: private-source, real-not-allowed, jev-off, no-key. */
+  skipDetail?: string;
+  /** How long the Jev call itself took, counted even when the prompt did not wait for it. */
+  jevMs?: number;
 };
 
 export class ThalamusStore {
@@ -548,6 +563,23 @@ export class ThalamusStore {
     return rows.map(ThalamusStore.card);
   }
 
+  /**
+   * Point a card at one of its stored versions: a step back, or forward again. Nothing is deleted, every version stays.
+   * Returns false, changing nothing, when that version does not exist.
+   */
+  setActiveVersion(cardId: string, version: number, ts: number): boolean {
+    const has = this.db
+      .prepare("SELECT 1 FROM enh_cards WHERE card_id=? AND version=? LIMIT 1")
+      .get(cardId, version);
+    if (!has) return false;
+    this.db
+      .prepare(
+        `INSERT INTO enh_active(card_id,version,since) VALUES(?,?,?) ON CONFLICT(card_id) DO UPDATE SET version=excluded.version, since=excluded.since`,
+      )
+      .run(cardId, version, ts);
+    return true;
+  }
+
   cardVersions(cardId: string): EnhancementCard[] {
     return (
       this.db
@@ -561,8 +593,8 @@ export class ThalamusStore {
   upsertUse(u: UseRow): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO enh_uses(task_id,ts,session,source,private,shuffled,shown_json,none_fits,list_shown,list_reason,list_source,used_json,outcome,card_versions_json,question_version,mode,task_kind)
-         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO enh_uses(task_id,ts,session,source,private,shuffled,shown_json,none_fits,list_shown,list_reason,list_source,used_json,outcome,card_versions_json,question_version,mode,task_kind,skip_reason,skip_detail,jev_ms,shown_modes,shown_sources)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         u.taskId,
@@ -582,6 +614,11 @@ export class ThalamusStore {
         u.questionVersion,
         u.mode,
         u.taskKind ?? null,
+        u.skipReason ?? null,
+        u.skipDetail ?? null,
+        u.jevMs ?? null,
+        u.shown.map((e) => e.mode ?? "?").join(","),
+        u.shown.map((e) => e.source ?? "?").join(","),
       );
   }
 
@@ -604,6 +641,9 @@ export class ThalamusStore {
       questionVersion: r.question_version as number,
       mode: r.mode as string,
       ...(typeof r.task_kind === "string" && r.task_kind ? { taskKind: r.task_kind } : {}),
+      ...(typeof r.skip_reason === "string" && r.skip_reason ? { skipReason: r.skip_reason } : {}),
+      ...(typeof r.skip_detail === "string" && r.skip_detail ? { skipDetail: r.skip_detail } : {}),
+      ...(typeof r.jev_ms === "number" ? { jevMs: r.jev_ms } : {}),
     };
   }
 

@@ -64,8 +64,12 @@ mkdir -p "$WS"
 AGENT_NAME="$(ask 'Agent name' Assistant)"
 SETTING="$(ask 'Setting — personal or company?' personal)"
 COMPANY=""; DEPT=""; ROLE=""
+HIVE_DOOR="no"; HIVE_OWNER=""
 if [ "$SETTING" = company ]; then
   COMPANY="$(ask 'Company name' '')"; DEPT="$(ask 'Department' '')"; ROLE="$(ask 'This agent'\''s role' overseer)"
+  # Multi-user mode is opt-in and OFF by default: a personal install never sees this question.
+  HIVE_DOOR="$(ask 'Several people will use this agent, each with their own token? Turns on the hive door so nobody can pose as someone else [yes/no]' no)"
+  case "$HIVE_DOOR" in yes|y) HIVE_OWNER="$(ask 'Your name (the first person who gets a token)' Owner)" ;; esac
 fi
 OBJECTIVE="$(ask 'One-line objective/personality for the agent' 'A capable, direct assistant.')"
 
@@ -82,6 +86,20 @@ else
     echo "- **Objective:** $OBJECTIVE"
   } > "$IDFILE"
 fi
+
+# ---- 4b. Multi-user door (opt-in; see scripts/hive-door/README.md) ---------------
+HIVE_NOTE=""
+case "$HIVE_DOOR" in
+  yes|y)
+    say "Turning on the hive door (one token per person)…"
+    HIVE_ID="$(printf '%s' "$HIVE_OWNER" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/^-*//;s/-*$//')"
+    if node scripts/hive-door/setup.mjs --owner-id "${HIVE_ID:-owner}" --owner-name "${HIVE_OWNER:-Owner}" --title "$AGENT_NAME"; then
+      HIVE_NOTE="Multi-user door is ON. Your first token is in ~/.openclaw/data/door/ (read it, delete the file). Add people: ${BOLD}node scripts/hive-door/door-tokens.mjs add <id> <Name>${N}"
+    else
+      warn "The hive door is configured but NOT running yet (see the command printed above)."
+      HIVE_NOTE="Multi-user door is configured but NOT running. Start it with the command printed above, or re-run: ${BOLD}node scripts/hive-door/setup.mjs${N}"
+    fi ;;
+esac
 
 # ---- 5. Structural crons (the habits, not just the engine) -------------------
 # These are the jobs that make the fork maintain ITSELF overnight: consolidate
@@ -115,6 +133,7 @@ esac
 # ---- 5. Optional components -------------------------------------------------
 say "Optional components (install later from ClawHub / plugins as needed):"
 echo "   • browser plugin   • downloader app   • mesh-VPN join   • messaging channels"
+echo "   • multi-user door  (company setting only: node scripts/hive-door/setup.mjs)"
 
 # ---- 6. Done ----------------------------------------------------------------
 cat <<DONE
@@ -124,11 +143,14 @@ $(printf "${BOLD}Setup complete.${N}")
   Code-linking  : $LINK
   Agent         : $AGENT_NAME${COMPANY:+ @ $COMPANY}
   Workspace     : $WS
+  Multi-user    : ${HIVE_DOOR:-no}
 
 Start the gateway:   ${BOLD}openclaw gateway start${N}     (or: node openclaw.mjs)
 Open the UI:         the address the gateway prints on start.
 ${CRON_NOTE:+
 $CRON_NOTE}
+${HIVE_NOTE:+
+$HIVE_NOTE}
 
 Personalize by editing files in your workspace ($WS) — never in this repo,
 so future 'git pull' stays clean. See FORK_SETUP.md for the git-pull contract.

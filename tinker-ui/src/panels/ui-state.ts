@@ -669,6 +669,20 @@ export function migrateLegacyUiState(store: Storage = globalThis.localStorage): 
 
 /** Dev-server endpoint owning the durable copy: GET returns the snapshot, POST replaces it. */
 export const UI_STATE_ENDPOINT = "/api/ui-state";
+// FORK 2026-10-06 (the user: "each user needs to have his own tabs, and have them reopen on reconnect
+// exactly as they were"). When the page is served by the gateway plugin (no dev server, no prod-ui
+// proxy), the root path above answers 404 and the state file lives under the app's base path. The
+// first 404 switches this page to the plugin's endpoint for the rest of its life; a 200 never does.
+export const UI_STATE_PLUGIN_ENDPOINT = "/tinker/api/ui-state";
+let uiStateEndpoint = UI_STATE_ENDPOINT;
+/** Which endpoint this page settled on (exported for tests and the boot trace). */
+export function currentUiStateEndpoint(): string {
+  return uiStateEndpoint;
+}
+/** Tests only: forget the settled endpoint. */
+export function resetUiStateEndpointForTests(): void {
+  uiStateEndpoint = UI_STATE_ENDPOINT;
+}
 
 /**
  * The four namespaces in one payload — exactly what the endpoint stores on disk.
@@ -941,11 +955,20 @@ async function fetchUiStateSnapshot(timeoutMs: number): Promise<UiStateSnapshot 
   hydrating = true;
   try {
     const seat = seatHeaders();
-    const res = await fetch(UI_STATE_ENDPOINT, {
-      method: "GET",
-      headers: { Accept: "application/json", ...seat },
-      signal: controller.signal,
-    });
+    const get = (url: string) =>
+      fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json", ...seat },
+        signal: controller.signal,
+      });
+    let res = await get(uiStateEndpoint);
+    if (res.status === 404 && uiStateEndpoint === UI_STATE_ENDPOINT) {
+      const alt = await get(UI_STATE_PLUGIN_ENDPOINT);
+      if (alt.ok) {
+        uiStateEndpoint = UI_STATE_PLUGIN_ENDPOINT;
+        res = alt;
+      }
+    }
     if (!res.ok) {
       return null;
     }
@@ -1187,7 +1210,7 @@ function flushUiStateMirror(finalFlush = false): void {
     if (!finalFlush) {
       mirrorsInFlight += 1;
     }
-    void fetch(UI_STATE_ENDPOINT, {
+    void fetch(uiStateEndpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

@@ -13,6 +13,7 @@ import {
   resolveGatewayPort,
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
+import { previousUserTextOf } from "openclaw/plugin-sdk/fork-thalamus";
 import { parseConfig } from "./src/config.js";
 import { sourceOfSessionKey } from "./src/context-view.js";
 import {
@@ -102,6 +103,7 @@ export default definePluginEntry({
       if (!seam) return undefined;
       try {
         const runId = ctx.runId ?? `run:${ctx.sessionKey ?? "x"}:${Date.now()}`;
+        const prev = previousUserTextOf(event.messages, event.prompt ?? "");
         const out = await seam.prepare({
           id: runId,
           runId,
@@ -110,6 +112,8 @@ export default definePluginEntry({
           text: event.prompt ?? "",
           source: sourceOfSessionKey(ctx.sessionKey),
           trigger: ctx.trigger,
+          ...(ctx.inputProvenanceKind ? { provenanceKind: ctx.inputProvenanceKind } : {}),
+          ...(prev ? { previousUserText: prev } : {}),
         });
         return out.text ? { prependContext: out.text } : undefined;
       } catch {

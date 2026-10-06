@@ -28,6 +28,15 @@ function sessionOf(ctx: unknown): string {
   return c.sessionKey ?? c.sessionId ?? `native:${c.agentId ?? "main"}`;
 }
 
+/**
+ * Internal one-shots (the tab namer, the slug generator, the WOULD HAVE explainer) run as `temp:*` sessions with no
+ * tools and no chat. Jev skips them: on 2026-10-05 it was sending the tab namer's titles back as "unfinished", and it
+ * would otherwise judge, flag and re-explain the explainer's own answers.
+ */
+function internal(ctx: unknown): boolean {
+  return sessionOf(ctx).startsWith("temp:");
+}
+
 function lastAssistantText(messages: unknown[]): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i] as { role?: unknown; content?: unknown } | null;
@@ -67,6 +76,7 @@ async function toBlock(runtime: NativeRuntime, hook: HookAction): Promise<Block 
 
 export function registerNativeHandlers(api: OpenClawPluginApi, runtime: NativeRuntime): void {
   api.on("before_tool_call", async (event, ctx) => {
+    if (internal(ctx)) return undefined;
     try {
       const r = await runtime.decide("pre-tool", {
         session_id: sessionOf(ctx),
@@ -82,6 +92,7 @@ export function registerNativeHandlers(api: OpenClawPluginApi, runtime: NativeRu
   });
 
   api.on("after_tool_call", async (event, ctx) => {
+    if (internal(ctx)) return;
     try {
       const r = await runtime.decide("post-tool", {
         session_id: sessionOf(ctx),
@@ -98,6 +109,7 @@ export function registerNativeHandlers(api: OpenClawPluginApi, runtime: NativeRu
   });
 
   api.on("agent_end", async (event, ctx) => {
+    if (internal(ctx)) return;
     try {
       await runtime.decide("stop", {
         session_id: sessionOf(ctx),

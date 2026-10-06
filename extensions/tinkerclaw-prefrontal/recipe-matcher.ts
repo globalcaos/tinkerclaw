@@ -21,11 +21,11 @@
  * See bible subagents-and-kits.md + tool-loop.md.
  */
 import fs from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { emitEvent } from "openclaw/plugin-sdk/fork-telemetry";
 import { parse as parseYaml } from "yaml";
 import { collectRecipeTargets, type RecipeFileTarget } from "./recipe-locate.js";
-import { parseKitStepsAndParallelism } from "./recipe-runner.js";
+import { parseKitStepsAndParallelism, resolveRecipeOverlayDir } from "./recipe-runner.js";
 import type { EmbedFn } from "./semantic-matcher.js";
 
 export interface RecipeIndexEntry {
@@ -263,11 +263,25 @@ async function scanRecipeTargets(targets: RecipeFileTarget[]): Promise<RecipeInd
 }
 
 /**
+ * FORK 2026-10-06 (Broca retrieval v2): the roots the matcher scans after the shipped
+ * recipes dir. The overlay (`<OPENCLAW_HOME>/recipes`) holds recipes the runner can run
+ * but the matcher never saw. Turn hook and both RPCs call this, not their own list.
+ * Collision rule (the architect's ruling 2026-10-06): the overlay recipe wins over a shipped or
+ * bridged one of the same slug, as it does in the runner; `loadRecipeIndex` applies it.
+ */
+export function recipeIndexExtraDirs(bridgedSkillsDir: string): string[] {
+  return [bridgedSkillsDir, resolveRecipeOverlayDir()];
+}
+
+/**
  * Load the matcher's catalog. Scans `ownRecipesDir` plus any `extraDirs` (FORK
  * 2026-06-01 / U11: the bridged-skills dir where imported CC SKILL.md recipes
  * land), so imported recipes are matchable alongside the curated ones. A later
  * dir's entry wins on a slug collision (so a bridged recipe never shadows a
- * curated kit of the same slug — own-kits scan first). The cache key is the
+ * curated kit of the same slug — own-kits scan first), EXCEPT the overlay root
+ * (`resolveRecipeOverlayDir()`): an overlay recipe is the owner's override and beats
+ * a shipped or bridged one of the same slug, matching the runner's read order. Each
+ * such collision logs one line when the index is built. The cache key is the
  * combined mtime signature of every scanned dir, so a write to ANY of them
  * invalidates the cache (a missing dir contributes a stable "x" so its later
  * creation also busts the cache).
@@ -275,6 +289,7 @@ async function scanRecipeTargets(targets: RecipeFileTarget[]): Promise<RecipeInd
 export async function loadRecipeIndex(
   ownRecipesDir: string,
   extraDirs: string[] = [],
+  log?: { info?: (m: string) => void },
 ): Promise<RecipeIndexEntry[]> {
   const dirs = [ownRecipesDir, ...extraDirs];
   // FORK 2026-09-02: the cache key used to be the ROOT dir's mtime, which does not
@@ -305,13 +320,23 @@ export async function loadRecipeIndex(
   }
 
   // own-recipes first so a bridged import cannot shadow a curated recipe.
-  const bySlug = new Map<string, RecipeIndexEntry>();
-  for (const { targets } of scans) {
+  const overlayRoot = resolvePath(resolveRecipeOverlayDir());
+  const bySlug = new Map<string, { entry: RecipeIndexEntry; overlay: boolean }>();
+  for (const { dir, targets } of scans) {
+    const overlay = resolvePath(dir) === overlayRoot;
     for (const entry of await scanRecipeTargets(targets)) {
-      if (!bySlug.has(entry.slug)) bySlug.set(entry.slug, entry);
+      const held = bySlug.get(entry.slug);
+      if (!held) {
+        bySlug.set(entry.slug, { entry, overlay });
+      } else if (overlay && !held.overlay) {
+        log?.info?.(
+          `[recipe-matcher] slug collision "${entry.slug}": overlay ${entry.path} wins over ${held.entry.path}`,
+        );
+        bySlug.set(entry.slug, { entry, overlay });
+      }
     }
   }
-  const index = [...bySlug.values()];
+  const index = [...bySlug.values()].map((v) => v.entry);
   cache = { sig, index };
   return index;
 }
@@ -587,6 +612,12 @@ export interface SeedPlanDeps {
    * by the caller via makeRatingLookup over the warmed marketplace cache.
    */
   rating?: RatingLookup;
+  /**
+   * FORK 2026-10-06 (Broca retrieval v2, phase E): may a plan be seeded from this matched recipe? The caller decides from
+   * the one ranked result per task: only a USE with high confidence seeds; an INSPIRE never does. A match it refuses seeds
+   * nothing and is NOT a recipe gap. Omitted → every match may seed (the historical behaviour).
+   */
+  allowSeed?: (slug: string, confidence: MatchConfidence) => boolean;
 }
 
 export interface SeedPlanOutcome {
@@ -653,7 +684,7 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
     return empty({ skipped: "plan-in-progress" });
   }
 
-  const index = await loadRecipeIndex(deps.ownRecipesDir, deps.extraKitDirs ?? []);
+  const index = await loadRecipeIndex(deps.ownRecipesDir, deps.extraKitDirs ?? [], deps.log);
   if (index.length === 0) {
     deps.log?.warn?.(`[recipe-matcher] no kits found in ${deps.ownRecipesDir}`);
     return empty({ skipped: "empty-catalog" });
@@ -726,6 +757,28 @@ export async function seedPlanFromPrompt(deps: SeedPlanDeps): Promise<SeedPlanOu
       `[recipe-matcher] NO-MATCH sessionKey=${deps.sessionKey} prompt="${snippet}" (catalog=${index.length}) — recipe-gap; authoring offered`,
     );
     return empty({ catalogSize: index.length, noMatch: true });
+  }
+
+  if (deps.allowSeed) {
+    const allow = deps.allowSeed;
+    const allowed = matches.filter((m) => allow(m.entry.slug, confidence));
+    if (allowed.length === 0) {
+      deps.log?.info?.(
+        `[recipe-matcher] sessionKey=${deps.sessionKey} matched ${matches.map((m) => m.entry.slug).join("+")} but none is a high-confidence USE — no plan seeded`,
+      );
+      return empty({
+        catalogSize: index.length,
+        matches: matches.map((m) => ({
+          slug: m.entry.slug,
+          score: m.score,
+          title: m.entry.title,
+          path: m.entry.path,
+        })),
+        confidence,
+        skipped: "not-a-high-use",
+      });
+    }
+    matches = allowed;
   }
 
   const plan = await buildMergedPlan(matches, index);

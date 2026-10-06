@@ -23,8 +23,13 @@
  *      the duplicate answer goes away").
  *  13. A prompt whose turn starts 20 s after the send is drawn once after a reload under its run, and once when
  *      the run finished while its tab was away (2026-10-03, the prompt drawn twice).
+ *  14. A reload while the gateway refuses history (starting) shows a moving "Waiting for the gateway to start"
+ *      indicator, never the error strip, and the history lands within a second of the gateway answering; a slow
+ *      read shows "Loading chat history"; a scroll back shows "Loading earlier turns" at the top (2026-10-06).
+ *      A dropped gateway that then starts, over a page holding its rows, draws no pill at any moment, never
+ *      removes a row, reconnects soon after it listens, and reads the viewed chat before sessions.list, once.
  *
- * Usage: node drive.mjs --url http://127.0.0.1:18997
+ * Usage: node drive.mjs --url http://127.0.0.1:18997 [--shots <dir>]  (--shots saves check 14's screenshots)
  * Exit code 1 when an assertion fails.
  */
 import { createRequire } from "node:module";
@@ -584,6 +589,173 @@ check(
   counts13.every((n) => n === 1),
   "13. a prompt whose turn starts 20 s late shows once after a reload under its run and after finishing away",
   `reload-under-run=${reloaded13a} after-finals=${final13a} reload=${reload13a} back-from-away=${back13b} reload=${reload13b}`,
+);
+
+// 14 ─ FORK 2026-10-06 (the architect: "make sure there are 'loading...' indicators when loading the chat
+// history, indicators that have some movement … Also, use the loading indicator for when we scroll
+// backwards"). A reload onto a gateway that refuses history while it starts, then answers late: the
+// moving indicator says why it waits, centred on the empty pane, and the read lands within a second
+// of the gateway answering (develop's backoff had reached 7 s gaps by then). Then a scroll back.
+const indicator = (id) =>
+  page.evaluate((i) => {
+    const el = document.getElementById(i);
+    if (!el || el.hidden) return null;
+    const spinner = el.querySelector(".hl-spinner");
+    return {
+      label: el.querySelector(".hl-label")?.textContent ?? "",
+      place: el.dataset.place ?? "",
+      spin: spinner ? getComputedStyle(spinner).animationName : "",
+    };
+  }, id);
+const labelIs = (id, text) =>
+  page
+    .waitForFunction(
+      ([i, t]) => {
+        const el = document.getElementById(i);
+        return !!el && !el.hidden && (el.querySelector(".hl-label")?.textContent ?? "").includes(t);
+      },
+      [id, text],
+      { timeout: 9000, polling: 50 },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+const shot = (name) =>
+  args.shots ? page.screenshot({ path: `${args.shots}/${name}.png` }) : Promise.resolve();
+const REFUSE_MS = 5000;
+const HELD_MS = 2500;
+// Check 13's knobs (late runs, held history while a run is live, heartbeats) are not this check's.
+await fetch(`${URL_}/__mock/state`, {
+  method: "POST",
+  body: JSON.stringify({ runStartDelayMs: 300, historyDelayMs: 0, runHeartbeatMs: 0, busy: [] }),
+});
+await fetch(`${URL_}/__mock/state`, {
+  method: "POST",
+  body: JSON.stringify({ refuseHistoryMs: REFUSE_MS, historyAllDelayMs: HELD_MS }),
+});
+const refusedAt = Date.now();
+await page.reload({ waitUntil: "load" });
+const sawWaiting = await labelIs("history-loading-main", "Waiting for the gateway to start");
+const waiting = await indicator("history-loading-main");
+const stripShown = await page.evaluate(
+  () => (document.getElementById("history-strip")?.style.display ?? "none") !== "none",
+);
+await shot("14a-waiting-for-gateway");
+await waitRows("A");
+const landedMs = Date.now() - refusedAt - REFUSE_MS;
+await page.waitForTimeout(600);
+const goneAfter = (await indicator("history-loading-main")) === null;
+// Until a read is answered the page cannot know the gateway took it, so the label keeps the last
+// reason it learned; the retry goes out within a second of the refusal ending (1 s cadence).
+check(
+  sawWaiting &&
+    waiting?.place === "center" &&
+    waiting?.spin === "hl-spin" &&
+    !stripShown &&
+    goneAfter &&
+    landedMs < 1000 + HELD_MS + 1500,
+  "14a. a reload during a gateway start shows a moving 'waiting' indicator, never the error strip, and lands within a second of the gateway answering",
+  `waiting=${JSON.stringify(waiting)} strip=${stripShown} gone=${goneAfter} landed ${landedMs} ms after the refusal ended (held ${HELD_MS})`,
+);
+// A slow read with no refusal: "Loading chat history", centred on the empty page.
+await page.reload({ waitUntil: "load" });
+const sawLoading = await labelIs("history-loading-main", "Loading chat history");
+const loading = await indicator("history-loading-main");
+await shot("14b-loading-chat-history");
+await waitRows("A");
+check(
+  sawLoading && loading?.place === "center" && loading?.spin === "hl-spin",
+  "14b. a slow first read shows the moving 'Loading chat history' indicator in the middle of the empty pane",
+  `loading=${JSON.stringify(loading)}`,
+);
+await overChat();
+let sawOlder = false;
+for (let i = 0; i < 12 && !sawOlder; i++) {
+  await page.mouse.wheel(0, -4000);
+  sawOlder = await labelIs("history-loading-top", "Loading earlier turns").then(
+    (ok) => ok,
+    () => false,
+  );
+}
+const older = await indicator("history-loading-top");
+const olderFlag = await page.evaluate(() =>
+  document.getElementById("messages").classList.contains("archive-loading"),
+);
+await shot("14c-loading-earlier-turns");
+await fetch(`${URL_}/__mock/state`, {
+  method: "POST",
+  body: JSON.stringify({ historyAllDelayMs: 0 }),
+});
+check(
+  sawOlder && older?.place === "top" && older?.spin === "hl-spin" && olderFlag,
+  "14c. scrolling back shows the moving 'Loading earlier turns' indicator at the top of the pane",
+  `older=${JSON.stringify(older)} archive-loading=${olderFlag}`,
+);
+
+// 14d ─ FORK 2026-10-06 (the architect, after a restart that kept his page: "I could see a 'loading context'
+// indicator that did not add anything … Consider what the front-end has loaded, and do not try to
+// reload that which is already loaded"). The gateway drops every socket and refuses new ones for 3 s,
+// then refuses history for 2 s more, as a starting gateway does. Over a page that holds its rows: no
+// pill at any moment, no row ever leaves, the page is connected again soon after the gateway listens
+// (the 0.5 s re-dial), and the reconnect's first read is the viewed chat's catch-up, before the list.
+const DOWN_MS = 3000;
+const STARTING_MS = 2000;
+await waitRows("A");
+await page.waitForTimeout(1500);
+await fetch(`${URL_}/__mock/log`);
+const rowsBefore = await page.evaluate(
+  () => document.querySelectorAll('#messages [data-oc-id^="oc:A-"]').length,
+);
+await page.evaluate(() => {
+  const w = window;
+  w.__quiet = { pills: [], minRows: Infinity };
+  w.__quietTimer = setInterval(() => {
+    for (const id of ["history-loading-main", "history-loading-top"]) {
+      const el = document.getElementById(id);
+      if (el && !el.hidden) w.__quiet.pills.push(el.querySelector(".hl-label")?.textContent ?? "");
+    }
+    const n = document.querySelectorAll('#messages [data-oc-id^="oc:A-"]').length;
+    w.__quiet.minRows = Math.min(w.__quiet.minRows, n);
+  }, 50);
+});
+await fetch(`${URL_}/__mock/state`, {
+  method: "POST",
+  body: JSON.stringify({ dropConnectionsMs: DOWN_MS, refuseHistoryMs: DOWN_MS + STARTING_MS }),
+});
+const droppedAt = Date.now();
+await page.waitForFunction(
+  () => document.getElementById("gw-label")?.textContent === "Connected",
+  null,
+  { timeout: 15000, polling: 50 },
+);
+const backMs = Date.now() - droppedAt - DOWN_MS;
+// The catch-up waits out the start (1 s cadence), then the list follows it.
+await page.waitForTimeout(STARTING_MS + 2500);
+const quiet = await page.evaluate(() => {
+  clearInterval(window.__quietTimer);
+  return window.__quiet;
+});
+await shot("14d-reconnect-over-rows");
+const { log } = await (await fetch(`${URL_}/__mock/log`)).json();
+const afterDrop = log.filter((r) => r.at >= droppedAt);
+const firstHistory = afterDrop.findIndex(
+  (r) => r.method === "chat.history" && r.key === "agent:main:main",
+);
+const firstList = afterDrop.findIndex((r) => r.method === "sessions.list");
+const viewedReads = afterDrop.filter(
+  (r) => r.method === "chat.history" && r.key === "agent:main:main",
+);
+check(
+  quiet.pills.length === 0 &&
+    quiet.minRows >= rowsBefore &&
+    backMs < 1500 &&
+    firstHistory !== -1 &&
+    (firstList === -1 || firstHistory < firstList),
+  "14d. a dropped gateway that then starts, over a page holding its rows: no pill, no row lost, back soon after it listens, the viewed chat read before the list",
+  `pills=${JSON.stringify([...new Set(quiet.pills)])} rows ${rowsBefore}→min ${quiet.minRows}, connected ${backMs} ms after the gateway took connections, ` +
+    `first viewed read #${firstHistory} (afterSeq ${viewedReads[0]?.afterSeq ?? "none"}), first list #${firstList}, ` +
+    `${viewedReads.length} viewed read(s) incl. ${viewedReads.length - 1} startup retr(y/ies)`,
 );
 
 check(pageErrors.length === 0, "no page errors", pageErrors.slice(0, 3).join(" | "));

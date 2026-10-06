@@ -79,8 +79,8 @@ def lane_of(label):
         if text.lower().startswith(v + " "):
             verb, text = v, text[len(v) + 1:]
             break
-    m = re.match(r"([A-Za-z]{1,2}\d+)\b[\s:-]*(.*)", text)
-    key, rest = (m.group(1).upper(), m.group(2)) if m else (text, "")
+    m = re.match(r"([A-Za-z]{1,2})(\d+[a-z]?)\b[\s:-]*(.*)", text)  # "K36a:build": a split unit
+    key, rest = (m.group(1).upper() + m.group(2), m.group(3)) if m else (text, "")
     first = rest.split(" ", 1)[0].lower() if rest else ""
     if verb == "build" and first in VERBS:  # "C1 review" names the verb after the id
         verb, rest = first, rest[len(first):].strip()
@@ -99,6 +99,53 @@ def workflow_dir(wf):
         for d in glob.glob(os.path.expanduser("~/.claude/projects/*/*/subagents/workflows/wf_*")):
             _WF_DIRS.setdefault(os.path.basename(d), d)
     return _WF_DIRS.get(wf)
+
+
+def first_prompt(wf_dir):
+    """The first prompt of the Claude Code session that ran a workflow: <project>/<session>.jsonl."""
+    session = os.path.dirname(os.path.dirname(os.path.dirname(wf_dir)))
+    try:
+        with open(session + ".jsonl") as fh:
+            for i, line in enumerate(fh):
+                if i > 200:
+                    break
+                try:
+                    o = json.loads(line)
+                except ValueError:
+                    continue
+                if o.get("type") != "user":
+                    continue
+                c = (o.get("message") or {}).get("content")
+                if isinstance(c, list):
+                    c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict))
+                if c:
+                    return str(c)
+    except OSError:
+        pass
+    return ""
+
+
+def discover_workflows(plan):
+    """Add the worker's workflows the plan does not list yet to the phase being sent.
+
+    The master writes a turn's workflow ids in only at its next wake, so for a whole turn the Gantt
+    tab showed nothing of what the worker was doing. A workflow counts as the worker's when the
+    first prompt of the session that ran it holds every string in "worker_prompt_has", and only
+    workflows newer than the newest one the plan lists are read."""
+    marks = plan.get("worker_prompt_has")
+    target = next((ph for ph in plan["phases"] if ph.get("status") == "next" or ph.get("next")), None)
+    if not marks or not target:
+        return []
+    workflow_dir("")
+    listed = {wf for ph in plan["phases"] for wf in ph.get("workflows", [])}
+    since = max((os.path.getmtime(_WF_DIRS[wf]) for wf in listed if wf in _WF_DIRS), default=0)
+    found = []
+    for wf, d in sorted(_WF_DIRS.items(), key=lambda kv: os.path.getmtime(kv[1])):
+        if wf not in listed and os.path.getmtime(d) > since and all(m in first_prompt(d) for m in marks):
+            found.append(wf)
+    if found:
+        target["workflows"] = target.get("workflows", []) + found
+    return found
 
 
 def _ts_of(line):
@@ -245,7 +292,9 @@ def derive(path):
 
 def derive_plan(plan):
     """Fill auto_tasks in memory and return the lane count; derive() is what writes the file."""
-    planned_names = {t["label"].split()[0].upper(): t["label"] for ph in plan["phases"]
+    for wf in discover_workflows(plan):
+        print(f"derive: worker workflow {wf} added to the phase being sent", file=sys.stderr)
+    planned_names ={t["label"].split()[0].upper(): t["label"] for ph in plan["phases"]
                      for t in ph.get("tasks", []) if re.match(r"^[A-Za-z]{1,2}\d+\b", t["label"])}
     for ph in plan["phases"]:
         lanes = {}
@@ -268,7 +317,7 @@ def derive_plan(plan):
         for key in sorted(lanes, key=natural):
             lane = lanes[key]
             lane["segments"].sort(key=lambda s: s["s"])
-            if re.match(r"^[A-Z]{1,2}\d+$", key):
+            if re.match(r"^[A-Z]{1,2}\d+[a-z]?$", key):
                 name = planned_names.get(key) or f"{key} {lane['label']}".strip()
             else:
                 name = key
@@ -324,6 +373,7 @@ def build_rows(plan, now):
                 r["segs"].append({"s": now, "e": eu, "kind": r["kind"], "status": "planned",
                                   "note": f"expected by {eu.strftime('%H:%M')} (the worker's deadline)", "cut": False})
     real_keys = {r["label"].split()[0] for ph in phases for r in ph["rows"] if r["segs"]}
+    real_keys |= {re.sub(r"(\d)[a-z]$", r"\1", k) for k in real_keys}  # a real K36a retires the planned K36
     for ph in phases:
         ph["rows"] = [r for r in ph["rows"] if r["segs"] or not (r["est"] and r["label"].split()[0] in real_keys)]
         has_real = any(r["segs"] for r in ph["rows"])
@@ -1131,7 +1181,7 @@ def main(argv):
     now = parse_t(opts["--now"]) if "--now" in opts else dt.datetime.now().astimezone()
     plan = json.load(open(path))
     if argv[1] == "live":
-        if any(ph.get("workflows") for ph in plan["phases"]):
+        if any(ph.get("workflows") for ph in plan["phases"]) or plan.get("worker_prompt_has"):
             derive_plan(plan)
         chart = render(plan, now, table=False, interactive=True)
         print(chart if "--fragment" in argv else live_page(chart, plan.get("title", "Build")))

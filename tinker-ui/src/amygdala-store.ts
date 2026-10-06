@@ -8,6 +8,7 @@ import type {
   DotState,
   FeedView,
   InterventionView,
+  JevExplanation,
   JevDecision,
   MarkerView,
   QuestionRow,
@@ -21,7 +22,8 @@ export type AmyEventName =
   | "amygdala2.intervention"
   | "amygdala2.change"
   | "amygdala2.marker"
-  | "amygdala2.refusal";
+  | "amygdala2.refusal"
+  | "amygdala2.explanation";
 
 export interface AmygdalaState {
   /** null = not probed yet, false = `amygdala2.status` is an unknown method (the UI stays on v3.1), true = present. */
@@ -97,6 +99,7 @@ export class AmygdalaStore {
   private readonly maxDecisionsPerTurn: number;
   private readonly turnMap = new Map<string, TurnRec>();
   private readonly changeMap = new Map<string, ChangeView>();
+  private readonly explainMap = new Map<string, JevExplanation>();
   private readonly listeners = new Set<() => void>();
   private st: AmygdalaState = {
     available: null,
@@ -142,6 +145,9 @@ export class AmygdalaStore {
         case "amygdala2.status":
           changed = this.replaceStatus(payload);
           break;
+        case "amygdala2.explanation":
+          changed = this.mergeExplanation(payload);
+          break;
         // The refusal strip is the `refusal` intervention; the bare event carries nothing more.
         default:
           return false;
@@ -164,6 +170,8 @@ export class AmygdalaStore {
         for (const i of feed.interventions) changed = this.mergeIntervention(i) || changed;
       if (Array.isArray(feed.changes))
         for (const c of feed.changes) changed = this.mergeChange(c) || changed;
+      if (Array.isArray(feed.explanations))
+        for (const x of feed.explanations) changed = this.mergeExplanation(x) || changed;
       if (Array.isArray(feed.questions) && !same(feed.questions, this.st.questions)) {
         this.st = { ...this.st, questions: feed.questions };
         changed = true;
@@ -214,6 +222,28 @@ export class AmygdalaStore {
     const out: TurnView[] = [];
     for (const t of this.turnMap.values()) if (t.sessionKey === sessionKey) out.push(this.view(t));
     return out.sort((a, b) => a.ts - b.ts);
+  }
+
+  /** The explainer's words for a decision, if any arrived. */
+  explanation(decisionId: string): JevExplanation | undefined {
+    return this.explainMap.get(decisionId);
+  }
+
+  /** Upsert an explanation; a late "pending" never replaces a finished one. Keeps the newest 2000. */
+  private mergeExplanation(p: unknown): boolean {
+    if (!isObj(p) || !isStr(p.decisionId) || !isStr(p.status)) return false;
+    const x = p as unknown as JevExplanation;
+    const have = this.explainMap.get(x.decisionId);
+    if (have && have.status !== "pending" && x.status === "pending") return false;
+    if (have && same(have, x)) return false;
+    this.explainMap.delete(x.decisionId);
+    this.explainMap.set(x.decisionId, have ? { ...have, ...x } : x);
+    while (this.explainMap.size > 2000) {
+      const oldest = this.explainMap.keys().next().value;
+      if (oldest === undefined) break;
+      this.explainMap.delete(oldest);
+    }
+    return true;
   }
 
   turn(turnId: string): TurnView | undefined {

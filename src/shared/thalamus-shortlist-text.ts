@@ -40,10 +40,17 @@ export function shortlistContext(
     if (!card) continue;
     const n = lines.length + 1;
     position.set(e.cardId, n);
-    const fit = e.fit ? `; ${FIT_WORDS[e.fit.value]}` : "";
+    const fit = e.fit
+      ? `; ${FIT_WORDS[e.fit.value]}`
+      : e.mode === "INSPIRE"
+        ? `; ${FIT_WORDS["by-structure"]}`
+        : "";
+    // A local entry has no probability of its own: recall's order is all it carries, so no percentage is printed for it.
+    const pct = e.source === "local" && e.prob === 0 ? "" : `, ${Math.round(e.prob * 100)}%`;
+    const part = e.mode === "INSPIRE" && e.section ? ` (the "${e.section}" part)` : "";
     const where = card.path ? ` (${card.path})` : "";
     lines.push(
-      `${n}. ${card.kind} ${card.name}, ${Math.round(e.prob * 100)}%${fit}: ${clip(card.purpose, PURPOSE_CHARS)}${where}`,
+      `${n}. ${card.kind} ${card.name}${pct}${fit}${part}: ${clip(card.purpose, PURPOSE_CHARS)}${where}`,
     );
   }
   if (lines.length === 0) return undefined;

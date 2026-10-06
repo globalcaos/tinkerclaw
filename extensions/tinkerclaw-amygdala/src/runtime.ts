@@ -21,6 +21,14 @@ import type { AmygdalaConfig } from "./config.js";
 import { TurnContexts } from "./context.js";
 import { decide, type DecideDeps, type DecideResult } from "./decide.js";
 import type { DecisionEvent, InterventionEvent } from "./events.js";
+import {
+  buildExplainInput,
+  createExplainer,
+  EXPLANATION_EVENT,
+  type Explainer,
+  type ExplanationRow,
+  type RunOnce,
+} from "./explain.js";
 import { enabledFamilies, type Family } from "./families/index.js";
 import {
   changeView,
@@ -44,6 +52,7 @@ import {
 } from "./policy.js";
 import { QuestionBook } from "./question-book.js";
 import { redactForSend } from "./redact.js";
+import { buildReviewInput, createReviewer, type Reviewer } from "./review.js";
 import type { SessionMap } from "./rewind.js";
 import { evaluateRules } from "./rules.js";
 import { SessionTracker, type HookPayload } from "./session-tracker.js";
@@ -51,7 +60,7 @@ import { buildSituation, type SeamInput } from "./situation.js";
 import { dayBounds, spendBetween, spendToday } from "./spend.js";
 import { buildStatus, readSpool, type StatusEvent } from "./status.js";
 import { AmygdalaStore } from "./store.js";
-import { narrationBefore } from "./transcript.js";
+import { narrationBefore, stepsAfter, stepsBefore } from "./transcript.js";
 import type { Intervention, Question, Seam, Situation, Verdict } from "./types.js";
 import { probeV31, type V31ProbeInput } from "./v31-probe.js";
 import { WaitRegistry, type WaitAnswer } from "./wait-registry.js";
@@ -86,6 +95,10 @@ export interface RuntimeOptions {
    * plugin entry passes this, i.e. only while the plugin is enabled; the file is touched only when the user presses Rewind.
    */
   bridgeMapFile?: string | true;
+  /** One model call for the WOULD HAVE explainer (the plugin entry passes the embedded runner). Absent = no explainer. */
+  explainRun?: RunOnce;
+  /** Wait before reading the transcript for an explanation (the step's narration must be on disk). Default 4 s. */
+  explainDelayMs?: number;
 }
 
 export interface FeedQuery {
@@ -128,6 +141,8 @@ export interface Runtime {
     /** One event per answered question, rebuilt so a reload redraws the Jev windows. */
     decisionEvents: DecisionEvent[];
     changes: ChangeViewOut[];
+    /** The WOULD HAVE explainer's output for these decisions; a row pending for over 15 min reads as failed. */
+    explanations: ExplanationRow[];
     questions: QuestionRowOut[];
     precedents: number;
     counts: { checks: number; held: number; asked: number };
@@ -148,6 +163,14 @@ export interface Runtime {
    * the paper places it "before the next step" anyway. Taking them empties the queue.
    */
   takeNotes(sessionKey: string): string[];
+  /** What the usefulness reviews say since `sinceTs`: per rule, Grok's verdicts beside the owner's votes. */
+  reviewReport(sinceTs?: number): {
+    since: number;
+    rules: ReturnType<AmygdalaStore["reviewReport"]>;
+    recent: ReturnType<AmygdalaStore["reviewsSince"]>;
+  };
+  /** The owner voted on a decision: if it was explained, keep whether the vote matched the suggestion. */
+  explanationVote(decisionId: string, vote: number): void;
   /** Learning (design §7.3): the operations behind the label / approve / undo / propose / nightly / rewind methods. */
   learning(): Learning;
 }
@@ -238,6 +261,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
   let store: AmygdalaStore | null = null;
   let learn: Learning | null = null;
   let deps: DecideDeps | null = null;
+  let explainer: Explainer | null = null;
+  let reviewer: Reviewer | null = null;
   let started = false;
   let startError: string | null = null;
   let floorActive = true;
@@ -447,6 +472,31 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           idGen: o.idGen,
           sessionMap,
         });
+        explainer =
+          config.explain.enabled && o.explainRun
+            ? createExplainer({
+                store,
+                emit,
+                run: o.explainRun,
+                ladder: config.explain.ladder,
+                timeoutMs: config.explain.timeoutMs,
+                concurrency: config.explain.concurrency,
+                delayMs: o.explainDelayMs ?? 4000,
+                logger,
+              })
+            : null;
+        reviewer =
+          config.review.enabled && o.explainRun
+            ? createReviewer({
+                store,
+                run: o.explainRun,
+                ladder: config.explain.ladder,
+                timeoutMs: config.explain.timeoutMs,
+                dailyCap: config.review.dailyCap,
+                now,
+                logger,
+              })
+            : null;
         deps = {
           jev: tracked,
           book,
@@ -501,6 +551,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       }
       store = null;
       learn = null;
+      explainer = null;
+      reviewer = null;
       deps = null;
       started = false;
     },
@@ -581,6 +633,32 @@ export function createRuntime(o: RuntimeOptions): Runtime {
         pendingNotes.set(sessionKey, q.slice(-NOTE_CAP));
       }
       learn?.observe(result);
+      // The explainer's own one-shots run as temp:* sessions; never explain those (it would explain itself).
+      if (
+        explainer &&
+        result.decision.response.kind !== "proceed" &&
+        !sessionKey.startsWith("temp:")
+      ) {
+        const book = deps.book;
+        explainer.observe({
+          decisionId: result.id,
+          sessionKey: result.situation.sessionKey,
+          turnId: result.situation.turnId,
+          ts: result.situation.ts,
+          input: () =>
+            buildExplainInput({
+              situation: result.situation,
+              decision: result.decision,
+              verdicts: result.verdicts,
+              hard: result.hard,
+              book,
+              steps: transcriptPath ? stepsBefore(transcriptPath, toolUseId) : [],
+              saidBefore:
+                transcriptPath && toolUseId ? narrationBefore(transcriptPath, toolUseId) : null,
+              homeDir: homedir(),
+            }),
+        });
+      }
       for (const id of result.released ?? []) learn?.onAnswer(id, "evidence");
       if (result.hook.kind === "wait") {
         const r = result.decision.response;
@@ -591,7 +669,52 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           ttlMs: result.hook.timeoutMs,
         });
       }
+      // When a turn ends, each flag it raised is judged once, in the background, by what the agent did after it.
+      if (reviewer && store && seam === "stop" && !sessionKey.startsWith("temp:")) {
+        const st = store;
+        const book = deps.book;
+        const finalReply = str(hook.last_assistant_message);
+        for (const d of st.flaggedDecisionsForTurn(result.situation.turnId)) {
+          if (st.hasReview(d.id)) continue;
+          const sit = st.situationRecord(d.situationId);
+          if (!sit) continue;
+          reviewer.observe({
+            decisionId: d.id,
+            sessionKey: sit.sessionKey,
+            turnId: sit.turnId,
+            ts: sit.ts,
+            input: () =>
+              buildReviewInput({
+                situation: sit,
+                decision: d,
+                verdicts: st.queryVerdicts({ situationId: d.situationId }),
+                book,
+                steps: [],
+                saidBefore: null,
+                homeDir: homedir(),
+                after: transcriptPath ? stepsAfter(transcriptPath, sit.ts) : [],
+                finalReply,
+              }),
+          });
+        }
+      }
       return { decisionId: result.id, hook: result.hook };
+    },
+
+    reviewReport(sinceTs) {
+      const s = need();
+      const since = sinceTs ?? now() - 7 * 86_400_000;
+      return { since, rules: s.reviewReport(since), recent: s.reviewsSince(since, 100) };
+    },
+
+    explanationVote(decisionId, vote) {
+      if (!store || (vote !== 1 && vote !== -1)) return;
+      try {
+        const row = store.noteExplanationVote(decisionId, vote, now());
+        if (row) emit(EXPLANATION_EVENT, row);
+      } catch (err) {
+        logger.warn(`[amygdala] explanation vote not kept: ${String(err)}`);
+      }
     },
 
     takeNotes(sessionKey) {
@@ -685,6 +808,10 @@ export function createRuntime(o: RuntimeOptions): Runtime {
         interventions: [...rebuilt.interventions, ...minimal],
         decisionEvents: rebuilt.decisionEvents,
         changes: learn ? learn.changes().map((c) => changeView(c, deps!.book)) : [],
+        explanations: s.explanationsSince(since, {
+          sessionKey: q.sessionKey,
+          staleBefore: now() - 15 * 60_000,
+        }),
         questions: book ? questionRows(s, book, dayBounds(t).start) : [],
         precedents: s.allPrecedents().length,
         counts: todayCounts(),

@@ -174,7 +174,66 @@ describe("queueEmbeddedPiMessage in-flight steer (P4)", () => {
       queueEmbeddedPiMessage("sess-fallback", "queue me");
       await vi.advanceTimersByTimeAsync(350);
 
-      expect(queueMessage).toHaveBeenCalledWith("queue me"); // existing next-round path
+      // existing next-round path; the buffered callers' keys ride along (FORK 2026-10-05)
+      expect(queueMessage).toHaveBeenCalledWith("queue me", { promptKeys: [] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // FORK 2026-10-05 (bug-log `steer-written-twice`): a run that persists the steered prompt itself,
+  // keyed, gets every buffered caller's key, and the delivery callback is told not to write a row.
+  it("next round: the handle gets the buffered keys, and a run that persists the steer says so", async () => {
+    vi.useFakeTimers();
+    try {
+      const queueMessage = vi.fn(async () => {});
+      setActiveEmbeddedRun("sess-keyed", {
+        queueMessage,
+        persistsSteeredPrompt: true,
+        isStreaming: () => true,
+        isCompacting: () => false,
+        abort: () => {},
+      });
+      registerInflightSteerHook(() => false);
+      const delivered: unknown[] = [];
+      const onDelivered = (combined: string, via: string, info?: unknown) =>
+        delivered.push([combined, via, info]);
+      queueEmbeddedPiMessage("sess-keyed", "one", { promptKeys: ["k1"], onDelivered });
+      queueEmbeddedPiMessage("sess-keyed", "two", { promptKeys: ["k2"], onDelivered });
+      await vi.advanceTimersByTimeAsync(350);
+
+      expect(queueMessage).toHaveBeenCalledWith("one\n\ntwo", { promptKeys: ["k1", "k2"] });
+      expect(delivered).toEqual([["one\n\ntwo", "next-round", { persistedByRun: true }]]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the delivery callback still writes for a run that does not persist the steer, a slash command, or no key", async () => {
+    vi.useFakeTimers();
+    try {
+      registerInflightSteerHook(() => false);
+      const cases: Array<[string, boolean, string, string[]]> = [
+        ["sess-codex", false, "plain text", ["k1"]], // the codex harness mirrors no steered row
+        ["sess-slash", true, "/skill run it", ["k1"]], // pi's own steer expands it, unkeyed
+        ["sess-nokey", true, "plain text", []],
+      ];
+      for (const [sessionId, persists, text, promptKeys] of cases) {
+        setActiveEmbeddedRun(sessionId, {
+          queueMessage: async () => {},
+          persistsSteeredPrompt: persists,
+          isStreaming: () => true,
+          isCompacting: () => false,
+          abort: () => {},
+        });
+        const infos: unknown[] = [];
+        queueEmbeddedPiMessage(sessionId, text, {
+          promptKeys,
+          onDelivered: (_combined, _via, info) => infos.push(info),
+        });
+        await vi.advanceTimersByTimeAsync(350);
+        expect(infos, sessionId).toEqual([{ persistedByRun: false }]);
+      }
     } finally {
       vi.useRealTimers();
     }
@@ -261,7 +320,7 @@ describe("steer buffer delivery contract (FORK 2026-08-28)", () => {
       await vi.advanceTimersByTimeAsync(350);
 
       // Pre-fix shape: handed to a run that is deleted on the very next line.
-      expect(queueMessage).toHaveBeenCalledWith("wait, also check the logs");
+      expect(queueMessage).toHaveBeenCalledWith("wait, also check the logs", { promptKeys: [] });
       expect(isEmbeddedPiRunActive("sess-ending-control")).toBe(false);
     } finally {
       vi.useRealTimers();

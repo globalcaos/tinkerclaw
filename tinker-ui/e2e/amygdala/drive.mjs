@@ -434,11 +434,17 @@ check(
   sumText.startsWith(`${noteDecisions.length} checks · 5 steps`),
   `5 checks: the bar counts checks and steps (${sumText})`,
 );
+check(
+  (await page.locator(".amy-jev-act.amy-open").count()) === 0 &&
+    (await page.locator(".amy-jev-act .amy-jsm").innerText()).includes("to review"),
+  "5 would have: collapsed by default, the bar still says how many",
+);
+await click("[data-amy-act=jev-act-toggle]");
 const actRows = page.locator(".amy-jev-act.amy-open .amy-jact");
 check(
   (await actRows.count()) === 1 &&
     (await actRows.first().innerText()).includes("Would have added a note for the agent"),
-  "5 would have: open by default, one row saying what it would have done",
+  "5 would have: a click opens it, one row saying what it would have done",
 );
 await shot("05-would-have", ".amy-jev-act");
 await click("[data-amy-act=jev-toggle]");
@@ -591,6 +597,105 @@ check(
 );
 await page.waitForTimeout(200);
 await shot("11-full-page", "body");
+
+// ── 12. the explainer's words on a WOULD HAVE row (2026-10-05) ───────────────────────────────────────────────────────
+// the architect: "the concatenated commands are too complex for me to process. Plus, everything has a context."
+const explainedDecisions = noteDecisions.map((d) =>
+  d.id === "dn" ? { ...d, decisionId: "D-note" } : d,
+);
+const explanation = (status, over = {}) => ({
+  decisionId: "D-note",
+  sessionKey: TAB,
+  turnId: `${TAB}#1`,
+  ts: at(6_300),
+  status,
+  model: "xai/grok-4.6",
+  ...(status === "done"
+    ? {
+        explanation: {
+          doing: "Reading your notes file to find the invoice you asked about.",
+          jev: "Would have added a note: the file may hold private details.",
+          risk: "low",
+          suggest: -1,
+          replies: [
+            { vote: -1, text: "You asked it to look there; reading is harmless." },
+            { vote: 1, text: "A reminder about private notes is fair." },
+          ],
+        },
+      }
+    : {}),
+  ...over,
+});
+const explainedFeed = (x) => ({
+  decisionEvents: explainedDecisions,
+  interventions: [
+    iv("ivn", "D-note", "note", {
+      state: "settled",
+      title: "Note for the agent",
+      chips: [],
+      ts: at(6_300),
+    }),
+  ],
+  explanations: [x],
+});
+const shadowSt = status({ mode: "shadow", state: "shadow", line: "Shadow · watching" });
+await scenario({ history: noteHistory, feed: explainedFeed(explanation("pending")), st: shadowSt });
+await click("[data-amy-act=jev-act-toggle]");
+check(
+  (
+    await page
+      .locator(".amy-jev-act .amy-jx-wait")
+      .innerText()
+      .catch(() => "")
+  ).includes("Explaining this flag"),
+  "12 explainer: while Grok works the row says so and keeps the step",
+);
+await shot("12a-would-have-explaining", ".amy-jev-act");
+await scenario({ history: noteHistory, feed: explainedFeed(explanation("done")), st: shadowSt });
+await click("[data-amy-act=jev-act-toggle]");
+const xrow = page.locator(".amy-jev-act .amy-jact").first();
+check(
+  (await xrow.locator(".amy-jx-doing").innerText()).startsWith("Reading your notes file"),
+  "12 explainer: the row leads with what the agent was doing",
+);
+check(
+  (await xrow.locator(".amy-jc-step").count()) === 0,
+  "12 explainer: the raw command waits behind details",
+);
+const replies = xrow.locator(".amy-jx-replies button");
+check(
+  (await replies.count()) === 2 &&
+    (await replies.first().innerText()).startsWith("👎 Wrong call: You asked it to look there") &&
+    (await replies.first().evaluate((e) => e.classList.contains("amy-jrec"))),
+  "12 explainer: two replies, the suggested one first and marked",
+);
+const rbox = await replies.first().boundingBox();
+check(
+  !!rbox && rbox.height >= 14 && rbox.width > 120,
+  `12 explainer: the reply is painted at size (${JSON.stringify(rbox)})`,
+);
+await shot("12b-would-have-explained", ".amy-jev-act");
+await click(".amy-jev-act [data-amy-act=jev-act-detail]");
+check(
+  (await page.locator(".amy-jev-act .amy-jact .amy-jc-step").innerText()).includes("cat notes.txt"),
+  "12 explainer: details open the raw step",
+);
+await shot("12c-would-have-details", ".amy-jev-act");
+await click(".amy-jev-act .amy-jx-replies button.amy-jrec");
+const labelCall = (await amyCalls()).filter((c) => c.method === "amygdala2.label").at(-1);
+check(
+  labelCall?.params?.targetId === "D-note" &&
+    labelCall?.params?.value === -1 &&
+    labelCall?.params?.targetKind === "decision",
+  `12 explainer: a reply is a vote on the decision (${JSON.stringify(labelCall?.params)})`,
+);
+check(
+  await page
+    .locator(".amy-jev-act .amy-jx-replies button.amy-jrec")
+    .evaluate((e) => e.classList.contains("amy-voted")),
+  "12 explainer: the clicked reply shows as voted",
+);
+await shot("12d-would-have-voted", ".amy-jev-act");
 
 check(pageErrors.length === 0, `no page errors (${pageErrors.slice(0, 3).join(" | ")})`);
 await browser.close();

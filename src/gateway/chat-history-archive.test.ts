@@ -3,12 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  __resetCopyHeldMemoForTest,
+  copyHeldByBase,
   findArchiveCliSessionIds,
   listResetArchives,
   listSessionArchives,
   readArchiveHead,
   readArchiveSessionId,
   readArchiveToolCallIds,
+  type SessionArchiveRef,
 } from "./chat-history-archive.js";
 
 let dir: string;
@@ -131,6 +134,114 @@ describe("listSessionArchives", () => {
     expect(listed("new.jsonl").map((r) => r[0])).toEqual([
       "old.jsonl.reset.2026-09-25T12-06-25.796Z",
     ]);
+  });
+
+  it("names the transcript each copy was taken from, and what took it", () => {
+    trajectory("live", KEY, "live.jsonl");
+    touch("live.jsonl");
+    touch(
+      "live.checkpoint.aa.jsonl",
+      line({ type: "session", id: "live", timestamp: "2026-10-01T00:00:00.000Z" }),
+    );
+    touch("live.jsonl.bak-9-1790000000000");
+    const refs = listSessionArchives({
+      sessionKey: KEY,
+      transcriptPath: path.join(dir, "live.jsonl"),
+    });
+    expect(
+      refs.map((r) => [
+        path.basename(r.path),
+        r.copyOf?.origin,
+        r.copyOf && path.basename(r.copyOf.base),
+      ]),
+    ).toEqual([
+      ["live.checkpoint.aa.jsonl", "checkpoint", "live.jsonl"],
+      ["live.jsonl.bak-9-1790000000000", "repair", "live.jsonl"],
+    ]);
+  });
+});
+
+// FORK 2026-10-05 — a copy its base transcript holds whole is passed over unread (AcmeVision's 22
+// compaction checkpoints were all byte-prefixes of its live file).
+describe("copyHeldByBase", () => {
+  beforeEach(() => __resetCopyHeldMemoForTest());
+  const row = (id: string, text = "x") =>
+    `${JSON.stringify({ type: "message", id, parentId: null, message: { role: "user", content: text } })}\n`;
+  const header = `${JSON.stringify({ type: "session", id: "s1", timestamp: "2026-09-23T12:50:00.000Z" })}\n`;
+  const copyRef = (
+    name: string,
+    origin: "repair" | "eviction" | "checkpoint",
+  ): SessionArchiveRef => ({
+    path: path.join(dir, name),
+    resetAt: 1,
+    kind: "copy",
+    copyOf: { base: path.join(dir, "live.jsonl"), origin },
+  });
+
+  it("holds a checkpoint that is a byte-prefix of the live transcript, as it grows", async () => {
+    touch("live.jsonl", header + row("a") + row("b") + row("c"));
+    touch("live.checkpoint.1.jsonl", header + row("a") + row("b"));
+    expect(await copyHeldByBase(copyRef("live.checkpoint.1.jsonl", "checkpoint"))).toBe(true);
+    fs.appendFileSync(path.join(dir, "live.jsonl"), row("d"));
+    expect(await copyHeldByBase(copyRef("live.checkpoint.1.jsonl", "checkpoint"))).toBe(true);
+  });
+
+  it("does not hold a copy with a row the base lacks, nor one whose base was replaced", async () => {
+    touch("live.jsonl", header + row("a") + row("b"));
+    touch("live.checkpoint.1.jsonl", header + row("a") + row("z"));
+    expect(await copyHeldByBase(copyRef("live.checkpoint.1.jsonl", "checkpoint"))).toBe(false);
+    // Longer than the base: it holds a row the base does not.
+    touch("live.checkpoint.2.jsonl", header + row("a") + row("b") + row("c"));
+    expect(await copyHeldByBase(copyRef("live.checkpoint.2.jsonl", "checkpoint"))).toBe(false);
+    // Held, then the base is replaced through a rename (a reset or a repair): asked again.
+    touch("live.checkpoint.3.jsonl", header + row("a"));
+    expect(await copyHeldByBase(copyRef("live.checkpoint.3.jsonl", "checkpoint"))).toBe(true);
+    touch("next.jsonl", `${JSON.stringify({ type: "session", id: "s2" })}\n` + row("q"));
+    fs.renameSync(path.join(dir, "next.jsonl"), path.join(dir, "live.jsonl"));
+    expect(await copyHeldByBase(copyRef("live.checkpoint.3.jsonl", "checkpoint"))).toBe(false);
+  });
+
+  it("holds a repair backup whose last line the repair rewrote, only as the same entry", async () => {
+    touch("live.jsonl", header + row("a") + row("b", "fixed") + row("c"));
+    touch("live.jsonl.bak-1-2", header + row("a") + row("b", "broken"));
+    expect(await copyHeldByBase(copyRef("live.jsonl.bak-1-2", "repair"))).toBe(true);
+    // Another entry at that place: not held.
+    touch("live.jsonl.bak-1-3", header + row("a") + row("other"));
+    expect(await copyHeldByBase(copyRef("live.jsonl.bak-1-3", "repair"))).toBe(false);
+    // A checkpoint gets no such allowance: it is a snapshot, byte for byte.
+    touch("live.checkpoint.4.jsonl", header + row("a") + row("b", "broken"));
+    expect(await copyHeldByBase(copyRef("live.checkpoint.4.jsonl", "checkpoint"))).toBe(false);
+    // Nothing proven before that line: not held.
+    touch("live.jsonl.bak-1-4", header.replace("s1", "s1x"));
+    expect(await copyHeldByBase(copyRef("live.jsonl.bak-1-4", "repair"))).toBe(false);
+  });
+
+  it("does not hold an empty copy, a missing base, a reset, or a copy with no base named", async () => {
+    touch("live.jsonl", header + row("a"));
+    touch("live.checkpoint.5.jsonl", "");
+    expect(await copyHeldByBase(copyRef("live.checkpoint.5.jsonl", "checkpoint"))).toBe(false);
+    touch("gone.checkpoint.1.jsonl", header);
+    expect(
+      await copyHeldByBase({
+        ...copyRef("gone.checkpoint.1.jsonl", "checkpoint"),
+        copyOf: { base: path.join(dir, "gone.jsonl"), origin: "checkpoint" },
+      }),
+    ).toBe(false);
+    touch("live.jsonl.reset.2026-10-01T00-00-00.000Z", header);
+    expect(
+      await copyHeldByBase({
+        path: path.join(dir, "live.jsonl.reset.2026-10-01T00-00-00.000Z"),
+        resetAt: 1,
+        kind: "reset",
+      }),
+    ).toBe(false);
+    expect(
+      await copyHeldByBase({
+        path: path.join(dir, "live.checkpoint.5.jsonl"),
+        resetAt: 1,
+        kind: "copy",
+      }),
+    ).toBe(false);
   });
 });
 

@@ -193,6 +193,12 @@ export type PluginHookAgentContext = {
   messageProvider?: string;
   trigger?: string;
   channelId?: string;
+  /**
+   * FORK 2026-10-06 (Broca retrieval v2): `inputProvenance.kind` of the run when the gateway recorded one:
+   * `external_user`, `inter_session` or `internal_system`. A recommendation is owed only to `external_user` or to a prompt
+   * with none recorded.
+   */
+  inputProvenanceKind?: string;
 };
 
 export type PluginHookBeforeAgentReplyEvent = {

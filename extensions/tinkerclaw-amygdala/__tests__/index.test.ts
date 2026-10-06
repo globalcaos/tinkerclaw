@@ -72,6 +72,7 @@ describe("tinkerclaw-amygdala entry", () => {
       "amygdala2.propose",
       "amygdala2.questionRecord",
       "amygdala2.replay",
+      "amygdala2.reviews",
       "amygdala2.rewind",
       "amygdala2.status",
       "amygdala2.undo",

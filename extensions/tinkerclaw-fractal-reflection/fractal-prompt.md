@@ -343,6 +343,15 @@ changed? Name only axes with real signal. Silence on the rest.
     and model switching that told him to ask the architect for the token. Its reflection never read the
     draft. The owner: "not to start a conversation with him ... He needs a token ... simple as that.")
 
+    A delivery that LISTS the members of a class (the machines a build uses, the files a change
+    touched, the people on a thread) is held against a census of that class, not against the list
+    the turn happened to read. Count the class from every source that names a member, including the
+    retired, the pending and the commented-out entries, and name each one the list leaves out with
+    the reason. (2026-10-05: the machines panel copied the active rows of `hosts.conf`; Fore1 and
+    Fore2 sat in its comments and in TOOLS.md, and the reflection wrote "no gap found". The owner:
+    "the Fore1 and Fore2 are still missing. They either are reachable or not, but we need to see
+    them listed.")
+
     A status answer is a delivery too. When the owner asks where a piece of work stands ("show me
     the present status", "what is pending", "where are we"), the recipe that governs that work
     shapes the answer: its report step (a commit diagram, a Gantt, a test sheet) is part of what

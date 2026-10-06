@@ -364,3 +364,29 @@ describe("AmygdalaStore subscribe", () => {
     err.mockRestore();
   });
 });
+
+describe("AmygdalaStore: explanations (2026-10-05)", () => {
+  const ev = (status: "pending" | "done" | "failed", extra = {}) => ({
+    decisionId: "D1",
+    sessionKey: "s",
+    turnId: "t1",
+    ts: 1,
+    status,
+    ...extra,
+  });
+
+  it("keeps the explainer's words from events and the feed; a late pending never replaces them", () => {
+    const st = new AmygdalaStore();
+    expect(st.applyEvent("amygdala2.explanation", ev("pending"))).toBe(true);
+    expect(st.explanation("D1")!.status).toBe("pending");
+    const done = ev("done", {
+      explanation: { doing: "a", jev: "b", risk: "low", suggest: -1, replies: [] },
+    });
+    expect(st.applyEvent("amygdala2.explanation", done)).toBe(true);
+    expect(st.applyEvent("amygdala2.explanation", ev("pending"))).toBe(false);
+    expect(st.explanation("D1")!.status).toBe("done");
+    st.applyFeed({ explanations: [{ ...done, vote: 1, agreed: false }] } as never);
+    expect(st.explanation("D1")).toMatchObject({ status: "done", vote: 1, agreed: false });
+    expect(st.applyEvent("amygdala2.explanation", { status: "done" })).toBe(false);
+  });
+});

@@ -11,7 +11,10 @@ import { isAcpRuntimeSpawnAvailable } from "../../../acp/runtime/availability.js
 import { filterHeartbeatPairs } from "../../../auto-reply/heartbeat-filter.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import { getRuntimeConfig } from "../../../config/config.js";
-import { appendMissingPromptKeyMarkers } from "../../../gateway/prompt-key-marker.js";
+import {
+  appendMissingPromptKeyMarkers,
+  findPromptRowClaimedOnBranch,
+} from "../../../gateway/prompt-key-marker.js";
 import { bridgeReattachFor } from "../../../infra/bridge-reattach.js";
 import { emitTrustedDiagnosticEvent } from "../../../infra/diagnostic-events.js";
 import {
@@ -241,6 +244,7 @@ import { mapThinkingLevel } from "../utils.js";
 import { flushPendingToolResultsAfterIdle } from "../wait-for-idle-before-flush.js";
 import { createEmbeddedAgentSessionWithResourceLoader } from "./attempt-session.js";
 import { evaluateSpawnBudget } from "./spawn-budget.js";
+import { buildKeyedSteerMessage, steerPromptKey } from "./steer-message.js";
 import { markSpan, turnSpan, turnSpanSync } from "./turn-span.js";
 export { buildContextEnginePromptCacheInfo } from "./attempt.context-engine-helpers.js";
 import {
@@ -2421,9 +2425,19 @@ export async function runEmbeddedAttempt(
         cancel: (reason?: "user_abort" | "restart" | "superseded") => void;
       } = {
         kind: "embedded",
-        queueMessage: async (text: string) => {
+        // FORK 2026-10-05 (bug-log `steer-written-twice`): the steered message carries its prompt's
+        // key, so the row pi persists when it injects it is that prompt's row (run/steer-message.ts).
+        // Agent.steer directly, as attempt.sessions-yield.ts does; AgentSession.steer would rebuild
+        // the message from the text alone.
+        queueMessage: async (text: string, opts?: { promptKeys?: readonly string[] }) => {
+          const key = steerPromptKey(text, opts?.promptKeys);
+          if (key) {
+            activeSession.agent.steer(buildKeyedSteerMessage(text, key));
+            return;
+          }
           await activeSession.steer(text);
         },
+        persistsSteeredPrompt: true,
         isStreaming: () => activeSession.isStreaming,
         isCompacting: () => subscription.isCompacting(),
         cancel: () => {
@@ -3069,13 +3083,25 @@ export async function runEmbeddedAttempt(
             const bridgeTurnHeld =
               params.provider === "claude-code" &&
               bridgeReattachFor(params.sessionKey)?.state === "pending";
+            // FORK 2026-10-05 (bug-log `failover-reprompt`): a later attempt of the same run (a
+            // provider failover, run.ts's thinking-level retry) finds the prompt row an earlier
+            // attempt wrote and continues from it, as a restart does. prompt() would persist the
+            // prompt a second time, unkeyed, after the failed attempt's rows. A fallback INTO
+            // claude-code keeps the prompt: its CLI session never received it.
+            const ownPromptRow =
+              !params.continueFromTranscript &&
+              !isRawModelRun &&
+              typeof sessionManager.getBranch === "function"
+                ? findPromptRowClaimedOnBranch(sessionManager.getBranch(), params.promptKeys)
+                : undefined;
             const continuation =
-              params.continueFromTranscript && (params.provider !== "claude-code" || bridgeTurnHeld)
+              (params.continueFromTranscript || ownPromptRow) &&
+              (params.provider !== "claude-code" || bridgeTurnHeld)
                 ? planContinuation(activeSession.agent.state.messages)
                 : undefined;
             if (continuation && !continuation.ok) {
               log.warn(
-                `continueFromTranscript: ${continuation.reason}; falling back to the prompt sessionKey=${params.sessionKey ?? params.sessionId}`,
+                `${ownPromptRow ? "retry of a written prompt" : "continueFromTranscript"}: ${continuation.reason}; falling back to the prompt sessionKey=${params.sessionKey ?? params.sessionId} runId=${params.runId}`,
               );
             }
             // A held bridge turn is taken either way. When the transcript cannot continue (a chat
@@ -3116,8 +3142,14 @@ export async function runEmbeddedAttempt(
                 sessionManager.appendMessage(result as never);
               }
               activeSession.agent.state.messages = continuation.messages;
+              // This attempt's messages start where the continued context ends: a trimmed stub
+              // shortened the list, and counting from the old length would hide a one-message answer
+              // from findCurrentAttemptAssistantMessage.
+              prePromptMessageCount = continuation.messages.length - continuation.synthetic.length;
               log.info(
-                `continueFromTranscript: resuming without a prompt sessionKey=${params.sessionKey ?? params.sessionId} trimmed=${continuation.trimmed} closedToolCalls=${continuation.synthetic.length}${bridgeTurnHeld ? " (cc-bridge worker held)" : ""}`,
+                ownPromptRow
+                  ? `retry continues from its prompt row entry=${ownPromptRow.entryId} key=${ownPromptRow.idempotencyKey} runId=${params.runId} provider=${params.provider}/${params.modelId} trimmed=${continuation.trimmed} closedToolCalls=${continuation.synthetic.length}`
+                  : `continueFromTranscript: resuming without a prompt sessionKey=${params.sessionKey ?? params.sessionId} trimmed=${continuation.trimmed} closedToolCalls=${continuation.synthetic.length}${bridgeTurnHeld ? " (cc-bridge worker held)" : ""}`,
               );
               await abortable(activeSession.agent.continue());
             } else if (promptSubmission.runtimeOnly) {

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { SCHEMA_VERSION } from "../src/schema.js";
 import { AmygdalaStore } from "../src/store.js";
@@ -18,6 +19,38 @@ describe("deleteReplayTurn", () => {
     expect(st.situationRecord("r1")).toBeUndefined();
     expect(st.situationRecord("l1")).toBeDefined();
     st.close();
+  });
+});
+
+// FORK 2026-10-06 — every Tinker page load sent two amygdala2.feed calls, and each ran ~7 s of
+// synchronous SQLite: one full SCAN of verdicts per decision (measured on the live 1.34 GB store,
+// 166,865 rows: 20.4 ms per lookup, up to 400 per feed). The gateway's one event loop was blocked
+// for it, so the chat history he was waiting for came back after 15 s instead of 0.5 s.
+describe("verdict indexes", () => {
+  it("an existing store gains the situation and time indexes, and the feed's lookup uses them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amy-idx-"));
+    try {
+      const path = join(dir, "amygdala.sqlite");
+      new AmygdalaStore(path).close();
+      const db = new Database(path, { readonly: true });
+      const names = (
+        db.prepare("PRAGMA index_list(verdicts)").all() as Array<{ name: string }>
+      ).map((r) => r.name);
+      expect(names).toEqual(expect.arrayContaining(["v_sit", "v_ts"]));
+      const plan = (
+        db
+          .prepare(
+            "EXPLAIN QUERY PLAN SELECT * FROM verdicts WHERE situation_id = ? ORDER BY ts, rowid",
+          )
+          .all("x") as Array<{ detail: string }>
+      )
+        .map((r) => r.detail)
+        .join(" | ");
+      expect(plan).toContain("USING INDEX v_sit");
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -16,7 +16,14 @@ export interface AmygdalaConfig {
   cost: { eurPerUsd: number };
   learn: { autoLoosen: boolean; capsPerWeek: number; capsPerDay: number };
   hooks: { enabled: boolean };
+  /** The WOULD HAVE explainer (2026-10-05): a second model words each flag for the owner. */
+  explain: { enabled: boolean; ladder: string[]; timeoutMs: number; concurrency: number };
+  /** Grok's after-the-fact verdict on whether each flag would have helped (2026-10-06). */
+  review: { enabled: boolean; dailyCap: number };
 }
+
+/** Grok first (the architect's ask, 2026-10-05; the subscription lane), then a different supply so one outage does not end it. */
+export const DEFAULT_EXPLAIN_LADDER = ["xai/grok-4.6", "claude-code/claude-haiku-4-5"];
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".openclaw", "data", "amygdala-jev");
 
@@ -58,6 +65,11 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
   const cost = obj(r.cost);
   const learn = obj(r.learn);
   const hooks = obj(r.hooks);
+  const explain = obj(r.explain);
+  const review = obj(r.review);
+  const ladder = Array.isArray(explain.ladder)
+    ? explain.ladder.filter((x): x is string => typeof x === "string" && x.includes("/"))
+    : [];
   return {
     mode: r.mode === "enforce" ? "enforce" : "shadow",
     families: {
@@ -83,5 +95,12 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
       capsPerDay: num(learn.capsPerDay, 6),
     },
     hooks: { enabled: bool(hooks.enabled, true) },
+    explain: {
+      enabled: bool(explain.enabled, true),
+      ladder: ladder.length ? ladder : [...DEFAULT_EXPLAIN_LADDER],
+      timeoutMs: num(explain.timeoutMs, 180_000),
+      concurrency: num(explain.concurrency, 2),
+    },
+    review: { enabled: bool(review.enabled, true), dailyCap: num(review.dailyCap, 150) },
   };
 }

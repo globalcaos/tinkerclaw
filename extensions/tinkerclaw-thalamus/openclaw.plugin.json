@@ -108,8 +108,13 @@
         "properties": {
           "budgetMs": {
             "type": "number",
-            "default": 800,
-            "description": "How long the prompt waits for the short list before going without it."
+            "default": 1500,
+            "description": "How long the prompt waits for the short list before going without it (ms). Was 800 until 2026-10-06; the ledger now records why a list was local, so the value can be chosen from counts."
+          },
+          "rank": {
+            "type": "boolean",
+            "default": true,
+            "description": "Build the short list from one ranked result per task (recall, then Jev's USE and INSPIRE split) that Broca's matcher reads too. Off: the old flat read of every card."
           }
         }
       },

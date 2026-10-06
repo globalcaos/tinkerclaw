@@ -121,6 +121,30 @@
             "default": true
           }
         }
+      },
+      "explain": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "The WOULD HAVE explainer: a second model words each Jev flag for the owner and suggests a vote.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "ladder": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "provider/model rungs, tried in order"
+          },
+          "timeoutMs": { "type": "number", "default": 180000 },
+          "concurrency": { "type": "number", "default": 2 }
+        }
+      },
+      "review": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "After each turn, a second model judges whether each Jev flag of that turn would have helped, from what the agent did next.",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true },
+          "dailyCap": { "type": "number", "default": 150 }
+        }
       }
     }
   }

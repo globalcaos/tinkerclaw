@@ -191,3 +191,119 @@ export function readTranscriptTail(path: string, o: { maxBytes?: number } = {}):
     return empty();
   }
 }
+
+/** One tool call as a person reads it: what the agent wrote just before it and what it ran (cut). */
+export interface StepSeen {
+  id?: string;
+  said: string;
+  ran: string;
+}
+
+const STEP_KEEP = 40;
+
+function ranText(name: string, input: Record<string, unknown>): string {
+  const pick = ["command", "file_path", "path", "pattern", "url", "query"].find(
+    (k) => typeof input[k] === "string",
+  );
+  const what = pick ? (input[pick] as string) : JSON.stringify(input);
+  return `${name} ${what}`.slice(0, 400);
+}
+
+/**
+ * The tool calls before `toolUseId` (all of the tail when it is not given or not found), oldest first, each with the
+ * text the agent wrote before it. A prompt does not reset the list: after a long-job wake-up the earlier steps are the
+ * context. The WOULD HAVE explainer reads it (2026-10-05). Never throws.
+ */
+export function stepsBefore(
+  path: string,
+  toolUseId?: string,
+  o: { maxBytes?: number } = {},
+): StepSeen[] {
+  try {
+    const { text } = readTailText(path, o.maxBytes ?? DEFAULT_MAX_BYTES);
+    const steps: StepSeen[] = [];
+    let said: string[] = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      let e: { type?: string; message?: { content?: unknown } };
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const content = e?.message?.content;
+      if (e?.type === "user") {
+        said = [];
+      } else if (e?.type === "assistant" && Array.isArray(content)) {
+        for (const b of content as Block[]) {
+          if (b?.type === "text" && typeof b.text === "string" && b.text.trim()) {
+            said.push(b.text.trim());
+          } else if (b?.type === "tool_use" && b.name) {
+            if (toolUseId && b.id === toolUseId) return steps;
+            const input =
+              b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+            steps.push({ id: b.id, said: said.join(" ").slice(-300), ran: ranText(b.name, input) });
+            if (steps.length > STEP_KEEP) steps.shift();
+            said = [];
+          }
+        }
+      }
+    }
+    return steps;
+  } catch {
+    return [];
+  }
+}
+
+/** A tool call that came after a moment, and whether it failed. */
+export interface StepAfter {
+  ran: string;
+  failed: boolean;
+}
+
+/**
+ * The tool calls the transcript shows after time `ts` (ms), oldest first, at most `max`, each with whether its result was
+ * an error. The usefulness review reads it to see what the agent did after a flag (2026-10-06). Never throws.
+ */
+export function stepsAfter(
+  path: string,
+  ts: number,
+  o: { maxBytes?: number; max?: number } = {},
+): StepAfter[] {
+  try {
+    const { text } = readTailText(path, o.maxBytes ?? DEFAULT_MAX_BYTES);
+    const out: (StepAfter & { id?: string })[] = [];
+    const byId = new Map<string, StepAfter>();
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      let e: { type?: string; timestamp?: string; message?: { content?: unknown } };
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const content = e?.message?.content;
+      if (e?.type === "user" && Array.isArray(content)) {
+        for (const b of content as Block[]) {
+          const s =
+            b?.type === "tool_result" && b.tool_use_id ? byId.get(b.tool_use_id) : undefined;
+          if (s && b.is_error) s.failed = true;
+        }
+      } else if (e?.type === "assistant" && Array.isArray(content)) {
+        const at = e.timestamp ? Date.parse(e.timestamp) : 0;
+        if (!(at > ts)) continue;
+        for (const b of content as Block[]) {
+          if (b?.type !== "tool_use" || !b.name) continue;
+          const input =
+            b.input && typeof b.input === "object" ? (b.input as Record<string, unknown>) : {};
+          const s: StepAfter = { ran: ranText(b.name, input).slice(0, 220), failed: false };
+          out.push(s);
+          if (b.id) byId.set(b.id, s);
+        }
+      }
+    }
+    return out.slice(0, o.max ?? 8);
+  } catch {
+    return [];
+  }
+}

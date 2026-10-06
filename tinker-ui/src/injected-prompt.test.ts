@@ -4,6 +4,7 @@ import {
   recipeNoticeFromInjected,
   skillNoticeFromTool,
   skillNoticeFromInjectedBody,
+  adviceLineFromInjected,
 } from "./injected-prompt.js";
 
 // Fixtures are shortened but structurally faithful to the live transcripts in
@@ -237,5 +238,52 @@ describe("skillNoticeFromTool", () => {
       skillNoticeFromTool("read", { path: "/home/x/.openclaw/workspace/skills/orca/SKILL.md" })
         ?.source,
     ).toBe("read");
+  });
+});
+
+// FORK 2026-10-06 (Broca retrieval v2, phase E): the advice line survives a reload in the `<recipe_advice>` tag.
+describe("the advice line in a stored turn", () => {
+  const LINE =
+    "Use: acme-coding, human-voice · Inspiration: review-site (§ Build the page) · source: Jev";
+  const stored = (block: string) => `Plan the family trip\n\n---\n\n${block}`;
+
+  it("folds an advice-only block and hands back the line", () => {
+    const s = splitInjectedPrompt(stored(`<recipe_advice source="Jev">${LINE}</recipe_advice>`));
+    expect(s).not.toBeNull();
+    expect(s!.visible).toBe("Plan the family trip");
+    expect(s!.kind).toBe("recipe");
+    expect(s!.label).toBe("recipe advice");
+    expect(s!.adviceLine).toBe(LINE);
+    expect(s!.recipeTitle).toBeUndefined();
+  });
+
+  it("reads the line next to an active_recipe tag, keeping the recipe chip fields", () => {
+    const s = splitInjectedPrompt(
+      stored(
+        '<active_recipe kits="globalcaos/x" steps="3" title="Plan a trip" path="/r/x/recipe.md">plan</active_recipe>\n\n' +
+          `<recipe_advice source="Jev">${LINE}</recipe_advice>`,
+      ),
+    );
+    expect(s!.label).toBe("recipe instructions");
+    expect(s!.recipeTitle).toBe("Plan a trip");
+    expect(s!.adviceLine).toBe(LINE);
+  });
+
+  it("decodes the escaped characters the hook writes", () => {
+    expect(
+      adviceLineFromInjected(
+        '<recipe_advice source="local">Use: a \u0026amp; b · source: local</recipe_advice>',
+      ),
+    ).toBe("Use: a & b · source: local");
+  });
+
+  it("returns null for no tag, an empty tag, or a line that is far too long", () => {
+    expect(adviceLineFromInjected("<active_recipe>x</active_recipe>")).toBeNull();
+    expect(adviceLineFromInjected("<recipe_advice></recipe_advice>")).toBeNull();
+    expect(adviceLineFromInjected(`<recipe_advice>${"x".repeat(700)}</recipe_advice>`)).toBeNull();
+  });
+
+  it("never folds a human's own sentence that merely mentions the tag name", () => {
+    expect(splitInjectedPrompt("what does recipe_advice do?\n\n---\n\nthanks")).toBeNull();
   });
 });

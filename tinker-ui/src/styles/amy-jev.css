@@ -84,3 +84,14 @@
 .amy-jev .amy-rewound{display:block;margin:2px 0 0;border-radius:0;border:1px dashed #1E1E1E;color:#1E1E1E;font-size:11.5px;padding:3px 8px}
 .amy-jev .amy-rewound a{color:#b03a93}
 .amy-jev .amy-marker{margin:0;padding:5px 8px;border-left:0;border-top:1px solid #1e1e1e55;color:#1e1e1ecc;font-size:11.5px}
+/* The explainer's words (2026-10-05): plain sentences lead, the raw step waits behind "details", one reply per vote. */
+.amy-jx-doing{margin-top:4px;font-size:12.5px;line-height:1.4}
+.amy-jx-jev{margin-top:3px;font-size:12px;line-height:1.4;color:#1e1e1ecc}
+.amy-jx-jev .amy-mt{color:#1e1e1e99;margin-right:6px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase}
+.amy-jx-more{margin-top:3px;font-size:10.5px;color:#1e1e1e99;cursor:pointer;user-select:none;width:max-content}
+.amy-jx-more:hover{color:#1E1E1E;text-decoration:underline}
+.amy-jx-wait{margin-top:3px;font-size:11px;font-style:italic;color:#1e1e1e99}
+.amy-jx-replies{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px}
+.amy-jvote.amy-jreply{white-space:normal;max-width:100%;padding:3px 9px;font-size:11.5px;line-height:1.35}
+.amy-jvote.amy-jreply.amy-jrec{border-style:dashed;border-color:#d45bb6}
+.amy-jvote.amy-jreply.amy-jrec.amy-voted,.amy-jvote.amy-jreply.amy-voted{border-style:solid;border-color:#1E1E1E}

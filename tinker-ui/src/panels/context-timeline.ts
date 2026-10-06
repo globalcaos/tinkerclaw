@@ -189,6 +189,8 @@ interface TimelineController {
   loadEvents(events: AnatomyEvent[]): void;
   clear(): void;
   getSelected(): AnatomyEvent | null;
+  /** FORK 2026-10-06 — the timeline holds columns, so a reconnect has nothing to reload here. */
+  hasEvents(): boolean;
   setFilterMode(mode: "session" | "all"): void;
   getFilterMode(): "session" | "all";
   loadAllSessions(sessionKeys?: string[]): void;
@@ -1219,6 +1221,10 @@ export function mountContextTimeline(
         return buffer[selectedIdx].event;
       }
       return null;
+    },
+
+    hasEvents() {
+      return buffer.length > 0;
     },
 
     setFilterMode(mode: "session" | "all") {

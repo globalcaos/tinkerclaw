@@ -20,10 +20,13 @@
 // THE FIX: resolve the EVENT's sessionKey to the local key of the tab that hosts it, and decide the
 // action from the event alone, so the controller can run on BOTH sides of the viewed-session gate.
 
+// FORK 2026-10-05 — the window a limit names decides whether a retry can outlast it; one reading of
+// it, shared with the gateway's envelope and turn outcome.
+import { isLongUsageWindow } from "../../src/shared/usage-window.js";
 import { classifyErrorBubble } from "./error-bubble.js";
 // FORK 2026-09-29 (U9): the TYPED successor to the text heuristics below. One guard, one kind map,
 // shared with the renderer, so the countdown and the bubble can never disagree about one turn.
-import { isTurnOutcome, retryKindForOutcome } from "./outcome-bubble.js";
+import { ENVELOPE_MARKER, isTurnOutcome, retryKindForOutcome } from "./outcome-bubble.js";
 import { classifyRecoverable, type RetryKind } from "./retry-policy.js";
 
 /** The subset of a `chat` WS payload this decision reads. Everything is `unknown`: the payload is
@@ -116,9 +119,93 @@ export type RetryLifecycleAction =
        */
       runId?: string;
     }
-  | { kind: "cancel"; sessionKey: string };
+  | { kind: "cancel"; sessionKey: string }
+  /**
+   * FORK 2026-10-05 — the run `runId` FAILED and no retry can help (a fatal envelope, a typed outcome
+   * that is not recoverable, a limit whose window resets in hours or days). app.ts ends the track
+   * only when `runId` is that track's own prompt or its last fire (`retryTrackStep`): a failure of
+   * some other run says nothing about the prompt this ladder re-sends.
+   */
+  | { kind: "stop"; sessionKey: string; runId?: string };
 
 const NONE: RetryLifecycleAction = { kind: "none" };
+
+/** Error-envelope category → the ladder's kind. Only these four can clear on their own. */
+const ENVELOPE_RETRY_KIND: Record<string, RetryKind> = {
+  rate_limit: "rate_limit",
+  overload: "overloaded",
+  network: "unavailable",
+  timeout: "unavailable",
+};
+
+/** End index (exclusive) of the JSON object that starts at `start`, honouring strings; -1 if open. */
+function jsonObjectEnd(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}" && --depth === 0) {
+      return i + 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * FORK 2026-10-05 — what the gateway's `__ERR_ENV__` envelope in a final's text lets the ladder do,
+ * or null when the text carries none (an answer, or prose the older text rule still reads).
+ *
+ * The lifecycle final of a failed claude-code turn carries the envelope as its whole body and no
+ * typed outcome; only the backstop final carries one. The text rule (`classifyErrorBubble`) knows
+ * "API Error…" shapes, not the envelope, so the first final read as a SUCCESS: it cancelled the
+ * track, the backstop re-armed it at attempt 0, and the ladder never reached its last step. One
+ * prompt was re-sent 169 times on 2026-10-03, every 40 to 97 s for 2.4 hours (bug-log
+ * `[failure-as-value+retry-storm]`).
+ */
+export function envelopeVerdictOf(
+  text: unknown,
+): { recoverable: boolean; retryKind: RetryKind | null } | null {
+  if (typeof text !== "string") {
+    return null;
+  }
+  const at = text.indexOf(ENVELOPE_MARKER);
+  if (at < 0) {
+    return null;
+  }
+  const brace = text.indexOf("{", at + ENVELOPE_MARKER.length);
+  const end = brace < 0 ? -1 : jsonObjectEnd(text, brace);
+  if (end < 0) {
+    return null;
+  }
+  let env: Record<string, unknown>;
+  try {
+    env = JSON.parse(text.slice(brace, end)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (!env || env.kind !== "error") {
+    return null;
+  }
+  const retryKind = ENVELOPE_RETRY_KIND[String(env.category)] ?? null;
+  const said = typeof env.raw === "string" ? env.raw : String(env.explanation ?? "");
+  return {
+    recoverable: env.fatal !== true && retryKind !== null && !isLongUsageWindow(said),
+    retryKind,
+  };
+}
 
 /**
  * Can a client-side retry track be OWNED for this session key?
@@ -236,14 +323,19 @@ export function retryLifecycleAction(
     //   • recoverable → keep the ladder climbing, but `onlyIfIdle` (see the action type): the
     //     `state:"error"` event for this same failure has usually scheduled already, and a second
     //     scheduleRetry would draw a second countdown and restart the clock.
-    //   • not recoverable → `none`. Not a success, so nothing is cancelled; not retryable, so
-    //     nothing is scheduled. RESIDUAL, named rather than bent: an auth/billing failure on a
-    //     FIRE therefore does not stop an already-running ladder, which burns its remaining
-    //     attempts. Cancelling on those kinds needs the contract changed, not this line.
+    //   • not recoverable → `stop` (FORK 2026-10-05, the contract change this line used to wait
+    //     for). Not a success, so nothing is retired as one; and no retry can help, so the track of
+    //     the run that failed ends. app.ts applies it only when the run is that track's own prompt
+    //     or its last fire (`retryTrackStep`), so another run's failure never ends a ladder.
+    //     A rate or usage limit whose window resets in hours or days is not recoverable either,
+    //     whatever an older gateway stamped: the ladder tops out at 15 minutes.
     const outcome = p.finalOutcome;
     if (isTurnOutcome(outcome)) {
-      if (!outcome.recoverable) {
-        return NONE;
+      const longLimit =
+        (outcome.kind === "rate_limit" || outcome.kind === "quota") &&
+        isLongUsageWindow(outcome.detail);
+      if (!outcome.recoverable || longLimit) {
+        return { kind: "stop", sessionKey, ...(runId ? { runId } : {}) };
       }
       const retryAfterSec =
         typeof outcome.retryAfter === "number" && Number.isFinite(outcome.retryAfter)
@@ -256,6 +348,23 @@ export function retryLifecycleAction(
         sessionKey,
         retryKind: retryKindForOutcome(outcome.kind),
         ...(retryAfterSec === undefined ? {} : { retryAfterSec }),
+        onlyIfIdle: true,
+        ...(runId ? { runId } : {}),
+      };
+    }
+    // FORK 2026-10-05 — an error envelope is a failure whatever the state word says, so it never
+    // reaches the `cancel` below. Judged like a typed outcome (the backstop final for the same run
+    // carries one): recoverable → schedule if idle, otherwise → stop.
+    const env = envelopeVerdictOf(p.finalText);
+    if (env) {
+      if (!env.recoverable) {
+        return { kind: "stop", sessionKey, ...(runId ? { runId } : {}) };
+      }
+      return {
+        kind: "schedule",
+        sessionKey,
+        retryKind: env.retryKind,
+        ...(typeof p.retryAfter === "number" ? { retryAfterSec: p.retryAfter } : {}),
         onlyIfIdle: true,
         ...(runId ? { runId } : {}),
       };
@@ -292,6 +401,11 @@ export function retryLifecycleAction(
   if (!cls.recoverable) {
     return NONE;
   }
+  // FORK 2026-10-05 — "You've hit your weekly limit" arrives with reason rate_limit: a kind that can
+  // clear, in a window that will not within the ladder's 15 minutes.
+  if ((cls.kind === "rate_limit" || cls.kind === "quota") && isLongUsageWindow(errorMessage)) {
+    return { kind: "stop", sessionKey, ...(runId ? { runId } : {}) };
+  }
   return {
     kind: "schedule",
     sessionKey,
@@ -299,6 +413,60 @@ export function retryLifecycleAction(
     retryAfterSec: typeof p.retryAfter === "number" ? p.retryAfter : undefined,
     ...(runId ? { runId } : {}),
   };
+}
+
+// ─── What an action does to the live track (FORK 2026-10-05) ──────────────────────────────────
+
+/** The part of app.ts's retry track this decision reads. */
+export type RetryTrackView = {
+  /** A fire is out and its run has not been judged yet. */
+  firing: boolean;
+  /** The run the last fire started: its outbox key, which `chat.send` uses as the run id. */
+  firedRunId?: string;
+  /** The prompt the owner typed, which every fire re-sends: also that prompt's run id. */
+  retryOf?: string;
+};
+
+/**
+ * FORK 2026-10-05 — what one action does to the session's live track: start one, take the next
+ * step, end it, or nothing (bug-log `[failure-as-value+retry-storm]`).
+ *
+ * A failed run reaches the page two or three times (`state:"error"`, the lifecycle final, the
+ * backstop final) and every one of them can schedule. The ladder moves ONCE per run:
+ *   • no track → arm one (the owner's prompt failed);
+ *   • the failure of the run the last fire started → the next step, even when the event says
+ *     "only if idle": a fire's failure IS the event that moves the ladder;
+ *   • any other "only if idle" schedule while a track lives → nothing, a repeat of a failure the
+ *     track has already counted. Before this, a final read as a success deleted the track between
+ *     two such signals and the next one armed a new track at attempt 0, so the ladder never
+ *     reached its last step;
+ *   • a stop → ends the track only for its own prompt or its last fire;
+ *   • a run whose failure already ENDED a track (`endedRuns`: the ladder ran out on it, it stopped
+ *     it, or the owner stopped retrying while it was out) never arms a new one. Without this the
+ *     run's second final, arriving after the first had exhausted the ladder, started the ladder
+ *     over at attempt 0 — the same endless loop by another door (caught by the replay test).
+ */
+export function retryTrackStep(
+  action: RetryLifecycleAction,
+  track: RetryTrackView | undefined,
+  endedRuns?: ReadonlySet<string>,
+): "arm" | "advance" | "stop" | "ignore" {
+  if (action.kind === "schedule") {
+    if (!track) {
+      return action.runId !== undefined && endedRuns?.has(action.runId) ? "ignore" : "arm";
+    }
+    if (track.firing && action.runId !== undefined && action.runId === track.firedRunId) {
+      return "advance";
+    }
+    return action.onlyIfIdle ? "ignore" : "advance";
+  }
+  if (action.kind === "stop") {
+    if (!track || action.runId === undefined) {
+      return "ignore";
+    }
+    return action.runId === track.firedRunId || action.runId === track.retryOf ? "stop" : "ignore";
+  }
+  return "ignore";
 }
 
 // ─── WHICH prompt a fire re-sends (FORK 2026-10-01) ──────────────────────────────────────────

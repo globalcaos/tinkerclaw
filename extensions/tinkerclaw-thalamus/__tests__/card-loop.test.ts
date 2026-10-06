@@ -404,3 +404,136 @@ describe("the card writer", () => {
     expect(errors).toHaveLength(1);
   });
 });
+
+// Broca retrieval v2, phase F: trigger phrases learned from the tasks a card served off its list.
+describe("trigger phrases from off-list uses", () => {
+  // Every text shares "contract" with card a, so before the edit card a outranks card b; none shares a word with card b.
+  const TEXTS = [
+    "draft indemnity redline supplier contract",
+    "send indemnity redline licence contract",
+    "prepare indemnity redline distributor contract",
+    "summarise indemnity redline legal contract",
+    "update indemnity redline after call contract",
+    "review indemnity redline template contract",
+  ];
+  const offList = (taskId: string, ts: number, over: Partial<UseRow> = {}): UseRow =>
+    use({
+      taskId,
+      ts,
+      shown: [{ cardId: "skill:c", rank: 1, prob: 0.5 }],
+      used: [{ cardId: "skill:b", onList: false, via: "skill-tool", how: "unknown" }],
+      ...over,
+    });
+
+  function fill(over: Partial<UseRow> = {}) {
+    const store = new ThalamusStore(":memory:");
+    store.seedCards(
+      [
+        card("skill:a", "sorts photos by date, contract folders"),
+        card("skill:b", "checks translations against the source text"),
+        card("skill:c", "formats an invoice"),
+        card("skill:d", "contract archive"),
+        card("skill:e", "contract register"),
+      ],
+      NOW,
+    );
+    TEXTS.forEach((text, i) => {
+      store.upsertUse(offList(`o${i}`, NOW + i * 1000, over));
+      store.putReplayText(`o${i}`, text, NOW + i * 1000);
+    });
+    return store;
+  }
+  const run = (store: ThalamusStore, dry: boolean, over: Record<string, unknown> = {}) =>
+    createCardLoop({
+      store: () => store,
+      now: () => NOW + 100_000,
+      rank,
+      triggers: { rank },
+      ...over,
+    }).run({ dry });
+
+  it("a dry run reports the edit it would keep and writes nothing", async () => {
+    const store = fill();
+    const r = (await run(store, true))!;
+    expect(r.triggers).toBeDefined();
+    expect(r.triggers!.cases).toBe(6);
+    expect(r.triggers!.train + r.triggers!.validation).toBe(6);
+    const a = r.triggers!.attempts.find((x) => x.cardId === "skill:b")!;
+    expect(a.phrases.join(" ")).toContain("indemnity redline");
+    expect(a.kept).toBe(true);
+    // card b ranked fourth before (a, d and e share "contract"), so the edit moves its tasks into the first three
+    expect(r.triggers!.hit3.before).toBe(0);
+    expect(r.triggers!.hit3.after).toBe(r.triggers!.hit3.n);
+    expect(r.kept).toBeGreaterThanOrEqual(1);
+    expect(store.cardVersions("skill:b")).toHaveLength(1);
+  });
+
+  it("a real run writes the next version, active, the old one kept, with the replay numbers; and one step back is a pointer", async () => {
+    const store = fill();
+    const r = (await run(store, false))!;
+    expect(r.triggers!.kept).toBe(1);
+    const versions = store.cardVersions("skill:b");
+    expect(versions.map((v) => v.version)).toEqual([1, 2]);
+    const active = store.activeCards().find((c) => c.id === "skill:b")!;
+    expect(active.version).toBe(2);
+    expect(active.origin).toBe("nightly");
+    expect(active.alsoServed.join(" ")).toContain("indemnity redline");
+    expect(versions[0].alsoServed).toEqual([]);
+    // reversible
+    expect(store.setActiveVersion("skill:b", 1, NOW + 200_000)).toBe(true);
+    expect(store.activeCards().find((c) => c.id === "skill:b")!.version).toBe(1);
+    expect(store.setActiveVersion("skill:b", 9, NOW + 300_000)).toBe(false);
+    expect(store.activeCards().find((c) => c.id === "skill:b")!.version).toBe(1);
+    expect(store.setActiveVersion("skill:b", 2, NOW + 400_000)).toBe(true);
+    expect(
+      store
+        .activeCards()
+        .find((c) => c.id === "skill:b")!
+        .alsoServed.join(" "),
+    ).toContain("indemnity redline");
+  });
+
+  it("is bounded: at most three phrases of at most 48 characters in one line", async () => {
+    const store = fill();
+    await run(store, false);
+    const lines = store.activeCards().find((c) => c.id === "skill:b")!.alsoServed;
+    expect(lines).toHaveLength(1);
+    const phrases = lines[0].split(", ");
+    expect(phrases.length).toBeLessThanOrEqual(3);
+    for (const p of phrases) expect(p.length).toBeLessThanOrEqual(48);
+  });
+
+  it("never learns from a private task or a task that ended in a retry", async () => {
+    const store = fill({ private: true });
+    const r = (await run(store, false))!;
+    expect(r.triggers!.cases).toBe(0);
+    expect(store.cardVersions("skill:b")).toHaveLength(1);
+    const retried = fill({ outcome: "retried" });
+    expect((await run(retried, false))!.triggers!.cases).toBe(0);
+  });
+
+  it("an on-list use teaches nothing", async () => {
+    const store = new ThalamusStore(":memory:");
+    store.seedCards([card("skill:b", "checks translations against the source text")], NOW);
+    TEXTS.forEach((text, i) => {
+      store.upsertUse(
+        offList(`o${i}`, NOW + i * 1000, {
+          shown: [{ cardId: "skill:b", rank: 1, prob: 0.9 }],
+          used: [{ cardId: "skill:b", onList: true, rank: 1, via: "skill-tool", how: "unknown" }],
+        }),
+      );
+      store.putReplayText(`o${i}`, text, NOW + i * 1000);
+    });
+    const r = (await run(store, false))!;
+    expect(r.triggers!.attempts).toEqual([]);
+    expect(store.cardVersions("skill:b")).toHaveLength(1);
+  });
+
+  it("is switched off by `triggers: false`, and the rest of the night still runs", async () => {
+    const store = fill();
+    const r = (await run(store, false, { triggers: false }))!;
+    expect(r.triggers).toBeUndefined();
+    expect(r.uses).toBe(6);
+    expect(store.cardVersions("skill:b")).toHaveLength(1);
+  });
+});

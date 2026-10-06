@@ -17,6 +17,7 @@ import {
  */
 import { esc } from "./amygdala-html.js";
 import {
+  actionDecisionId,
   type JevAction,
   renderJevActions,
   renderJevChecks,
@@ -97,11 +98,13 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
   // Interactive state that is not data: which windows/rows/expanders are open, which ask option is selected. A reply's
   // two windows are keyed by its first turn id (the run key).
   const openWindows = new Set<string>();
-  /** WOULD HAVE windows the owner folded (they open by default: they are there to be reviewed). */
-  const closedActions = new Set<string>();
+  /** WOULD HAVE windows the owner opened (collapsed by default since 2026-10-06; a card waiting for an answer forces it open). */
+  const openActions = new Set<string>();
   /** The step column clicked in a reply's check timeline. */
   const selectedCol = new Map<string, number>();
   const openRows = new Set<string>();
+  /** WOULD HAVE rows whose raw step and answers the owner opened under "details" (2026-10-05). */
+  const openDetails = new Set<string>();
   /** Votes given in this page, by target id, so a row shows which one counted (2026-10-02). */
   const votes = new Map<string, number>();
   const openAcc = new Set<string>();
@@ -249,10 +252,15 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
     // A card that waits for an answer keeps the window open even if the owner folded it.
     const waiting = turns.some((t) => t.interventions.some((i) => i.state === "open"));
     const acts = renderJevActions(key, turns, {
-      open: waiting || !closedActions.has(key),
+      open: waiting || openActions.has(key),
       votes,
       shadow: store.state.status?.mode !== "enforce",
       extra: (a) => actionExtra(a, byId.get(a.turnId)),
+      explain: (a) => {
+        const id = actionDecisionId(a);
+        return id ? store.explanation(id) : undefined;
+      },
+      openDetails,
     });
     if (acts) parts.push(acts);
     return parts.length
@@ -473,7 +481,7 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
           toggle(openWindows, d("data-run"));
           break;
         case "jev-act-toggle":
-          toggle(closedActions, d("data-run"));
+          toggle(openActions, d("data-run"));
           break;
         case "jev-col": {
           // A second click on the same column folds its list again.
@@ -485,6 +493,9 @@ export function createAmygdalaUi(deps: AmygdalaUiDeps): AmygdalaUi {
         }
         case "jev-row":
           toggle(openRows, d("data-id"));
+          break;
+        case "jev-act-detail":
+          toggle(openDetails, d("data-action"));
           break;
         case "why":
           toggle(shownWhy, d("data-iv"));

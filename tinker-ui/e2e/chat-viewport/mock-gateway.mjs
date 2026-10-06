@@ -18,6 +18,11 @@
  * {historyDelayMs} holds every chat.history reply for a session while a run of it is live, as a busy gateway
  * answers late, and {runHeartbeatMs} has a live run send an `effort` frame that often, as a run that is
  * thinking or calling a tool still tells the page it is live (check 13).
+ * FORK 2026-10-06 (check 14): {historyAllDelayMs} holds EVERY chat.history reply that long, as a cold or
+ * loaded gateway answers late, and {refuseHistoryMs} answers chat.history with the gateway's startup
+ * refusal (UNAVAILABLE "chat.history unavailable during gateway startup") for that long from the POST.
+ * {dropConnectionsMs} drops every open socket and refuses new ones for that long, as a gateway that
+ * stops and starts again (check 14d).
  *
  * Session C (2026-10-03) has earlier transcripts of every kind the gateway pages: a COPY that overlaps its live rows
  * and holds older ones, an empty copy answered as the gateway does when its skip budget runs out, and a reset. The
@@ -65,6 +70,9 @@ const state = {
   runStartDelayMs: 300,
   historyDelayMs: 0,
   runHeartbeatMs: 0,
+  historyAllDelayMs: 0,
+  refuseHistoryUntil: 0,
+  refuseConnectUntil: 0,
 };
 const sockets = new Set();
 /** Push one event frame to every open page, as the gateway broadcasts agent and chat events. */
@@ -454,7 +462,18 @@ function control(req, res, url) {
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     const j = body ? JSON.parse(body) : {};
-    if (url.pathname === "/__mock/state") Object.assign(state, j);
+    if (url.pathname === "/__mock/state") {
+      Object.assign(state, j);
+      if (typeof j.refuseHistoryMs === "number") {
+        state.refuseHistoryUntil = Date.now() + j.refuseHistoryMs;
+      }
+      if (typeof j.dropConnectionsMs === "number") {
+        state.refuseConnectUntil = Date.now() + j.dropConnectionsMs;
+        for (const s of sockets) s.terminate();
+      }
+    }
+    // GET /__mock/log: every request the page sent since the last read ({at, method, key, afterSeq}),
+    // then cleared (2026-10-06, check 14d: what a reconnect reads and in which order).
     const reply =
       url.pathname === "/__mock/run"
         ? {
@@ -463,7 +482,9 @@ function control(req, res, url) {
             phase: run?.phase ?? null,
             answer: ANSWER,
           }
-        : {};
+        : url.pathname === "/__mock/log"
+          ? { log: requestLog.splice(0) }
+          : {};
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(reply));
   });
 }
@@ -543,8 +564,13 @@ function answer(method, params) {
   throw new Error(`unknown method: ${method}`);
 }
 
+const requestLog = [];
 const wss = new WebSocketServer({ server });
 wss.on("connection", (ws) => {
+  if (Date.now() < state.refuseConnectUntil) {
+    ws.terminate();
+    return;
+  }
   sockets.add(ws);
   ws.on("close", () => sockets.delete(ws));
   ws.send(
@@ -562,6 +588,12 @@ wss.on("connection", (ws) => {
       return;
     }
     if (f.type !== "req") return;
+    requestLog.push({
+      at: Date.now(),
+      method: f.method,
+      key: f.params?.sessionKey ?? null,
+      afterSeq: f.params?.afterSeq ?? null,
+    });
     const reply = () => {
       try {
         ws.send(
@@ -578,12 +610,28 @@ wss.on("connection", (ws) => {
         );
       }
     };
+    if (f.method === "chat.history" && Date.now() < state.refuseHistoryUntil) {
+      // The gateway's own refusal while its sidecars start (server-startup-unavailable-methods.ts).
+      ws.send(
+        JSON.stringify({
+          type: "res",
+          id: f.id,
+          ok: false,
+          error: {
+            code: "UNAVAILABLE",
+            message: "chat.history unavailable during gateway startup",
+          },
+        }),
+      );
+      return;
+    }
     const late =
       f.method === "chat.history" &&
       state.historyDelayMs > 0 &&
       runLive(String(f.params?.sessionKey ?? SESSION_A));
-    if (late) {
-      setTimeout(reply, state.historyDelayMs);
+    const allLate = f.method === "chat.history" ? state.historyAllDelayMs : 0;
+    if (late || allLate > 0) {
+      setTimeout(reply, Math.max(late ? state.historyDelayMs : 0, allLate));
     } else {
       reply();
     }

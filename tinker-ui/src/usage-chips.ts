@@ -196,3 +196,24 @@ export function skillMark(n: { name: string; path?: string }, via = "read"): Usa
 export function recipeMark(n: { title: string; path?: string }): UsageMark {
   return { kind: "recipe", name: n.title, via: "recipe-cli", ...(n.path ? { path: n.path } : {}) };
 }
+
+/**
+ * FORK 2026-10-06 (Broca retrieval v2, phase E): the one advice line under a prompt, `Use: … · Inspiration: … (§ section) ·
+ * source: Jev|local`. It is NOT a chip and NOT a message: a muted text line in the same row as the chips, with no bubble, no
+ * button and nothing that looks like a prompt. The text comes from the gateway's trail event or the stored turn, so it is
+ * validated here (a string, one line, bounded) before it reaches the DOM.
+ */
+export function renderAdviceLine(line: unknown): string {
+  if (typeof line !== "string") {
+    return "";
+  }
+  const text = line.replace(/\s+/g, " ").trim();
+  if (!text || text.length > 600) {
+    return "";
+  }
+  return (
+    `<div class="msg-advice-line" title="Advice for the agent from the ranked list; it decides what to use">` +
+    `<span class="msg-advice-line-text">${esc(text)}</span>` +
+    `</div>`
+  );
+}

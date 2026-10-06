@@ -21,10 +21,14 @@
 
 import {
   applyEdit,
+  createRecall,
+  docsFromCards,
   estimateRates,
   evaluateEdit,
   fitCalibrationFrom,
   groupMisses,
+  isHouseRule,
+  learnTriggers,
   localRank,
   missesFrom,
   proposalsFrom,
@@ -34,9 +38,12 @@ import {
   type MissGroup,
   type Ranker,
   type ReplayTask,
+  type TriggerAttempt,
+  type TriggerCase,
   type UseLike,
 } from "openclaw/plugin-sdk/fork-thalamus";
 import type { ThalamusStore, UseRow } from "./store.js";
+import { readCardFile } from "./task-ranker.js";
 
 /** The groups worth an edit in one night: the heaviest few. */
 export const MAX_GROUPS_PER_NIGHT = 5;
@@ -78,6 +85,19 @@ export type CardLoopReport = {
   calibration: { points: number; n: number; fromShuffled: boolean };
   proposals: { found: number; added: number };
   writer: "used" | "none";
+  /**
+   * Broca retrieval v2, phase F: key phrases learned from the tasks cards served off their list. The earlier tasks give the
+   * phrases, the later ones keep or drop each edit; `hit3` is the retriever's first-3 hits on those later tasks with the cards
+   * as they were and as they end. Absent when the step is switched off.
+   */
+  triggers?: {
+    cases: number;
+    train: number;
+    validation: number;
+    kept: number;
+    attempts: TriggerAttempt[];
+    hit3: { before: number; after: number; n: number };
+  };
 };
 
 export type CardLoopDeps = {
@@ -86,6 +106,11 @@ export type CardLoopDeps = {
   writer?: CardWriter;
   /** The ranker replay uses. Default: local word matching (what private tasks get), so a run needs no outside call. */
   rank?: Ranker;
+  /**
+   * Phase F: the retriever the trigger step scores edits with, over a set of cards. Default: the recall stage (text and surface
+   * map, which need no chat history) over the catalogue built from the cards, as a prompt is ranked. `false` switches the step off.
+   */
+  triggers?: false | { rank?: Ranker; readCard?: (path: string) => string | undefined };
   onError?: (err: unknown) => void;
 };
 
@@ -105,6 +130,19 @@ const asLike = (u: UseRow): UseLike => ({
   ...(u.taskKind ? { taskKind: u.taskKind } : {}),
   private: u.private,
 });
+
+/** Recall over the cards as given, rebuilt once per card set: what a prompt is ranked by, without a chat's history. */
+function recallRanker(read: (path: string) => string | undefined): Ranker {
+  const built = new WeakMap<readonly EnhancementCard[], ReturnType<typeof createRecall>>();
+  return (text, cards) => {
+    let r = built.get(cards);
+    if (!r) {
+      r = createRecall(docsFromCards(cards, read));
+      built.set(cards, r);
+    }
+    return r.recall({ text, sources: ["text", "surface"] }).map((x) => x.cardId);
+  };
+}
 
 export function createCardLoop(d: CardLoopDeps) {
   const rank = d.rank ?? defaultRank;
@@ -220,6 +258,60 @@ export function createCardLoop(d: CardLoopDeps) {
       }
     }
 
+    // Phase F: trigger phrases from the tasks cards served off their list. No writer needed, no second loop: the same replay
+    // set, the same keep rule and the same versioning, with the retriever a prompt is really ranked by.
+    let triggers: CardLoopReport["triggers"];
+    if (d.triggers !== false) {
+      const cases: TriggerCase[] = [];
+      for (const t of store.listReplayTexts({ sinceTs: since, limit: 500 })) {
+        const u = useById.get(t.taskId);
+        if (!u || u.private || u.outcome === "retried") continue;
+        const used = u.used
+          .filter((x) => !isHouseRule(x.cardId))
+          .map((x) => ({ cardId: x.cardId, onList: x.onList }));
+        if (used.length === 0) continue;
+        cases.push({
+          taskId: t.taskId,
+          ts: t.ts,
+          text: t.text,
+          used,
+          pinned: pins.filter((p) => p.taskId === t.taskId).map((p) => p.cardId),
+        });
+      }
+      const result = learnTriggers({
+        cases,
+        cards,
+        rank: d.triggers?.rank ?? recallRanker(d.triggers?.readCard ?? readCardFile),
+        weight: (taskId, cardId, onList) =>
+          weightOf(
+            onList ? useById.get(taskId)?.used.find((x) => x.cardId === cardId)?.rank : undefined,
+            rates.pi,
+          ),
+      });
+      for (const a of result.attempts) {
+        if (!a.kept) continue;
+        const prev = cards.find((c) => c.id === a.cardId);
+        const next = result.cards.find((c) => c.id === a.cardId);
+        if (!prev || !next) continue;
+        if (!o.dry)
+          store.addCardVersion(next, {
+            createdAt: now,
+            parent: prev.version,
+            replay: { before: a.before, after: a.after, n: a.n },
+          });
+      }
+      kept += result.kept;
+      cards = result.cards;
+      triggers = {
+        cases: cases.length,
+        train: result.train,
+        validation: result.validation,
+        kept: result.kept,
+        attempts: result.attempts,
+        hit3: result.hit3,
+      };
+    }
+
     const cal = fitCalibrationFrom(uses);
     const found = proposalsFrom(uses);
     let added = 0;
@@ -252,6 +344,7 @@ export function createCardLoop(d: CardLoopDeps) {
       calibration: { points: cal.map.length, n: cal.n, fromShuffled: cal.fromShuffled },
       proposals: { found: found.length, added },
       writer: d.writer ? "used" : "none",
+      ...(triggers ? { triggers } : {}),
     };
   }
 

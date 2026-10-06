@@ -1229,19 +1229,42 @@ export function querySessionTree(
   if (!root) {
     return querySessionEvents(sessionKey, limit);
   }
+  // FORK 2026-10-05 (the architect: "it cannot be missing from the chat or from the EEG") — the session's
+  // own rows and its subagent family no longer share one LIMIT. Every tab shares the root
+  // (`agent:main`), so the newest 500 rows of "this session OR any subagent" were mostly other tabs'
+  // fan-outs: Main had 1,391 rows of its own and 34 of them came back, and a tab with no row of its
+  // own got 500 foreign subagent rows, which its paper drew as its strands. Now: the session's own
+  // newest `limit` rows; subagent rows only inside the span those cover (plus the slack a fan-out
+  // that outruns its last turn needs), under a limit of their own; none at all without own rows.
   const database = openAnatomyDb();
-  const subLike = `${root}:subagent:%`;
-  const rows = database
+  const own = database
     .prepare(
-      `SELECT * FROM (
-        SELECT * FROM anatomy_events
-        WHERE session_key = ? OR session_key LIKE ?
-        ORDER BY timestamp_ms DESC LIMIT ?
-      ) ORDER BY timestamp_ms ASC`,
+      `SELECT * FROM anatomy_events WHERE session_key = ? ORDER BY timestamp_ms DESC, id DESC LIMIT ?`,
     )
-    .all(sessionKey, subLike, limit) as AnatomyRow[];
-  return rows.map(parseRow);
+    .all(sessionKey, limit) as AnatomyRow[];
+  if (own.length === 0) {
+    return [];
+  }
+  let from = Number.POSITIVE_INFINITY;
+  let to = Number.NEGATIVE_INFINITY;
+  for (const row of own) {
+    from = Math.min(from, row.timestamp_ms);
+    to = Math.max(to, row.timestamp_ms);
+  }
+  const subs = database
+    .prepare(
+      `SELECT * FROM anatomy_events
+       WHERE timestamp_ms BETWEEN ? AND ? AND session_key LIKE ?
+       ORDER BY timestamp_ms DESC, id DESC LIMIT ?`,
+    )
+    .all(from, to + TREE_SUBAGENT_SLACK_MS, `${root}:subagent:%`, limit) as AnatomyRow[];
+  return [...own, ...subs]
+    .toSorted((a, b) => a.timestamp_ms - b.timestamp_ms || a.id - b.id)
+    .map(parseRow);
 }
+
+/** How far past a session's last own row its subagents' rows still belong to it (a long fan-out). */
+const TREE_SUBAGENT_SLACK_MS = 60 * 60 * 1000;
 
 /**
  * Return `limit` anatomy events older than `beforeMs`, newest first in that window,
