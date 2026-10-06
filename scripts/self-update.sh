@@ -17,6 +17,9 @@
 #                           one path relative to the repo root per line (default ~/.openclaw/self-update.extras)
 #   SELF_UPDATE_PROBE_MODEL optional model id for a reply probe after the swap (no probe when empty)
 #   SELF_UPDATE_UNIT        gateway systemd user unit (default openclaw-gateway)
+#   SELF_UPDATE_MIN_FREE_GB free space required beside the live tree before anything starts (default 15:
+#                           a full tree with dependencies and builds; 2026-10-06 a run with less filled
+#                           the disk mid-install, at 11 GB, before the swap)
 # Progress: one line per step on stdout; ~/.self-update.progress holds "<step> <total>".
 set -uo pipefail
 
@@ -50,6 +53,14 @@ UNIT="${SELF_UPDATE_UNIT:-openclaw-gateway}"
 PROGRESS="$HOME/.self-update.progress"
 TOTAL=7
 step() { echo "$1 $TOTAL" > "$PROGRESS"; echo "[self-update $(date +%T)] $2"; }
+
+NEED_GB="${SELF_UPDATE_MIN_FREE_GB:-15}"
+FREE_GB=$(df -P "$(dirname "$TREE")" | awk 'NR==2{print int($4/1048576)}')
+if [ "$FREE_GB" -lt "$NEED_GB" ]; then
+  echo "only ${FREE_GB} GB free beside $TREE; an update needs about ${NEED_GB} GB (a whole tree with its"
+  echo "dependencies). Free space or grow the disk, then run this again. Nothing was changed."
+  exit 6
+fi
 
 step 1 "fresh clone of the published $BRANCH beside the live tree"
 ORIGIN=$(git -C "$TREE" remote get-url origin) || { echo "no origin in $TREE"; exit 2; }
