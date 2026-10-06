@@ -275,7 +275,8 @@ describe("clicks call the gateway with the right parameters", () => {
     await ui.handleClick(btn({ "data-amy-act": "dot" }));
     expect(spies.openPanel).toHaveBeenCalled();
   });
-  it("WOULD HAVE opens by default and folds on a click; a card that waits for an answer keeps it open", async () => {
+  // 2026-10-06, the architect: "Keep the Jev's insertions in the chat collapsed by default from now on."
+  it("WOULD HAVE is collapsed by default and opens on a click; a card that waits for an answer forces it open", async () => {
     const { ui } = await available({
       decisionEvents: [dec("v1", { codeDid: "sent-back", decisionId: "D1" })],
     });
@@ -284,6 +285,8 @@ describe("clicks call the gateway with the right parameters", () => {
         .createRange()
         .createContextualFragment(ui.afterRun(userRow(9_000), null))
         .querySelector(".amy-jev-act");
+    expect(act()!.classList.contains("amy-open")).toBe(false);
+    await ui.handleClick(btn({ "data-amy-act": "jev-act-toggle", "data-run": `${TAB}#1` }));
     expect(act()!.classList.contains("amy-open")).toBe(true);
     await ui.handleClick(btn({ "data-amy-act": "jev-act-toggle", "data-run": `${TAB}#1` }));
     expect(act()!.classList.contains("amy-open")).toBe(false);

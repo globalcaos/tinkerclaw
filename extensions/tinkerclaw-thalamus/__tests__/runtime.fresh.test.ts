@@ -122,6 +122,20 @@ describe("the worker provider (design D5)", () => {
     expect(getToolResultDigester()).toBeUndefined();
   });
 
+  it("a stop() that lands while start() is still opening leaves no provider, digester or router behind", async () => {
+    // index.ts does not await start(), and a test that registers the plugin and ends at once stops it mid-start.
+    // The slot is process-global, so a late registration here showed up as a failure in whichever file ran next.
+    const t = make({ mode: "shadow" });
+    const started = t.rt.start();
+    t.rt.stop();
+    await started;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getWorkerProvider()).toBeUndefined();
+    expect(getToolResultDigester()).toBeUndefined();
+    expect(getCallRouter()).toBeUndefined();
+    expect(t.rt.status()).toMatchObject({ running: false });
+  });
+
   it("counts a sub-agent call from its start and end frames, one row, with the output joined in", async () => {
     const t = make({ mode: "shadow" });
     await t.rt.start();

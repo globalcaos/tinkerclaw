@@ -14,6 +14,7 @@ import {
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
 import { parseConfig } from "./src/config.js";
+import { embeddedExplainRun } from "./src/explain-run.js";
 import { createHttpHandlers, DECIDE_PATH, NOTES_PATH, WAIT_PATH } from "./src/http.js";
 import { registerNativeHandlers } from "./src/native.js";
 import { createRuntime } from "./src/runtime.js";
@@ -88,6 +89,25 @@ export default definePluginEntry({
       v31: { readPluginConfig: () => readV31Config(api) },
       emit: broadcast,
       logger: api.logger,
+      explainRun: embeddedExplainRun(
+        {
+          currentConfig: () => {
+            try {
+              return api.runtime.config.current();
+            } catch {
+              return api.config;
+            }
+          },
+          runEmbeddedPiAgent: (p) =>
+            api.runtime.agent.runEmbeddedPiAgent(
+              p as unknown as Parameters<typeof api.runtime.agent.runEmbeddedPiAgent>[0],
+            ),
+          resolveAgentDir: (c, id) => api.runtime.agent.resolveAgentDir(c as typeof api.config, id),
+          resolveAgentWorkspaceDir: (c, id) =>
+            api.runtime.agent.resolveAgentWorkspaceDir(c as typeof api.config, id),
+        },
+        cfg.explain.timeoutMs,
+      ),
     });
     try {
       runtime.start();
@@ -139,6 +159,14 @@ export default definePluginEntry({
         respond(true, { ok: false, error: String(err) });
       }
     });
+    api.registerGatewayMethod("amygdala2.reviews", ({ params, respond }) => {
+      try {
+        const p = (params ?? {}) as { sinceTs?: unknown };
+        respond(true, runtime.reviewReport(typeof p.sinceTs === "number" ? p.sinceTs : undefined));
+      } catch (err) {
+        respond(true, { ok: false, error: String(err) });
+      }
+    });
     api.registerGatewayMethod("amygdala2.answer", ({ params, respond }) => {
       const p = params as { interventionId?: unknown; answer?: unknown };
       const ok =
@@ -173,6 +201,9 @@ export default definePluginEntry({
       if (p.value !== -1 && p.value !== 0 && p.value !== 1)
         throw new Error("value must be -1, 0 or 1");
       const targetKind = p.targetKind === "verdict" ? "verdict" : "decision";
+      // A vote on an explained decision also records whether it matched the explainer's suggestion.
+      if (kind === "useful" && targetKind === "decision")
+        runtime.explanationVote(text(p.targetId, "targetId"), p.value as number);
       return {
         ok: true,
         ...runtime.learning().label({

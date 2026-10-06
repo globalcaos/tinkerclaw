@@ -45,8 +45,6 @@ export type ChatUnitDeps = {
   streamRunId: string | null;
   streamMsgUid: string | null;
   esc: (s: string) => string;
-  /** Span of a timing block, measured now (app.ts phaseDurationText over phaseGroupSpanMs). */
-  phaseSpanText: (timingMsg: Record<string, unknown>) => string;
   skillNoticesHtmlAfter: (
     view: unknown[],
     userIdx: number,
@@ -65,11 +63,15 @@ export type ChatUnitDeps = {
   /**
    * FORK 2026-10-01 — the answering model's rail for one run (chat-rail.ts): `rows` are the run's
    * rows, `prev` the model the previous run resolved to. Null draws no rail. Absent = no rails.
+   * FORK 2026-10-05 — `tail` marks the chat's last run, the only one a turn in flight can be (a
+   * prompt typed during a turn waits in the queue, outside `view`). A `model` of null is a pending
+   * rail (chat-rail.ts PENDING_RAIL): its room kept, nothing painted, nothing handed to `prev`.
    */
   runRail?: (
     rows: readonly unknown[],
     prev: RailModel | null,
-  ) => { rail: ChatRail; model: RailModel } | null;
+    tail: boolean,
+  ) => { rail: ChatRail; model: RailModel | null } | null;
   /**
    * FORK 2026-10-02 (the architect: "when we expand anything, it should not compact automatically") — asked
    * for a finished run's Reasoning group that `expandedTools` does not already open, with the group
@@ -333,6 +335,8 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       const runEnd = i; // exclusive
       const intermediateIndices: number[] = [];
       const answerIndices: number[] = [];
+      /** TURN TIMING blocks: never folded, painted where they were written (see below). */
+      const timingIndices: number[] = [];
 
       for (let j = runStart; j < runEnd; j++) {
         const m = view[j];
@@ -352,14 +356,18 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
           intermediateIndices.push(j);
           continue;
         }
-        // FORK 2026-08-24 (the architect: "The timing list should also fold into the reasoning whenever
-        // the turn ends, same as the tool calls and intermediate thinking/reasoning"). The block
-        // is an assistant message with text, so it classified as ANSWER and stayed permanently
-        // expanded in the transcript. Classified HERE rather than via thinkingSet, for the same
-        // reason `_isReasoning` is: thinkingSet feeds the §5.8 flicker guard, and this is not a
-        // narration judgement — a timing block is intermediate by definition.
+        // FORK 2026-10-05 (the architect: "the 'TURN TIMING' box disappears after a while, not being
+        // visible when the answer appears, it should stay exactly where it was. The chat should
+        // work like a very long paper, when something is written here it stays, it might expand
+        // and contract, but never disappear"). SUPERSEDES the 2026-08-24 fold ("The timing list
+        // should also fold into the reasoning whenever the turn ends"): classified intermediate,
+        // the block went into the hidden "▸ Reasoning" group the moment the answer settled, which
+        // is exactly when it was asked to be read. Measured on the live page: 59 of 64 blocks sat
+        // inside a hidden group. It is now neither intermediate nor answer. It is its own unit, at
+        // the place it was written, and only its stage breakdowns fold (app.ts applyAutoDisclosure).
+        // Still classified HERE rather than via thinkingSet, which feeds the §5.8 flicker guard.
         if ((m as any)._isPhaseTiming) {
-          intermediateIndices.push(j);
+          timingIndices.push(j);
           continue;
         }
         const role = (m.role ?? "").toLowerCase();
@@ -440,6 +448,14 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       );
       const fractalGraftUid =
         boundaryMsg && isFractalSectionText(boundaryText) ? String(boundaryMsg._uid ?? "") : "";
+      // FORK 2026-10-05 — THE TURN'S OWN BLOCK NEVER LEAVES. The note above assumed a run closed by
+      // a 🌿 section holds only the reflection's rows. It does not: the reflection has no prompt of
+      // its own, so the run is the WHOLE turn, prompt to 🌿, and the turn's own TURN TIMING block
+      // sits at its top. Both signals below then grafted it into the collapsed 🌿 section, the
+      // second when the 🌿 text streams in the turn's own run and stamps `_fractalPass` on every
+      // block of that runId. A reflection's block is written after the answer it reflects on; a
+      // block written before the run's first answer is the turn's own, and stays where it is.
+      const firstAnswerIdx = answerIndices.length > 0 ? answerIndices[0] : runEnd;
       // Renders one message, wrapping a REFLECTION's timing block in a marker the post-render
       // pass moves into the 🌿 section's body. A wrapper rather than a render-time nesting
       // because the section is emitted AFTER this run, as its boundary — there is no string to
@@ -447,7 +463,7 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       const renderRunMsg = (j: number, thinking: boolean, structured = false): string => {
         const out = renderMsg(view[j], j, thinking, globalResultMap, globalToolNames, structured);
         const m = view[j] as Record<string, unknown>;
-        if (!m?._isPhaseTiming) {
+        if (!m?._isPhaseTiming || j < firstAnswerIdx) {
           return out;
         }
         // Two independent ways to know this block is a reflection's, because the two events
@@ -472,9 +488,18 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
         // user's open/closed state to a DIFFERENT group. Key it on the anchor's stable `_uid`.
         const groupAnchor = view[intermediateIndices[0]] as Record<string, unknown>;
         const groupId = `rg-${(groupAnchor._uid as string | undefined) ?? intermediateIndices[0]}`;
+        // FORK 2026-10-05 — a TURN TIMING block written before the group's first row stays above
+        // the group; any other comes after it, in row order among the answers. That is the place it
+        // held while the run was flat, less the rows the group now folds.
+        for (const j of timingIndices) {
+          if (j < intermediateIndices[0]) {
+            units.push({ key: chatRowKey(view[j], j), html: renderRunMsg(j, false) });
+          }
+        }
         // The members are rendered BEFORE the open/closed decision: the hook reads what they show,
-        // and rendering a timing block is what retires its automatic disclosure at turn end
-        // (app.ts applyAutoDisclosure), so only rows the owner opened are still open here.
+        // so only rows the owner opened are still open here. (A TURN TIMING block is no longer a
+        // member; rendering it above, outside the group, retires its own automatic disclosure at
+        // turn end, app.ts applyAutoDisclosure.)
         let inner = "";
         for (const j of intermediateIndices) {
           inner += renderRunMsg(j, thinkingSet.has(j));
@@ -491,15 +516,10 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
         const stepLabel = stepCount > 0 ? `${stepCount} step${stepCount !== 1 ? "s" : ""}` : "";
         const toolLabel =
           toolCount > 0 ? `${toolCount} tool call${toolCount !== 1 ? "s" : ""}` : "";
-        // FORK 2026-08-24 — surface the turn's span ON the collapsed header. Folding the timing
-        // block would otherwise hide the one number the block exists to report, and a header that
-        // reads "Reasoning" with nothing after it (the shape a timing-only run produces) says
-        // less than the rows it replaced.
-        const timingMsg = intermediateIndices
-          .map((j) => view[j] as Record<string, unknown>)
-          .find((m) => m?._isPhaseTiming);
-        const timingLabel = timingMsg ? `⏱ ${deps.phaseSpanText(timingMsg)}` : "";
-        const parts = [stepLabel, toolLabel, timingLabel].filter(Boolean).join(", ");
+        // FORK 2026-10-05 — the "⏱ span" this header carried since 2026-08-24 is gone with the fold
+        // that needed it: the TURN TIMING block is no longer inside the group, so its span is on
+        // screen in the block's own header, above.
+        const parts = [stepLabel, toolLabel].filter(Boolean).join(", ");
         const summary = parts ? `Reasoning (${parts})` : "Reasoning";
 
         // The group is ONE keyed unit: its wrapper holds many rows, so no row inside it can be
@@ -525,8 +545,10 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
         // intermediates are already folded and these bubbles are the answer itself. Pass
         // hasStructuredReasoning=true so the text-heuristic splitter does NOT re-cut them —
         // compaction happens once, at turn end, over CLASSIFIED steps, never over the reply.
-        for (const j of answerIndices) {
-          units.push({ key: chatRowKey(view[j], j), html: renderRunMsg(j, false, true) });
+        const later = timingIndices.filter((j) => j > intermediateIndices[0]);
+        for (const j of [...answerIndices, ...later].sort((x, y) => x - y)) {
+          const isTiming = later.includes(j);
+          units.push({ key: chatRowKey(view[j], j), html: renderRunMsg(j, false, !isTiming) });
         }
       } else {
         // Streaming run or no intermediates — render flat
@@ -539,22 +561,42 @@ export function buildChatUnits(view: Row[], deps: ChatUnitDeps): ChatUnit[] {
       // own stretch of the line, and the logos are units of their own before and after the run, so
       // no unit's markup depends on what follows it (chat-rail.ts). It closes before the amygdala's
       // cards and never reaches the prompt below: those are not the model's answer.
-      const runPainted = units.slice(runFirstUnit).some((u) => u.html.trim() !== "");
-      const railed: { rail: ChatRail; model: RailModel } | null =
-        deps.runRail && runPainted
-          ? deps.runRail(view.slice(runStart, runEnd), prevRailModel)
+      // FORK 2026-10-06 (the architect: "I still see the line next to 'TURN TIMING', which does not make
+      // sense because this part does not use any agent to be computed") — nor does it reach a TURN
+      // TIMING block. The block is the browser's and the gateway's measurement of the turn, written
+      // before any model is chosen; the model wrote none of it. The rail wraps only the units a model
+      // wrote, its logos bracket the first and last of them, and a run that holds nothing else (the
+      // seconds before Thalamus picks) gets no rail at all. A block between two such units leaves a
+      // gap in the line rather than a line beside it.
+      const timingKeys = new Set(timingIndices.map((j) => chatRowKey(view[j], j)));
+      const railedAt: number[] = [];
+      for (let u = runFirstUnit; u < units.length; u++) {
+        if (units[u].html.trim() !== "" && !timingKeys.has(units[u].key)) {
+          railedAt.push(u);
+        }
+      }
+      const railed: { rail: ChatRail; model: RailModel | null } | null =
+        deps.runRail && railedAt.length > 0
+          ? deps.runRail(view.slice(runStart, runEnd), prevRailModel, i === view.length)
           : null;
       if (railed) {
-        prevRailModel = railed.model;
-        for (let u = runFirstUnit; u < units.length; u++) {
+        // A pending rail names no model, so the next run cannot inherit one from it.
+        if (railed.model) {
+          prevRailModel = railed.model;
+        }
+        for (const u of railedAt) {
           units[u] = { key: units[u].key, html: railSegmentHtml(units[u].html, railed.rail) };
         }
         const anchor = chatRowKey(view[runStart], runStart);
-        units.splice(runFirstUnit, 0, {
+        // The end cap first: inserting it does not move the index the start cap goes to.
+        units.splice(railedAt[railedAt.length - 1] + 1, 0, {
+          key: `rail-end:${anchor}`,
+          html: railCapHtml(railed.rail, "end"),
+        });
+        units.splice(railedAt[0], 0, {
           key: `rail-start:${anchor}`,
           html: railCapHtml(railed.rail, "start"),
         });
-        units.push({ key: `rail-end:${anchor}`, html: railCapHtml(railed.rail, "end") });
       }
 
       // The amygdala's Jev window and cards close the run they judged (design doc §9); "" draws nothing.

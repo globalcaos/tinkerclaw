@@ -1,5 +1,6 @@
 import type { SessionEntry } from "../config/sessions.js";
 import { logWarn } from "../logger.js";
+import { CHAT_ROW_CONTRACT_RE } from "../shared/appended-prompt-blocks.js";
 import {
   type ClaudeCliFallbackSeed,
   readClaudeCliFallbackSeed,
@@ -253,6 +254,57 @@ export function resolveClaudeCliProvenanceSessionIds(params: {
   return cliSessionIds;
 }
 
+/**
+ * FORK 2026-10-05 — the claude-cli copy of a prompt, without the chat-row contract the bridge
+ * appended before forwarding it (src/shared/appended-prompt-blocks.ts). The owner never typed it,
+ * yet an imported prompt showed it under his words (45 served import prompts on 2026-10-05). Cut
+ * on the history path only: the parser also seeds the fallback model, which keeps the text whole.
+ * Copy-on-write; rows that carry no contract come back as the same objects.
+ */
+export function withoutChatRowContract(rows: unknown[]): unknown[] {
+  let changed = false;
+  const out = rows.map((row) => {
+    const rec = row && typeof row === "object" ? (row as Record<string, unknown>) : null;
+    if (!rec || rec.role !== "user") {
+      return row;
+    }
+    const cut = (text: string): string => {
+      const m = CHAT_ROW_CONTRACT_RE.exec(text);
+      return m ? text.slice(0, m.index) : text;
+    };
+    if (typeof rec.content === "string") {
+      const next = cut(rec.content);
+      if (next === rec.content) {
+        return row;
+      }
+      changed = true;
+      return { ...rec, content: next };
+    }
+    if (!Array.isArray(rec.content)) {
+      return row;
+    }
+    let blockChanged = false;
+    const content = rec.content.map((b) => {
+      const block = b && typeof b === "object" ? (b as Record<string, unknown>) : null;
+      if (!block || block.type !== "text" || typeof block.text !== "string") {
+        return b;
+      }
+      const next = cut(block.text);
+      if (next === block.text) {
+        return b;
+      }
+      blockChanged = true;
+      return { ...block, text: next };
+    });
+    if (!blockChanged) {
+      return row;
+    }
+    changed = true;
+    return { ...rec, content };
+  });
+  return changed ? out : rows;
+}
+
 export function augmentChatHistoryWithCliSessionImports(params: {
   entry: SessionEntry | undefined;
   /**
@@ -310,7 +362,7 @@ export function augmentChatHistoryWithCliSessionImports(params: {
     if (importedMessages.length === 0) {
       continue;
     }
-    allImports.push(importedMessages);
+    allImports.push(withoutChatRowContract(importedMessages));
   }
   // GATE 2 of 2 — does a recorded id actually resolve to a real transcript with content?
   // Together with GATE 1 that is the whole PROVENANCE condition: presence-of-transcript

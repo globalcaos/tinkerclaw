@@ -6,6 +6,7 @@ import {
   isUsageMark,
   mergeUsageMarks,
   recipeMark,
+  renderAdviceLine,
   renderUsageChip,
   renderUsageChips,
   skillMark,
@@ -258,5 +259,37 @@ describe("app.ts usage-chip wiring", () => {
     const body = appSrc.slice(at, appSrc.indexOf("continue;", at));
     expect(body).not.toContain("renderSkillNotice");
     expect(body).not.toContain("renderUsageChip");
+  });
+});
+
+// FORK 2026-10-06 (Broca retrieval v2, phase E)
+describe("renderAdviceLine", () => {
+  const LINE = "Use: acme-coding · Inspiration: review-site (§ Build the page) · source: Jev";
+
+  it("draws one muted line with the text, and nothing that looks like a message or a button", () => {
+    const html = renderAdviceLine(LINE);
+    expect(html).toContain('class="msg-advice-line"');
+    expect(html).toContain(LINE);
+    expect(html).not.toMatch(/<(button|a|input|textarea)\b/);
+    expect(html).not.toContain('class="msg ');
+    expect(html.match(/<div\b/g)).toHaveLength(1);
+  });
+
+  it("escapes what it is given", () => {
+    const html = renderAdviceLine('Use: <img src=x onerror=alert(1)> "a" & b');
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+    expect(html).toContain("&quot;a&quot; &amp; b");
+  });
+
+  it("draws nothing for a non-string, an empty line or an absurdly long one", () => {
+    expect(renderAdviceLine(undefined)).toBe("");
+    expect(renderAdviceLine(42)).toBe("");
+    expect(renderAdviceLine("   ")).toBe("");
+    expect(renderAdviceLine("x".repeat(601))).toBe("");
+  });
+
+  it("keeps the line on one line", () => {
+    expect(renderAdviceLine("Use: a\n\nb  c")).toContain("Use: a b c");
   });
 });

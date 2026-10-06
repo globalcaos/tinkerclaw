@@ -92,6 +92,7 @@ import {
   resolveEffectiveChatHistoryMaxChars,
 } from "../chat-display-projection.js";
 import {
+  copyHeldByBase,
   findArchiveCliSessionIds,
   listSessionArchives,
   readArchiveHead,
@@ -110,6 +111,7 @@ import {
   resolveClaudeCliSessionFilePath,
   resolveEarliestLocalTimestamp,
 } from "../cli-session-history.js";
+import { dropImportedPromptsPairedOutsideSlice } from "../cli-session-history.merge.js";
 import { isSuppressedControlReplyText } from "../control-reply-text.js";
 import {
   attachManagedOutgoingImagesToMessage,
@@ -2549,6 +2551,11 @@ async function respondWithResetArchive(params: {
   const started = Date.now();
   for (let i = 0; i < archives.length; i++) {
     const ref = archives[i];
+    // FORK 2026-10-05 — an archive read can pass many archives; between them the gateway answers
+    // everyone else (each one is parsed synchronously).
+    if (i > 0) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     // `archiveOffset` continues the archive the page is reading: the newest one still listed.
     const continuing = i === 0 && offset > 0;
     // FORK 2026-10-03 (4th report on the worker tab) — the floor cuts COPIES only. A reset archive
@@ -2558,8 +2565,13 @@ async function respondWithResetArchive(params: {
     const floor = ref.kind === "reset" ? undefined : archiveFloor;
     // A transcript that started at or after the floor holds nothing older: no merge needed.
     const startedAt = readArchiveHead(ref.path).startedAt;
+    // FORK 2026-10-05 — nor does a copy its base transcript holds whole (a compaction checkpoint is
+    // a byte-prefix of the live file): the base serves those rows (chat-history-archive.ts
+    // copyHeldByBase).
     const skipUnread =
-      !continuing && floor !== undefined && startedAt !== undefined && startedAt >= floor;
+      !continuing &&
+      floor !== undefined &&
+      ((startedAt !== undefined && startedAt >= floor) || (await copyHeldByBase(ref)));
     let rows = skipUnread
       ? []
       : await projectedArchiveRows({
@@ -2727,7 +2739,17 @@ export const chatHandlers: GatewayRequestHandlers = {
             wholeStoreEarliestLocalTs: resolveEarliestLocalTimestamp(localMessages),
           }),
     });
-    const rawMessages = filterImportsToWindow(mergedMessages, windowPlan);
+    // FORK 2026-10-05: a slice also drops a prompt's claude-cli copy whose local row lies outside
+    // the slice, as the whole-store read does (cli-session-history.merge.ts).
+    const windowedMessages = filterImportsToWindow(mergedMessages, windowPlan);
+    const rawMessages =
+      windowPlan.kind === "tail"
+        ? windowedMessages
+        : dropImportedPromptsPairedOutsideSlice({
+            served: windowedMessages,
+            allLocal: localMessages,
+            sliceLocal: windowLocal,
+          });
     // FORK 2026-05-26 (task-mpkw1a0b-9jsfy): chat.history instrumentation
     // for the "user prompt appears twice on hard refresh" bug. Counts the
     // sources merged here so next reproduction tells us which layer

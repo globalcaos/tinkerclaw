@@ -42,6 +42,8 @@ export interface InjectedSplit {
   recipeTitle?: string;
   /** Absolute path of the matched recipe.md — from `<active_recipe path="…">`. */
   recipePath?: string;
+  /** The one advice line (`Use: … · Inspiration: … (§ section) · source: Jev|local`) from `<recipe_advice>`. */
+  adviceLine?: string;
 }
 
 export type SkillNotice = { name: string; path: string; source: "read" | "skill" };
@@ -78,6 +80,21 @@ export function recipeNoticeFromInjected(injected: string): { title: string; pat
     title: title || slug,
     path: path || `~/src/tinkerclaw/extensions/tinkerclaw-prefrontal/recipes/${slug}/recipe.md`,
   };
+}
+
+/**
+ * FORK 2026-10-06 (Broca retrieval v2, phase E). Broca's matcher hook appends `<recipe_advice source="Jev">LINE</recipe_advice>` to
+ * the block it adds to the turn: LINE is the compact `Use: … · Inspiration: … (§ section) · source: Jev|local` the owner sees under
+ * the prompt, XML-escaped. The live trail event does not survive a reload; this tag does.
+ */
+const ADVICE_TAG = /<recipe_advice\b[^>]*>([\s\S]*?)<\/recipe_advice>/i;
+const MAX_ADVICE_CHARS = 600;
+
+export function adviceLineFromInjected(injected: string): string | null {
+  const m = injected.match(ADVICE_TAG);
+  if (!m) return null;
+  const line = decodeXml(m[1]).replace(/\s+/g, " ").trim();
+  return line && line.length <= MAX_ADVICE_CHARS ? line : null;
 }
 
 /** The harness prints this as the first line of a skill body (and, on some harnesses, the tool result). */
@@ -215,6 +232,9 @@ function classify(block: string): { kind: InjectedKind; label: string } | null {
   if (RECIPE_PATTERNS.some((r) => r.test(block))) {
     return { kind: "recipe", label: "recipe instructions" };
   }
+  if (ADVICE_TAG.test(block)) {
+    return { kind: "recipe", label: "recipe advice" };
+  }
   if (trimmed.startsWith("[System]")) {
     return { kind: "system", label: "system instructions" };
   }
@@ -252,12 +272,14 @@ export function splitInjectedPrompt(raw: unknown): InjectedSplit | null {
     const hit = classify(block);
     if (hit) {
       const notice = hit.kind === "recipe" ? recipeNoticeFromInjected(block) : null;
+      const adviceLine = hit.kind === "recipe" ? adviceLineFromInjected(block) : null;
       return {
         visible: raw.slice(0, cut.index).trim(),
         injected: block,
         kind: hit.kind,
         label: hit.label,
         ...(notice ? { recipeTitle: notice.title, recipePath: notice.path } : {}),
+        ...(adviceLine ? { adviceLine } : {}),
       };
     }
   }

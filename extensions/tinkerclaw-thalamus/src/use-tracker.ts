@@ -26,11 +26,14 @@ export type ShownInfo = {
   shuffled?: boolean;
   /** The task's kind of work from the local read. */
   taskKind?: string;
+  /** Why the list is not Jev's (see `UseRow.skipReason`); absent when Jev answered. */
+  skip?: string;
+  skipDetail?: string;
 };
 
 type Used = UseRow["used"][number];
 
-type RunUse = { ts: number; info?: ShownInfo; used: Map<string, Used> };
+type RunUse = { ts: number; info?: ShownInfo; used: Map<string, Used>; jevMs?: number };
 
 const MAX_RUNS = 256;
 
@@ -57,6 +60,12 @@ export function createUseTracker(d: {
     /** The list computed for this task, shown to the agent or not. */
     noteShown(runId: string, info: ShownInfo): void {
       runOf(runId).info = info;
+    },
+
+    /** How long the Jev call took. It may arrive after the prompt went on without it; a run that has ended ignores it. */
+    noteJevMs(runId: string, ms: number): void {
+      const run = runs.get(runId);
+      if (run) run.jevMs = ms;
     },
 
     /** A tool call started. Attributed to an enhancement when it opens its manual or runs its tool. */
@@ -118,6 +127,9 @@ export function createUseTracker(d: {
         questionVersion: run.info?.questionVersion ?? 0,
         mode: d.mode(),
         ...(run.info?.taskKind ? { taskKind: run.info.taskKind } : {}),
+        ...(run.info?.skip ? { skipReason: run.info.skip } : {}),
+        ...(run.info?.skipDetail ? { skipDetail: run.info.skipDetail } : {}),
+        ...(run.jevMs !== undefined ? { jevMs: run.jevMs } : {}),
       };
       try {
         d.store()?.upsertUse(row);

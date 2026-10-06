@@ -65,7 +65,14 @@ export function listResetArchives(transcriptPath: string): ResetArchiveRef[] {
 /** `reset`: a reset archive. `earlier`: a transcript the tab left. `copy`: a backup or checkpoint. */
 export type SessionArchiveKind = "reset" | "earlier" | "copy";
 
-export type SessionArchiveRef = ResetArchiveRef & { kind: SessionArchiveKind };
+/** What made a copy: a repair backup, an eviction backup, or a compaction checkpoint. */
+export type SessionCopyOrigin = "repair" | "eviction" | "checkpoint";
+
+export type SessionArchiveRef = ResetArchiveRef & {
+  kind: SessionArchiveKind;
+  /** A copy's: the transcript it was taken from (absolute), and what took it. */
+  copyOf?: { base: string; origin: SessionCopyOrigin };
+};
 
 const RESET_ARCHIVE_RE = /^(.+\.jsonl)\.reset\./;
 const REPAIR_BACKUP_RE = /^(.+\.jsonl)\.bak-\d+-(\d{10,})$/;
@@ -94,9 +101,19 @@ export function listSessionArchives(params: {
   const bases = transcriptBasesOfKey(dir, names, params.sessionKey);
   bases.add(live);
   const out: SessionArchiveRef[] = [];
-  const add = (name: string, resetAt: number | null | undefined, kind: SessionArchiveKind) => {
+  const add = (
+    name: string,
+    resetAt: number | null | undefined,
+    kind: SessionArchiveKind,
+    copyOf?: { base: string; origin: SessionCopyOrigin },
+  ) => {
     if (typeof resetAt === "number" && Number.isFinite(resetAt)) {
-      out.push({ path: path.join(dir, name), resetAt, kind });
+      out.push({
+        path: path.join(dir, name),
+        resetAt,
+        kind,
+        ...(copyOf ? { copyOf: { base: path.join(dir, copyOf.base), origin: copyOf.origin } } : {}),
+      });
     }
   };
   for (const name of names) {
@@ -110,14 +127,17 @@ export function listSessionArchives(params: {
     const repair = REPAIR_BACKUP_RE.exec(name);
     if (repair) {
       if (bases.has(repair[1])) {
-        add(name, Number(repair[2]), "copy");
+        add(name, Number(repair[2]), "copy", { base: repair[1], origin: "repair" });
       }
       continue;
     }
     const evicted = EVICTION_BACKUP_RE.exec(name);
     if (evicted) {
       if (bases.has(evicted[1])) {
-        add(name, parseSessionArchiveTimestamp(name, "bak"), "copy");
+        add(name, parseSessionArchiveTimestamp(name, "bak"), "copy", {
+          base: evicted[1],
+          origin: "eviction",
+        });
       }
       continue;
     }
@@ -126,8 +146,9 @@ export function listSessionArchives(params: {
     }
     const checkpoint = CHECKPOINT_RE.exec(name);
     if (checkpoint) {
-      if (bases.has(`${checkpoint[1]}.jsonl`)) {
-        add(name, readLastTimestamp(path.join(dir, name)), "copy");
+      const base = `${checkpoint[1]}.jsonl`;
+      if (bases.has(base)) {
+        add(name, readLastTimestamp(path.join(dir, name)), "copy", { base, origin: "checkpoint" });
       }
       continue;
     }
@@ -136,6 +157,181 @@ export function listSessionArchives(params: {
     }
   }
   return out.toSorted((a, b) => b.resetAt - a.resetAt);
+}
+
+// FORK 2026-10-05 (the architect: "Some tabs in tinkerclaw appear without history. I should be able to
+// scroll back until the beginning") — a compaction checkpoint is a snapshot of an append-only
+// transcript, so the transcript still holds every byte of it. AcmeVision's live file (23 MB) had 22
+// checkpoints of 15-23 MB, every one a byte-prefix of it, and its three repair backups differed only
+// in their last line, the entry the repair rewrote. An archive read parsed each copy whole (the
+// legacy loader, the claude-cli merge, the projection: synchronous, 35-63 s per read on the loaded
+// box) only to cut every row away at the page's floor, and the gateway answered nothing else
+// meanwhile: every open tab's history and live stream waited. A copy its base transcript holds is
+// passed over unread; a copy that is not PROVEN held is served exactly as before.
+
+/** Bytes read per step when comparing a copy with its base. */
+const PREFIX_COMPARE_CHUNK_BYTES = 1024 * 1024;
+/** The longest last line a copy may end with and still be proven held (a tool result can be long). */
+const COPY_LAST_LINE_MAX_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Proven results by copy state and base inode. A copy never changes; its base only grows by appends,
+ * which keep its inode, while a repair or an eviction replaces it through a rename, which does not.
+ */
+const copyHeldMemo = new Map<string, boolean>();
+const COPY_HELD_MEMO_MAX = 512;
+
+export function __resetCopyHeldMemoForTest(): void {
+  copyHeldMemo.clear();
+}
+
+/**
+ * Whether every row of the copy `ref` is in the transcript it was taken from, so serving the copy
+ * could only repeat rows: its bytes up to its last line are the base's, and its last line is the
+ * base's line at the same offset (byte for byte; for a repair backup, the same entry, because the
+ * repair rewrites the line it fixes). A repair backup must also hold at least one line before that
+ * one. False when anything cannot be read or does not match: the copy is then served as before.
+ */
+export async function copyHeldByBase(ref: SessionArchiveRef): Promise<boolean> {
+  if (ref.kind !== "copy" || !ref.copyOf) {
+    return false;
+  }
+  let copyStat: fs.Stats;
+  let baseStat: fs.Stats;
+  try {
+    [copyStat, baseStat] = await Promise.all([
+      fs.promises.stat(ref.path),
+      fs.promises.stat(ref.copyOf.base),
+    ]);
+  } catch {
+    return false;
+  }
+  const key = `${ref.path}|${copyStat.size}|${copyStat.mtimeMs}|${baseStat.dev}:${baseStat.ino}`;
+  const memo = copyHeldMemo.get(key);
+  if (memo !== undefined) {
+    return memo;
+  }
+  const held = await proveCopyHeld(ref.path, ref.copyOf.base, ref.copyOf.origin, copyStat.size);
+  copyHeldMemo.set(key, held);
+  while (copyHeldMemo.size > COPY_HELD_MEMO_MAX) {
+    const oldest = copyHeldMemo.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    copyHeldMemo.delete(oldest);
+  }
+  return held;
+}
+
+async function proveCopyHeld(
+  copyPath: string,
+  basePath: string,
+  origin: SessionCopyOrigin,
+  copySize: number,
+): Promise<boolean> {
+  if (copySize === 0) {
+    return false;
+  }
+  let copy: fs.promises.FileHandle | undefined;
+  let base: fs.promises.FileHandle | undefined;
+  try {
+    copy = await fs.promises.open(copyPath, "r");
+    base = await fs.promises.open(basePath, "r");
+    const lastLineStart = await findLastLineStart(copy, copySize);
+    if (lastLineStart === null) {
+      return false;
+    }
+    if (!(await sameBytes(copy, base, 0, lastLineStart))) {
+      return false;
+    }
+    const copyLine = await readRange(copy, lastLineStart, copySize - lastLineStart);
+    const baseLine = await readRange(base, lastLineStart, copyLine.length);
+    if (copyLine.equals(baseLine)) {
+      return true;
+    }
+    if (origin !== "repair" || lastLineStart === 0) {
+      return false;
+    }
+    // The repair rewrote this line: the base must hold the same entry where it stood.
+    const baseWhole = await readLineAt(base, lastLineStart);
+    const copyId = entryIdOf(copyLine);
+    return copyId !== undefined && baseWhole !== null && copyId === entryIdOf(baseWhole);
+  } catch {
+    return false;
+  } finally {
+    await copy?.close().catch(() => {});
+    await base?.close().catch(() => {});
+  }
+}
+
+/** Where the copy's last non-empty line starts; null when it is longer than the limit. */
+async function findLastLineStart(
+  file: fs.promises.FileHandle,
+  size: number,
+): Promise<number | null> {
+  const span = Math.min(size, COPY_LAST_LINE_MAX_BYTES);
+  const tail = await readRange(file, size - span, span);
+  let end = tail.length;
+  while (end > 0 && (tail[end - 1] === 0x0a || tail[end - 1] === 0x0d)) {
+    end--;
+  }
+  if (end === 0) {
+    return null;
+  }
+  const nl = tail.lastIndexOf(0x0a, end - 1);
+  if (nl >= 0) {
+    return size - span + nl + 1;
+  }
+  return span === size ? 0 : null;
+}
+
+async function sameBytes(
+  a: fs.promises.FileHandle,
+  b: fs.promises.FileHandle,
+  from: number,
+  to: number,
+): Promise<boolean> {
+  for (let at = from; at < to; at += PREFIX_COMPARE_CHUNK_BYTES) {
+    const len = Math.min(PREFIX_COMPARE_CHUNK_BYTES, to - at);
+    const [x, y] = await Promise.all([readRange(a, at, len), readRange(b, at, len)]);
+    if (x.length !== len || !x.equals(y)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function readRange(
+  file: fs.promises.FileHandle,
+  position: number,
+  length: number,
+): Promise<Buffer> {
+  const buf = Buffer.alloc(length);
+  let read = 0;
+  while (read < length) {
+    const { bytesRead } = await file.read(buf, read, length - read, position + read);
+    if (bytesRead === 0) {
+      break;
+    }
+    read += bytesRead;
+  }
+  return read === length ? buf : buf.subarray(0, read);
+}
+
+/** The line that starts at `position`, without its newline; null when none ends within the limit. */
+async function readLineAt(file: fs.promises.FileHandle, position: number): Promise<Buffer | null> {
+  const chunk = await readRange(file, position, COPY_LAST_LINE_MAX_BYTES);
+  const nl = chunk.indexOf(0x0a);
+  return nl >= 0 ? chunk.subarray(0, nl) : null;
+}
+
+function entryIdOf(line: Buffer): string | undefined {
+  try {
+    const id = (JSON.parse(line.toString("utf-8")) as { id?: unknown }).id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** A trajectory's first line, reduced to what lineage needs; null = it names no key or file. */

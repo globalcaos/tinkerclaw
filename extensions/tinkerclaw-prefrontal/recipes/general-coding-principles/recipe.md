@@ -370,6 +370,12 @@ is not there (`git -C {{repo}} push -u {{remote}} feat/{{feature}}`), and the me
 - Bench safety rules stay in force: outputs start OFF, an explicit unlock step gates every output
   test, and a device reboot is logged in the bench log with the reason.
 - `pkill -f` over ssh matches its own shell: use the `[x]yz` bracket form or kill by PID.
+- A cache that outlives the process (files on disk, a database table) stores next to each entry
+  what it was made from (the inputs, the tool settings, model and format versions) and a checksum
+  of the result, and reuses an entry only when both still match. Keyed by name alone, it keeps
+  serving stale or half-written results after the generator changes or a crash (2026-10-05: a
+  speech cache keyed by voice and text would have replayed audio made with a replaced voice model;
+  the owner asked for the settings to be saved and checked).
 - Times written into the plan, a status row or a bench note come from `date +%H:%M` in the same
   command that writes them, never typed. On 2026-09-25 two hand-typed times were 22 and 27 minutes
   wrong, and on 2026-09-28 another was 19 minutes wrong.

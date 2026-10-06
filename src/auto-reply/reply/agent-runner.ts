@@ -996,7 +996,13 @@ export async function runReplyAgent(params: {
       // IS the client's idempotencyKey, so the outbox matches on the key instead
       // of guessing by text. The append dedupes on that key, so a re-send that
       // races this write is a no-op rather than a second row.
-      onDelivered: (combined) => {
+      onDelivered: (combined, _via, info) => {
+        // FORK 2026-10-05 (bug-log `steer-written-twice`): the run writes this prompt's row itself,
+        // keyed, when it injects it (runs.ts `persistsSteeredPrompt`). A row here as well was the
+        // second copy. The claude-cli stdin steer and the codex harness still need this one.
+        if (info?.persistedByRun) {
+          return;
+        }
         // sessionKey is optional on the run descriptor; without it the append
         // cannot resolve a store entry, so skip rather than write to the wrong
         // session. Falls back to the pre-fix behaviour (an unproven outbox

@@ -8,19 +8,32 @@ import {
   scrubLegacyStaticAuthJsonEntriesForDiscovery,
 } from "./pi-auth-discovery-core.js";
 
+const envKeyMocks = vi.hoisted(() => ({
+  resolveProviderEnvApiKeyCandidates: vi.fn(
+    (): Record<string, readonly string[]> => ({
+      mistral: ["MISTRAL_API_KEY"],
+    }),
+  ),
+  resolveEnvApiKey: vi.fn(
+    (
+      provider: string,
+      env: NodeJS.ProcessEnv,
+      _candidateMap?: Record<string, readonly string[]>,
+    ) => {
+      if (provider !== "mistral" || !env.MISTRAL_API_KEY?.trim()) {
+        return null;
+      }
+      return { apiKey: env.MISTRAL_API_KEY, source: "env: MISTRAL_API_KEY" };
+    },
+  ),
+}));
+
 vi.mock("./model-auth-env-vars.js", () => ({
-  resolveProviderEnvApiKeyCandidates: () => ({
-    mistral: ["MISTRAL_API_KEY"],
-  }),
+  resolveProviderEnvApiKeyCandidates: envKeyMocks.resolveProviderEnvApiKeyCandidates,
 }));
 
 vi.mock("./model-auth-env.js", () => ({
-  resolveEnvApiKey: (provider: string, env: NodeJS.ProcessEnv) => {
-    if (provider !== "mistral" || !env.MISTRAL_API_KEY?.trim()) {
-      return null;
-    }
-    return { apiKey: env.MISTRAL_API_KEY, source: "env: MISTRAL_API_KEY" };
-  },
+  resolveEnvApiKey: envKeyMocks.resolveEnvApiKey,
 }));
 
 async function createAgentDir(): Promise<string> {
@@ -166,6 +179,25 @@ describe("discoverAuthStorage", () => {
       } else {
         process.env.OPENCLAW_DISABLE_BUNDLED_PLUGINS = previousDisableBundledPlugins;
       }
+    }
+  });
+
+  // 2026-10-06: every candidate-map build rereads the plugin manifest registry. Built once per provider,
+  // 83 providers made each cold model catalog block the gateway's event loop for ~17 s.
+  it("builds the env-key candidate map once and hands it to every provider lookup", () => {
+    const map = { alpha: ["ALPHA_KEY"], beta: ["BETA_KEY"], gamma: ["GAMMA_KEY"] };
+    envKeyMocks.resolveProviderEnvApiKeyCandidates.mockClear().mockReturnValueOnce(map);
+    envKeyMocks.resolveEnvApiKey.mockClear();
+
+    addEnvBackedPiCredentials({ beta: { type: "api_key", key: "from-store" } }, {});
+
+    expect(envKeyMocks.resolveProviderEnvApiKeyCandidates).toHaveBeenCalledTimes(1);
+    expect(envKeyMocks.resolveEnvApiKey.mock.calls.map((call) => call[0])).toEqual([
+      "alpha",
+      "gamma",
+    ]);
+    for (const call of envKeyMocks.resolveEnvApiKey.mock.calls) {
+      expect(call[2]).toBe(map);
     }
   });
 });

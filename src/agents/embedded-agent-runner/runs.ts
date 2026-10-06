@@ -11,9 +11,17 @@ import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 import { normalizeOptionalString } from "../../shared/string-coerce.js";
 import type { BoundaryPauseGate } from "./boundary-pause.js";
 import { tryInflightSteer } from "./inflight-steer-hook.js";
+import { steerPromptKey } from "./run/steer-message.js";
 
 type EmbeddedPiQueueHandle = {
-  queueMessage: (text: string) => Promise<void>;
+  /** `promptKeys`: every buffered caller's key, in arrival order (FORK 2026-10-05). */
+  queueMessage: (text: string, opts?: { promptKeys?: readonly string[] }) => Promise<void>;
+  /**
+   * FORK 2026-10-05 (bug-log `steer-written-twice`): the run persists a queued message itself, keyed,
+   * when it injects it (the embedded pi runner, run/steer-message.ts). The steer's delivery callback
+   * then writes no row of its own: two writers made the prompt show twice.
+   */
+  persistsSteeredPrompt?: boolean;
   isStreaming: () => boolean;
   isCompacting: () => boolean;
   abort: () => void;
@@ -101,7 +109,12 @@ type SteerDeliveryFallback = (texts: string[], combined: string, promptKeys: str
 // landed while idle and ran as a duplicate turn. The caller owns transcript
 // persistence, so it gets told the moment delivery actually happened.
 // Mutually exclusive with SteerDeliveryFallback — never both for one buffer.
-type SteerDeliveredCallback = (combined: string, via: "inflight-steer" | "next-round") => void;
+type SteerDeliveredCallback = (
+  combined: string,
+  via: "inflight-steer" | "next-round",
+  /** `persistedByRun`: the run writes the prompt's row itself, keyed (FORK 2026-10-05). */
+  info?: { persistedByRun: boolean },
+) => void;
 type SteerBuffer = {
   texts: string[];
   /** FORK 2026-09-24: every buffered caller's prompt key (see SteerDeliveryFallback). */
@@ -203,8 +216,12 @@ function flushSteerBuffer(sessionId: string, opts?: { runEnding?: boolean }) {
   diag.debug(
     `steer flush: sessionId=${sessionId} messages=${buf.texts.length} chars=${combined.length}`,
   );
-  void handle.queueMessage(combined);
-  buf.onDelivered?.(combined, "next-round");
+  const promptKeys = [...buf.promptKeys];
+  void handle.queueMessage(combined, { promptKeys });
+  buf.onDelivered?.(combined, "next-round", {
+    persistedByRun:
+      handle.persistsSteeredPrompt === true && steerPromptKey(combined, promptKeys) !== undefined,
+  });
 }
 
 // FORK (2026-08-28): `true` means ACCEPTED FOR DELIVERY, not yet delivered —

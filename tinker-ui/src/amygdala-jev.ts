@@ -19,13 +19,19 @@ import {
  *    axis and the checks made after it below, coloured by what code did with the answer. A click on a column lists that
  *    step's answers, each with its probability, latency and 👍/👎.
  * 2. WOULD HAVE: the actions Jev would have taken (took, when enforcing), one row each with its step, its reasons and the
- *    vote. Open by default, because it is there to be reviewed. A card that waits for an answer (enforce mode), the refusal
+ *    vote. Collapsed by default (the owner, 2026-10-06); the bar says how many there are. A card that waits for an answer (enforce mode), the refusal
  *    offer (Rewind, retry) and the Rewound line ride on their action's row.
  *
  * Pure HTML-string builders; app.ts handles the `data-amy-act` attributes by delegation. A question's wording never
  * appears: names, ids, versions and answers only.
  */
-import type { CodeDid, InterventionView, JevDecision, TurnView } from "./amygdala-types.js";
+import type {
+  CodeDid,
+  InterventionView,
+  JevDecision,
+  JevExplanation,
+  TurnView,
+} from "./amygdala-types.js";
 
 type Change = Exclude<CodeDid, "ok">;
 
@@ -440,6 +446,15 @@ export interface JevActionsOptions {
   shadow?: boolean;
   /** Markup that rides on an action's row: a card waiting for an answer, the refusal offer, the Rewound line. */
   extra?: (a: JevAction) => string;
+  /** The explainer's words for an action's decision (2026-10-05), when any arrived. */
+  explain?: (a: JevAction) => JevExplanation | undefined;
+  /** Actions whose raw step and answers the owner opened under "details". */
+  openDetails?: ReadonlySet<string>;
+}
+
+/** The decision an action's vote and explanation belong to, if it has one. */
+export function actionDecisionId(a: JevAction): string | undefined {
+  return a.reasons[0]?.decisionId ?? a.iv?.decisionId;
 }
 
 /** A vote targets the decision when there is one, else the first answer; a lone rule with no decision has no vote. */
@@ -453,34 +468,65 @@ function voteTarget(a: JevAction): { id: string; kind: "decision" | "verdict" } 
 
 function renderAction(a: JevAction, o: JevActionsOptions): string {
   const target = voteTarget(a);
-  const voted = target ? o.votes?.get(target.id) : undefined;
+  const x = o.explain?.(a);
+  const words = x?.status === "done" ? x.explanation : undefined;
+  const voted = target ? (o.votes?.get(target.id) ?? (words ? x?.vote : undefined)) : undefined;
+  const voteAttrs = (value: 1 | -1): string =>
+    `data-amy-act="label" data-target-id="${esc(target!.id)}" data-target-kind="${target!.kind}" data-kind="useful" data-value="${value}"`;
   const vote = (value: 1 | -1, text: string): string =>
-    `<button class="amy-jvote${voted === value ? " amy-voted" : ""}" data-amy-act="label" data-target-id="${esc(target!.id)}" ` +
-    `data-target-kind="${target!.kind}" data-kind="useful" data-value="${value}">${text}</button>`;
-  const votes = target
-    ? `<div class="amy-ja-votes" title="Was that the right call?">${vote(1, "👍 right call")}${vote(-1, "👎 wrong call")}</div>`
-    : "";
+    `<button class="amy-jvote${voted === value ? " amy-voted" : ""}" ${voteAttrs(value)}>${text}</button>`;
   const why = a.reasons.length
     ? `<span class="amy-mt">because Jev answered</span> ` +
       a.reasons.map((d) => `<b>${esc(d.questionName)}</b> → ${esc(fmtAnswer(d))}`).join(" · ")
     : a.chips.length
       ? `<span class="amy-mt">because of the rules</span> ${a.chips.map((c) => esc(c)).join(" · ")}`
       : "";
-  const extra = o.extra?.(a) ?? "";
-  return (
-    `<div class="amy-jact" data-turn="${esc(a.turnId)}" data-action="${esc(a.key)}"><div class="amy-ja-main">` +
+  const raw =
+    (a.step
+      ? `<div class="amy-jc-step"><span class="amy-mt">step</span> ${esc(a.step)}</div>`
+      : "") + (why ? `<div class="amy-jc-why">${why}</div>` : "");
+  const head =
     `<div class="amy-jc-head"><span class="amy-jg">${GLYPH[a.did]}</span>` +
     `<span class="amy-jo ${PILL_CLASS[a.did]}">${esc(DID_WORD[a.did])}</span>` +
     `<b>${esc(CHANGE_WORDS[a.did][o.shadow === false ? 1 : 0])}</b>` +
-    `<span class="amy-ja-time">${esc(fmtClock(a.ts))}</span></div>` +
-    (a.step
-      ? `<div class="amy-jc-step"><span class="amy-mt">step</span> ${esc(a.step)}</div>`
-      : "") +
-    (why ? `<div class="amy-jc-why">${why}</div>` : "") +
-    `</div>${votes}` +
-    (extra ? `<div class="amy-ja-extra">${extra}</div>` : "") +
-    `</div>`
-  );
+    `<span class="amy-ja-time">${esc(fmtClock(a.ts))}</span></div>`;
+  const extra = o.extra?.(a) ?? "";
+  const tail = extra ? `<div class="amy-ja-extra">${extra}</div>` : "";
+  const open = `<div class="amy-jact${words ? " amy-jact-x" : ""}" data-turn="${esc(a.turnId)}" data-action="${esc(a.key)}">`;
+  if (words) {
+    // The explainer's words lead; the raw command and scores wait behind "details". One reply per vote, the
+    // suggested one first: marked, never pre-selected, so the vote stays the owner's (his votes teach Jev).
+    const shown = o.openDetails?.has(a.key) ?? false;
+    const model = x?.model ? x.model.split("/").pop()! : "the explainer";
+    const replies = target
+      ? `<div class="amy-jx-replies">` +
+        words.replies
+          .map(
+            (r) =>
+              `<button class="amy-jvote amy-jreply${r.vote === words.suggest ? " amy-jrec" : ""}${voted === r.vote ? " amy-voted" : ""}" ` +
+              `${voteAttrs(r.vote)}${r.vote === words.suggest ? ` title="${esc(`Suggested by ${model}`)}"` : ""}>` +
+              `${r.vote === 1 ? "👍 Right call" : "👎 Wrong call"}: ${esc(r.text)}</button>`,
+          )
+          .join("") +
+        `</div>`
+      : "";
+    return (
+      `${open}<div class="amy-ja-main">${head}` +
+      `<div class="amy-jx-doing">${esc(words.doing)}</div>` +
+      `<div class="amy-jx-jev"><span class="amy-mt">Jev</span>${esc(words.jev)}</div>` +
+      `<div class="amy-jx-more" data-amy-act="jev-act-detail" data-action="${esc(a.key)}">${shown ? "details ▾" : "details ▸"}</div>` +
+      (shown ? raw : "") +
+      `</div>${replies}${tail}</div>`
+    );
+  }
+  const votes = target
+    ? `<div class="amy-ja-votes" title="Was that the right call?">${vote(1, "👍 right call")}${vote(-1, "👎 wrong call")}</div>`
+    : "";
+  const wait =
+    x?.status === "pending"
+      ? `<div class="amy-jx-wait">Explaining this flag in plain words…</div>`
+      : "";
+  return `${open}<div class="amy-ja-main">${head}${raw}${wait}</div>${votes}${tail}</div>`;
 }
 
 /** The WOULD HAVE window for one reply; "" when Jev would have changed nothing in it. */

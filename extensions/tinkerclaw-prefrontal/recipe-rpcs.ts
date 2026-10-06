@@ -56,6 +56,7 @@ import {
   type RecipeSpec,
   type RecipeParamSpec,
 } from "./recipe-author.js";
+import { extractSection } from "./recipe-extract.js";
 import { findRecipeFile } from "./recipe-locate.js";
 import {
   bumpVersion,
@@ -67,6 +68,7 @@ import {
   loadRecipeIndex,
   matchRecipesDetailed,
   invalidateRecipeIndexCache,
+  recipeIndexExtraDirs,
 } from "./recipe-matcher.js";
 import { optimizeRecipe } from "./recipe-optimize.js";
 import { parseRecipeMd, recipeStepProse, firstSentence } from "./recipe-parse.js";
@@ -861,7 +863,10 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
         // hard-failing the search. The local matcher scores the query against the
         // own-kits catalog (+ bridged imports) so a network outage still surfaces
         // the recipes Jarvis already has. Never throws on the fallback path.
-        const index = await loadRecipeIndex(deps.ownRecipesDir, [bridgedSkillsDir]);
+        const index = await loadRecipeIndex(
+          deps.ownRecipesDir,
+          recipeIndexExtraDirs(bridgedSkillsDir),
+        );
         // FORK 2026-06 (U1) + 2026-06-01 (U12): same fitness+rating signals as the
         // turn-start seed so the local fallback ranks proven/popular recipes higher.
         const { matches } = matchRecipesDetailed(p.query, index, {
@@ -1723,6 +1728,35 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
       };
     },
 
+    // FORK 2026-10-06 (Broca retrieval v2, phase D): lift ONE numbered step of a recipe into a recipe of its own and leave
+    // `uses: <slug>` where it was (recipe-extract.ts says what it proves, what it refuses and how a failure is rolled
+    // back). The parent is found in the overlay (`~/.openclaw/recipes`) first, then the shipped dir, as the runner reads
+    // them; the new recipe is created beside it. A refusal is a typed result carrying every reason, with nothing written.
+    "prefrontal.recipe.extract": async (raw: unknown) => {
+      const p = (raw ?? {}) as Record<string, unknown>;
+      for (const k of ["from", "section", "slug", "title"] as const) {
+        if (typeof p[k] !== "string" || !(p[k] as string).trim()) {
+          throw new Error(`prefrontal.recipe.extract: ${k} (non-empty string) required`);
+        }
+      }
+      const r = await extractSection(
+        [resolveRecipeOverlayDir(), deps.ownRecipesDir],
+        {
+          from: (p.from as string).trim(),
+          section: (p.section as string).trim(),
+          slug: (p.slug as string).trim(),
+          title: (p.title as string).trim(),
+        },
+        {},
+      );
+      if (!r.ok) return { ok: false, refused: r.refused };
+      invalidateRecipeIndexCache(); // the matcher sees the new recipe on the next turn
+      return {
+        ...r,
+        note: `lifted step ${r.step} ("${r.stepTitle}") of ${p.from as string} into ${r.kitRef}; the parent now has uses: ${r.slug} there. Previous text archived at ${r.archive}`,
+      };
+    },
+
     // FORK 2026-05-31: J5 self-apply — apply ONE autoPromotable recipe-evolution proposal.
     // Snapshot the current recipe (rollback net) → LLM rewrites it applying the op+intent →
     // validate → guarded write (persistKitSpec, which refuses hand-curated kits). Gated by
@@ -1943,7 +1977,10 @@ export function createRecipeRpcs(deps: KitRpcsDeps) {
     "prefrontal.recipe.match": async (raw: unknown) => {
       const p = check<PrefrontalKitMatchParams>(vMatch, raw, "prefrontal.recipe.match");
       // FORK 2026-06-01 (U11): include bridged CC-skill imports in the match catalog.
-      const index = await loadRecipeIndex(deps.ownRecipesDir, [bridgedSkillsDir]);
+      const index = await loadRecipeIndex(
+        deps.ownRecipesDir,
+        recipeIndexExtraDirs(bridgedSkillsDir),
+      );
       // FORK 2026-06 (U1) + 2026-06-01 (U12): fold empirical-fitness + marketplace-
       // rating into the score so recipe.match returns the same proven/popular-aware
       // ranking the turn-start seed uses (single scoring policy across both seams).

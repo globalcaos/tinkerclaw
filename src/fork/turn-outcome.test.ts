@@ -17,6 +17,36 @@ import {
  * census, not synthetic tokens — same discipline as error-envelope.test.ts.
  */
 
+// FORK 2026-10-05 — recoverable means "a retry within the ladder's 15 minutes can succeed". A limit
+// whose window resets in hours or days is not, whatever its kind (src/shared/usage-window.ts).
+describe("a usage window no retry can outlast is not recoverable", () => {
+  const weeklyRaw = "You've hit your weekly limit · resets Oct 8, 6pm (Europe/Madrid)";
+
+  it("the envelope the gateway builds now, and one an older gateway stamped non-fatal", () => {
+    const fresh = outcomeFromEnvelope(buildErrorEnvelope({ raw: weeklyRaw }));
+    expect(fresh.kind).toBe("rate_limit");
+    expect(fresh.recoverable).toBe(false);
+    expect(fresh.retryAfter).toBeUndefined();
+    const older = outcomeFromEnvelope({
+      ...buildErrorEnvelope({ raw: weeklyRaw }),
+      fatal: false,
+    });
+    expect(older.recoverable).toBe(false);
+  });
+
+  it("a 5-hour usage limit read from text; a burst limit stays recoverable", () => {
+    const fiveHour = classifyErrorText("5-hour usage limit reached · resets 3pm");
+    expect(fiveHour.kind).toBe("quota");
+    expect(fiveHour.recoverable).toBe(false);
+    const burst = classifyErrorText("429 Too Many Requests");
+    expect(burst.kind).toBe("rate_limit");
+    expect(burst.recoverable).toBe(true);
+    expect(
+      outcomeFromEnvelope(buildErrorEnvelope({ raw: "429 Too Many Requests" })).recoverable,
+    ).toBe(true);
+  });
+});
+
 describe("classifyErrorText — the plan's mapping table, real strings", () => {
   it("usage limit → quota, recoverable, retryAfter from the reset parser", () => {
     const out = classifyErrorText(

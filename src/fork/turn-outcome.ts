@@ -8,9 +8,15 @@
  * fields, `__ERR_ENV__` envelopes, and first-line gateway wording on flagged
  * or short unflagged rows — never mid-prose keywords.
  *
- * Pure by contract: no fs, no gateway imports. The only runtime import is the
- * existing reset parser (src/agents/rate-limit-reset.ts); envelope types are
+ * Pure by contract: no fs, no gateway imports. The runtime imports are the
+ * existing reset parser (src/agents/rate-limit-reset.ts) and the pure
+ * usage-window reader (src/shared/usage-window.ts); envelope types are
  * type-only. Every entry point is total over `unknown` and never throws.
+ *
+ * FORK 2026-10-05 — a rate or usage limit whose window resets in hours or days
+ * (weekly, rolling 5-hour, Claude's "session" limit) is NOT recoverable: the
+ * client ladder tops out at 15 minutes, so retrying only re-sends the prompt
+ * into the same wall (169 copies of one prompt on 2026-10-03).
  *
  * Deliberately NOT reused here: `classifyRawErrorMessage` / `rateLimitDetail`
  * from error-envelope.ts. Their taxonomy serves envelope cards and diverges
@@ -21,7 +27,13 @@
  */
 
 import { resolveRetryAfterSeconds } from "../agents/rate-limit-reset.js";
+import { isLongUsageWindow } from "../shared/usage-window.js";
 import type { ErrorCategory, ErrorEnvelope } from "./error-envelope.js";
+
+/** A rate or usage limit no retry can outlast (see the header): the window, not the kind, decides. */
+function isLongLimit(kind: TurnOutcomeKind, raw: string): boolean {
+  return (kind === "rate_limit" || kind === "quota") && isLongUsageWindow(raw);
+}
 
 export type TurnOutcomeKind =
   | "rate_limit"
@@ -194,7 +206,7 @@ export function classifyErrorText(raw: string, opts?: { source?: TurnOutcomeSour
       }
     }
   }
-  const recoverable = RECOVERABLE[kind];
+  const recoverable = RECOVERABLE[kind] && !isLongLimit(kind, trimmed);
   let retryAfter: number | undefined;
   if (recoverable && trimmed) {
     try {
@@ -314,7 +326,6 @@ export function outcomeFromEnvelope(env: ErrorEnvelope): TurnOutcome {
     const e = env && typeof env === "object" ? env : ({} as ErrorEnvelope);
     const kind: TurnOutcomeKind =
       (typeof e.category === "string" && CATEGORY_TO_KIND[e.category as ErrorCategory]) || "error";
-    const recoverable = kind === "aborted" ? false : e.fatal !== true;
     const headline =
       typeof e.headline === "string" && e.headline.trim() ? e.headline.trim() : HEADLINES[kind];
     const rawText =
@@ -323,6 +334,9 @@ export function outcomeFromEnvelope(env: ErrorEnvelope): TurnOutcome {
         : typeof e.explanation === "string"
           ? e.explanation
           : "";
+    // An envelope built before 2026-10-05 marks a weekly limit non-fatal: read the window too.
+    const recoverable =
+      kind === "aborted" ? false : e.fatal !== true && !isLongLimit(kind, rawText);
     let retryAfter: number | undefined;
     if (recoverable && rawText) {
       try {

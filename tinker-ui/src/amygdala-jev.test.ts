@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { DID_WORD, GLYPH } from "./amygdala-html.js";
 import {
+  actionDecisionId,
   actionsOf,
   actionsSummary,
   checksSummary,
@@ -14,6 +15,7 @@ import type {
   CodeDid,
   InterventionView,
   JevDecision,
+  JevExplanation,
   MarkerView,
   TurnView,
 } from "./amygdala-types.js";
@@ -493,5 +495,102 @@ describe("renderJevActions: the actions to review", () => {
     );
     expect(el.querySelector("img")).toBeNull();
     expect(el.querySelector(".amy-jc-step")!.textContent).toContain(evil);
+  });
+});
+
+// 2026-10-05, the architect: "the 'would have' descriptions are a bit complicated for me to understand ... the concatenated
+// commands are too complex for me to process. Plus, everything has a context." Grok words each flag and proposes a reply.
+describe("renderJevActions: the explainer's words", () => {
+  const held = [
+    dec("h", {
+      codeDid: "held",
+      decisionId: "D1",
+      stepLabel: "Bash rm -f /tmp/door-jar.txt; pkill -f x",
+      questionName: "Danger level: how hard is this step to undo?",
+      answer: 1.57,
+    }),
+  ];
+  const x = (over: Partial<JevExplanation> = {}): JevExplanation => ({
+    decisionId: "D1",
+    sessionKey: "s",
+    turnId: "t1",
+    ts: T0,
+    status: "done",
+    model: "xai/grok-4.6",
+    explanation: {
+      doing: "Cleaning up its own login test files.",
+      jev: "Would have held it because files were deleted.",
+      risk: "low",
+      suggest: -1,
+      replies: [
+        { vote: -1, text: "Just its own test files." },
+        { vote: 1, text: "A hold is fair." },
+      ],
+    },
+    ...over,
+  });
+  const key = () => actionsOf([turn(held)])[0]!.key;
+  const render = (o: Partial<Parameters<typeof renderJevActions>[2]> = {}) =>
+    parse(renderJevActions("t1", [turn(held)], { open: true, ...o }));
+
+  it("leads with what the agent was doing and what worried Jev; the command folds behind details", () => {
+    const row = render({ explain: () => x() }).querySelector(".amy-jact")!;
+    expect(row.querySelector(".amy-jx-doing")!.textContent).toBe(
+      "Cleaning up its own login test files.",
+    );
+    expect(row.querySelector(".amy-jx-jev")!.textContent).toContain(
+      "Would have held it because files were deleted.",
+    );
+    expect(row.querySelector(".amy-jc-step")).toBeNull();
+    expect(row.querySelector("[data-amy-act=jev-act-detail]")!.getAttribute("data-action")).toBe(
+      key(),
+    );
+    const opened = render({ explain: () => x(), openDetails: new Set([key()]) }).querySelector(
+      ".amy-jact",
+    )!;
+    expect(opened.querySelector(".amy-jc-step")!.textContent).toContain("rm -f /tmp/door-jar.txt");
+    expect(opened.querySelector(".amy-jc-why")!.textContent).toContain("Danger level");
+  });
+
+  it("offers one reply per vote, the suggested one first and marked, each a vote on the decision", () => {
+    const el = render({ explain: () => x() });
+    const btns = el.querySelectorAll(".amy-jx-replies button[data-amy-act=label]");
+    expect(btns).toHaveLength(2);
+    expect(btns[0]!.getAttribute("data-value")).toBe("-1");
+    expect(btns[0]!.textContent).toBe("👎 Wrong call: Just its own test files.");
+    expect(btns[0]!.classList.contains("amy-jrec")).toBe(true);
+    expect(btns[0]!.getAttribute("data-target-id")).toBe("D1");
+    expect(btns[0]!.getAttribute("data-target-kind")).toBe("decision");
+    expect(btns[1]!.textContent).toBe("👍 Right call: A hold is fair.");
+    expect(btns[1]!.classList.contains("amy-jrec")).toBe(false);
+    expect(el.querySelectorAll(".amy-ja-votes")).toHaveLength(0);
+  });
+
+  it("marks a vote already given, here or before a reload", () => {
+    const b = render({ explain: () => x({ vote: 1 }) }).querySelectorAll(".amy-jx-replies button");
+    expect(b[1]!.classList.contains("amy-voted")).toBe(true);
+    const here = render({ explain: () => x(), votes: new Map([["D1", -1]]) }).querySelectorAll(
+      ".amy-jx-replies button",
+    );
+    expect(here[0]!.classList.contains("amy-voted")).toBe(true);
+  });
+
+  it("while the words are on their way the row keeps the old view and says so; a failure keeps the old view", () => {
+    const pending = render({
+      explain: () => x({ status: "pending", explanation: undefined }),
+    }).querySelector(".amy-jact")!;
+    expect(pending.querySelector(".amy-jx-wait")!.textContent).toBe(
+      "Explaining this flag in plain words…",
+    );
+    expect(pending.querySelector(".amy-jc-step")).not.toBeNull();
+    const failed = render({
+      explain: () => x({ status: "failed", explanation: undefined }),
+    }).querySelector(".amy-jact")!;
+    expect(failed.querySelector(".amy-jx-wait")).toBeNull();
+    expect(failed.querySelectorAll(".amy-ja-votes button")).toHaveLength(2);
+  });
+
+  it("actionDecisionId names the decision an action's vote and words belong to", () => {
+    expect(actionDecisionId(actionsOf([turn(held)])[0]!)).toBe("D1");
   });
 });

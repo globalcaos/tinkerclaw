@@ -13,6 +13,7 @@ import {
   fitnessFeedbackDelta,
   ratingScoreDelta,
   RATING_CLAMP,
+  recipeIndexExtraDirs,
   type RecipeIndexEntry,
 } from "../recipe-matcher.js";
 
@@ -251,7 +252,7 @@ describe("loadRecipeIndex — extraDirs (bridged-skills) scan", () => {
     extraDir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-bridged-"));
     const curated = `---\nslug: "shared"\ntitle: "Curated Shared"\nsummary: "the curated one"\ntags: ["shared"]\n---\n### 1. Curated\nbody\n`;
     const bridged = `---\nslug: "imported"\ntitle: "Imported"\nsummary: "from a cc skill"\ntags: ["imported"]\nauthoredBy: "tinker-bridge"\n---\n### 1. Imported step\nbody\n`;
-    const bridgedShadow = `---\nslug: "shared"\ntitle: "Bridged Shadow"\nsummary: "should NOT win"\ntags: ["shared"]\nauthoredBy: "tinker-bridge"\n---\n### 1. Shadow\nbody\n`;
+    const bridgedShadow = `---\nslug: "shared"\ntitle: "Bridged Shadow"\nsummary: "the overlay owner wins"\ntags: ["shared"]\nauthoredBy: "tinker-bridge"\n---\n### 1. Shadow\nbody\n`;
     await fs.mkdir(path.join(ownDir, "shared"), { recursive: true });
     await fs.writeFile(path.join(ownDir, "shared", "kit.md"), curated);
     await fs.mkdir(path.join(extraDir, "imported"), { recursive: true });
@@ -284,6 +285,95 @@ describe("loadRecipeIndex — extraDirs (bridged-skills) scan", () => {
     const index = await loadRecipeIndex(ownDir, [path.join(extraDir, "does-not-exist")]);
     expect(index.find((e) => e.slug === "shared")).toBeTruthy();
     expect(index.find((e) => e.slug === "imported")).toBeFalsy();
+  });
+});
+
+// FORK 2026-10-06 (Broca retrieval v2, review 2026-10-05): the matcher never scanned the
+// overlay `~/.openclaw/recipes`, so 10 recipes the runner can run (acme-coding,
+// review-site, plan-family-trip …) were invisible to it. recipeIndexExtraDirs is the one
+// place that lists the roots beyond the shipped dir, used by the turn hook and both RPCs.
+describe("recipeIndexExtraDirs — the overlay recipes root is indexed", () => {
+  let ownDir: string;
+  let home: string;
+  let bridgedDir: string;
+  let prevHome: string | undefined;
+  beforeAll(async () => {
+    prevHome = process.env.OPENCLAW_HOME;
+    ownDir = await fs.mkdtemp(path.join(os.tmpdir(), "kit-own-"));
+    home = await fs.mkdtemp(path.join(os.tmpdir(), "oc-home-"));
+    bridgedDir = path.join(home, "workspace", "kits", "bridged-skills");
+    process.env.OPENCLAW_HOME = home;
+    const shipped = `---\nslug: "shared"\ntitle: "Shipped Shared"\nsummary: "the shipped one"\ntags: ["shared"]\n---\n### 1. Shipped\nbody\n`;
+    const overlayOnly = `---\nslug: "family-trip"\ntitle: "Plan a family trip"\nsummary: "flights and a motorhome for the family holiday"\ntriggers: ["plan a family trip", "motorhome holiday"]\n---\n### 1. Pick dates\nbody\n`;
+    const overlayShadow = `---\nslug: "shared"\ntitle: "Overlay Shadow"\nsummary: "the overlay owner wins"\ntags: ["shared"]\n---\n### 1. Shadow\nbody\n`;
+    await fs.mkdir(path.join(ownDir, "shared"), { recursive: true });
+    await fs.writeFile(path.join(ownDir, "shared", "recipe.md"), shipped);
+    await fs.mkdir(path.join(home, "recipes", "family-trip"), { recursive: true });
+    await fs.writeFile(path.join(home, "recipes", "family-trip", "recipe.md"), overlayOnly);
+    await fs.mkdir(path.join(home, "recipes", "shared"), { recursive: true });
+    await fs.writeFile(path.join(home, "recipes", "shared", "recipe.md"), overlayShadow);
+    invalidateRecipeIndexCache();
+  });
+  afterAll(async () => {
+    if (prevHome === undefined) delete process.env.OPENCLAW_HOME;
+    else process.env.OPENCLAW_HOME = prevHome;
+    await fs.rm(ownDir, { recursive: true, force: true });
+    await fs.rm(home, { recursive: true, force: true });
+    invalidateRecipeIndexCache();
+  });
+
+  it("lists the bridged dir first and the overlay root second", () => {
+    expect(recipeIndexExtraDirs(bridgedDir)).toEqual([bridgedDir, path.join(home, "recipes")]);
+  });
+
+  it("indexes an overlay-only recipe", async () => {
+    const index = await loadRecipeIndex(ownDir, recipeIndexExtraDirs(bridgedDir));
+    expect(index.find((e) => e.slug === "family-trip")).toBeTruthy();
+  });
+
+  it("without the overlay root the same recipe is invisible (the old behaviour)", async () => {
+    invalidateRecipeIndexCache();
+    const index = await loadRecipeIndex(ownDir, [bridgedDir]);
+    expect(index.find((e) => e.slug === "family-trip")).toBeFalsy();
+  });
+
+  it("matches the overlay recipe from a task", async () => {
+    invalidateRecipeIndexCache();
+    const index = await loadRecipeIndex(ownDir, recipeIndexExtraDirs(bridgedDir));
+    const { matches } = matchRecipesDetailed(
+      "plan a family trip with a motorhome for the holiday",
+      index,
+    );
+    expect(matches[0]?.entry.slug).toBe("family-trip");
+  });
+
+  it("the overlay recipe wins a slug collision with the shipped one (an overlay recipe is the owner's override, as in the runner)", async () => {
+    invalidateRecipeIndexCache();
+    const index = await loadRecipeIndex(ownDir, recipeIndexExtraDirs(bridgedDir));
+    const shared = index.filter((e) => e.slug === "shared");
+    expect(shared).toHaveLength(1);
+    expect(shared[0].title).toBe("Overlay Shadow");
+    expect(shared[0].path).toContain(path.join(home, "recipes"));
+  });
+
+  it("logs one line per collision when the index is built, none when it is served from cache", async () => {
+    invalidateRecipeIndexCache();
+    const lines: string[] = [];
+    const log = { info: (m: string) => lines.push(m) };
+    await loadRecipeIndex(ownDir, recipeIndexExtraDirs(bridgedDir), log);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("shared");
+    expect(lines[0]).toContain("overlay");
+    await loadRecipeIndex(ownDir, recipeIndexExtraDirs(bridgedDir), log);
+    expect(lines).toHaveLength(1);
+  });
+
+  it("no overlay root, no collision line", async () => {
+    invalidateRecipeIndexCache();
+    const lines: string[] = [];
+    const index = await loadRecipeIndex(ownDir, [bridgedDir], { info: (m) => lines.push(m) });
+    expect(lines).toHaveLength(0);
+    expect(index.find((e) => e.slug === "shared")?.title).toBe("Shipped Shared");
   });
 });
 
@@ -434,6 +524,61 @@ describe("seedPlanFromPrompt — threads feedback + rating into the match", () =
       planStore,
     });
     expect(outcome.matches.some((m) => m.slug === "debug")).toBe(true);
+  });
+});
+
+// FORK 2026-10-06 (Broca retrieval v2, phase E): a plan is seeded only from a USE with high confidence. The caller passes
+// `allowSeed`; a match it refuses seeds nothing and is not a recipe gap (no authoring is offered for it).
+describe("seedPlanFromPrompt — allowSeed gate", () => {
+  let dir: string;
+  beforeAll(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), "seed-allow-"));
+    const recipeMd = `---\nslug: "debug"\ntitle: "Debug & Fix"\nsummary: "reproduce diagnose fix verify"\ntags: ["debug", "bug", "crash", "error"]\n---\n### 1. Repro\nbody\n`;
+    await fs.mkdir(path.join(dir, "debug"), { recursive: true });
+    await fs.writeFile(path.join(dir, "debug", "kit.md"), recipeMd);
+    invalidateRecipeIndexCache();
+  });
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+    invalidateRecipeIndexCache();
+  });
+  const run = (allowSeed?: (slug: string, c: string) => boolean) => {
+    invalidateRecipeIndexCache();
+    const planStore = {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue({ runId: "r" }),
+    };
+    return seedPlanFromPrompt({
+      prompt: "debug the crash error",
+      sessionKey: "agent:main:tinker:abc",
+      runId: "r",
+      ownRecipesDir: dir,
+      planStore,
+      ...(allowSeed ? { allowSeed } : {}),
+    }).then((outcome) => ({ outcome, planStore }));
+  };
+
+  it("seeds when the gate allows the recipe", async () => {
+    const seen: Array<[string, string]> = [];
+    const { outcome, planStore } = await run((slug, c) => (seen.push([slug, c]), true));
+    expect(outcome.seeded).toBe(true);
+    expect(planStore.set).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([["debug", "high"]]);
+  });
+
+  it("seeds nothing when the gate refuses, and that is not a recipe gap", async () => {
+    const { outcome, planStore } = await run(() => false);
+    expect(outcome.seeded).toBe(false);
+    expect(outcome.noMatch).toBe(false);
+    expect(outcome.skipped).toBe("not-a-high-use");
+    expect(planStore.set).not.toHaveBeenCalled();
+    // the match is still reported, so the owner-visible line and the trail can name it
+    expect(outcome.matches.map((m) => m.slug)).toEqual(["debug"]);
+  });
+
+  it("without a gate it behaves as before", async () => {
+    const { outcome } = await run();
+    expect(outcome.seeded).toBe(true);
   });
 });
 

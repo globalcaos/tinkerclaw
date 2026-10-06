@@ -617,6 +617,52 @@ sequenceDiagram
 
 ---
 
+## F-TURN-MODEL. Send → TURN TIMING → Thalamus picks → the pill and the rail name the model together (2026-10-05)
+
+**Trigger:** the owner sends a prompt on Auto. **Entry:** `tinker-ui/src/app.ts send()`. **Exit:** the turn's model is drawn once, by the pill and the answer rail in the same repaint, and the TURN TIMING block stays where it was written. Written for the owner's report of 2026-10-05: the rail first took the previous turn's model and switched when Thalamus' pick arrived, and the block vanished into the hidden Reasoning group when the answer appeared.
+
+```mermaid
+sequenceDiagram
+  participant UI as Tinker UI (app.ts)
+  participant CU as chat-units.ts / chat-rail.ts
+  participant GW as Gateway (chat.ts → auto-reply)
+  participant TH as Thalamus (model selection)
+  participant RUN as Embedded runner (lifecycle)
+
+  UI->>UI: send(): resetPhaseGroup(), prompt bubble, pending pill ("sending")
+  UI->>GW: chat.send {idempotencyKey = runId, model? only when pinned}
+  Note over UI: pinned → provisional activeRuns[runId] with the pin: the model is named now
+  GW-->>UI: chat.send ack → recordPhaseTiming("sending", finished) → the TURN TIMING block (client row); "preparing context" starts counting
+  UI->>CU: updateChat → last run = [TURN TIMING] only
+  CU-->>UI: no rail, no room (the block is not the model's, 2026-10-06); pill: "preparing context"
+  GW-->>UI: stream:"turn-phase" stages (runId) → block entries, block._phaseRunId
+  GW->>TH: pick for this turn (Auto)
+  TH-->>UI: stream:"thalamus" decision (runId thalamus:<sessionKey>) → THALAMUS card only
+  GW->>RUN: run on the picked model
+  RUN-->>UI: lifecycle phase:"start" {model, modelProvider}
+  UI->>UI: closePreModelWindow(runId): "preparing context" closed, block._phaseRunId stamped if empty
+  UI->>UI: activeRuns[runId] = {model} (the turn has NAMED its model)
+  UI->>CU: updateChat() → inFlightTurnModel() = that model
+  CU-->>UI: pill names the model; still no rail (the run holds only TURN TIMING)
+  RUN-->>UI: first thinking, tool or text bubble (carries _runId)
+  UI->>CU: updateChat → the rail opens BELOW the block, at that bubble, already in the named model's colour
+  RUN-->>UI: more deltas, tools, thinking (each unit gets its stretch of line)
+  RUN-->>UI: chat final → run settles
+  UI->>CU: updateChat → settled run: rows name the model (railModelByRun, _phaseRunId) → same rail
+  CU-->>UI: Reasoning group folds tools and narration; TURN TIMING stays its own unit above it
+```
+
+**Invariants:**
+
+- The pill and the rail read the same in-flight model (`inFlightTurnModel`), and nothing paints the turn's model before lifecycle `phase:start` (or an effort event, or the pinned send) names it. Since 2026-10-06 the rail appears only with the model's first unit, so it is born in the named colour and never changes colour on screen; the pill can name the model a few seconds earlier, while the run still holds only TURN TIMING.
+- No line is ever drawn beside a TURN TIMING block: it is the browser's and the gateway's measurement of the turn, not the model's work (2026-10-06).
+- The Thalamus decision feeds the THALAMUS card only. It is keyed `thalamus:<sessionKey>`, not the run, and a failover can still change the model before `phase:start`.
+- The TURN TIMING block is never inside the Reasoning group, and it never moves into a 🌿 section unless it was written after the turn's answer (then it is the reflection's).
+
+**State machine:** lifecycles.md L-RAIL. **Visual language:** tinker-ui.md §5.8M (the block), §5.8X2 (the rail). **Gate:** tinker-ui.md frontmatter `§5.8M/§5.8X2`, lifecycles.md frontmatter `L-RAIL`.
+
+---
+
 ## Auto-validation
 
 Each diagram should be paired with an `[idle-timeout-diag]`-style probe that emits one log line per traversal. Today only F1 has this (the `idle-timeout-diag` line). Probes for F2–F7 are listed as proposed in `probes.md`.

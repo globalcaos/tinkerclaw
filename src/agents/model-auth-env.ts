@@ -36,12 +36,15 @@ function resolveGoogleVertexEnvApiKey(env: NodeJS.ProcessEnv): string | undefine
     : undefined;
 }
 
+// FORK 2026-10-06: `candidateMap` lets a caller that resolves many providers build the map once. Each build
+// rereads the plugin manifest registry (~120-200 ms, synchronous); addEnvBackedPiCredentials paid it once per
+// provider (83 on this host), a 17 s event-loop block on every cold model catalog. Omitted = built here, as before.
 export function resolveEnvApiKey(
   provider: string,
   env: NodeJS.ProcessEnv = process.env,
+  candidateMap: Record<string, readonly string[]> = resolveProviderEnvApiKeyCandidates({ env }),
 ): EnvApiKeyResult | null {
   const normalized = resolveProviderIdForAuth(provider, { env });
-  const candidateMap = resolveProviderEnvApiKeyCandidates({ env });
   const applied = new Set(getShellEnvAppliedKeys());
   const pick = (envVar: string): EnvApiKeyResult | null => {
     const value = normalizeOptionalSecretInput(env[envVar]);

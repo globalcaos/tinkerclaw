@@ -176,3 +176,29 @@ describe("the note handed to the agent", () => {
     expect(shortlistContext(list(), byId)!.split("\n").length).toBeLessThanOrEqual(6);
   });
 });
+
+describe("the note for a list from the ranking (Broca retrieval v2)", () => {
+  it("names the part to take for an inspiration and prints no percentage for a local entry", () => {
+    const t = shortlistContext(
+      list({
+        entries: [
+          { cardId: "skill:translation-checker", rank: 1, prob: 0.9, mode: "USE", source: "jev" },
+          {
+            cardId: "recipe:Photo sorter",
+            rank: 2,
+            prob: 0,
+            mode: "INSPIRE",
+            source: "local",
+            section: "Decide",
+          },
+        ],
+      }),
+      byId,
+    )!;
+    const lines = t.split("\n");
+    expect(lines[1]).toMatch(/^1\. skill translation-checker, 90%:/);
+    expect(lines[2]).toMatch(
+      /^2\. recipe Photo sorter; not made for this, but it works the same way \(the "Decide" part\):/,
+    );
+  });
+});

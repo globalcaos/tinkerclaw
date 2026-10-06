@@ -20,6 +20,23 @@ export * from "../shared/thalamus-stuck.js";
 export * from "../shared/thalamus-graph.js";
 export * from "../shared/thalamus-learning.js";
 export * from "../shared/thalamus-card-loop.js";
+// FORK 2026-10-06 (Broca retrieval v2, phase C): Jev ranks recall's candidates into USE and INSPIRE groups.
+export * from "../shared/enhancement-rank.js";
+export type { Candidate, HistoryItem, RecallDoc } from "../shared/enhancement-recall.js";
+export {
+  createRecall,
+  docFromCard,
+  docsFromCards,
+  isStopWord,
+  stems,
+  toHistoryItem,
+} from "../shared/enhancement-recall.js";
+export { isHouseRule, isRuntimeNotice, taskText } from "../shared/enhancement-text.js";
+// Phase E: one ranked result per task, shared by the short-list seam and Broca's matcher hook.
+export * from "../shared/enhancement-task-rank.js";
+// Phase F: key phrases learned from the tasks a card served off its list, kept or dropped on later tasks.
+export * from "../shared/enhancement-triggers.js";
+export * from "../infra/thalamus-task-ranking.js";
 export {
   routeCall,
   topicUnsure,

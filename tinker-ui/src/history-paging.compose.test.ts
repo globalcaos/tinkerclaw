@@ -394,6 +394,21 @@ describe("C2 — an older page never re-adds a run the page watched live", () =>
   });
 });
 
+// FORK 2026-10-05 (the architect: "Some tabs appear without history. I should be able to scroll back until
+// the beginning") — app.ts loadOlderPage no longer refuses a scroll to the top while the session
+// runs (AcmeVision's turns run 30-45 min). What makes that safe is here, in the helpers it calls.
+describe("an older page under a live run", () => {
+  it("pages all the way up while the run writes; its server copies stay out, its bubbles stay put", () => {
+    const gw = new FakeGateway(locals(1, 400), "e0");
+    const tab = new Tab(gw);
+    tab.tailRead(); // first open: 301..400
+    gw.entries.push(...locals(401, 420)); // the running turn's rows, as the gateway serves them
+    watchLive(tab, "R", 401, 420, 401); // the page joined it: its first bubble names the prompt time
+    tab.pageAllTheWayUp();
+    expect(tab.labels()).toEqual([...range(1, 400), ...range(401, 420, "LIVE")]);
+  });
+});
+
 /** The viewed tab's trim while pinned to the latest row (app.ts trimViewedPageIfPinned). */
 function trimPinned(tab: Tab): void {
   const cutoff = viewedTrimCutoff(tab.page, tab.window, true);

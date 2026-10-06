@@ -22,6 +22,9 @@ import {
   ORDER_DEFAULT,
   TABS_KEY,
   UI_STATE_ENDPOINT,
+  UI_STATE_PLUGIN_ENDPOINT,
+  currentUiStateEndpoint,
+  resetUiStateEndpointForTests,
   applyStoredOrder,
   coerceTabs,
   getChoice,
@@ -1108,6 +1111,29 @@ describe("the durable layer — the three namespaces, backed by a file", () => {
       await hydrateUiState(fakeStorage());
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(String(callAt(fetchMock, 0)[0])).toContain(UI_STATE_ENDPOINT);
+    });
+
+    // 2026-10-06: behind the gateway plugin the root path answers 404 and the file lives under the
+    // app's base path. On Goku that 404 meant tabs never reopened: no state file was ever written.
+    it("a 404 at the root path switches this page to the plugin's endpoint, reads and mirrors there", async () => {
+      const urls: string[] = [];
+      setFetch(
+        vi.fn((url: unknown) => {
+          urls.push(String(url));
+          return Promise.resolve(
+            String(url) === UI_STATE_ENDPOINT
+              ? jsonResponse({ error: "not found" }, 404)
+              : jsonResponse(sampleSnapshot()),
+          );
+        }),
+      );
+      try {
+        await expect(hydrateUiState(fakeStorage())).resolves.toBe(true);
+        expect(urls).toEqual([UI_STATE_ENDPOINT, UI_STATE_PLUGIN_ENDPOINT]);
+        expect(currentUiStateEndpoint()).toBe(UI_STATE_PLUGIN_ENDPOINT);
+      } finally {
+        resetUiStateEndpointForTests();
+      }
     });
 
     // `degraded: true` is the server saying "I could not read the store, this body is a

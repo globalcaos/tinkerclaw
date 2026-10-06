@@ -22,7 +22,8 @@ export type ThalamusConfig = {
     jevApprovedSources: string[];
   };
   policy: { table: PolicyTable };
-  shortlist: { budgetMs: number };
+  /** `rank`: the short list comes from the ranked result (recall, then Jev's USE / INSPIRE split) and the matcher reads the same one. Off: the old flat read, as before 2026-10-06. */
+  shortlist: { budgetMs: number; rank: boolean };
   /** What enforce mode is allowed to do. Each is off until the owner switches it on; shadow never acts on any of them. */
   enforce: {
     digest: boolean;
@@ -148,7 +149,10 @@ export function parseConfig(raw: Raw): ThalamusConfig {
       jevApprovedSources: strs(privacy.jevApprovedSources, []),
     },
     policy: { table: obj(policy.table) as PolicyTable },
-    shortlist: { budgetMs: Math.max(0, num(shortlist.budgetMs, 800)) },
+    shortlist: {
+      budgetMs: Math.max(0, num(shortlist.budgetMs, 1500)),
+      rank: bool(shortlist.rank, true),
+    },
     enforce: {
       digest: bool(enforce.digest, false),
       check: bool(enforce.check, false),

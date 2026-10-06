@@ -9,6 +9,7 @@ import {
   attachPromptKeysToUserRows,
   buildPromptKeyMarker,
   findPromptKeyMarker,
+  findPromptRowClaimedOnBranch,
   isPromptKeyMarkerEntry,
   PROMPT_KEY_CUSTOM_TYPE,
   type PromptKeyMarkerRef,
@@ -543,6 +544,31 @@ describe("appendMissingPromptKeyMarkers (the runner's write)", () => {
     expect(servedKeys(sessionId, dir, transcriptPath)[0]).toBe("key-first");
   });
 
+  // FORK 2026-10-05 (bug-log `failover-reprompt`): the test above appends the prompt again in
+  // attempt 2, which is what prompt() did and what the runner no longer does once it finds the row.
+  it("a second attempt finds the prompt row the first one wrote, the row its retry continues from", async () => {
+    const sessionId = "sess-failover-claim";
+    const { transcriptPath } = precreated(sessionId);
+    const first = await openPrepared(transcriptPath, sessionId);
+    mark(first, ["key-first"], 5_000);
+    first.appendMessage(userRow("first prompt", 5_001));
+    first.appendMessage(
+      assistantRow("", 5_002, { stopReason: "error", errorMessage: "usage limit" }),
+    );
+
+    // attempt 2 on another model opens the file fresh; replay notes the model change first
+    const second = await openPrepared(transcriptPath, sessionId);
+    second.appendCustomEntry("model-snapshot", { timestamp: 6, provider: "xai", modelId: "grok" });
+    const promptRow = transcriptEntries(transcriptPath).find(
+      (entry) => entry.type === "message" && (entry.message as { role?: unknown }).role === "user",
+    );
+    expect(findPromptRowClaimedOnBranch(second.getBranch(), ["key-first"])).toEqual({
+      entryId: promptRow?.id,
+      idempotencyKey: "key-first",
+    });
+    expect(findPromptRowClaimedOnBranch(second.getBranch(), ["key-other"])).toBeUndefined();
+  });
+
   it("an attempt that died before the first flush left nothing, so the next one writes it once", async () => {
     const sessionId = "sess-first-prompt-died";
     const { dir, transcriptPath } = precreated(sessionId);
@@ -586,6 +612,63 @@ describe("appendMissingPromptKeyMarkers (the runner's write)", () => {
       "key-next",
       undefined,
     ]);
+  });
+
+  // FORK 2026-10-05 (bug-log `steer-written-twice`): the agent:main:tinker:mue2cvin 10-05 08:25 tree,
+  // rebuilt with real SessionManagers. A prompt steered into a running turn: chat.send's marker and
+  // the delivery callback's keyed row land on the file's leaf, the running turn appends under its
+  // own older leaf (stranding them), and pi persists the injected steer on the served branch.
+  const steeredPromptRows = async (sessionId: string, injectedKey: string | undefined) => {
+    // Entries are stamped with the wall clock, and a stranded row is served only when the branch
+    // moved on AFTER it was written: one second between appends, as in the live tree.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      let clock = Date.parse("2026-10-05T06:25:00.000Z");
+      const tick = () => vi.setSystemTime((clock += 1_000));
+      const { dir, transcriptPath } = precreated(sessionId);
+      const running = await openPrepared(transcriptPath, sessionId);
+      tick();
+      running.appendMessage(userRow("start a long task", clock));
+      tick();
+      running.appendMessage(assistantRow("working on it", clock));
+      tick();
+      SessionManager.open(transcriptPath).appendCustomEntry(
+        PROMPT_KEY_CUSTOM_TYPE,
+        buildPromptKeyMarker({ idempotencyKey: "key-steer", sessionKey: SESSION_KEY, ts: clock }),
+      );
+      tick();
+      // A keyed user row, as appendUserMessageToSessionTranscript writes it: pi's type has no key.
+      SessionManager.open(transcriptPath).appendMessage({
+        ...userRow("stop the process for now", clock),
+        idempotencyKey: "key-steer",
+      } as unknown as AppendMessageArg);
+      tick();
+      running.appendMessage(assistantRow("still working", clock));
+      tick();
+      running.appendMessage({
+        ...userRow("stop the process for now", clock),
+        ...(injectedKey ? { idempotencyKey: injectedKey } : {}),
+      } as unknown as AppendMessageArg);
+      tick();
+      running.appendMessage(assistantRow("stopped", clock));
+      return readSessionMessages(sessionId, path.join(dir, "sessions.json"), transcriptPath).filter(
+        (row) =>
+          (row as { role?: unknown }).role === "user" &&
+          JSON.stringify((row as { content?: unknown }).content).includes("stop the process"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("a steered row persisted with its prompt's key is served once", async () => {
+    const rows = await steeredPromptRows("sess-steer-keyed", "key-steer");
+    expect(rows.map(keyOf)).toEqual(["key-steer"]);
+  });
+
+  it("CONTROL: pi's unkeyed steered row is served beside the stranded keyed copy", async () => {
+    const rows = await steeredPromptRows("sess-steer-unkeyed", undefined);
+    expect(rows).toHaveLength(2);
   });
 
   // WHY the runner writes after prepareSessionManagerForRun and not at SessionManager.open: on a
@@ -664,5 +747,59 @@ describe("appendMissingPromptKeyMarkers (the runner's write)", () => {
     expect(
       appendMissingPromptKeyMarkers(sm, { promptKeys: ["key-a", "key-b"], sessionKey: "s", ts: 1 }),
     ).toEqual({ ok: false, appended: ["key-a"], error: boom });
+  });
+});
+
+// FORK 2026-10-05 (bug-log `failover-reprompt`): the claim a retry continues from. Plain branch
+// entries in root-to-leaf order, as SessionManager.getBranch() returns them.
+describe("findPromptRowClaimedOnBranch (the prompt row a retry continues from)", () => {
+  const markerEntry = (key: string) => ({
+    type: "custom",
+    customType: PROMPT_KEY_CUSTOM_TYPE,
+    id: `m-${key}`,
+    data: buildPromptKeyMarker({ idempotencyKey: key, sessionKey: "agent:main:tinker:x", ts: 1 }),
+  });
+  const userEntry = (id: string) => ({ type: "message", id, message: user("same words") });
+  const answerEntry = (id: string) => ({ type: "message", id, message: assistant("an answer") });
+
+  it("claims the first user row after the run's marker", () => {
+    const branch = [userEntry("u0"), answerEntry("a0"), markerEntry("k1"), userEntry("u1")];
+    expect(findPromptRowClaimedOnBranch(branch, ["k1"])).toEqual({
+      entryId: "u1",
+      idempotencyKey: "k1",
+    });
+  });
+
+  it("claims nothing without the marker, without a row after it, or without keys", () => {
+    expect(findPromptRowClaimedOnBranch([userEntry("u0")], ["k1"])).toBeUndefined();
+    expect(
+      findPromptRowClaimedOnBranch([userEntry("u0"), markerEntry("k1")], ["k1"]),
+    ).toBeUndefined();
+    expect(findPromptRowClaimedOnBranch([markerEntry("k1"), userEntry("u1")], [])).toBeUndefined();
+    expect(
+      findPromptRowClaimedOnBranch([markerEntry("k1"), userEntry("u1")], undefined),
+    ).toBeUndefined();
+  });
+
+  it("another prompt's marker closes the claim: a turn that died before its row never reaches forward", () => {
+    const branch = [markerEntry("k1"), markerEntry("k2"), userEntry("u2")];
+    expect(findPromptRowClaimedOnBranch(branch, ["k1"])).toBeUndefined();
+  });
+
+  it("identity, not text: the same words under a new key are a new prompt", () => {
+    const branch = [
+      markerEntry("k1"),
+      userEntry("u1"),
+      answerEntry("a1"),
+      markerEntry("k2"),
+      userEntry("u2"),
+    ];
+    expect(findPromptRowClaimedOnBranch(branch, ["k1"])?.entryId).toBe("u1");
+    expect(findPromptRowClaimedOnBranch(branch, ["k2"])?.entryId).toBe("u2");
+  });
+
+  it("a compaction after the row keeps the prompt path", () => {
+    const branch = [markerEntry("k1"), userEntry("u1"), { type: "compaction", id: "c1" }];
+    expect(findPromptRowClaimedOnBranch(branch, ["k1"])).toBeUndefined();
   });
 });

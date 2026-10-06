@@ -965,6 +965,24 @@ describe("app.ts: a tab holding only live rows still gets its history", () => {
       /if \(ts\.messages\.length > 0 && !pageHoldsServerRows\(ts\.messages\)\) \{\s*\n\s*const written = writeHistoryAroundLooseRows\(ts\.messages, incoming\);/,
     );
   });
+
+  // FORK 2026-10-05 (bug-log busy-tab-history-and-eeg) — a scroll to the top pages back while the
+  // session runs: the live-run gate silently refused it, and AcmeVision's turns run 30-45 min.
+  it("a scroll-back older page is not gated on a live run; only a hole fill is", () => {
+    const older = body("async function loadOlderPage(");
+    expect(older).toContain("const liveRunGate = fill !== undefined;");
+    expect(older).not.toMatch(
+      /\|\|\s*transcriptWriterLive\(\)\s*\|\|\s*viewedSessionBusy\(\)\s*\)/,
+    );
+    expect(older).toContain('pane?.classList.add("archive-loading");');
+  });
+
+  it("the EEG backfill runs for a live session and never clears a richer or live store", () => {
+    const eeg = body("function backfillEegFromAnatomy(");
+    expect(eeg.slice(0, 1500)).not.toMatch(/if \(sessionIsBusy\(eegSk\)[^\n]*\{\s*\n\s*return;/);
+    expect(eeg).toMatch(/if \(!olderOnly\) \{\s*\n\s*store\.clear\(\);/);
+    expect(eeg).toContain("&fields=eeg");
+  });
 });
 
 // FORK 2026-10-02 (the architect: "The parallel worker's chat history seems to not be loading") — a session

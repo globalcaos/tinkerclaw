@@ -94,8 +94,31 @@ def meminfo():
     return m
 
 
+def jetson_gpu():
+    """A Jetson's GPU from sysfs: load in per mille, temperature from the gpu thermal zone. JetPack 6
+    ships an nvidia-smi that answers [N/A] for both, so this is read first (Orin NX on 2026-10-05)."""
+    paths = (glob.glob("/sys/devices/gpu.0/load") + glob.glob("/sys/devices/platform/gpu.0/load")
+             + glob.glob("/sys/devices/platform/*/17000000.*/load") + glob.glob("/sys/devices/platform/17000000.*/load"))
+    for p in paths:
+        v = read(p)
+        if v and v.strip().isdigit():
+            temp = None
+            for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+                if "gpu" in (read(z + "/type") or "").lower():
+                    t = read(z + "/temp")
+                    if t and t.strip().lstrip("-").isdigit():
+                        temp = int(t) / 1000.0
+                        break
+            return {"name": "Jetson GPU (shares RAM)", "util": int(v) / 10.0, "mem_used": None,
+                    "mem_total": None, "temp": temp, "ours_mem": None}
+    return None
+
+
 def gpus(ours):
     out = []
+    j = jetson_gpu()
+    if j:
+        return [j]
     q = sh(["nvidia-smi", "--query-gpu=uuid,name,utilization.gpu,memory.used,memory.total,temperature.gpu",
             "--format=csv,noheader,nounits"])
     if q:
@@ -113,11 +136,6 @@ def gpus(ours):
                         "mem_total": (num(f[4]) or 0) * 2 ** 20, "temp": num(f[5]),
                         "ours_mem": apps.get(f[0], 0) * 2 ** 20})
         return out
-    for p in glob.glob("/sys/devices/gpu.0/load") + glob.glob("/sys/devices/platform/gpu.0/load"):
-        v = read(p)  # Jetson: per mille, memory shared with RAM
-        if v and v.strip().isdigit():
-            return [{"name": "Jetson GPU (shares RAM)", "util": int(v) / 10.0, "mem_used": None,
-                     "mem_total": None, "temp": None, "ours_mem": None}]
     return out
 
 
@@ -220,7 +238,7 @@ def main():
     dirs = [os.path.realpath(os.path.expanduser(d)) for d in spec.get("dirs") or []]
     ours = set(our_pids(dirs)) if dirs else set()
     pmon = None
-    if ours and os.path.exists("/usr/bin/nvidia-smi"):
+    if ours and os.path.exists("/usr/bin/nvidia-smi") and not jetson_gpu():
         try:
             pmon = subprocess.Popen(["nvidia-smi", "pmon", "-c", "1", "-s", "u"], stdout=subprocess.PIPE,
                                     stderr=subprocess.DEVNULL, universal_newlines=True)

@@ -693,6 +693,76 @@ describe("chat.history seq cursors", () => {
     );
   });
 
+  // FORK 2026-10-05 — a slice served a prompt's claude-cli copy whose local row sat outside the
+  // slice: the merge paired imports only against the slice's own local rows. The page drew the
+  // prompt twice until a refresh read the whole store (bug-log `cursor-slice-prompt-twin`).
+  describe("a cursor slice never serves a prompt's claude-cli copy beside the prompt", () => {
+    const appendRow = (role: "user" | "assistant", text: string, atMs: number) =>
+      fs.appendFileSync(fx.transcriptPath, `${JSON.stringify(messageEntry(role, text, atMs))}\n`);
+    const appendCliPrompt = (uuid: string, text: string, atMs: number) =>
+      fs.appendFileSync(
+        fx.claudeTranscriptPath,
+        `${JSON.stringify({
+          type: "user",
+          uuid,
+          timestamp: new Date(BASE_MS + atMs).toISOString(),
+          message: {
+            role: "user",
+            content: `${text}\n\n<!-- TINKERCLAW chat-row contract -->\nnarrate`,
+          },
+        })}\n`,
+      );
+    const prompt = "q6: a prompt long enough that the merge pairs its claude-cli copy by text";
+    const copiesOf = (rows: Array<Record<string, unknown>>, text: string) =>
+      rows.filter((m) => m.role === "user" && textOf(m).startsWith(text));
+    const t0 = 10 * 60_000;
+
+    it("a delta anchored at the prompt itself", async () => {
+      seedTurns(5);
+      appendRow("user", prompt, t0); // row 11
+      writeStore({ cliSessionBindings: { "claude-cli": { sessionId: CLI_SESSION_ID } } });
+      const first = await history({});
+      expect(first.cursor.lastSeq).toBe(11); // the page now holds the prompt
+      appendCliPrompt("cli-q6", prompt, t0 + 50);
+      appendRow("assistant", "a6", t0 + 5_000); // row 12
+
+      const delta = await history({ afterSeq: 11, epoch: first.cursor.epoch });
+      expect(delta.cursor).toMatchObject({ reset: false, firstSeq: 12, lastSeq: 12 });
+      expect(copiesOf(delta.messages, prompt)).toHaveLength(0);
+      expect(copiesOf((await history({ limit: 1000 })).messages, prompt)).toHaveLength(1);
+    });
+
+    it("a prompt sent during a turn, which the CLI records only when the turn ends", async () => {
+      seedTurns(5);
+      appendRow("user", "q6 starts a long turn", t0); // row 11
+      appendRow("user", prompt, t0 + 20_000); // row 12, sent while row 11's turn runs
+      appendRow("assistant", "a6", t0 + 90_000); // row 13
+      writeStore({ cliSessionBindings: { "claude-cli": { sessionId: CLI_SESSION_ID } } });
+      const first = await history({});
+      expect(first.cursor.lastSeq).toBe(13);
+      appendCliPrompt("cli-q7", prompt, t0 + 95_000); // delivered after a6
+      appendRow("assistant", "a7", t0 + 120_000); // row 14
+
+      const delta = await history({ afterSeq: 13, epoch: first.cursor.epoch });
+      expect(delta.messages.filter((m) => !isImported(m)).map(seqOf)).toEqual([14]);
+      expect(copiesOf(delta.messages, prompt)).toHaveLength(0);
+      expect(copiesOf((await history({ limit: 1000 })).messages, prompt)).toHaveLength(1);
+    });
+
+    it("a CLI-only prompt with no local row is still served by the delta", async () => {
+      seedTurns(5);
+      writeStore({ cliSessionBindings: { "claude-cli": { sessionId: CLI_SESSION_ID } } });
+      const first = await history({});
+      appendCliPrompt("cli-only", "a prompt only the claude-cli transcript holds, long text", t0);
+      appendRow("assistant", "a6", t0 + 5_000);
+
+      const delta = await history({ afterSeq: first.cursor.lastSeq, epoch: first.cursor.epoch });
+      expect(
+        copiesOf(delta.messages, "a prompt only the claude-cli transcript holds"),
+      ).toHaveLength(1);
+    });
+  });
+
   describe("a tool loop longer than the merge's 15-minute prehistory grace", () => {
     // Task 5 review, fix round 1. The import merge drops imports older than its earliest LOCAL
     // row minus 15 minutes (cli-session-history.merge.ts, layer 1). A slice starts later than the

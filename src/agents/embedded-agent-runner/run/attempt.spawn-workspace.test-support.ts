@@ -682,6 +682,8 @@ export type MutableSession = {
     streamFn?: unknown;
     transport?: string;
     reset: () => void;
+    /** pi-agent-core Agent.continue(): resumes the loop from the transcript, no prompt. */
+    continue: () => Promise<void>;
     state: {
       messages: unknown[];
       systemPrompt?: string;
@@ -804,6 +806,12 @@ export function createDefaultEmbeddedSession(params?: {
       reset: () => {
         session.messages = [];
       },
+      continue: vi.fn(async () => {
+        session.messages = [
+          ...session.messages,
+          { role: "assistant", content: "continued", timestamp: 3 },
+        ];
+      }),
       state: {
         get messages() {
           return session.messages;

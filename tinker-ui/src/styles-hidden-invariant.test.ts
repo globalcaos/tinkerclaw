@@ -37,6 +37,8 @@ const HIDDEN_TOGGLED_CONTAINERS = [
   ".msg-phase-plugins",
   // FORK 2026-10-05 — the Gantt tab's chart pane (gantt-tab.ts), display:flex when shown.
   ".gantt-view",
+  // FORK 2026-10-06 — the chat history loading indicator (history-loading.ts), inline-flex.
+  ".history-loading",
 ] as const;
 
 /** Strip comments so a selector quoted inside a warning note cannot satisfy the assertion. */

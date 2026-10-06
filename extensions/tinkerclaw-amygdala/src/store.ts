@@ -8,6 +8,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
+import type { Explanation, ExplanationEvent, ExplanationRow } from "./explain.js";
+import type { Review, ReviewReportRow, ReviewRow } from "./review.js";
 import { SCHEMA_SQL, SCHEMA_VERSION } from "./schema.js";
 import type {
   Change,
@@ -73,6 +75,184 @@ export class AmygdalaStore {
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS seen_counts(key TEXT PRIMARY KEY, n INTEGER NOT NULL, last_ts INTEGER NOT NULL)",
     );
+    // Added 2026-10-05 for the WOULD HAVE explainer, the same way. `agreed` records whether the owner's vote matched the
+    // explainer's suggestion, so its pull on his labels can be measured.
+    this.db.exec(
+      "CREATE TABLE IF NOT EXISTS explanations(decision_id TEXT PRIMARY KEY, session TEXT NOT NULL, turn_id TEXT NOT NULL, ts INTEGER NOT NULL, status TEXT NOT NULL, model TEXT, body_json TEXT, error TEXT, vote INTEGER, agreed INTEGER, vote_ts INTEGER)",
+    );
+    this.db.exec("CREATE INDEX IF NOT EXISTS explanations_ts ON explanations(ts)");
+    // Added 2026-10-06: Grok's after-the-fact verdict on whether a flag would have helped (see review.ts).
+    this.db.exec(
+      "CREATE TABLE IF NOT EXISTS reviews(decision_id TEXT PRIMARY KEY, session TEXT NOT NULL, turn_id TEXT NOT NULL, ts INTEGER NOT NULL, status TEXT NOT NULL, model TEXT, verdict TEXT, body_json TEXT, error TEXT)",
+    );
+    this.db.exec("CREATE INDEX IF NOT EXISTS reviews_ts ON reviews(ts)");
+    // Added 2026-10-06, the same way. The feed (feed.ts) reads a decision's verdicts by situation, up
+    // to 400 times per call, and the spend sums read verdicts by time; neither had an index, so each
+    // lookup scanned the whole table (live store, 166,865 rows: 20.4 ms a lookup, ~7 s a feed, two
+    // feeds per Tinker page load, on the gateway's one event loop). With v_sit the 400 lookups took
+    // 2.6 ms on a copy of the live columns. Built once, on the first open after the upgrade.
+    this.db.exec("CREATE INDEX IF NOT EXISTS v_sit ON verdicts(situation_id, ts)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS v_ts ON verdicts(ts)");
+  }
+
+  saveReview(r: ReviewRow): void {
+    this.db
+      .prepare(
+        "INSERT INTO reviews(decision_id, session, turn_id, ts, status, model, verdict, body_json, error) VALUES (?,?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(decision_id) DO UPDATE SET status = excluded.status, model = excluded.model, verdict = excluded.verdict, body_json = excluded.body_json, error = excluded.error",
+      )
+      .run(
+        r.decisionId,
+        r.sessionKey,
+        r.turnId,
+        r.ts,
+        r.status,
+        r.model ?? null,
+        r.review?.verdict ?? null,
+        r.review ? json(r.review) : null,
+        r.error ?? null,
+      );
+  }
+
+  hasReview(decisionId: string): boolean {
+    return !!this.db
+      .prepare("SELECT 1 FROM reviews WHERE decision_id = ? AND status = 'done'")
+      .get(decisionId);
+  }
+
+  /** Reviews since `since` (newest first), for the report. */
+  reviewsSince(since: number, limit = 200): ReviewRow[] {
+    return (
+      this.db
+        .prepare("SELECT * FROM reviews WHERE ts >= ? ORDER BY ts DESC LIMIT ?")
+        .all(since, limit) as Row[]
+    ).map((r) => ({
+      decisionId: r.decision_id as string,
+      sessionKey: r.session as string,
+      turnId: r.turn_id as string,
+      ts: r.ts as number,
+      status: r.status as ReviewRow["status"],
+      ...(r.model ? { model: r.model as string } : {}),
+      ...(r.body_json ? { review: parse<Review>(r.body_json) } : {}),
+      ...(r.error ? { error: r.error as string } : {}),
+    }));
+  }
+
+  /** The decisions of one turn that changed (or would have changed) something, oldest first. */
+  flaggedDecisionsForTurn(turnId: string): DecisionRow[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT d.* FROM decisions d JOIN situations s ON s.id = d.situation_id WHERE s.turn_id = ? AND d.kind != 'proceed' ORDER BY d.ts, d.rowid",
+        )
+        .all(turnId) as Row[]
+    ).map((r) => this.decisionFromRow(r));
+  }
+
+  /**
+   * What the reviews say, per rule: how many flags each family/response/rule raised since `since`, how Grok judged
+   * them, and how the owner voted on them. The evidence for tightening a question or dropping an injection.
+   */
+  reviewReport(since: number): ReviewReportRow[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT d.family AS family, d.kind AS kind,
+                  CASE WHEN instr(d.reason_code, '[') > 0 THEN substr(d.reason_code, 1, instr(d.reason_code, '[') - 1) ELSE d.reason_code END AS rule,
+                  COUNT(*) AS n,
+                  SUM(r.verdict = 'useful') AS useful, SUM(r.verdict = 'harmless') AS harmless,
+                  SUM(r.verdict = 'noise') AS noise, SUM(r.verdict = 'harmful') AS harmful,
+                  SUM(EXISTS(SELECT 1 FROM labels l WHERE l.target_id = d.id AND l.kind = 'useful' AND l.value = 1)) AS up,
+                  SUM(EXISTS(SELECT 1 FROM labels l WHERE l.target_id = d.id AND l.kind = 'useful' AND l.value = -1)) AS down
+           FROM reviews r JOIN decisions d ON d.id = r.decision_id
+           WHERE r.status = 'done' AND r.ts >= ?
+           GROUP BY d.family, d.kind, rule ORDER BY n DESC`,
+        )
+        .all(since) as Row[]
+    ).map((r) => ({
+      family: r.family as string,
+      kind: r.kind as string,
+      rule: r.rule as string,
+      n: r.n as number,
+      useful: (r.useful as number) ?? 0,
+      harmless: (r.harmless as number) ?? 0,
+      noise: (r.noise as number) ?? 0,
+      harmful: (r.harmful as number) ?? 0,
+      ownerUp: (r.up as number) ?? 0,
+      ownerDown: (r.down as number) ?? 0,
+    }));
+  }
+
+  /** Insert or replace an explanation's state; a vote already given is kept. */
+  saveExplanation(e: ExplanationEvent): void {
+    this.db
+      .prepare(
+        "INSERT INTO explanations(decision_id, session, turn_id, ts, status, model, body_json, error) VALUES (?,?,?,?,?,?,?,?) " +
+          "ON CONFLICT(decision_id) DO UPDATE SET status = excluded.status, model = excluded.model, body_json = excluded.body_json, error = excluded.error",
+      )
+      .run(
+        e.decisionId,
+        e.sessionKey,
+        e.turnId,
+        e.ts,
+        e.status,
+        e.model ?? null,
+        e.explanation ? json(e.explanation) : null,
+        e.error ?? null,
+      );
+  }
+
+  private explanationRow(r: Row, staleBefore?: number): ExplanationRow {
+    const stale =
+      r.status === "pending" && staleBefore !== undefined && (r.ts as number) < staleBefore;
+    return {
+      decisionId: r.decision_id as string,
+      sessionKey: r.session as string,
+      turnId: r.turn_id as string,
+      ts: r.ts as number,
+      status: stale ? "failed" : (r.status as ExplanationEvent["status"]),
+      ...(r.model ? { model: r.model as string } : {}),
+      ...(r.body_json ? { explanation: parse<Explanation>(r.body_json) } : {}),
+      ...(stale
+        ? { error: "never finished (the gateway restarted?)" }
+        : r.error
+          ? { error: r.error as string }
+          : {}),
+      ...(r.vote === 1 || r.vote === -1 ? { vote: r.vote as 1 | -1, agreed: r.agreed === 1 } : {}),
+    };
+  }
+
+  getExplanation(decisionId: string): ExplanationRow | undefined {
+    const r = this.db
+      .prepare("SELECT * FROM explanations WHERE decision_id = ?")
+      .get(decisionId) as Row | undefined;
+    return r ? this.explanationRow(r) : undefined;
+  }
+
+  /** Explanations since `since`; a row still pending before `staleBefore` reads as failed. */
+  explanationsSince(
+    since: number,
+    o: { sessionKey?: string; staleBefore?: number } = {},
+  ): ExplanationRow[] {
+    const rows = (
+      o.sessionKey
+        ? this.db
+            .prepare("SELECT * FROM explanations WHERE ts >= ? AND session = ? ORDER BY ts")
+            .all(since, o.sessionKey)
+        : this.db.prepare("SELECT * FROM explanations WHERE ts >= ? ORDER BY ts").all(since)
+    ) as Row[];
+    return rows.map((r) => this.explanationRow(r, o.staleBefore));
+  }
+
+  /** The owner voted on an explained decision: keep the vote and whether it matched the suggestion. */
+  noteExplanationVote(decisionId: string, vote: 1 | -1, ts: number): ExplanationRow | undefined {
+    const e = this.getExplanation(decisionId);
+    if (!e) return undefined;
+    const agreed = e.explanation ? e.explanation.suggest === vote : null;
+    this.db
+      .prepare("UPDATE explanations SET vote = ?, agreed = ?, vote_ts = ? WHERE decision_id = ?")
+      .run(vote, agreed === null ? null : agreed ? 1 : 0, ts, decisionId);
+    return this.getExplanation(decisionId);
   }
 
   /** How many times `key` was seen before this call, then counts this sighting. */

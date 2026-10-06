@@ -457,26 +457,97 @@ body {
   gap: 4px;
 }
 
-/* FORK 2026-10-02 — a reset archive is being read (app.ts loadResetArchivePage; a first read can
-   take tens of seconds). Zero height and a margin that cancels the flex gap, so showing it moves no
-   row; sticky, so it stays at the top of the pane while he waits there. */
-.messages.archive-loading::before {
-  content: "↺ Loading earlier turns…";
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  height: 22px;
-  /* its own height plus the flex gap: it overlays the first row instead of pushing it */
-  margin-bottom: -26px;
-  align-self: center;
+/* FORK 2026-10-02 — a reset archive or an older page is being read: app.ts sets
+   .messages.archive-loading for it. FORK 2026-10-06 — the class is now the state flag only (tests and
+   the e2e drivers read it); the static "↺ Loading earlier turns…" text it drew is replaced by the
+   moving indicator below, which also covers the first load and a reload. */
+
+/* FORK 2026-10-06 (the architect: "make sure there are 'loading...' indicators when loading the chat
+   history, indicators that have some movement so the user understands there is something turning.
+   Also, use the loading indicator for when we scroll backwards"). history-loading.ts decides what
+   it says and where; app.ts places it over the messages pane (top for a scroll back, centred on an
+   empty page, bottom over a page with rows). A static host in .chat-area, never inside #messages,
+   so the keyed renderer never meets it; pointer-events off, so it covers nothing he can click. */
+.chat-area > .history-loading {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 14px;
   white-space: nowrap;
   font-size: 12px;
-  line-height: 22px;
-  padding: 0 12px;
-  border-radius: 11px;
-  color: var(--muted, #666);
-  background: var(--bg, #fff);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  color: #f0c878;
+  background: rgba(32, 24, 17, 0.92);
+  border: 1px solid rgba(217, 119, 87, 0.5);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.history-loading[hidden] {
+  display: none;
+}
+.chat-area > .history-loading[data-place="center"] {
+  height: 34px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+.history-loading .hl-spinner {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid rgba(217, 119, 87, 0.25);
+  border-top-color: #d97757;
+  animation: hl-spin 0.8s linear infinite;
+}
+.history-loading .hl-dots {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: -5px;
+}
+.history-loading .hl-dots i {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: hl-dot 1.2s ease-in-out infinite;
+}
+.history-loading .hl-dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.history-loading .hl-dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes hl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes hl-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+/* Still moving, just slower and without the bounce. */
+@media (prefers-reduced-motion: reduce) {
+  .history-loading .hl-spinner {
+    animation-duration: 2.4s;
+  }
+  .history-loading .hl-dots i {
+    animation: none;
+    opacity: 0.7;
+  }
 }
 
 /* FORK 2026-09-07 — the configured agent name, in the topbar beside the wooden logo.
@@ -8829,6 +8900,25 @@ body.tab-chain-picking #tab-bar-scroll .tab:not(.tab-chain-master-picking):hover
   white-space: nowrap;
 }
 
+/* FORK 2026-10-06 (Broca retrieval v2, phase E) — the advice line under a prompt: `Use: … · Inspiration: … (§ section) · source: Jev`.
+   It is the owner's view of the ranked list the agent was given, and it must never read as a message: no bubble, no fill, no
+   border, no button; muted 11px text on the woody chat, centred under the chips like them. A line that is long wraps; it never
+   widens the row. */
+.msg-advice-line {
+  align-self: center;
+  max-width: 100%;
+  margin: 0 0 6px;
+  padding: 0 10px;
+  color: rgba(244, 241, 222, 0.62);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.msg-advice-line-text::before {
+  content: "\1F4A1\00a0";
+}
+
 /* FORK 2026-06-04 — Exec-mode Pulse presence graphs (grouped multi-line + axes). */
 .pg-chart {
   margin: 8px 0 12px;
@@ -12555,3 +12645,37 @@ td.sd-sorted {
   font-size: 11px;
   white-space: nowrap;
 }
+
+/* FORK 2026-10-06 — multi-user mode (hive door): owner headers in the admin's chat list and the
+   USERS panel at the bottom of the right rail. Hidden in single-user mode. */
+.session-owner-head {
+  margin: 8px 6px 2px;
+  padding: 2px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+#hive-users-body { padding: 6px 8px 10px; font-size: 12px; }
+.hive-add { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+.hive-add input[name="name"] { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; font-size: 12px; }
+.hive-add-admin { display: flex; gap: 3px; align-items: center; color: var(--muted); font-size: 11px; }
+.hive-person { padding: 6px 4px; border-top: 1px solid var(--border); }
+.hive-person--off { opacity: 0.6; }
+.hive-person-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.hive-person-meta { color: var(--muted); font-size: 10.5px; margin: 2px 0 4px; }
+.hive-person-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.hive-btn { font-size: 10.5px; padding: 2px 7px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.hive-btn:hover { border-color: var(--accent); }
+.hive-btn--primary { border-color: var(--accent); }
+.hive-chip { font-size: 9.5px; padding: 0 5px; border-radius: 8px; border: 1px solid var(--border); }
+.hive-chip--ok { color: var(--green); border-color: var(--green); }
+.hive-chip--off { color: var(--red); border-color: var(--red); }
+.hive-chip--admin { color: var(--accent); border-color: var(--accent); }
+.hive-you { color: var(--muted); font-size: 10px; }
+.hive-reveal { border: 1px solid var(--accent); border-radius: 6px; padding: 6px; margin-bottom: 8px; }
+.hive-token { display: block; margin: 4px 0; padding: 4px; word-break: break-all; font-size: 11px; user-select: all; }
+.hive-note { color: var(--muted); margin-bottom: 6px; }
+.hive-note--err { color: var(--red); }

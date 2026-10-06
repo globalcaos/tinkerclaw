@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseConfig } from "../src/config.js";
+import type { RunOnce } from "../src/explain.js";
 import type { Family } from "../src/families/types.js";
 import type { JevTransport } from "../src/jev.js";
 import { createRuntime, type Runtime } from "../src/runtime.js";
@@ -40,6 +41,7 @@ interface Opts {
   /** Share another runtime's data folder (the gateway can register the plugin twice in one process). */
   dataDir?: string;
   enforceFamilies?: string[];
+  explainRun?: RunOnce;
 }
 
 function make(o: Opts = {}) {
@@ -70,6 +72,8 @@ function make(o: Opts = {}) {
     now: () => state.t,
     logger: { info() {}, warn() {}, error() {} },
     families: o.families ?? [],
+    explainRun: o.explainRun,
+    explainDelayMs: 0,
   });
   runtimes.push(rt);
   return { rt, root, dataDir, v31Path, state, events };
@@ -508,5 +512,151 @@ describe("runtime: personality notes reach the next hook while the rest stays in
     const r = await rt.decide("post-tool", hook, "agent:main:tinker:t");
     expect(r.hook.kind).toBe("none");
     expect(rt.takeNotes("agent:main:tinker:t")).toEqual([]);
+  });
+});
+
+describe("usefulness review (2026-10-06)", () => {
+  const noter: Family = {
+    id: "safety",
+    questionsFor: () => [],
+    decide: (seam) =>
+      seam === "pre-tool"
+        ? {
+            response: {
+              kind: "note",
+              templateId: "relevant-fact",
+              slots: { fact: "this file is not in a scratch area" },
+              channel: "additionalContext",
+            },
+            drivers: ["danger-level"],
+            reasonCode: "table-d2-low",
+          }
+        : null,
+  };
+  const REVIEW = JSON.stringify({
+    verdict: "noise",
+    reason: "The agent was cleaning its own file; nothing could go wrong.",
+    fix: "Treat files the agent created this task as scratch.",
+    confidence: "high",
+  });
+  const EXPLAIN = JSON.stringify({
+    doing: "a",
+    jev: "b",
+    risk: "low",
+    suggest: "wrong",
+    replies: [],
+  });
+
+  it("a turn that ends reviews each flag it raised, once, from what the agent did next", async () => {
+    const prompts: string[] = [];
+    const explainRun: RunOnce = async (p) => {
+      prompts.push(p);
+      return p.includes("review flags") ? REVIEW : EXPLAIN;
+    };
+    const { rt, root } = make({ families: [noter], explainRun });
+    rt.start();
+    const transcript = join(root, "t.jsonl");
+    const t0 = 1_700_000_000_000;
+    const line = (type: string, content: unknown, ts: number) =>
+      JSON.stringify({ type, timestamp: new Date(ts).toISOString(), message: { content } });
+    writeFileSync(
+      transcript,
+      [
+        line(
+          "assistant",
+          [{ type: "tool_use", id: "x1", name: "Bash", input: { command: "rm -f /tmp/mine.txt" } }],
+          t0 + 1000,
+        ),
+        line("user", [{ type: "tool_result", tool_use_id: "x1" }], t0 + 1500),
+        line(
+          "assistant",
+          [{ type: "tool_use", id: "x2", name: "Bash", input: { command: "ls /tmp" } }],
+          t0 + 2000,
+        ),
+      ].join("\n") + "\n",
+    );
+    await rt.decide("prompt", { session_id: "s", prompt: "clean up my test file" }, "tab");
+    await rt.decide(
+      "pre-tool",
+      {
+        session_id: "s",
+        tool_name: "Bash",
+        tool_input: { command: "rm -f /tmp/mine.txt" },
+        tool_use_id: "x1",
+        transcript_path: transcript,
+      },
+      "tab",
+    );
+    await rt.decide(
+      "stop",
+      {
+        session_id: "s",
+        last_assistant_message: "Done, the file is gone.",
+        transcript_path: transcript,
+      },
+      "tab",
+    );
+    const deadline = Date.now() + 3000;
+    let report = rt.reviewReport(0);
+    while (report.recent.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+      report = rt.reviewReport(0);
+    }
+    expect(report.recent).toHaveLength(1);
+    expect(report.recent[0]).toMatchObject({
+      status: "done",
+      model: "xai/grok-4.6",
+      review: { verdict: "noise", sawOutcome: true },
+    });
+    expect(report.rules).toEqual([
+      {
+        family: "safety",
+        kind: "note",
+        rule: "table-d2-low",
+        n: 1,
+        useful: 0,
+        harmless: 0,
+        noise: 1,
+        harmful: 0,
+        ownerUp: 0,
+        ownerDown: 0,
+      },
+    ]);
+    const asked = prompts.find((p) => p.includes("review flags"))!;
+    expect(asked).toContain("this file is not in a scratch area");
+    expect(asked).toContain("Done, the file is gone.");
+    expect(asked).toContain("ls /tmp");
+    // The same turn ending again does not review the flag twice.
+    await rt.decide(
+      "stop",
+      { session_id: "s", last_assistant_message: "Done.", transcript_path: transcript },
+      "tab",
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    expect(prompts.filter((p) => p.includes("review flags"))).toHaveLength(1);
+  });
+
+  it("the reviewer's own one-shots (temp:*) are never reviewed", async () => {
+    const prompts: string[] = [];
+    const { rt } = make({
+      families: [noter],
+      explainRun: async (p) => {
+        prompts.push(p);
+        return REVIEW;
+      },
+    });
+    rt.start();
+    await rt.decide(
+      "pre-tool",
+      { session_id: "temp:jev-explain", tool_name: "Bash", tool_input: { command: "ls" } },
+      "temp:jev-explain",
+    );
+    await rt.decide(
+      "stop",
+      { session_id: "temp:jev-explain", last_assistant_message: "x" },
+      "temp:jev-explain",
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    expect(prompts).toEqual([]);
   });
 });

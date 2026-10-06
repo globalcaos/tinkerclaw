@@ -85,7 +85,7 @@ catches what a builder misses at the edges of the live system, and keeps the rec
 
 ### 0. Pair the tabs and write the charter
 
-**Done when:** `loop-partner.mjs` returns `role: master` for this tab, and a charter exists in `charter_dir`.
+**Done when:** `loop-partner.mjs` returns `role: master` for this tab, a charter exists in `charter_dir`, and `charter_dir/gantt.json` exists with the phases and the real times so far and has been rendered once (`gantt.py render`), so the principal's Gantt tab is attached BEFORE the first send. A first send with no plan file shows him nothing.
 
 The principal chains the two tabs in the Tinker UI (right-click a tab, **Set conversation slave**). Resolve the
 worker's session key with `loop-partner.mjs` (see `adversarial-review-loop` Step 0); never guess from titles.
@@ -120,7 +120,8 @@ break them.
 ### 2. Send a phase, then end the turn
 
 **Done when:** the Gantt is drawn and looked at, the watcher is armed, the turn file is sent, the worker is
-running exactly one process, the Gantt block is in the reply, and the master either works the parallel track
+running exactly one process, the Gantt is where the principal watches it (in Tinker the master's Gantt tab, not
+the reply; on other channels the PNG in the reply), and the master either works the parallel track
 below or has ended its turn.
 
 Write the turn file in `charter_dir/turns/<nn>-<phase>.md`: corrections from the last review first, then the
@@ -161,8 +162,11 @@ In `charter_dir/gantt.json`, add the workflow ids the worker ran since the last 
 the phase you are about to send `"status": "next"`, and keep the estimates of the phases after it current.
 Then `python3 ~/src/tinkerclaw/skills/build-gantt/scripts/gantt.py derive charter_dir/gantt.json` and
 `… render charter_dir/gantt.json --png /tmp/<build>-gantt.png > /tmp/<build>-gantt.block.md`. Look at the
-PNG. The block goes into this turn's reply to the principal, every phase, never a bare progress bar. In
-Tinker the reply is the turn's last text block, so it lands in the same turn as the send. A plan without
+PNG. In Tinker, `render` gives the master's chat its Gantt tab, which redraws itself every 15 s and, with
+`worker_prompt_has` in the plan, picks up the worker's new workflows while the turn runs: the block does NOT
+go into the reply (the principal, 2026-10-05 20:31: "No need to show me the gantt here, it should be
+automatically updating the real one"). The reply says in one line where the build stands. On a channel with
+no tab, the PNG goes into the reply, every phase, never a bare progress bar. A plan without
 a `gantt.json` gets one now: conception and spec from the build's own dated files, past phases from their
 workflow ids, the rest as estimates sized on the phases already measured.
 
@@ -238,6 +242,9 @@ the next turn is sent (Step 2) or the loop is stopped.
    provider answers again, unless the principal names a substitute himself. Paid extra usage on the same provider
    is not a limit: keep going. On resume, the first turn re-checks, with that provider, whatever another model
    built in between (2026-10-05). Tell the worker the run limit in the charter, plan turns to end well inside it, and
+   write it into every turn file as clock times computed when you send: report by send + 2 h 30, hard stop by send +
+   2 h 45, the gateway's cut at send + 3 h. The send script refuses a turn file whose `hard stop HH:MM` is more than 2 h 50
+   away or missing. Then
    give it a progress file to write when it has to stop mid-phase at a clean point. That stop includes its own
    Workflow: stop it by id (TaskStop) and check its processes are gone before writing the file. A Workflow lives as
    long as the worker process, not the turn. If one is still running at the wake anyway, the send's unit stop ends
@@ -465,6 +472,21 @@ laptop's. Then:
   laptop under the real stack's free-space floor).
 
 ## Failures Overcome
+
+- **2026-10-05 23:31, AcmeVision 2.0.** Turn 36's file said "report by 00:29; hard stop 00:59", four and a half hours
+  after its 20:29 send. The gateway cut it at three hours, mid-unit, with no status file, and the morning wake had to
+  reconstruct the turn from its reports and branches. The run-limit rule was already in Step 3 as advice ("plan turns
+  to end well inside it") and turn 35 had also set a hard stop past it. Now the deadline is a computed clock time and
+  the send script refuses a turn whose hard stop is past 2 h 50.
+
+- 2026-10-06 (Broca retrieval v2): phases A+B were sent with no `gantt.json`, because Step 2's "draw the Gantt" reads as an update and Step 0 never created the plan. the architect, 06:10: "I don't see any long job progress bar nor a progress indicator." Step 0 now requires the plan and one render before the first send.
+
+- **2026-10-05 20:31, AcmeVision 2.0, the principal: "No need to show me the gantt here, it should be
+  automatically updating the real one, right?"** Step 2 still pasted the chart block into every send's reply,
+  written before the Gantt tab existed. And the tab was only half live: it redrew from the workflow ids the master
+  writes in at its wakes, so turn 36's units were missing from it while they ran. In Tinker the tab is now the
+  chart and the reply carries no block; the plan's `worker_prompt_has` lets the tab pick up the worker's
+  workflows by itself (skill `build-gantt`).
 
 - **2026-10-03 21:02, AcmeVision 2.0.** Turn 29's worker died mid-unit with Claude's weekly limit ("You've hit your
   weekly limit · resets Oct 8, 6pm"). The gateway then started four more Claude workers on the same session, all

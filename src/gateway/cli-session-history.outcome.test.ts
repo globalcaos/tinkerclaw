@@ -165,21 +165,28 @@ describe("claude-cli import — isApiErrorMessage rows become typed outcomes", (
 
     const outcome = outcomeOf(message);
     expect(outcome.kind).toBe("rate_limit");
-    expect(outcome.recoverable).toBe(true);
+    // FORK 2026-10-05: the code names the kind; the prose names the WEEKLY window, which no
+    // retry can outlast (src/shared/usage-window.ts). Marked recoverable, this row re-armed the
+    // client ladder and one prompt was re-sent 169 times on 2026-10-03.
+    expect(outcome.recoverable).toBe(false);
+    expect(outcome.retryAfter).toBeUndefined();
     expect(outcome.headline).toBe("Rate limited");
     expect(outcome.detail).toBe(text);
     expect(outcome.source).toBe("cli");
   });
 
   it("rate_limit: the reset clock is parsed although the prose is not rate-limit-shaped", () => {
+    // A burst limit, which a retry can outlast. (Until 2026-10-05 this fixture read "weekly limit ·
+    // Try again in 30 seconds", a window that cannot clear in 30 s.)
     const [message] = readTranscript("sess-rate-limit-retry", [
       apiErrorLine({
         uuid: "err-retry",
         error: "rate_limit",
-        text: "You've hit your weekly limit · Try again in 30 seconds.",
+        text: "You've hit your limit · Try again in 30 seconds.",
         apiErrorStatus: 429,
       }),
     ]);
+    expect(outcomeOf(message).recoverable).toBe(true);
     expect(outcomeOf(message).retryAfter).toBe(30);
   });
 

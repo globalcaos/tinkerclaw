@@ -7,6 +7,12 @@ last_verified_commit: HEAD
 single_owner: yes — panel-layout facts live here, not in tinker-ui.md. tinker-ui.md owns the visual language (chip styles, fonts, colors); this file owns the SPATIAL contract.
 see_also: tinker-ui.md (visual language, chip families, per-component design), flows.md (event flows that drive panel updates), topology.md (which process renders the UI), ui-persistence.md (which chrome state survives a reload — the collapse/flag/choice store)
 verify:
+  - name: hive door unit tests pass (tokens, forged headers, no gateway secret in the page, WebSocket rewrite, revocation, rate limit)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node --test scripts/hive-door/door.test.mjs
+  - name: hive door multi-user rules pass (own Main, who sees which chat, events, soft vs admin delete, admin API, per-person UI state)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && node --test scripts/hive-door/multiuser.test.mjs
+  - name: multi-user USERS panel sits at the bottom of the right rail, hidden by default, opened only for admins (2026-10-06)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'a=open("tinker-ui/src/app.ts").read(); i=a.find("id=\"amygdala-panel\""); j=a.find("id=\"hive-users-panel\" hidden"); assert i>0 and j>i, "USERS panel missing, not hidden by default, or not after the Amygdala panel"; assert "if (me.admin && panel && body) initHiveUsersPanel" in a, "the USERS panel must open only for admins"'
   - name: single source of truth for "session busy" (FORK 2026-05-16 — chat/sending/sessions/prefrontal must not disagree)
     cmd: python3 -c 'import os,re; t=open(os.path.expanduser("~/src/tinkerclaw/tinker-ui/src/app.ts")).read(); assert "function runBelongsToViewedSession" in t and "function scopedActiveRuns" in t and "function viewedSessionBusy" in t, "the shared busy/scope helpers were removed — the four panels will silently re-diverge (chat stuck on sending, prefrontal idle, sessions thinking)"; assert re.search(r"budgetScope ===\s*.all.\s*&&\s*latestTreeFromExtension", t, re.S), "buildPrefrontalTree no longer gates the extension-tree shortcut on budgetScope===all — the session/all toggle is being ignored by prefrontal again"; assert "if (sending && !viewedSessionBusy())" in t, "the sending pill no longer checks viewedSessionBusy — it will stick on sending forever whenever another tab has a run"'
   - name: every left-nav tab in app.ts is listed in this panel doc's tab matrix
@@ -237,3 +243,11 @@ Future invariants worth adding (defer until first regression):
 - `topology.md` — which process owns the renderer. Does NOT define layout.
 - `ui-persistence.md` — which chrome state (collapse/pressed/choice) survives a reload, and how. Does NOT define visibility.
 - `panels.md` — **this file** — spatial + visibility contract.
+
+## Multi-user mode (hive door, 2026-10-06)
+
+**What it is for:** several people share one agent behind `scripts/hive-door/` (opt-in; off for personal installs). Owner's words: _"Admin should have a specific panel at the right panel at the bottom, to create a new token for a new user, to revoke those tokens, regenerate them or simply delete the user's access."_
+
+- **USERS panel** (`#hive-users-panel`, module `tinker-ui/src/panels/hive-admin.ts`): the last panel of `right-panels`, after Amygdala. Hidden by default. At boot the page asks the door `GET /tinker/door/api/me`; only when the answer says `admin: true` does `initHiveUsersPanel` unhide and fill it. Single-user mode (no door) answers nothing and the panel never shows.
+- **Sessions panel for admins:** the main list keeps open tabs on top in tab order, then groups the remaining chats under owner headers (`.session-owner-head`: Mine, each user by name, Shared (before multi-user), System), from the `hiveOwner*` tags the door adds to `sessions.list` rows (`tinker-ui/src/panels/hive-owner-groups.ts`). Regular users see only their own and shared chats, with no headers.
+- Which chats a person sees at all is decided by the door, not by the page (`scripts/hive-door/acl.mjs`).

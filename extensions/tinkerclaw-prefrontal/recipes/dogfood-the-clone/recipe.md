@@ -49,7 +49,11 @@ model-rank cron runs on the laptop only), and the allowlist `agents.defaults.mod
 laptop stay on the clone, models added on the laptop never arrive; on 2026-10-05 Goku had FEWER
 models and still lacked Opus 5.5), plus the default `agents.defaults.model.primary` and
 `claude --version` on both (a new model id needs a minimum Claude Code: Opus 5.5 2.1.280, Sonnet 5.5
-2.1.284). Prove a new default with one short `claude -p --model <id>` call on the clone. Copy the laptop's ranks onto the clone's shared ids and drop what
+2.1.284). Prove a new default with one short `claude -p --model <id>` call on the clone.
+The picker cuts at the first `copilot/` id in INTELLIGENCE order (not rank), so also copy each
+shared model's `rank` AND `intelligenceIndex`, and keep the `copilot/copilot-think-deeper` entry on the
+clone (placeholder apiKey; the bridge exists on the laptop only). The proof is a headless login as
+the architect that lists the picker's chip names on both pages: same models, same order (17 on 2026-10-05). Copy the laptop's ranks onto the clone's shared ids and drop what
 the laptop dropped, both host config. Also compare the laptop checkout's UNCOMMITTED changes
 (`git -C ~/src/tinkerclaw status --short`): the laptop's live page builds from that working tree,
 so a change the architect asked for that was never committed shows on the laptop and can never reach the clone. Memory is what
@@ -99,6 +103,8 @@ export check crashes with ERR_MODULE_NOT_FOUND and reads as a failure.
 
 ## Step 6 — pull, rebuild, restart, and LOOK
 
+**Check the clone's disk before building (2026-10-05).** `ssh goku 'df -h /'` must show at least 25 GB free: each deploy keeps a ~11 GB rollback copy (`~/src/tinkerclaw-prev-*`) plus a ~11 GB build beside the live tree. Keep the live tree and the newest rollback; remove older `tinkerclaw-prev-*` and any half-built `tinkerclaw-develop*` (all rebuildable from git).
+
 On the clone: pull, then RE-RUN THE INSTALLER (that is the real test of an installer fix), then
 restart. Verify by a changed PID and a rendered page — never from a log line, because logs append
 across runs and a stale line reads exactly like a fresh one.
@@ -135,6 +141,14 @@ config: copy it with paths rewritten and name its MCP server after the clone's a
   Confirm a restart by PID (`pgrep -x`), before and after.
 
 ## Failures overcome
+
+- **2026-10-05, "way too many models, it should look exactly like this one".** Four layers, found one
+  at a time: no ranks, a code path that skipped discovered models (fixed 6e3698c500c), the missing
+  Copilot cut point, and stale `intelligenceIndex` values that sorted Qwen below the cut. 50 chips on
+  Goku against 17 here; after all four, same 17 in the same order. The earlier steps claimed "fixed" on
+  a count of ranks; only the chip names on the rendered page proved it.
+
+- **2026-10-05, install died with ENOSPC.** Goku's disk was 100% full (48 MB free): five old deploy copies of 7 to 13 GB each. The update stopped at `pnpm install`; the live gateway was untouched. Freed 32 GB by deleting the half-built tree and the 21 and 23 September copies, then reran the update. Step 6 now checks `df` first.
 
 - **2026-10-05, "too many models" and THALAMUS out of place on Goku.** the architect: "Goku seems to have too
   many models in the model picker ... Additionally, Thalamus is not right under the model picker,

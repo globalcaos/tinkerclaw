@@ -62,6 +62,7 @@ function getSessionStoreLoader(): ((cfg: any) => any) | null {
   return _sessionStoreLoader;
 }
 import { makeFitnessLookup } from "openclaw/plugin-sdk/fork-recipe-engine";
+import { taskText } from "openclaw/plugin-sdk/fork-thalamus";
 import { callGateway } from "openclaw/plugin-sdk/testing";
 import {
   loadAntiGoldplatingPrompt,
@@ -92,7 +93,7 @@ import {
   type MarketplaceFetch,
   type MarketplaceMeta,
 } from "./recipe-marketplace.js";
-import { seedPlanFromPrompt } from "./recipe-matcher.js";
+import { recipeIndexExtraDirs, seedPlanFromPrompt } from "./recipe-matcher.js";
 import { createRecipeRpcs } from "./recipe-rpcs.js";
 import { resolveOwnRecipesDir } from "./recipe-runner.js";
 import { RecipeStore } from "./recipe-store.js";
@@ -144,6 +145,13 @@ let sharedFaarTracker: ReturnType<typeof createFaarTracker> | null = null;
 const sharedSubagentRuns = new Map<string, SubagentRunInfo>();
 const sharedLastEventTimestamps = new Map<string, number>();
 let sharedPrefrontalSessionKey: string | null = null;
+
+// FORK 2026-10-06 (Broca retrieval v2, phase E): the matcher hook's ranking helpers load on first use. A failure to load the SDK
+// module (or the thalamus half of it) leaves the hook as it was: the old gate and no advice.
+type AdviceModule = typeof import("./recipe-advice.js");
+let adviceModule: Promise<AdviceModule | undefined> | undefined;
+const loadAdvice = (): Promise<AdviceModule | undefined> =>
+  (adviceModule ??= import("./recipe-advice.js").catch(() => undefined));
 
 export default function register(api: OpenClawPluginApi) {
   // oxlint-disable-next-line typescript-eslint/no-explicit-any
@@ -1085,13 +1093,17 @@ export default function register(api: OpenClawPluginApi) {
       try {
         const sessionKey: string = ctx?.sessionKey ?? "";
         const trigger: string = ctx?.trigger ?? "";
-        // Only the user's primary chat turn. Skip subagents, heartbeats,
-        // cron, and any non-main session — those must not seed the main
-        // plan (and recipe-runner's own subagents would recurse).
+        // Only an interactive user turn: the main chat or a Tinker tab. Skip subagents, heartbeats,
+        // cron and every other session — those must not seed a plan (and recipe-runner's own
+        // subagents would recurse). FORK 2026-10-06 (Broca retrieval v2, phase E): this was
+        // `endsWith(":main")`, which left every Tinker tab without a matcher. The ranking module
+        // is loaded lazily; if it cannot be, the gate is the old one.
+        const advice = await loadAdvice();
+        const isMainSession = sessionKey.endsWith(":main");
         if (
           !sessionKey ||
           sessionKey.includes(":subagent:") ||
-          !sessionKey.endsWith(":main") ||
+          !(advice ? advice.isInteractiveSession(sessionKey) : isMainSession) ||
           trigger === "heartbeat" ||
           trigger === "cron"
         ) {
@@ -1133,8 +1145,29 @@ export default function register(api: OpenClawPluginApi) {
         };
 
         // 1) Dynamic effort adaptation — scale reasoning/orchestration to the task.
-        const effortGuidance = buildEffortGuidance(prompt);
+        // Main chat only, as before: a Tinker tab now reaches this hook for the recipe match and the advice, not for this.
+        const effortGuidance = isMainSession ? buildEffortGuidance(prompt) : null;
         if (effortGuidance) parts.push(effortGuidance);
+
+        // FORK 2026-10-06 (Broca retrieval v2, phase E): a prompt the gateway or an agent put in the chat is owed no
+        // recipe match, no plan and no advice. The ranking the short-list seam reads is fetched here, once per run.
+        const turn = advice
+          ? await advice.rankForTurn({
+              runId: ctx?.runId,
+              sessionKey,
+              prompt,
+              trigger,
+              provenanceKind: ctx?.inputProvenanceKind,
+              messages: event?.messages,
+            })
+          : { owed: true as const };
+        if (!turn.owed) {
+          log.info?.(
+            `[recipe-matcher] sessionKey=${sessionKey} no recommendation owed (${turn.why})`,
+          );
+          return parts.length > 0 ? { prependSystemContext: parts.join("\n\n") } : {};
+        }
+        const ranking = turn.ranking;
 
         // 2) Recipe matching + provenance.
         // J13 semantic recipe-match lane, gated default-OFF. Only when
@@ -1172,13 +1205,15 @@ export default function register(api: OpenClawPluginApi) {
         const fitnessLookup = makeFitnessLookup(engramBaseDir);
         const ratingLookup = makeRatingLookup(marketplace);
         const outcome = await seedPlanFromPrompt({
-          prompt,
+          // The request as the person wrote it: every Tinker turn ends with ~30,000 characters of reflection instructions, and
+          // the word matcher scored them (2026-10-06: the same three recipes at "high" on unrelated prompts, one plan seeded).
+          prompt: taskText(prompt) || prompt,
           sessionKey,
           runId: ctx?.runId ?? "",
           ownRecipesDir,
           // FORK 2026-06-01 (U11): include bridged CC-skill imports in the turn-
           // start match catalog so imported recipes seed plans like curated ones.
-          extraKitDirs: [bridgedSkillsDir],
+          extraKitDirs: recipeIndexExtraDirs(bridgedSkillsDir),
           planStore,
           log,
           embed: embedFn,
@@ -1186,6 +1221,10 @@ export default function register(api: OpenClawPluginApi) {
           feedback: fitnessLookup,
           // FORK 2026-06-01 (U12): clamped marketplace-popularity tie-breaker.
           rating: ratingLookup,
+          // FORK 2026-10-06: a plan is seeded only from a high-confidence USE in the one ranked result.
+          ...(advice && advice.allowSeedFrom(ranking)
+            ? { allowSeed: advice.allowSeedFrom(ranking) }
+            : {}),
         });
 
         if (outcome.catalogSize > 0) {
@@ -1299,6 +1338,20 @@ export default function register(api: OpenClawPluginApi) {
               `<recipe_gap>No existing recipe matched (catalog=${outcome.catalogSize}). If this is repeatable work, COMPOSE one from your skill stdlib FIRST: call \`prefrontal.recipe.compose\` with {sessionKey, query:"<this task>"} — it searches the skill library and assembles \`invoke skill:\` steps into a matchable recipe. If no skills fit, author from scratch: \`prefrontal.recipe.author\` with {slug,title,summary,tags,category,steps:[{title,tools,doneWhen,body}],parallelismGroups}. Either becomes matchable next turn. To build a recipe FROM other recipes, add a \`uses: <slug>\` line to a step (runtime sub-kit) or a frontmatter \`composes: [slug,...]\` list (merged steps). PRIVACY / PUBLIC-vs-PRIVATE SPLIT: make every recipe a GENERIC SKELETON — abstract each product/business/private specific (names, URLs, paths, IBANs, internal strategy) into a typed {{param}} declared in frontmatter; the real values go ONLY in the private gitignored recipe-vars.json (global scope; mark secrets with secret:true), NEVER in the .md. The skeleton is shareable and BELONGS in the public tinkerclaw fork; the private values stay out of it. CAVEAT: the recipe.author RPC schema rejects a params field, so for a parameterized recipe write the canonical recipe.md file directly (replicate buildRecipeMd, incl. the params: block) — see bible subagents-and-recipes.md "Authoring recipes".</recipe_gap>`,
             );
           }
+        }
+
+        // FORK 2026-10-06 (Broca retrieval v2, phase E): the one line the owner sees under the prompt, from the same ranked
+        // result the short-list seam used. Live it travels as a trail event (the chat stamps it on the prompt that opened this
+        // run); after a reload the tag in the stored turn carries it. No chat.send, no new row. It is advice for the agent too.
+        const adviceOut = advice?.adviceOf(ranking);
+        if (advice && adviceOut) {
+          emitTrail("advice", adviceOut.line, "advice", {
+            adviceLine: adviceOut.line,
+            adviceSource: adviceOut.source,
+            use: adviceOut.use,
+            inspire: adviceOut.inspire,
+          });
+          parts.push(advice.adviceTag(adviceOut));
         }
       } catch (err) {
         log.warn?.(`[recipe-matcher] before_prompt_build failed: ${String(err)}`);

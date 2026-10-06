@@ -19,6 +19,8 @@ invariants:
   - in the tabs namespace ABSENT and EMPTY are different answers, and conflating them is a data-loss bug — an absent `tabs` section means "no opinion" (hydrate leaves the cached list alone, and a POST omitting it carries the on-disk list forward), while `[]` means "no tabs" and is applied. A store written before 2026-08-16 has no `tabs`, so reading absence as empty would blank the live list on the first reload after any deploy
   - the tab list is carried VERBATIM through both tiers and the endpoint — app.ts owns the Tab shape, ui-state.ts owns only its durability, so no layer between them may filter Tab fields or each new field is dropped on its first cold boot
 verify:
+  - name: plugin-served pages fall back to /tinker/api/ui-state when the root path answers 404, and the hive door maps the root path (2026-10-06)
+    cmd: cd "${BIBLE_DIR:-$HOME/src/tinkerclaw/TINKER_UI_DESIGN_BIBLE}/.." && python3 -c 'u=open("tinker-ui/src/panels/ui-state.ts").read(); d=open("scripts/hive-door/door.mjs").read(); assert "UI_STATE_PLUGIN_ENDPOINT = \"/tinker/api/ui-state\"" in u and "res.status === 404" in u, "ui-state.ts lost the 404 fallback: a plugin-served page writes no state file and tabs never reopen"; assert "/tinker/api/ui-state" in d and "\"/api/ui-state\"" in d, "the hive door no longer maps /api/ui-state: per-person tabs stop persisting"'
   - name: UI-chrome store keys are referenced only inside ui-state.ts (single-writer, any quote style or accessor shape)
     cmd: python3 -c 'import os,glob; root=os.path.expanduser("~/src/tinkerclaw/tinker-ui/src"); files=[f for f in glob.glob(root+"/**/*.ts",recursive=True) if os.path.basename(f) not in ("ui-state.ts","ui-state.test.ts")]; hits=[(os.path.relpath(f,root),k) for f in files for k in ("tinker.rpanelCollapsed","tinker.uiFlags","tinker.uiChoices","tinker-tabs") if k in open(f).read()]; assert not hits, "UI-chrome store keys referenced outside ui-state.ts (single-writer broken) -> " + str(hits)'
   - name: ui-state.ts exports the one-shot legacy migration (endstate gate for the 2026-08-02 unification)
@@ -306,3 +308,8 @@ this file already names: the store goes SERVER-SIDE, `session-naming.md` being t
 is a real decision and not a tidy-up — it puts CLIENT-measured numbers into the durable transcript,
 where they sit beside gateway-measured ones that mean a different thing (`turn-latency.md` §7 is the
 record of what happens when those two get conflated). It has not been taken.
+
+## Per-person state, and the page served by the gateway plugin (2026-10-06)
+
+- **The durable file is per seat.** The plugin's `/tinker/api/ui-state` writes `~/.openclaw/data/seats/<seat>/tinker-ui-state.json` for the seat named by `x-tinker-seat`. In multi-user mode the hive door sets that header from the person's token and strips any copy the browser sends, so each person's tabs and panel state come back on their reconnect, and nobody can load another's.
+- **The root path does not exist behind the plugin.** The page saves to `/api/ui-state` (dev server and prod-ui answer it). A page served by the gateway plugin got 404 there, and no state file was ever written: tabs survived only in the browser's own storage. Two fixes: `ui-state.ts` switches the page to `/tinker/api/ui-state` after the first 404 (a 200 never switches), and the hive door maps `/api/ui-state` to the plugin route. Bug log: `ui-state-root-path-404-behind-plugin`.
