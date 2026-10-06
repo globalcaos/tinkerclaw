@@ -116,8 +116,12 @@ export function upstreamHeaders(reqHeaders, row, gatewayToken) {
   return h;
 }
 
-/** Overwrite the token the page sent in its `connect` frame with the real one. Other frames pass untouched. */
-export function rewriteClientFrame(text, gatewayToken) {
+/**
+ * Overwrite the token the page sent in its `connect` frame with the real one, and, when the door
+ * knows the person, set the client's display name to theirs: the gateway passes it to the agent as
+ * the message's sender, so the agent knows who is talking. Other frames pass untouched.
+ */
+export function rewriteClientFrame(text, gatewayToken, person) {
   let obj;
   try {
     obj = JSON.parse(text);
@@ -127,6 +131,9 @@ export function rewriteClientFrame(text, gatewayToken) {
   if (obj && obj.type === "req" && obj.method === "connect") {
     obj.params = obj.params && typeof obj.params === "object" ? obj.params : {};
     obj.params.auth = { ...(obj.params.auth || {}), token: gatewayToken };
+    if (person?.displayName && obj.params.client && typeof obj.params.client === "object") {
+      obj.params.client.displayName = person.displayName;
+    }
     return JSON.stringify(obj);
   }
   return text;
@@ -625,7 +632,7 @@ export function createDoor(opts) {
         const { id, method, params } = frame;
         if (method === "connect") {
           tracked.set(id, method);
-          toUpstream(rewriteClientFrame(text, gatewayToken), false);
+          toUpstream(rewriteClientFrame(text, gatewayToken, live), false);
           return;
         }
         for (const k of sessionKeysOf(method, params)) {

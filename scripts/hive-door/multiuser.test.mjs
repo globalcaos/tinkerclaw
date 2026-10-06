@@ -87,7 +87,10 @@ async function connectAs(token) {
       ws.send(JSON.stringify({ type: "req", id, method, params }));
       setTimeout(() => reject(new Error(`timeout ${method}`)), 3000);
     });
-  const hello = await call("connect", { auth: { token: "door-session" } });
+  const hello = await call("connect", {
+    auth: { token: "door-session" },
+    client: { id: "webchat-ui", displayName: "Tinker UI" },
+  });
   return { ws, call, events, hello, cookie };
 }
 const keysOf = (res) => res.payload.sessions.map((s) => s.key).sort();
@@ -184,6 +187,13 @@ describe("multi-user door", () => {
       "agent:main:hive:bob:main",
     );
     assert.equal(upSeen.find((f) => f.method === "connect").params.auth.token, GW);
+  });
+
+  it("the agent is told who is talking: the door sets the client's name from the token", () => {
+    const names = upSeen
+      .filter((f) => f.method === "connect")
+      .map((f) => f.params.client.displayName);
+    assert.deepEqual(names.slice(0, 3), ["Alice", "Bob", "Carol"]);
   });
 
   it("a user's new chat: that user and the admins see it, nobody else", async () => {
