@@ -21,7 +21,12 @@ import { readSessionMessages } from "../gateway/session-utils.fs.js";
 import { awaitBridgeReattachScan, bridgeReattachFor } from "../infra/bridge-reattach.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { CommandLane } from "../process/lanes.js";
-import { isAcpSessionKey, isCronSessionKey, isSubagentSessionKey } from "../routing/session-key.js";
+import {
+  isAcpSessionKey,
+  isCronSessionKey,
+  isSubagentSessionKey,
+  parseAgentSessionKey,
+} from "../routing/session-key.js";
 import { planContinuation } from "./embedded-agent-runner/continuation.js";
 import { appendInterruptedRun } from "./interrupted-run-ledger.js";
 import { findDanglingToolCall } from "./interrupted-run-probe.js";
@@ -82,6 +87,12 @@ function shouldSkipMainRecovery(entry: SessionEntry, sessionKey: string): boolea
     return true;
   }
   if (entry.subagentRole != null) {
+    return true;
+  }
+  // FORK 2026-10-07: `temp:*` sessions are internal one-shots (tab namer, slug generator, Jev's
+  // WOULD HAVE explainer). Nobody reads them, and the next event re-runs them. The 09:57 restart
+  // sent the full resume prompt to `temp:jev-explain` because an explain run was in flight.
+  if (parseAgentSessionKey(sessionKey)?.rest.startsWith("temp:")) {
     return true;
   }
   return (

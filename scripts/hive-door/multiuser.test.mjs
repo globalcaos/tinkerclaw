@@ -8,7 +8,7 @@ import path from "node:path";
 import { after, before, describe, it } from "node:test";
 import { WebSocket, WebSocketServer } from "ws";
 import { createDoor } from "./door.mjs";
-import { sha256Hex } from "./table.mjs";
+import { rememberToken, sha256Hex } from "./table.mjs";
 
 const GW = "REAL-GATEWAY-SECRET-0987654321";
 const T = {
@@ -318,6 +318,32 @@ describe("multi-user door", () => {
         (o) => o.deviceId === "dan-smith",
       ),
     );
+  });
+
+  it("an admin can copy a person's current token; nobody else can, and lists never carry it", async () => {
+    const add = await api(alice.cookie, "POST", "users", { displayName: "Copy Me" });
+    const id = add.json.user.operatorId;
+    assert.equal(add.json.user.hasToken, true);
+    assert.equal((await api(bob.cookie, "GET", `users/${id}/token`)).status, 403);
+    const got = await api(alice.cookie, "GET", `users/${id}/token`);
+    assert.equal(got.status, 200);
+    assert.equal(got.json.token, add.json.token, "the same token the add showed");
+    const list = JSON.stringify((await api(alice.cookie, "GET", "users")).json);
+    assert.ok(!list.includes(add.json.token), "a list never carries a token");
+    const rot = await api(alice.cookie, "POST", `users/${id}/rotate`, {});
+    assert.equal((await api(alice.cookie, "GET", `users/${id}/token`)).json.token, rot.json.token);
+    await api(alice.cookie, "POST", `users/${id}/revoke`, {});
+    assert.equal(
+      (await api(alice.cookie, "GET", `users/${id}/token`)).status,
+      409,
+      "no copy of a token that no longer opens the door",
+    );
+  });
+
+  it("rememberToken keeps a pre-existing token only when it matches the stored hash", () => {
+    const table = [{ operatorId: "old", hash: sha256Hex("tok-old-123"), status: "active" }];
+    assert.throws(() => rememberToken(table, "old", "some-other-token"));
+    assert.equal(rememberToken(table, "old", "tok-old-123").token, "tok-old-123");
   });
 
   it("admin is a property: the last admin cannot lose it; a granted admin sees users' chats, not other admins' private ones", async () => {

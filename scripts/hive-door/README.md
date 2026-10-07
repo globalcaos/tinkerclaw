@@ -10,12 +10,12 @@ Nothing here runs unless you turn it on. `scripts/setup.sh` asks about it only f
 
 ## The rules it enforces
 
-- **Who you are** comes from your token (`~/.openclaw/data/door/tokens.json`, sha256 hashes only). A typed name or a forged `x-tinker-seat` header changes nothing: the door overwrites it. The gateway secret never reaches a browser.
+- **Who you are** comes from your token (`~/.openclaw/data/door/tokens.json`, the sha256 the door checks, plus the token itself so an admin can copy it; 0600). A typed name or a forged `x-tinker-seat` header changes nothing: the door overwrites it. The gateway secret never reaches a browser.
 - **Your own Main and tabs.** The door hands each person their own Main chat (`agent:main:hive:<id>:main`) and keys the saved tab list and panel state to their seat, so a reconnect reopens exactly what that person had.
 - **Who sees a chat.** A user's new chat: that user and the admins. An admin's new chat: that admin only. Admins see every user's chats, grouped by owner in the chat list; another admin's private chats stay private. Chats that existed before multi-user mode stay visible to the admins and to the people listed in `DOOR_LEGACY_USERS`. Background chats (crons, reflections) are admin-only.
 - **Deleting.** A regular user's delete only hides the chat for that user; nothing is removed and the admins still see it. An admin's delete is a real delete (the gateway archives the transcript).
 - **Admin is a property**: granted and taken away from the page. The last admin cannot lose it.
-- **People.** Admins add people, issue a new token (the old one stops), revoke a token, or remove access, from the USERS panel at the bottom of the right rail. Nothing a person made is ever removed. New tokens are shown once.
+- **People.** Admins add people, issue a new token (the old one stops), revoke a token, copy a person's current token, or delete them (no access; everything they made is kept), from the USERS panel at the bottom of the right rail. Nothing a person made is ever removed. New tokens are shown once.
 - Every request naming a chat you may not see is refused, `sessions.list` only lists what you may see, and live events about other people's chats are dropped. Logins, refusals and admin actions go to `audit.jsonl`.
 
 ## Turn it on

@@ -7,6 +7,10 @@ override-target: ~/.openclaw/workspace/plan-tools.md
 
 When a user request will take more than two distinct steps, call
 `openclaw gateway call prefrontal.plan.set` first with intent + step titles.
+Every plan call needs your session key, which the bridge exports as
+`$TC_SESSION_KEY` (without it the call fails: "must have required property
+'sessionKey'"), e.g.
+`openclaw gateway call prefrontal.plan.set --params "{\"sessionKey\":\"$TC_SESSION_KEY\",\"intent\":\"…\",\"steps\":[{\"title\":\"…\"}]}"`.
 Mark each step in_progress when you start it, and done with a one-line note
 when you finish. The note should be the smallest summary that lets a future
 you skip redoing the step (e.g. "wrote slo-burn.test.ts with 5 cases").

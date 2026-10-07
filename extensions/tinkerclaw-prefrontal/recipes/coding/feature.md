@@ -156,6 +156,11 @@ uses: code-review
 **Done when:** Findings are severity-ordered against the SPEC and PLAN, each verified against the real code, with optional ones marked optional.
 
 Receives: the diff, the SPEC path, the PLAN path. Returns: the findings list.
+A reviewer that wrote no report found nothing only in the sense that it never
+looked: check the report file exists before reading "no findings". If no
+independent reviewer can run, the builder does its own adversarial pass with
+executable checks, and step 8's report says the independent review did not
+happen.
 Three lenses fan out in parallel — correctness plus spec compliance, security
 plus data flow, tests plus maintainability — on a model family DIFFERENT from
 the implementer's. Findings that do not affect correctness or a stated
@@ -237,4 +242,12 @@ dumps — the code is in the commits.
   open. Step 7 is now part of the pipeline and step 8 must quote its status
   line.
 - **v2.1.0 (2026-09-03):** folded in the AI-native SDLC playbook (claude.com/blog/the-ai-native-sdlc-playbook — the source the "INTENT.md" video walks through): the report closes with fix rounds and rulings, the two leading indicators of the pipeline itself.
+- **The reviewer that never ran** (2026-10-07, git-manager): step 6's reviewer was
+  spawned through the gateway and a gateway restart killed it before it wrote a
+  line; a direct Claude Code run of the same review was then refused by the
+  model's safety classifier. The wait loop timed out on a missing file and the
+  merge was one step from going ahead on that silence. The builder's own pass
+  then found two real holes (a read-only console that allowed `reflog expire`,
+  and `branch -l` creating a branch on git 2.17). Step 6 now says a missing
+  report is not a clean review.
 - **v2.2.0 (2026-09-10):** `implementation-plan` and `parallel-build` now `uses: git-instructions` so any reviewed repo ships hop-sized commits a colleague can pull and sign off, one seam at a time.

@@ -18439,7 +18439,14 @@ function reuseHtmlFrames(root: HTMLElement): void {
  *  gone, page frozen) the surfaces clear rather than lying. */
 let longjobAnim: { pct: number | null; label: string; frame: number; lastAt: number } | null = null;
 const LONGJOB_FRAMES = ["◐", "◓", "◑", "◒"];
-const baseDocTitle = document.title;
+let baseDocTitle = document.title;
+/** FORK 2026-10-07 (the user: "the name on the browser tab should say Goku, and mine just Jarvis"). The tab
+ *  title is the agent's name once agent.identity.get answers; index.html's product title only covers the boot. */
+function setAgentDocTitle(name: string): void {
+  if (!name || baseDocTitle === name) return;
+  baseDocTitle = name;
+  if (!longjobAnim) document.title = name;
+}
 function applyLongjobSurfaces(): void {
   if (longjobAnim && Date.now() - longjobAnim.lastAt > 15_000) {
     longjobAnim = null;
@@ -22797,6 +22804,7 @@ function refreshAgentNameHeader(): void {
         return;
       }
       voiceSpeakerName = name;
+      setAgentDocTitle(name);
       let conductor = "";
       try {
         conductor = sessionStorage.getItem(CONDUCTOR_STORAGE_KEY) ?? "";

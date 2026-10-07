@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Manage the hive door's people table (tokens.json, hashes only, mode 0600). Admins can do the same
+ * Manage the hive door's people table (tokens.json, mode 0600). Admins can do the same
  * from the page (right rail, USERS panel); this is the terminal way and the bootstrap.
  *
  *   door-tokens.mjs list
@@ -12,6 +12,8 @@
  *   door-tokens.mjs delete <operatorId|tokenId>    no access; every chat and setting of theirs is kept
  *   door-tokens.mjs admin <operatorId|tokenId> on|off
  *   door-tokens.mjs seed-seats                     make sure the seat file names every person
+ *   door-tokens.mjs remember <operatorId>          read that person's CURRENT token on stdin and keep it so admins
+ *                             can copy it from the page; refused unless it matches the stored hash
  *
  * Env: DOOR_STATE_DIR (default ~/.openclaw/data/door). Nothing here ever removes a row.
  */
@@ -26,6 +28,7 @@ import {
   saveRows,
   seedSeats,
   sha256Hex,
+  rememberToken,
 } from "./table.mjs";
 
 const home = os.homedir();
@@ -92,6 +95,7 @@ switch (cmd) {
       admin: args.includes("--admin"),
       hash,
     });
+    row.token = t;
     saveRows(tableFile, next);
     console.log(
       `registered the current gateway token for ${displayName} as ${row.tokenId} (value not printed)`,
@@ -102,6 +106,7 @@ switch (cmd) {
     const r = must(find(args[0]));
     const token = newToken();
     r.hash = sha256Hex(token);
+    r.token = token;
     r.status = "active";
     r.rotatedAt = new Date().toISOString();
     delete r.revokedAt;
@@ -131,6 +136,13 @@ switch (cmd) {
     r.admin = on;
     saveRows(tableFile, rows);
     console.log(`${r.displayName}: admin ${on ? "on" : "off"}`);
+    break;
+  }
+  case "remember": {
+    const token = fs.readFileSync(0, "utf8").trim();
+    const r = rememberToken(rows, args[0], token);
+    saveRows(tableFile, rows);
+    console.log(`kept the current token for ${r.displayName} (${r.tokenId}); value not printed`);
     break;
   }
   case "seed-seats": {
