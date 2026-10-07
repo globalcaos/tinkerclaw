@@ -7,8 +7,16 @@ import {
 import type { Question, Situation } from "./types.js";
 
 export {
+  announceJev,
+  configureJev,
   fetchTransport,
   fieldValues,
+  jevOn,
+  jevToken,
+  noteJevBreaker,
+  reportJevResult,
+  setJevProbe,
+  startJevWatch,
   toEntry,
   type JevTransport,
 } from "openclaw/plugin-sdk/fork-jev";

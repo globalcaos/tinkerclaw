@@ -14,7 +14,8 @@
  *   4. Over time the observation table accumulates a series; the UI renders
  *      ≥2 points as a sparkline and falls back to a text line for ≤1.
  *
- * Errors during a single poll log and skip — the next tick retries. Boot
+ * Errors during a single poll log and skip; the metric retries with a backoff
+ * (2, 4, 8 … minutes, capped at its own cadence — see `isDue`). Boot
  * does an immediate pass for any metric with zero observations so the first
  * data point lands within seconds, not the next tick.
  *
@@ -173,6 +174,32 @@ function latestObservationTs(db: Database.Database, metricId: string): number {
   return row.ts ?? 0;
 }
 
+/**
+ * FORK 2026-10-07 — consecutive failures per metric, so a metric that keeps
+ * failing backs off instead of being retried (and logged) on every tick. A
+ * failing metric never gets an observation, so before this it counted as
+ * overdue forever: on Goku 21 such metrics × 4 plugin loads wrote ~121k warn
+ * lines a day, 93% of its gateway journal.
+ */
+const failures = new Map<string, { at: number; count: number }>();
+
+/**
+ * Whether a metric should be polled now. Healthy metrics are due one cadence
+ * after their last observation; a failing one retries after 2^count minutes,
+ * never later than its cadence. Exported for tests.
+ */
+export function isDue(
+  now: number,
+  lastObservationTs: number,
+  cadenceSeconds: number,
+  failure?: { at: number; count: number },
+): boolean {
+  if (failure) {
+    return now - failure.at >= Math.min(cadenceSeconds * 1000, 60_000 * 2 ** failure.count);
+  }
+  return now - lastObservationTs >= cadenceSeconds * 1000;
+}
+
 function splitSource(source: string): { key: string; args: string } {
   const idx = source.indexOf(":");
   if (idx < 0) return { key: source, args: "" };
@@ -183,7 +210,7 @@ async function pollOne(
   cfg: ControlPanelResolvedConfig,
   metric: PollableMetric,
   log: Logger,
-): Promise<void> {
+): Promise<boolean> {
   const { key, args } = splitSource(metric.source);
   const poller = POLLER_REGISTRY.get(key);
   if (!poller) {
@@ -191,12 +218,13 @@ async function pollOne(
       log,
       `[pulse-panel] no poller registered for source key "${key}" (metric ${metric.id})`,
     );
-    return;
+    return false;
   }
   try {
     const value = await poller(args);
     recordObservation(cfg, { metric_id: metric.id, value });
     log.info(`[pulse-panel] polled ${metric.id} → ${value}`);
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (err instanceof MissingLocalStateKeyError) {
@@ -204,15 +232,16 @@ async function pollOne(
       // skip (debug, never per-cycle error/warn spam). Series with data are
       // unaffected; a real failure (bad file, non-numeric value) still warns.
       log.debug?.(`[pulse-panel] skip ${metric.id} (no data yet): ${msg}`);
-      return;
+      return false;
     }
     if (err instanceof PollerNotConfiguredError) {
       // The operator has not supplied this poller's credential. That is a
       // normal steady state, not a failure — skip quietly every cycle.
       log.debug?.(`[pulse-panel] skip ${metric.id} (not configured): ${msg}`);
-      return;
+      return false;
     }
     (log.warn ?? log.info).call(log, `[pulse-panel] poll failed for ${metric.id}: ${msg}`);
+    return false;
   }
 }
 
@@ -345,13 +374,17 @@ async function tick(
   const now = Date.now();
   for (const m of metrics) {
     const lastTs = latestObservationTs(db, m.id);
+    const failure = failures.get(m.id);
     if (opts.forceMissingOnly) {
       if (lastTs !== 0) continue;
-    } else {
-      const overdueBy = now - lastTs - m.cadence_seconds * 1000;
-      if (overdueBy < 0) continue;
+    } else if (!isDue(now, lastTs, m.cadence_seconds, failure)) {
+      continue;
     }
-    await pollOne(cfg, m, log);
+    if (await pollOne(cfg, m, log)) {
+      failures.delete(m.id);
+    } else {
+      failures.set(m.id, { at: Date.now(), count: (failure?.count ?? 0) + 1 });
+    }
   }
 }
 

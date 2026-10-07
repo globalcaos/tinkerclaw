@@ -36,6 +36,7 @@ interface Opts {
   hooks?: boolean;
   transport?: JevTransport;
   apiKey?: () => string | undefined;
+  jevOn?: () => boolean;
   families?: Family[];
   extensionRoot?: string;
   /** Share another runtime's data folder (the gateway can register the plugin twice in one process). */
@@ -68,6 +69,7 @@ function make(o: Opts = {}) {
     v31: { readPluginConfig: () => state.v31cfg, settingsPath: v31Path },
     transport: o.transport,
     apiKey: o.apiKey,
+    jevOn: o.jevOn,
     emit: (event, payload) => events.push({ event, payload }),
     now: () => state.t,
     logger: { info() {}, warn() {}, error() {} },
@@ -448,6 +450,77 @@ describe("judge status", () => {
     expect(s.judge.silentSince).toBeDefined();
     expect(s.state).toBe("degraded");
     expect(s.line).toBe("Judge silent 6 min · hard rules still on");
+  });
+});
+
+describe("Jev dormant: no token is not a judge that is down", () => {
+  const posts: unknown[] = [];
+  const counting: JevTransport = {
+    async post(...a) {
+      posts.push(a);
+      return { status: 200, json: { answers: {} }, ms: 1 };
+    },
+  };
+  const step = (rt: ReturnType<typeof make>["rt"], root: string, i: number) =>
+    rt.decide("pre-tool", {
+      session_id: "s1",
+      tool_name: "Write",
+      tool_input: { file_path: `/tmp/dormant-${i}.txt`, content: "x" },
+      cwd: root,
+    });
+
+  it("20 steps with no token: no request, no verdict row, no judge error, no 'judge down' event, a clean status", async () => {
+    posts.length = 0;
+    const { rt, root, events, state } = make({
+      families: [askFamily],
+      sendReal: true,
+      transport: counting,
+      apiKey: () => undefined,
+      jevOn: () => false,
+    });
+    rt.start();
+    for (let i = 0; i < 20; i++) {
+      await step(rt, root, i);
+    }
+    expect(posts).toHaveLength(0);
+    const feed = rt.feed({ sinceTs: 0 });
+    expect(feed.decisions).toHaveLength(20);
+    expect(feed.decisionEvents).toHaveLength(0);
+    expect(events.filter((e) => e.event === "amygdala2.consult")).toHaveLength(0);
+    expect(rt.status().judge.errors).toBe(0);
+    state.t += 10 * 60_000;
+    await step(rt, root, 99);
+    expect(rt.status().state).not.toBe("degraded");
+    expect(rt.status().line).not.toMatch(/Judge silent/);
+  });
+
+  it("the canary asks the judge nothing while dormant", async () => {
+    posts.length = 0;
+    const { rt } = make({
+      families: [askFamily],
+      sendReal: true,
+      transport: counting,
+      apiKey: () => "k",
+      jevOn: () => false,
+    });
+    rt.start();
+    const c = await rt.canary();
+    expect(posts).toHaveLength(0);
+    expect(c.judgeMs).toBeNull();
+    expect(c.heldBy).toBe("hard-rule");
+  });
+
+  it("with a token the same runtime asks (the control)", async () => {
+    posts.length = 0;
+    const { rt, root } = make({
+      families: [askFamily],
+      sendReal: true,
+      transport: counting,
+      apiKey: () => "k",
+    });
+    rt.start();
+    await step(rt, root, 1);
+    expect(posts.length).toBeGreaterThan(0);
   });
 });
 

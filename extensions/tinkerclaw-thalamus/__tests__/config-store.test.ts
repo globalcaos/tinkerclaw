@@ -15,10 +15,21 @@ const tmp = mkdtempSync(join(tmpdir(), "thalamus-store-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
 describe("config", () => {
-  it("is off, with no outside reads, by default", () => {
+  it("ships no token pointer and has no config token; takes the pointer from config when the owner sets it", () => {
+    const d = parseConfig(undefined);
+    expect(d.jev.tokenHelpUrl).toBeUndefined();
+    const c = parseConfig({ jev: { apiKey: "tok", tokenHelpUrl: "https://example.test/t" } });
+    expect(c.jev).not.toHaveProperty("apiKey");
+    expect(c.jev.tokenHelpUrl).toBe("https://example.test/t");
+    expect(parseConfig({ jev: { tokenHelpUrl: 7 } }).jev.tokenHelpUrl).toBeUndefined();
+  });
+
+  it("is in shadow, with no real situations sent, by default", () => {
     const c = parseConfig(undefined);
-    expect(c.mode).toBe("off");
-    expect(c.jev).toMatchObject({ enabled: false, sendRealSituations: false });
+    expect(c.mode).toBe("shadow");
+    expect(c.jev).toMatchObject({ enabled: true, sendRealSituations: false });
+    expect(parseConfig({ mode: "off" }).mode).toBe("off");
+    expect(parseConfig({ mode: "bogus" }).mode).toBe("off");
     expect(c.privacy.privateSources).toEqual(["channel:*"]);
     expect(c.privacy.approvedProviders).toEqual(["claude-code"]);
     expect(c.reads.confidenceFloor).toBe(0.6);

@@ -3,10 +3,10 @@
   "activation": {
     "onStartup": true
   },
-  "enabledByDefault": false,
+  "enabledByDefault": true,
   "runtimeAssets": ["./questions", "./cases", "./hooks"],
   "name": "Amygdala (Jev)",
-  "description": "Digital amygdala: a typed fast judge (Jev) answers questions about each agent step and code chooses the response (proceed, note, proof check, ask, hold, send back). Ships disabled. Shadow mode by default: it decides and logs and enforces nothing through the judge. Replaces AMYGDALA v3.1 (tinkerclaw-learned-intuition) after cutover.",
+  "description": "Digital amygdala: a typed fast judge (Jev) answers questions about each agent step and code chooses the response (proceed, note, proof check, ask, hold, send back). Loads by default but stays dormant until a Jev token exists. Shadow mode by default: it decides and logs and enforces nothing through the judge. Replaces AMYGDALA v3.1 (tinkerclaw-learned-intuition) after cutover.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -71,7 +71,11 @@
           "sendRealSituations": {
             "type": "boolean",
             "default": false,
-            "description": "When false, real situations never leave the machine: only synthetic cases reach Jev. The key is read from the TYPESAFE_API_KEY environment variable only."
+            "description": "When false, real situations never leave the machine: only synthetic cases reach Jev. The token is read from the TYPESAFE_API_KEY environment variable (needs a restart) or the key file <state dir>/jev/token (picked up without a restart). It is never held in config."
+          },
+          "tokenHelpUrl": {
+            "type": "string",
+            "description": "Where to get a Jev token. Shown in the start line and the status; no default."
           }
         }
       },

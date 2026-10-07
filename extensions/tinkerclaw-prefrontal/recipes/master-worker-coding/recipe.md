@@ -150,7 +150,11 @@ principal says stop. (2026-10-03 19:07, his words: "Why did you stop? The whole 
 to not stop for anything." The 15:48 review had ended the loop because Desk1 was off and his calls were open.)
 
 CPU is the ceiling, not agents: agent units
-mostly wait on the model, so fan them out freely. Tests get a **core budget**, not a suite count: the charter
+mostly wait on the model, so fan them out freely. The machine that runs the principal's chat UI and the gateway is
+not a test runner: whole suites go to the build's other machines first, a queue there is waited for inside the deadline, and
+the master's own machine is the last fallback, pinned to a few cores at the lowest priority (`taskset`, `nice 19`; a
+`CPUQuota` on a user scope is ignored unless the cpu controller is delegated). Never write "don't wait, use this machine" into
+a turn. Tests get a **core budget**, not a suite count: the charter
 names the most test processes allowed at once (pytest workers, Playwright workers, browsers; 12 of 16 cores on
 the AcmeVision laptop), and every suite runs parallel inside itself. "Two suites at once" let two
 single-process suites use 1.4 of 16 cores while the worker waited. Timing tests (a latency bound, a real-time
@@ -269,6 +273,9 @@ the next turn is sent (Step 2) or the loop is stopped.
    Then run the EXISTING suites of every live file the phase changed, not only the worker's new tests: the worker names
    what it wrote. A red there is compared against the integration branch's tip in a scratch worktree before it is
    blamed on the branch; if the tip is red too, fix it on the integration branch, and the worker merges it in.
+   The linter works the same way: the integration branch is not lint-clean, so a raw count says nothing. Run the
+   repo's own lint command on the changed files in both trees and count only what the branch adds, by file and rule
+   (2026-10-06, Jev: develop gave 223 on the same files, the branch added 29, all `curly` plus one spread).
 2. Check the live side is untouched (config and cron files' mtimes, no data folder created, nothing enabled), and
    that nothing the worker started is still running (units, mock servers, background shells).
 3. Count prompt copies in the worker's transcript by `type == "user"` lines only. A plain `grep -c` also hits the
@@ -309,6 +316,12 @@ missing fields, true/false answers with no confidence). Budget the live run for 
 is inert by design, so every gate (tests, the dry-run, the inert comparison) passes with it never loaded. Build
 with `--keep-worktree`, then load it enabled from that `dist`: missing data folders, hook scripts or assets only
 show there.
+
+**Run it once as a fresh clone without our keys.** Start the built `dist` with every private key unset
+(`TYPESAFE_API_KEY` for Jev, any model seat or API token the feature reads) and a fresh state folder. The feature must
+stay dormant: zero calls to the keyed service, zero error lines in the log, one status line that says what it needs.
+Then add a key (a mock endpoint is enough) and see it switch itself on. A build that only ever ran on this machine
+has proven nothing about what the public fork ships.
 
 ### 5. Merge and clean up
 
@@ -472,6 +485,15 @@ laptop's. Then:
   laptop under the real stack's free-space floor).
 
 ## Failures Overcome
+
+- **2026-10-06 21:18, AcmeVision 2.0, the principal: "Tinkerclaw seems a bit slow. Are you consuming a lot of CPU here?
+  Remember you have more machines available."** Turn 41's final suites (edge unit tests, two Playwright suites, Vitest) ran on the
+  laptop at full width for 23 minutes, load about 19 on 16 cores, because the master's turn text said to use the laptop rather
+  than wait more than 10 minutes for a runner. Hence the paragraph on the master's machine in Step 2.
+
+- **2026-10-06, Broca retrieval v2.** Seven phases, every test green, merged and deployed, and no step ever started
+  it the way a clone would: no Jev key. The principal: "How do we ship the jev-dependant capabilities? Did you think
+  about it?" Step 4 now runs the build once keyless and once with a key.
 
 - **2026-10-05 23:31, AcmeVision 2.0.** Turn 36's file said "report by 00:29; hard stop 00:59", four and a half hours
   after its 20:29 send. The gateway cut it at three hours, mid-unit, with no status file, and the morning wake had to

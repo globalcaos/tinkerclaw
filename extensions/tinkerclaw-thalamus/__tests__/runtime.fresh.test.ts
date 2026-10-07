@@ -111,7 +111,7 @@ describe("resultText", () => {
 
 describe("the worker provider (design D5)", () => {
   it("is registered with the router in shadow, removed by stop(), and never registered when off", async () => {
-    const off = make();
+    const off = make({ mode: "off" });
     await off.rt.start();
     expect(getWorkerProvider()).toBeUndefined();
     const t = make({ mode: "shadow" });

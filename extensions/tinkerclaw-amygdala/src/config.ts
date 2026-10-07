@@ -10,7 +10,14 @@ export interface AmygdalaConfig {
    * agent's context; holds, asks and send-backs of these families stay shadow records unless `mode` is enforce.
    */
   enforceFamilies: FamilyId[];
-  jev: { baseUrl: string; model: string; timeoutMs: number; sendRealSituations: boolean };
+  jev: {
+    baseUrl: string;
+    model: string;
+    timeoutMs: number;
+    sendRealSituations: boolean;
+    /** Where an owner gets a token. No default: the pointer is the owner's decision. */
+    tokenHelpUrl?: string;
+  };
   dataDir: string;
   failClosedOnLevel3: boolean;
   cost: { eurPerUsd: number };
@@ -24,6 +31,9 @@ export interface AmygdalaConfig {
 
 /** Grok first (the architect's ask, 2026-10-05; the subscription lane), then a different supply so one outage does not end it. */
 export const DEFAULT_EXPLAIN_LADDER = ["xai/grok-4.6", "claude-code/claude-haiku-4-5"];
+
+const optStr = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
 
 export const DEFAULT_DATA_DIR = join(homedir(), ".openclaw", "data", "amygdala-jev");
 
@@ -85,6 +95,7 @@ export function parseConfig(raw: Raw): AmygdalaConfig {
       model: str(jev.model, "jev-latest"),
       timeoutMs: num(jev.timeoutMs, 2600),
       sendRealSituations: bool(jev.sendRealSituations, false),
+      ...(optStr(jev.tokenHelpUrl) ? { tokenHelpUrl: optStr(jev.tokenHelpUrl) } : {}),
     },
     dataDir: str(r.dataDir, DEFAULT_DATA_DIR),
     failClosedOnLevel3: bool(r.failClosedOnLevel3, false),

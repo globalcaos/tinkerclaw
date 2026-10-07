@@ -36,7 +36,14 @@ import type {
 } from "./types.js";
 
 export interface DecideDeps {
-  jev: { ask(s: Situation, qs: Question[], o?: { budgetMs?: number }): Promise<Verdict[]> };
+  jev: {
+    ask(s: Situation, qs: Question[], o?: { budgetMs?: number }): Promise<Verdict[]>;
+    /**
+     * False while Jev is dormant (no token): nothing is asked and no verdict row is written, which is different from a
+     * judge that is down. Absent means on.
+     */
+    on?(): boolean;
+  };
   book: QuestionBook;
   store: AmygdalaStore;
   contexts: TurnContexts;
@@ -174,8 +181,11 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
     const q = deps.book.get(id);
     if (q && q.status === "active" && q.seams.includes(seam)) questions.push(q);
   }
+  // Dormant (no token): the hard rules above already ran; the judge's questions are simply not asked.
+  const jevOn = deps.jev.on?.() ?? true;
+  const dormantSkip = !jevOn && questions.length > 0;
   let verdicts: Verdict[] = [];
-  if (questions.length) {
+  if (questions.length && jevOn) {
     const extra = companionQuestions(deps, seam, situation);
     try {
       verdicts = await deps.jev.ask(
@@ -194,7 +204,7 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
   const consulted = verdicts.some((v) => !v.skipped);
   const notAllowed = verdicts.length > 0 && verdicts.every((v) => v.skipped === "not-allowed");
   const degraded = verdicts.some((v) => v.skipped !== undefined && v.skipped !== "not-allowed");
-  const judgeUnavailable = questions.length > 0 && !consulted;
+  const judgeUnavailable = jevOn && questions.length > 0 && !consulted;
 
   // 4. Every family's opinion (observe first, so a family's state update is visible to the others at this step).
   const asked = new Map(
@@ -216,8 +226,8 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
     driversByCand.set(c, res.drivers);
     cands.push(c);
   }
-  // Judge out: level-3 external steps hold only when configured to fail closed; everything else proceeds.
-  if (judgeUnavailable && seam === "pre-tool") {
+  // Judge out (or dormant): level-3 external steps hold only when configured to fail closed; everything else proceeds.
+  if ((judgeUnavailable || dormantSkip) && seam === "pre-tool") {
     const external =
       situation.effectClass.value !== null && EXTERNAL.includes(situation.effectClass.value);
     if (deps.config.failClosedOnLevel3 && external) {
@@ -276,17 +286,19 @@ export async function decide(deps: DecideDeps, input: DecideInput): Promise<Deci
     best.family === "fallback" || best.family === "hard-rule"
       ? best.family
       : (best.family as Decision["family"]);
-  const fallbackCode = judgeUnavailable
-    ? notAllowed
-      ? "jev-not-consulted"
-      : "jev-unavailable"
-    : null;
+  const fallbackCode = dormantSkip
+    ? "jev-dormant"
+    : judgeUnavailable
+      ? notAllowed
+        ? "jev-not-consulted"
+        : "jev-unavailable"
+      : null;
   const code = response.kind === "proceed" && fallbackCode ? fallbackCode : best.reasonCode;
   if (response.kind === "hold") state.turnHeld = true;
   const decision: Decision = {
     situationId: situation.id,
     response,
-    family: response.kind === "proceed" && judgeUnavailable ? "fallback" : family,
+    family: response.kind === "proceed" && (judgeUnavailable || dormantSkip) ? "fallback" : family,
     reasonCode: withDrivers(code, response.kind === "proceed" ? [] : drivers),
     verdictIds: verdicts.map((v) => v.id),
     mode: deps.config.mode,

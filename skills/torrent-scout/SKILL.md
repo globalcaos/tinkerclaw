@@ -153,14 +153,21 @@ the agent reported it "running in the background". A background process started
 inside an agent turn does not survive the turn. Saying otherwise is a promise
 you cannot keep, and the user finds out by looking at an empty folder.
 
-Downloads therefore go to a **systemd user service**:
-`~/.config/systemd/user/torrent-scout-daemon.service` runs aria2 with JSON-RPC
-on `127.0.0.1:6800`, `save-session` so queued tasks survive a restart, and
-`seed-time=0 seed-ratio=0.0` so there is no seeding phase at all.
+Downloads therefore go to a **systemd user service** owned by the
+`tinkerclaw-downloader` plugin (`extensions/tinkerclaw-downloader/` in the fork):
+aria2 with JSON-RPC on `127.0.0.1:6800`, `save-session` so UNFINISHED tasks survive
+a restart, and `seed-time=0 seed-ratio=0.0` so there is no seeding phase at all.
+Install or repair it with `node scripts/downloader/setup.mjs` (from the fork root);
+`--check` exits 0 when it is running. Never hand-edit `~/.config/aria2/aria2.conf`
+and never add `force-save=true`: it keeps FINISHED tasks in the session, and every
+boot re-fetched files the owner had deleted (about 72 GB, 2026-10-06). The plugin's
+guard removes that line at gateway start. Gateway methods: `downloader.status`,
+`downloader.add`, `downloader.remove`, `downloader.forget` (clears finished tasks).
 
 ```bash
+node scripts/downloader/setup.mjs --check
 systemctl --user status  torrent-scout-daemon.service
-systemctl --user restart torrent-scout-daemon.service
+openclaw gateway call downloader.status
 ```
 
 ### The tray icon — status he owns, not status I report

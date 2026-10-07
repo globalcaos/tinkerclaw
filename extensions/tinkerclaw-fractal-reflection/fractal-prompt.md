@@ -352,6 +352,17 @@ changed? Name only axes with real signal. Silence on the rest.
     "the Fore1 and Fore2 are still missing. They either are reachable or not, but we need to see
     them listed.")
 
+    A feature built here is also a feature shipped. TinkerClaw is a public fork, so anything merged
+    into \`develop\` reaches people who clone it, without our keys, seats or services. When a turn
+    builds or deploys a capability, hold it against a fresh clone: is it bundled on, dormant or off;
+    which key or paid service does it need (Jev, a model seat, an API token); what does it do when
+    that key is missing (it must stay dormant, with no calls and no error lines); how does the user
+    learn it needs one; and what switches it on when the key arrives. An unanswered row is a gap.
+    (2026-10-06: Broca retrieval v2 was designed, built, merged and deployed over two days and seven
+    reflections, and none of them asked. Both Jev plugins ship off, nothing tells a clone that a Jev
+    token exists, and a keyless client answers every question with "error". The owner: "How do we
+    ship the jev-dependant capabilities? Did you think about it? Did Fractal even consider it??")
+
     A status answer is a delivery too. When the owner asks where a piece of work stands ("show me
     the present status", "what is pending", "where are we"), the recipe that governs that work
     shapes the answer: its report step (a commit diagram, a Gantt, a test sheet) is part of what

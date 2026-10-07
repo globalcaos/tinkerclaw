@@ -29,7 +29,7 @@ const src = (p) => import(join(root, "src", p));
 const { RoutingReader, DEFAULT_READER_CONFIG } = await src("reads/routing-reader.ts");
 const { loadQuestions } = await src("reads/questions.ts");
 const { buildRoutingState } = await src("reads/redact.ts");
-const { JevClient } = await import("openclaw/plugin-sdk/fork-jev");
+const { JevClient, jevToken, refreshJevNow } = await import("openclaw/plugin-sdk/fork-jev");
 const {
   TASKS,
   STEPS,
@@ -48,11 +48,12 @@ if (resolve(outDir).startsWith(join(homedir(), ".openclaw"))) {
 }
 mkdirSync(outDir, { recursive: true });
 
-if (!process.env.TYPESAFE_API_KEY) {
+if (!jevToken()) {
   const dropIn = join(homedir(), ".config/systemd/user/openclaw-gateway.service.d/typesafe.conf");
   const m = /^Environment=TYPESAFE_API_KEY=(.+)$/m.exec(readFileSync(dropIn, "utf8"));
   if (!m) throw new Error("no TYPESAFE_API_KEY in the environment or the gateway drop-in");
   process.env.TYPESAFE_API_KEY = m[1].trim();
+  refreshJevNow();
 }
 
 const EUR_CAP = 2;
@@ -62,7 +63,7 @@ let stopped = false;
 const calls = [];
 
 const client = new JevClient({
-  apiKey: () => process.env.TYPESAFE_API_KEY,
+  apiKey: jevToken,
   baseUrl: "https://api.typesafe.ai",
   model: "jev-latest",
   buildState: (s, qs) => buildRoutingState(s, qs),

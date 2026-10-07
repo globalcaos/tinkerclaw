@@ -43,6 +43,7 @@ import { forensicHandlers } from "./server-methods/forensic.js";
 import { gatewayDrainHandlers } from "./server-methods/gateway-drain.js";
 import { gatewayProbesHandlers } from "./server-methods/gateway-probes.js";
 import { healthHandlers } from "./server-methods/health.js";
+import { jevHandlers } from "./server-methods/jev.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsAuthStatusHandlers } from "./server-methods/models-auth-status.js";
 import { modelsHandlers } from "./server-methods/models.js";
@@ -109,6 +110,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...voicewakeRoutingHandlers,
   ...healthHandlers,
   ...briefingHandlers,
+  ...jevHandlers,
   ...channelsHandlers,
   ...chatHandlers,
   ...commandsHandlers,

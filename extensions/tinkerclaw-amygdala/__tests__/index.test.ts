@@ -100,11 +100,11 @@ describe("tinkerclaw-amygdala entry", () => {
     expect(routes).toHaveLength(0);
   });
 
-  it("ships disabled by default in the manifest", () => {
+  it("loads by default in the manifest", () => {
     const manifest = JSON.parse(
       readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf-8"),
     ) as { enabledByDefault: boolean; id: string };
     expect(manifest.id).toBe("tinkerclaw-amygdala");
-    expect(manifest.enabledByDefault).toBe(false);
+    expect(manifest.enabledByDefault).toBe(true);
   });
 });

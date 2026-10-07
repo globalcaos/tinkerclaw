@@ -64,7 +64,7 @@ const PROMPT =
 
 describe("the leaf resolver in the runtime", () => {
   it("is registered in shadow and enforce, removed by stop(), and never registered when off", async () => {
-    const off = make();
+    const off = make({ mode: "off" });
     await off.rt.start();
     expect(getLeafModelResolver()).toBeUndefined();
     const shadow = make({ mode: "shadow" });
@@ -232,7 +232,7 @@ describe("thalamus.plan.preview", () => {
     });
     const big = { units: Array.from({ length: MAX_PLAN_UNITS + 1 }, (_, i) => ({ id: `u${i}` })) };
     expect(t.rt.previewPlan(big)).toEqual({ ok: false, error: `units: at most ${MAX_PLAN_UNITS}` });
-    const off = make();
+    const off = make({ mode: "off" });
     await off.rt.start();
     expect(off.rt.previewPlan(plan)).toBeUndefined();
     expect(existsSync(join(off.root, "data"))).toBe(false);

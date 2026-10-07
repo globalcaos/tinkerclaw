@@ -479,9 +479,14 @@ instrument; never substitute it for one.
 ## 8. The ratchet
 
 `BLIND_CAP` in `scripts/bible/capability-coverage.mjs` is the measured structural status quo —
-**154 on 2026-10-05** — and the build stops when that measurement rises. The stop is intentionally
+**157 on 2026-10-07** — and the build stops when that measurement rises. The stop is intentionally
 cheap and binary; the diagnosis is neither. It asks whether a capability arrived with nothing
 watching it, or whether the scorer lost context about a signal that already exists.
+
+**2026-10-06 and 2026-10-07: 154 → 156 → 157.** Three new rows, all `tinker-ui` modules BLIND by R16: the
+USERS panel `hive-admin` and its grouping helper `hive-owner-groups` (10-06), then the left-rail Users button
+`ui.nav.users` (10-07). No forgotten signal. The 10-06 raise left this paragraph at 154, which the prose pin
+below caught on 10-07.
 
 **2026-10-01: 145 → 153, and green again.** Scoring `2c59c99a222` (where 145 was set) and develop
 against the same config, then diffing the two `--blind` lists, names all nine rows that arrived since.

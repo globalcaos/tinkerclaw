@@ -126,9 +126,33 @@ export async function renderHiveUsers(body: HTMLElement, me: HiveMe, countEl?: H
     ${people.map((p) => personRow(p, me)).join("")}`;
 }
 
-/** Wire the panel once. Re-renders after every action. */
+/** Wire the right-rail panel once. */
 export function initHiveUsersPanel(panel: HTMLElement, body: HTMLElement, me: HiveMe) {
-  const countEl = panel.querySelector<HTMLElement>("#hive-users-count");
+  wireHiveUsers(body, me, panel.querySelector<HTMLElement>("#hive-users-count"));
+  panel.hidden = false;
+}
+
+/** Who this page is signed in as, with the way out. Shown to everyone behind the door. */
+export function hiveWhoAmIHtml(me: HiveMe): string {
+  return `Signed in as <b>${esc(me.displayName)}</b>${me.admin ? ' <span class="hive-chip hive-chip--admin">admin</span>' : ""} · <a class="hive-signout" href="/tinker/logout" data-hint="Sign out, then log in with another person's token">Sign out</a>`;
+}
+
+// FORK 2026-10-07 (the user: "build an extra left-panel tab under recipes called users, where I can
+// do all the user operations"). Same people list and actions as the right-rail panel, full width.
+// Everyone gets the "signed in as" line and Sign out: the user had logged in with a token that had
+// become someone else's and nothing on the page said so.
+export function renderHiveUsersTab(body: HTMLElement, sub: HTMLElement, me: HiveMe) {
+  sub.innerHTML = hiveWhoAmIHtml(me);
+  if (!me.admin) {
+    body.innerHTML = `<div class="hive-note">Only an admin can add people or change their access.</div>`;
+    return;
+  }
+  body.innerHTML = `<div class="hive-users-tab"></div>`;
+  wireHiveUsers(body.firstElementChild as HTMLElement, me, null);
+}
+
+/** Attach the add form and the per-person buttons to `body`, then render. Re-renders after every action. */
+function wireHiveUsers(body: HTMLElement, me: HiveMe, countEl: HTMLElement | null) {
   const rerender = () => renderHiveUsers(body, me, countEl);
   body.addEventListener("submit", async (ev) => {
     const form = (ev.target as HTMLElement).closest<HTMLFormElement>('[data-hive-form="add"]');
@@ -188,6 +212,5 @@ export function initHiveUsersPanel(panel: HTMLElement, body: HTMLElement, me: Hi
     }
     await rerender();
   });
-  panel.hidden = false;
   void rerender();
 }

@@ -102,6 +102,10 @@ export interface JevClientOptions<
   now?: () => number;
   usdPerMTokIn?: number;
   idGen?: () => string;
+  /** How Jev answered (the availability source's `report`): a token arms on the first good answer, 401/403 refuses it. */
+  report?: (r: { ok: true } | { ok: false; status?: number }) => void;
+  /** The breaker's state after each call, with when it lets a probe through (the availability source's `noteBreaker`). */
+  onBreaker?: (open: boolean, until?: number) => void;
 }
 
 type Skip = NonNullable<JevVerdict["skipped"]>;
@@ -148,6 +152,11 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
       skipped: why,
       ts: this.now(),
     };
+  }
+
+  private breakerNote(): void {
+    const until = this.breaker.retryAt;
+    this.o.onBreaker?.(this.breaker.state === "open", until ?? undefined);
   }
 
   async ask(s: S, qs: Q[], o: { budgetMs?: number } = {}): Promise<JevVerdict[]> {
@@ -209,6 +218,8 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
     } catch (err) {
       // Only the error's name is inspected; its message is never propagated (it could echo the key).
       this.breaker.recordFailure();
+      this.breakerNote();
+      this.o.report?.({ ok: false });
       fill(err instanceof Error && err.name === "TimeoutError" ? "timeout" : "error");
       return out as JevVerdict[];
     }
@@ -217,6 +228,8 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
     const answers = isRecord(json) && isRecord(json.answers) ? json.answers : undefined;
     if (res.status !== 200 || !answers) {
       this.breaker.recordFailure();
+      this.breakerNote();
+      this.o.report?.({ ok: false, status: res.status });
       fill("error");
       return out as JevVerdict[];
     }
@@ -238,6 +251,8 @@ export class JevClient<S extends JevSituation = JevSituation, Q extends JevQuest
     }
     if (anyMissing) this.breaker.recordFailure();
     else this.breaker.recordSuccess();
+    this.breakerNote();
+    this.o.report?.(anyMissing ? { ok: false, status: res.status } : { ok: true });
     return out as JevVerdict[];
   }
 

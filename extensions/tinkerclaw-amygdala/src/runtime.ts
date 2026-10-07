@@ -38,7 +38,17 @@ import {
   type QuestionRowOut,
 } from "./feed.js";
 import type { HookAction } from "./hook-action.js";
-import { JevClient, type JevTransport } from "./jev.js";
+import {
+  announceJev,
+  JevClient,
+  jevOn as sharedJevOn,
+  jevToken,
+  noteJevBreaker,
+  reportJevResult,
+  setJevProbe,
+  startJevWatch,
+  type JevTransport,
+} from "./jev.js";
 import { createLearning, type Learning } from "./learning.js";
 import {
   buildHookSettings,
@@ -80,8 +90,13 @@ export interface RuntimeOptions {
   gatewayPort: number;
   v31: { readPluginConfig(): V31ProbeInput["pluginConfig"]; settingsPath?: string };
   transport?: JevTransport;
-  /** Read per call; the default reads `TYPESAFE_API_KEY`. Nothing else in the runtime touches the key. */
+  /**
+   * Read per call; the default is the shared Jev token (env or key file: `jevToken`). Nothing else in the
+   * runtime touches the key. An injected key stands in for the whole shared source: it is never reported to it.
+   */
   apiKey?: () => string | undefined;
+  /** Whether Jev may be asked at all. Default: the shared availability, or always on when `apiKey` is injected. */
+  jevOn?: () => boolean;
   emit: (event: string, payload: unknown) => void;
   now?: () => number;
   idGen?: () => string;
@@ -271,6 +286,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
   let rulesInfo = { n: 0, version: 1 };
   let lastEffectiveMerged: boolean | null = null;
   let notesDropped = 0;
+  let stopJevWatch: (() => void) | null = null;
   // Per chat, at most NOTE_CAP notes younger than NOTE_TTL_MS: a chat whose hooks never come back (the native runner)
   // cannot pile them up, and a note is never delivered long after the step it was about.
   const NOTE_CAP = 3;
@@ -413,6 +429,32 @@ export function createRuntime(o: RuntimeOptions): Runtime {
     });
   }
 
+  /** One synthetic question through the judge (nothing real leaves). Its time when Jev answered, else null. */
+  async function askJudgeOnce(step = "ls /demo"): Promise<number | null> {
+    if (!deps) {
+      return null;
+    }
+    const q = deps.book.get("runs-or-quotes");
+    if (!q) {
+      return null;
+    }
+    const probe = buildSituation(
+      {
+        seam: "pre-tool",
+        sessionKey: "canary",
+        turnId: "canary#1",
+        now: now(),
+        originKind: "synthetic",
+        tool: "Bash",
+        toolInput: { command: step },
+      },
+      { workspaceRoot: "/work/demo", homeDir: "/home/demo" },
+    );
+    const t1 = performance.now();
+    const vs = await deps.jev.ask(probe, [q], { budgetMs: config.jev.timeoutMs });
+    return vs.some((v) => !v.skipped) ? Math.round(performance.now() - t1) : null;
+  }
+
   function closeIntervention(id: string, state: Intervention["state"]): void {
     need().closeIntervention(id, state, now(), "user");
     const ev = interventionEvents.get(id);
@@ -438,9 +480,18 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           seedDir: join(o.extensionRoot, "questions"),
           overlayDir: join(dataDir, "questions.d"),
         });
+        const sharedSource = o.apiKey === undefined;
+        const jevOnNow = o.jevOn ?? (sharedSource ? sharedJevOn : () => true);
         const jev = new JevClient({
           transport: o.transport,
-          apiKey: o.apiKey ?? (() => process.env.TYPESAFE_API_KEY),
+          apiKey: o.apiKey ?? jevToken,
+          ...(sharedSource
+            ? {
+                report: reportJevResult,
+                onBreaker: (open: boolean, until?: number) =>
+                  noteJevBreaker("amygdala", open, until),
+              }
+            : {}),
           baseUrl: config.jev.baseUrl,
           model: config.jev.model,
           buildState: (s: Situation, qs: Question[]) =>
@@ -449,7 +500,12 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           idGen: o.idGen,
         });
         const tracked: DecideDeps["jev"] = {
+          on: jevOnNow,
           async ask(s, qs, opt) {
+            // Dormant: no request, no verdict, no judge-error count. Answers `[]`, the callers treat that as "no read".
+            if (!jevOnNow()) {
+              return [];
+            }
             const vs = await jev.ask(s, qs, opt);
             noteJudge(vs);
             return vs;
@@ -517,6 +573,14 @@ export function createRuntime(o: RuntimeOptions): Runtime {
           companion: routingCompanion,
         };
 
+        if (sharedSource) {
+          // One start line (what is dormant and why), a synthetic probe that arms a new token, and the poll that notices
+          // a key file appearing.
+          announceJev("amygdala");
+          setJevProbe(() => askJudgeOnce(), "amygdala");
+          stopJevWatch = startJevWatch();
+        }
+
         v31On = probeV31({ readPluginConfig: o.v31.readPluginConfig, settingsPath: v31Path });
         floorActive = computeFloorActive(config.mode, v31On);
         writePolicyNow();
@@ -541,6 +605,8 @@ export function createRuntime(o: RuntimeOptions): Runtime {
     },
 
     stop(): void {
+      stopJevWatch?.();
+      stopJevWatch = null;
       registry.dispose();
       if (store) {
         try {
@@ -831,25 +897,7 @@ export function createRuntime(o: RuntimeOptions): Runtime {
       const hit = evaluateRules("Bash", step, { enforcedOnly: true });
       const floorMs = Math.round((performance.now() - t0) * 10) / 10;
       // The judge: one synthetic question, only when it is configured; synthetic situations may leave the machine.
-      let judgeMs: number | null = null;
-      const q = deps.book.get("runs-or-quotes");
-      if (q) {
-        const probe = buildSituation(
-          {
-            seam: "pre-tool",
-            sessionKey: "canary",
-            turnId: "canary#1",
-            now: now(),
-            originKind: "synthetic",
-            tool: "Bash",
-            toolInput: { command: step },
-          },
-          { workspaceRoot: "/work/demo", homeDir: "/home/demo" },
-        );
-        const t1 = performance.now();
-        const vs = await deps.jev.ask(probe, [q], { budgetMs: config.jev.timeoutMs });
-        if (vs.some((v) => !v.skipped)) judgeMs = Math.round(performance.now() - t1);
-      }
+      const judgeMs = await askJudgeOnce(step);
       return { heldBy: hit.decision === "hard_block" ? "hard-rule" : "none", floorMs, judgeMs };
     },
 

@@ -1,0 +1,35 @@
+{
+  "id": "tinkerclaw-downloader",
+  "name": "Downloader",
+  "description": "Owns the download daemon the torrent-scout skill hands work to: aria2 on a systemd user unit (Linux), so a download outlives the agent turn, a gateway restart and a reboot. On every gateway start a guard repairs a config that would replay finished downloads (force-save) and starts the unit if it is installed but down; it never installs anything itself (that is scripts/downloader/setup.mjs). Talks only to aria2's JSON-RPC on 127.0.0.1. GATEWAY METHODS: downloader.status, downloader.add, downloader.remove, downloader.forget. Seeding is off: seed-time=0.",
+  "activation": {
+    "onStartup": true
+  },
+  "enabledByDefault": false,
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "downloadDir": {
+        "type": "string",
+        "description": "Where finished downloads land. Default ~/Downloads/torrent-scout."
+      },
+      "rpcPort": {
+        "type": "integer",
+        "minimum": 1024,
+        "maximum": 65535,
+        "description": "aria2 JSON-RPC port on 127.0.0.1. Default 6800."
+      },
+      "maxConcurrentDownloads": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20,
+        "description": "Downloads that run at once; the rest wait in the queue. Default 3."
+      },
+      "unitName": {
+        "type": "string",
+        "description": "systemd user unit name, without .service. Default torrent-scout-daemon."
+      }
+    }
+  }
+}

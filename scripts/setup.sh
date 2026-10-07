@@ -72,6 +72,8 @@ if [ "$SETTING" = company ]; then
   case "$HIVE_DOOR" in yes|y) HIVE_OWNER="$(ask 'Your name (the first person who gets a token)' Owner)" ;; esac
 fi
 OBJECTIVE="$(ask 'One-line objective/personality for the agent' 'A capable, direct assistant.')"
+# Download daemon is opt-in and OFF by default: it needs aria2 and a systemd user unit.
+DOWNLOADER="$(ask 'Download daemon for torrents and large files (aria2, Linux)? Lets the agent start a download that survives the chat and a reboot [yes/no]' no)"
 
 IDFILE="$WS/IDENTITY.md"
 if [ -e "$IDFILE" ]; then
@@ -98,6 +100,19 @@ case "$HIVE_DOOR" in
     else
       warn "The hive door is configured but NOT running yet (see the command printed above)."
       HIVE_NOTE="Multi-user door is configured but NOT running. Start it with the command printed above, or re-run: ${BOLD}node scripts/hive-door/setup.mjs${N}"
+    fi ;;
+esac
+
+# ---- 4c. Download daemon (opt-in; see extensions/tinkerclaw-downloader/README.md) ---
+DOWNLOADER_NOTE=""
+case "$DOWNLOADER" in
+  yes|y)
+    say "Installing the download daemon (aria2 on a systemd user unit)…"
+    if node scripts/downloader/setup.mjs; then
+      DOWNLOADER_NOTE="Download daemon is ON. Check it any time: ${BOLD}node scripts/downloader/setup.mjs --check${N}"
+    else
+      warn "The download daemon is NOT running (see the message above)."
+      DOWNLOADER_NOTE="Download daemon is NOT running. Fix what the message above says, then re-run: ${BOLD}node scripts/downloader/setup.mjs${N}"
     fi ;;
 esac
 
@@ -132,7 +147,8 @@ esac
 
 # ---- 5. Optional components -------------------------------------------------
 say "Optional components (install later from ClawHub / plugins as needed):"
-echo "   • browser plugin   • downloader app   • mesh-VPN join   • messaging channels"
+echo "   • browser plugin   • mesh-VPN join   • messaging channels"
+echo "   • download daemon  (node scripts/downloader/setup.mjs)"
 echo "   • multi-user door  (company setting only: node scripts/hive-door/setup.mjs)"
 
 # ---- 6. Done ----------------------------------------------------------------
@@ -144,6 +160,7 @@ $(printf "${BOLD}Setup complete.${N}")
   Agent         : $AGENT_NAME${COMPANY:+ @ $COMPANY}
   Workspace     : $WS
   Multi-user    : ${HIVE_DOOR:-no}
+  Downloader    : ${DOWNLOADER:-no}
 
 Start the gateway:   ${BOLD}openclaw gateway start${N}     (or: node openclaw.mjs)
 Open the UI:         the address the gateway prints on start.
@@ -151,6 +168,8 @@ ${CRON_NOTE:+
 $CRON_NOTE}
 ${HIVE_NOTE:+
 $HIVE_NOTE}
+${DOWNLOADER_NOTE:+
+$DOWNLOADER_NOTE}
 
 Personalize by editing files in your workspace ($WS) — never in this repo,
 so future 'git pull' stays clean. See FORK_SETUP.md for the git-pull contract.

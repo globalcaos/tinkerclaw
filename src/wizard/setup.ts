@@ -776,6 +776,10 @@ export async function runSetupWizard(
     nextConfig = await setupSkills(nextConfig, workspaceDir, runtime, prompter);
   }
 
+  // Optional Jev token: written to the key file, never to the config.
+  const { setupJevToken } = await import("./setup.jev.js");
+  await setupJevToken(prompter);
+
   // Plugin configuration (sandbox backends, tool plugins, etc.)
   if (flow !== "quickstart") {
     const { setupPluginConfig } = await import("./setup.plugin-config.js");

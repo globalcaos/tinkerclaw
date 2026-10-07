@@ -62,3 +62,9 @@ code.fs-link.amy-qlink:hover { color: var(--accent); background: none; text-deco
 .amy-btn--small { margin-top: 0; padding: 1px 7px; font-size: 11px; }
 .amy-dot[data-amy-act] { cursor: pointer; }
 #amy-dot-host { display: flex; align-items: center; padding: 0 8px; }
+
+/* The Jev chip beside the composer (Jev ships dormant): off until a token exists, on once Jev answers. */
+.jev-chip { display: inline-block; margin: 0 6px; padding: 1px 9px; border-radius: 10px; border: 1px solid #3a3124; background: #241d15; color: var(--muted); font-size: 10.5px; line-height: 1.6; white-space: nowrap; vertical-align: middle; cursor: default; }
+.jev-chip--on { color: var(--green2, #8fb03a); border-color: #4a5a24; }
+.jev-chip--checking { color: var(--amber, #d9a441); border-color: #5e4a1c; }
+.jev-chip--refused { color: var(--red); border-color: #6a2e28; }

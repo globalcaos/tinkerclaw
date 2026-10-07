@@ -75,6 +75,7 @@ import { createGatewayAuxHandlers } from "./server-aux-handlers.js";
 import { createChannelManager } from "./server-channels.js";
 import { resolveGatewayControlUiRootState } from "./server-control-ui-root.js";
 import { buildGatewayCronService } from "./server-cron.js";
+import { startJevStatusFeed } from "./server-jev.js";
 import { applyGatewayLaneConcurrency } from "./server-lanes.js";
 import { createGatewayServerLiveState, type GatewayServerLiveState } from "./server-live-state.js";
 import { GATEWAY_EVENTS } from "./server-methods-list.js";
@@ -732,6 +733,8 @@ export async function startGatewayServer(
   // FORK 2026-09-25 (logging.md §4.9, §9 step 5): the per-worker memory and CPU trend sampler.
   // A no-op while the writer is disabled; stopped in runClosePrelude, before the writer.
   startWorkerResourceSampler();
+  // FORK 2026-10-06: Jev availability to every open page, and the poll that arms a key file without a restart.
+  const stopJevStatusFeed = startJevStatusFeed(broadcast);
 
   // FORK 2026-09-25 (logging.md §9 step 4): the gateway's own rows. The diagnostic bridge maps
   // three bus types (gw.liveness.warning, gw.memory.pressure, gw.session.stuck) and the
@@ -769,6 +772,7 @@ export async function startGatewayServer(
     // FORK 2026-09-25 (logging.md §4.9): the worker-resources sampler, before the writer: a sample
     // taken after its stop would only be counted as dropped.
     stopWorkerResourceSampler();
+    stopJevStatusFeed();
     // FORK 2026-09-24 (logging.md §7.5 Shutdown): flush the events queue (2 s deadline) and stop
     // the writer thread; records still queued are counted in its final journal line.
     await stopEventWriter().catch((err) => log.warn(`events writer shutdown: ${String(err)}`));

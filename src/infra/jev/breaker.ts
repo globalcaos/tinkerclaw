@@ -24,6 +24,11 @@ export class CircuitBreaker {
     return this.now() - this.openedAt >= this.resetMs ? "half-open" : "open";
   }
 
+  /** When an open breaker lets a probe through (ms), or null while closed. Pure: unlike `isOpen` it changes nothing. */
+  get retryAt(): number | null {
+    return this.openedAt === null ? null : this.openedAt + this.resetMs;
+  }
+
   /** True when the caller must NOT call. In half-open the first caller gets the probe (false), the rest see true. */
   isOpen(): boolean {
     const st = this.state;
