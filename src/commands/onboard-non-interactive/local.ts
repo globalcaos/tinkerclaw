@@ -4,6 +4,8 @@ import { logConfigUpdated } from "../../config/logging.js";
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { resolveGatewayAuthToken } from "../../gateway/auth-token-resolution.js";
 import { resolveConfiguredSecretInputString } from "../../gateway/resolve-configured-secret-input-string.js";
+import { jevAvailability } from "../../infra/jev/availability.js";
+import { jevDormantNote } from "../../infra/jev/token-file.js";
 import type { RuntimeEnv } from "../../runtime.js";
 import { DEFAULT_GATEWAY_DAEMON_RUNTIME } from "../daemon-runtime.js";
 import {
@@ -372,5 +374,8 @@ export async function runNonInteractiveLocalSetup(params: {
     runtime.log(
       `Tip: run \`${formatCliCommand("openclaw configure --section web")}\` to store your Brave API key for web_search. Docs: https://docs.openclaw.ai/tools/web`,
     );
+    if (!jevAvailability().keySource) {
+      runtime.log(jevDormantNote());
+    }
   }
 }

@@ -94,6 +94,8 @@ export type ReaderDeps = {
   ask?: AskFn;
   /** The questions ride on the amygdala's call (see provider.ts), so this reader needs no client of its own. */
   rides?: boolean;
+  /** False while Jev is dormant (no token): every read stays local with `no-key` and nothing is asked. Absent means on. */
+  jevOn?: () => boolean;
   questions: LoadedQuestions;
   cards: () => readonly EnhancementCard[];
   calibration?: () => CalibrationMap | undefined;
@@ -156,6 +158,9 @@ export class RoutingReader {
     const c = this.d.config;
     if (!c.jevEnabled) return { allowed: false, why: "jev-off" };
     if (!this.d.ask && !this.d.rides) return { allowed: false, why: "no-key" };
+    if (this.d.jevOn && !this.d.jevOn()) {
+      return { allowed: false, why: "no-key" };
+    }
     if (i.synthetic !== true && !c.sendRealSituations)
       return { allowed: false, why: "real-not-allowed" };
     const approved = c.jevApprovedSources.some((s) => isPrivateSource(i.source, [s]));

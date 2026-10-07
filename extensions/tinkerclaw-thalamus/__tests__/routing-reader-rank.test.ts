@@ -243,6 +243,20 @@ describe("rankCandidates: the privacy gate is the one RoutingReader uses", () =>
     expect(jev.calls).toHaveLength(0);
   });
 
+  it("while Jev is dormant (no token) it ranks locally and asks nothing", async () => {
+    const jev = scripted({});
+    const r = new RoutingReader({
+      ask: jev.ask,
+      questions,
+      cards: () => [],
+      config: { ...on },
+      jevOn: () => false,
+    });
+    const out = await r.rankCandidates(input(), ITEMS);
+    expect(out).toMatchObject({ skip: "not-allowed", skipDetail: "no-key" });
+    expect(jev.calls).toHaveLength(0);
+  });
+
   it("makes no call when Jev is off or there is no way to ask", async () => {
     const jev = scripted({});
     const off = await reader(jev.ask, { jevEnabled: false }).rankCandidates(input(), ITEMS);

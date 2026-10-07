@@ -1,7 +1,16 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { jevAvailability, resetJevAvailabilityForTests } from "openclaw/plugin-sdk/fork-jev";
 import {
   getCallRouter,
   getRoutingReadProvider,
@@ -93,7 +102,7 @@ function make(raw: Record<string, unknown> = {}, over: Partial<RuntimeDeps> = {}
 
 describe("mode off: nothing is opened", () => {
   it("creates no folder, no file, no router and no provider", async () => {
-    const t = make();
+    const t = make({ mode: "off" });
     await t.rt.start();
     expect(existsSync(t.dataDir)).toBe(false);
     expect(getCallRouter()).toBeUndefined();
@@ -144,7 +153,7 @@ describe("mode shadow: it starts what it needs and creates the folder itself", (
   });
 
   it("does not register the routing provider unless Jev is on", async () => {
-    const off = make({ mode: "shadow" });
+    const off = make({ mode: "shadow", jev: { enabled: false } });
     await off.rt.start();
     expect(getRoutingReadProvider()).toBeUndefined();
     off.rt.stop();
@@ -153,6 +162,86 @@ describe("mode shadow: it starts what it needs and creates the folder itself", (
     expect(getRoutingReadProvider()).toBeDefined();
     on.rt.stop();
     expect(getRoutingReadProvider()).toBeUndefined();
+  });
+
+  it("with Jev enabled but no token (dormant) the routing provider adds no question, and adds them when a token arrives", async () => {
+    let on = false;
+    const t = make(
+      { mode: "shadow", jev: { enabled: true, sendRealSituations: true } },
+      { jevOn: () => on },
+    );
+    await t.rt.start();
+    const view = {
+      id: "s1",
+      sessionKey: "agent:main:tinker:x",
+      turnId: "t1",
+      request: "do a thing",
+      originKind: "user",
+    } as never;
+    const provider = getRoutingReadProvider()!;
+    expect(provider.questionsFor("pre-tool", view)).toEqual([]);
+    expect(provider.questionsFor("prompt", view)).toEqual([]);
+    on = true;
+    expect(provider.questionsFor("pre-tool", view).length).toBeGreaterThan(0);
+  });
+
+  it("with no amygdala, a new token is checked by one synthetic question and arms Jev; nothing real is sent", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "thalamus-probe-"));
+    dirs.push(stateDir);
+    const saved = { state: process.env.OPENCLAW_STATE_DIR, key: process.env.TYPESAFE_API_KEY };
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    delete process.env.TYPESAFE_API_KEY;
+    mkdirSync(join(stateDir, "jev"), { recursive: true });
+    writeFileSync(join(stateDir, "jev", "token"), "tok-probe\n");
+    resetJevAvailabilityForTests();
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      const qs = (JSON.parse(init.body).questions ?? {}) as Record<string, { criteria?: object }>;
+      const answers = Object.fromEntries(
+        Object.entries(qs).map(([id, q]) => {
+          const keys = Object.keys(q.criteria ?? {});
+          return [
+            id,
+            {
+              choice: keys[0] ?? "",
+              confidence: 0.9,
+              probabilities: Object.fromEntries(keys.map((k, i) => [k, i === 0 ? 1 : 0])),
+            },
+          ];
+        }),
+      );
+      return new Response(
+        JSON.stringify({ answers, usage: { input_tokens: 5, output_tokens: 1 } }),
+        {
+          status: 200,
+        },
+      );
+    });
+    try {
+      const t = make({ mode: "shadow", jev: { enabled: true, baseUrl: "http://jev.test" } });
+      await t.rt.start();
+      for (let i = 0; i < 50 && jevAvailability().state !== "armed"; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(jevAvailability().state).toBe("armed");
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toContain("demo folder");
+      t.rt.stop();
+    } finally {
+      vi.unstubAllGlobals();
+      resetJevAvailabilityForTests();
+      if (saved.state === undefined) {
+        delete process.env.OPENCLAW_STATE_DIR;
+      } else {
+        process.env.OPENCLAW_STATE_DIR = saved.state;
+      }
+      if (saved.key === undefined) {
+        delete process.env.TYPESAFE_API_KEY;
+      } else {
+        process.env.TYPESAFE_API_KEY = saved.key;
+      }
+    }
   });
 
   it("seeds a card for every installed enhancement, from its own file, once", async () => {
@@ -267,16 +356,14 @@ describe("mode shadow: what the bus does", () => {
   it("records a run that ended in error as retried", async () => {
     const t = make({ mode: "shadow" });
     await t.rt.start();
-    await t.rt
-      .shortlist()!
-      .prepare({
-        id: "run-1",
-        runId: "run-1",
-        ts: 1,
-        sessionKey: "s",
-        text: "compare my translation with the source",
-        source: "tinker",
-      });
+    await t.rt.shortlist()!.prepare({
+      id: "run-1",
+      runId: "run-1",
+      ts: 1,
+      sessionKey: "s",
+      text: "compare my translation with the source",
+      source: "tinker",
+    });
     t.emit({ stream: "lifecycle", data: { phase: "error" } });
     const store = new ThalamusStore(join(t.dataDir, "thalamus.sqlite"));
     expect(store.getUse("run-1")!.outcome).toBe("retried");

@@ -93,7 +93,7 @@ function buildAllowlist(workspaceDir: string | undefined | null): string[] {
   list.push(path.resolve(home, "src/jarvis-icu"));
   // FORK 2026-07-08: the four roots above are code/workspace dirs, but the
   // user's REAL documents (drafts, PDFs, plans we point him at) live under the
-  // standard XDG home dirs. Every `.fs-link` to a real doc — e.g. an Hillside
+  // standard XDG home dirs. Every `.fs-link` to a real doc — e.g. a village
   // licence draft under ~/Documents — was rejected server-side with "outside
   // allowlist" even after the client matcher learned to render spaced/accented
   // paths as clickable. The client fix was necessary but not sufficient; the

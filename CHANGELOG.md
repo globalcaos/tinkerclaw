@@ -6,6 +6,7 @@ Docs: https://docs.openclaw.ai
 
 ### Changes
 
+- Jev: the amygdala and Thalamus plugins now load in a fresh install, in `shadow` mode, and stay dormant until a Jev token exists (env `TYPESAFE_API_KEY` or the key file `<state dir>/jev/token`, picked up without a restart); `openclaw jev status` and a Tinker chip show the state, and onboarding offers an optional token step.
 - Channels: add Yuanbao channel docs entrance so the Tencent Yuanbao bot appears in the channel listing and sidebar navigation. (#73443) Thanks @loongfay.
 
 ### Fixes

@@ -65,7 +65,7 @@ describe("classifySubject — coarse, deterministic, and silent on ordinary text
   it("returns none on ordinary text and on silence", () => {
     // "none" is the common case and it must never accumulate a penalty: with no subject class
     // there is no ledger lookup at all, so an ordinary turn cannot be vetoed by observation.
-    expect(classifySubject("what time does the train to Springfield leave on Tuesday")).toBe("none");
+    expect(classifySubject("what time does the train to the city leave on Tuesday")).toBe("none");
     expect(classifySubject("")).toBe("none");
     expect(classifySubject("   ")).toBe("none");
   });

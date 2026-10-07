@@ -12679,3 +12679,10 @@ td.sd-sorted {
 .hive-token { display: block; margin: 4px 0; padding: 4px; word-break: break-all; font-size: 11px; user-select: all; }
 .hive-note { color: var(--muted); margin-bottom: 6px; }
 .hive-note--err { color: var(--red); }
+/* FORK 2026-10-07 — the Users tab (left rail): same rows as the right-rail panel, at reading size. */
+.hive-users-tab { max-width: 760px; font-size: 13px; }
+.hive-users-tab .hive-person { padding: 10px 6px; }
+.hive-users-tab .hive-person-meta { font-size: 12px; }
+.hive-users-tab .hive-btn { font-size: 12px; padding: 3px 10px; }
+.hive-users-tab .hive-add input[name="name"] { font-size: 13px; padding: 6px 8px; }
+.hive-signout { color: var(--accent); text-decoration: underline; cursor: pointer; }

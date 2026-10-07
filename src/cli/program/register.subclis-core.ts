@@ -189,6 +189,11 @@ const entrySpecs: readonly CommandGroupDescriptorSpec<SubCliRegistrar>[] = [
       loadModule: () => import("../clawbot-cli.js"),
       exportName: "registerClawbotCli",
     },
+    {
+      commandNames: ["jev"],
+      loadModule: () => import("../jev-cli.js"),
+      exportName: "registerJevCli",
+    },
   ]),
   {
     commandNames: ["pairing"],

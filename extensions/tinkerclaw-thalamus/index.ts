@@ -13,6 +13,7 @@ import {
   resolveGatewayPort,
   type OpenClawPluginApi,
 } from "openclaw/plugin-sdk/core";
+import { configureJev } from "openclaw/plugin-sdk/fork-jev";
 import { previousUserTextOf } from "openclaw/plugin-sdk/fork-thalamus";
 import { parseConfig } from "./src/config.js";
 import { sourceOfSessionKey } from "./src/context-view.js";
@@ -74,6 +75,13 @@ export default definePluginEntry({
         return api.config;
       }
     };
+
+    // The shared Jev source: where it logs and the owner's pointer. Nothing here starts any asking.
+    configureJev({
+      owner: "thalamus",
+      logger: api.logger,
+      tokenHelpUrl: () => cfg.jev.tokenHelpUrl,
+    });
 
     const live = liveRuntimes();
     const shared = live.get(cfg.dataDir);

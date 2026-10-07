@@ -16,6 +16,7 @@ import {
 import { parseConfig } from "./src/config.js";
 import { embeddedExplainRun } from "./src/explain-run.js";
 import { createHttpHandlers, DECIDE_PATH, NOTES_PATH, WAIT_PATH } from "./src/http.js";
+import { configureJev } from "./src/jev.js";
 import { registerNativeHandlers } from "./src/native.js";
 import { createRuntime } from "./src/runtime.js";
 import type { V31ProbeInput } from "./src/v31-probe.js";
@@ -77,6 +78,13 @@ export default definePluginEntry({
         /* broadcast is best-effort */
       }
     };
+
+    // The shared Jev source: where it logs and the owner's pointer. Nothing here starts any asking.
+    configureJev({
+      owner: "amygdala",
+      logger: api.logger,
+      tokenHelpUrl: () => cfg.jev.tokenHelpUrl,
+    });
 
     const runtime = createRuntime({
       config: cfg,

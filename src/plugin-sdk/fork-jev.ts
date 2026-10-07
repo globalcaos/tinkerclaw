@@ -8,6 +8,7 @@
  * holds a key: the caller passes `apiKey: () => string | undefined`.
  */
 export * from "../infra/jev/jev.js";
+export * from "../infra/jev/availability.js";
 export * from "../infra/jev/breaker.js";
 export * from "../infra/jev/cache.js";
 export * from "../infra/jev/redact.js";

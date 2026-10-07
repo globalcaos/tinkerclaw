@@ -98,7 +98,7 @@ const OPENCLAW = process.env.OPENCLAW_DIR || path.join(homedir(), ".openclaw");
  * machine happened to have three days of logs would be switched off the first time it flapped.
  * The journal makes the REPORT sharper; it must never make the GATE non-deterministic.
  */
-export const BLIND_CAP = 156;
+export const BLIND_CAP = 157;
 // 2026-08-05: 377 -> 358, pulled down in the same session that earned it. What moved it:
 // fractal-reflection's first instruments and per-hook liveness at the registerTypedHook seam.
 // 2026-09-07: 358 -> 145 after the scorer was taught about noteRpcDispatch(req.method), the
@@ -124,6 +124,9 @@ export const BLIND_CAP = 156;
 // modules under tinker-ui/src/panels and BLIND by R16 like the ten above: hive-admin (the USERS panel)
 // and hive-owner-groups (its pure grouping helper). No forgotten signal; the fix is still the UI
 // liveness signal.
+// 2026-10-07: 156 -> 157, measured when the gate blocked the Users-tab publish: the one new --blind id is
+// ui.nav.users, the left-rail Users button (alt-view for the hive door), BLIND by R16 like the panel
+// modules above. No forgotten signal; the fix is still the UI liveness signal.
 
 /** Directories that must never be walked. A recursive glob over an extension tree hung the bible gate once. */
 const PRUNE = new Set([

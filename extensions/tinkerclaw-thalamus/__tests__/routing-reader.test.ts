@@ -193,6 +193,41 @@ describe("the privacy gate: decided from the source, before any question is buil
     expect(jev.calls).toHaveLength(0);
   });
 
+  it("while Jev is dormant (no token) every read stays local, says no-key, and asks nothing", async () => {
+    const jev = scripted();
+    const r = new RoutingReader({
+      ask: jev.ask,
+      questions,
+      cards: () => CARDS,
+      config: on,
+      jevOn: () => false,
+    });
+    const task = await r.readTask(input());
+    expect(task.local).toBe("no-key");
+    expect(task.usedJev).toBe(false);
+    expect((await r.readStep({ ...input(), callIndex: 1 })).local).toBe("no-key");
+    expect((await r.readOutcome({ ...input(), callIndex: 1 })).local).toBe("no-key");
+    expect(r.gate(input())).toEqual({ allowed: false, why: "no-key" });
+    expect(jev.calls).toHaveLength(0);
+  });
+
+  it("asks again the moment the source says Jev is on", async () => {
+    const jev = scripted();
+    let on_ = false;
+    const r = new RoutingReader({
+      ask: jev.ask,
+      questions,
+      cards: () => CARDS,
+      config: on,
+      jevOn: () => on_,
+    });
+    await r.readTask(input());
+    expect(jev.calls).toHaveLength(0);
+    on_ = true;
+    await r.readTask(input());
+    expect(jev.calls.length).toBeGreaterThan(0);
+  });
+
   it("applies to every read, not only the task read", async () => {
     const jev = scripted();
     const r = reader(jev.ask);

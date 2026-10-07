@@ -3353,3 +3353,11 @@ border #30363d.
 - **Measured:** `GET /api/ui-state` through the page's address answered 404; `GET /tinker/api/ui-state` answered 200. The laptop never saw it because its prod-ui server answers the root path itself.
 - **Root cause:** `UI_STATE_ENDPOINT` is root-absolute (right for the dev server and prod-ui); the gateway plugin only serves its routes under `/tinker/`.
 - **Fix:** `ui-state.ts` falls back to `/tinker/api/ui-state` after a 404 (test "a 404 at the root path switches this page to the plugin's endpoint", red on the old file); the hive door maps the root path (`multiuser.test.mjs` "tab and page state is saved per person").
+
+### FIXED [retry-storm]: a pulse metric that never succeeds was retried and logged on every tick, forever (2026-10-07; bug id `pulse-failing-metric-no-backoff`)
+
+- **Symptom:** _"Explain why the logs are so big."_ Goku's gateway wrote 130,230 journal lines in 24 h; 121,449 were `[pulse-panel] poll failed for graph.*` warnings, and its journal history only reached back to 2026-09-21.
+- **Measured:** 21 metrics in Goku's `~/.openclaw/data/control-panel/store.db` read `localstate:` files under `memory/online-presence/`, a folder that exists only on the laptop. Each failed 241 times an hour, every ~15 s, because the plugin registers four times per gateway boot and each copy runs its own 60 s tick.
+- **Root cause:** `tick()` treated a metric as due when `now − latest observation ≥ cadence`. A metric that never succeeds has no observation, so it was overdue on every tick.
+- **Fix:** `isDue()` in `pollers/index.ts` keeps consecutive failures per metric and retries after 2^n minutes, capped at the metric's cadence; a success resets it (`poll-backoff.test.ts`). Commit `a77979bd099`.
+- **Still open:** the four registrations per boot (same family as "a run started before ready loads plugins twice"), and Goku's store carrying 33 of the laptop's own KPIs.

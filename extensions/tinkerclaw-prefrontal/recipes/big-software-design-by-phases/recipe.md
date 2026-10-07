@@ -101,8 +101,16 @@ enforces, what it logs. The most important fact for the plan is often there.
 
 **Tools:** read, write
 **Done when:** one short document in `plans_dir` holds the shape, a choices table (choice | why | instead of),
-the module map, the build order, the cutover, the lines not to cross, and the open items split into "the
-principal decides" and "unverified". The principal has read it.
+the module map, the build order, the cutover, the lines not to cross, the **ship path**, and the open items split
+into "the principal decides" and "unverified". The principal has read it.
+
+**The ship path is a required row, not a footnote.** Everything built here also reaches people who clone the public
+fork. Name, for the finished feature: whether a fresh clone gets it bundled on, bundled dormant or off; every key or
+paid service it needs (Jev, a model seat, an API token); what it does on a clone that has none of them (it must stay
+dormant: no calls, no error lines, no half-working UI); how the user learns it needs one (one status line, never a
+silent absence); what switches it on when the key arrives; and where the key lives. Env or a git-ignored key
+file, never a field in a config file that is tracked (2026-10-06, Jev: `openclaw.json` sits in a repo with a remote, so
+the planned `jev.apiKey` setting was dropped at review).
 
 Explain choices; do not restate the source. Point to its sections instead. No test plan and no fine detail in
 this pass.
@@ -222,6 +230,13 @@ states), the merge and branch state, and what is still open.
 - Enforcement flips, data leaving the machine, and deletions of the old system are the principal's decisions.
 
 ## Failures Overcome
+
+- **2026-10-06, Broca retrieval v2 and every Jev feature:** designed, built, merged and deployed with no answer to
+  how they reach a clone. Both Jev plugins ship `enabledByDefault: false`, nothing announces that a Jev token exists,
+  and a keyless client answers every question with "error". The principal: "How do we ship the jev-dependant
+  capabilities? Did you think about it? Did Fractal even consider it?? Maybe these capabilities should be bundled in a
+  new cloner installation and automatically disabled until a Jev token is available, right?" Pass 1 now carries the
+  ship path as a required row.
 
 - **Born project-specific (2026-09-29):** pass 1 was written as `digital-amygdala-build`; at the second pass the
   principal asked for a name "useable by other things" that can start from a prompt, a paper or a dialog. The

@@ -1,0 +1,32 @@
+{
+  "name": "@globalcaos/tinker-downloader",
+  "version": "0.1.0",
+  "description": "Download daemon for the torrent-scout skill: aria2 on a systemd user unit, with a guard that stops finished downloads from coming back after a reboot.",
+  "license": "Apache-2.0",
+  "files": [
+    "index.ts",
+    "aria2-core.mjs",
+    "aria2-core.d.mts",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "type": "module",
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "release": {
+      "publishToClawHub": true,
+      "publishToNpm": false
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.25"
+    },
+    "build": {
+      "openclawVersion": "2026.4.25"
+    }
+  }
+}

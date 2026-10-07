@@ -124,6 +124,11 @@ const subCliCommandCatalog = defineCommandDescriptorCatalog([
     hasSubcommands: true,
   },
   {
+    name: "jev",
+    description: "Jev, the optional judge: is it off (no token) or on",
+    hasSubcommands: true,
+  },
+  {
     name: "pairing",
     description: "Secure DM pairing (approve inbound requests)",
     hasSubcommands: true,

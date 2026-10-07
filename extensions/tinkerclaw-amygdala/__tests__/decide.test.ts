@@ -343,6 +343,73 @@ describe("decide: the judge is out", () => {
   });
 });
 
+describe("decide: Jev dormant (no token)", () => {
+  // No token is not a failure of the judge: nothing is asked, no verdict row is written, no "judge down" row is drawn.
+  const fams = [fam("safety", ["danger-level", "runs-or-quotes"], () => null)];
+  const dormantJev = () => Object.assign(new FakeJev(), { on: () => false });
+
+  it("asks nothing, writes no verdict row, emits nothing, and is not degraded", async () => {
+    const jev = dormantJev();
+    const { deps, store, events } = setup({ families: fams, mode: "enforce", jev });
+    const r = await decide(deps, input("cp a b"));
+    expect(jev.calls).toHaveLength(0);
+    expect(r.verdicts).toHaveLength(0);
+    expect(store.queryVerdicts({ situationId: r.situation.id })).toHaveLength(0);
+    expect(r.decision).toMatchObject({ degraded: false, response: { kind: "proceed" } });
+    expect(r.decision.reasonCode).toBe("jev-dormant[]");
+    expect(events).toHaveLength(0);
+  });
+
+  it("the hard rules still hold with no token", async () => {
+    const { deps } = setup({ families: fams, mode: "enforce", jev: dormantJev() });
+    const r = await decide(deps, input(ABSOLUTE_DELETE));
+    expect(r.decision.response).toMatchObject({ kind: "hold" });
+  });
+
+  it("failClosedOnLevel3 still holds external steps with no token", async () => {
+    const { deps } = setup({
+      families: fams,
+      mode: "enforce",
+      failClosedOnLevel3: true,
+      jev: dormantJev(),
+    });
+    const send = await decide(deps, input("git push origin main"));
+    expect(send.decision.response).toMatchObject({
+      kind: "hold",
+      ruleOrQuestion: "fallback-level3",
+    });
+    const read = await decide(deps, input("ls -la"));
+    expect(read.decision.response.kind).toBe("proceed");
+  });
+
+  it("asks again the moment a token exists, in the same runtime", async () => {
+    let on = false;
+    const jev = Object.assign(new FakeJev(), { on: () => on });
+    const { deps } = setup({ families: fams, jev });
+    await decide(deps, input("cp a b"));
+    expect(jev.calls).toHaveLength(0);
+    on = true;
+    await decide(deps, input("cp a b"));
+    expect(jev.calls).toHaveLength(1);
+  });
+
+  it("does not ask the Thalamus routing questions that ride on the call either", async () => {
+    const jev = dormantJev();
+    const { deps } = setup({ families: fams, jev });
+    let asked = 0;
+    deps.companion = {
+      questionsFor: () => {
+        asked += 1;
+        return [];
+      },
+      observe: () => {},
+    } as never;
+    await decide(deps, input("cp a b"));
+    expect(jev.calls).toHaveLength(0);
+    expect(asked).toBe(0);
+  });
+});
+
 describe("decide: persistence and events", () => {
   it("stores situation, verdicts and decision; emits one decision event per answered question and one intervention", async () => {
     const { deps, store, events } = setup({

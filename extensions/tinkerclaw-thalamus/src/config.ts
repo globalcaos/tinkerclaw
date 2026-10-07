@@ -13,6 +13,8 @@ export type ThalamusConfig = {
     baseUrl: string;
     model: string;
     timeoutMs: number;
+    /** Where an owner gets a token. No default: the pointer is the owner's decision. */
+    tokenHelpUrl?: string;
   };
   reads: { confidenceFloor: number };
   privacy: {
@@ -111,10 +113,13 @@ const caps = (v: unknown): Record<string, number> => {
   return out;
 };
 
-/** Anything but the two named modes is `off`: a typo must never switch routing on. */
+/** Anything but the two named modes is `off`: a typo must never switch routing on. A missing mode is `shadow`. */
 export function parseMode(v: unknown): ThalamusMode {
   return v === "shadow" || v === "enforce" ? v : "off";
 }
+
+const optStr = (v: unknown): string | undefined =>
+  typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
 
 export function parseConfig(raw: Raw): ThalamusConfig {
   const r = obj(raw);
@@ -133,13 +138,15 @@ export function parseConfig(raw: Raw): ThalamusConfig {
   const hedge = obj(r.hedge);
   const preferred = obj(finish.preferred);
   return {
-    mode: parseMode(r.mode),
+    mode: r.mode === undefined ? "shadow" : parseMode(r.mode),
     jev: {
-      enabled: bool(jev.enabled, false),
+      // On by default: with no token the shared Jev source keeps every read local, and a token arms it by itself.
+      enabled: bool(jev.enabled, true),
       sendRealSituations: bool(jev.sendRealSituations, false),
       baseUrl: str(jev.baseUrl, "https://api.typesafe.ai"),
       model: str(jev.model, "jev-latest"),
       timeoutMs: num(jev.timeoutMs, 2600),
+      ...(optStr(jev.tokenHelpUrl) ? { tokenHelpUrl: optStr(jev.tokenHelpUrl) } : {}),
     },
     reads: { confidenceFloor: Math.min(1, Math.max(0, num(reads.confidenceFloor, 0.6))) },
     privacy: {

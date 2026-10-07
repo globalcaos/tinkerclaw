@@ -489,6 +489,13 @@ run_quiet_step() {
     return 1
 }
 
+print_jev_note() {
+    # Jev is an optional paid judge. Without a token it stays off by itself; `openclaw onboard` offers a token step,
+    # and a non-interactive install only says where the token goes. The token never goes into openclaw.json.
+    local state_dir="${OPENCLAW_STATE_DIR:-$HOME/.openclaw}"
+    ui_info "Jev is off: no token. Safety checks, routing reads and recipe ranking stay off until one exists; everything else works. To turn it on, put the token in ${state_dir}/jev/token (picked up without a restart)."
+}
+
 cleanup_legacy_submodules() {
     local repo_dir="$1"
     local legacy_dir="$repo_dir/Peekaboo"
@@ -2704,6 +2711,7 @@ main() {
     else
         if [[ "$NO_ONBOARD" == "1" || "$skip_onboard" == "true" ]]; then
             ui_info "Skipping onboard (requested); run openclaw onboard later"
+            print_jev_note
         else
             local config_path="${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}"
             if [[ -f "${config_path}" || -f "$HOME/.clawdbot/clawdbot.json" ]]; then
@@ -2729,6 +2737,7 @@ main() {
                 exec "$claw" onboard
             fi
             ui_info "No TTY; run openclaw onboard to finish setup"
+            print_jev_note
             return 0
         fi
     fi

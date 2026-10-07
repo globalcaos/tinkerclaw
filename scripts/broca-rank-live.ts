@@ -50,7 +50,7 @@ type Synthetic = {
 const PROMPTS: Synthetic[] = [
   {
     id: "trip",
-    text: "Plan a two-week family holiday in Portugal in July: flights from Springfield, a motorhome or a car, and a day-by-day plan with a budget.",
+    text: "Plan a two-week family holiday in Portugal in July: flights from the city, a motorhome or a car, and a day-by-day plan with a budget.",
     expectUse: ["plan a family trip"],
     why: "a task a recipe was made for",
   },

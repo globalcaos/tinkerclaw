@@ -3,10 +3,10 @@
   "activation": {
     "onStartup": true
   },
-  "enabledByDefault": false,
+  "enabledByDefault": true,
   "runtimeAssets": ["./questions", "./hooks", "./prompts"],
   "name": "Thalamus v4",
-  "description": "Routes each model call, ranks the assistant's skills, recipes and plugins for each task, and records what it would have done. Ships disabled. Mode off by default; shadow computes and records and changes nothing; only enforce hands the agent a short list.",
+  "description": "Routes each model call, ranks the assistant's skills, recipes and plugins for each task, and records what it would have done. Loads by default. Mode shadow by default; it computes and records and changes nothing; only enforce hands the agent a short list.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -14,7 +14,7 @@
       "mode": {
         "type": "string",
         "enum": ["off", "shadow", "enforce"],
-        "default": "off",
+        "default": "shadow",
         "description": "off = load nothing and open nothing; shadow = compute and record the per-call decision and the short list, change nothing; enforce = hand the agent the short list."
       },
       "jev": {
@@ -23,8 +23,8 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false,
-            "description": "Ask Jev at all. Off: every read comes from local rules."
+            "default": true,
+            "description": "Ask Jev at all. Off: every read comes from local rules. With no token, nothing is asked whatever this says."
           },
           "sendRealSituations": {
             "type": "boolean",
@@ -42,6 +42,10 @@
           "timeoutMs": {
             "type": "number",
             "default": 2600
+          },
+          "tokenHelpUrl": {
+            "type": "string",
+            "description": "Where to get a Jev token. Shown in the start line and the status; no default."
           }
         }
       },

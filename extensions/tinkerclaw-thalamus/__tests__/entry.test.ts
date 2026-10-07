@@ -60,9 +60,9 @@ function register(pluginConfig: Record<string, unknown> | undefined) {
 describe("the plugin manifest", () => {
   const manifest = JSON.parse(readFileSync(join(root, "openclaw.plugin.json"), "utf8"));
 
-  it("ships disabled, and lists the folders the build must copy", () => {
+  it("loads by default, and lists the folders the build must copy", () => {
     expect(manifest.id).toBe("tinkerclaw-thalamus");
-    expect(manifest.enabledByDefault).toBe(false);
+    expect(manifest.enabledByDefault).toBe(true);
     expect(manifest.runtimeAssets).toEqual(expect.arrayContaining(["./questions", "./hooks"]));
     for (const a of manifest.runtimeAssets) expect(existsSync(join(root, a)), a).toBe(true);
   });
@@ -80,19 +80,19 @@ describe("the plugin manifest", () => {
     }
   });
 
-  it("defaults the mode to off and every outside read to off", () => {
+  it("defaults the mode to shadow and sends no real situation to Jev", () => {
     const p = manifest.configSchema.properties;
-    expect(p.mode.default).toBe("off");
+    expect(p.mode.default).toBe("shadow");
     expect(p.mode.enum).toEqual(["off", "shadow", "enforce"]);
-    expect(p.jev.properties.enabled.default).toBe(false);
+    expect(p.jev.properties.enabled.default).toBe(true);
     expect(p.jev.properties.sendRealSituations.default).toBe(false);
     expect(manifest.configSchema.additionalProperties).toBe(false);
   });
 });
 
 describe("the plugin entry", () => {
-  it("registers nothing and opens nothing when the mode is off, or when there is no config", () => {
-    for (const cfg of [undefined, {}, { mode: "off" }, { mode: "bogus" }]) {
+  it("registers nothing and opens nothing when the mode is off or misspelled", () => {
+    for (const cfg of [{ mode: "off" }, { mode: "bogus" }]) {
       const r = register(cfg);
       expect(r.routes, JSON.stringify(cfg)).toEqual([]);
       expect(r.methods).toEqual([]);

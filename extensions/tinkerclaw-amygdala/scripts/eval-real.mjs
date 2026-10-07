@@ -11,13 +11,13 @@ import { dirname, join, resolve } from "node:path";
  * "cases": [{"situationId": "…", "expect": true, "note": "why"}]}. Each case is read from the live store (read-only),
  * the reply is re-cleaned with today's `judgedReply`, the prompt (the shipped version, or a candidate file in the same
  * format as questions/<family>/<id>.md) is asked through the real redaction and the real Jev client, and the answer is
- * compared with the label at the prompt's own cut-off. Needs TYPESAFE_API_KEY in the environment; never prints it.
+ * compared with the label at the prompt's own cut-off. Needs a Jev token (TYPESAFE_API_KEY in the environment, or the key file); never prints it.
  */
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const src = (p) => import(join(root, "src", p));
-const { JevClient } = await src("jev.ts");
+const { JevClient, jevToken } = await src("jev.ts");
 const { QuestionBook, readSeedFile, validateQuestion } = await src("question-book.ts");
 const { parseConfig } = await src("config.ts");
 const { redactForSend } = await src("redact.ts");
@@ -26,7 +26,9 @@ const { judgedReply } = await src("situation.ts");
 const [labelsPath] = process.argv.slice(2);
 const qi = process.argv.indexOf("--question");
 if (!labelsPath) throw new Error("usage: eval-real.mjs <labels.json> [--question <candidate.md>]");
-if (!process.env.TYPESAFE_API_KEY) throw new Error("TYPESAFE_API_KEY is not in the environment");
+if (!jevToken()) {
+  throw new Error("no Jev token (TYPESAFE_API_KEY in the environment, or the key file)");
+}
 const labels = JSON.parse(readFileSync(labelsPath, "utf8"));
 const book = new QuestionBook({ seedDir: join(root, "questions") });
 const q = qi > 0 ? readSeedFile(process.argv[qi + 1]) : book.get(labels.questionId);
@@ -34,7 +36,7 @@ const problems = validateQuestion(q);
 if (problems.length) throw new Error(`invalid question: ${problems.join("; ")}`);
 const config = parseConfig({ jev: { sendRealSituations: true } });
 const jev = new JevClient({
-  apiKey: () => process.env.TYPESAFE_API_KEY,
+  apiKey: jevToken,
   baseUrl: config.jev.baseUrl,
   model: config.jev.model,
   buildState: (s, qs) => redactForSend(s, qs, { allowReal: true, homeDir: homedir() }),

@@ -12,7 +12,18 @@
 
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { JevClient } from "openclaw/plugin-sdk/fork-jev";
+import {
+  announceJev,
+  JevClient,
+  jevAvailability,
+  jevOn as sharedJevOn,
+  jevToken,
+  noteJevBreaker,
+  refreshJevNow,
+  reportJevResult,
+  setJevProbe,
+  startJevWatch,
+} from "openclaw/plugin-sdk/fork-jev";
 import {
   createStuckTracker,
   DEFAULT_RUNG_TIME,
@@ -105,6 +116,8 @@ export type RuntimeDeps = {
   attribute?: (call: { name: string; args?: unknown; toolCallId?: string }) => UsageMark[];
   store?: ThalamusStore;
   ask?: AskFn;
+  /** Whether Jev may be asked at all. Default: the shared availability, or always on when `ask` is injected. */
+  jevOn?: () => boolean;
   defer?: (fn: () => void) => void;
   /** A draw in [0, 1) for exploration; default `Math.random`. */
   rand?: () => number;
@@ -206,7 +219,7 @@ export function createRuntime(deps: RuntimeDeps) {
   const providerReadsByKind = { task: 0, step: 0, outcome: 0 };
   let feedRuns: () => number = () => 0;
   let seam: ReturnType<typeof createShortlistSeam> | undefined;
-  let hasKey = false;
+  let stopJevWatch: (() => void) | undefined;
   let services: { digest: DigestService; check: CheckService; finish: FinishService } | undefined;
   let runStates: ReturnType<typeof createRunStates> | undefined;
   let scheduler: Scheduler | undefined;
@@ -240,6 +253,17 @@ export function createRuntime(deps: RuntimeDeps) {
       : {};
   const timeFrom = (which: "typical" | "slow") => (key: string) =>
     rungTimeFrom(learnedTimes.get(key), DEFAULT_RUNG_TIME, which);
+
+  // Whether Jev may be asked: the shared availability, or always on when a test injects its own `ask`.
+  const jevOnNow = deps.jevOn ?? (deps.ask ? () => true : sharedJevOn);
+  /** A token exists (the status shows this, never the token). A test that injects `ask` stands in for the source. */
+  const jevHasKey = (): boolean => {
+    if (deps.ask) {
+      return true;
+    }
+    refreshJevNow();
+    return jevAvailability().keySource !== null;
+  };
 
   const readerConfig = (): ReaderConfig => ({
     ...DEFAULT_READER_CONFIG,
@@ -305,21 +329,46 @@ export function createRuntime(deps: RuntimeDeps) {
 
       const questions = loadQuestions(join(deps.extensionRoot, "questions"));
 
-      // Jev: only when asked for, and the key is read per call, never kept.
+      // Jev: only when asked for, and the key is read per call, never kept. No token = dormant: nothing is asked.
       let ask = deps.ask;
       if (!ask && cfg.jev.enabled) {
         const client = new JevClient<RoutingSituation>({
-          apiKey: () => process.env.TYPESAFE_API_KEY,
+          apiKey: jevToken,
           baseUrl: cfg.jev.baseUrl,
           model: cfg.jev.model,
           buildState: (s, qs) => buildRoutingState(s, qs),
+          report: reportJevResult,
+          onBreaker: (open, until) => noteJevBreaker("thalamus", open, until),
         });
         ask = (s, qs, o) => client.ask(s, qs as never, o);
       }
-      hasKey = Boolean(process.env.TYPESAFE_API_KEY);
+      if (!deps.ask && cfg.jev.enabled) {
+        announceJev("thalamus");
+        stopJevWatch ??= startJevWatch();
+        // With no amygdala to probe a new token, one synthetic question arms it, or shows it refused. Nothing real is sent:
+        // the situation is fixed text. Without this a Thalamus-only install stays "token not checked yet" for good.
+        const probeQuestion = questions.task[0];
+        if (ask && probeQuestion) {
+          setJevProbe(
+            () =>
+              ask(
+                { id: "jev-probe", request: { value: "List the files in a demo folder." } },
+                [probeQuestion],
+                { budgetMs: cfg.jev.timeoutMs },
+              ),
+            "thalamus",
+          );
+        }
+      }
 
       const cards = (): EnhancementCard[] => [...cardMap.values()];
-      const reader = new RoutingReader({ ask, questions, cards, config: readerConfig() });
+      const reader = new RoutingReader({
+        ask,
+        questions,
+        cards,
+        config: readerConfig(),
+        jevOn: jevOnNow,
+      });
       const tracker = createUseTracker({
         store: () => store,
         cards: () => cardMap,
@@ -684,7 +733,13 @@ export function createRuntime(deps: RuntimeDeps) {
 
       // The step read rides on the amygdala's call, but only when Jev is on at all.
       if (cfg.jev.enabled) {
-        const riding = new RoutingReader({ rides: true, questions, cards, config: readerConfig() });
+        const riding = new RoutingReader({
+          rides: true,
+          questions,
+          cards,
+          config: readerConfig(),
+          jevOn: jevOnNow,
+        });
         cleanups.push(
           setRoutingReadProvider(
             createRoutingProvider({
@@ -718,6 +773,8 @@ export function createRuntime(deps: RuntimeDeps) {
 
     stop(): void {
       stops += 1;
+      stopJevWatch?.();
+      stopJevWatch = undefined;
       for (const off of cleanups.splice(0).reverse()) {
         try {
           off();
@@ -947,7 +1004,11 @@ export function createRuntime(deps: RuntimeDeps) {
       return {
         mode: cfg.mode,
         running,
-        jev: { enabled: cfg.jev.enabled, sendRealSituations: cfg.jev.sendRealSituations, hasKey },
+        jev: {
+          enabled: cfg.jev.enabled,
+          sendRealSituations: cfg.jev.sendRealSituations,
+          hasKey: jevHasKey(),
+        },
         ...(store ? { counts: store.counts() } : {}),
         ...(running ? { shadow: shadowStats() } : {}),
         cache: { runs: feedRuns() },

@@ -185,6 +185,7 @@ import {
   skillNoticeFromInjectedBody,
   type InjectedKind,
 } from "./injected-prompt.js";
+import { createJevChip } from "./jev-chip.js";
 import {
   advanceCursor,
   closeSegment,
@@ -381,10 +382,16 @@ import {
   type CronGroupNode,
   type CronTaxonomy,
 } from "./panels/cron-taxonomy.js";
-import { fetchHiveMe, initHiveUsersPanel } from "./panels/hive-admin.ts";
+import { fetchHiveMe, initHiveUsersPanel, renderHiveUsersTab } from "./panels/hive-admin.ts";
 import { groupByOwner, type HiveMe } from "./panels/hive-owner-groups.ts";
 // FORK 2026-10-06 — multi-user mode (hive door): who this page belongs to, null in single-user mode.
 let hiveMe: HiveMe | null = null;
+// One /me request per page load, shared by the banner, the USERS panel and the Users tab.
+let hiveMePromise: Promise<HiveMe | null> | null = null;
+function getHiveMe(): Promise<HiveMe | null> {
+  hiveMePromise ??= fetchHiveMe();
+  return hiveMePromise;
+}
 // FORK 2026-06-13 (eeg): seismograph trace store (bible §5.8h) — pure state +
 // SVG renderer live in their own unit-tested module; app.ts only feeds and
 // mounts it (effort stream → record, lifecycle end → turnEnd, history → backfill).
@@ -9706,6 +9713,9 @@ document.addEventListener("click", (ev) => {
   const el = (ev.target as HTMLElement | null)?.closest("[data-amy-act]");
   if (el) void amyUi.handleClick(el);
 });
+// FORK 2026-10-06 (Jev ships dormant): a chip beside the composer says whether Jev is off (no token), checking a token, on,
+// or refused. Inert on a gateway without `jev.status`.
+const jevChip = createJevChip({ req, repaint: () => renderAmygdalaPanel() });
 // THALAMUS v4 panel (phase G): asks `thalamus.panel`; an unknown-method answer leaves the routing card exactly as it was.
 const thalamusV4Ui = createThalamusV4Ui({ req, repaint: () => updateBudgetPanel() });
 // A `toggle` does not bubble, so it is caught in the capture phase to remember which expanders the reader has open.
@@ -9725,7 +9735,7 @@ document.addEventListener(
 );
 function renderAmygdalaPanel(): void {
   const dotHost = document.getElementById("amy-dot-host");
-  if (dotHost) dotHost.innerHTML = amyUi.dotHtml();
+  if (dotHost) dotHost.innerHTML = amyUi.dotHtml() + jevChip.html();
   const body = document.getElementById("amygdala-body");
   if (!body) return;
   const amyBody = amyUi.panelBodyHtml();
@@ -9824,6 +9834,7 @@ function onFrame(f: unknown) {
           if (!reconnectOverLoadedPage || !amyUi.available()) {
             void amyUi.onConnected().then(() => renderAmygdalaPanel());
           }
+          void jevChip.onConnected();
           // FORK 2026-08-16 — the gateway is back, so replay anything it never provably received.
           // This is the exact moment the reported bug used to bite: a restart drops the socket,
           // every in-flight chat.send is rejected, and the prompt died there. Now the reconnect
@@ -10590,6 +10601,10 @@ function bumpActiveRunActivity(payload: { runId?: unknown; sessionKey?: unknown 
 
 function onEvent(evt: unknown) {
   const amyEvent = (evt as { event?: unknown } | null)?.event;
+  if (amyEvent === "jev.status") {
+    jevChip.onEvent((evt as { payload?: unknown }).payload);
+    return;
+  }
   if (
     typeof amyEvent === "string" &&
     (amyEvent.startsWith("amygdala2.") || amyEvent === "thalamus.refusal")
@@ -18621,7 +18636,7 @@ function renderMarkdown(text: string): string {
   // so over-matching here cannot open anything outside the allowed roots.
   // Trailing punctuation guard: don't swallow a path-final '.' or '-'.
   // FORK 2026-07-08: spaces + unicode letters/digits now supported so that
-  // real paths like "/home/user/HOME Hillside/Llicència projecte/file.md"
+  // real paths like "/home/user/HOME Village/Llicència projecte/file.md"
   // linkify. \p{L}/\p{N} (requires /u flag) cover accented chars (\w is
   // ASCII-only). Spaces are allowed inside the path BUT not when followed
   // by '-' or whitespace — that pattern signals a shell flag (" --flag",
@@ -19374,6 +19389,17 @@ changed? Name only axes with real signal. Silence on the rest.
     Fore2 sat in its comments and in TOOLS.md, and the reflection wrote "no gap found". The owner:
     "the Fore1 and Fore2 are still missing. They either are reachable or not, but we need to see
     them listed.")
+
+    A feature built here is also a feature shipped. TinkerClaw is a public fork, so anything merged
+    into \\\`develop\\\` reaches people who clone it, without our keys, seats or services. When a turn
+    builds or deploys a capability, hold it against a fresh clone: is it bundled on, dormant or off;
+    which key or paid service does it need (Jev, a model seat, an API token); what does it do when
+    that key is missing (it must stay dormant, with no calls and no error lines); how does the user
+    learn it needs one; and what switches it on when the key arrives. An unanswered row is a gap.
+    (2026-10-06: Broca retrieval v2 was designed, built, merged and deployed over two days and seven
+    reflections, and none of them asked. Both Jev plugins ship off, nothing tells a clone that a Jev
+    token exists, and a keyless client answers every question with "error". The owner: "How do we
+    ship the jev-dependant capabilities? Did you think about it? Did Fractal even consider it??")
 
     A status answer is a delivery too. When the owner asks where a piece of work stands ("show me
     the present status", "what is pending", "where are we"), the recipe that governs that work
@@ -22703,6 +22729,22 @@ let agentNameHeaderKey: string | null = null;
 let conductorNamePromise: Promise<string> | null = null;
 function loadConductorName(): Promise<string> {
   if (conductorNamePromise) return conductorNamePromise;
+  // FORK 2026-10-07: behind the hive door the door owns the seat (a cookie), so this tab never stores
+  // a seat id and the banner said only the agent's name, for every person. The door's /me knows who
+  // this page belongs to; use it first and keep the seat lookup for single-user pages.
+  conductorNamePromise = getHiveMe().then((me) => {
+    const n = me?.displayName?.trim() ?? "";
+    if (!n) return loadSeatConductorName();
+    try {
+      sessionStorage.setItem(CONDUCTOR_STORAGE_KEY, n);
+    } catch {
+      // The banner still paints from the returned value.
+    }
+    return n;
+  });
+  return conductorNamePromise;
+}
+function loadSeatConductorName(): Promise<string> {
   let seat = "";
   try {
     seat = sessionStorage.getItem(SEAT_ID_STORAGE_KEY) ?? "";
@@ -22710,7 +22752,7 @@ function loadConductorName(): Promise<string> {
     seat = "";
   }
   if (!seat || !TOKEN) return Promise.resolve("");
-  conductorNamePromise = fetch(`${BASE}api/seat`, {
+  return fetch(`${BASE}api/seat`, {
     headers: { Authorization: `Bearer ${TOKEN}`, "X-Tinker-Seat": seat },
   })
     .then((r) => (r.ok ? r.json() : null))
@@ -22729,7 +22771,6 @@ function loadConductorName(): Promise<string> {
       conductorNamePromise = null;
       return "";
     });
-  return conductorNamePromise;
 }
 function refreshAgentNameHeader(): void {
   const host = document.getElementById("agent-name-banner");
@@ -27345,6 +27386,7 @@ function init() {
       <button class="nav-btn" data-tab="debug" data-hint="Debug"><svg viewBox="0 0 24 24" style="stroke:#f87171"><path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3 3 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/></svg></button>
       <button class="nav-btn" data-tab="logs" data-hint="Logs"><svg viewBox="0 0 24 24" style="stroke:#94a3b8"><path d="M8 21h12a2 2 0 0 0 2-2v-2H10v2a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v3h4"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M15 8h-5"/><path d="M15 12h-5"/></svg></button>
       <button class="nav-btn" data-tab="recipes" data-hint="Recipes"><svg viewBox="0 0 24 24" style="stroke:#d4a574"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" x2="16" y1="13" y2="13"/><line x1="8" x2="12" y1="17" y2="17"/><line x1="8" x2="10" y1="9" y2="9"/></svg></button>
+      <button class="nav-btn" data-tab="users" data-hint="Users" style="display:none"><svg viewBox="0 0 24 24" style="stroke:#e879f9"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></button>
     </nav>
     <div class="topbar">
       <div class="logo" id="new-session-btn" data-hint="New session"><img src="${BASE}icon.png?v=4" alt="T" style="height:76px;width:auto" onmouseenter="this.src='${BASE}icon-neon.png?v=1'" onmouseleave="this.src='${BASE}icon.png?v=4'"><img src="${BASE}icon-neon.png?v=1" style="display:none" aria-hidden="true"></div>
@@ -27580,9 +27622,14 @@ function init() {
 
   // FORK 2026-10-06 — multi-user mode: ask the hive door who this page belongs to. Admins get the
   // USERS panel at the bottom of the rail and an owner-grouped chat list. Single-user: no-op.
-  void fetchHiveMe().then((me) => {
+  void getHiveMe().then((me) => {
     hiveMe = me;
     if (!me) return;
+    const usersBtn = document.querySelector<HTMLElement>('.nav-btn[data-tab="users"]');
+    if (usersBtn) {
+      usersBtn.style.display = "";
+      usersBtn.dataset.hint = `Users · signed in as ${me.displayName}`;
+    }
     const panel = document.getElementById("hive-users-panel");
     const body = document.getElementById("hive-users-body");
     if (me.admin && panel && body) initHiveUsersPanel(panel, body, me);
@@ -35072,6 +35119,8 @@ function init() {
     | "debug"
     | "logs"
     | "recipes"
+    // FORK 2026-10-07 — people behind the hive door; the nav button shows only in multi-user mode.
+    | "users"
     // FORK 2026-06-06 — BROCA recipe visibility: a detail view reached by clicking
     // a recipe title (NOT a top-level nav button). switchTab("recipe-detail")
     // routes here; it is intentionally absent from the visible nav bar.
@@ -35090,6 +35139,7 @@ function init() {
     debug: "#f87171",
     logs: "#94a3b8",
     recipes: "#d4a574",
+    users: "#e879f9",
     "recipe-detail": "#e3b341",
   };
 
@@ -35393,6 +35443,15 @@ function init() {
         case "recipe-detail":
           await renderRecipeDetail(body, sub);
           break;
+        case "users": {
+          const me = hiveMe ?? (await getHiveMe());
+          if (me) renderHiveUsersTab(body as HTMLElement, sub as HTMLElement, me);
+          else {
+            sub.textContent = "";
+            body.innerHTML = `<div class="alt-placeholder"><span>This page is not behind the multi-user door, so there are no people to manage.</span></div>`;
+          }
+          break;
+        }
       }
     } catch (e) {
       const body = altView.querySelector(".alt-view-body");

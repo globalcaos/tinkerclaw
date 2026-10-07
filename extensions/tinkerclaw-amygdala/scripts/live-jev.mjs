@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const src = (p) => import(join(root, "src", p));
-const { JevClient } = await src("jev.ts");
+const { JevClient, jevToken } = await src("jev.ts");
 const { QuestionBook } = await src("question-book.ts");
 const { enabledFamilies } = await src("families/index.ts");
 const { parseConfig } = await src("config.ts");
@@ -41,7 +41,9 @@ if (resolve(dataDir).startsWith(join(homedir(), ".openclaw"))) {
   throw new Error("refusing to use a data dir under ~/.openclaw");
 }
 mkdirSync(dataDir, { recursive: true });
-if (!process.env.TYPESAFE_API_KEY) throw new Error("TYPESAFE_API_KEY is not in the environment");
+if (!jevToken()) {
+  throw new Error("no Jev token (TYPESAFE_API_KEY in the environment, or the key file)");
+}
 
 const EUR_CAP = 2;
 const MEASURE_BUDGET_MS = 10_000;
@@ -62,7 +64,7 @@ const book = new QuestionBook({
   overlayDir: join(dataDir, "questions.d"),
 });
 const jev = new JevClient({
-  apiKey: () => process.env.TYPESAFE_API_KEY,
+  apiKey: jevToken,
   baseUrl: config.jev.baseUrl,
   model: config.jev.model,
   buildState: (s, qs) => redactForSend(s, qs, { allowReal: false, homeDir: homedir() }),

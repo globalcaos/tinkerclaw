@@ -28,7 +28,7 @@ relay server — without launching a separate automated browser.
 ## Options
 
 - `Relay host`: defaults to `127.0.0.1`. Set it to the machine running the gateway when the
-  browser lives elsewhere — a LAN address such as `192.0.2.100`, or `127.0.0.1` again if you
+  browser lives elsewhere — a LAN address such as `192.168.1.100`, or `127.0.0.1` again if you
   reach it through an SSH tunnel (`ssh -N -L 18792:127.0.0.1:18792 user@host`).
 - `Relay port`: defaults to `18792`.
 - `Gateway token`: paste `gateway.auth.token` from `~/.openclaw/openclaw.json`. Optional for a
