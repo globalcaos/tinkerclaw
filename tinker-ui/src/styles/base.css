@@ -12686,3 +12686,6 @@ td.sd-sorted {
 .hive-users-tab .hive-btn { font-size: 12px; padding: 3px 10px; }
 .hive-users-tab .hive-add input[name="name"] { font-size: 13px; padding: 6px 8px; }
 .hive-signout { color: var(--accent); text-decoration: underline; cursor: pointer; }
+/* FORK 2026-10-07 — deleted people fold away at the bottom of the people list. */
+.hive-deleted { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
+.hive-deleted > summary { cursor: pointer; color: var(--muted); font-size: 11px; }

@@ -196,7 +196,7 @@ stateDiagram-v2
 - The restart notice fires before the dispatch, so the user sees the restart first. Since 2026-09-29 it is a transcript `custom` entry (`openclaw.restart-notice`, `gateway/restart-notice.ts`) served by `chat.history` as a `role:"system"` row and pushed live on the `chat.notice` event; the model never sees it. The old `chat.inject` `__ERR_ENV__` envelope was an assistant MESSAGE: it became the transcript tail, which `Agent.continue()` refuses.
 - The notice says how the chat came back: `continued` (embedded, `Agent.continue()` from the transcript), `reattached` (the live cc-bridge worker's turn), or `prompted` (the resume message).
 - Resume is attempted regardless of tail-check result (FORK 2026-05-10).
-- Only `agent:main:*` sessions are eligible. Subagent, cron, ACP sessions are skipped (`shouldSkipMainRecovery`).
+- Only `agent:main:*` sessions are eligible. Subagent, cron, ACP sessions and internal `temp:*` one-shots (tab namer, title suggester, Jev's explainer; since 2026-10-07, bug id `recovery-resumes-temp-session`) are skipped (`shouldSkipMainRecovery`).
 - Recovery is bounded: `DEFAULT_RECOVERY_DELAY_MS=5000`, `MAX_RECOVERY_RETRIES=3`, exponential backoff.
 
 ### L4b. Planned restart — drain, stop, start, continue (2026-09-29, 2026-09-30)

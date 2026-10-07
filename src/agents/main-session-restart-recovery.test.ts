@@ -7,6 +7,7 @@ import { callGateway } from "../gateway/call.js";
 import { __testing as bridgeReattach } from "../infra/bridge-reattach.js";
 import {
   markRestartAbortedMainSessionsFromLocks,
+  markRunningMainSessionsAsInterrupted,
   recoverRestartAbortedMainSessions,
 } from "./main-session-restart-recovery.js";
 import type { SessionLockInspection } from "./session-write-lock.js";
@@ -94,6 +95,47 @@ describe("main-session-restart-recovery", () => {
     expect(store["agent:main:main"]?.abortedLastRun).toBe(true);
     expect(store["agent:main:subagent:child"]?.abortedLastRun).toBeUndefined();
     expect(store["agent:main:other"]?.abortedLastRun).toBeUndefined();
+  });
+
+  // 2026-10-07 09:57: Jev's explainer had a run in flight, so the restart sent the full resume
+  // prompt to `agent:main:temp:jev-explain` and an Opus turn found nothing owed.
+  it("never marks or resumes an internal temp: session", async () => {
+    const sessionsDir = await makeSessionsDir();
+    await writeStore(sessionsDir, {
+      "agent:main:main": {
+        sessionId: "main-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+      },
+      "agent:main:temp:jev-explain": {
+        sessionId: "explain-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+      },
+      "agent:main:temp:title-suggest": {
+        sessionId: "title-session",
+        updatedAt: Date.now() - 10_000,
+        status: "running",
+        abortedLastRun: true,
+      },
+    });
+    await writeTranscript(sessionsDir, "main-session", [{ role: "user", content: "do it" }]);
+    await writeTranscript(sessionsDir, "title-session", [{ role: "user", content: "name it" }]);
+
+    const sweep = await markRunningMainSessionsAsInterrupted({ sessionsDir });
+    const result = await recoverRestartAbortedMainSessions({ stateDir: tmpDir });
+
+    expect(sweep).toEqual({ marked: 1, skipped: 2 });
+    expect(result).toEqual({ recovered: 1, failed: 0, skipped: 1 });
+    const dispatchedKeys = vi
+      .mocked(callGateway)
+      .mock.calls.map(
+        ([call]) => (call as { params?: { sessionKey?: string } }).params?.sessionKey,
+      );
+    expect(dispatchedKeys).not.toContain("agent:main:temp:jev-explain");
+    expect(dispatchedKeys).not.toContain("agent:main:temp:title-suggest");
+    const store = loadSessionStore(path.join(sessionsDir, "sessions.json"));
+    expect(store["agent:main:temp:jev-explain"]?.abortedLastRun).toBeUndefined();
   });
 
   it("resumes marked sessions with a tool-result transcript tail", async () => {

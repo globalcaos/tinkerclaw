@@ -29,6 +29,15 @@ verify:
 
 # Bug Fix Log
 
+### FIXED [scope-mismatch]: a restart sent the resume prompt to Jev's internal explainer (2026-10-07; bug id `recovery-resumes-temp-session`)
+
+- **Symptom:** after the 09:57 restart, `agent:main:temp:jev-explain` got the full "the gateway restarted and interrupted your previous turn" prompt, and an Opus turn spent half an hour finding nothing owed. Its last answer had finished at 09:20.
+- **Measured:** journal 10-07 09:57:32 `marked 3 interrupted main session(s) from running-at-boot state (skipped=0)`, then 09:57:46 `attempting resume despite tail-check warning: agent:main:temp:jev-explain (transcript tail is not resumable)`. An explain run on `xai/grok-4.6` was in flight (`FailoverError: Stopped.` at 09:56:54) with 7 more queued. Since 10-01 this is the only resume sent to a `temp:` session; the explainer lane shipped on 10-06.
+- **Root cause:** `shouldSkipMainRecovery` skipped subagent, cron and ACP keys but not `temp:*`. Those are internal one-shots (tab namer, slug generator, title suggester, Jev's explainer) that nobody reads and the next event re-runs. Jev already skips the namespace (`tinkerclaw-amygdala/src/native.ts`).
+- **Fix:** `127fac39c9e`, `lifecycles.md` L4b. `shouldSkipMainRecovery` returns true for a key whose rest starts with `temp:`, which covers the running-at-boot sweep, the stale-lock sweep and the resume loop.
+- **Tests:** `main-session-restart-recovery.test.ts` "never marks or resumes an internal temp: session": the sweep marks only `main`, the resume loop skips a `temp:` entry an older boot already flagged, and no dispatch names a `temp:` key. 66/66 in the two recovery files with the fix. The run against develop's code stalled in vitest's build step, as did the fixed code afterwards, so red-on-develop is read from the code, not observed: develop marks `temp:jev-explain`, so the sweep returns `marked: 2`.
+- **LESSON:** a skip list of session kinds has to be kept with the list of who mints sessions. A new internal lane (the explainer, 10-06) inherits every main-session behaviour until someone names it.
+
 ### FIXED [scope-mismatch+chat-divergence]: a prompt drawn twice while its answer ran, gone after a refresh (2026-10-05; bug id `cursor-slice-prompt-twin`)
 
 - **Symptom:** _"Check again the code, I can still sometimes see duplicates and have to refresh"_.

@@ -1,8 +1,10 @@
 /**
- * Hive door — the people table (tokens.json, hashes only, mode 0600).
+ * Hive door — the people table (tokens.json, mode 0600). Each row keeps the token's sha256, which the door
+ * checks, and, since 2026-10-07, the token itself, so an admin can copy it again (the user: "another [button]
+ * to copy their token"). Rows made before then hold only the hash until `door-tokens.mjs remember` fills it in.
  *
  * A row is one person: { tokenId, operatorId, displayName, seatId, hash, status, admin, createdAt,
- * rotatedAt?, revokedAt?, deletedAt?, lastLoginAt? }. status is "active" (can log in), "revoked"
+ * rotatedAt?, revokedAt?, deletedAt?, lastLoginAt?, token? }. status is "active" (can log in), "revoked"
  * (token stopped; a regenerated token makes the row active again) or "deleted" (no access; every
  * chat and setting of theirs is kept). Nothing in this module ever removes a row.
  */
@@ -74,9 +76,20 @@ export function addPerson(rows, { displayName, operatorId, seatId, admin = false
     status: "active",
     admin: Boolean(admin),
     createdAt: new Date().toISOString(),
+    ...(token ? { token } : {}),
   };
   if (!idOk(row.seatId)) throw new Error("bad seat");
   return { rows: [...rows, row], row, token };
+}
+
+/** Keep a token that was issued before tokens were stored. Refuses one whose hash is not this person's. */
+export function rememberToken(rows, operatorId, token) {
+  const row = rows.find((r) => r.operatorId === operatorId);
+  if (!row) throw new Error(`no person "${operatorId}"`);
+  if (sha256Hex(String(token ?? "").trim()) !== row.hash)
+    throw new Error("that token is not this person's current token");
+  row.token = String(token).trim();
+  return row;
 }
 
 export function activeAdmins(rows) {

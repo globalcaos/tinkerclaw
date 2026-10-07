@@ -19,6 +19,8 @@ type Person = {
   chats: number;
   createdAt: string | null;
   lastLoginAt: string | null;
+  /** The door keeps this person's current token, so an admin can copy it (2026-10-07). */
+  hasToken?: boolean;
 };
 
 const esc = (s: unknown) =>
@@ -68,6 +70,43 @@ function when(iso: string | null): string {
       });
 }
 
+/** Copy text on any page. Goku is served over plain http on the LAN, where navigator.clipboard does not
+ *  exist (it needs a secure context), so fall back to a hidden textarea + execCommand("copy"). */
+export async function copyText(text: string): Promise<boolean> {
+  if (window.isSecureContext && navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      console.error("[hive-admin] clipboard write failed, trying the fallback", err);
+    }
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;left:-9999px;top:0;opacity:0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (err) {
+    console.error("[hive-admin] execCommand copy failed", err);
+  }
+  ta.remove();
+  return ok;
+}
+
+/** Deleted people go to their own folded list; everyone else stays in the main list. */
+export function splitPeople<T extends { status: string }>(
+  people: T[],
+): { current: T[]; deleted: T[] } {
+  return {
+    current: people.filter((p) => p.status !== "deleted"),
+    deleted: people.filter((p) => p.status === "deleted"),
+  };
+}
+
 let reveal: { name: string; token: string } | null = null;
 let notice = "";
 
@@ -85,11 +124,14 @@ function personRow(p: Person, me: HiveMe): string {
       p.status === "active" ? "New token" : "Restore",
       "Make a new token for this person; the old one stops working",
     ),
+    p.status === "active" && p.hasToken
+      ? btn("copytoken", "Copy token", "Copy this person's current token")
+      : "",
     !self && p.status === "active"
       ? btn("revoke", "Revoke", "Stop this person's current token; a new token restores access")
       : "",
     !self && p.status !== "deleted"
-      ? btn("delete", "Remove access", "No more access. Their chats and settings are kept")
+      ? btn("delete", "Delete", "Delete this person: no more access. Everything they made is kept")
       : "",
     p.admin
       ? btn("unadmin", "Remove admin", "Take admin rights away")
@@ -123,7 +165,13 @@ export async function renderHiveUsers(body: HTMLElement, me: HiveMe, countEl?: H
       <label class="hive-add-admin"><input type="checkbox" name="admin"> admin</label>
       <button class="hive-btn hive-btn--primary" type="submit">Add</button>
     </form>
-    ${people.map((p) => personRow(p, me)).join("")}`;
+    ${(() => {
+      const { current, deleted } = splitPeople(people);
+      const folded = deleted.length
+        ? `<details class="hive-deleted"><summary>Deleted people (${deleted.length})</summary>${deleted.map((p) => personRow(p, me)).join("")}</details>`
+        : "";
+      return current.map((p) => personRow(p, me)).join("") + folded;
+    })()}`;
 }
 
 /** Wire the right-rail panel once. */
@@ -179,8 +227,22 @@ function wireHiveUsers(body: HTMLElement, me: HiveMe, countEl: HTMLElement | nul
     const action = b.dataset.hiveAction!;
     const id = b.dataset.hiveId ?? "";
     if (action === "copy" && reveal) {
-      await navigator.clipboard?.writeText(reveal.token).catch(() => {});
-      b.textContent = "Copied";
+      b.textContent = (await copyText(reveal.token)) ? "Copied" : "Select and copy it by hand";
+      return;
+    }
+    if (action === "copytoken") {
+      try {
+        const r = await call<{ token: string }>("GET", `users/${encodeURIComponent(id)}/token`);
+        if (await copyText(r.token)) {
+          b.textContent = "Copied";
+          return;
+        }
+        reveal = { name: id, token: r.token };
+        notice = "Copying is blocked on this page; the token is shown above.";
+      } catch (err) {
+        notice = (err as Error).message;
+      }
+      await rerender();
       return;
     }
     if (action === "dismiss") {
@@ -191,7 +253,7 @@ function wireHiveUsers(body: HTMLElement, me: HiveMe, countEl: HTMLElement | nul
     const ask: Record<string, string> = {
       rotate: `Make a new token for ${id}? Their current token stops working.`,
       revoke: `Revoke ${id}'s token? They are signed out until you make a new token.`,
-      delete: `Remove ${id}'s access? Their chats and settings are kept, and you will still see their chats.`,
+      delete: `Delete ${id}? They can no longer log in. Everything they made (chats, settings) is kept, you still see their chats, and Restore brings them back.`,
       admin: `Make ${id} an admin? Admins see every user's chats and manage people.`,
       unadmin: `Take admin rights away from ${id}?`,
     };

@@ -200,6 +200,8 @@ function publicPerson(r, counts) {
     deletedAt: r.deletedAt ?? null,
     lastLoginAt: r.lastLoginAt ?? null,
     chats: counts?.[r.operatorId] ?? 0,
+    // The token itself never leaves in a list; an admin fetches it per person (users/<id>/token).
+    hasToken: Boolean(r.token),
   };
 }
 
@@ -329,6 +331,22 @@ export function createDoor(opts) {
       return true;
     }
     const counts = acl.countsByOwner();
+    // FORK 2026-10-07 (the user: "another [button] to copy their token"). Admins only, one person per call,
+    // audited, and only for a token that still opens the door.
+    const tk = /^users\/([A-Za-z0-9._:-]{1,80})\/token$/.exec(sub);
+    if (tk && req.method === "GET") {
+      const r = rows().find((x) => x.operatorId === tk[1]);
+      if (!r) json(res, 404, { error: "no such person" });
+      else if (r.status !== "active")
+        json(res, 409, { error: "this person has no access; make a new token first" });
+      else if (!r.token)
+        json(res, 404, { error: "this token was made before tokens were kept; make a new one" });
+      else {
+        audit({ ev: "token_copy", by: me.operatorId, operatorId: r.operatorId });
+        json(res, 200, { token: r.token });
+      }
+      return true;
+    }
     if (sub === "users" && req.method === "GET") {
       json(res, 200, {
         users: rows().map((r) => publicPerson(r, counts)),
@@ -384,6 +402,7 @@ export function createDoor(opts) {
       if (action === "rotate") {
         token = newToken();
         r.hash = sha256Hex(token);
+        r.token = token;
         r.status = "active";
         r.rotatedAt = at;
         delete r.revokedAt;

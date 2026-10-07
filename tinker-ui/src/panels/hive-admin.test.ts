@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hiveWhoAmIHtml, renderHiveUsersTab } from "./hive-admin.ts";
+import { hiveWhoAmIHtml, renderHiveUsersTab, splitPeople } from "./hive-admin.ts";
 
 const me = (displayName: string, admin: boolean) => ({ operatorId: "p1", displayName, admin });
 
@@ -28,5 +28,17 @@ describe("Users tab: who am I", () => {
     expect(sub.innerHTML).toContain("Signed in as <b>alex</b>");
     expect(body.innerHTML).toContain("Only an admin");
     expect(body.innerHTML).not.toContain("hive-add");
+  });
+});
+
+describe("Users tab: deleted people fold away", () => {
+  it("keeps active and revoked people in the list and moves deleted ones out", () => {
+    const { current, deleted } = splitPeople([
+      { id: "a", status: "active" },
+      { id: "r", status: "revoked" },
+      { id: "d", status: "deleted" },
+    ]);
+    expect(current.map((p) => p.id)).toEqual(["a", "r"]);
+    expect(deleted.map((p) => p.id)).toEqual(["d"]);
   });
 });
