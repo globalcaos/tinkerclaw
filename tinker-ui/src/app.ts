@@ -37034,7 +37034,9 @@ function init() {
       return;
     }
     const tab = btn.dataset.tab!;
-    switchTab(tab);
+    // FORK 2026-10-07 (the user: "when pressing the left tab icons for the second time, the chat should
+    // appear again"). A second click on the open rail tab goes back to the chat.
+    switchTab(tab === activeTab && tab !== "chat" ? "chat" : tab);
   });
 
   // FORK 2026-05-30: the RECIPES panel header doubles as a button into the book.
